@@ -1,0 +1,12 @@
+DROP TABLE IF EXISTS settings;
+DROP TABLE IF EXISTS ingest_errors;
+DROP TABLE IF EXISTS play_history;
+DROP TABLE IF EXISTS user_track_stats;
+DROP TABLE IF EXISTS playlist_share_links;
+DROP TABLE IF EXISTS playlist_collaborators;
+DROP TABLE IF EXISTS playlist_tracks;
+DROP TABLE IF EXISTS playlists;
+DROP TABLE IF EXISTS track_artists;
+DROP TABLE IF EXISTS tracks;
+DROP TABLE IF EXISTS albums;
+DROP TABLE IF EXISTS artists;

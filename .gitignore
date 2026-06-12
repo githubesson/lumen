@@ -1,0 +1,85 @@
+# Dependencies
+node_modules/
+.vscode/
+.pnp.*
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.pem
+
+# Logs and local process output
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.tmp-*
+
+# Build and cache output
+dist/
+build/
+coverage/
+.cache/
+.vite/
+.turbo/
+*.tsbuildinfo
+
+# Electron and packaged app artifacts
+release/
+electron/build/
+*.asar
+*.exe
+*.msi
+*.dmg
+*.AppImage
+
+# Archives
+*.rar
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+
+# Go build and test artifacts
+bin/
+tmp/
+.gocache/
+*.test
+*.out
+
+# Expo / React Native generated state
+.expo/
+web-build/
+mobile/ios/
+mobile/android/
+mobile/.vscode/
+.kotlin/
+*.orig.*
+
+# Docker and local runtime data
+**/pgdata/
+**/transcode-cache/
+/music/
+backend/music/
+*.db
+*.sqlite
+*.sqlite3
+
+# Local-only files that never belong in the repo
+_local/
+
+# Local agent/tooling state
+.pi/
+.deepsec/
+.commandcode/
+thoughts/
+settings.local.json

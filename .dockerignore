@@ -1,0 +1,33 @@
+# The frontend image builds with the repo root as context (it needs frontend/
+# and core/); the backend image builds from ./backend with its own
+# .dockerignore. Keep everything else out of the context.
+.git
+.github
+_local
+thoughts
+docs
+backend
+mobile
+
+pgdata
+transcode-cache
+music
+docker-compose.yml
+
+**/node_modules
+**/dist
+**/build
+**/release
+**/.tmp-*
+**/*.log
+**/*.rar
+
+.agents
+.claude
+.commandcode
+.deepsec
+.pi
+
+.env
+.env.*
+!.env.example

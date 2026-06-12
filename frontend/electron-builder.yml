@@ -1,0 +1,37 @@
+appId: com.lumen.music-library
+productName: Lumen
+copyright: ""
+directories:
+  output: release
+asar: true
+files:
+  - package.json
+  - electron/package.json
+  - electron/setup.html
+  - electron/build/**/*
+  - dist/**/*
+  - "!**/*.map"
+# Optional private add-on: the FH6 radio bridge DLL + config are pulled from a
+# local, untracked folder. Without it, remove this block before electron:build.
+extraResources:
+  - from: ../_local/fh6-spotify-mod/lumen-radio/dist
+    to: lumen-radio
+    filter:
+      - version.dll
+      - fh6-radio/config.toml
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+    - target: nsis
+      arch:
+        - x64
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-${version}-setup.${ext}

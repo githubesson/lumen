@@ -1,0 +1,78 @@
+# ──────────────────────────────────────────────────────────────────────
+# Music Library — nginx site config (plain HTTP on :80)
+#
+# Drop this into /etc/nginx/sites-available/music-library.conf, symlink
+# into sites-enabled, and reload nginx. Assumes the compose stack is
+# running with:
+#
+#   backend  bound to 127.0.0.1:8080   (BACKEND_PORT in .env)
+#   frontend bound to 127.0.0.1:8081   (FRONTEND_PORT in .env)
+#
+# Replace music.example.com with your hostname — this server block only
+# matches requests for that name, so other nginx sites on :80 keep working.
+#
+# When serving over plain HTTP, set COOKIE_SECURE=false in .env — the
+# session cookie is marked Secure by default and the browser drops it
+# over non-TLS connections.
+# ──────────────────────────────────────────────────────────────────────
+
+upstream music_library_backend {
+    server 127.0.0.1:8080;
+    keepalive 32;
+}
+
+upstream music_library_frontend {
+    server 127.0.0.1:8081;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name music.example.com;
+
+    # Audio uploads can be chunky — default 1m rejects multipart uploads.
+    client_max_body_size 512m;
+
+    proxy_http_version 1.1;
+    proxy_set_header   Host              $host;
+    proxy_set_header   X-Forwarded-Host  $host;
+    proxy_set_header   X-Real-IP         $remote_addr;
+    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    # Cloudflare Flexible SSL connects to this origin over HTTP, so $scheme is
+    # "http" here even though the public browser URL is HTTPS. The backend uses
+    # this header when minting share/preview URLs.
+    proxy_set_header   X-Forwarded-Proto https;
+    proxy_set_header   Connection        "";
+    proxy_read_timeout 1h;   # long enough for a full album side in one request
+    proxy_send_timeout 1h;
+
+    gzip on;
+    gzip_vary on;
+    gzip_types text/plain text/css application/json application/javascript
+               application/xml+rss application/atom+xml image/svg+xml;
+
+    # Backend — API, streaming, cover art.
+    location /api/ {
+        proxy_pass http://music_library_backend;
+
+        # Range requests (audio scrubbing) don't benefit from nginx buffering.
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    # Public link-preview pages (what Discord / chat apps scrape).
+    location /share/ {
+        proxy_pass http://music_library_backend;
+    }
+
+    # Public embeddable players advertised in link-preview metadata.
+    location /embed/ {
+        proxy_pass http://music_library_backend;
+    }
+
+    # Everything else → SPA.
+    location / {
+        proxy_pass http://music_library_frontend;
+    }
+}

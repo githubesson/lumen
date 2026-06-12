@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en" class="antialiased">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Host+Grotesk:wght@300..800&family=Geist+Mono:wght@400..700&display=swap"
+    />
+
+    <title>Lumen — Music Library</title>
+    <script>
+      (() => {
+        const saved = (() => {
+          try { return JSON.parse(localStorage.getItem("lumen.tweaks") || "{}"); }
+          catch { return {}; }
+        })();
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const theme = saved.theme || (prefersDark ? "dark" : "light");
+        const depth = saved.depth ?? 2;
+        const radius = saved.radius ?? 10;
+        const density = saved.density || "balanced";
+        const layout = saved.layout || "sidebar";
+        document.documentElement.setAttribute("data-theme", theme);
+        document.documentElement.setAttribute("data-depth", depth);
+        document.documentElement.setAttribute("data-radius", radius);
+        document.documentElement.setAttribute("data-density", density);
+        document.documentElement.setAttribute("data-layout", layout);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

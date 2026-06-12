@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';"
+    />
+    <title>Server configuration</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #111111;
+        --muted: #666666;
+        --border: #d5d5d5;
+        --accent: #111111;
+        --accent-fg: #ffffff;
+        --error: #b42318;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #141414;
+          --fg: #f2f2f2;
+          --muted: #8a8a8a;
+          --border: #2e2e2e;
+          --accent: #f2f2f2;
+          --accent-fg: #111111;
+          --error: #f97066;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+          Arial, sans-serif;
+      }
+      body {
+        padding: 28px 28px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        height: 100vh;
+      }
+      h1 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      p.hint {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+      code {
+        font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo,
+          monospace;
+        font-size: 12px;
+        padding: 1px 5px;
+        border-radius: 4px;
+        background: color-mix(in srgb, var(--fg) 8%, transparent);
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 500;
+      }
+      label.check {
+        flex-direction: row;
+        align-items: flex-start;
+        gap: 10px;
+      }
+      label.check input {
+        margin: 2px 0 0;
+        padding: 0;
+        width: auto;
+        border: 0;
+        accent-color: var(--accent);
+      }
+      label.check .sub {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        font-weight: 400;
+        color: var(--muted);
+      }
+      input {
+        padding: 9px 11px;
+        font-size: 14px;
+        font-family: inherit;
+        color: var(--fg);
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        outline: none;
+        transition: border-color 120ms ease;
+      }
+      input:focus {
+        border-color: var(--accent);
+      }
+      .error {
+        color: var(--error);
+        font-size: 12px;
+        min-height: 1.2em;
+        line-height: 1.4;
+      }
+      .row {
+        margin-top: auto;
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+      button {
+        padding: 8px 14px;
+        font-size: 13px;
+        font-weight: 500;
+        font-family: inherit;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: var(--bg);
+        color: var(--fg);
+        cursor: pointer;
+        transition:
+          background 120ms ease,
+          border-color 120ms ease;
+      }
+      button:hover {
+        border-color: color-mix(in srgb, var(--fg) 40%, transparent);
+      }
+      button.primary {
+        background: var(--accent);
+        color: var(--accent-fg);
+        border-color: var(--accent);
+      }
+      button.primary:hover {
+        opacity: 0.9;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Music library server</h1>
+    <p class="hint">
+      Enter the base URL of your music-library backend. For a local server use
+      <code>http://localhost:8080</code>.
+    </p>
+    <label>
+      Server URL
+      <input
+        id="url"
+        type="text"
+        placeholder="http://localhost:8080"
+        autocomplete="off"
+        spellcheck="false"
+      />
+    </label>
+    <label class="check">
+      <input id="discordEnabled" type="checkbox" />
+      <span>
+        Show what I'm listening to on Discord
+        <span class="sub">Requires the Discord desktop app to be running.</span>
+      </span>
+    </label>
+    <label class="check">
+      <input id="alwaysOnTop" type="checkbox" />
+      <span>
+        Stay on top of other windows
+        <span class="sub">Keep the player visible above all other apps.</span>
+      </span>
+    </label>
+    <label class="check">
+      <input id="fh6RadioEnabled" type="checkbox" />
+      <span>
+        Enable Lumen Radio for FH6
+        <span class="sub">Adds the in-app installer and radio controls.</span>
+      </span>
+    </label>
+    <div class="error" id="error"></div>
+    <div class="row">
+      <button id="cancel" type="button">Cancel</button>
+      <button id="save" type="button" class="primary">Save</button>
+    </div>
+    <script src="./build/setup.js"></script>
+  </body>
+</html>

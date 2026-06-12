@@ -1,0 +1,12 @@
+{
+  "name": "music-library-filen-downloader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@filen/sdk": "^0.3.12"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

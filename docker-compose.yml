@@ -1,0 +1,80 @@
+name: music-library
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mlib}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:-mlib}
+    # Exposed on loopback so you can `psql -h 127.0.0.1 -p ${POSTGRES_PORT}`
+    # for backups and one-off queries. Nothing on the internet should touch it.
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mlib} -d ${POSTGRES_DB:-mlib}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: music-library-backend:local
+    build:
+      context: ./backend
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://${POSTGRES_USER:-mlib}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mlib}?sslmode=disable
+      MUSIC_PATH: /mnt/music
+      TRANSCODE_CACHE: /cache
+      ENABLE_TRANSCODING: ${ENABLE_TRANSCODING:-false}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      SESSION_COOKIE: ${SESSION_COOKIE:-mlsession}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      SESSION_TTL: ${SESSION_TTL:-720h}
+      COVER_SIGN_KEY: ${COVER_SIGN_KEY:?COVER_SIGN_KEY must be set}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+    # Bind to loopback only — the host-level nginx reverse proxy connects over
+    # 127.0.0.1:${BACKEND_PORT}. Drop the "127.0.0.1:" prefix to make it
+    # reachable on all interfaces (not recommended — nothing enforces auth at
+    # the port level).
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+    # Join the host group that owns the music directory so the container keeps
+    # access to everything under the music bind mount. Pair with setgid +
+    # default ACLs on the host dir so new folders inherit the group and rwx
+    # permissions. Set MUSIC_GROUP_GID in .env to your host group's GID.
+    group_add:
+      - "${MUSIC_GROUP_GID:-1100}"
+    # Mounted at the same path inside the container as on the host, so music
+    # roots added in the admin UI (e.g. /mnt/music/liluzivert) resolve to the
+    # identical path the backend sees — no host/container path translation.
+    volumes:
+      - ${MUSIC_HOST_PATH:-/mnt/music}:/mnt/music
+      - ./transcode-cache:/cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    image: music-library-frontend:local
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-8081}:8080"
+    depends_on:
+      - backend

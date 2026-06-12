@@ -1,0 +1,23 @@
+{
+  "name": "@music-library/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Platform-agnostic core (API client, player state, auth, favorites) shared between the web and mobile clients.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./api": "./src/api.ts",
+    "./storage": "./src/storage.ts",
+    "./events": "./src/events.ts",
+    "./auth": "./src/auth/auth-core.tsx",
+    "./favorites": "./src/favorites/favorites-core.tsx",
+    "./player": "./src/player/index.ts",
+    "./player/*": "./src/player/*.ts"
+  },
+  "devDependencies": {
+    "@types/react": "~19.1.0",
+    "typescript": "^5.9.3"
+  }
+}

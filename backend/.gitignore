@@ -1,0 +1,9 @@
+/bin/
+/tmp/
+*.test
+*.out
+.env
+.env.local
+/pgdata/
+/music/
+/transcode-cache/
