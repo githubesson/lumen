@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/uncut/lumen/internal/library"
-	"github.com/uncut/lumen/internal/playlists"
-	"github.com/uncut/lumen/internal/storage"
+	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/playlists"
+	"github.com/githubesson/lumen/internal/storage"
 )
 
 type Stats struct {

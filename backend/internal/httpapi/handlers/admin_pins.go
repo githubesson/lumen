@@ -17,8 +17,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/uncut/lumen/internal/musicroots"
-	"github.com/uncut/lumen/internal/pathsafe"
+	"github.com/githubesson/lumen/internal/musicroots"
+	"github.com/githubesson/lumen/internal/pathsafe"
 )
 
 // pathPinID parses the {id} URL parameter for the admin pin endpoints,

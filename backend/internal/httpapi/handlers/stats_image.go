@@ -13,8 +13,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/uncut/lumen/internal/library"
-	"github.com/uncut/lumen/internal/preview"
+	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/preview"
 )
 
 // replayImageMaxTitle bounds the caller-supplied period label so a hostile

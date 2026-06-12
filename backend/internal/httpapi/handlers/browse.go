@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/uncut/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/library"
 )
 
 // Browse serves server-aggregated lists of albums and artists. This replaces

@@ -15,9 +15,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/uncut/lumen/internal/dbtext"
-	"github.com/uncut/lumen/internal/dbutil"
-	"github.com/uncut/lumen/internal/pinscan"
+	"github.com/githubesson/lumen/internal/dbtext"
+	"github.com/githubesson/lumen/internal/dbutil"
+	"github.com/githubesson/lumen/internal/pinscan"
 )
 
 var ErrNotFound = errors.New("artistgrid tracker pin not found")

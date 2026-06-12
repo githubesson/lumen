@@ -21,6 +21,7 @@ docker-compose.yml
 **/.tmp-*
 **/*.log
 **/*.rar
+**/*.tsbuildinfo
 
 .agents
 .claude

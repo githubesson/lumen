@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uncut/lumen/internal/httpx"
+	"github.com/githubesson/lumen/internal/httpx"
 )
 
 func TestDownloadOneSkipsUnsupportedExtensionBeforeWriting(t *testing.T) {

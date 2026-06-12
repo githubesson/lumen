@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/uncut/lumen/internal/pathsafe"
+	"github.com/githubesson/lumen/internal/pathsafe"
 )
 
 type Local struct {

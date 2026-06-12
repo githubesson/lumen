@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/uncut/lumen/internal/dbutil"
+	"github.com/githubesson/lumen/internal/dbutil"
 )
 
 var (

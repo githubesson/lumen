@@ -1,4 +1,4 @@
-module github.com/uncut/lumen
+module github.com/githubesson/lumen
 
 go 1.22.0
 

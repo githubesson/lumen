@@ -21,9 +21,9 @@ import (
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
-	"github.com/uncut/lumen/internal/library"
-	"github.com/uncut/lumen/internal/pathsafe"
-	"github.com/uncut/lumen/internal/storage"
+	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/pathsafe"
+	"github.com/githubesson/lumen/internal/storage"
 )
 
 const (

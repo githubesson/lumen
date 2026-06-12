@@ -5,9 +5,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/uncut/lumen/internal/auth"
-	"github.com/uncut/lumen/internal/models"
-	"github.com/uncut/lumen/internal/users"
+	"github.com/githubesson/lumen/internal/auth"
+	"github.com/githubesson/lumen/internal/models"
+	"github.com/githubesson/lumen/internal/users"
 )
 
 type ctxKey int

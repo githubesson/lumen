@@ -11,8 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/uncut/lumen/internal/dbtext"
-	"github.com/uncut/lumen/internal/dbutil"
+	"github.com/githubesson/lumen/internal/dbtext"
+	"github.com/githubesson/lumen/internal/dbutil"
 )
 
 var ErrNotFound = errors.New("not found")

@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/uncut/lumen/internal/artistgrid"
-	"github.com/uncut/lumen/internal/musicroots"
+	"github.com/githubesson/lumen/internal/artistgrid"
+	"github.com/githubesson/lumen/internal/musicroots"
 )
 
 type AdminArtistGrid struct {

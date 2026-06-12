@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/uncut/lumen/internal/auth"
-	"github.com/uncut/lumen/internal/models"
+	"github.com/githubesson/lumen/internal/auth"
+	"github.com/githubesson/lumen/internal/models"
 )
 
 var (

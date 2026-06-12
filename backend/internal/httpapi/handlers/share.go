@@ -25,11 +25,11 @@ import (
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
-	"github.com/uncut/lumen/internal/auth"
-	"github.com/uncut/lumen/internal/ingest"
-	"github.com/uncut/lumen/internal/library"
-	"github.com/uncut/lumen/internal/preview"
-	"github.com/uncut/lumen/internal/storage"
+	"github.com/githubesson/lumen/internal/auth"
+	"github.com/githubesson/lumen/internal/ingest"
+	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/preview"
+	"github.com/githubesson/lumen/internal/storage"
 )
 
 // Share wires the endpoints that let a user copy a Lumen track link into

@@ -7,9 +7,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/uncut/lumen/internal/models"
-	"github.com/uncut/lumen/internal/playlists"
-	"github.com/uncut/lumen/internal/users"
+	"github.com/githubesson/lumen/internal/models"
+	"github.com/githubesson/lumen/internal/playlists"
+	"github.com/githubesson/lumen/internal/users"
 )
 
 type AdminUsers struct {

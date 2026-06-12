@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/uncut/lumen/internal/dbutil"
-	"github.com/uncut/lumen/internal/ingest"
-	"github.com/uncut/lumen/internal/library"
-	"github.com/uncut/lumen/internal/musicroots"
+	"github.com/githubesson/lumen/internal/dbutil"
+	"github.com/githubesson/lumen/internal/ingest"
+	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/musicroots"
 )
 
 // AdminRoots manages the set of extra music directories an admin can

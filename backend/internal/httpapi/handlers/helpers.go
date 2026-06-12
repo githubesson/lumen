@@ -10,10 +10,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/uncut/lumen/internal/httpapi/middleware"
-	"github.com/uncut/lumen/internal/library"
-	"github.com/uncut/lumen/internal/models"
-	"github.com/uncut/lumen/internal/playlists"
+	"github.com/githubesson/lumen/internal/httpapi/middleware"
+	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/models"
+	"github.com/githubesson/lumen/internal/playlists"
 )
 
 var errFileTooLarge = errors.New("file too large")

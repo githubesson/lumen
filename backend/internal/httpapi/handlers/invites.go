@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/uncut/lumen/internal/httpapi/middleware"
-	"github.com/uncut/lumen/internal/invites"
-	"github.com/uncut/lumen/internal/models"
+	"github.com/githubesson/lumen/internal/httpapi/middleware"
+	"github.com/githubesson/lumen/internal/invites"
+	"github.com/githubesson/lumen/internal/models"
 )
 
 type Invites struct {

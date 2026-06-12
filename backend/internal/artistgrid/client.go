@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/uncut/lumen/internal/httpx"
-	"github.com/uncut/lumen/internal/ingest"
-	"github.com/uncut/lumen/internal/lastshare"
+	"github.com/githubesson/lumen/internal/httpx"
+	"github.com/githubesson/lumen/internal/ingest"
+	"github.com/githubesson/lumen/internal/lastshare"
 )
 
 const (

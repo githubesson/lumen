@@ -9,8 +9,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/uncut/lumen/internal/playlists"
-	"github.com/uncut/lumen/internal/users"
+	"github.com/githubesson/lumen/internal/playlists"
+	"github.com/githubesson/lumen/internal/users"
 )
 
 type Playlists struct {

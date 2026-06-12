@@ -1,9 +1,11 @@
 FROM node:20-alpine AS build
 WORKDIR /app
+# Core must land at /core: the app's package.json, tsconfig paths, and Vite
+# aliases all reference it as ../core relative to /app.
 COPY frontend/package.json frontend/package-lock.json* ./
-COPY core /music-library-core
+COPY core /core
 RUN npm install --no-audit --no-fund
-RUN ln -s /app/node_modules /music-library-core/node_modules
+RUN ln -s /app/node_modules /core/node_modules
 COPY frontend ./
 RUN npm run build
 

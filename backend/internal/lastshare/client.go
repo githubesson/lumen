@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/uncut/lumen/internal/httpx"
+	"github.com/githubesson/lumen/internal/httpx"
 )
 
 // shareHost is the only host treated as a lastshare instance. Detection is

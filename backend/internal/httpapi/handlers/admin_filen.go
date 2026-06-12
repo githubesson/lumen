@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/uncut/lumen/internal/filen"
-	"github.com/uncut/lumen/internal/musicroots"
+	"github.com/githubesson/lumen/internal/filen"
+	"github.com/githubesson/lumen/internal/musicroots"
 )
 
 type AdminFilen struct {

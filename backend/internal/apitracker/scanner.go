@@ -22,11 +22,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/uncut/lumen/internal/httpx"
-	"github.com/uncut/lumen/internal/ingest"
-	"github.com/uncut/lumen/internal/library"
-	"github.com/uncut/lumen/internal/pathsafe"
-	"github.com/uncut/lumen/internal/pinscan"
+	"github.com/githubesson/lumen/internal/httpx"
+	"github.com/githubesson/lumen/internal/ingest"
+	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/pathsafe"
+	"github.com/githubesson/lumen/internal/pinscan"
 )
 
 const skipHost = "music.froste.lol"

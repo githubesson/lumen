@@ -11,12 +11,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/uncut/lumen/internal/auth"
-	"github.com/uncut/lumen/internal/dbutil"
-	"github.com/uncut/lumen/internal/httpapi/middleware"
-	"github.com/uncut/lumen/internal/invites"
-	"github.com/uncut/lumen/internal/models"
-	"github.com/uncut/lumen/internal/users"
+	"github.com/githubesson/lumen/internal/auth"
+	"github.com/githubesson/lumen/internal/dbutil"
+	"github.com/githubesson/lumen/internal/httpapi/middleware"
+	"github.com/githubesson/lumen/internal/invites"
+	"github.com/githubesson/lumen/internal/models"
+	"github.com/githubesson/lumen/internal/users"
 )
 
 type Auth struct {

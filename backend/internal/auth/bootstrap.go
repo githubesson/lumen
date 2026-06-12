@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/uncut/lumen/internal/models"
-	"github.com/uncut/lumen/internal/users"
+	"github.com/githubesson/lumen/internal/models"
+	"github.com/githubesson/lumen/internal/users"
 )
 
 // SeedAdmin creates the initial admin user on first run if no users exist.

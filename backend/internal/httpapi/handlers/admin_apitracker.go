@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/uncut/lumen/internal/apitracker"
-	"github.com/uncut/lumen/internal/musicroots"
+	"github.com/githubesson/lumen/internal/apitracker"
+	"github.com/githubesson/lumen/internal/musicroots"
 )
 
 type AdminAPITracker struct {
