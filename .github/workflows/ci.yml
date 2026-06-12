@@ -42,7 +42,13 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            core/package-lock.json
+      # The typecheck compiles ../core/src too; core resolves react types
+      # from its own node_modules, so install its dev deps as well.
+      - run: npm ci
+        working-directory: core
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
