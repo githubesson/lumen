@@ -2,9 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-  pull_request:
 
 jobs:
   backend:
@@ -76,11 +74,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}/backend
           tags: |
-            type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - uses: docker/build-push-action@v6
         with:
@@ -115,11 +111,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}/frontend
           tags: |
-            type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - uses: docker/build-push-action@v6
         with:

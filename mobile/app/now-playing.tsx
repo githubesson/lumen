@@ -79,6 +79,9 @@ const VOLUME_UPDATE_INTERVAL_MS = 80;
 const PROGRESS_DISPLAY_INTERVAL_MS = 250;
 const TABLET_BREAKPOINT = 600;
 const TABLET_CONTENT_MAX_WIDTH = 760;
+const PHONE_BOTTOM_CONTROLS_ESTIMATE = 316;
+const PHONE_HERO_CONTROLS_GAP = 64;
+const HERO_META_BLOCK_HEIGHT = 54;
 
 type DisplayedQueue = {
   queue: TrackListItem[];
@@ -121,13 +124,13 @@ export default function NowPlayingScreen() {
     });
   }, [queueOpen, transition]);
 
-  const coverSize = isTabletLayout
-    ? Math.min(
-        Math.round(bodyWidth * 0.74),
-        Math.round(availableBodyHeight * 0.46),
-        560,
-      )
-    : Math.min(Math.round(width * 0.62), 320);
+  const measuredBottomControls =
+    bottomControlsHeight ||
+    (isTabletLayout ? 244 : PHONE_BOTTOM_CONTROLS_ESTIMATE);
+  const bottomControlsTop = Math.max(
+    0,
+    availableBodyHeight - measuredBottomControls,
+  );
   const trackId = track?.id ?? null;
   const favorite = useFavorite(trackId ?? "");
   const previousTrackIdRef = useRef<string | null>(null);
@@ -142,6 +145,27 @@ export default function NowPlayingScreen() {
   const coverStartTop = isTabletLayout
     ? Math.max(72, Math.round(availableBodyHeight * 0.11))
     : 60;
+  const metaGap = isTabletLayout ? 82 : 110;
+  const preferredCoverSize = isTabletLayout
+    ? Math.min(
+        Math.round(bodyWidth * 0.74),
+        Math.round(availableBodyHeight * 0.46),
+        560,
+      )
+    : Math.min(Math.round(width * 0.62), 320);
+  const heightLimitedPhoneCoverSize = Math.max(
+    COMPACT_COVER_SIZE,
+    Math.round(
+      bottomControlsTop -
+        coverStartTop -
+        metaGap -
+        HERO_META_BLOCK_HEIGHT -
+        PHONE_HERO_CONTROLS_GAP,
+    ),
+  );
+  const coverSize = isTabletLayout
+    ? preferredCoverSize
+    : Math.min(preferredCoverSize, heightLimitedPhoneCoverSize);
   const coverStartLeft = Math.max(0, (bodyWidth - coverSize) / 2);
   const coverEndTop = 2;
   const coverEndLeft = 0;
@@ -149,8 +173,7 @@ export default function NowPlayingScreen() {
   const coverStartCenterY = coverStartTop + coverSize / 2;
   const coverEndCenterX = coverEndLeft + COMPACT_COVER_SIZE / 2;
   const coverEndCenterY = coverEndTop + COMPACT_COVER_SIZE / 2;
-  const metaStartTop =
-    coverStartTop + coverSize + (isTabletLayout ? 82 : 110);
+  const metaStartTop = coverStartTop + coverSize + metaGap;
   const metaEndTop = 6;
   const metaStartLeft = 0;
   const metaEndLeft = COMPACT_COVER_SIZE + 6;
@@ -159,7 +182,6 @@ export default function NowPlayingScreen() {
   const metaEndWidth = Math.max(120, actionsLeft - metaEndLeft - 10);
   const heroExpandedHeight = metaStartTop + 50;
   const heroCompactHeight = COMPACT_COVER_SIZE + 2;
-  const measuredBottomControls = bottomControlsHeight || 244;
   const queueBottomInset = measuredBottomControls + 18;
   const queueOpenTop = heroCompactHeight + 4;
   const queueClosedTop = Math.max(
