@@ -80,8 +80,10 @@ const PROGRESS_DISPLAY_INTERVAL_MS = 250;
 const TABLET_BREAKPOINT = 600;
 const TABLET_CONTENT_MAX_WIDTH = 760;
 const PHONE_BOTTOM_CONTROLS_ESTIMATE = 316;
-const PHONE_HERO_CONTROLS_GAP = 64;
 const HERO_META_BLOCK_HEIGHT = 54;
+const PHONE_ARTWORK_META_MIN_GAP = 44;
+const PHONE_META_CONTROLS_GAP = 14;
+const TABLET_ARTWORK_META_GAP = 82;
 
 type DisplayedQueue = {
   queue: TrackListItem[];
@@ -145,7 +147,6 @@ export default function NowPlayingScreen() {
   const coverStartTop = isTabletLayout
     ? Math.max(72, Math.round(availableBodyHeight * 0.11))
     : 60;
-  const metaGap = isTabletLayout ? 82 : 110;
   const preferredCoverSize = isTabletLayout
     ? Math.min(
         Math.round(bodyWidth * 0.74),
@@ -158,9 +159,9 @@ export default function NowPlayingScreen() {
     Math.round(
       bottomControlsTop -
         coverStartTop -
-        metaGap -
+        PHONE_ARTWORK_META_MIN_GAP -
         HERO_META_BLOCK_HEIGHT -
-        PHONE_HERO_CONTROLS_GAP,
+        PHONE_META_CONTROLS_GAP,
     ),
   );
   const coverSize = isTabletLayout
@@ -173,7 +174,12 @@ export default function NowPlayingScreen() {
   const coverStartCenterY = coverStartTop + coverSize / 2;
   const coverEndCenterX = coverEndLeft + COMPACT_COVER_SIZE / 2;
   const coverEndCenterY = coverEndTop + COMPACT_COVER_SIZE / 2;
-  const metaStartTop = coverStartTop + coverSize + metaGap;
+  const metaStartTop = isTabletLayout
+    ? coverStartTop + coverSize + TABLET_ARTWORK_META_GAP
+    : Math.max(
+        coverStartTop + coverSize + PHONE_ARTWORK_META_MIN_GAP,
+        bottomControlsTop - HERO_META_BLOCK_HEIGHT - PHONE_META_CONTROLS_GAP,
+      );
   const metaEndTop = 6;
   const metaStartLeft = 0;
   const metaEndLeft = COMPACT_COVER_SIZE + 6;
