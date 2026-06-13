@@ -77,6 +77,7 @@ backend/music/
 
 # Local-only files that never belong in the repo
 _local/
+.DS_Store
 
 # Local agent/tooling state
 .pi/
