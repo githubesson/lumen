@@ -32,6 +32,9 @@ type Config struct {
 	FilenFileTimeout           time.Duration
 	FilenDownloaderNode        string
 	FilenDownloaderScript      string
+	TIDALCountryCode           string
+	TIDALQuality               string
+	TIDALHifiAPIURL            string
 	EnableTranscoding          bool
 	TrustedProxies             []string
 	// CoverSignKey is the HMAC secret used to mint/verify public signed
@@ -71,6 +74,9 @@ func FromEnv() (*Config, error) {
 		FilenFileTimeout:           durenv("FILEN_FILE_TIMEOUT", 30*time.Minute),
 		FilenDownloaderNode:        getenv("FILEN_DOWNLOADER_NODE", "node"),
 		FilenDownloaderScript:      getenv("FILEN_DOWNLOADER_SCRIPT", ""),
+		TIDALCountryCode:           strings.ToUpper(getenv("TIDAL_COUNTRY_CODE", "US")),
+		TIDALQuality:               strings.ToUpper(getenv("TIDAL_QUALITY", "LOSSLESS")),
+		TIDALHifiAPIURL:            getenv("TIDAL_HIFI_API_URL", ""),
 		EnableTranscoding:          boolenv("ENABLE_TRANSCODING", false),
 		TrustedProxies:             splitenv("TRUSTED_PROXIES"),
 	}

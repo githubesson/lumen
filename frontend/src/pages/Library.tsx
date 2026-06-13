@@ -11,6 +11,7 @@ import {
   trackCoverUrl,
   type Album,
   type Artist,
+  type Page,
   type TrackListItem,
 } from "../api";
 import { displayText, pluralize } from "../lib/format";
@@ -237,7 +238,7 @@ function BrowseToolbar({
             ? "Search albums"
             : view === "artists"
               ? "Search artists"
-              : "Search titles, artists, albums"
+              : "Search local + TIDAL"
         }
       />
 
@@ -289,10 +290,23 @@ function TracksView({
   sort: SortKey;
   displayMode: "grid" | "list";
 }) {
-  const fetcher = useCallback(
-    (p: { limit: number; offset: number; q?: string }) => api.listTracksPage(p),
-    [],
-  );
+  const [searchWarning, setSearchWarning] = useState<string | null>(null);
+  const fetcher = useCallback(async (p: {
+    limit: number;
+    offset: number;
+    q?: string;
+  }): Promise<Page<TrackListItem>> => {
+    if (p.q?.trim()) {
+      const res = await api.searchTracks({ ...p, limit: Math.min(p.limit, 50) });
+      setSearchWarning(res.warnings?.join(" ") || null);
+      return {
+        items: res.tracks ?? [],
+        total: p.offset + (res.tracks?.length ?? 0),
+      };
+    }
+    setSearchWarning(null);
+    return api.listTracksPage(p);
+  }, []);
   const { items, total, loadingMore, error, sentinelRef } = usePaginatedList(
     fetcher,
     query,
@@ -309,6 +323,7 @@ function TracksView({
     <>
       <ListMeta loaded={sorted.length} total={total} unit="track" />
       {error && <ErrorBanner message={error} />}
+      {!error && searchWarning && <ErrorBanner message={searchWarning} />}
       <div style={{ marginTop: 14 }}>
         {items === null && <LoadingState label="Loading library…" />}
         {items && items.length === 0 && !error && <LibraryEmptyState />}
@@ -410,6 +425,11 @@ function TracksGrid({
           <div>
             <div className="card-title">{displayText(t.title)}</div>
             <div className="card-sub">{displayText(t.artist, "Unknown artist")}</div>
+            {t.source === "tidal" && (
+              <span className="badge" style={{ marginTop: 6 }}>
+                TIDAL
+              </span>
+            )}
           </div>
         </div>
       ))}

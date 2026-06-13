@@ -63,9 +63,19 @@ type PageParams = {
   signal?: AbortSignal;
 };
 
+export type TrackSource = "local" | "tidal";
+
+type SearchParams = PageParams & {
+  sources?: TrackSource[];
+};
+
 function url(path: string): string {
   if (/^https?:\/\//i.test(path)) return path;
   return `${baseUrl}${path}`;
+}
+
+function trackPathID(id: string): string {
+  return encodeURIComponent(id);
 }
 
 /**
@@ -354,6 +364,16 @@ export const api = {
     ),
   listTracksPage: (params: PageParams = {}) =>
     fetchPage<TrackListItem>("/api/tracks", params),
+  searchTracks: (params: SearchParams = {}) =>
+    request<SearchResponse>(
+      `/api/search${buildQuery({
+        limit: params.limit,
+        offset: params.offset,
+        q: params.q,
+        sources: params.sources?.join(","),
+      })}`,
+      { signal: params.signal },
+    ),
 
   listAlbumsPage: (params: PageParams = {}) =>
     fetchPage<Album>("/api/albums", params),
@@ -369,22 +389,22 @@ export const api = {
   listArtistTracks: (id: string, options: RequestOptions = {}) =>
     request<TrackListItem[]>(`/api/artists/${id}/tracks`, options),
   getTrack: (id: string, options: RequestOptions = {}) =>
-    request<TrackDetail>(`/api/tracks/${id}`, options),
+    request<TrackDetail>(`/api/tracks/${trackPathID(id)}`, options),
   updateTrack: (id: string, patch: TrackPatch) =>
-    request<TrackDetail>(`/api/tracks/${id}`, {
+    request<TrackDetail>(`/api/tracks/${trackPathID(id)}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
     }),
   // Delete a track from the caller's personal library. Owner-scoped on the
   // server: only the user's own personal uploads can be removed (others 404).
   deleteTrack: (id: string) =>
-    requestVoid(`/api/tracks/${id}`, { method: "DELETE" }),
+    requestVoid(`/api/tracks/${trackPathID(id)}`, { method: "DELETE" }),
   // Remove a global (shared-library) track. Admin-only on the server: it
   // hard-deletes the track and unlinks its file(s) from disk so a rescan
   // won't re-add it. Personal uploads aren't global and 404 here — use
   // `deleteTrack` for those.
   deleteGlobalTrack: (id: string) =>
-    requestVoid(`/api/admin/tracks/${id}`, { method: "DELETE" }),
+    requestVoid(`/api/admin/tracks/${trackPathID(id)}`, { method: "DELETE" }),
   updateAlbum: (id: string, patch: AlbumPatch) =>
     request<Album>(`/api/albums/${id}`, {
       method: "PATCH",
@@ -402,7 +422,7 @@ export const api = {
   removeAlbumCover: (id: string) =>
     request<Album>(`/api/albums/${id}/cover`, { method: "DELETE" }),
   recordPlay: (id: string, completion: number) =>
-    requestVoid(`/api/tracks/${id}/play`, {
+    requestVoid(`/api/tracks/${trackPathID(id)}/play`, {
       method: "POST",
       body: JSON.stringify({ completion }),
     }),
@@ -418,9 +438,9 @@ export const api = {
   },
 
   favorite: (id: string) =>
-    requestVoid(`/api/tracks/${id}/favorite`, { method: "POST" }),
+    requestVoid(`/api/tracks/${trackPathID(id)}/favorite`, { method: "POST" }),
   unfavorite: (id: string) =>
-    requestVoid(`/api/tracks/${id}/favorite`, { method: "DELETE" }),
+    requestVoid(`/api/tracks/${trackPathID(id)}/favorite`, { method: "DELETE" }),
   listFavorites: (options: RequestOptions = {}) =>
     request<TrackListItem[]>(`/api/favorites`, options),
   listRecent: (limit = 100, options: RequestOptions = {}) =>
@@ -523,10 +543,16 @@ export const api = {
     requestVoid(`/api/playlists/invites/${id}/accept`, { method: "POST" }),
   declineInvite: (id: string) =>
     requestVoid(`/api/playlists/invites/${id}/decline`, { method: "POST" }),
+
+  tidalStatus: (options: RequestOptions = {}) =>
+    request<TidalStatus>("/api/admin/tidal/status", options),
 };
 
 export interface TrackListItem {
   id: string;
+  db_track_id?: string;
+  source?: TrackSource;
+  source_id?: string;
   title: string;
   album_id?: string;
   album_title?: string;
@@ -536,9 +562,16 @@ export interface TrackListItem {
   aka?: string;
   favorited?: boolean;
   has_cover?: boolean;
+  cover_url?: string;
   /** True when the track is the current user's own personal upload — only
    *  these can be deleted via `deleteTrack`. */
   owned?: boolean;
+}
+
+export interface SearchResponse {
+  tracks: TrackListItem[];
+  sources: TrackSource[];
+  warnings?: string[];
 }
 
 export interface TrackArtist {
@@ -556,6 +589,9 @@ export interface TrackAlias {
 
 export interface TrackDetail {
   id: string;
+  db_track_id?: string;
+  source: TrackSource;
+  source_id?: string;
   title: string;
   album_id?: string;
   album_title?: string;
@@ -572,6 +608,7 @@ export interface TrackDetail {
   artists: TrackArtist[];
   aliases?: TrackAlias[];
   has_cover: boolean;
+  cover_url?: string;
   favorited: boolean;
 }
 
@@ -595,6 +632,9 @@ export interface Playlist {
 export interface PlaylistTrackEntry {
   position: number;
   track_id: string;
+  db_track_id?: string;
+  source?: TrackSource;
+  source_id?: string;
   title: string;
   album_id?: string;
   album_title?: string;
@@ -602,6 +642,7 @@ export interface PlaylistTrackEntry {
   duration_ms: number;
   artist?: string;
   has_cover?: boolean;
+  cover_url?: string;
   added_by_id?: string;
   added_by?: string;
   added_at: string;
@@ -611,6 +652,16 @@ export interface PlaylistTrackEntry {
 
 export interface PlaylistTracks {
   tracks: PlaylistTrackEntry[];
+}
+
+export interface TidalStatus {
+  connected: boolean;
+  proxy_url?: string;
+  country_code?: string;
+  quality?: string;
+  version?: string;
+  repo?: string;
+  error?: string;
 }
 
 export interface Collaborator {
@@ -853,7 +904,7 @@ export interface FilenDownload {
 }
 
 export function streamUrl(id: string): string {
-  return url(`/api/tracks/${id}/stream`);
+  return url(`/api/tracks/${trackPathID(id)}/stream`);
 }
 
 function withCoverSize(path: string, size?: number): string {
@@ -863,7 +914,7 @@ function withCoverSize(path: string, size?: number): string {
 }
 
 export function coverUrl(id: string, size?: number): string {
-  return withCoverSize(`/api/tracks/${id}/cover`, size);
+  return withCoverSize(`/api/tracks/${trackPathID(id)}/cover`, size);
 }
 
 export function albumCoverUrl(id: string, size?: number): string {
@@ -879,7 +930,9 @@ export function albumCoverUrl(id: string, size?: number): string {
 export function trackCoverUrl(track: {
   id: string;
   album_id?: string | null;
+  cover_url?: string | null;
 }, size?: number): string {
+  if (track.cover_url) return url(track.cover_url);
   return track.album_id ? albumCoverUrl(track.album_id, size) : coverUrl(track.id, size);
 }
 
@@ -933,7 +986,7 @@ export function createTrackShareLink(
   startSec: number,
 ): Promise<ShareLink> {
   const qs = new URLSearchParams({ t: String(Math.max(0, Math.floor(startSec))) });
-  return request<ShareLink>(`/api/tracks/${trackId}/share?${qs.toString()}`, {
+  return request<ShareLink>(`/api/tracks/${trackPathID(trackId)}/share?${qs.toString()}`, {
     method: "POST",
   });
 }
@@ -1048,6 +1101,9 @@ export function toQueueItem(entry: PlaylistTrackEntry): TrackListItem {
     track_no: entry.track_no,
     duration_ms: entry.duration_ms,
     artist: entry.artist,
+    source: entry.source,
+    source_id: entry.source_id,
+    cover_url: entry.cover_url,
   };
 }
 

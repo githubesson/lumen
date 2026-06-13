@@ -254,23 +254,8 @@ func (h *Browse) ListArtistTracks(w http.ResponseWriter, r *http.Request) {
 func trackListItems(items []library.TrackListItem, favs map[uuid.UUID]struct{}) []trackListItemResp {
 	out := make([]trackListItemResp, 0, len(items))
 	for _, it := range items {
-		r := trackListItemResp{
-			ID:         it.ID.String(),
-			Title:      it.Title,
-			AlbumTitle: it.AlbumTitle,
-			TrackNo:    it.TrackNo,
-			DurationMS: it.DurationMS,
-			Artist:     it.Artist,
-			Aka:        it.Aka,
-			Owned:      it.Owned,
-		}
-		if it.AlbumID != nil {
-			r.AlbumID = it.AlbumID.String()
-		}
-		if _, ok := favs[it.ID]; ok {
-			r.Favorited = true
-		}
-		out = append(out, r)
+		_, favorited := favs[it.ID]
+		out = append(out, makeTrackListItemResp(it, favorited, false))
 	}
 	return out
 }

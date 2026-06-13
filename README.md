@@ -74,8 +74,8 @@ surface for invites and library management.
 | [`core/`](core/) | Shared TypeScript package (`@music-library/core`) — API client, player state, auth, favorites — consumed by the web and mobile clients. |
 
 Deployment lives at the repo root: [docker-compose.yml](docker-compose.yml)
-runs Postgres + backend + frontend, both app images built straight from this
-repo.
+runs Postgres + hifi-api + backend + frontend, with the app images built
+straight from this repo.
 
 ## Run it
 
@@ -88,6 +88,7 @@ docker compose up -d --build
 That starts:
 
 - **postgres** — Postgres 16, data in `./pgdata`, bound to `127.0.0.1:${POSTGRES_PORT}`
+- **hifi-api** - internal TIDAL search/playback proxy, with token data in `./tidal-hifi`
 - **backend** — Go API on `127.0.0.1:${BACKEND_PORT}` (default 8080)
 - **frontend** — SPA behind nginx on `127.0.0.1:${FRONTEND_PORT}` (default 8081)
 
@@ -106,6 +107,80 @@ The admin is forced to set a new password on first login. From the admin UI
 you can add music roots and create invites — registration is invite-only.
 
 Re-run `docker compose up -d --build` any time you pull new source.
+
+## TIDAL proxy passthrough
+
+TIDAL integration is handled by the internal `hifi-api` sidecar. The frontend
+and mobile clients still talk only to Lumen's backend; the backend calls
+`hifi-api`, rewrites the returned stream manifests, and proxies the audio
+segments back through `/api`. TIDAL credentials and media URLs are never exposed
+to clients, and no TIDAL audio is downloaded into the local library.
+
+This is intentionally a passthrough setup:
+
+- Local files stay in the normal Postgres-backed library.
+- TIDAL is searched live through the unified search endpoint.
+- Playlists can contain both local tracks and TIDAL tracks.
+- TIDAL playlist entries store track metadata plus the remote TIDAL id, not an
+  audio file.
+- One subscribed TIDAL account powers playback for all invite-only users.
+
+No TIDAL developer app, OAuth client id, client secret, redirect URL, or scopes
+are required for this path. The only TIDAL auth state is the device token that
+`hifi-api` writes to `./tidal-hifi/token.json`.
+
+Configure the TIDAL values in the root `.env`. Use the country for the
+subscribed account, for example `PL`:
+
+```env
+HIFI_API_PORT=8000
+TIDAL_COUNTRY_CODE=PL
+TIDAL_QUALITY=LOSSLESS
+TIDAL_HIFI_USE_PROXIES=False
+TIDAL_HIFI_ROTATE_PROXIES_ON_REFRESH=False
+TIDAL_HIFI_MAX_RETRIES=2
+TIDAL_HIFI_FALLBACK_TO_DIRECT_CONNECTION=False
+TIDAL_HIFI_DEV_MODE=False
+```
+
+`HIFI_API_PORT` belongs next to the other port values. It is not published to
+the host; Compose uses it for the private `hifi-api` service and derives the
+backend URL as `http://hifi-api:${HIFI_API_PORT}` internally. Do not set
+`TIDAL_HIFI_API_URL` in `.env` for the Docker setup.
+
+After the image has built, generate the token once:
+
+```sh
+docker compose run --rm hifi-api python tidal_auth/tidal_auth.py
+```
+
+Follow the device-login instructions and sign in with the subscribed TIDAL
+account. The command writes `./tidal-hifi/token.json`; that directory is local
+runtime state and is gitignored.
+
+Then restart the stack:
+
+```sh
+docker compose up -d --build
+```
+
+In the admin UI, the TIDAL panel should show the proxy as connected. From there,
+normal search and playback use the same UI as local tracks. If playback fails,
+check both logs:
+
+```sh
+docker compose logs backend hifi-api
+```
+
+Common checks:
+
+- `tidal proxy is not configured` means the backend cannot see the generated
+  internal URL; run `docker compose config` and verify `TIDAL_HIFI_API_URL`
+  resolves to `http://hifi-api:8000` or your chosen `HIFI_API_PORT`.
+- Preview-only or low-quality playback usually means the token was generated
+  with an account or country that TIDAL is not granting full playback for.
+- Changing account, country, or subscription state is easiest by deleting
+  `./tidal-hifi/token.json`, running the auth command again, and restarting.
 
 ## Putting it on the internet
 
@@ -160,7 +235,7 @@ after changing core.
 ## Repository layout
 
 ```
-docker-compose.yml   Postgres + backend + frontend
+docker-compose.yml   Postgres + hifi-api + backend + frontend
 .env.example         all deployment knobs, copy to .env
 docs/                nginx site-config example for host-level proxying
 backend/             Go API server (own Dockerfile)
@@ -169,8 +244,8 @@ frontend/            web + Electron client (Dockerfile builds with repo root as 
 mobile/              Expo app
 ```
 
-Runtime data (`./pgdata`, `./transcode-cache`) is created next to the compose
-file and gitignored.
+Runtime data (`./pgdata`, `./transcode-cache`, `./tidal-hifi`) is created next
+to the compose file and gitignored.
 
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) tests the backend
 and frontend on every push/PR, and publishes Docker images to GHCR on pushes

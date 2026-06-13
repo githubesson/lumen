@@ -20,6 +20,25 @@ services:
       timeout: 5s
       retries: 5
 
+  hifi-api:
+    build:
+      context: https://github.com/binimum/hifi-api.git#e52d1091407c2014958116a6875d9ac37e265c03
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${HIFI_API_PORT:-8000}", "--no-access-log"]
+    restart: unless-stopped
+    environment:
+      TOKEN_FILE: /app/data/token.json
+      COUNTRY_CODE: ${TIDAL_COUNTRY_CODE:-US}
+      USE_PROXIES: ${TIDAL_HIFI_USE_PROXIES:-False}
+      ROTATE_PROXIES_ON_REFRESH: ${TIDAL_HIFI_ROTATE_PROXIES_ON_REFRESH:-False}
+      PROXIES_FILE: /app/data/proxies.txt
+      MAX_RETRIES: ${TIDAL_HIFI_MAX_RETRIES:-2}
+      FALLBACK_TO_DIRECT_CONNECTION: ${TIDAL_HIFI_FALLBACK_TO_DIRECT_CONNECTION:-False}
+      DEV_MODE: ${TIDAL_HIFI_DEV_MODE:-False}
+    volumes:
+      - ./tidal-hifi:/app/data
+    expose:
+      - "${HIFI_API_PORT:-8000}"
+
   backend:
     image: music-library-backend:local
     build:
@@ -38,6 +57,9 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       SESSION_TTL: ${SESSION_TTL:-720h}
       COVER_SIGN_KEY: ${COVER_SIGN_KEY:?COVER_SIGN_KEY must be set}
+      TIDAL_COUNTRY_CODE: ${TIDAL_COUNTRY_CODE:-US}
+      TIDAL_QUALITY: ${TIDAL_QUALITY:-LOSSLESS}
+      TIDAL_HIFI_API_URL: http://hifi-api:${HIFI_API_PORT:-8000}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     # Bind to loopback only — the host-level nginx reverse proxy connects over
     # 127.0.0.1:${BACKEND_PORT}. Drop the "127.0.0.1:" prefix to make it
@@ -60,6 +82,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      hifi-api:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/health"]
       interval: 15s

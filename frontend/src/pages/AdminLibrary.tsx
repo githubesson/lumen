@@ -3,6 +3,7 @@ import { api, errorMessage, type MusicRoot } from "../api";
 import { ArtistGridPinsSection } from "./admin/ArtistGridPinsSection";
 import { FilenPinsSection } from "./admin/FilenPinsSection";
 import { MusicRootsSection } from "./admin/MusicRootsSection";
+import { TidalSection } from "./admin/TidalSection";
 
 /**
  * Section for the unified Admin page. Manages music roots + ArtistGrid trackers
@@ -53,6 +54,7 @@ export function LibraryAdminSection() {
         error={error}
         onError={onError}
       />
+      <TidalSection />
       <ArtistGridPinsSection
         rootOptions={rootOptions}
         defaultRootPath={defaultRootPath}

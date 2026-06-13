@@ -79,6 +79,7 @@ export default function TrackContextMenu({
   const { isFavorite, toggle: toggleFav } = useFavorites();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
+  const isLocal = isLocalTrack(track);
   const fav = isFavorite(track.id);
 
   const ref = useRef<HTMLDivElement>(null);
@@ -293,16 +294,18 @@ export default function TrackContextMenu({
           <span>Share…</span>
         </button>
       )}
-      <button
-        type="button"
-        role="menuitem"
-        className="ctx-item"
-        onClick={() => void runDownload()}
-        disabled={downloading}
-      >
-        <ArrowDownTrayIcon className="size-3.5" />
-        <span>{downloading ? "Preparing download..." : "Download file"}</span>
-      </button>
+      {isLocal && (
+        <button
+          type="button"
+          role="menuitem"
+          className="ctx-item"
+          onClick={() => void runDownload()}
+          disabled={downloading}
+        >
+          <ArrowDownTrayIcon className="size-3.5" />
+          <span>{downloading ? "Preparing download..." : "Download file"}</span>
+        </button>
+      )}
       {isAdmin && onEdit && (
         <button
           type="button"
@@ -342,7 +345,7 @@ export default function TrackContextMenu({
           </span>
         </button>
       )}
-      {isAdmin && !track.owned && (
+      {isAdmin && !track.owned && isLocal && (
         <button
           type="button"
           role="menuitem"
@@ -478,7 +481,7 @@ export function useTrackContextMenu() {
             (trackInfo ? () => trackInfo.open(track.id) : undefined),
           onShare:
             opts.onShare ??
-            (share ? () => share.open(track.id) : undefined),
+            (share && isLocalTrack(track) ? () => share.open(track.id) : undefined),
         });
       },
     [trackInfo, share],
@@ -503,3 +506,6 @@ export function useTrackContextMenu() {
   return { bind, menu, close, isOpen: state !== null };
 }
 
+function isLocalTrack(track: TrackListItem): boolean {
+  return !track.source || track.source === "local";
+}

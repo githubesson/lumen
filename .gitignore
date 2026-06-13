@@ -68,6 +68,7 @@ mobile/.vscode/
 # Docker and local runtime data
 **/pgdata/
 **/transcode-cache/
+**/tidal-hifi/
 /music/
 backend/music/
 *.db

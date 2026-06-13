@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, type RefObject } from "react";
+import Hls from "hls.js";
 import type { AudioAdapter, AudioAdapterEvent } from "@music-library/core";
 
 /**
@@ -16,6 +17,7 @@ export function useHtmlAudioAdapter(): {
   audioRef: RefObject<HTMLAudioElement>;
 } {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const listenersRef = useRef<Map<AudioAdapterEvent, Set<() => void>>>(
     new Map(),
   );
@@ -55,11 +57,49 @@ export function useHtmlAudioAdapter(): {
     };
   }, []);
 
+  useEffect(
+    () => () => {
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
+    },
+    [],
+  );
+
   const adapter = useMemo<AudioAdapter>(
     () => ({
       load(url) {
         const a = audioRef.current;
         if (!a) return;
+        hlsRef.current?.destroy();
+        hlsRef.current = null;
+        a.removeAttribute("src");
+        a.load();
+        if (shouldUseHLS(url)) {
+          if (Hls.isSupported()) {
+            const hls = new Hls();
+            hlsRef.current = hls;
+            hls.attachMedia(a);
+            hls.loadSource(url);
+            hls.on(Hls.Events.ERROR, (_event, data) => {
+              if (!data.fatal) return;
+              if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                hls.startLoad();
+                return;
+              }
+              if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                hls.recoverMediaError();
+                return;
+              }
+              hls.destroy();
+              if (hlsRef.current === hls) hlsRef.current = null;
+            });
+            return;
+          }
+          if (a.canPlayType("application/vnd.apple.mpegurl")) {
+            a.src = url;
+            return;
+          }
+        }
         a.src = url;
       },
       play() {
@@ -104,6 +144,8 @@ export function useHtmlAudioAdapter(): {
         };
       },
       dispose() {
+        hlsRef.current?.destroy();
+        hlsRef.current = null;
         listenersRef.current.clear();
       },
     }),
@@ -111,4 +153,9 @@ export function useHtmlAudioAdapter(): {
   );
 
   return { adapter, audioRef };
+}
+
+function shouldUseHLS(url: string): boolean {
+  const lower = url.toLowerCase();
+  return lower.includes("/api/tracks/tidal%3a") || lower.includes(".m3u8");
 }

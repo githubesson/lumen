@@ -225,6 +225,9 @@ func (s *Store) replayTopTracks(ctx context.Context, p ReplayStatsParams, out *R
 			COALESCE(STRING_AGG(ar.name, ', ' ORDER BY ta.position) FILTER (WHERE ta.role = 'primary'), ''),
 			`+akaSubquery+`,
 			COALESCE(t.owner_id = $1, FALSE) AS owned,
+			t.source,
+			t.external_id,
+			COALESCE(t.external_meta->>'cover_url', ''),
 			t.created_at,
 			c.plays
 		FROM counts c
@@ -242,7 +245,8 @@ func (s *Store) replayTopTracks(ctx context.Context, p ReplayStatsParams, out *R
 	for rows.Next() {
 		var it ReplayTrack
 		if err := rows.Scan(&it.ID, &it.Title, &it.AlbumID, &it.AlbumTitle,
-			&it.TrackNo, &it.DurationMS, &it.Artist, &it.Aka, &it.Owned, &it.CreatedAt, &it.Plays); err != nil {
+			&it.TrackNo, &it.DurationMS, &it.Artist, &it.Aka, &it.Owned,
+			&it.Source, &it.ExternalID, &it.CoverURL, &it.CreatedAt, &it.Plays); err != nil {
 			return err
 		}
 		out.TopTracks = append(out.TopTracks, it)

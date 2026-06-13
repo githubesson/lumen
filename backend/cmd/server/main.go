@@ -24,6 +24,7 @@ import (
 	"github.com/githubesson/lumen/internal/playlists"
 	"github.com/githubesson/lumen/internal/preview"
 	"github.com/githubesson/lumen/internal/storage"
+	"github.com/githubesson/lumen/internal/tidal"
 	"github.com/githubesson/lumen/internal/users"
 )
 
@@ -60,6 +61,11 @@ func main() {
 	apiTrackerStore := apitracker.NewStore(pool)
 	artistGridStore := artistgrid.NewStore(pool)
 	filenStore := filen.NewStore(pool)
+	tidalClient := tidal.NewClient(tidal.Config{
+		CountryCode: cfg.TIDALCountryCode,
+		Quality:     cfg.TIDALQuality,
+		HifiAPIURL:  cfg.TIDALHifiAPIURL,
+	})
 	sessions := auth.NewSessionStore(pool, cfg.CookieName, cfg.CookieSecure, cfg.SessionTTL)
 
 	if err := auth.SeedAdmin(ctx, logger, usersStore, cfg.AdminUsername, cfg.AdminPassword); err != nil {
@@ -151,6 +157,7 @@ func main() {
 		Ingest:         ingestSvc,
 		Library:        libraryStore,
 		Playlists:      playlistsStore,
+		TIDAL:          tidalClient,
 		Storage:        store,
 		MusicRoots:     musicRootsStore,
 		APITracker:     apiTrackerStore,

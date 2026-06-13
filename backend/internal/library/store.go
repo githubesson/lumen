@@ -2,6 +2,8 @@ package library
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -106,6 +108,141 @@ type TrackInsert struct {
 	SampleRate  int
 	Channels    int
 	AudioSHA256 []byte
+}
+
+type RemoteTrackInput struct {
+	Source      string
+	ExternalID  string
+	Title       string
+	ArtistNames []string
+	AlbumTitle  string
+	AlbumArtist string
+	DurationMS  int
+	TrackNo     int
+	DiscNo      int
+	Year        int
+	ISRC        string
+	CoverID     string
+	CoverURL    string
+	Metadata    map[string]any
+}
+
+// UpsertRemoteTrack materializes a streamed catalog item as a hidden track row.
+// The row is not shown in the local library, but it gives playlists, favorites,
+// and play history the same stable FK target that local files already use.
+func (s *Store) UpsertRemoteTrack(ctx context.Context, in RemoteTrackInput) (uuid.UUID, error) {
+	source := strings.ToLower(dbtext.Clean(in.Source))
+	externalID := dbtext.Clean(strings.TrimSpace(in.ExternalID))
+	if source == "" || source == "local" || externalID == "" {
+		return uuid.Nil, errors.New("remote source and external id are required")
+	}
+	title := dbtext.Clean(in.Title)
+	if title == "" {
+		title = source + ":" + externalID
+	}
+	albumTitle := dbtext.Clean(in.AlbumTitle)
+	albumArtist := dbtext.Clean(in.AlbumArtist)
+	if albumArtist == "" && len(in.ArtistNames) > 0 {
+		albumArtist = dbtext.Clean(in.ArtistNames[0])
+	}
+	meta := map[string]any{}
+	for k, v := range in.Metadata {
+		meta[k] = v
+	}
+	if in.CoverID != "" {
+		meta["cover_id"] = in.CoverID
+	}
+	if in.CoverURL != "" {
+		meta["cover_url"] = in.CoverURL
+	}
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("marshal remote metadata: %w", err)
+	}
+	sum := sha256.Sum256([]byte(source + ":" + externalID))
+
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var albumID *uuid.UUID
+	if albumTitle != "" {
+		var albumArtistID *uuid.UUID
+		isCompilation := albumArtist == "" || strings.EqualFold(albumArtist, "Various Artists")
+		if albumArtist != "" && !isCompilation {
+			aid, err := UpsertArtist(ctx, tx, albumArtist)
+			if err != nil {
+				return uuid.Nil, fmt.Errorf("upsert remote album artist: %w", err)
+			}
+			albumArtistID = &aid
+		}
+		aid, err := UpsertAlbum(ctx, tx, albumTitle, albumArtistID, in.Year, isCompilation, "")
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("upsert remote album: %w", err)
+		}
+		albumID = &aid
+	}
+
+	var id uuid.UUID
+	err = tx.QueryRow(ctx, `
+		INSERT INTO tracks (
+			album_id, title, track_no, disc_no, duration_ms, year, isrc,
+			file_path, file_size, format, audio_sha256,
+			source, external_id, external_meta, library_visible
+		) VALUES (
+			$1, $2, NULLIF($3, 0), NULLIF($4, 0), $5, NULLIF($6, 0), NULLIF($7, ''),
+			$8, 0, $9, $10,
+			$11, $12, $13::jsonb, FALSE
+		)
+		ON CONFLICT (source, external_id)
+			WHERE source <> 'local' AND external_id <> '' AND deleted_at IS NULL
+		DO UPDATE SET
+			album_id = EXCLUDED.album_id,
+			title = EXCLUDED.title,
+			track_no = EXCLUDED.track_no,
+			disc_no = EXCLUDED.disc_no,
+			duration_ms = EXCLUDED.duration_ms,
+			year = EXCLUDED.year,
+			isrc = EXCLUDED.isrc,
+			external_meta = EXCLUDED.external_meta,
+			library_visible = FALSE,
+			updated_at = NOW()
+		RETURNING id`,
+		albumID, title, in.TrackNo, in.DiscNo, in.DurationMS, in.Year, dbtext.Clean(in.ISRC),
+		source+":"+externalID, source, sum[:],
+		source, externalID, string(metaJSON),
+	).Scan(&id)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if len(in.ArtistNames) > 0 {
+		if err := ReplaceTrackArtists(ctx, tx, id, in.ArtistNames); err != nil {
+			return uuid.Nil, fmt.Errorf("replace remote artists: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, err
+	}
+	return id, nil
+}
+
+func (s *Store) TrackIDForExternal(ctx context.Context, source, externalID string) (uuid.UUID, error) {
+	source = strings.ToLower(dbtext.Clean(source))
+	externalID = dbtext.Clean(strings.TrimSpace(externalID))
+	var id uuid.UUID
+	err := s.db.QueryRow(ctx, `
+		SELECT id FROM tracks
+		WHERE source = $1 AND external_id = $2 AND deleted_at IS NULL
+		LIMIT 1`, source, externalID).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, ErrNotFound
+		}
+		return uuid.Nil, err
+	}
+	return id, nil
 }
 
 // InsertTrack inserts a track honoring the ownership rules:
@@ -671,7 +808,7 @@ func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string) (i
 	prefix = dbtext.Clean(prefix)
 	tag, err := s.db.Exec(ctx, `
 		UPDATE tracks SET deleted_at = NOW()
-		WHERE deleted_at IS NULL AND starts_with(file_path, $1)`, prefix)
+		WHERE deleted_at IS NULL AND source = 'local' AND starts_with(file_path, $1)`, prefix)
 	if err != nil {
 		return 0, err
 	}
@@ -679,7 +816,7 @@ func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string) (i
 }
 
 func (s *Store) KnownPaths(ctx context.Context) (map[string]struct{}, error) {
-	rows, err := s.db.Query(ctx, `SELECT file_path FROM tracks WHERE deleted_at IS NULL`)
+	rows, err := s.db.Query(ctx, `SELECT file_path FROM tracks WHERE deleted_at IS NULL AND source = 'local'`)
 	if err != nil {
 		return nil, err
 	}

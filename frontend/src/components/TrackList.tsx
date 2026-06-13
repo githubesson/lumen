@@ -74,12 +74,13 @@ export default function TrackList({
       t: TrackListItem,
       e: { preventDefault: () => void; clientX: number; clientY: number },
     ) => {
+      const canModifyLocal = isAdmin && isLocalTrack(t);
       // onInfo is wired by default via TrackInfoProvider; the bind() helper
       // falls back to the app-wide dialog when we don't override it here.
       bind(t, {
         queue: queueRef.current,
-        onEdit: isAdmin ? () => setEditId(t.id) : undefined,
-        onMoveToAlbum: isAdmin ? () => setMoveTrack(t) : undefined,
+        onEdit: canModifyLocal ? () => setEditId(t.id) : undefined,
+        onMoveToAlbum: canModifyLocal ? () => setMoveTrack(t) : undefined,
       })(e);
     },
     [bind, isAdmin],
@@ -143,7 +144,7 @@ export default function TrackList({
               isNow={current?.id === t.id}
               isPlaying={isPlaying && current?.id === t.id}
               fav={isFavorite(t.id)}
-              canEdit={isAdmin}
+              canEdit={isAdmin && isLocalTrack(t)}
               onPlay={handlePlay}
               onToggleFav={handleToggleFav}
               onEdit={isAdmin ? handleEdit : undefined}
@@ -248,6 +249,11 @@ export const TrackRow = memo(function TrackRow({
       <td onClick={() => onPlay(track)}>
         <div className="track-title">
           {displayText(track.title)}
+          {track.source === "tidal" && (
+            <span className="badge" style={{ marginLeft: 8 }}>
+              TIDAL
+            </span>
+          )}
           {akaParts && (
             <Tooltip
               content={
@@ -318,3 +324,7 @@ export const TrackRow = memo(function TrackRow({
     </tr>
   );
 });
+
+function isLocalTrack(track: TrackListItem): boolean {
+  return !track.source || track.source === "local";
+}

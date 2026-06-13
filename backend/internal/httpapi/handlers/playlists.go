@@ -9,13 +9,18 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/playlists"
+	"github.com/githubesson/lumen/internal/tidal"
+	"github.com/githubesson/lumen/internal/trackref"
 	"github.com/githubesson/lumen/internal/users"
 )
 
 type Playlists struct {
-	Store *playlists.Store
-	Users *users.Store
+	Store   *playlists.Store
+	Users   *users.Store
+	Library *library.Store
+	TIDAL   *tidal.Client
 }
 
 type playlistResp struct {
@@ -203,6 +208,9 @@ type tracksResp struct {
 type trackItem struct {
 	Position    int    `json:"position"`
 	TrackID     string `json:"track_id"`
+	DBTrackID   string `json:"db_track_id,omitempty"`
+	Source      string `json:"source,omitempty"`
+	SourceID    string `json:"source_id,omitempty"`
 	Title       string `json:"title"`
 	AlbumID     string `json:"album_id,omitempty"`
 	AlbumTitle  string `json:"album_title,omitempty"`
@@ -213,6 +221,7 @@ type trackItem struct {
 	AddedByName string `json:"added_by,omitempty"`
 	AddedAt     string `json:"added_at"`
 	PlayCount   int    `json:"play_count"`
+	CoverURL    string `json:"cover_url,omitempty"`
 }
 
 func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
@@ -236,9 +245,17 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 	}
 	out := tracksResp{Tracks: make([]trackItem, 0, len(tracks))}
 	for _, t := range tracks {
+		source := sourceOrLocal(t.Source)
+		sourceID := t.ExternalID
+		if source == trackref.SourceLocal {
+			sourceID = t.TrackID.String()
+		}
 		ti := trackItem{
 			Position:    t.Position,
-			TrackID:     t.TrackID.String(),
+			TrackID:     canonicalTrackRef(source, t.TrackID, t.ExternalID),
+			DBTrackID:   t.TrackID.String(),
+			Source:      source,
+			SourceID:    sourceID,
 			Title:       t.Title,
 			AlbumTitle:  t.AlbumTitle,
 			TrackNo:     t.TrackNo,
@@ -247,6 +264,7 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 			AddedByName: t.AddedByName,
 			AddedAt:     t.AddedAt.Format("2006-01-02T15:04:05Z07:00"),
 			PlayCount:   t.PlayCount,
+			CoverURL:    t.CoverURL,
 		}
 		if t.AlbumID != nil {
 			ti.AlbumID = t.AlbumID.String()
@@ -287,8 +305,12 @@ func (h *Playlists) AddTracks(w http.ResponseWriter, r *http.Request) {
 	}
 	ids := make([]uuid.UUID, 0, len(req.TrackIDs))
 	for _, s := range req.TrackIDs {
-		id, err := uuid.Parse(s)
+		id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, s, true)
 		if err != nil {
+			if errors.Is(err, tidal.ErrNotConfigured) {
+				http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+				return
+			}
 			http.Error(w, "bad track id", http.StatusBadRequest)
 			return
 		}
@@ -359,8 +381,12 @@ func (h *Playlists) Reorder(w http.ResponseWriter, r *http.Request) {
 	}
 	ids := make([]uuid.UUID, 0, len(req.TrackIDs))
 	for _, s := range req.TrackIDs {
-		id, err := uuid.Parse(s)
+		id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, s, true)
 		if err != nil {
+			if errors.Is(err, tidal.ErrNotConfigured) {
+				http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+				return
+			}
 			http.Error(w, "bad track id", http.StatusBadRequest)
 			return
 		}

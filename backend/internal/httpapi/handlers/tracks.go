@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"image"
@@ -9,28 +10,35 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
 	"github.com/githubesson/lumen/internal/auth"
+	"github.com/githubesson/lumen/internal/httpx"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/storage"
+	"github.com/githubesson/lumen/internal/tidal"
+	"github.com/githubesson/lumen/internal/trackref"
 )
 
 type Tracks struct {
 	Library      *library.Store
 	Storage      storage.Storage
 	Ingest       *ingest.Service
+	TIDAL        *tidal.Client
 	CoverSignKey []byte
 }
 
@@ -39,6 +47,16 @@ const maxServedCoverDimension = 1024
 // maxCoverUploadBytes caps an admin's cover-art upload. Cover art is small;
 // 16 MiB is comfortably above any real album scan while still bounding memory.
 const maxCoverUploadBytes int64 = 16 << 20
+
+const maxRemoteCoverBytes int64 = 16 << 20
+
+var remoteCoverHTTPClient = &http.Client{
+	Timeout: 10 * time.Second,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		_, err := allowedRemoteCoverURL(req.URL.String())
+		return err
+	},
+}
 
 // log returns the handler's structured logger, falling back to the slog
 // default so call sites never need a nil check.
@@ -57,6 +75,9 @@ type trackArtistResp struct {
 
 type trackDetailResp struct {
 	ID         string            `json:"id"`
+	DBTrackID  string            `json:"db_track_id,omitempty"`
+	Source     string            `json:"source"`
+	SourceID   string            `json:"source_id,omitempty"`
 	Title      string            `json:"title"`
 	AlbumID    string            `json:"album_id,omitempty"`
 	AlbumTitle string            `json:"album_title,omitempty"`
@@ -73,11 +94,15 @@ type trackDetailResp struct {
 	Artists    []trackArtistResp `json:"artists"`
 	Aliases    []trackAliasResp  `json:"aliases,omitempty"`
 	HasCover   bool              `json:"has_cover"`
+	CoverURL   string            `json:"cover_url,omitempty"`
 	Favorited  bool              `json:"favorited"`
 }
 
 type trackListItemResp struct {
 	ID         string `json:"id"`
+	DBTrackID  string `json:"db_track_id,omitempty"`
+	Source     string `json:"source,omitempty"`
+	SourceID   string `json:"source_id,omitempty"`
 	Title      string `json:"title"`
 	AlbumID    string `json:"album_id,omitempty"`
 	AlbumTitle string `json:"album_title,omitempty"`
@@ -87,6 +112,7 @@ type trackListItemResp struct {
 	Aka        string `json:"aka,omitempty"` // " • "-joined alt titles from dedup'd copies
 	Favorited  bool   `json:"favorited,omitempty"`
 	Owned      bool   `json:"owned,omitempty"` // true = the viewer's own personal upload (deletable)
+	CoverURL   string `json:"cover_url,omitempty"`
 }
 
 type trackAliasResp struct {
@@ -94,6 +120,39 @@ type trackAliasResp struct {
 	Title       string `json:"title,omitempty"`
 	ArtistNames string `json:"artist_names,omitempty"`
 	AlbumTitle  string `json:"album_title,omitempty"`
+}
+
+func makeTrackListItemResp(it library.TrackListItem, favorited, canonical bool) trackListItemResp {
+	source := sourceOrLocal(it.Source)
+	id := it.ID.String()
+	if canonical {
+		id = canonicalTrackRef(source, it.ID, it.ExternalID)
+	}
+	r := trackListItemResp{
+		ID:         id,
+		DBTrackID:  it.ID.String(),
+		Source:     source,
+		SourceID:   it.ExternalID,
+		Title:      it.Title,
+		AlbumTitle: it.AlbumTitle,
+		TrackNo:    it.TrackNo,
+		DurationMS: it.DurationMS,
+		Artist:     it.Artist,
+		Aka:        it.Aka,
+		Favorited:  favorited,
+		Owned:      it.Owned,
+		CoverURL:   it.CoverURL,
+	}
+	if source == trackref.SourceLocal {
+		r.SourceID = it.ID.String()
+		if !canonical {
+			r.DBTrackID = ""
+		}
+	}
+	if it.AlbumID != nil {
+		r.AlbumID = it.AlbumID.String()
+	}
+	return r
 }
 
 func (h *Tracks) List(w http.ResponseWriter, r *http.Request) {
@@ -123,23 +182,11 @@ func (h *Tracks) List(w http.ResponseWriter, r *http.Request) {
 	favs, _ := h.Library.FavoriteIDs(r.Context(), u.ID)
 	out := make([]trackListItemResp, 0, len(items))
 	for _, it := range items {
-		r := trackListItemResp{
-			ID:         it.ID.String(),
-			Title:      it.Title,
-			AlbumTitle: it.AlbumTitle,
-			TrackNo:    it.TrackNo,
-			DurationMS: it.DurationMS,
-			Artist:     it.Artist,
-			Aka:        it.Aka,
-			Owned:      it.Owned,
-		}
-		if it.AlbumID != nil {
-			r.AlbumID = it.AlbumID.String()
-		}
 		if _, ok := favs[it.ID]; ok {
-			r.Favorited = true
+			out = append(out, makeTrackListItemResp(it, true, false))
+		} else {
+			out = append(out, makeTrackListItemResp(it, false, false))
 		}
-		out = append(out, r)
 	}
 	w.Header().Set("X-Total-Count", strconv.FormatInt(total, 10))
 	writeJSON(w, http.StatusOK, out)
@@ -151,8 +198,13 @@ func (h *Tracks) Favorite(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, ok := pathUUID(w, r, "id")
-	if !ok {
+	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, chi.URLParam(r, "id"), true)
+	if err != nil {
+		if errors.Is(err, tidal.ErrNotConfigured) {
+			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		http.Error(w, "bad track id", http.StatusBadRequest)
 		return
 	}
 	if err := h.Library.SetFavorite(r.Context(), u.ID, id, true); err != nil {
@@ -168,8 +220,13 @@ func (h *Tracks) Unfavorite(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, ok := pathUUID(w, r, "id")
-	if !ok {
+	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, chi.URLParam(r, "id"), false)
+	if err != nil {
+		if errors.Is(err, library.ErrNotFound) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, "bad track id", http.StatusBadRequest)
 		return
 	}
 	if err := h.Library.SetFavorite(r.Context(), u.ID, id, false); err != nil {
@@ -195,20 +252,7 @@ func (h *Tracks) ListFavorites(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]trackListItemResp, 0, len(items))
 	for _, it := range items {
-		r := trackListItemResp{
-			ID:         it.ID.String(),
-			Title:      it.Title,
-			AlbumTitle: it.AlbumTitle,
-			TrackNo:    it.TrackNo,
-			DurationMS: it.DurationMS,
-			Artist:     it.Artist,
-			Favorited:  true,
-			Owned:      it.Owned,
-		}
-		if it.AlbumID != nil {
-			r.AlbumID = it.AlbumID.String()
-		}
-		out = append(out, r)
+		out = append(out, makeTrackListItemResp(it, true, true))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -229,23 +273,11 @@ func (h *Tracks) ListRecent(w http.ResponseWriter, r *http.Request) {
 	favs, _ := h.Library.FavoriteIDs(r.Context(), u.ID)
 	out := make([]trackListItemResp, 0, len(items))
 	for _, it := range items {
-		r := trackListItemResp{
-			ID:         it.ID.String(),
-			Title:      it.Title,
-			AlbumTitle: it.AlbumTitle,
-			TrackNo:    it.TrackNo,
-			DurationMS: it.DurationMS,
-			Artist:     it.Artist,
-			Aka:        it.Aka,
-			Owned:      it.Owned,
-		}
-		if it.AlbumID != nil {
-			r.AlbumID = it.AlbumID.String()
-		}
+		favorited := false
 		if _, ok := favs[it.ID]; ok {
-			r.Favorited = true
+			favorited = true
 		}
-		out = append(out, r)
+		out = append(out, makeTrackListItemResp(it, favorited, true))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -255,8 +287,13 @@ func (h *Tracks) Get(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, ok := pathUUID(w, r, "id")
-	if !ok {
+	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, chi.URLParam(r, "id"), true)
+	if err != nil {
+		if errors.Is(err, tidal.ErrNotConfigured) {
+			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		http.Error(w, "bad track id", http.StatusBadRequest)
 		return
 	}
 	t, err := h.Library.GetTrack(r.Context(), id, u.ID)
@@ -270,8 +307,19 @@ func (h *Tracks) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func makeTrackDetailResp(t *library.TrackDetail, isFav bool) trackDetailResp {
+	source := sourceOrLocal(t.Source)
+	id := t.ID.String()
+	sourceID := t.ExternalID
+	if source != trackref.SourceLocal {
+		id = canonicalTrackRef(source, t.ID, t.ExternalID)
+	} else {
+		sourceID = t.ID.String()
+	}
 	resp := trackDetailResp{
-		ID:         t.ID.String(),
+		ID:         id,
+		DBTrackID:  t.ID.String(),
+		Source:     source,
+		SourceID:   sourceID,
 		Title:      t.Title,
 		AlbumTitle: t.AlbumTitle,
 		TrackNo:    t.TrackNo,
@@ -284,7 +332,8 @@ func makeTrackDetailResp(t *library.TrackDetail, isFav bool) trackDetailResp {
 		SampleRate: t.SampleRate,
 		Channels:   t.Channels,
 		FileSize:   t.FileSize,
-		HasCover:   t.CoverArtPath != "",
+		HasCover:   t.CoverArtPath != "" || t.CoverURL != "",
+		CoverURL:   t.CoverURL,
 		Favorited:  isFav,
 		Artists:    make([]trackArtistResp, 0, len(t.Artists)),
 	}
@@ -329,10 +378,12 @@ func (h *Tracks) Patch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, ok := pathUUID(w, r, "id")
-	if !ok {
+	ref, err := trackref.Parse(chi.URLParam(r, "id"))
+	if err != nil || ref.Source != trackref.SourceLocal {
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
+	id := ref.LocalID
 	var req trackPatchReq
 	if !decodeJSON(w, r, &req) {
 		return
@@ -346,7 +397,7 @@ func (h *Tracks) Patch(w http.ResponseWriter, r *http.Request) {
 		}
 		albumID = &parsed
 	}
-	err := h.Library.UpdateTrack(r.Context(), id, library.TrackPatch{
+	err = h.Library.UpdateTrack(r.Context(), id, library.TrackPatch{
 		Title:       req.Title,
 		Year:        req.Year,
 		Genre:       req.Genre,
@@ -386,10 +437,12 @@ func (h *Tracks) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, ok := pathUUID(w, r, "id")
-	if !ok {
+	ref, err := trackref.Parse(chi.URLParam(r, "id"))
+	if err != nil || ref.Source != trackref.SourceLocal {
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
+	id := ref.LocalID
 	filePath, err := h.Library.DeletePersonalTrack(r.Context(), id, u.ID)
 	if err != nil {
 		writeStoreError(w, err)
@@ -431,10 +484,12 @@ func (h *Tracks) AdminDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, ok := pathUUID(w, r, "id")
-	if !ok {
+	ref, err := trackref.Parse(chi.URLParam(r, "id"))
+	if err != nil || ref.Source != trackref.SourceLocal {
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
+	id := ref.LocalID
 	paths, err := h.Library.DeleteGlobalTrack(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, library.ErrNotFound) {
@@ -485,8 +540,18 @@ func (h *Tracks) Stream(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, ok := pathUUID(w, r, "id")
-	if !ok {
+	ref, err := trackref.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	if ref.Source == trackref.SourceTIDAL {
+		h.streamTIDAL(w, r, ref.ID)
+		return
+	}
+	id := ref.LocalID
+	if id == uuid.Nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	t, err := h.Library.GetTrack(r.Context(), id, u.ID)
@@ -538,14 +603,144 @@ func (h *Tracks) Stream(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, filepath.Base(t.FilePath), stat.ModTime(), f)
 }
 
+func (h *Tracks) streamTIDAL(w http.ResponseWriter, r *http.Request, tidalID string) {
+	if h.TIDAL == nil {
+		h.log().Warn("stream: tidal client not configured", "tidal_track", tidalID)
+		http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	resp, err := h.TIDAL.HLSResponse(r.Context(), tidalID, r, func(rawURL string) string {
+		return tidalHLSProxyURL(tidalID, rawURL)
+	})
+	if err != nil {
+		if errors.Is(err, tidal.ErrNotConfigured) {
+			h.log().Warn("stream: tidal proxy not configured", "tidal_track", tidalID, "err", err)
+			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		if errors.Is(err, tidal.ErrDASHManifest) {
+			h.log().Warn("stream: tidal dash manifest unsupported", "tidal_track", tidalID, "err", err)
+			http.Error(w, "tidal stream format is not supported yet", http.StatusBadGateway)
+			return
+		}
+		if errors.Is(err, tidal.ErrPreviewManifest) {
+			h.log().Warn("stream: tidal preview manifest rejected", "tidal_track", tidalID, "err", err)
+			http.Error(w, tidalStreamErrorMessage(err), http.StatusBadGateway)
+			return
+		}
+		h.log().Warn("stream: tidal proxy failed", "tidal_track", tidalID, "err", err)
+		http.Error(w, tidalStreamErrorMessage(err), http.StatusBadGateway)
+		return
+	}
+	h.log().Info("stream: tidal track started playing",
+		"tidal_track", tidalID,
+		"status", resp.StatusCode,
+		"content_type", resp.Header.Get("Content-Type"))
+	writeTIDALProxyResponse(w, resp)
+}
+
+func (h *Tracks) TIDALHLS(w http.ResponseWriter, r *http.Request) {
+	ref, err := trackref.Parse(chi.URLParam(r, "id"))
+	if err != nil || ref.Source != trackref.SourceTIDAL {
+		h.log().Warn("stream: tidal hls bad id", "raw_id", chi.URLParam(r, "id"), "err", err)
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	h.log().Debug("stream: tidal hls request start",
+		"tidal_track", ref.ID,
+		"path", r.URL.Path,
+		"range", r.Header.Get("Range"),
+		"user_agent", r.UserAgent())
+	if h.TIDAL == nil {
+		h.log().Warn("stream: tidal hls client not configured", "tidal_track", ref.ID)
+		http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	rawURL, err := decodeTIDALHLSURL(r.URL.Query().Get("u"))
+	if err != nil {
+		h.log().Warn("stream: tidal hls bad proxied url", "tidal_track", ref.ID, "err", err)
+		http.Error(w, "bad hls url", http.StatusBadRequest)
+		return
+	}
+	resp, err := h.TIDAL.HLSProxyResponse(r.Context(), rawURL, r, func(nextURL string) string {
+		return tidalHLSProxyURL(ref.ID, nextURL)
+	})
+	if err != nil {
+		h.log().Warn("stream: tidal hls proxy failed", "tidal_track", ref.ID, "err", err)
+		http.Error(w, tidalStreamErrorMessage(err), http.StatusBadGateway)
+		return
+	}
+	h.log().Debug("stream: tidal hls response ready",
+		"tidal_track", ref.ID,
+		"status", resp.StatusCode,
+		"content_type", resp.Header.Get("Content-Type"),
+		"content_length", resp.ContentLength)
+	writeTIDALProxyResponse(w, resp)
+}
+
+func writeTIDALProxyResponse(w http.ResponseWriter, resp *http.Response) {
+	defer resp.Body.Close()
+	for _, name := range []string{
+		"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges",
+		"ETag", "Last-Modified",
+	} {
+		if v := resp.Header.Get(name); v != "" {
+			w.Header().Set(name, v)
+		}
+	}
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "audio/mp4")
+	}
+	w.Header().Set("Cache-Control", "private, max-age=0")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+func tidalHLSProxyURL(tidalID, rawURL string) string {
+	q := url.Values{}
+	q.Set("u", base64.RawURLEncoding.EncodeToString([]byte(rawURL)))
+	return "/api/tracks/" + url.PathEscape(trackref.SourceTIDAL+":"+tidalID) + "/hls?" + q.Encode()
+}
+
+func decodeTIDALHLSURL(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", errors.New("missing hls url")
+	}
+	b, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func tidalStreamErrorMessage(err error) string {
+	msg := strings.TrimSpace(err.Error())
+	if msg == "" {
+		return "tidal stream unavailable"
+	}
+	return "tidal stream unavailable: " + redactTIDALStreamError(msg)
+}
+
+func redactTIDALStreamError(msg string) string {
+	msg = streamURLRe.ReplaceAllString(msg, "[url]")
+	msg = streamTokenRe.ReplaceAllString(msg, "${1}[redacted]")
+	return msg
+}
+
+var (
+	streamURLRe   = regexp.MustCompile(`https?://[^\s"']+`)
+	streamTokenRe = regexp.MustCompile(`(?i)(token=)[^&\s"']+`)
+)
+
 // TrackCover serves the cover art associated with a single track's album.
 func (h *Tracks) TrackCover(w http.ResponseWriter, r *http.Request) {
 	u, ok := requireUser(w, r)
 	if !ok {
 		return
 	}
-	id, ok := pathUUID(w, r, "id")
-	if !ok {
+	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, chi.URLParam(r, "id"), false)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	t, err := h.Library.GetTrack(r.Context(), id, u.ID)
@@ -553,11 +748,16 @@ func (h *Tracks) TrackCover(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if t.CoverArtPath == "" {
-		http.Error(w, "no cover", http.StatusNotFound)
+	maxSize := parseCoverMaxSize(r)
+	if t.CoverArtPath != "" {
+		h.serveStorageObject(w, r, t.CoverArtPath, maxSize)
 		return
 	}
-	h.serveStorageObject(w, r, t.CoverArtPath, parseCoverMaxSize(r))
+	if t.CoverURL != "" {
+		h.serveRemoteCover(w, r, t.CoverURL)
+		return
+	}
+	http.Error(w, "no cover", http.StatusNotFound)
 }
 
 // AlbumCover serves the cover for an album directly.
@@ -570,12 +770,20 @@ func (h *Tracks) AlbumCover(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	key, err := h.Library.AlbumCoverPathForViewer(r.Context(), id, u.ID)
+	maxSize := parseCoverMaxSize(r)
+	if key, err := h.Library.AlbumCoverPathForViewer(r.Context(), id, u.ID); err == nil {
+		h.serveStorageObject(w, r, key, maxSize)
+		return
+	} else if !errors.Is(err, library.ErrNotFound) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	cover, err := h.Library.RemoteAlbumCoverForViewer(r.Context(), id, u.ID)
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	h.serveStorageObject(w, r, key, parseCoverMaxSize(r))
+	h.serveRemoteCover(w, r, remoteCoverURLForSize(cover, maxSize))
 }
 
 // PutAlbumCover replaces an album's cover art with an uploaded image. Admin
@@ -803,6 +1011,94 @@ func (h *Tracks) serveStorageObject(w http.ResponseWriter, r *http.Request, key 
 	http.ServeContent(w, r, filepath.Base(key), zeroTime(), body)
 }
 
+func remoteCoverURLForSize(cover library.RemoteCover, maxSize int) string {
+	if cover.CoverURL != "" {
+		return cover.CoverURL
+	}
+	if strings.EqualFold(cover.Source, trackref.SourceTIDAL) && cover.CoverID != "" {
+		return tidal.CoverURL(cover.CoverID, tidalCoverSize(maxSize))
+	}
+	return ""
+}
+
+func tidalCoverSize(maxSize int) int {
+	switch {
+	case maxSize <= 80:
+		return 80
+	case maxSize <= 640:
+		return 640
+	default:
+		return 1280
+	}
+}
+
+func (h *Tracks) serveRemoteCover(w http.ResponseWriter, r *http.Request, rawURL string) {
+	u, err := allowedRemoteCoverURL(rawURL)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u.String(), nil)
+	if err != nil {
+		http.Error(w, "bad cover url", http.StatusBadGateway)
+		return
+	}
+	req.Header.Set("User-Agent", httpx.BrowserUserAgent)
+	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Referer", "https://tidal.com/")
+	req.Header.Set("Sec-Fetch-Dest", "image")
+	req.Header.Set("Sec-Fetch-Mode", "no-cors")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	resp, err := remoteCoverHTTPClient.Do(req)
+	if err != nil {
+		h.log().Warn("remote cover fetch failed", "host", u.Hostname(), "err", err)
+		http.Error(w, "cover fetch failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		h.log().Warn("remote cover fetch non-2xx", "host", u.Hostname(), "status", resp.StatusCode)
+		http.Redirect(w, r, u.String(), http.StatusFound)
+		return
+	}
+	if resp.ContentLength > maxRemoteCoverBytes {
+		http.Error(w, "cover too large", http.StatusBadGateway)
+		return
+	}
+	ct := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	if ct == "" {
+		ct = contentTypeForExt(filepath.Ext(u.Path))
+	}
+	if !strings.HasPrefix(strings.ToLower(ct), "image/") {
+		h.log().Warn("remote cover fetch returned non-image", "host", u.Hostname(), "content_type", ct)
+		http.Error(w, "cover fetch failed", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	if resp.ContentLength > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
+	}
+	if _, err := io.Copy(w, io.LimitReader(resp.Body, maxRemoteCoverBytes)); err != nil {
+		h.log().Warn("remote cover copy failed", "host", u.Hostname(), "err", err)
+	}
+}
+
+func allowedRemoteCoverURL(rawURL string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return nil, err
+	}
+	if u.Scheme != "https" {
+		return nil, errors.New("remote cover URL must be HTTPS")
+	}
+	if strings.ToLower(u.Hostname()) != "resources.tidal.com" {
+		return nil, errors.New("remote cover host is not allowed")
+	}
+	return u, nil
+}
+
 func parseCoverMaxSize(r *http.Request) int {
 	raw := strings.TrimSpace(r.URL.Query().Get("size"))
 	if raw == "" {
@@ -901,10 +1197,6 @@ func (h *Tracks) RecordPlay(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, ok := pathUUID(w, r, "id")
-	if !ok {
-		return
-	}
 	var req playReq
 	if r.ContentLength > 0 {
 		if !decodeJSON(w, r, &req) {
@@ -916,6 +1208,15 @@ func (h *Tracks) RecordPlay(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Completion > 1 {
 		req.Completion = 1
+	}
+	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, chi.URLParam(r, "id"), true)
+	if err != nil {
+		if errors.Is(err, tidal.ErrNotConfigured) {
+			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		http.Error(w, "bad track id", http.StatusBadRequest)
+		return
 	}
 	if err := h.Library.RecordPlay(r.Context(), u.ID, id, req.Completion); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)

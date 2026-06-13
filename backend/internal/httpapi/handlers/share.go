@@ -30,6 +30,7 @@ import (
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/preview"
 	"github.com/githubesson/lumen/internal/storage"
+	"github.com/githubesson/lumen/internal/trackref"
 )
 
 // Share wires the endpoints that let a user copy a Lumen track link into
@@ -92,10 +93,12 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "signing not configured", http.StatusServiceUnavailable)
 		return
 	}
-	id, ok := pathUUID(w, r, "id")
-	if !ok {
+	ref, err := trackref.Parse(chi.URLParam(r, "id"))
+	if err != nil || ref.Source != trackref.SourceLocal {
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
+	id := ref.LocalID
 	startSec, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("t")))
 	if err != nil || startSec < 0 {
 		http.Error(w, "bad t", http.StatusBadRequest)

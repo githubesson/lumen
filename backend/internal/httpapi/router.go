@@ -21,6 +21,7 @@ import (
 	"github.com/githubesson/lumen/internal/playlists"
 	"github.com/githubesson/lumen/internal/preview"
 	"github.com/githubesson/lumen/internal/storage"
+	"github.com/githubesson/lumen/internal/tidal"
 	"github.com/githubesson/lumen/internal/users"
 )
 
@@ -32,6 +33,7 @@ type Deps struct {
 	Ingest         *ingest.Service
 	Library        *library.Store
 	Playlists      *playlists.Store
+	TIDAL          *tidal.Client
 	Storage        storage.Storage
 	MusicRoots     *musicroots.Store
 	APITracker     *apitracker.Store
@@ -67,7 +69,8 @@ func NewRouter(d Deps) http.Handler {
 	}
 	invH := &handlers.Invites{Store: d.Invites}
 	libH := &handlers.Library{Ingest: d.Ingest, Library: d.Library}
-	plH := &handlers.Playlists{Store: d.Playlists, Users: d.Users}
+	plH := &handlers.Playlists{Store: d.Playlists, Users: d.Users, Library: d.Library, TIDAL: d.TIDAL}
+	searchH := &handlers.Search{Library: d.Library, TIDAL: d.TIDAL}
 	adminUsersH := &handlers.AdminUsers{DB: d.DB, Users: d.Users, Playlists: d.Playlists}
 	adminRootsH := &handlers.AdminRoots{
 		Store:       d.MusicRoots,
@@ -94,10 +97,12 @@ func NewRouter(d Deps) http.Handler {
 		Scanner:     d.FilenScan,
 		PrimaryRoot: d.MusicRoot,
 	}
+	adminTIDALH := &handlers.AdminTIDAL{TIDAL: d.TIDAL}
 	tracksH := &handlers.Tracks{
 		Library:      d.Library,
 		Storage:      d.Storage,
 		Ingest:       d.Ingest,
+		TIDAL:        d.TIDAL,
 		CoverSignKey: d.CoverSignKey,
 	}
 	browseH := &handlers.Browse{Library: d.Library}
@@ -157,9 +162,11 @@ func NewRouter(d Deps) http.Handler {
 			r.With(appmw.RateLimitByIP(5, 10*time.Minute)).Post("/auth/reset-password", authH.ResetPassword)
 
 			r.Get("/tracks", tracksH.List)
+			r.Get("/search", searchH.Search)
 			r.Get("/tracks/{id}", tracksH.Get)
 			r.Delete("/tracks/{id}", tracksH.Delete)
 			r.Get("/tracks/{id}/stream", tracksH.Stream)
+			r.Get("/tracks/{id}/hls", tracksH.TIDALHLS)
 			r.Get("/tracks/{id}/cover", tracksH.TrackCover)
 			r.Post("/tracks/{id}/play", tracksH.RecordPlay)
 			r.Post("/tracks/{id}/favorite", tracksH.Favorite)
@@ -244,6 +251,8 @@ func NewRouter(d Deps) http.Handler {
 			r.Delete("/admin/library/filen/pins/{id}", adminFilenH.Delete)
 			r.Post("/admin/library/filen/pins/{id}/scan", adminFilenH.Scan)
 			r.Get("/admin/library/filen/pins/{id}/downloads", adminFilenH.Downloads)
+
+			r.Get("/admin/tidal/status", adminTIDALH.Status)
 
 			r.Get("/admin/users", adminUsersH.List)
 			r.Get("/admin/users/{id}/departure-preview", adminUsersH.DeparturePreview)

@@ -25,6 +25,9 @@ type TrackDetail struct {
 	Channels     int
 	FilePath     string
 	FileSize     int64
+	Source       string
+	ExternalID   string
+	CoverURL     string
 	Artists      []TrackArtist
 	Aliases      []TrackAlias
 	CoverArtPath string
@@ -59,7 +62,9 @@ const trackDetailSelect = `
 		COALESCE(t.genre, ''), COALESCE(t.year, 0),
 		t.format,
 		COALESCE(t.bitrate, 0), COALESCE(t.sample_rate, 0), COALESCE(t.channels, 0),
-		t.file_path, t.file_size, t.created_at
+		t.file_path, t.file_size,
+		t.source, t.external_id, COALESCE(t.external_meta->>'cover_url', ''),
+		t.created_at
 	FROM tracks t
 	LEFT JOIN albums a ON a.id = t.album_id
 	WHERE t.id = $1 AND t.deleted_at IS NULL`
@@ -95,7 +100,9 @@ func (s *Store) getTrackDetail(ctx context.Context, query string, args ...any) (
 		&t.Genre, &t.Year,
 		&t.Format,
 		&t.Bitrate, &t.SampleRate, &t.Channels,
-		&t.FilePath, &t.FileSize, &t.CreatedAt,
+		&t.FilePath, &t.FileSize,
+		&t.Source, &t.ExternalID, &t.CoverURL,
+		&t.CreatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -159,6 +166,7 @@ func (s *Store) AlbumCoverPathForViewer(ctx context.Context, albumID, viewerID u
 		    FROM tracks t
 		    WHERE t.album_id = a.id
 		      AND t.deleted_at IS NULL
+		      AND t.library_visible = TRUE
 		      AND `+trackVisibleP2+`
 		  )`, albumID, viewerID).Scan(&p)
 	if err != nil {
@@ -173,6 +181,67 @@ func (s *Store) AlbumCoverPathForViewer(ctx context.Context, albumID, viewerID u
 	return *p, nil
 }
 
+type RemoteCover struct {
+	Source   string
+	CoverID  string
+	CoverURL string
+}
+
+// RemoteAlbumCoverForViewer returns remote artwork for a hidden streamed album
+// when the viewer has encountered one of its tracks through a playlist,
+// favorite, or play history. Local album covers are handled by
+// AlbumCoverPathForViewer; this is the passthrough fallback for sources like
+// TIDAL that store artwork URLs in track external metadata.
+func (s *Store) RemoteAlbumCoverForViewer(ctx context.Context, albumID, viewerID uuid.UUID) (RemoteCover, error) {
+	var c RemoteCover
+	err := s.db.QueryRow(ctx, `
+		SELECT
+			t.source,
+			COALESCE(t.external_meta->>'cover_id', ''),
+			COALESCE(t.external_meta->>'cover_url', '')
+		FROM tracks t
+		WHERE t.album_id = $1
+		  AND t.deleted_at IS NULL
+		  AND t.source <> 'local'
+		  AND (
+		    COALESCE(t.external_meta->>'cover_id', '') <> ''
+		    OR COALESCE(t.external_meta->>'cover_url', '') <> ''
+		  )
+		  AND (
+		    EXISTS (
+		      SELECT 1
+		      FROM playlist_tracks pt
+		      JOIN playlists p ON p.id = pt.playlist_id
+		      LEFT JOIN playlist_collaborators pc
+		        ON pc.playlist_id = p.id
+		       AND pc.user_id = $2
+		       AND pc.status = 'accepted'
+		       AND p.visibility = 'collaborative'
+		      WHERE pt.track_id = t.id
+		        AND (p.owner_id = $2 OR pc.user_id IS NOT NULL)
+		    )
+		    OR EXISTS (
+		      SELECT 1 FROM user_track_stats uts
+		      WHERE uts.track_id = t.id AND uts.user_id = $2
+		    )
+		    OR EXISTS (
+		      SELECT 1 FROM play_history ph
+		      WHERE ph.track_id = t.id AND ph.user_id = $2
+		    )
+		  )
+		ORDER BY
+			(COALESCE(t.external_meta->>'cover_id', '') <> '') DESC,
+			t.created_at DESC
+		LIMIT 1`, albumID, viewerID).Scan(&c.Source, &c.CoverID, &c.CoverURL)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RemoteCover{}, ErrNotFound
+		}
+		return RemoteCover{}, err
+	}
+	return c, nil
+}
+
 type TrackListItem struct {
 	ID         uuid.UUID
 	Title      string
@@ -184,6 +253,9 @@ type TrackListItem struct {
 	Aka        string // " • "-joined distinct alternate titles from track_aliases; empty when none
 	CreatedAt  time.Time
 	Owned      bool // true when the track is the viewer's own personal upload
+	Source     string
+	ExternalID string
+	CoverURL   string
 }
 
 type ListTracksParams struct {
@@ -234,6 +306,7 @@ func (s *Store) ListAlbums(ctx context.Context, viewerID uuid.UUID, limit, offse
 		LEFT JOIN artists aa ON aa.id = a.album_artist_id
 		INNER JOIN tracks t ON t.album_id = a.id
 		    AND t.deleted_at IS NULL
+		    AND t.library_visible = TRUE
 		    AND `+trackVisibleP1+`
 		WHERE $2 = '' OR a.title ILIKE '%' || $2 || '%' OR aa.name ILIKE '%' || $2 || '%'
 		GROUP BY a.id, aa.name
@@ -267,6 +340,7 @@ func (s *Store) CountAlbums(ctx context.Context, viewerID uuid.UUID, query strin
 			LEFT JOIN artists aa ON aa.id = a.album_artist_id
 			INNER JOIN tracks t ON t.album_id = a.id
 			    AND t.deleted_at IS NULL
+			    AND t.library_visible = TRUE
 			    AND `+trackVisibleP1+`
 			WHERE $2 = '' OR a.title ILIKE '%' || $2 || '%' OR aa.name ILIKE '%' || $2 || '%'
 			GROUP BY a.id
@@ -289,6 +363,7 @@ func (s *Store) GetAlbum(ctx context.Context, albumID, viewerID uuid.UUID) (*Alb
 		LEFT JOIN artists aa ON aa.id = a.album_artist_id
 		INNER JOIN tracks t ON t.album_id = a.id
 		    AND t.deleted_at IS NULL
+		    AND t.library_visible = TRUE
 		    AND `+trackVisibleP2+`
 		WHERE a.id = $1
 		GROUP BY a.id, aa.name`, albumID, viewerID).
@@ -316,12 +391,14 @@ func (s *Store) ListAlbumTracks(ctx context.Context, albumID, viewerID uuid.UUID
 			COALESCE(STRING_AGG(ar.name, ', ' ORDER BY ta.position) FILTER (WHERE ta.role = 'primary'), ''),
 			`+akaSubquery+`,
 			COALESCE(t.owner_id = $2, FALSE) AS owned,
+			t.source, t.external_id, COALESCE(t.external_meta->>'cover_url', ''),
 			t.created_at
 		FROM tracks t
 		LEFT JOIN albums a ON a.id = t.album_id
 		LEFT JOIN track_artists ta ON ta.track_id = t.id
 		LEFT JOIN artists ar ON ar.id = ta.artist_id
 		WHERE t.album_id = $1 AND t.deleted_at IS NULL
+		  AND t.library_visible = TRUE
 		  AND `+trackVisibleP2+`
 		GROUP BY t.id, a.title
 		ORDER BY COALESCE(t.disc_no, 0) ASC, COALESCE(t.track_no, 0) ASC, t.title ASC`,
@@ -400,7 +477,8 @@ const trackSearchFilter = `
 
 // scanTrackListItems drains rows whose projection matches the standard
 // TrackListItem column order (id, title, album_id, album_title, track_no,
-// duration_ms, artist, aka, owned, timestamp) shared by the track list
+// duration_ms, artist, aka, owned, source, external_id, cover_url, timestamp)
+// shared by the track list
 // queries. It closes rows and always returns a non-nil slice on success.
 func scanTrackListItems(rows pgx.Rows, capHint int) ([]TrackListItem, error) {
 	defer rows.Close()
@@ -408,7 +486,8 @@ func scanTrackListItems(rows pgx.Rows, capHint int) ([]TrackListItem, error) {
 	for rows.Next() {
 		var it TrackListItem
 		if err := rows.Scan(&it.ID, &it.Title, &it.AlbumID, &it.AlbumTitle,
-			&it.TrackNo, &it.DurationMS, &it.Artist, &it.Aka, &it.Owned, &it.CreatedAt); err != nil {
+			&it.TrackNo, &it.DurationMS, &it.Artist, &it.Aka, &it.Owned,
+			&it.Source, &it.ExternalID, &it.CoverURL, &it.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
@@ -428,6 +507,7 @@ func (s *Store) ListArtists(ctx context.Context, viewerID uuid.UUID, limit, offs
 		INNER JOIN track_artists ta ON ta.artist_id = ar.id
 		INNER JOIN tracks t ON t.id = ta.track_id
 		    AND t.deleted_at IS NULL
+		    AND t.library_visible = TRUE
 		    AND `+trackVisibleP1+`
 		WHERE $2 = '' OR ar.name ILIKE '%' || $2 || '%'
 		GROUP BY ar.id
@@ -459,6 +539,7 @@ func (s *Store) CountArtists(ctx context.Context, viewerID uuid.UUID, query stri
 			INNER JOIN track_artists ta ON ta.artist_id = ar.id
 			INNER JOIN tracks t ON t.id = ta.track_id
 			    AND t.deleted_at IS NULL
+			    AND t.library_visible = TRUE
 			    AND `+trackVisibleP1+`
 			WHERE $2 = '' OR ar.name ILIKE '%' || $2 || '%'
 			GROUP BY ar.id
@@ -477,6 +558,7 @@ func (s *Store) GetArtist(ctx context.Context, artistID, viewerID uuid.UUID) (*A
 		INNER JOIN track_artists ta ON ta.artist_id = ar.id
 		INNER JOIN tracks t ON t.id = ta.track_id
 		    AND t.deleted_at IS NULL
+		    AND t.library_visible = TRUE
 		    AND `+trackVisibleP2+`
 		WHERE ar.id = $1
 		GROUP BY ar.id`, artistID, viewerID).
@@ -500,6 +582,7 @@ func (s *Store) ListArtistTracks(ctx context.Context, artistID, viewerID uuid.UU
 			COALESCE(STRING_AGG(ar2.name, ', ' ORDER BY ta2.position) FILTER (WHERE ta2.role = 'primary'), ''),
 			`+akaSubquery+`,
 			COALESCE(t.owner_id = $2, FALSE) AS owned,
+			t.source, t.external_id, COALESCE(t.external_meta->>'cover_url', ''),
 			t.created_at
 		FROM tracks t
 		INNER JOIN track_artists ta_filter
@@ -508,6 +591,7 @@ func (s *Store) ListArtistTracks(ctx context.Context, artistID, viewerID uuid.UU
 		LEFT JOIN track_artists ta2 ON ta2.track_id = t.id
 		LEFT JOIN artists ar2 ON ar2.id = ta2.artist_id
 		WHERE t.deleted_at IS NULL
+		  AND t.library_visible = TRUE
 		  AND `+trackVisibleP2+`
 		GROUP BY t.id, a.title
 		ORDER BY (a.title IS NULL), a.title ASC,
@@ -532,12 +616,14 @@ func (s *Store) CountTracks(ctx context.Context, viewerID uuid.UUID, query strin
 			LEFT JOIN track_artists ta ON ta.track_id = t.id
 			LEFT JOIN artists ar ON ar.id = ta.artist_id
 			WHERE t.deleted_at IS NULL
+			  AND t.library_visible = TRUE
 			  AND `+trackVisibleP1+trackSearchFilter, viewerID, query).Scan(&total)
 		return total, err
 	}
 	err := s.db.QueryRow(ctx, `
 		SELECT COUNT(*) FROM tracks t
 		WHERE t.deleted_at IS NULL
+		  AND t.library_visible = TRUE
 		  AND `+trackVisibleP1+``, viewerID).Scan(&total)
 	return total, err
 }
@@ -567,12 +653,14 @@ func (s *Store) ListTracks(ctx context.Context, p ListTracksParams) ([]TrackList
 				COALESCE(STRING_AGG(ar.name, ', ' ORDER BY ta.position) FILTER (WHERE ta.role = 'primary'), ''),
 				`+akaSubquery+`,
 				COALESCE(t.owner_id = $1, FALSE) AS owned,
+				t.source, t.external_id, COALESCE(t.external_meta->>'cover_url', ''),
 				t.created_at
 			FROM tracks t
 			LEFT JOIN albums a ON a.id = t.album_id
 			LEFT JOIN track_artists ta ON ta.track_id = t.id
 			LEFT JOIN artists ar ON ar.id = ta.artist_id
 			WHERE t.deleted_at IS NULL
+			  AND t.library_visible = TRUE
 			  AND `+trackVisibleP1+trackSearchFilter+`
 			GROUP BY t.id, a.title
 			ORDER BY t.created_at DESC
@@ -585,12 +673,14 @@ func (s *Store) ListTracks(ctx context.Context, p ListTracksParams) ([]TrackList
 				COALESCE(STRING_AGG(ar.name, ', ' ORDER BY ta.position) FILTER (WHERE ta.role = 'primary'), ''),
 				`+akaSubquery+`,
 				COALESCE(t.owner_id = $1, FALSE) AS owned,
+				t.source, t.external_id, COALESCE(t.external_meta->>'cover_url', ''),
 				t.created_at
 			FROM tracks t
 			LEFT JOIN albums a ON a.id = t.album_id
 			LEFT JOIN track_artists ta ON ta.track_id = t.id
 			LEFT JOIN artists ar ON ar.id = ta.artist_id
 			WHERE t.deleted_at IS NULL
+			  AND t.library_visible = TRUE
 			  AND `+trackVisibleP1+`
 			GROUP BY t.id, a.title
 			ORDER BY t.created_at DESC
@@ -631,6 +721,7 @@ func (s *Store) ListFavorites(ctx context.Context, userID uuid.UUID, limit, offs
 			COALESCE(STRING_AGG(ar.name, ', ' ORDER BY ta.position) FILTER (WHERE ta.role = 'primary'), ''),
 			`+akaSubquery+`,
 			COALESCE(t.owner_id = $1, FALSE) AS owned,
+			t.source, t.external_id, COALESCE(t.external_meta->>'cover_url', ''),
 			uts.favorited_at
 		FROM user_track_stats uts
 		JOIN tracks t ON t.id = uts.track_id AND t.deleted_at IS NULL
@@ -652,7 +743,8 @@ func (s *Store) ListFavorites(ctx context.Context, userID uuid.UUID, limit, offs
 		var it TrackListItem
 		var favAt *time.Time
 		if err := rows.Scan(&it.ID, &it.Title, &it.AlbumID, &it.AlbumTitle,
-			&it.TrackNo, &it.DurationMS, &it.Artist, &it.Aka, &it.Owned, &favAt); err != nil {
+			&it.TrackNo, &it.DurationMS, &it.Artist, &it.Aka, &it.Owned,
+			&it.Source, &it.ExternalID, &it.CoverURL, &favAt); err != nil {
 			return nil, err
 		}
 		if favAt != nil {
@@ -703,6 +795,7 @@ func (s *Store) ListRecent(ctx context.Context, userID uuid.UUID, limit int) ([]
 			COALESCE(STRING_AGG(ar.name, ', ' ORDER BY ta.position) FILTER (WHERE ta.role = 'primary'), ''),
 			`+akaSubquery+`,
 			COALESCE(t.owner_id = $1, FALSE) AS owned,
+			t.source, t.external_id, COALESCE(t.external_meta->>'cover_url', ''),
 			lp.played_at
 		FROM last_play lp
 		JOIN tracks t ON t.id = lp.track_id AND t.deleted_at IS NULL

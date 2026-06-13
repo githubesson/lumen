@@ -33,10 +33,24 @@ export default function AddTracksDialog({
   useEffect(() => {
     let cancelled = false;
     const t = setTimeout(() => {
-      api
-        .listTracks({ q: query, limit: 200 })
+      const q = query.trim();
+      const req = q
+        ? api.searchTracks({ q, limit: 50 }).then((res) => {
+            if (!cancelled) setError(res.warnings?.join(" ") || null);
+            return res.tracks ?? [];
+          })
+        : api.listTracks({ limit: 200 }).then((res) => {
+            if (!cancelled) setError(null);
+            return res;
+          });
+      req
         .then((d) => !cancelled && setTracks(d ?? []))
-        .catch(() => !cancelled && setTracks([]));
+        .catch((err) => {
+          if (!cancelled) {
+            setTracks([]);
+            setError(errorMessage(err, "Search failed."));
+          }
+        });
     }, 150);
     return () => {
       cancelled = true;
@@ -63,6 +77,21 @@ export default function AddTracksDialog({
       setError(errorMessage(err, "Failed to add tracks."));
       setBusy(false);
     }
+  };
+
+  const isExisting = (track: TrackListItem) => {
+    if (existingIds.has(track.id)) return true;
+    if (track.db_track_id && existingIds.has(track.db_track_id)) return true;
+    if (track.source === "local" && track.db_track_id && existingIds.has(`local:${track.db_track_id}`)) {
+      return true;
+    }
+    if (track.source === "local" && track.source_id && existingIds.has(`local:${track.source_id}`)) {
+      return true;
+    }
+    if (track.source === "tidal" && track.source_id && existingIds.has(`tidal:${track.source_id}`)) {
+      return true;
+    }
+    return false;
   };
 
   return (
@@ -98,7 +127,7 @@ export default function AddTracksDialog({
             onClick={submit}
             disabled={busy || selected.size === 0}
           >
-            {busy ? "Adding…" : `Add ${selected.size}`}
+            {busy ? "Adding..." : `Add ${selected.size}`}
           </Button>
         </DialogFooter>
       }
@@ -106,14 +135,14 @@ export default function AddTracksDialog({
       <div style={{ overflowY: "auto", padding: 18 }}>
         <SearchInput
           autoFocus
-          placeholder="Search library"
+          placeholder="Search local + TIDAL"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          aria-label="Search library"
+          aria-label="Search tracks"
         />
         <ul style={{ marginTop: 12, listStyle: "none", padding: 0 }}>
           {tracks.map((t) => {
-            const disabled = existingIds.has(t.id);
+            const disabled = isExisting(t);
             const sel = selected.has(t.id);
             return (
               <li key={t.id}>
@@ -166,8 +195,9 @@ export default function AddTracksDialog({
                       }}
                     >
                       {displayText(t.artist, "Unknown") +
-                        (t.album_title ? ` · ${displayText(t.album_title)}` : "") +
-                        (disabled ? " · already added" : "")}
+                        (t.album_title ? ` - ${displayText(t.album_title)}` : "") +
+                        (t.source === "tidal" ? " - TIDAL" : "") +
+                        (disabled ? " - already added" : "")}
                     </div>
                   </div>
                   <span

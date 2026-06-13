@@ -25,6 +25,7 @@ import {
 import {
   albumCoverUrl,
   api,
+  errorMessage,
   trackCoverUrl,
   type Album,
   type Artist,
@@ -74,6 +75,7 @@ export default function CommandPalette({
   const [albums, setAlbums] = useState<Album[]>([]);
   const [artists, setArtists] = useState<Artist[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const reqId = useRef(0);
 
   // Reset query whenever the dialog opens so the user starts fresh.
@@ -83,6 +85,7 @@ export default function CommandPalette({
       setTracks([]);
       setAlbums([]);
       setArtists([]);
+      setSearchError(null);
     }
   }, [open]);
 
@@ -95,6 +98,7 @@ export default function CommandPalette({
       setTracks([]);
       setAlbums([]);
       setArtists([]);
+      setSearchError(null);
       setLoading(false);
       return;
     }
@@ -102,18 +106,22 @@ export default function CommandPalette({
     const id = ++reqId.current;
     const t = window.setTimeout(async () => {
       try {
-        const [albumsPage, artistsPage, trackList] = await Promise.all([
+        const [albumsPage, artistsPage, trackResult] = await Promise.all([
           api.listAlbumsPage({ q, limit: 8 }),
           api.listArtistsPage({ q, limit: 8 }),
-          api.listTracks({ q, limit: 20 }),
+          api.searchTracks({ q, limit: 20 }),
         ]);
         if (id !== reqId.current) return;
         setAlbums(albumsPage.items ?? []);
         setArtists(artistsPage.items ?? []);
-        setTracks(trackList ?? []);
+        setTracks(trackResult.tracks ?? []);
+        setSearchError(trackResult.warnings?.join(" ") || null);
         setLoading(false);
-      } catch {
-        if (id === reqId.current) setLoading(false);
+      } catch (err) {
+        if (id === reqId.current) {
+          setSearchError(errorMessage(err, "Search failed."));
+          setLoading(false);
+        }
       }
     }, 160);
     return () => window.clearTimeout(t);
@@ -270,7 +278,13 @@ export default function CommandPalette({
 
       <Command.List className="cmdk-list">
           {loading && <Command.Loading>Searching…</Command.Loading>}
-          <Command.Empty className="cmdk-empty">No results.</Command.Empty>
+          {searchError ? (
+            <div className="cmdk-empty" role="alert">
+              {searchError}
+            </div>
+          ) : (
+            <Command.Empty className="cmdk-empty">No results.</Command.Empty>
+          )}
 
           {albums.length > 0 && (
             <Command.Group heading="Albums" className="cmdk-group">
@@ -370,6 +384,7 @@ export default function CommandPalette({
                     <span className="cmdk-item-sub">
                       {displayText(t.artist, "Unknown artist")}
                       {t.album_title ? ` · ${displayText(t.album_title)}` : ""}
+                      {t.source === "tidal" ? " · TIDAL" : ""}
                     </span>
                   </span>
                   <span className="cmdk-shortcut">play</span>

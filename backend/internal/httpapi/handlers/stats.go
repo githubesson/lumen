@@ -235,20 +235,8 @@ func toReplayResp(d *library.ReplayData) replayResp {
 	}
 	for _, t := range d.TopTracks {
 		row := replayTrackResp{
-			trackListItemResp: trackListItemResp{
-				ID:         t.ID.String(),
-				Title:      t.Title,
-				AlbumTitle: t.AlbumTitle,
-				TrackNo:    t.TrackNo,
-				DurationMS: t.DurationMS,
-				Artist:     t.Artist,
-				Aka:        t.Aka,
-				Owned:      t.Owned,
-			},
-			Plays: t.Plays,
-		}
-		if t.AlbumID != nil {
-			row.AlbumID = t.AlbumID.String()
+			trackListItemResp: makeTrackListItemResp(t.TrackListItem, false, true),
+			Plays:             t.Plays,
 		}
 		out.TopTracks = append(out.TopTracks, row)
 	}

@@ -180,6 +180,9 @@ type TrackDetail struct {
 	TrackNo     int
 	DurationMS  int
 	Artist      string // primary artists joined with ", "
+	Source      string
+	ExternalID  string
+	CoverURL    string
 	AddedBy     *uuid.UUID
 	AddedByName string
 	AddedAt     time.Time
@@ -200,6 +203,9 @@ func (s *Store) TracksDetailed(ctx context.Context, id, viewerID uuid.UUID) ([]T
 				 JOIN artists ar ON ar.id = ta.artist_id
 				 WHERE ta.track_id = t.id AND ta.role = 'primary'),
 				''),
+			t.source,
+			t.external_id,
+			COALESCE(t.external_meta->>'cover_url', ''),
 			pt.added_by,
 			COALESCE(u.username, ''),
 			pt.added_at,
@@ -224,6 +230,7 @@ func (s *Store) TracksDetailed(ctx context.Context, id, viewerID uuid.UUID) ([]T
 		if err := rows.Scan(
 			&td.Position, &td.TrackID, &td.Title, &td.AlbumID, &td.AlbumTitle,
 			&td.TrackNo, &td.DurationMS, &td.Artist,
+			&td.Source, &td.ExternalID, &td.CoverURL,
 			&td.AddedBy, &td.AddedByName, &td.AddedAt, &td.PlayCount,
 		); err != nil {
 			return nil, err
