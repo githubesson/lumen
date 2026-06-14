@@ -296,7 +296,8 @@ func (s *Store) RecordDownload(ctx context.Context, in DownloadInput) error {
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (pin_id, source_path) DO UPDATE SET
 			file_path = CASE
-				WHEN EXCLUDED.file_path <> '' THEN EXCLUDED.file_path
+				WHEN EXCLUDED.status IN ('downloaded', 'existing') AND EXCLUDED.file_path <> '' THEN EXCLUDED.file_path
+				WHEN EXCLUDED.status IN ('failed', 'skipped') THEN ''
 				ELSE filen_downloads.file_path
 			END,
 			size_bytes = CASE

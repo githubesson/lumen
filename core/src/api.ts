@@ -635,6 +635,8 @@ export interface TrackDetail {
   duration_ms: number;
   genre?: string;
   year?: number;
+  composer?: string;
+  comments?: string;
   format: string;
   bitrate?: number;
   sample_rate?: number;

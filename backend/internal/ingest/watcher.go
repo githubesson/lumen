@@ -185,10 +185,26 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event) {
 			w.schedule(ctx, ev.Name)
 		}
 	case ev.Has(fsnotify.Remove), ev.Has(fsnotify.Rename):
+		if w.svc.Library == nil {
+			return
+		}
 		if IsSupported(ev.Name) {
 			_ = w.svc.Library.SoftDeleteByPath(ctx, ev.Name)
 		}
+		if prefix := deletedTreePrefix(ev.Name); prefix != "" {
+			if _, err := w.svc.Library.SoftDeleteTracksUnderPath(ctx, prefix); err != nil {
+				w.svc.Logger.Warn("fsnotify subtree soft delete failed", "path", ev.Name, "err", err)
+			}
+		}
 	}
+}
+
+func deletedTreePrefix(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	return filepath.Clean(p) + string(os.PathSeparator)
 }
 
 // absorbDir walks `root`, registering watches for every subdirectory and

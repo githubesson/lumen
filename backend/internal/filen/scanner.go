@@ -238,10 +238,23 @@ func (s *Scanner) readEvents(ctx context.Context, pin Pin, destBase string, r io
 		}
 		var trackID *uuid.UUID
 		inserted := false
-		if (status == StatusDownloaded || status == StatusExisting) && ev.Path != "" {
-			trackID, inserted = s.ingestPath(ctx, ev.Path)
-			if inserted {
-				summary.Ingested++
+		if status == StatusDownloaded || status == StatusExisting {
+			if ev.Path == "" {
+				status = StatusFailed
+				if ev.Error == "" {
+					ev.Error = "helper did not provide file path"
+				}
+			} else if err := validateCompleteFile(ev.Path, ev.Size); err != nil {
+				status = StatusFailed
+				ev.Path = ""
+				if ev.Error == "" {
+					ev.Error = err.Error()
+				}
+			} else {
+				trackID, inserted = s.ingestPath(ctx, ev.Path)
+				if inserted {
+					summary.Ingested++
+				}
 			}
 		}
 		switch status {
@@ -291,6 +304,23 @@ func normalizeStatus(status string) string {
 	default:
 		return StatusFailed
 	}
+}
+
+func validateCompleteFile(p string, expectedSize int64) error {
+	info, err := os.Stat(p)
+	if err != nil {
+		return fmt.Errorf("downloaded file unavailable: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("downloaded path is not a regular file")
+	}
+	if expectedSize > 0 && info.Size() != expectedSize {
+		return fmt.Errorf("download size mismatch: expected %d bytes, got %d", expectedSize, info.Size())
+	}
+	if info.Size() <= 0 {
+		return fmt.Errorf("downloaded file is empty")
+	}
+	return nil
 }
 
 func eventMetadata(pin Pin, ev helperEvent) json.RawMessage {

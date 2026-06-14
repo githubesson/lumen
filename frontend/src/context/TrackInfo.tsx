@@ -22,14 +22,28 @@ const TrackInfoContext = createContext<TrackInfoCtxValue | null>(null);
  * entrypoints don't each need to manage their own copy.
  */
 export function TrackInfoProvider({ children }: { children: ReactNode }) {
-  const [id, setId] = useState<string | null>(null);
-  const open = useCallback((trackId: string) => setId(trackId), []);
-  const close = useCallback(() => setId(null), []);
+  const [request, setRequest] = useState<{ id: string; nonce: number } | null>(
+    null,
+  );
+  const open = useCallback(
+    (trackId: string) =>
+      setRequest((prev) => ({
+        id: trackId,
+        nonce: (prev?.nonce ?? 0) + 1,
+      })),
+    [],
+  );
+  const close = useCallback(() => setRequest(null), []);
   const value = useMemo<TrackInfoCtxValue>(() => ({ open }), [open]);
   return (
     <TrackInfoContext.Provider value={value}>
       {children}
-      <TrackInfoDialog open={id !== null} trackId={id} onClose={close} />
+      <TrackInfoDialog
+        open={request !== null}
+        trackId={request?.id ?? null}
+        requestNonce={request?.nonce ?? 0}
+        onClose={close}
+      />
     </TrackInfoContext.Provider>
   );
 }
