@@ -32,6 +32,7 @@ type apiTrackerPinResp struct {
 	TrackerID           int64      `json:"tracker_id"`
 	TrackerName         string     `json:"tracker_name"`
 	TrackerURL          string     `json:"tracker_url"`
+	Tab                 string     `json:"tab"`
 	Label               string     `json:"label"`
 	PrimaryArtist       string     `json:"primary_artist"`
 	Enabled             bool       `json:"enabled"`
@@ -53,6 +54,7 @@ type addAPITrackerPinReq struct {
 	TrackerID           flexibleID64 `json:"tracker_id"`
 	TrackerURL          string       `json:"tracker_url"`
 	TrackerName         string       `json:"tracker_name"`
+	Tab                 string       `json:"tab"`
 	Label               string       `json:"label"`
 	PrimaryArtist       string       `json:"primary_artist"`
 	Enabled             *bool        `json:"enabled"`
@@ -61,6 +63,7 @@ type addAPITrackerPinReq struct {
 
 type patchAPITrackerPinReq struct {
 	DestinationSubdir   *string `json:"destination_subdir"`
+	Tab                 *string `json:"tab"`
 	Label               *string `json:"label"`
 	PrimaryArtist       *string `json:"primary_artist"`
 	Enabled             *bool   `json:"enabled"`
@@ -150,6 +153,7 @@ func (h *AdminAPITracker) Add(w http.ResponseWriter, r *http.Request) {
 		TrackerID:           trackerID,
 		TrackerName:         strings.TrimSpace(req.TrackerName),
 		TrackerURL:          trackerURL,
+		Tab:                 strings.TrimSpace(req.Tab),
 		Label:               strings.TrimSpace(req.Label),
 		PrimaryArtist:       strings.TrimSpace(req.PrimaryArtist),
 		Enabled:             enabled,
@@ -171,7 +175,7 @@ func (h *AdminAPITracker) Patch(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.DestinationSubdir == nil && req.Label == nil &&
+	if req.DestinationSubdir == nil && req.Tab == nil && req.Label == nil &&
 		req.PrimaryArtist == nil && req.Enabled == nil && req.ScanIntervalSeconds == nil {
 		http.Error(w, "nothing to update", http.StatusBadRequest)
 		return
@@ -179,10 +183,12 @@ func (h *AdminAPITracker) Patch(w http.ResponseWriter, r *http.Request) {
 	if !resolvePatchSubdir(w, r, id, apitracker.ErrNotFound, h.pinRootPath, &req.DestinationSubdir) {
 		return
 	}
+	cleanStringPtr(req.Tab)
 	cleanStringPtr(req.Label)
 	cleanStringPtr(req.PrimaryArtist)
 	pin, err := h.Store.PatchPin(r.Context(), id, apitracker.PatchPinInput{
 		DestinationSubdir:   req.DestinationSubdir,
+		Tab:                 req.Tab,
 		Label:               req.Label,
 		PrimaryArtist:       req.PrimaryArtist,
 		Enabled:             req.Enabled,
@@ -232,6 +238,7 @@ func (h *AdminAPITracker) pinResp(pin apitracker.Pin) apiTrackerPinResp {
 		TrackerID:           pin.TrackerID,
 		TrackerName:         pin.TrackerName,
 		TrackerURL:          pin.TrackerURL,
+		Tab:                 pin.Tab,
 		Label:               pin.Label,
 		PrimaryArtist:       pin.PrimaryArtist,
 		Enabled:             pin.Enabled,

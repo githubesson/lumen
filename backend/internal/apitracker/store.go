@@ -38,6 +38,7 @@ type Pin struct {
 	TrackerID           int64      `json:"tracker_id"`
 	TrackerName         string     `json:"tracker_name"`
 	TrackerURL          string     `json:"tracker_url"`
+	Tab                 string     `json:"tab"`
 	Label               string     `json:"label"`
 	PrimaryArtist       string     `json:"primary_artist"`
 	Enabled             bool       `json:"enabled"`
@@ -57,6 +58,7 @@ type AddPinInput struct {
 	TrackerID           int64
 	TrackerName         string
 	TrackerURL          string
+	Tab                 string
 	Label               string
 	PrimaryArtist       string
 	Enabled             bool
@@ -65,6 +67,7 @@ type AddPinInput struct {
 
 type PatchPinInput struct {
 	DestinationSubdir   *string
+	Tab                 *string
 	Label               *string
 	PrimaryArtist       *string
 	Enabled             *bool
@@ -108,7 +111,7 @@ func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
 func (s *Store) ListPins(ctx context.Context) ([]Pin, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, root_id, root_path, destination_subdir, api_base_url,
-		       tracker_id, tracker_name, tracker_url, label, primary_artist,
+		       tracker_id, tracker_name, tracker_url, tab, label, primary_artist,
 		       enabled, scan_interval_seconds, last_scan_at, last_success_at,
 		       last_error, created_at, updated_at
 		FROM api_tracker_pins
@@ -134,7 +137,7 @@ func (s *Store) DuePins(ctx context.Context, limit int) ([]Pin, error) {
 	}
 	rows, err := s.db.Query(ctx, `
 		SELECT id, root_id, root_path, destination_subdir, api_base_url,
-		       tracker_id, tracker_name, tracker_url, label, primary_artist,
+		       tracker_id, tracker_name, tracker_url, tab, label, primary_artist,
 		       enabled, scan_interval_seconds, last_scan_at, last_success_at,
 		       last_error, created_at, updated_at
 		FROM api_tracker_pins
@@ -163,7 +166,7 @@ func (s *Store) DuePins(ctx context.Context, limit int) ([]Pin, error) {
 func (s *Store) GetPin(ctx context.Context, id uuid.UUID) (Pin, error) {
 	p, err := scanPin(s.db.QueryRow(ctx, `
 		SELECT id, root_id, root_path, destination_subdir, api_base_url,
-		       tracker_id, tracker_name, tracker_url, label, primary_artist,
+		       tracker_id, tracker_name, tracker_url, tab, label, primary_artist,
 		       enabled, scan_interval_seconds, last_scan_at, last_success_at,
 		       last_error, created_at, updated_at
 		FROM api_tracker_pins
@@ -188,15 +191,15 @@ func (s *Store) AddPin(ctx context.Context, in AddPinInput) (Pin, error) {
 	p, err := scanPin(s.db.QueryRow(ctx, `
 		INSERT INTO api_tracker_pins (
 			root_id, root_path, destination_subdir, api_base_url, tracker_id,
-			tracker_name, tracker_url, label, primary_artist, enabled, scan_interval_seconds
+			tracker_name, tracker_url, tab, label, primary_artist, enabled, scan_interval_seconds
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id, root_id, root_path, destination_subdir, api_base_url,
-		          tracker_id, tracker_name, tracker_url, label, primary_artist,
+		          tracker_id, tracker_name, tracker_url, tab, label, primary_artist,
 		          enabled, scan_interval_seconds, last_scan_at, last_success_at,
 		          last_error, created_at, updated_at`,
 		dbutil.NullableUUID(in.RootID), in.RootPath, in.DestinationSubdir, in.APIBaseURL,
-		in.TrackerID, in.TrackerName, in.TrackerURL, in.Label, in.PrimaryArtist, in.Enabled,
+		in.TrackerID, in.TrackerName, in.TrackerURL, in.Tab, in.Label, in.PrimaryArtist, in.Enabled,
 		in.ScanIntervalSeconds,
 	))
 	if err != nil && dbutil.IsUniqueViolation(err) {
@@ -210,6 +213,9 @@ func (s *Store) PatchPin(ctx context.Context, id uuid.UUID, in PatchPinInput) (P
 	set.AddRaw("updated_at = NOW()")
 	if in.DestinationSubdir != nil {
 		set.Add("destination_subdir = $%d", *in.DestinationSubdir)
+	}
+	if in.Tab != nil {
+		set.Add("tab = $%d", *in.Tab)
 	}
 	if in.Label != nil {
 		set.Add("label = $%d", *in.Label)
@@ -232,7 +238,7 @@ func (s *Store) PatchPin(ctx context.Context, id uuid.UUID, in PatchPinInput) (P
 		UPDATE api_tracker_pins SET %s
 		WHERE id = $%d
 		RETURNING id, root_id, root_path, destination_subdir, api_base_url,
-		          tracker_id, tracker_name, tracker_url, label, primary_artist,
+		          tracker_id, tracker_name, tracker_url, tab, label, primary_artist,
 		          enabled, scan_interval_seconds, last_scan_at, last_success_at,
 		          last_error, created_at, updated_at`,
 		setClause, len(args),
@@ -379,7 +385,7 @@ func scanPin(row scanner) (Pin, error) {
 	)
 	err := row.Scan(
 		&p.ID, &rootID, &p.RootPath, &p.DestinationSubdir, &p.APIBaseURL,
-		&p.TrackerID, &p.TrackerName, &p.TrackerURL, &p.Label, &p.PrimaryArtist,
+		&p.TrackerID, &p.TrackerName, &p.TrackerURL, &p.Tab, &p.Label, &p.PrimaryArtist,
 		&p.Enabled, &p.ScanIntervalSeconds, &lastScan, &lastSuccess,
 		&p.LastError, &p.CreatedAt, &p.UpdatedAt,
 	)

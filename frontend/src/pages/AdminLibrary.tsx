@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, errorMessage, type MusicRoot } from "../api";
+import { APITrackerPinsSection } from "./admin/APITrackerPinsSection";
 import { ArtistGridPinsSection } from "./admin/ArtistGridPinsSection";
 import { FilenPinsSection } from "./admin/FilenPinsSection";
 import { MusicRootsSection } from "./admin/MusicRootsSection";
@@ -55,6 +56,11 @@ export function LibraryAdminSection() {
         onError={onError}
       />
       <TidalSection />
+      <APITrackerPinsSection
+        rootOptions={rootOptions}
+        defaultRootPath={defaultRootPath}
+        onError={onError}
+      />
       <ArtistGridPinsSection
         rootOptions={rootOptions}
         defaultRootPath={defaultRootPath}

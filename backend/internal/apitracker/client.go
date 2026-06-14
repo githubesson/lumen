@@ -16,7 +16,7 @@ import (
 	"github.com/githubesson/lumen/internal/lastshare"
 )
 
-const DefaultBaseURL = "https://trackers.misleadi.ng/api"
+const DefaultBaseURL = "https://trackers.musicfiles.su/api"
 
 type Client struct {
 	HTTP    *http.Client
@@ -40,6 +40,13 @@ type Tracker struct {
 	SpreadsheetID  string   `json:"spreadsheet_id"`
 	GID            string   `json:"gid"`
 	EntryCount     int64    `json:"entry_count"`
+}
+
+type Era struct {
+	Era      string `json:"era"`
+	EraKey   string `json:"era_key"`
+	ImageID  int64  `json:"image_id"`
+	ImageURL string `json:"image_url"`
 }
 
 type Entry struct {
@@ -72,6 +79,11 @@ type entriesPage struct {
 	Limit  int     `json:"limit"`
 	Offset int     `json:"offset"`
 	Total  int     `json:"total"`
+}
+
+type erasPage struct {
+	Items []Era `json:"items"`
+	Total int   `json:"total"`
 }
 
 func NewClient(baseURL string) *Client {
@@ -126,6 +138,64 @@ func (c *Client) FetchEntries(ctx context.Context, trackerID int64) ([]Entry, er
 		}
 	}
 	return out, nil
+}
+
+func (c *Client) FetchEras(ctx context.Context, trackerID int64) ([]Era, error) {
+	if trackerID <= 0 {
+		return nil, fmt.Errorf("tracker id must be positive")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.apiURL("/v1/trackers/"+strconv.FormatInt(trackerID, 10)+"/eras"), nil)
+	if err != nil {
+		return nil, err
+	}
+	setHeaders(req)
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("api tracker eras %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	var page erasPage
+	if err := decodeJSON(resp.Body, &page); err != nil {
+		return nil, err
+	}
+	return page.Items, nil
+}
+
+func (c *Client) FetchEraImage(ctx context.Context, imageID int64) ([]byte, string, error) {
+	if imageID <= 0 {
+		return nil, "", fmt.Errorf("image id must be positive")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.apiURL("/v1/era-images/"+strconv.FormatInt(imageID, 10)), nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Accept", "image/*")
+	req.Header.Set("User-Agent", httpx.BrowserUserAgent)
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("api tracker era image %s", resp.Status)
+	}
+	contentType := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
+	if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		return nil, "", fmt.Errorf("api tracker era image returned %q", contentType)
+	}
+	const maxEraImageBytes = 20 << 20
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxEraImageBytes+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(data) > maxEraImageBytes {
+		return nil, "", fmt.Errorf("api tracker era image exceeds 20MiB")
+	}
+	return data, contentType, nil
 }
 
 func (c *Client) fetchEntriesPage(ctx context.Context, trackerID int64, limit, offset int) (entriesPage, error) {
