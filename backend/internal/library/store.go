@@ -695,6 +695,26 @@ func (s *Store) ClearIngestErrorsForPath(ctx context.Context, path string) {
 	_, _ = s.db.Exec(ctx, `DELETE FROM ingest_errors WHERE file_path = $1`, path)
 }
 
+// TrackHasFilePath reports whether a live local track row still points at path.
+// Importers use this before applying source-specific metadata to a dedup hit,
+// where the returned track id may belong to a different canonical file.
+func (s *Store) TrackHasFilePath(ctx context.Context, trackID uuid.UUID, path string) (bool, error) {
+	path = dbtext.Clean(path)
+	if trackID == uuid.Nil || path == "" {
+		return false, nil
+	}
+	var ok bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tracks
+			WHERE id = $1
+			  AND file_path = $2
+			  AND deleted_at IS NULL
+			  AND source = 'local'
+		)`, trackID, path).Scan(&ok)
+	return ok, err
+}
+
 func (s *Store) SoftDeleteByPath(ctx context.Context, path string) error {
 	path = dbtext.Clean(path)
 	_, err := s.db.Exec(ctx, `UPDATE tracks SET deleted_at = NOW() WHERE file_path = $1 AND deleted_at IS NULL`, path)

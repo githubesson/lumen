@@ -221,7 +221,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 				})
 				continue
 			}
-			if s.previousStillPresent(ctx, pin.ID, sourceURL, coverKey, summary) {
+			if s.previousStillPresent(ctx, pin.ID, sourceURL, trackCtx, coverKey, summary) {
 				continue
 			}
 			status, resolvedURL, filePath, trackID, ingestInserted, err := s.downloadOne(
@@ -269,7 +269,9 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 			if ingestInserted {
 				summary.Ingested++
 			}
-			s.applyTrackAlbumCover(ctx, trackID, coverKey)
+			if s.applyTrackerMetadataForFile(ctx, trackID, filePath, trackCtx) {
+				s.applyTrackAlbumCover(ctx, trackID, coverKey)
+			}
 			_ = s.Store.RecordDownload(ctx, DownloadInput{
 				PinID:       pin.ID,
 				EntryID:     entry.ID,
@@ -394,7 +396,7 @@ func (s *Scanner) expandRecordURLs(ctx context.Context, client *Client, urls []s
 	return out
 }
 
-func (s *Scanner) previousStillPresent(ctx context.Context, pinID uuid.UUID, sourceURL string, coverKey string, summary *ScanSummary) bool {
+func (s *Scanner) previousStillPresent(ctx context.Context, pinID uuid.UUID, sourceURL string, trackCtx TrackContext, coverKey string, summary *ScanSummary) bool {
 	prev, err := s.Store.DownloadForSource(ctx, pinID, sourceURL)
 	if err != nil {
 		return false
@@ -408,8 +410,10 @@ func (s *Scanner) previousStillPresent(ctx context.Context, pinID uuid.UUID, sou
 	case StatusDownloaded, StatusExisting:
 		if prev.FilePath != "" && fileNonEmpty(prev.FilePath) {
 			if prev.TrackID == nil {
-				trackID, inserted := s.ingestPath(ctx, prev.FilePath, TrackContext{}, false)
-				s.applyTrackAlbumCover(ctx, trackID, coverKey)
+				trackID, inserted := s.ingestPath(ctx, prev.FilePath, trackCtx, false)
+				if s.applyTrackerMetadataForFile(ctx, trackID, prev.FilePath, trackCtx) {
+					s.applyTrackAlbumCover(ctx, trackID, coverKey)
+				}
 				_ = s.Store.RecordDownload(ctx, DownloadInput{
 					PinID:       pinID,
 					EntryID:     prev.EntryID,
@@ -424,7 +428,9 @@ func (s *Scanner) previousStillPresent(ctx context.Context, pinID uuid.UUID, sou
 					summary.Ingested++
 				}
 			} else {
-				s.applyTrackAlbumCover(ctx, prev.TrackID, coverKey)
+				if s.applyTrackerMetadataForFile(ctx, prev.TrackID, prev.FilePath, trackCtx) {
+					s.applyTrackAlbumCover(ctx, prev.TrackID, coverKey)
+				}
 			}
 			summary.Existing++
 			return true
@@ -522,7 +528,7 @@ func (s *Scanner) downloadOne(
 	if err != nil {
 		return "", resolvedURL, target, nil, false, err
 	}
-	trackID, ingestInserted = s.ingestPath(ctx, target, trackCtx, true)
+	trackID, ingestInserted = s.ingestPath(ctx, target, trackCtx, false)
 	return StatusDownloaded, resolvedURL, target, trackID, ingestInserted, nil
 }
 
@@ -587,6 +593,24 @@ func (s *Scanner) applyTrackerMetadata(ctx context.Context, trackID uuid.UUID, t
 	if err := s.Library.UpdateTrack(ctx, trackID, patch); err != nil && s.Logger != nil {
 		s.Logger.Warn("api tracker metadata patch failed", "track", trackID, "err", err)
 	}
+}
+
+func (s *Scanner) applyTrackerMetadataForFile(ctx context.Context, trackID *uuid.UUID, filePath string, tc TrackContext) bool {
+	if s == nil || s.Library == nil || trackID == nil || *trackID == uuid.Nil || strings.TrimSpace(filePath) == "" {
+		return false
+	}
+	ok, err := s.Library.TrackHasFilePath(ctx, *trackID, filePath)
+	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Warn("api tracker track path check failed", "track", *trackID, "path", filePath, "err", err)
+		}
+		return false
+	}
+	if !ok {
+		return false
+	}
+	s.applyTrackerMetadata(ctx, *trackID, tc)
+	return true
 }
 
 func (s *Scanner) applyTrackAlbumCover(ctx context.Context, trackID *uuid.UUID, coverKey string) {
