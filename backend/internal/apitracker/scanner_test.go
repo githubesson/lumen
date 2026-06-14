@@ -79,6 +79,102 @@ func TestNormalizeEraKey(t *testing.T) {
 	}
 }
 
+func TestBuildContextExtractsTitleCredits(t *testing.T) {
+	ctx := BuildContext(
+		Tracker{TrackerName: "Future Tracker"},
+		Pin{},
+		Entry{Name: "Chrome Heart Cross (feat. Gunna) (prod. Wheezy)", Era: "Mixtape", Type: "Leak"},
+	)
+	if ctx.Title != "Chrome Heart Cross" {
+		t.Fatalf("Title = %q", ctx.Title)
+	}
+	if ctx.AlbumArtist != "Future" {
+		t.Fatalf("AlbumArtist = %q", ctx.AlbumArtist)
+	}
+	if ctx.Artist != "Future feat. Gunna" {
+		t.Fatalf("Artist = %q", ctx.Artist)
+	}
+	if len(ctx.Featured) != 1 || ctx.Featured[0] != "Gunna" {
+		t.Fatalf("Featured = %#v", ctx.Featured)
+	}
+	if ctx.Composer != "Wheezy" {
+		t.Fatalf("Composer = %q", ctx.Composer)
+	}
+}
+
+func TestBuildContextExtractsCreditsFromExtraFields(t *testing.T) {
+	ctx := BuildContext(
+		Tracker{TrackerName: "Future Tracker"},
+		Pin{},
+		Entry{
+			Name: "Too Comfortable",
+			Fields: map[string]any{
+				"extra": "(feat. Young Thug & Gunna) (prod. Wheezy)",
+			},
+		},
+	)
+	if ctx.Title != "Too Comfortable" {
+		t.Fatalf("Title = %q", ctx.Title)
+	}
+	if got := strings.Join(ctx.Featured, ", "); got != "Young Thug, Gunna" {
+		t.Fatalf("Featured = %#v", ctx.Featured)
+	}
+	if ctx.Composer != "Wheezy" {
+		t.Fatalf("Composer = %q", ctx.Composer)
+	}
+}
+
+func TestBuildContextUsesLessCommonCreditFields(t *testing.T) {
+	ctx := BuildContext(
+		Tracker{TrackerName: "Future Tracker"},
+		Pin{},
+		Entry{
+			Name: "Too Comfortable (feat. Drake)",
+			LessCommonFields: map[string]any{
+				"producer":  "Wheezy",
+				"featured":  []any{"Young Thug", "Gunna"},
+				"extra":     "(prod. should not win)",
+				"row_notes": "ignored",
+			},
+		},
+	)
+	if ctx.Title != "Too Comfortable" {
+		t.Fatalf("Title = %q", ctx.Title)
+	}
+	if ctx.Composer != "Wheezy" {
+		t.Fatalf("Composer = %q", ctx.Composer)
+	}
+	if got := strings.Join(ctx.Featured, ", "); got != "Young Thug, Gunna, Drake" {
+		t.Fatalf("Featured = %#v", ctx.Featured)
+	}
+	if ctx.Artist != "Future feat. Young Thug, Gunna, Drake" {
+		t.Fatalf("Artist = %q", ctx.Artist)
+	}
+}
+
+func TestBuildContextUsesLessCommonProducerWithoutTitleCredits(t *testing.T) {
+	ctx := BuildContext(
+		Tracker{TrackerName: "Future Tracker"},
+		Pin{},
+		Entry{
+			Name: "Solo",
+			LessCommonFields: map[string]any{
+				"produced_by": "Metro Boomin",
+				"featuring":   "Don Toliver & Travis Scott",
+			},
+		},
+	)
+	if ctx.Title != "Solo" {
+		t.Fatalf("Title = %q", ctx.Title)
+	}
+	if ctx.Composer != "Metro Boomin" {
+		t.Fatalf("Composer = %q", ctx.Composer)
+	}
+	if got := strings.Join(ctx.Featured, ", "); got != "Don Toliver, Travis Scott" {
+		t.Fatalf("Featured = %#v", ctx.Featured)
+	}
+}
+
 func TestDownloadOneRejectsLoopbackByDefaultBeforeRequest(t *testing.T) {
 	var requested bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -86,6 +86,8 @@ type trackDetailResp struct {
 	DurationMS int               `json:"duration_ms"`
 	Genre      string            `json:"genre,omitempty"`
 	Year       int               `json:"year,omitempty"`
+	Composer   string            `json:"composer,omitempty"`
+	Comments   string            `json:"comments,omitempty"`
 	Format     string            `json:"format"`
 	Bitrate    int               `json:"bitrate,omitempty"`
 	SampleRate int               `json:"sample_rate,omitempty"`
@@ -327,6 +329,8 @@ func makeTrackDetailResp(t *library.TrackDetail, isFav bool) trackDetailResp {
 		DurationMS: t.DurationMS,
 		Genre:      t.Genre,
 		Year:       t.Year,
+		Composer:   t.Composer,
+		Comments:   t.Comments,
 		Format:     t.Format,
 		Bitrate:    t.Bitrate,
 		SampleRate: t.SampleRate,

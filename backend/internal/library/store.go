@@ -442,6 +442,8 @@ type TrackPatch struct {
 	Title       *string
 	Year        *int
 	Genre       *string
+	Composer    *string
+	Comments    *string
 	DiscNo      *int
 	TrackNo     *int
 	Artists     *[]string  // ordered; first is primary, rest featured
@@ -485,6 +487,12 @@ func (s *Store) UpdateTrack(ctx context.Context, id uuid.UUID, p TrackPatch) err
 	}
 	if p.Genre != nil {
 		set.Add("genre = NULLIF($%d, '')", *p.Genre)
+	}
+	if p.Composer != nil {
+		set.Add("composer = NULLIF($%d, '')", *p.Composer)
+	}
+	if p.Comments != nil {
+		set.Add("comments = NULLIF($%d, '')", *p.Comments)
 	}
 	if p.DiscNo != nil {
 		set.Add("disc_no = NULLIF($%d::int, 0)", *p.DiscNo)
@@ -635,8 +643,9 @@ func (s *Store) SetAlbumCover(ctx context.Context, albumID uuid.UUID, coverPath 
 	return nil
 }
 
-// SetTrackAlbumCover points the track's album at coverPath. It is
-// intentionally opportunistic: tracks without albums simply result in no rows
+// SetTrackAlbumCover points the track's album at coverPath when the album does
+// not already have local artwork. It is intentionally opportunistic: tracks
+// without albums, or albums that already have covers, simply result in no rows
 // updated.
 func (s *Store) SetTrackAlbumCover(ctx context.Context, trackID uuid.UUID, coverPath string) error {
 	coverPath = dbtext.Clean(coverPath)
@@ -648,7 +657,8 @@ func (s *Store) SetTrackAlbumCover(ctx context.Context, trackID uuid.UUID, cover
 		SET cover_art_path = $2, updated_at = NOW()
 		FROM tracks t
 		WHERE t.id = $1
-		  AND t.album_id = a.id`,
+		  AND t.album_id = a.id
+		  AND NULLIF(a.cover_art_path, '') IS NULL`,
 		trackID, coverPath)
 	return err
 }

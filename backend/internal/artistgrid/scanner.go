@@ -469,6 +469,12 @@ func (s *Scanner) applyTrackerMetadata(ctx context.Context, trackID uuid.UUID, t
 	if tc.Genre != "" {
 		patch.Genre = &tc.Genre
 	}
+	if tc.Composer != "" {
+		patch.Composer = &tc.Composer
+	}
+	if tc.Comment != "" {
+		patch.Comments = &tc.Comment
+	}
 	if len(artists) > 0 {
 		patch.Artists = &artists
 	}

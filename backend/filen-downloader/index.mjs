@@ -2,6 +2,8 @@
 import { FilenSDK } from "@filen/sdk"
 import path from "node:path"
 import fs from "node:fs/promises"
+import { constants as fsConstants } from "node:fs"
+import { randomUUID } from "node:crypto"
 
 function usage() {
   console.error("Usage: node index.mjs [--json] [--password <pw> | --password-env <name>] <filen-share-url> <outDir>")
@@ -126,6 +128,57 @@ async function nextAvailablePath(outDir, target) {
   return resolveInside(outDir, `${base}-${Date.now()}${ext}`)
 }
 
+function isExistError(err) {
+  return err?.code === "EEXIST"
+}
+
+async function tempPathForTarget(outDir, target) {
+  return resolveInside(outDir, path.join(path.dirname(target), `.${path.basename(target)}.${randomUUID()}.part`))
+}
+
+async function assertCompleteDownload(tmpPath, expectedSize) {
+  const st = await fs.stat(tmpPath)
+  if (!st.isFile()) {
+    throw new Error("download target is not a regular file")
+  }
+  if (expectedSize > 0 && st.size !== expectedSize) {
+    throw new Error(`download size mismatch: expected ${expectedSize} bytes, got ${st.size}`)
+  }
+  if (st.size <= 0) {
+    throw new Error("download produced an empty file")
+  }
+}
+
+async function installNoOverwrite(outDir, tmpPath, target) {
+  target = resolveInside(outDir, target)
+  for (let i = 0; i < 10000; i++) {
+    try {
+      await fs.link(tmpPath, target)
+      await fs.rm(tmpPath, { force: true })
+      return target
+    } catch (err) {
+      if (isExistError(err)) {
+        target = await nextAvailablePath(outDir, target)
+        continue
+      }
+    }
+
+    try {
+      await fs.copyFile(tmpPath, target, fsConstants.COPYFILE_EXCL)
+      await fs.rm(tmpPath, { force: true })
+      return target
+    } catch (err) {
+      if (isExistError(err)) {
+        target = await nextAvailablePath(outDir, target)
+        continue
+      }
+      await fs.rm(target, { force: true }).catch(() => {})
+      throw err
+    }
+  }
+  throw new Error("could not find an available target path")
+}
+
 async function prepareTarget(outDir, target, size) {
   target = resolveInside(outDir, target)
   const st = await statOrNull(target)
@@ -176,16 +229,24 @@ async function downloadSingleFile(cloud, linkUuid, linkKey, password, outDir) {
   }
   try {
     await fs.mkdir(path.dirname(target.path), { recursive: true })
-    await cloud.downloadFileToLocal({
-      uuid: info.uuid,
-      bucket: info.bucket,
-      region: info.region,
-      chunks: info.chunks,
-      version: info.version,
-      key: linkKey,
-      size: info.size,
-      to: target.path
-    })
+    const tmpPath = await tempPathForTarget(outDir, target.path)
+    try {
+      await cloud.downloadFileToLocal({
+        uuid: info.uuid,
+        bucket: info.bucket,
+        region: info.region,
+        chunks: info.chunks,
+        version: info.version,
+        key: linkKey,
+        size: info.size,
+        to: tmpPath
+      })
+      await assertCompleteDownload(tmpPath, info.size)
+      target.path = await installNoOverwrite(outDir, tmpPath, target.path)
+    } catch (err) {
+      await fs.rm(tmpPath, { force: true }).catch(() => {})
+      throw err
+    }
     emit({ event: "file", status: "downloaded", relPath, path: target.path, size: info.size })
   } catch (err) {
     if (readOnlyError(err)) {
@@ -203,7 +264,7 @@ async function downloadSingleFile(cloud, linkUuid, linkKey, password, outDir) {
       event: "file",
       status: "failed",
       relPath,
-      path: target.path,
+      path: "",
       size: info.size,
       error: String(err?.message ?? err)
     })
@@ -290,7 +351,15 @@ async function downloadFolderLink(cloud, linkUuid, linkKey, password, outDir) {
     }
     try {
       await fs.mkdir(path.dirname(target.path), { recursive: true })
-      await cloud.downloadFileToLocal({ ...job.params, to: target.path })
+      const tmpPath = await tempPathForTarget(outDir, target.path)
+      try {
+        await cloud.downloadFileToLocal({ ...job.params, to: tmpPath })
+        await assertCompleteDownload(tmpPath, job.size)
+        target.path = await installNoOverwrite(outDir, tmpPath, target.path)
+      } catch (err) {
+        await fs.rm(tmpPath, { force: true }).catch(() => {})
+        throw err
+      }
       emit({ event: "file", status: "downloaded", relPath: job.relPath, path: target.path, size: job.size })
     } catch (err) {
       if (readOnlyError(err)) {
@@ -309,7 +378,7 @@ async function downloadFolderLink(cloud, linkUuid, linkKey, password, outDir) {
         event: "file",
         status: "failed",
         relPath: job.relPath,
-        path: target.path,
+        path: "",
         size: job.size,
         error: String(err?.message ?? err)
       })

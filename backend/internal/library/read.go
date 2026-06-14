@@ -19,6 +19,8 @@ type TrackDetail struct {
 	DurationMS   int
 	Genre        string
 	Year         int
+	Composer     string
+	Comments     string
 	Format       string
 	Bitrate      int
 	SampleRate   int
@@ -60,6 +62,7 @@ const trackDetailSelect = `
 		COALESCE(t.track_no, 0), COALESCE(t.disc_no, 0),
 		t.duration_ms,
 		COALESCE(t.genre, ''), COALESCE(t.year, 0),
+		COALESCE(t.composer, ''), COALESCE(t.comments, ''),
 		t.format,
 		COALESCE(t.bitrate, 0), COALESCE(t.sample_rate, 0), COALESCE(t.channels, 0),
 		t.file_path, t.file_size,
@@ -98,6 +101,7 @@ func (s *Store) getTrackDetail(ctx context.Context, query string, args ...any) (
 		&t.TrackNo, &t.DiscNo,
 		&t.DurationMS,
 		&t.Genre, &t.Year,
+		&t.Composer, &t.Comments,
 		&t.Format,
 		&t.Bitrate, &t.SampleRate, &t.Channels,
 		&t.FilePath, &t.FileSize,

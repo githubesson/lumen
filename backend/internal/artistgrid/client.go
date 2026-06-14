@@ -500,8 +500,8 @@ var (
 	yearCopyrightRe = regexp.MustCompile(`(?:\x{2117}|\x{00a9})\s*(\d{4})`)
 	yearPlainRe     = regexp.MustCompile(`\b(?:19|20)\d{2}\b`)
 	extraGroupRe    = regexp.MustCompile(`\(([^()]+)\)`)
-	extraProdRe     = regexp.MustCompile(`(?i)^(?:prod\.?|produced by)\b\s*`)
-	extraFeatRe     = regexp.MustCompile(`(?i)^(?:feat\.?|ft\.?|featuring|w/|with)\b\s*`)
+	extraProdRe     = regexp.MustCompile(`(?i)^(?:(?:prod|produced by)\.?)\s*`)
+	extraFeatRe     = regexp.MustCompile(`(?i)^(?:(?:feat|ft|featuring|w/|with)\.?)\s*`)
 )
 
 func ParseYear(text string) int {

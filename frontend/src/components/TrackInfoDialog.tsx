@@ -6,6 +6,7 @@ import { useTrackDetail } from "../lib/useTrackDetail";
 interface Props {
   open: boolean;
   trackId: string | null;
+  requestNonce?: number;
   onClose: () => void;
 }
 
@@ -16,8 +17,13 @@ interface Props {
  * separate from EditTrackDialog so non-admins can see the same information
  * without accidentally opening an editor they can't submit.
  */
-export function TrackInfoDialog({ open, trackId, onClose }: Props) {
-  const { track, error } = useTrackDetail(open, trackId);
+export function TrackInfoDialog({
+  open,
+  trackId,
+  requestNonce = 0,
+  onClose,
+}: Props) {
+  const { track, error } = useTrackDetail(open, trackId, requestNonce);
 
   const body = error ? (
     <div
@@ -39,27 +45,13 @@ export function TrackInfoDialog({ open, trackId, onClose }: Props) {
 
       <Section label="Identity">
         <Field k="Title" v={track.title} />
-        <Field
-          k="Artists"
-          v={
-            track.artists
-              .filter((a) => a.role !== "composer")
-              .map((a) => a.name)
-              .join(", ") || "—"
-          }
-        />
-        {track.artists.some((a) => a.role === "composer") && (
-          <Field
-            k="Composers"
-            v={track.artists
-              .filter((a) => a.role === "composer")
-              .map((a) => a.name)
-              .join(", ")}
-          />
-        )}
+        <Field k="Primary artist" v={artistNames(track, "primary") || "—"} />
+        <Field k="Featured" v={artistNames(track, "featured") || "—"} />
+        <Field k="Producers" v={producerNames(track) || "—"} />
         <Field k="Album" v={track.album_title || "—"} />
         <Field k="Year" v={track.year ? String(track.year) : "—"} />
         <Field k="Genre" v={track.genre || "—"} />
+        {track.comments && <Field k="Comments" v={track.comments} />}
         <Field
           k="Track · Disc"
           v={
@@ -128,6 +120,17 @@ function HeaderBlock({ track }: { track: TrackDetail }) {
       </div>
     </div>
   );
+}
+
+function artistNames(track: TrackDetail, role: string): string {
+  return track.artists
+    .filter((a) => a.role === role)
+    .map((a) => a.name)
+    .join(", ");
+}
+
+function producerNames(track: TrackDetail): string {
+  return track.composer?.trim() || artistNames(track, "composer");
 }
 
 function Section({
