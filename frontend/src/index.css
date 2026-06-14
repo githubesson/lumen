@@ -1277,6 +1277,53 @@ textarea { font: inherit; color: inherit; }
   align-items: center;
   flex-wrap: wrap;
 }
+.detail-corner {
+  position: absolute;
+  right: 28px;
+  bottom: 24px;
+  z-index: 2;
+  max-width: calc(100% - 56px);
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: auto;
+}
+.detail-track-search {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  max-width: 100%;
+}
+.detail-track-search .search {
+  width: 260px;
+  max-width: min(260px, 40vw);
+  background: color-mix(in oklch, var(--bg-elev-1) 42%, transparent);
+}
+.detail-track-search-count {
+  color: var(--fg-subtle);
+  font-size: 11px;
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .detail-header.has-corner {
+    flex-wrap: wrap;
+  }
+  .detail-corner {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    width: 100%;
+    max-width: none;
+    margin-top: 4px;
+  }
+  .detail-track-search {
+    width: 100%;
+  }
+  .detail-track-search .search {
+    width: 100%;
+    max-width: none;
+  }
+}
 
 /* ============================================================
    Player bar

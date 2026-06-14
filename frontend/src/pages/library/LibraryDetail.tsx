@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useRef, useState, type RefObject } from "react";
 import {
   ArrowLeftIcon,
   PencilSquareIcon,
@@ -10,6 +10,7 @@ import {
   trackCoverUrl,
   type Album,
   type Artist,
+  type TrackListItem,
 } from "../../api";
 import { displayText, pluralize } from "../../lib/format";
 import { useEntityDetail } from "../../lib/useEntityDetail";
@@ -17,11 +18,14 @@ import TrackList from "../../components/TrackList";
 import CoverArt from "../../components/CoverArt";
 import { Button } from "../../components/Button";
 import { EditAlbumDialog } from "../../components/EditDialog";
+import EmptyState from "../../components/EmptyState";
 import ErrorBanner from "../../components/ErrorBanner";
 import ListPageHeader from "../../components/ListPageHeader";
 import LoadingState from "../../components/LoadingState";
+import SearchInput from "../../components/SearchInput";
 import { usePlayer } from "../../context/Player";
 import { useAuth } from "../../context/Auth";
+import { useKey } from "../../lib/keybindings";
 
 export function AlbumDetailView({
   id,
@@ -44,6 +48,7 @@ export function AlbumDetailView({
   const { play } = usePlayer();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
+  const search = useDetailTrackSearch("album", tracks);
 
   if (entity === "notfound") {
     return <NotFound kind="Album" onBack={onBack} />;
@@ -111,9 +116,32 @@ export function AlbumDetailView({
             )}
           </>
         }
+        corner={
+          <DetailTrackSearchBar
+            kind="album"
+            query={search.query}
+            onQueryChange={search.setQuery}
+            inputRef={search.inputRef}
+            matchCount={search.filteredTracks.length}
+            totalCount={tracks.length}
+            searchActive={search.searchActive}
+          />
+        }
       />
       {error && <ErrorBanner message={error} />}
-      <TrackList tracks={tracks} queueSource={tracks} showAlbum={false} />
+      <TrackList
+        tracks={search.filteredTracks}
+        queueSource={tracks}
+        showAlbum={false}
+        emptyState={
+          search.searchActive ? (
+            <EmptyState
+              title="No matches."
+              hint={`Nothing in this album matches "${search.query}".`}
+            />
+          ) : undefined
+        }
+      />
       <EditAlbumDialog
         open={editing}
         album={album}
@@ -140,6 +168,7 @@ export function ArtistDetailView({
     label: "artist",
   });
   const { play } = usePlayer();
+  const search = useDetailTrackSearch("artist", tracks);
 
   if (artist === "notfound") {
     return <NotFound kind="Artist" onBack={onBack} />;
@@ -188,17 +217,129 @@ export function ArtistDetailView({
             Play all
           </Button>
         }
+        corner={
+          <DetailTrackSearchBar
+            kind="artist"
+            query={search.query}
+            onQueryChange={search.setQuery}
+            inputRef={search.inputRef}
+            matchCount={search.filteredTracks.length}
+            totalCount={tracks.length}
+            searchActive={search.searchActive}
+          />
+        }
       />
       {error && <ErrorBanner message={error} />}
-      <TrackList tracks={tracks} queueSource={tracks} />
+      <TrackList
+        tracks={search.filteredTracks}
+        queueSource={tracks}
+        emptyState={
+          search.searchActive ? (
+            <EmptyState
+              title="No matches."
+              hint={`Nothing by this artist matches "${search.query}".`}
+            />
+          ) : undefined
+        }
+      />
+    </div>
+  );
+}
+
+function useDetailTrackSearch(
+  kind: "album" | "artist",
+  tracks: TrackListItem[] | null,
+) {
+  const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const normalizedQuery = query.trim().toLowerCase();
+
+  useKey(
+    "mod+f",
+    (e) => {
+      e.preventDefault();
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      });
+    },
+    {
+      id: `library:${kind}:search`,
+      label: `Search this ${kind}`,
+      group: "Library",
+      allowInInput: true,
+    },
+  );
+
+  const filteredTracks = useMemo(() => {
+    const base = tracks ?? [];
+    if (!normalizedQuery) return base;
+    return base.filter((track) => trackMatchesQuery(track, normalizedQuery));
+  }, [tracks, normalizedQuery]);
+
+  return {
+    query,
+    setQuery,
+    inputRef,
+    filteredTracks,
+    searchActive: normalizedQuery.length > 0,
+  };
+}
+
+function trackMatchesQuery(track: TrackListItem, query: string): boolean {
+  return [track.title, track.artist, track.album_title, track.aka, track.source]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .includes(query);
+}
+
+function DetailTrackSearchBar({
+  kind,
+  query,
+  onQueryChange,
+  inputRef,
+  matchCount,
+  totalCount,
+  searchActive,
+}: {
+  kind: "album" | "artist";
+  query: string;
+  onQueryChange: (query: string) => void;
+  inputRef: RefObject<HTMLInputElement>;
+  matchCount: number;
+  totalCount: number;
+  searchActive: boolean;
+}) {
+  return (
+    <div className="detail-track-search">
+      {searchActive && (
+        <div className="mono detail-track-search-count">
+          {matchCount} of {totalCount} match
+        </div>
+      )}
+      <SearchInput
+        ref={inputRef}
+        style={{ width: 260 }}
+        value={query}
+        onChange={(e) => onQueryChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onQueryChange("");
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+        placeholder={`Search this ${kind}`}
+        aria-label={`Search this ${kind}`}
+      />
     </div>
   );
 }
 
 /**
- * Renders inside `.detail-header` as the top strip — sits over the same
- * gradient as the cover/body below it so the ambient color feels continuous
- * from the top-bar down.
+ * Renders inside `.detail-header` as the top strip, over the same card
+ * gradient as the cover/body below it.
  */
 function DetailBackRow({ onBack }: { onBack: () => void }) {
   return (
