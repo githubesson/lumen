@@ -61,6 +61,24 @@ func TestDownloadOneSkipsUnsupportedExtensionBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestPinMatchesEntryTab(t *testing.T) {
+	if !pinMatchesEntryTab(Pin{}, Entry{SheetName: "Leaks"}) {
+		t.Fatal("blank pin tab should match every entry")
+	}
+	if !pinMatchesEntryTab(Pin{Tab: "leaks"}, Entry{SheetName: "Leaks"}) {
+		t.Fatal("tab match should be case-insensitive")
+	}
+	if pinMatchesEntryTab(Pin{Tab: "Demos"}, Entry{SheetName: "Leaks"}) {
+		t.Fatal("different tab should not match")
+	}
+}
+
+func TestNormalizeEraKey(t *testing.T) {
+	if got := normalizeEraKey("  Working   On Dying  "); got != "working on dying" {
+		t.Fatalf("normalizeEraKey = %q", got)
+	}
+}
+
 func TestDownloadOneRejectsLoopbackByDefaultBeforeRequest(t *testing.T) {
 	var requested bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

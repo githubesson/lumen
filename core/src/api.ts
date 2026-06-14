@@ -234,6 +234,10 @@ function filenPinPathID(id: string): string {
   return pinPathID(id, "Filen");
 }
 
+function apiTrackerPinPathID(id: string): string {
+  return pinPathID(id, "API tracker");
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<Me>("/api/auth/login", {
@@ -354,6 +358,37 @@ export const api = {
     const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit) || 50));
     return request<FilenDownload[]>(
       `/api/admin/library/filen/pins/${filenPinPathID(id)}/downloads?limit=${safeLimit}`,
+    );
+  },
+  listAPITrackerPins: () =>
+    request<APITrackerPin[]>("/api/admin/library/api-trackers/pins"),
+  createAPITrackerPin: (input: APITrackerPinCreate) =>
+    request<APITrackerPin>("/api/admin/library/api-trackers/pins", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateAPITrackerPin: (id: string, input: APITrackerPinPatch) =>
+    request<APITrackerPin>(
+      `/api/admin/library/api-trackers/pins/${apiTrackerPinPathID(id)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      },
+    ),
+  deleteAPITrackerPin: (id: string) =>
+    requestVoid(
+      `/api/admin/library/api-trackers/pins/${apiTrackerPinPathID(id)}`,
+      { method: "DELETE" },
+    ),
+  scanAPITrackerPin: (id: string) =>
+    requestVoid(
+      `/api/admin/library/api-trackers/pins/${apiTrackerPinPathID(id)}/scan`,
+      { method: "POST" },
+    ),
+  listAPITrackerDownloads: (id: string, limit = 50) => {
+    const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit) || 50));
+    return request<APITrackerDownload[]>(
+      `/api/admin/library/api-trackers/pins/${apiTrackerPinPathID(id)}/downloads?limit=${safeLimit}`,
     );
   },
 
@@ -895,6 +930,76 @@ export interface FilenDownload {
   file_path?: string;
   size_bytes: number;
   status: FilenDownloadStatus;
+  error?: string;
+  track_id?: string;
+  metadata?: Record<string, unknown>;
+  first_seen_at: string;
+  downloaded_at?: string | null;
+  updated_at: string;
+}
+
+export interface APITrackerPin {
+  id: string;
+  root_id?: string;
+  root_path: string;
+  destination_subdir: string;
+  destination_path: string;
+  api_base_url: string;
+  tracker_id: number;
+  tracker_name: string;
+  tracker_url: string;
+  tab: string;
+  label: string;
+  primary_artist: string;
+  enabled: boolean;
+  scan_interval_seconds: number;
+  last_scan_at?: string | null;
+  last_success_at?: string | null;
+  last_error?: string;
+  created_at: string;
+  updated_at: string;
+  root_exists: boolean;
+}
+
+export interface APITrackerPinCreate {
+  root_id?: string;
+  root_path?: string;
+  destination_subdir?: string;
+  api_base_url?: string;
+  tracker?: string;
+  tracker_id?: string | number;
+  tracker_url?: string;
+  tracker_name?: string;
+  tab?: string;
+  label?: string;
+  primary_artist?: string;
+  enabled?: boolean;
+  scan_interval_seconds?: number;
+}
+
+export interface APITrackerPinPatch {
+  destination_subdir?: string;
+  tab?: string;
+  label?: string;
+  primary_artist?: string;
+  enabled?: boolean;
+  scan_interval_seconds?: number;
+}
+
+export type APITrackerDownloadStatus =
+  | "downloaded"
+  | "existing"
+  | "skipped"
+  | "failed";
+
+export interface APITrackerDownload {
+  id: number;
+  pin_id: string;
+  entry_id?: number;
+  source_url: string;
+  resolved_url?: string;
+  file_path?: string;
+  status: APITrackerDownloadStatus;
   error?: string;
   track_id?: string;
   metadata?: Record<string, unknown>;

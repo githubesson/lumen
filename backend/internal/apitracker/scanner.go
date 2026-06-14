@@ -175,16 +175,22 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 			s.Logger.Warn("api tracker metadata update failed", "pin", pin.ID, "err", err)
 		}
 	}
+	eraImages := s.fetchEraImageIDs(ctx, client, pin.TrackerID)
+	eraCoverKeys := map[int64]string{}
 	entries, err := client.FetchEntries(ctx, pin.TrackerID)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
+		if !pinMatchesEntryTab(pin, entry) {
+			continue
+		}
 		if len(entry.Links) == 0 {
 			summary.NoURL++
 			continue
 		}
 		trackCtx := BuildContext(tracker, pin, entry)
+		coverKey := s.eraCoverKey(ctx, client, eraImages, eraCoverKeys, trackCtx.Album)
 		sourceURLs := s.expandRecordURLs(ctx, client, entry.Links)
 		for i, sourceURL := range sourceURLs {
 			sourceURL = strings.TrimSpace(sourceURL)
@@ -213,7 +219,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 				})
 				continue
 			}
-			if s.previousStillPresent(ctx, pin.ID, sourceURL, summary) {
+			if s.previousStillPresent(ctx, pin.ID, sourceURL, coverKey, summary) {
 				continue
 			}
 			status, resolvedURL, filePath, trackID, ingestInserted, err := s.downloadOne(
@@ -261,6 +267,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 			if ingestInserted {
 				summary.Ingested++
 			}
+			s.applyTrackAlbumCover(ctx, trackID, coverKey)
 			_ = s.Store.RecordDownload(ctx, DownloadInput{
 				PinID:       pin.ID,
 				EntryID:     entry.ID,
@@ -277,6 +284,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 		s.Logger.Info("api tracker scan complete",
 			"pin", pin.ID,
 			"tracker", pin.TrackerID,
+			"tab", pin.Tab,
 			"seen", summary.Seen,
 			"downloaded", summary.Downloaded,
 			"existing", summary.Existing,
@@ -284,6 +292,72 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 			"failed", summary.Failed)
 	}
 	return nil
+}
+
+func pinMatchesEntryTab(pin Pin, entry Entry) bool {
+	tab := strings.TrimSpace(pin.Tab)
+	if tab == "" {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(entry.SheetName), tab)
+}
+
+func (s *Scanner) fetchEraImageIDs(ctx context.Context, client *Client, trackerID int64) map[string]int64 {
+	eras, err := client.FetchEras(ctx, trackerID)
+	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Warn("api tracker eras fetch failed", "tracker", trackerID, "err", err)
+		}
+		return nil
+	}
+	out := make(map[string]int64, len(eras)*2)
+	for _, era := range eras {
+		if era.ImageID <= 0 {
+			continue
+		}
+		for _, key := range []string{era.EraKey, era.Era} {
+			key = normalizeEraKey(key)
+			if key != "" {
+				out[key] = era.ImageID
+			}
+		}
+	}
+	return out
+}
+
+func (s *Scanner) eraCoverKey(ctx context.Context, client *Client, eraImages map[string]int64, cache map[int64]string, era string) string {
+	if s == nil || s.Ingest == nil || len(eraImages) == 0 {
+		return ""
+	}
+	imageID := eraImages[normalizeEraKey(era)]
+	if imageID <= 0 {
+		return ""
+	}
+	if key, ok := cache[imageID]; ok {
+		return key
+	}
+	data, contentType, err := client.FetchEraImage(ctx, imageID)
+	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Warn("api tracker era image fetch failed", "image_id", imageID, "era", era, "err", err)
+		}
+		cache[imageID] = ""
+		return ""
+	}
+	key, err := s.Ingest.StoreCoverImage(ctx, data, contentType)
+	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Warn("api tracker era image store failed", "image_id", imageID, "era", era, "err", err)
+		}
+		cache[imageID] = ""
+		return ""
+	}
+	cache[imageID] = key
+	return key
+}
+
+func normalizeEraKey(raw string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(raw))), " ")
 }
 
 func (s *Scanner) clientFor(pin Pin) *Client {
@@ -318,7 +392,7 @@ func (s *Scanner) expandRecordURLs(ctx context.Context, client *Client, urls []s
 	return out
 }
 
-func (s *Scanner) previousStillPresent(ctx context.Context, pinID uuid.UUID, sourceURL string, summary *ScanSummary) bool {
+func (s *Scanner) previousStillPresent(ctx context.Context, pinID uuid.UUID, sourceURL string, coverKey string, summary *ScanSummary) bool {
 	prev, err := s.Store.DownloadForSource(ctx, pinID, sourceURL)
 	if err != nil {
 		return false
@@ -333,6 +407,7 @@ func (s *Scanner) previousStillPresent(ctx context.Context, pinID uuid.UUID, sou
 		if prev.FilePath != "" && fileNonEmpty(prev.FilePath) {
 			if prev.TrackID == nil {
 				trackID, inserted := s.ingestPath(ctx, prev.FilePath, TrackContext{}, false)
+				s.applyTrackAlbumCover(ctx, trackID, coverKey)
 				_ = s.Store.RecordDownload(ctx, DownloadInput{
 					PinID:       pinID,
 					EntryID:     prev.EntryID,
@@ -346,6 +421,8 @@ func (s *Scanner) previousStillPresent(ctx context.Context, pinID uuid.UUID, sou
 				if inserted {
 					summary.Ingested++
 				}
+			} else {
+				s.applyTrackAlbumCover(ctx, prev.TrackID, coverKey)
 			}
 			summary.Existing++
 			return true
@@ -504,6 +581,15 @@ func (s *Scanner) applyTrackerMetadata(ctx context.Context, trackID uuid.UUID, t
 	}
 }
 
+func (s *Scanner) applyTrackAlbumCover(ctx context.Context, trackID *uuid.UUID, coverKey string) {
+	if s == nil || s.Library == nil || trackID == nil || *trackID == uuid.Nil || coverKey == "" {
+		return
+	}
+	if err := s.Library.SetTrackAlbumCover(ctx, *trackID, coverKey); err != nil && s.Logger != nil {
+		s.Logger.Warn("api tracker album cover apply failed", "track", *trackID, "cover_key", coverKey, "err", err)
+	}
+}
+
 func pinDestination(pin Pin) (string, error) {
 	root, err := filepath.Abs(pin.RootPath)
 	if err != nil {
@@ -563,6 +649,7 @@ func entryMetadata(tracker Tracker, pin Pin, entry Entry, tc TrackContext) json.
 		"tracker_id":     pin.TrackerID,
 		"tracker":        firstNonEmpty(tracker.TrackerName, pin.TrackerName),
 		"tracker_url":    firstNonEmpty(tracker.URL, pin.TrackerURL),
+		"tab":            pin.Tab,
 		"entry_id":       entry.ID,
 		"sheet_id":       entry.SheetID,
 		"sheet":          entry.SheetName,

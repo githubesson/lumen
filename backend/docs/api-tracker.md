@@ -18,13 +18,13 @@ of it — the upstream sees the full `/api/...` path.
 
 | How you reach it | URL |
 | --- | --- |
-| **Production** | `https://trackers.misleadi.ng/api` |
+| **Production** | `https://trackers.musicfiles.su/api` |
 | Through the bundled Nginx (`backend/nginx/tracker.conf`, listens on `:80`) | `http://your-host/api` |
 | Directly against the Go service in Docker Compose | `http://127.0.0.1:4444/api` |
 
-The production deployment is served at `trackers.misleadi.ng`; call the API at
-`https://trackers.misleadi.ng/api/...` (e.g.
-`https://trackers.misleadi.ng/api/v1/trackers`).
+The production deployment is served at `trackers.musicfiles.su`; call the API at
+`https://trackers.musicfiles.su/api/...` (e.g.
+`https://trackers.musicfiles.su/api/v1/trackers`).
 
 The Go process binds `:$PORT`. The code default for `PORT` is `8080`; the
 provided `docker-compose.yml` sets `PORT=4444` and publishes it on

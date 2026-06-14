@@ -117,20 +117,21 @@ export function useDiscordPresence() {
 }
 
 /**
- * Resolve the cover URL to ship with a Discord activity push. Discord's media
- * proxy fetches `large_image` server-side without the user's cookies, so the
- * normal auth-gated cover endpoints 404 on it. We ask the backend to mint a
- * short-lived signed public URL instead, cache it per album, and hand
- * Electron an absolute URL it can host-rewrite to the public backend.
+ * Resolve the cover URL to ship with a Discord activity push. Remote sources
+ * such as TIDAL already carry public HTTPS artwork URLs, so those can be
+ * passed straight through. Local covers need the signed backend path because
+ * Discord's media proxy fetches `large_image` server-side without user
+ * cookies.
  *
- * Returns undefined when the track has no album, the album has no cover, or
- * signing failed — Electron then falls back to the uploaded "lumen" asset
+ * Returns undefined when the track has no usable cover or signing failed;
+ * Electron then falls back to the uploaded "lumen" asset
  * key on Discord's side.
  */
 async function resolveSignedCoverUrl(
   track: TrackListItem,
   cache: Map<string, SignedCoverCacheEntry>,
 ): Promise<string | undefined> {
+  if (track.cover_url) return toAbsolute(track.cover_url);
   if (!track.album_id) return undefined;
   const nowSec = Math.floor(Date.now() / 1000);
   const cached = cache.get(track.album_id);

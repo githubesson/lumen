@@ -264,6 +264,10 @@ func InsertTrack(ctx context.Context, q pgx.Tx, t TrackInsert) (id uuid.UUID, in
 	t.Comments = dbtext.Clean(t.Comments)
 	t.Format = dbtext.Clean(t.Format)
 
+	if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea, 'hex'), 0))`, t.AudioSHA256); err != nil {
+		return uuid.Nil, false, err
+	}
+
 	// 1. Is there already a global row with this SHA?
 	var globalID uuid.UUID
 	err = q.QueryRow(ctx, `SELECT id FROM tracks WHERE audio_sha256 = $1 AND owner_id IS NULL AND deleted_at IS NULL`, t.AudioSHA256).Scan(&globalID)
@@ -629,6 +633,24 @@ func (s *Store) SetAlbumCover(ctx context.Context, albumID uuid.UUID, coverPath 
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetTrackAlbumCover points the track's album at coverPath. It is
+// intentionally opportunistic: tracks without albums simply result in no rows
+// updated.
+func (s *Store) SetTrackAlbumCover(ctx context.Context, trackID uuid.UUID, coverPath string) error {
+	coverPath = dbtext.Clean(coverPath)
+	if coverPath == "" {
+		return nil
+	}
+	_, err := s.db.Exec(ctx, `
+		UPDATE albums a
+		SET cover_art_path = $2, updated_at = NOW()
+		FROM tracks t
+		WHERE t.id = $1
+		  AND t.album_id = a.id`,
+		trackID, coverPath)
+	return err
 }
 
 // ClearAlbumCover removes an album's cover-art reference, reverting it to the

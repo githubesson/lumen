@@ -3,10 +3,11 @@ CREATE TABLE api_tracker_pins (
     root_id               UUID REFERENCES music_roots(id) ON DELETE CASCADE,
     root_path             TEXT NOT NULL,
     destination_subdir    TEXT NOT NULL DEFAULT '',
-    api_base_url          TEXT NOT NULL DEFAULT 'https://trackers.misleadi.ng/api',
+    api_base_url          TEXT NOT NULL DEFAULT 'https://trackers.musicfiles.su/api',
     tracker_id            BIGINT NOT NULL CHECK (tracker_id > 0),
     tracker_name          TEXT NOT NULL DEFAULT '',
     tracker_url           TEXT NOT NULL DEFAULT '',
+    tab                   TEXT NOT NULL DEFAULT '',
     label                 TEXT NOT NULL DEFAULT '',
     primary_artist        TEXT NOT NULL DEFAULT '',
     enabled               BOOLEAN NOT NULL DEFAULT TRUE,
@@ -16,7 +17,8 @@ CREATE TABLE api_tracker_pins (
     last_error            TEXT NOT NULL DEFAULT '',
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (root_path, destination_subdir, api_base_url, tracker_id)
+    CONSTRAINT api_tracker_pins_unique_source
+        UNIQUE (root_path, destination_subdir, api_base_url, tracker_id, tab)
 );
 CREATE INDEX api_tracker_pins_due_idx
     ON api_tracker_pins(enabled, last_scan_at);
