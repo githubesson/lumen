@@ -239,7 +239,7 @@ function TrackActionItems({
           <Divider />
           <Section title="Library">
             <Button
-              label="Go to Album"
+              label="View Album"
               systemImage="square.stack"
               onPress={actions.openAlbum}
             />
@@ -255,7 +255,7 @@ function TrackActionItems({
               systemImage="pencil"
               onPress={actions.openEditMetadata}
             />
-            {actions.hasAlbum ? (
+            {actions.hasEditableAlbum ? (
               <Button
                 label="Edit Album & Cover"
                 systemImage="photo"
@@ -301,12 +301,45 @@ export function useTrackActionModel(track: TrackListItem) {
   }, [toggleFav, track.id]);
 
   const openAlbum = useCallback(() => {
-    if (!track.album_id) return;
-    router.push({
-      pathname: "/(tabs)/(library)/albums/[id]",
-      params: { id: track.album_id },
-    });
-  }, [router, track.album_id]);
+    void (async () => {
+      try {
+        let localAlbumId = track.album_id;
+        let tidalAlbumId =
+          track.source === "tidal" ? track.source_album_id : undefined;
+
+        if (!localAlbumId || (track.source === "tidal" && !tidalAlbumId)) {
+          const detail = await api.getTrack(track.id);
+          localAlbumId = localAlbumId || detail.album_id;
+          if (detail.source === "tidal") {
+            tidalAlbumId = tidalAlbumId || detail.source_album_id;
+          }
+        }
+
+        if (track.source === "tidal" && tidalAlbumId) {
+          router.push({
+            pathname: "/(tabs)/(library)/tidal-albums/[id]" as never,
+            params: { id: tidalAlbumId },
+          });
+          return;
+        }
+
+        if (localAlbumId) {
+          router.push({
+            pathname: "/(tabs)/(library)/albums/[id]",
+            params: { id: localAlbumId },
+          });
+          return;
+        }
+
+        Alert.alert("Album unavailable", "No album was found for this track.");
+      } catch (error) {
+        Alert.alert(
+          "Album unavailable",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      }
+    })();
+  }, [router, track]);
 
   const openInfo = useCallback(() => {
     router.push({
@@ -422,7 +455,8 @@ export function useTrackActionModel(track: TrackListItem) {
     download,
     downloading,
     favorite,
-    hasAlbum: Boolean(track.album_id),
+    hasAlbum: Boolean(track.album_id || track.album_title || track.source === "tidal"),
+    hasEditableAlbum: Boolean(track.album_id && track.source !== "tidal"),
     isAdmin,
     openAlbum,
     openEditAlbum,

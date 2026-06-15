@@ -472,7 +472,11 @@ export default function ShareTrackScreen() {
     <>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
-        style={{ flex: 1, backgroundColor: theme.color.bg }}
+        bounces={false}
+        alwaysBounceVertical={false}
+        alwaysBounceHorizontal={false}
+        overScrollMode="never"
+        style={[styles.noDragPage, { flex: 1, backgroundColor: theme.color.bg }]}
         contentContainerStyle={{
           paddingHorizontal: theme.space.lg,
           paddingTop: theme.space.lg,
@@ -486,7 +490,7 @@ export default function ShareTrackScreen() {
           </View>
         ) : trackQuery.isError || !trackQuery.data ? (
           <View style={styles.center}>
-            <Text selectable style={{ color: theme.color.fgMuted }}>
+            <Text style={{ color: theme.color.fgMuted }}>
               Couldn&apos;t load track.
             </Text>
           </View>
@@ -508,7 +512,6 @@ export default function ShareTrackScreen() {
             >
               <View style={styles.panelHeader}>
                 <Text
-                  selectable
                   style={{
                     color: theme.color.fg,
                     fontSize: 17,
@@ -572,7 +575,7 @@ export default function ShareTrackScreen() {
                 </Text>
               </Pressable>
 
-              <Text selectable style={{ color: theme.color.fgMuted }}>
+              <Text style={{ color: theme.color.fgMuted }}>
                 {picked
                   ? "Drag the highlighted region to tune the share clip."
                   : "Drag across the waveform to choose the 30-second clip friends will hear."}
@@ -606,7 +609,7 @@ export default function ShareTrackScreen() {
                 <Text style={{ color: theme.color.fgMuted, fontSize: 12 }}>
                   Share link
                 </Text>
-                <Text selectable style={{ color: theme.color.fg }}>
+                <Text style={{ color: theme.color.fg }}>
                   {shareUrl}
                 </Text>
               </View>
@@ -884,10 +887,7 @@ function StoryBackgroundCropEditor({
       ]}
     >
       <View style={styles.panelHeader}>
-        <Text
-          selectable
-          style={{ color: theme.color.fg, fontSize: 17, fontWeight: "700" }}
-        >
+        <Text style={{ color: theme.color.fg, fontSize: 17, fontWeight: "700" }}>
           Story Background
         </Text>
         <View style={styles.cropActionRow}>
@@ -927,9 +927,11 @@ function StoryBackgroundCropEditor({
           const { width } = event.nativeEvent.layout;
           setLayout({ width, height: cropEditorHeightForWidth(width) });
         }}
+        pointerEvents="box-only"
         {...panResponder.panHandlers}
         style={[
           styles.cropEditor,
+          styles.dragSurface,
           {
             height: editorHeight,
             backgroundColor: theme.color.bg,
@@ -1143,14 +1145,12 @@ function TrackHeader({ track }: { track: TrackDetail }) {
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text
           numberOfLines={2}
-          selectable
           style={{ color: theme.color.fg, fontSize: 22, fontWeight: "700" }}
         >
           {track.title}
         </Text>
         <Text
           numberOfLines={1}
-          selectable
           style={{ color: theme.color.fgMuted, fontSize: 16 }}
         >
           {artist}
@@ -1201,8 +1201,8 @@ function WaveformRegionSelector({
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponder: () => durationSec > 0,
+        onMoveShouldSetPanResponder: () => durationSec > 0,
         onPanResponderGrant: (event) => {
           setFromX(event.nativeEvent.locationX);
           void Haptics.selectionAsync();
@@ -1211,7 +1211,7 @@ function WaveformRegionSelector({
           setFromX(event.nativeEvent.locationX);
         },
       }),
-    [setFromX],
+    [durationSec, setFromX],
   );
 
   const onLayout = useCallback((event: LayoutChangeEvent) => {
@@ -1227,9 +1227,11 @@ function WaveformRegionSelector({
   return (
     <View
       onLayout={onLayout}
+      pointerEvents="box-only"
       {...panResponder.panHandlers}
       style={[
         styles.waveform,
+        styles.dragSurface,
         {
           backgroundColor: theme.color.bg,
           borderColor: theme.color.separator,
@@ -1474,6 +1476,9 @@ function isShareDismissal(error: unknown) {
 }
 
 const styles = StyleSheet.create({
+  noDragPage: {
+    userSelect: "none",
+  },
   center: {
     minHeight: 240,
     alignItems: "center",
@@ -1508,6 +1513,9 @@ const styles = StyleSheet.create({
     borderCurve: "continuous",
     borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
+  },
+  dragSurface: {
+    userSelect: "none",
   },
   cropWindow: {
     position: "absolute",

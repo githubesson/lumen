@@ -10,30 +10,31 @@ import (
 )
 
 type TrackDetail struct {
-	ID           uuid.UUID
-	Title        string
-	AlbumID      *uuid.UUID
-	AlbumTitle   string
-	TrackNo      int
-	DiscNo       int
-	DurationMS   int
-	Genre        string
-	Year         int
-	Composer     string
-	Comments     string
-	Format       string
-	Bitrate      int
-	SampleRate   int
-	Channels     int
-	FilePath     string
-	FileSize     int64
-	Source       string
-	ExternalID   string
-	CoverURL     string
-	Artists      []TrackArtist
-	Aliases      []TrackAlias
-	CoverArtPath string
-	CreatedAt    time.Time
+	ID              uuid.UUID
+	Title           string
+	AlbumID         *uuid.UUID
+	AlbumTitle      string
+	TrackNo         int
+	DiscNo          int
+	DurationMS      int
+	Genre           string
+	Year            int
+	Composer        string
+	Comments        string
+	Format          string
+	Bitrate         int
+	SampleRate      int
+	Channels        int
+	FilePath        string
+	FileSize        int64
+	Source          string
+	ExternalID      string
+	ExternalAlbumID string
+	CoverURL        string
+	Artists         []TrackArtist
+	Aliases         []TrackAlias
+	CoverArtPath    string
+	CreatedAt       time.Time
 }
 
 type TrackArtist struct {
@@ -66,7 +67,8 @@ const trackDetailSelect = `
 		t.format,
 		COALESCE(t.bitrate, 0), COALESCE(t.sample_rate, 0), COALESCE(t.channels, 0),
 		t.file_path, t.file_size,
-		t.source, t.external_id, COALESCE(t.external_meta->>'cover_url', ''),
+		t.source, t.external_id, COALESCE(t.external_meta->>'album_id', ''),
+		COALESCE(t.external_meta->>'cover_url', ''),
 		t.created_at
 	FROM tracks t
 	LEFT JOIN albums a ON a.id = t.album_id
@@ -105,7 +107,7 @@ func (s *Store) getTrackDetail(ctx context.Context, query string, args ...any) (
 		&t.Format,
 		&t.Bitrate, &t.SampleRate, &t.Channels,
 		&t.FilePath, &t.FileSize,
-		&t.Source, &t.ExternalID, &t.CoverURL,
+		&t.Source, &t.ExternalID, &t.ExternalAlbumID, &t.CoverURL,
 		&t.CreatedAt,
 	)
 	if err != nil {

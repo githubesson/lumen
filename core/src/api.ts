@@ -416,6 +416,8 @@ export const api = {
     request<Album>(`/api/albums/${id}`, options),
   listAlbumTracks: (id: string, options: RequestOptions = {}) =>
     request<TrackListItem[]>(`/api/albums/${id}/tracks`, options),
+  getTidalAlbum: (id: string, options: RequestOptions = {}) =>
+    request<TidalAlbum>(`/api/tidal/albums/${encodeURIComponent(id)}`, options),
 
   listArtistsPage: (params: PageParams = {}) =>
     fetchPage<Artist>("/api/artists", params),
@@ -588,6 +590,7 @@ export interface TrackListItem {
   db_track_id?: string;
   source?: TrackSource;
   source_id?: string;
+  source_album_id?: string;
   title: string;
   album_id?: string;
   album_title?: string;
@@ -627,6 +630,7 @@ export interface TrackDetail {
   db_track_id?: string;
   source: TrackSource;
   source_id?: string;
+  source_album_id?: string;
   title: string;
   album_id?: string;
   album_title?: string;
@@ -672,6 +676,7 @@ export interface PlaylistTrackEntry {
   db_track_id?: string;
   source?: TrackSource;
   source_id?: string;
+  source_album_id?: string;
   title: string;
   album_id?: string;
   album_title?: string;
@@ -699,6 +704,17 @@ export interface TidalStatus {
   version?: string;
   repo?: string;
   error?: string;
+}
+
+export interface TidalAlbum {
+  id: string;
+  title: string;
+  artist?: string;
+  release_year?: number;
+  track_count: number;
+  duration_ms: number;
+  cover_url?: string;
+  tracks: TrackListItem[];
 }
 
 export interface Collaborator {
@@ -1210,6 +1226,7 @@ export function toQueueItem(entry: PlaylistTrackEntry): TrackListItem {
     artist: entry.artist,
     source: entry.source,
     source_id: entry.source_id,
+    source_album_id: entry.source_album_id,
     cover_url: entry.cover_url,
   };
 }

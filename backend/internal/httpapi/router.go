@@ -71,6 +71,7 @@ func NewRouter(d Deps) http.Handler {
 	libH := &handlers.Library{Ingest: d.Ingest, Library: d.Library}
 	plH := &handlers.Playlists{Store: d.Playlists, Users: d.Users, Library: d.Library, TIDAL: d.TIDAL}
 	searchH := &handlers.Search{Library: d.Library, TIDAL: d.TIDAL}
+	tidalH := &handlers.TIDAL{TIDAL: d.TIDAL}
 	adminUsersH := &handlers.AdminUsers{DB: d.DB, Users: d.Users, Playlists: d.Playlists}
 	adminRootsH := &handlers.AdminRoots{
 		Store:       d.MusicRoots,
@@ -163,6 +164,7 @@ func NewRouter(d Deps) http.Handler {
 
 			r.Get("/tracks", tracksH.List)
 			r.Get("/search", searchH.Search)
+			r.Get("/tidal/albums/{id}", tidalH.Album)
 			r.Get("/tracks/{id}", tracksH.Get)
 			r.Delete("/tracks/{id}", tracksH.Delete)
 			r.Get("/tracks/{id}/stream", tracksH.Stream)
