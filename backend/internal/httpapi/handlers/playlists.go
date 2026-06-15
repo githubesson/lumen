@@ -206,22 +206,23 @@ type tracksResp struct {
 }
 
 type trackItem struct {
-	Position    int    `json:"position"`
-	TrackID     string `json:"track_id"`
-	DBTrackID   string `json:"db_track_id,omitempty"`
-	Source      string `json:"source,omitempty"`
-	SourceID    string `json:"source_id,omitempty"`
-	Title       string `json:"title"`
-	AlbumID     string `json:"album_id,omitempty"`
-	AlbumTitle  string `json:"album_title,omitempty"`
-	TrackNo     int    `json:"track_no,omitempty"`
-	DurationMS  int    `json:"duration_ms"`
-	Artist      string `json:"artist,omitempty"`
-	AddedByID   string `json:"added_by_id,omitempty"`
-	AddedByName string `json:"added_by,omitempty"`
-	AddedAt     string `json:"added_at"`
-	PlayCount   int    `json:"play_count"`
-	CoverURL    string `json:"cover_url,omitempty"`
+	Position      int    `json:"position"`
+	TrackID       string `json:"track_id"`
+	DBTrackID     string `json:"db_track_id,omitempty"`
+	Source        string `json:"source,omitempty"`
+	SourceID      string `json:"source_id,omitempty"`
+	SourceAlbumID string `json:"source_album_id,omitempty"`
+	Title         string `json:"title"`
+	AlbumID       string `json:"album_id,omitempty"`
+	AlbumTitle    string `json:"album_title,omitempty"`
+	TrackNo       int    `json:"track_no,omitempty"`
+	DurationMS    int    `json:"duration_ms"`
+	Artist        string `json:"artist,omitempty"`
+	AddedByID     string `json:"added_by_id,omitempty"`
+	AddedByName   string `json:"added_by,omitempty"`
+	AddedAt       string `json:"added_at"`
+	PlayCount     int    `json:"play_count"`
+	CoverURL      string `json:"cover_url,omitempty"`
 }
 
 func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
@@ -251,20 +252,21 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 			sourceID = t.TrackID.String()
 		}
 		ti := trackItem{
-			Position:    t.Position,
-			TrackID:     canonicalTrackRef(source, t.TrackID, t.ExternalID),
-			DBTrackID:   t.TrackID.String(),
-			Source:      source,
-			SourceID:    sourceID,
-			Title:       t.Title,
-			AlbumTitle:  t.AlbumTitle,
-			TrackNo:     t.TrackNo,
-			DurationMS:  t.DurationMS,
-			Artist:      t.Artist,
-			AddedByName: t.AddedByName,
-			AddedAt:     t.AddedAt.Format("2006-01-02T15:04:05Z07:00"),
-			PlayCount:   t.PlayCount,
-			CoverURL:    t.CoverURL,
+			Position:      t.Position,
+			TrackID:       canonicalTrackRef(source, t.TrackID, t.ExternalID),
+			DBTrackID:     t.TrackID.String(),
+			Source:        source,
+			SourceID:      sourceID,
+			SourceAlbumID: t.ExternalAlbumID,
+			Title:         t.Title,
+			AlbumTitle:    t.AlbumTitle,
+			TrackNo:       t.TrackNo,
+			DurationMS:    t.DurationMS,
+			Artist:        t.Artist,
+			AddedByName:   t.AddedByName,
+			AddedAt:       t.AddedAt.Format("2006-01-02T15:04:05Z07:00"),
+			PlayCount:     t.PlayCount,
+			CoverURL:      t.CoverURL,
 		}
 		if t.AlbumID != nil {
 			ti.AlbumID = t.AlbumID.String()

@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
 import {
   ArrowDownTrayIcon,
   CheckIcon,
@@ -76,6 +77,7 @@ export default function TrackContextMenu({
   onClose,
 }: Props) {
   const { play } = usePlayer();
+  const navigate = useNavigate();
   const { isFavorite, toggle: toggleFav } = useFavorites();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
@@ -89,6 +91,7 @@ export default function TrackContextMenu({
   const [addingId, setAddingId] = useState<string | null>(null);
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [downloading, setDownloading] = useState(false);
+  const [viewingAlbum, setViewingAlbum] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -195,6 +198,39 @@ export default function TrackContextMenu({
     onClose();
   };
 
+  const runViewAlbum = async () => {
+    if (viewingAlbum) return;
+    setViewingAlbum(true);
+    setError(null);
+    try {
+      let localAlbumID = track.album_id;
+      let tidalAlbumID =
+        track.source === "tidal" ? track.source_album_id : undefined;
+      if (!localAlbumID || (track.source === "tidal" && !tidalAlbumID)) {
+        const detail = await api.getTrack(track.id);
+        localAlbumID = localAlbumID || detail.album_id;
+        if (detail.source === "tidal") {
+          tidalAlbumID = tidalAlbumID || detail.source_album_id;
+        }
+      }
+      if (track.source === "tidal" && tidalAlbumID) {
+        navigate(`/library?view=albums&tidalAlbum=${encodeURIComponent(tidalAlbumID)}`);
+        onClose();
+        return;
+      }
+      if (localAlbumID) {
+        navigate(`/library?view=albums&album=${encodeURIComponent(localAlbumID)}`);
+        onClose();
+        return;
+      }
+      setError("No album found for this track.");
+      setViewingAlbum(false);
+    } catch (err) {
+      setError(errorMessage(err, "Album lookup failed."));
+      setViewingAlbum(false);
+    }
+  };
+
   const runShare = () => {
     onShare?.();
     onClose();
@@ -281,6 +317,18 @@ export default function TrackContextMenu({
         >
           <InformationCircleIcon className="size-3.5" />
           <span>Song info</span>
+        </button>
+      )}
+      {(track.album_id || track.album_title || track.source === "tidal") && (
+        <button
+          type="button"
+          role="menuitem"
+          className="ctx-item"
+          onClick={() => void runViewAlbum()}
+          disabled={viewingAlbum}
+        >
+          <RectangleStackIcon className="size-3.5" />
+          <span>{viewingAlbum ? "Opening album..." : "View album"}</span>
         </button>
       )}
       {onShare && (

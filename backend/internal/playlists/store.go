@@ -172,21 +172,22 @@ func (s *Store) Tracks(ctx context.Context, id uuid.UUID) ([]TrackEntry, error) 
 // TrackDetail is a playlist entry joined with track + artist + album data so
 // the UI can render a full row in one query.
 type TrackDetail struct {
-	Position    int
-	TrackID     uuid.UUID
-	Title       string
-	AlbumID     *uuid.UUID
-	AlbumTitle  string
-	TrackNo     int
-	DurationMS  int
-	Artist      string // primary artists joined with ", "
-	Source      string
-	ExternalID  string
-	CoverURL    string
-	AddedBy     *uuid.UUID
-	AddedByName string
-	AddedAt     time.Time
-	PlayCount   int // viewer's all-time plays of this track
+	Position        int
+	TrackID         uuid.UUID
+	Title           string
+	AlbumID         *uuid.UUID
+	AlbumTitle      string
+	TrackNo         int
+	DurationMS      int
+	Artist          string // primary artists joined with ", "
+	Source          string
+	ExternalID      string
+	ExternalAlbumID string
+	CoverURL        string
+	AddedBy         *uuid.UUID
+	AddedByName     string
+	AddedAt         time.Time
+	PlayCount       int // viewer's all-time plays of this track
 }
 
 // TracksDetailed returns all tracks in a playlist visible to viewerID (global
@@ -205,6 +206,7 @@ func (s *Store) TracksDetailed(ctx context.Context, id, viewerID uuid.UUID) ([]T
 				''),
 			t.source,
 			t.external_id,
+			COALESCE(t.external_meta->>'album_id', ''),
 			COALESCE(t.external_meta->>'cover_url', ''),
 			pt.added_by,
 			COALESCE(u.username, ''),
@@ -230,7 +232,7 @@ func (s *Store) TracksDetailed(ctx context.Context, id, viewerID uuid.UUID) ([]T
 		if err := rows.Scan(
 			&td.Position, &td.TrackID, &td.Title, &td.AlbumID, &td.AlbumTitle,
 			&td.TrackNo, &td.DurationMS, &td.Artist,
-			&td.Source, &td.ExternalID, &td.CoverURL,
+			&td.Source, &td.ExternalID, &td.ExternalAlbumID, &td.CoverURL,
 			&td.AddedBy, &td.AddedByName, &td.AddedAt, &td.PlayCount,
 		); err != nil {
 			return nil, err

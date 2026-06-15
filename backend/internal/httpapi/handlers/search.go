@@ -74,15 +74,16 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, it := range items {
 				resp.Tracks = append(resp.Tracks, trackListItemResp{
-					ID:         trackref.Remote(trackref.SourceTIDAL, it.ID),
-					Source:     trackref.SourceTIDAL,
-					SourceID:   it.ID,
-					Title:      it.Title,
-					AlbumTitle: it.AlbumTitle,
-					TrackNo:    it.TrackNo,
-					DurationMS: it.DurationMS,
-					Artist:     strings.Join(it.Artists, ", "),
-					CoverURL:   it.CoverURL,
+					ID:            trackref.Remote(trackref.SourceTIDAL, it.ID),
+					Source:        trackref.SourceTIDAL,
+					SourceID:      it.ID,
+					SourceAlbumID: it.AlbumID,
+					Title:         it.Title,
+					AlbumTitle:    it.AlbumTitle,
+					TrackNo:       it.TrackNo,
+					DurationMS:    it.DurationMS,
+					Artist:        strings.Join(it.Artists, ", "),
+					CoverURL:      it.CoverURL,
 				})
 			}
 		}

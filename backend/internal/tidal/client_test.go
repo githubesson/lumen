@@ -180,6 +180,35 @@ func TestHifiSearchTracks(t *testing.T) {
 	}
 }
 
+func TestHifiAlbum(t *testing.T) {
+	var gotID, gotLimit string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/album/" {
+			t.Fatalf("path = %q, want /album/", r.URL.Path)
+		}
+		gotID = r.URL.Query().Get("id")
+		gotLimit = r.URL.Query().Get("limit")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"version":"2.10","data":{"id":58990510,"title":"OK Computer","duration":3216,"numberOfTracks":12,"releaseDate":"1997-07-01","cover":"e77e4cc0-6cd0-4522-807d-88aeac488065","artist":{"name":"Radiohead"},"items":[{"type":"track","item":{"id":58990511,"title":"Airbag","duration":287,"trackNumber":1,"volumeNumber":1,"artist":{"name":"Radiohead"},"artists":[{"name":"Radiohead"}],"album":{"id":58990510,"title":"OK Computer","cover":"e77e4cc0-6cd0-4522-807d-88aeac488065"}}}]}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{HifiAPIURL: srv.URL})
+	album, err := c.Album(context.Background(), "58990510", 100, 0)
+	if err != nil {
+		t.Fatalf("Album returned error: %v", err)
+	}
+	if gotID != "58990510" || gotLimit != "100" {
+		t.Fatalf("query id=%q limit=%q, want id=58990510 limit=100", gotID, gotLimit)
+	}
+	if album.ID != "58990510" || album.Title != "OK Computer" || album.Artist != "Radiohead" {
+		t.Fatalf("unexpected album: %+v", album)
+	}
+	if len(album.Tracks) != 1 || album.Tracks[0].ID != "58990511" || album.Tracks[0].AlbumID != "58990510" {
+		t.Fatalf("unexpected album tracks: %+v", album.Tracks)
+	}
+}
+
 func TestHifiStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {

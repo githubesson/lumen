@@ -831,6 +831,10 @@ function entryToTrack(e: PlaylistTrackEntry): TrackListItem {
     duration_ms: e.duration_ms,
     artist: e.artist,
     has_cover: e.has_cover,
+    cover_url: e.cover_url,
+    source: e.source,
+    source_id: e.source_id,
+    source_album_id: e.source_album_id,
   };
 }
 

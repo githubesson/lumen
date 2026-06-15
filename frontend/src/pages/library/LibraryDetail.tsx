@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ArrowLeftIcon,
   PencilSquareIcon,
@@ -7,9 +7,11 @@ import {
 import {
   api,
   albumCoverUrl,
+  errorMessage,
   trackCoverUrl,
   type Album,
   type Artist,
+  type TidalAlbum,
   type TrackListItem,
 } from "../../api";
 import { displayText, pluralize } from "../../lib/format";
@@ -151,6 +153,133 @@ export function AlbumDetailView({
           setCoverNonce(Date.now());
         }}
       />
+    </div>
+  );
+}
+
+export function TidalAlbumDetailView({
+  id,
+  onBack,
+}: {
+  id: string;
+  onBack: () => void;
+}) {
+  const [album, setAlbum] = useState<TidalAlbum | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const { play } = usePlayer();
+  const search = useDetailTrackSearch("album", album?.tracks ?? null);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    setAlbum(null);
+    setError(null);
+    api
+      .getTidalAlbum(id, { signal: ac.signal })
+      .then((next) => {
+        if (!ac.signal.aborted) setAlbum(next);
+      })
+      .catch((err) => {
+        if (!ac.signal.aborted) {
+          setError(errorMessage(err, "Failed to load TIDAL album."));
+        }
+      });
+    return () => ac.abort();
+  }, [id]);
+
+  if (!album && !error) {
+    return (
+      <div className="view">
+        <LoadingState label="Loading TIDAL album..." />
+      </div>
+    );
+  }
+
+  return (
+    <div className="view" style={{ display: "grid", gap: 18 }}>
+      <DetailBackRow onBack={onBack} />
+      {album ? (
+        <>
+          <ListPageHeader
+            kind="TIDAL Album"
+            title={displayText(album.title)}
+            art={
+              <CoverArt
+                className="detail-art"
+                src={album.cover_url ?? null}
+                seed={`tidal:${album.id}`}
+                label={album.title}
+                forcePlaceholder={!album.cover_url}
+              />
+            }
+            meta={
+              <>
+                {album.artist && (
+                  <>
+                    <span>{displayText(album.artist)}</span>
+                    <span className="dot" />
+                  </>
+                )}
+                <span>{pluralize(album.track_count, "track")}</span>
+                {album.release_year ? (
+                  <>
+                    <span className="dot" />
+                    <span>{album.release_year}</span>
+                  </>
+                ) : null}
+              </>
+            }
+            actions={
+              <Button
+                variant="primary"
+                onClick={() => album.tracks.length && play(album.tracks[0], album.tracks)}
+                disabled={album.tracks.length === 0}
+                leadingIcon={<PlayIcon className="size-4" />}
+              >
+                Play all
+              </Button>
+            }
+            corner={
+              <DetailTrackSearchBar
+                kind="album"
+                query={search.query}
+                onQueryChange={search.setQuery}
+                inputRef={search.inputRef}
+                matchCount={search.filteredTracks.length}
+                totalCount={album.tracks.length}
+                searchActive={search.searchActive}
+              />
+            }
+          />
+          {error && <ErrorBanner message={error} />}
+          <TrackList
+            tracks={search.filteredTracks}
+            queueSource={album.tracks}
+            showAlbum={false}
+            emptyState={
+              search.searchActive ? (
+                <EmptyState
+                  title="No matches."
+                  hint={`Nothing in this album matches "${search.query}".`}
+                />
+              ) : undefined
+            }
+          />
+        </>
+      ) : (
+        <div
+          style={{
+            padding: 40,
+            textAlign: "center",
+            color: "var(--fg-muted)",
+            fontSize: 13,
+          }}
+        >
+          {error && <ErrorBanner message={error} />}
+          <p style={{ color: "var(--fg)", fontWeight: 500, fontSize: 14 }}>
+            TIDAL album unavailable.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

@@ -45,6 +45,8 @@ export const qk = {
   album: (userId: UserId, id: Id) => ["user", userId, "album", id] as const,
   albumTracks: (userId: UserId, id: Id) =>
     ["user", userId, "album-tracks", id] as const,
+  tidalAlbum: (userId: UserId, id: Id) =>
+    ["user", userId, "tidal-album", id] as const,
   artist: (userId: UserId, id: Id) => ["user", userId, "artist", id] as const,
   artistTracks: (userId: UserId, id: Id) =>
     ["user", userId, "artist-tracks", id] as const,

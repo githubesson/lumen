@@ -109,6 +109,18 @@ type Track struct {
 	CoverURL    string
 }
 
+type Album struct {
+	ID          string
+	Title       string
+	Artist      string
+	ReleaseYear int
+	TrackCount  int
+	DurationMS  int
+	CoverID     string
+	CoverURL    string
+	Tracks      []Track
+}
+
 func (t Track) Metadata() map[string]any {
 	return map[string]any{
 		"album_id":     t.AlbumID,
@@ -157,6 +169,42 @@ func (c *Client) SearchTracks(ctx context.Context, query string, limit, offset i
 	}
 	slog.Debug("tidal hifi search response", "query", query, "count", len(tracks), "version", out.Version)
 	return tracks, nil
+}
+
+func (c *Client) Album(ctx context.Context, id string, limit, offset int) (Album, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return Album{}, errors.New("tidal album id is required")
+	}
+	if strings.TrimSpace(c.cfg.HifiAPIURL) == "" {
+		return Album{}, ErrNotConfigured
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	u := c.hifiURL("/album/")
+	q := u.Query()
+	q.Set("id", id)
+	q.Set("limit", strconv.Itoa(limit))
+	q.Set("offset", strconv.Itoa(offset))
+	u.RawQuery = q.Encode()
+	var out struct {
+		Version string   `json:"version"`
+		Data    apiAlbum `json:"data"`
+	}
+	slog.Debug("tidal hifi album request", "album", id, "limit", limit, "offset", offset, "url", logSafeURL(u.String()))
+	if err := c.doHifiJSON(ctx, u.String(), &out); err != nil {
+		return Album{}, err
+	}
+	album := out.Data.album()
+	if album.ID == "" {
+		return Album{}, errors.New("hifi-api album response did not include an album")
+	}
+	slog.Debug("tidal hifi album response", "album", id, "title", album.Title, "tracks", len(album.Tracks), "version", out.Version)
+	return album, nil
 }
 
 func (c *Client) Track(ctx context.Context, id string) (Track, error) {
@@ -715,11 +763,15 @@ type apiArtist struct {
 }
 
 type apiAlbum struct {
-	ID          tidalID   `json:"id"`
-	Title       string    `json:"title"`
-	Cover       string    `json:"cover"`
-	ReleaseDate string    `json:"releaseDate"`
-	Artist      apiArtist `json:"artist"`
+	ID             tidalID        `json:"id"`
+	Title          string         `json:"title"`
+	Cover          string         `json:"cover"`
+	ReleaseDate    string         `json:"releaseDate"`
+	Duration       int            `json:"duration"`
+	NumberOfTracks int            `json:"numberOfTracks"`
+	Artist         apiArtist      `json:"artist"`
+	Artists        []apiArtist    `json:"artists"`
+	Items          []apiAlbumItem `json:"items"`
 }
 
 type apiTrack struct {
@@ -732,6 +784,61 @@ type apiTrack struct {
 	Artist       apiArtist   `json:"artist"`
 	Artists      []apiArtist `json:"artists"`
 	Album        apiAlbum    `json:"album"`
+}
+
+type apiAlbumItem struct {
+	Item apiTrack `json:"item"`
+	Type string   `json:"type"`
+}
+
+func (a apiAlbum) album() Album {
+	year := 0
+	if len(a.ReleaseDate) >= 4 {
+		year, _ = strconv.Atoi(a.ReleaseDate[:4])
+	}
+	artist := strings.TrimSpace(a.Artist.Name)
+	if artist == "" && len(a.Artists) > 0 {
+		artist = strings.TrimSpace(a.Artists[0].Name)
+	}
+	coverID := strings.TrimSpace(a.Cover)
+	album := Album{
+		ID:          string(a.ID),
+		Title:       a.Title,
+		Artist:      artist,
+		ReleaseYear: year,
+		TrackCount:  a.NumberOfTracks,
+		DurationMS:  max(0, a.Duration) * 1000,
+		CoverID:     coverID,
+		CoverURL:    CoverURL(coverID, 640),
+		Tracks:      make([]Track, 0, len(a.Items)),
+	}
+	for _, item := range a.Items {
+		if item.Type != "" && !strings.EqualFold(item.Type, "track") {
+			continue
+		}
+		track := item.Item.track()
+		if track.ID == "" || track.Title == "" {
+			continue
+		}
+		if track.AlbumID == "" {
+			track.AlbumID = album.ID
+		}
+		if track.AlbumTitle == "" {
+			track.AlbumTitle = album.Title
+		}
+		if track.AlbumArtist == "" {
+			track.AlbumArtist = album.Artist
+		}
+		if track.CoverID == "" {
+			track.CoverID = album.CoverID
+			track.CoverURL = album.CoverURL
+		}
+		album.Tracks = append(album.Tracks, track)
+	}
+	if album.TrackCount == 0 {
+		album.TrackCount = len(album.Tracks)
+	}
+	return album
 }
 
 func (t apiTrack) track() Track {

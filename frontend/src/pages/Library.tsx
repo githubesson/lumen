@@ -28,7 +28,11 @@ import { useTrackContextMenu } from "../components/TrackContextMenu";
 import { usePlayer } from "../context/Player";
 import { usePaginatedList } from "../lib/usePaginatedList";
 import GridView from "./library/GridView";
-import { AlbumDetailView, ArtistDetailView } from "./library/LibraryDetail";
+import {
+  AlbumDetailView,
+  ArtistDetailView,
+  TidalAlbumDetailView,
+} from "./library/LibraryDetail";
 
 const POLL_INTERVAL_MS = 15 * 60 * 1000;
 
@@ -53,6 +57,7 @@ export default function Library() {
     ? (params.get("view") as View)
     : "tracks";
   const albumID = params.get("album");
+  const tidalAlbumID = params.get("tidalAlbum");
   const artistID = params.get("artist");
   const query = params.get("q") ?? "";
 
@@ -94,6 +99,15 @@ export default function Library() {
 
   if (albumID) {
     return <AlbumDetailView key={albumID} id={albumID} onBack={clearDrill} />;
+  }
+  if (tidalAlbumID) {
+    return (
+      <TidalAlbumDetailView
+        key={tidalAlbumID}
+        id={tidalAlbumID}
+        onBack={clearDrill}
+      />
+    );
   }
   if (artistID) {
     return <ArtistDetailView key={artistID} id={artistID} onBack={clearDrill} />;

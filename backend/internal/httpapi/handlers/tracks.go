@@ -74,47 +74,49 @@ type trackArtistResp struct {
 }
 
 type trackDetailResp struct {
-	ID         string            `json:"id"`
-	DBTrackID  string            `json:"db_track_id,omitempty"`
-	Source     string            `json:"source"`
-	SourceID   string            `json:"source_id,omitempty"`
-	Title      string            `json:"title"`
-	AlbumID    string            `json:"album_id,omitempty"`
-	AlbumTitle string            `json:"album_title,omitempty"`
-	TrackNo    int               `json:"track_no,omitempty"`
-	DiscNo     int               `json:"disc_no,omitempty"`
-	DurationMS int               `json:"duration_ms"`
-	Genre      string            `json:"genre,omitempty"`
-	Year       int               `json:"year,omitempty"`
-	Composer   string            `json:"composer,omitempty"`
-	Comments   string            `json:"comments,omitempty"`
-	Format     string            `json:"format"`
-	Bitrate    int               `json:"bitrate,omitempty"`
-	SampleRate int               `json:"sample_rate,omitempty"`
-	Channels   int               `json:"channels,omitempty"`
-	FileSize   int64             `json:"file_size"`
-	Artists    []trackArtistResp `json:"artists"`
-	Aliases    []trackAliasResp  `json:"aliases,omitempty"`
-	HasCover   bool              `json:"has_cover"`
-	CoverURL   string            `json:"cover_url,omitempty"`
-	Favorited  bool              `json:"favorited"`
+	ID            string            `json:"id"`
+	DBTrackID     string            `json:"db_track_id,omitempty"`
+	Source        string            `json:"source"`
+	SourceID      string            `json:"source_id,omitempty"`
+	SourceAlbumID string            `json:"source_album_id,omitempty"`
+	Title         string            `json:"title"`
+	AlbumID       string            `json:"album_id,omitempty"`
+	AlbumTitle    string            `json:"album_title,omitempty"`
+	TrackNo       int               `json:"track_no,omitempty"`
+	DiscNo        int               `json:"disc_no,omitempty"`
+	DurationMS    int               `json:"duration_ms"`
+	Genre         string            `json:"genre,omitempty"`
+	Year          int               `json:"year,omitempty"`
+	Composer      string            `json:"composer,omitempty"`
+	Comments      string            `json:"comments,omitempty"`
+	Format        string            `json:"format"`
+	Bitrate       int               `json:"bitrate,omitempty"`
+	SampleRate    int               `json:"sample_rate,omitempty"`
+	Channels      int               `json:"channels,omitempty"`
+	FileSize      int64             `json:"file_size"`
+	Artists       []trackArtistResp `json:"artists"`
+	Aliases       []trackAliasResp  `json:"aliases,omitempty"`
+	HasCover      bool              `json:"has_cover"`
+	CoverURL      string            `json:"cover_url,omitempty"`
+	Favorited     bool              `json:"favorited"`
 }
 
 type trackListItemResp struct {
-	ID         string `json:"id"`
-	DBTrackID  string `json:"db_track_id,omitempty"`
-	Source     string `json:"source,omitempty"`
-	SourceID   string `json:"source_id,omitempty"`
-	Title      string `json:"title"`
-	AlbumID    string `json:"album_id,omitempty"`
-	AlbumTitle string `json:"album_title,omitempty"`
-	TrackNo    int    `json:"track_no,omitempty"`
-	DurationMS int    `json:"duration_ms"`
-	Artist     string `json:"artist,omitempty"`
-	Aka        string `json:"aka,omitempty"` // " • "-joined alt titles from dedup'd copies
-	Favorited  bool   `json:"favorited,omitempty"`
-	Owned      bool   `json:"owned,omitempty"` // true = the viewer's own personal upload (deletable)
-	CoverURL   string `json:"cover_url,omitempty"`
+	ID            string `json:"id"`
+	DBTrackID     string `json:"db_track_id,omitempty"`
+	Source        string `json:"source,omitempty"`
+	SourceID      string `json:"source_id,omitempty"`
+	SourceAlbumID string `json:"source_album_id,omitempty"`
+	Title         string `json:"title"`
+	AlbumID       string `json:"album_id,omitempty"`
+	AlbumTitle    string `json:"album_title,omitempty"`
+	TrackNo       int    `json:"track_no,omitempty"`
+	DurationMS    int    `json:"duration_ms"`
+	Artist        string `json:"artist,omitempty"`
+	Aka           string `json:"aka,omitempty"` // " • "-joined alt titles from dedup'd copies
+	Favorited     bool   `json:"favorited,omitempty"`
+	Owned         bool   `json:"owned,omitempty"` // true = the viewer's own personal upload (deletable)
+	CoverURL      string `json:"cover_url,omitempty"`
 }
 
 type trackAliasResp struct {
@@ -318,28 +320,29 @@ func makeTrackDetailResp(t *library.TrackDetail, isFav bool) trackDetailResp {
 		sourceID = t.ID.String()
 	}
 	resp := trackDetailResp{
-		ID:         id,
-		DBTrackID:  t.ID.String(),
-		Source:     source,
-		SourceID:   sourceID,
-		Title:      t.Title,
-		AlbumTitle: t.AlbumTitle,
-		TrackNo:    t.TrackNo,
-		DiscNo:     t.DiscNo,
-		DurationMS: t.DurationMS,
-		Genre:      t.Genre,
-		Year:       t.Year,
-		Composer:   t.Composer,
-		Comments:   t.Comments,
-		Format:     t.Format,
-		Bitrate:    t.Bitrate,
-		SampleRate: t.SampleRate,
-		Channels:   t.Channels,
-		FileSize:   t.FileSize,
-		HasCover:   t.CoverArtPath != "" || t.CoverURL != "",
-		CoverURL:   t.CoverURL,
-		Favorited:  isFav,
-		Artists:    make([]trackArtistResp, 0, len(t.Artists)),
+		ID:            id,
+		DBTrackID:     t.ID.String(),
+		Source:        source,
+		SourceID:      sourceID,
+		SourceAlbumID: t.ExternalAlbumID,
+		Title:         t.Title,
+		AlbumTitle:    t.AlbumTitle,
+		TrackNo:       t.TrackNo,
+		DiscNo:        t.DiscNo,
+		DurationMS:    t.DurationMS,
+		Genre:         t.Genre,
+		Year:          t.Year,
+		Composer:      t.Composer,
+		Comments:      t.Comments,
+		Format:        t.Format,
+		Bitrate:       t.Bitrate,
+		SampleRate:    t.SampleRate,
+		Channels:      t.Channels,
+		FileSize:      t.FileSize,
+		HasCover:      t.CoverArtPath != "" || t.CoverURL != "",
+		CoverURL:      t.CoverURL,
+		Favorited:     isFav,
+		Artists:       make([]trackArtistResp, 0, len(t.Artists)),
 	}
 	if t.AlbumID != nil {
 		resp.AlbumID = t.AlbumID.String()
