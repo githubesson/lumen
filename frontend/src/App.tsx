@@ -100,6 +100,10 @@ export default function App() {
             element={<Navigate to="/admin?section=invites" replace />}
           />
           <Route
+            path="/admin/users"
+            element={<Navigate to="/admin?section=users" replace />}
+          />
+          <Route
             path="/admin/library"
             element={<Navigate to="/admin" replace />}
           />

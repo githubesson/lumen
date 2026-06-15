@@ -975,6 +975,58 @@ textarea { font: inherit; color: inherit; }
 [data-density="dense"] .card-sub { font-size: 10.5px; }
 
 /* Library table */
+.track-selectbar {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 8px;
+}
+.track-selectbar-host {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+}
+.track-selectbar-attached {
+  min-height: 30px;
+  padding: 0;
+  gap: 6px;
+}
+.track-selectbar-attached[data-selecting="false"] .track-selectbar-status {
+  display: none;
+}
+.track-selectbar-attached .track-selectbar-status {
+  flex: 0 1 auto;
+  max-width: 220px;
+}
+.track-selectbar-status {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--fg-subtle);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+}
+.track-selectbar-status span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+}
+.track-selectbar .btn {
+  height: 30px;
+  padding: 0 10px;
+}
+.track-selectbar-close {
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+}
+
 .table {
   width: 100%;
   border-collapse: separate;
@@ -999,6 +1051,13 @@ textarea { font: inherit; color: inherit; }
 }
 .table tbody tr { cursor: pointer; }
 .table tbody tr:hover td { background: var(--bg-elev-2); }
+.table tbody tr.selected td {
+  background: color-mix(in oklch, var(--accent) 12%, var(--bg-elev-2));
+  color: var(--fg);
+}
+.table tbody tr.selected:hover td {
+  background: color-mix(in oklch, var(--accent) 16%, var(--bg-elev-2));
+}
 .table tbody tr.playing td { color: var(--fg); }
 .table tbody tr.playing td:first-child { color: var(--accent); }
 .table tbody td {
@@ -1030,6 +1089,22 @@ textarea { font: inherit; color: inherit; }
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--fg-subtle);
+}
+.table .col-select {
+  width: 34px;
+  text-align: center;
+}
+.track-check {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.track-check:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 .table .col-art { width: 44px; }
 .table .col-dur {

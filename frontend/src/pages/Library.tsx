@@ -35,6 +35,7 @@ import {
 } from "./library/LibraryDetail";
 
 const POLL_INTERVAL_MS = 15 * 60 * 1000;
+const LIBRARY_SELECTION_CONTROLS_ID = "library-track-selection-controls";
 
 type View = "tracks" | "artists" | "albums";
 type SortKey = "recent" | "title" | "artist" | "album" | "duration";
@@ -256,6 +257,13 @@ function BrowseToolbar({
         }
       />
 
+      {view === "tracks" && displayMode === "list" && (
+        <div
+          id={LIBRARY_SELECTION_CONTROLS_ID}
+          className="track-selectbar-host"
+        />
+      )}
+
       {view === "tracks" && (
         <select
           className="input"
@@ -342,7 +350,11 @@ function TracksView({
         {items === null && <LoadingState label="Loading library…" />}
         {items && items.length === 0 && !error && <LibraryEmptyState />}
         {items && items.length > 0 && displayMode === "list" && (
-          <TrackList tracks={sorted} queueSource={sorted} />
+          <TrackList
+            tracks={sorted}
+            queueSource={sorted}
+            selectionControlsHostId={LIBRARY_SELECTION_CONTROLS_ID}
+          />
         )}
         {items && items.length > 0 && displayMode === "grid" && (
           <TracksGrid tracks={sorted} onPlay={(t) => play(t, sorted)} />

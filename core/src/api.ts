@@ -18,6 +18,16 @@ export interface Invite {
   created_at: string;
 }
 
+export interface AdminUser {
+  id: string;
+  username: string;
+  role: Role;
+  disabled: boolean;
+  must_reset_password: boolean;
+  created_at: string;
+  last_login_at?: string;
+}
+
 export interface InviteCheck {
   valid: boolean;
   target_role?: Role;
@@ -258,6 +268,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ current_password, new_password }),
     }),
+
+  listAdminUsers: (options: RequestOptions = {}) =>
+    request<AdminUser[]>("/api/admin/users", options),
 
   listInvites: (options: RequestOptions = {}) =>
     request<Invite[]>("/api/admin/invites", options),

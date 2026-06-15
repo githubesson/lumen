@@ -24,6 +24,21 @@ export interface FH6StatusPayload {
   candidates: string[];
 }
 
+export interface ExportTrackFileItem {
+  url: string;
+  filename: string;
+}
+
+export interface ExportTrackFilesResult {
+  ok: boolean;
+  canceled?: boolean;
+  folder?: string;
+  saved?: number;
+  failed?: number;
+  errors?: string[];
+  error?: string;
+}
+
 export interface ElectronApi {
   isElectron: true;
   platform: NodeJS.Platform;
@@ -69,6 +84,7 @@ export interface ElectronApi {
     payload: DiscordActivityPayload,
   ): Promise<{ ok: boolean; error?: string }>;
   clearDiscordActivity(): Promise<{ ok: boolean }>;
+  exportTrackFiles(items: ExportTrackFileItem[]): Promise<ExportTrackFilesResult>;
 }
 
 const api: ElectronApi = {
@@ -90,6 +106,7 @@ const api: ElectronApi = {
   setDiscordActivity: (payload) =>
     ipcRenderer.invoke("discord:activity", payload),
   clearDiscordActivity: () => ipcRenderer.invoke("discord:clear"),
+  exportTrackFiles: (items) => ipcRenderer.invoke("tracks:export-files", items),
 };
 
 contextBridge.exposeInMainWorld("electron", api);

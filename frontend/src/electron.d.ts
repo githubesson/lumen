@@ -34,6 +34,21 @@ export interface FH6StatusPayload {
   candidates: string[];
 }
 
+export interface ExportTrackFileItem {
+  url: string;
+  filename: string;
+}
+
+export interface ExportTrackFilesResult {
+  ok: boolean;
+  canceled?: boolean;
+  folder?: string;
+  saved?: number;
+  failed?: number;
+  errors?: string[];
+  error?: string;
+}
+
 declare global {
   interface Window {
     electron?: {
@@ -83,6 +98,9 @@ declare global {
       ) => Promise<{ ok: boolean; error?: string }>;
       /** Clear the Discord activity (e.g. on logout or paused with no track). */
       clearDiscordActivity?: () => Promise<{ ok: boolean }>;
+      exportTrackFiles?: (
+        items: ExportTrackFileItem[],
+      ) => Promise<ExportTrackFilesResult>;
     };
   }
 }
