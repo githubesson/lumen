@@ -2,9 +2,11 @@ import { useSearchParams } from "react-router-dom";
 import SegmentedControl from "../components/SegmentedControl";
 import { LibraryAdminSection } from "./AdminLibrary";
 import { InvitesAdminSection } from "./AdminInvites";
+import { UsersAdminSection } from "./AdminUsers";
 
 const SECTIONS = [
   { id: "library", label: "Library", Component: LibraryAdminSection },
+  { id: "users", label: "Users", Component: UsersAdminSection },
   { id: "invites", label: "Invites", Component: InvitesAdminSection },
 ] as const;
 

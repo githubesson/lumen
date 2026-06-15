@@ -1,4 +1,5 @@
 import type { DiscordActivityPayload } from "../electron";
+import type { ExportTrackFileItem } from "../electron";
 
 type ElectronApi = NonNullable<Window["electron"]>;
 
@@ -15,6 +16,9 @@ export const isElectron = !!electron;
 
 /** Whether the desktop shell can toggle the compact mini-player window. */
 export const canSetMiniPlayer = !!electron?.setMiniPlayerMode;
+
+/** Whether the desktop shell can export many track streams into a chosen folder. */
+export const canExportTrackFiles = !!electron?.exportTrackFiles;
 
 export function setMiniPlayerMode(enabled: boolean) {
   return (
@@ -61,4 +65,8 @@ export function installFH6Radio(opts: {
 
 export function syncFH6Session() {
   return electron?.syncFH6Session?.();
+}
+
+export function exportTrackFiles(items: ExportTrackFileItem[]) {
+  return electron?.exportTrackFiles?.(items);
 }

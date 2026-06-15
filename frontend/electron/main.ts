@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { pipeline } from "node:stream/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { OpenDialogOptions, Rectangle } from "electron";
 
@@ -71,6 +72,11 @@ interface FH6Status {
   mediaInstalled: boolean;
   packagedModAvailable: boolean;
   candidates: string[];
+}
+
+interface ExportTrackFileItem {
+  url: string;
+  filename: string;
 }
 
 const DIST_DIR = path.join(__dirname, "..", "..", "dist");
@@ -767,6 +773,66 @@ ipcMain.handle("window:close", () => {
   return { ok: true };
 });
 
+ipcMain.handle("tracks:export-files", async (_e, rawItems: ExportTrackFileItem[]) => {
+  try {
+    const items = Array.isArray(rawItems)
+      ? rawItems.filter(
+          (item) =>
+            item &&
+            typeof item.url === "string" &&
+            typeof item.filename === "string" &&
+            item.url.trim() &&
+            item.filename.trim(),
+        )
+      : [];
+    if (items.length === 0) {
+      return { ok: false, error: "No files selected for export." };
+    }
+
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, {
+          title: "Choose export folder",
+          properties: ["openDirectory", "createDirectory"],
+        })
+      : await dialog.showOpenDialog({
+          title: "Choose export folder",
+          properties: ["openDirectory", "createDirectory"],
+        });
+    if (result.canceled || result.filePaths.length === 0) {
+      return { ok: false, canceled: true };
+    }
+
+    const folder = result.filePaths[0];
+    const cookieHeader = await appCookieHeader();
+    let saved = 0;
+    let failed = 0;
+    const errors: string[] = [];
+    for (const item of items) {
+      try {
+        const urlString = exportDownloadUrl(item.url);
+        const dest = await uniqueExportPath(folder, item.filename);
+        await downloadToFile(urlString, dest, cookieHeader);
+        saved += 1;
+      } catch (e) {
+        failed += 1;
+        if (errors.length < 5) {
+          errors.push(`${item.filename}: ${(e as Error).message}`);
+        }
+      }
+    }
+
+    return {
+      ok: failed === 0,
+      folder,
+      saved,
+      failed,
+      errors,
+    };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
 ipcMain.handle("fh6:status", async () => fh6Status());
 
 ipcMain.handle("fh6:choose-game-dir", async () => {
@@ -835,6 +901,98 @@ async function appCookieHeader(): Promise<string> {
     url: `http://127.0.0.1:${proxyPort}`,
   });
   return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+}
+
+function exportDownloadUrl(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) throw new Error("Missing download URL");
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (!trimmed.startsWith("/api/")) {
+    throw new Error("Export URL must be an API path");
+  }
+  if (!proxyPort) throw new Error("Local app proxy is not ready");
+  return `http://127.0.0.1:${proxyPort}${trimmed}`;
+}
+
+function sanitizeExportFilename(name: string): string {
+  const sanitized = path
+    .basename(name)
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .slice(0, 180);
+  return sanitized || "track";
+}
+
+async function uniqueExportPath(folder: string, filename: string): Promise<string> {
+  const safe = sanitizeExportFilename(filename);
+  const parsed = path.parse(safe);
+  const stem = parsed.name || "track";
+  const ext = parsed.ext;
+  for (let i = 0; i < 10000; i += 1) {
+    const candidate = path.join(
+      folder,
+      i === 0 ? `${stem}${ext}` : `${stem} (${i})${ext}`,
+    );
+    if (!(await exists(candidate))) return candidate;
+  }
+  throw new Error("Could not choose a unique filename");
+}
+
+function downloadToFile(urlString: string, dest: string, cookieHeader: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const attempt = (currentUrl: string, redirects: number) => {
+      const target = new URL(currentUrl);
+      const lib = target.protocol === "https:" ? https : http;
+      const req = lib.get(
+        {
+          protocol: target.protocol,
+          hostname: target.hostname,
+          port: target.port || (target.protocol === "https:" ? 443 : 80),
+          path: target.pathname + target.search,
+          headers: {
+            Accept: "application/octet-stream,*/*",
+            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+          },
+        },
+        (res) => {
+          const status = res.statusCode ?? 0;
+          const location = res.headers.location;
+          if (status >= 300 && status < 400 && location) {
+            res.resume();
+            if (redirects <= 0) {
+              reject(new Error("Too many redirects"));
+              return;
+            }
+            attempt(new URL(location, target).toString(), redirects - 1);
+            return;
+          }
+          if (status < 200 || status >= 300) {
+            res.resume();
+            reject(new Error(`HTTP ${status || "error"}`));
+            return;
+          }
+
+          const out = fs.createWriteStream(dest, { flags: "wx" });
+          pipeline(res, out)
+            .then(() => resolve())
+            .catch(async (e) => {
+              try {
+                await fsp.rm(dest, { force: true });
+              } catch {
+                // Best-effort cleanup; the original stream error is clearer.
+              }
+              reject(e);
+            });
+        },
+      );
+      req.on("error", reject);
+      req.setTimeout(120000, () => {
+        req.destroy(new Error("Download timed out"));
+      });
+    };
+    attempt(urlString, 5);
+  });
 }
 
 function postJson(urlString: string, body: unknown): Promise<{ ok: boolean; error?: string }> {

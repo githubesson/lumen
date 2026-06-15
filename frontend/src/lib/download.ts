@@ -1,6 +1,10 @@
 // Download + audio-format utilities, extracted from TrackContextMenu so they
 // live as pure helpers (and so UploadDialog can share the audio allowlist).
-import { streamUrl, type TrackDetail, type TrackListItem } from "../api";
+import { api, streamUrl, type TrackDetail, type TrackListItem } from "../api";
+import {
+  exportTrackFiles,
+  canExportTrackFiles,
+} from "./platform";
 
 /** Canonical audio file extensions the app accepts/recognizes. */
 export const AUDIO_EXTENSIONS = [
@@ -26,6 +30,111 @@ export function triggerDownload(
   document.body.appendChild(a);
   a.click();
   a.remove();
+}
+
+export interface BatchExportResult {
+  canceled: boolean;
+  exported: number;
+  failed: number;
+  skipped: number;
+  folder?: string;
+  errors: string[];
+  usedFolderPicker: boolean;
+}
+
+export async function exportTracksAsFiles(
+  tracks: TrackListItem[],
+): Promise<BatchExportResult> {
+  const localTracks = tracks.filter(isLocalTrack);
+  const skipped = tracks.length - localTracks.length;
+  if (localTracks.length === 0) {
+    return {
+      canceled: false,
+      exported: 0,
+      failed: 0,
+      skipped,
+      errors: [],
+      usedFolderPicker: false,
+    };
+  }
+
+  const prepared: Array<{
+    track: TrackListItem;
+    detail: TrackDetail | null;
+    ext?: string;
+  }> = [];
+  let failed = 0;
+  const errors: string[] = [];
+  for (const track of localTracks) {
+    try {
+      let detail: TrackDetail | null = null;
+      try {
+        detail = await api.getTrack(track.id);
+      } catch {
+        // Stream URL is enough; detail only improves the filename.
+      }
+      const ext =
+        extensionForFormat(detail?.format) ?? (await extensionFromStream(track.id));
+      prepared.push({ track, detail, ext });
+    } catch (e) {
+      failed += 1;
+      if (errors.length < 5) {
+        errors.push(`${track.title}: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  if (canExportTrackFiles) {
+    const res = await exportTrackFiles(
+      prepared.map(({ track, detail, ext }) => ({
+        url: streamUrl(track.id),
+        filename: downloadFilename(track, detail, ext),
+      })),
+    );
+    if (res?.canceled) {
+      return {
+        canceled: true,
+        exported: 0,
+        failed,
+        skipped,
+        folder: res.folder,
+        errors,
+        usedFolderPicker: true,
+      };
+    }
+    if (!res) {
+      return {
+        canceled: false,
+        exported: 0,
+        failed: failed + prepared.length,
+        skipped,
+        errors: [...errors, "Desktop export is unavailable."],
+        usedFolderPicker: true,
+      };
+    }
+    return {
+      canceled: false,
+      exported: res.saved ?? 0,
+      failed: failed + (res.failed ?? 0),
+      skipped,
+      folder: res.folder,
+      errors: [...errors, ...(res.errors ?? []), ...(res.error ? [res.error] : [])],
+      usedFolderPicker: true,
+    };
+  }
+
+  for (const { track, detail, ext } of prepared) {
+    triggerDownload(track, detail, ext);
+    await sleep(150);
+  }
+  return {
+    canceled: false,
+    exported: prepared.length,
+    failed,
+    skipped,
+    errors,
+    usedFolderPicker: false,
+  };
 }
 
 export function downloadFilename(
@@ -123,4 +232,12 @@ export function extensionForContentType(contentType?: string) {
     default:
       return undefined;
   }
+}
+
+function isLocalTrack(track: TrackListItem): boolean {
+  return !track.source || track.source === "local";
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
