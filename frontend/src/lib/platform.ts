@@ -1,5 +1,6 @@
 import type { DiscordActivityPayload } from "../electron";
 import type { ExportTrackFileItem } from "../electron";
+import type { Tweaks as ElectronTweaks } from "../electron";
 
 type ElectronApi = NonNullable<Window["electron"]>;
 
@@ -69,4 +70,18 @@ export function syncFH6Session() {
 
 export function exportTrackFiles(items: ExportTrackFileItem[]) {
   return electron?.exportTrackFiles?.(items);
+}
+
+export function getTweaks() {
+  return (
+    electron?.getTweaks?.() ??
+    Promise.resolve({ tweaks: {} as Partial<ElectronTweaks>, audioSinkId: "" })
+  );
+}
+
+export function saveTweaks(payload: {
+  tweaks?: Partial<ElectronTweaks>;
+  audioSinkId?: string;
+}) {
+  return electron?.saveTweaks?.(payload) ?? Promise.resolve({ ok: false });
 }

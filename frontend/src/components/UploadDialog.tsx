@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react";
-import { ArrowUpTrayIcon, CheckIcon, XMarkIcon } from "@heroicons/react/16/solid";
+import { useRef, useState } from "react";
+import { ArrowUpTrayIcon, CheckIcon } from "@heroicons/react/16/solid";
 import { api, errorMessage, type UploadResult } from "../api";
 import { Button } from "./Button";
 import DialogFooter from "./DialogFooter";
 import ErrorBanner from "./ErrorBanner";
+import Fieldset from "./Fieldset";
 import RadioCardOption from "./RadioCardOption";
+import { DialogShell } from "./DialogShell";
 import { libraryChanged } from "../lib/events";
 import { AUDIO_EXTENSIONS, isAudioFile } from "../lib/download";
 import { useTransitionMount } from "../lib/useTransitionMount";
@@ -18,20 +20,13 @@ interface Props {
   onComplete?: () => void;
 }
 
+/**
+ * Drag-and-drop upload dialog. The full-viewport drop zone wraps DialogShell
+ * so the modal itself still benefits from the shared scrim / header / footer
+ * / transition / Escape-to-close behavior.
+ */
 export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Props) {
-  const { mounted, visible } = useTransitionMount(open, 200);
-  // Escape-to-close, matching DialogShell (this dialog keeps its own scaffold
-  // for the full-overlay drag-and-drop drop zone).
-  useEffect(() => {
-    if (!mounted) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      onClose();
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [mounted, onClose]);
+  const { mounted } = useTransitionMount(open, 200);
   const [scope, setScope] = useState<Scope>(isAdmin ? "global" : "personal");
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<UploadResult[] | null>(null);
@@ -70,11 +65,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
 
   return (
     <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="upload-dialog-title"
-      data-closed={!visible || undefined}
-      className="group fixed inset-0 z-40 grid place-items-center p-4"
+      className="fixed inset-0 z-40"
       onDragOver={(e) => {
         e.preventDefault();
         setDragActive(true);
@@ -88,60 +79,33 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
         accept(e.dataTransfer.files);
       }}
     >
-      <button
-        type="button"
-        aria-label="Close"
-        onClick={onClose}
-        className="absolute inset-0 transition-opacity duration-200 ease-out group-data-closed:opacity-0 motion-reduce:transition-none"
-        style={{ background: "var(--scrim)" }}
-      />
-      <div
-        className="dialog relative grid max-h-[80vh] w-full max-w-lg grid-rows-[auto_1fr_auto] overflow-hidden transition-[opacity,transform] duration-200 ease-out group-data-closed:scale-95 group-data-closed:opacity-0 motion-reduce:transition-none"
+      <DialogShell
+        open={open}
+        title="Add music"
+        onClose={onClose}
+        footer={
+          <DialogFooter>
+            <Button variant="ghost" onClick={onClose} disabled={busy}>
+              {results ? "Done" : "Cancel"}
+            </Button>
+            {!results && (
+              <Button
+                variant="primary"
+                onClick={submit}
+                disabled={busy || files.length === 0}
+              >
+                {busy ? "Uploading…" : `Upload ${files.length || ""}`.trim()}
+              </Button>
+            )}
+          </DialogFooter>
+        }
       >
-        <div
-          className="flex items-center justify-between px-4 py-3"
-          style={{ borderBottom: "1px solid var(--border-soft)" }}
-        >
-          <h2
-            id="upload-dialog-title"
-            style={{ fontSize: 14, fontWeight: 600, margin: 0 }}
-          >
-            Add music
-          </h2>
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            className="iconbtn"
-          >
-            <XMarkIcon className="size-3.5" aria-hidden="true" />
-          </button>
-        </div>
-
         <div className="overflow-y-auto px-4 py-4">
           {isAdmin && (
-            <fieldset
-              style={{
-                border: 0,
-                padding: 0,
-                margin: "0 0 16px",
-                display: "grid",
-                gap: 8,
-              }}
+            <Fieldset
+              legend="Where should these files go?"
+              style={{ margin: "0 0 16px" }}
             >
-              <legend
-                className="mono"
-                style={{
-                  fontSize: 10,
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                  color: "var(--fg-subtle)",
-                  padding: 0,
-                  marginBottom: 4,
-                }}
-              >
-                Where should these files go?
-              </legend>
               <RadioCardOption
                 name="upload-scope"
                 value="global"
@@ -158,7 +122,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
                 label="Personal"
                 description="Only you'll see these tracks alongside the global library."
               />
-            </fieldset>
+            </Fieldset>
           )}
 
           <label
@@ -278,22 +242,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
 
           {error && <ErrorBanner className="mt-3" message={error} />}
         </div>
-
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>
-            {results ? "Done" : "Cancel"}
-          </Button>
-          {!results && (
-            <Button
-              variant="primary"
-              onClick={submit}
-              disabled={busy || files.length === 0}
-            >
-              {busy ? "Uploading…" : `Upload ${files.length || ""}`.trim()}
-            </Button>
-          )}
-        </DialogFooter>
-      </div>
+      </DialogShell>
     </div>
   );
 }
@@ -355,4 +304,3 @@ function StatusDot({ result }: { result: UploadResult }) {
     </span>
   );
 }
-

@@ -16,6 +16,7 @@
   "dependencies": {
     "@heroicons/react": "^2.1.5",
     "@music-library/core": "file:../core",
+    "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "discord-rpc": "^4.0.1",
     "hls.js": "^1.6.16",

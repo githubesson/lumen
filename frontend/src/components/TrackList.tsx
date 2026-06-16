@@ -1,21 +1,12 @@
 import {
   memo,
   useCallback,
-  useEffect,
   useMemo,
   useRef,
   useState,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { createPortal } from "react-dom";
-import {
-  ArrowDownTrayIcon,
-  CheckIcon,
-  HeartIcon,
-  PencilSquareIcon,
-  XMarkIcon,
-} from "@heroicons/react/16/solid";
+import { HeartIcon, PencilSquareIcon } from "@heroicons/react/16/solid";
 import { trackCoverUrl, type TrackListItem } from "../api";
 import { displayText, fmtDurationMs } from "../lib/format";
 import CoverArt from "./CoverArt";
@@ -25,10 +16,11 @@ import { useTrackContextMenu } from "./TrackContextMenu";
 import { useAuth } from "../context/Auth";
 import { useFavorites } from "../context/Favorites";
 import { usePlayer } from "../context/Player";
-import { exportTracksAsFiles } from "../lib/download";
-import { useKey } from "../lib/keybindings";
 import { usePopKey } from "../lib/useTransitionMount";
+import { useTrackSelection } from "../lib/useTrackSelection";
 import { useWindowedSlice } from "../lib/useWindowedSlice";
+import TrackCheckbox from "./TrackCheckbox";
+import TrackSelectionToolbar from "./TrackSelectionToolbar";
 
 interface Props {
   tracks: TrackListItem[];
@@ -63,85 +55,30 @@ export default function TrackList({
   const isAdmin = me?.role === "admin";
   const [editId, setEditId] = useState<string | null>(null);
   const [moveTrack, setMoveTrack] = useState<TrackListItem | null>(null);
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [exporting, setExporting] = useState(false);
-  const [exportNotice, setExportNotice] = useState<string | null>(null);
-  const lastSelectedIndexRef = useRef<number | null>(null);
   const { bind, menu } = useTrackContextMenu();
 
-  const tracksById = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks]);
-  const selectedTracks = useMemo(
-    () => tracks.filter((track) => selectedIds.has(track.id)),
-    [tracks, selectedIds],
-  );
+  const {
+    selectionMode,
+    setSelectionMode,
+    selectedIds,
+    selectedItems: selectedTracks,
+    allSelected,
+    someSelected,
+    exporting,
+    exportNotice,
+    toggleSelection,
+    selectAll,
+    clearSelection,
+    exportSelected,
+  } = useTrackSelection<TrackListItem>({
+    items: tracks,
+    getId: (t) => t.id,
+    toExportItems: (items) => items,
+  });
+
   const selectedLocalTracks = useMemo(
     () => selectedTracks.filter(isLocalTrack),
     [selectedTracks],
-  );
-  const allSelected = tracks.length > 0 && selectedIds.size === tracks.length;
-  const someSelected = selectedIds.size > 0;
-
-  useEffect(() => {
-    setSelectedIds((prev) => {
-      let changed = false;
-      const next = new Set<string>();
-      for (const id of prev) {
-        if (tracksById.has(id)) {
-          next.add(id);
-        } else {
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [tracksById]);
-
-  useEffect(() => {
-    if (selectedIds.size === 0) lastSelectedIndexRef.current = null;
-  }, [selectedIds.size]);
-
-  useKey(
-    "v",
-    (e) => {
-      e.preventDefault();
-      setSelectionMode((value) => !value);
-      setExportNotice(null);
-    },
-    { id: "tracks:selection-mode", label: "Toggle track selection", group: "Selection" },
-  );
-
-  useKey(
-    "esc",
-    (e) => {
-      e.preventDefault();
-      setSelectionMode(false);
-      setSelectedIds(new Set());
-      setExportNotice(null);
-    },
-    {
-      id: "tracks:selection-clear",
-      label: "Clear track selection",
-      group: "Selection",
-      enabled: selectionMode,
-      priority: 5,
-    },
-  );
-
-  useKey(
-    "mod+a",
-    (e) => {
-      e.preventDefault();
-      setSelectedIds(new Set(tracks.map((track) => track.id)));
-      setSelectionMode(true);
-      setExportNotice(null);
-    },
-    {
-      id: "tracks:selection-all",
-      label: "Select all tracks",
-      group: "Selection",
-      enabled: selectionMode,
-    },
   );
 
   // Queue reference held in a ref so stable per-track callbacks can read the
@@ -163,65 +100,13 @@ export default function TrackList({
   const handleEdit = useCallback((id: string) => setEditId(id), []);
   const handleToggleSelection = useCallback(
     (track: TrackListItem, index: number, range: boolean) => {
-      setSelectionMode(true);
-      setExportNotice(null);
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        if (range && lastSelectedIndexRef.current !== null) {
-          const from = Math.min(lastSelectedIndexRef.current, index);
-          const to = Math.max(lastSelectedIndexRef.current, index);
-          for (let pos = from; pos <= to; pos += 1) {
-            const rangeTrack = tracks[pos];
-            if (rangeTrack) next.add(rangeTrack.id);
-          }
-        } else if (next.has(track.id)) {
-          next.delete(track.id);
-        } else {
-          next.add(track.id);
-        }
-        return next;
-      });
-      lastSelectedIndexRef.current = index;
+      toggleSelection(track, index, range);
     },
-    [tracks],
+    [toggleSelection],
   );
-  const handleSelectAll = useCallback(() => {
-    setSelectedIds((prev) => {
-      if (tracks.length > 0 && prev.size === tracks.length) return new Set();
-      return new Set(tracks.map((track) => track.id));
-    });
-    setSelectionMode(true);
-    setExportNotice(null);
-  }, [tracks]);
-  const handleClearSelection = useCallback(() => {
-    setSelectedIds(new Set());
-    setExportNotice(null);
-  }, []);
-  const handleExportSelected = useCallback(async () => {
-    if (exporting || selectedLocalTracks.length === 0) return;
-    setExporting(true);
-    setExportNotice(null);
-    try {
-      const result = await exportTracksAsFiles(selectedTracks);
-      if (result.canceled) {
-        setExportNotice("Export canceled.");
-        return;
-      }
-      const parts: string[] = [];
-      if (result.failed > 0) parts.push(`${result.failed} failed`);
-      if (result.skipped > 0) parts.push(`${result.skipped} streaming-only skipped`);
-      const suffix = parts.length > 0 ? `, ${parts.join(", ")}` : "";
-      setExportNotice(
-        result.usedFolderPicker
-          ? `Exported ${result.exported} file${result.exported === 1 ? "" : "s"}${suffix}.`
-          : `Export started for ${result.exported} file${result.exported === 1 ? "" : "s"}${suffix}.`,
-      );
-    } catch (e) {
-      setExportNotice((e as Error).message || "Export failed.");
-    } finally {
-      setExporting(false);
-    }
-  }, [exporting, selectedLocalTracks.length, selectedTracks]);
+  const handleExportSelected = useCallback(() => {
+    void exportSelected();
+  }, [exportSelected]);
   const handleContextMenu = useCallback(
     (
       t: TrackListItem,
@@ -258,73 +143,29 @@ export default function TrackList({
     (showAlbum ? 1 : 0) +
     (extraColumn ? 1 : 0);
   const visible = tracks.slice(start, end);
-  const selectionControlsHost =
-    selectionControlsHostId && typeof document !== "undefined"
-      ? document.getElementById(selectionControlsHostId)
-      : null;
-  const selectionControls = (
-    <div
-      className={`track-selectbar${selectionControlsHost ? " track-selectbar-attached" : ""}`}
-      data-selecting={selectionMode}
-    >
-      <div className="track-selectbar-status" aria-live="polite">
-        {selectionMode
-          ? `${selectedIds.size} selected`
-          : `${tracks.length} track${tracks.length === 1 ? "" : "s"}`}
-        {exportNotice && <span>{exportNotice}</span>}
-      </div>
-      {selectionMode ? (
-        <>
-          <button type="button" className="btn" onClick={handleSelectAll}>
-            {allSelected ? "Deselect all" : "Select all"}
-          </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => void handleExportSelected()}
-            disabled={!someSelected || selectedLocalTracks.length === 0 || exporting}
-            title={
-              selectedLocalTracks.length === 0 && someSelected
-                ? "Selected streaming tracks cannot be exported as files."
-                : undefined
-            }
-          >
-            <ArrowDownTrayIcon className="size-3.5" />
-            {exporting ? "Exporting..." : "Export files"}
-          </button>
-          <button
-            type="button"
-            className="iconbtn track-selectbar-close"
-            aria-label="Clear selection"
-            onClick={() => {
-              setSelectionMode(false);
-              handleClearSelection();
-            }}
-          >
-            <XMarkIcon className="size-4" />
-          </button>
-        </>
-      ) : (
-        <button
-          type="button"
-          className="btn"
-          onClick={() => {
-            setSelectionMode(true);
-            setExportNotice(null);
-          }}
-        >
-          <CheckIcon className="size-3.5" />
-          Select
-        </button>
-      )}
-    </div>
-  );
-
   return (
     <>
-      {selectionControlsHost
-        ? createPortal(selectionControls, selectionControlsHost)
-        : selectionControls}
+      <TrackSelectionToolbar
+        selectionMode={selectionMode}
+        selectedCount={selectedIds.size}
+        totalCount={tracks.length}
+        exportNotice={exportNotice}
+        allSelected={allSelected}
+        someSelected={someSelected}
+        exporting={exporting}
+        exportDisabled={selectedLocalTracks.length === 0}
+        exportDisabledReason="Selected streaming tracks cannot be exported as files."
+        onToggleMode={() => {
+          setSelectionMode(!selectionMode);
+        }}
+        onSelectAll={selectAll}
+        onExport={handleExportSelected}
+        onClear={() => {
+          setSelectionMode(false);
+          clearSelection();
+        }}
+        hostId={selectionControlsHostId}
+      />
       <table
         className={`table${selectionMode ? " table-selecting" : ""}`}
         ref={tableRef}
@@ -337,7 +178,7 @@ export default function TrackList({
                   checked={allSelected}
                   indeterminate={someSelected && !allSelected}
                   ariaLabel={allSelected ? "Deselect all tracks" : "Select all tracks"}
-                  onChange={handleSelectAll}
+                  onChange={selectAll}
                 />
               </th>
             )}
@@ -593,39 +434,6 @@ export const TrackRow = memo(function TrackRow({
     </tr>
   );
 });
-
-function TrackCheckbox({
-  checked,
-  indeterminate = false,
-  ariaLabel,
-  onChange,
-}: {
-  checked: boolean;
-  indeterminate?: boolean;
-  ariaLabel: string;
-  onChange: (e: ReactMouseEvent<HTMLInputElement>) => void;
-}) {
-  const ref = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (ref.current) ref.current.indeterminate = indeterminate;
-  }, [indeterminate]);
-
-  return (
-    <input
-      ref={ref}
-      type="checkbox"
-      className="track-check"
-      checked={checked}
-      aria-label={ariaLabel}
-      onClick={(e) => {
-        e.stopPropagation();
-        onChange(e);
-      }}
-      onChange={() => {}}
-    />
-  );
-}
 
 function isLocalTrack(track: TrackListItem): boolean {
   return !track.source || track.source === "local";

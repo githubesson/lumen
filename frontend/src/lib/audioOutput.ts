@@ -10,6 +10,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { getTweaks, isElectron, saveTweaks } from "./platform";
 
 const STORAGE_KEY = "player:sinkId";
 const DEFAULT_DEVICE_ID = "default";
@@ -137,10 +138,30 @@ export function AudioOutputProvider({ audioRef, children }: ProviderProps) {
       } catch {
         // ignore
       }
+      if (isElectron) {
+        void saveTweaks({ audioSinkId: id });
+      }
       await applySink(id);
     },
     [applySink],
   );
+
+  // In Electron localStorage is tied to the random proxy port, so the
+  // canonical sink id lives in config.json. Load it once at startup.
+  useEffect(() => {
+    if (!isElectron) return;
+    let cancelled = false;
+    getTweaks()
+      .then(({ audioSinkId }) => {
+        if (cancelled || !audioSinkId) return;
+        desiredRef.current = audioSinkId;
+        setDeviceId(audioSinkId);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Apply the persisted sinkId once the audio element mounts. The element
   // is owned by `PlayerProvider`, so the ref may resolve a tick after we do.

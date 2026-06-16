@@ -649,7 +649,21 @@ textarea { font: inherit; color: inherit; }
   scrollbar-gutter: stable;
 }
 
-.view { padding: var(--pad); }
+.view {
+  padding: var(--pad);
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+/* Admin sections contain wide tables/forms that must scroll horizontally
+   instead of forcing the whole app shell to grow. */
+.admin-section-wrap {
+  min-width: 0;
+  overflow-x: auto;
+}
+.admin-section-wrap > * {
+  min-width: 720px;
+}
 
 /* ============================================================
    Home / Discover

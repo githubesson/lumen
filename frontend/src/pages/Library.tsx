@@ -1,10 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import {
-  Bars3BottomLeftIcon,
-  PlayIcon,
-  Squares2X2Icon,
-} from "@heroicons/react/16/solid";
+import { PlayIcon } from "@heroicons/react/16/solid";
 import {
   api,
   albumCoverUrl,
@@ -22,9 +18,9 @@ import EmptyState from "../components/EmptyState";
 import LoadingState from "../components/LoadingState";
 import ListMeta from "../components/list/ListMeta";
 import LoadMoreSentinel from "../components/list/LoadMoreSentinel";
-import SearchInput from "../components/SearchInput";
-import SegmentedControl from "../components/SegmentedControl";
+import PageHeader from "../components/PageHeader";
 import { useTrackContextMenu } from "../components/TrackContextMenu";
+import BrowseToolbar from "../components/library/BrowseToolbar";
 import { usePlayer } from "../context/Player";
 import { usePaginatedList } from "../lib/usePaginatedList";
 import GridView from "./library/GridView";
@@ -39,14 +35,6 @@ const LIBRARY_SELECTION_CONTROLS_ID = "library-track-selection-controls";
 
 type View = "tracks" | "artists" | "albums";
 type SortKey = "recent" | "title" | "artist" | "album" | "duration";
-
-const sortLabels: Record<SortKey, string> = {
-  recent: "Recently added",
-  title: "Title",
-  artist: "Artist",
-  album: "Album",
-  duration: "Duration",
-};
 
 function isView(v: string | null): v is View {
   return v === "tracks" || v === "artists" || v === "albums";
@@ -146,9 +134,7 @@ function LibraryBrowse({
 
   return (
     <div className="view">
-      <LibraryHeader>
-        <span>{labelFor(view)}</span>
-      </LibraryHeader>
+      <PageHeader title="Library" count={labelFor(view)} />
 
       <BrowseToolbar
         view={view}
@@ -159,6 +145,7 @@ function LibraryBrowse({
         onDisplayModeChange={setDisplayMode}
         sort={sort}
         onSortChange={setSort}
+        selectionControlsHostId={LIBRARY_SELECTION_CONTROLS_ID}
       />
 
       {view === "tracks" && (
@@ -167,28 +154,6 @@ function LibraryBrowse({
       {view === "albums" && <AlbumsView query={query} onOpen={onOpenAlbum} />}
       {view === "artists" && <ArtistsView query={query} onOpen={onOpenArtist} />}
     </div>
-  );
-}
-
-function LibraryHeader({ children }: { children?: React.ReactNode }) {
-  return (
-    <header
-      style={{ display: "flex", alignItems: "baseline", gap: 16, flexWrap: "wrap" }}
-    >
-      <h1
-        style={{
-          fontSize: 28,
-          fontWeight: 600,
-          letterSpacing: "-0.02em",
-          margin: 0,
-        }}
-      >
-        Library
-      </h1>
-      <div className="mono" style={{ color: "var(--fg-subtle)", fontSize: 11 }}>
-        {children}
-      </div>
-    </header>
   );
 }
 
@@ -201,106 +166,6 @@ function labelFor(view: View) {
     case "artists":
       return "Artists";
   }
-}
-
-function BrowseToolbar({
-  view,
-  query,
-  onViewChange,
-  onQueryChange,
-  displayMode,
-  onDisplayModeChange,
-  sort,
-  onSortChange,
-}: {
-  view: View;
-  query: string;
-  onViewChange: (v: View) => void;
-  onQueryChange: (q: string) => void;
-  displayMode: "grid" | "list";
-  onDisplayModeChange: (m: "grid" | "list") => void;
-  sort: SortKey;
-  onSortChange: (s: SortKey) => void;
-}) {
-  return (
-    <div
-      style={{
-        marginTop: 18,
-        display: "flex",
-        gap: 12,
-        alignItems: "center",
-        flexWrap: "wrap",
-      }}
-    >
-      <SegmentedControl
-        aria-label="View"
-        value={view}
-        onChange={onViewChange}
-        options={(["tracks", "albums", "artists"] as View[]).map((v) => ({
-          value: v,
-          label: labelFor(v),
-        }))}
-      />
-
-      <div style={{ flex: 1 }} />
-
-      <SearchInput
-        style={{ width: 260 }}
-        value={query}
-        onChange={(e) => onQueryChange(e.target.value)}
-        placeholder={
-          view === "albums"
-            ? "Search albums"
-            : view === "artists"
-              ? "Search artists"
-              : "Search local + TIDAL"
-        }
-      />
-
-      {view === "tracks" && displayMode === "list" && (
-        <div
-          id={LIBRARY_SELECTION_CONTROLS_ID}
-          className="track-selectbar-host"
-        />
-      )}
-
-      {view === "tracks" && (
-        <select
-          className="input"
-          style={{ width: "auto" }}
-          value={sort}
-          onChange={(e) => onSortChange(e.target.value as SortKey)}
-          aria-label="Sort"
-        >
-          {(Object.keys(sortLabels) as SortKey[]).map((k) => (
-            <option key={k} value={k}>
-              {sortLabels[k]}
-            </option>
-          ))}
-        </select>
-      )}
-
-      {view === "tracks" && (
-        <SegmentedControl
-          aria-label="Display mode"
-          value={displayMode}
-          onChange={onDisplayModeChange}
-          options={[
-            {
-              value: "list",
-              label: <Bars3BottomLeftIcon className="size-3.5" />,
-              ariaLabel: "List",
-            },
-            {
-              value: "grid",
-              label: <Squares2X2Icon className="size-3.5" />,
-              ariaLabel: "Grid",
-            },
-          ]}
-        />
-      )}
-    </div>
-  );
 }
 
 function TracksView({

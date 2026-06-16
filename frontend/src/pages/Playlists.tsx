@@ -3,9 +3,8 @@ import { PlusIcon } from "@heroicons/react/16/solid";
 import { api, type Playlist } from "../api";
 import PageHeader from "../components/PageHeader";
 import PlaylistCard from "../components/PlaylistCard";
-import ErrorBanner from "../components/ErrorBanner";
 import EmptyState from "../components/EmptyState";
-import LoadingState from "../components/LoadingState";
+import DataState from "../components/DataState";
 import { useApiResource } from "../lib/useApiResource";
 import { pluralize } from "../lib/format";
 
@@ -29,25 +28,26 @@ export default function Playlists() {
         }
       />
 
-      {error && <ErrorBanner message={error} />}
-
-      {rows === null && !error && <LoadingState />}
-
-      {rows && rows.length === 0 && (
-        <EmptyState
-          className="mt-7"
-          title="No playlists yet."
-          hint="Create one to start collecting tracks."
-        />
-      )}
-
-      {rows && rows.length > 0 && (
-        <div className="grid-cards" style={{ marginTop: 20 }}>
-          {rows.map((p) => (
-            <PlaylistCard key={p.id} playlist={p} />
-          ))}
-        </div>
-      )}
+      <DataState
+        data={rows}
+        error={error}
+        empty={(data) => data.length === 0}
+        emptyState={
+          <EmptyState
+            className="mt-7"
+            title="No playlists yet."
+            hint="Create one to start collecting tracks."
+          />
+        }
+      >
+        {(playlists) => (
+          <div className="grid-cards" style={{ marginTop: 20 }}>
+            {playlists.map((p) => (
+              <PlaylistCard key={p.id} playlist={p} />
+            ))}
+          </div>
+        )}
+      </DataState>
     </div>
   );
 }

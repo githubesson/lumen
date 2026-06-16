@@ -4,8 +4,10 @@ import { api, errorMessage, type AdminUser } from "../api";
 import { Button } from "../components/Button";
 import EmptyState from "../components/EmptyState";
 import ErrorBanner from "../components/ErrorBanner";
+import StatCard from "../components/StatCard";
 import { useAuth } from "../context/Auth";
-import { AdminSectionTitle } from "./admin/AdminSectionTitle";
+import AdminPanel from "../components/admin/AdminPanel";
+import AdminSection from "../components/admin/AdminSection";
 
 function formatDateTime(value?: string) {
   if (!value) return "-";
@@ -55,7 +57,7 @@ export function UsersAdminSection() {
   }, [users]);
 
   return (
-    <div style={{ display: "grid", gap: 20 }}>
+    <AdminPanel>
       <div
         style={{
           display: "flex",
@@ -86,35 +88,31 @@ export function UsersAdminSection() {
       </div>
 
       <div className="stat-grid" aria-label="User summary">
-        <div className="stat-card">
-          <div className="stat-card-label">Total users</div>
-          <div className="stat-card-value">{summary.total}</div>
-          <div className="stat-card-sub">registered accounts</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-card-label">Active</div>
-          <div className="stat-card-value">{summary.active}</div>
-          <div className="stat-card-sub">enabled accounts</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-card-label">Admins</div>
-          <div className="stat-card-value">{summary.admins}</div>
-          <div className="stat-card-sub">with admin access</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-card-label">Reset required</div>
-          <div className="stat-card-value">{summary.resetRequired}</div>
-          <div className="stat-card-sub">pending password change</div>
-        </div>
+        <StatCard
+          label="Total users"
+          value={summary.total}
+          sublabel="registered accounts"
+        />
+        <StatCard
+          label="Active"
+          value={summary.active}
+          sublabel="enabled accounts"
+        />
+        <StatCard
+          label="Admins"
+          value={summary.admins}
+          sublabel="with admin access"
+        />
+        <StatCard
+          label="Reset required"
+          value={summary.resetRequired}
+          sublabel="pending password change"
+        />
       </div>
 
       {error && <ErrorBanner message={error} />}
 
-      <section>
-        <AdminSectionTitle style={{ margin: "0 0 12px" }}>
-          All users
-        </AdminSectionTitle>
-
+      <AdminSection title="All users">
         {users?.length === 0 ? (
           <EmptyState
             icon={<UserGroupIcon />}
@@ -194,7 +192,7 @@ export function UsersAdminSection() {
             </tbody>
           </table>
         )}
-      </section>
-    </div>
+      </AdminSection>
+    </AdminPanel>
   );
 }

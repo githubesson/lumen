@@ -49,6 +49,15 @@ export interface ExportTrackFilesResult {
   error?: string;
 }
 
+export interface Tweaks {
+  theme: "light" | "dark";
+  depth: number;
+  radius: number;
+  density: "airy" | "balanced" | "dense";
+  layout: "compact" | "sidebar" | "wide";
+  glow: boolean;
+}
+
 declare global {
   interface Window {
     electron?: {
@@ -101,6 +110,11 @@ declare global {
       exportTrackFiles?: (
         items: ExportTrackFileItem[],
       ) => Promise<ExportTrackFilesResult>;
+      getTweaks?: () => Promise<{ tweaks: Partial<Tweaks>; audioSinkId: string }>;
+      saveTweaks?: (payload: {
+        tweaks?: Partial<Tweaks>;
+        audioSinkId?: string;
+      }) => Promise<{ ok: boolean }>;
     };
   }
 }

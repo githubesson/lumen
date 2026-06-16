@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, errorMessage, type MusicRoot } from "../api";
+import AdminPanel from "../components/admin/AdminPanel";
 import { APITrackerPinsSection } from "./admin/APITrackerPinsSection";
 import { ArtistGridPinsSection } from "./admin/ArtistGridPinsSection";
 import { FilenPinsSection } from "./admin/FilenPinsSection";
@@ -48,7 +49,7 @@ export function LibraryAdminSection() {
   const defaultRootPath = roots?.[0]?.path ?? "";
 
   return (
-    <div style={{ display: "grid", gap: 20 }}>
+    <AdminPanel>
       <MusicRootsSection
         roots={roots}
         reloadRoots={loadRoots}
@@ -71,6 +72,6 @@ export function LibraryAdminSection() {
         defaultRootPath={defaultRootPath}
         onError={onError}
       />
-    </div>
+    </AdminPanel>
   );
 }

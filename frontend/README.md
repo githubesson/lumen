@@ -25,6 +25,27 @@ player state, auth, favorites) comes from
 [`@music-library/core`](../core/) — aliased to `../core/src` in
 `vite.config.ts` and `tsconfig.json`, so changes to core are picked up live.
 
+## Component inventory
+
+Reusable UI lives under `src/components/`:
+
+- **Layout / chrome**: `PageHeader`, `ListPageHeader`, `Section`,
+  `CenteredCard`, `Shell`, `DialogShell`, `DialogFooter`
+- **Form primitives**: `Button`, `Field`, `TextInput`, `Select`,
+  `SearchInput`, `SegmentedControl`, `RadioCardOption`, `Fieldset`
+- **Data display**: `TrackList`, `MediaCard`, `PlaylistCard`, `StatCard`,
+  `EmptyState`, `LoadingState`, `ErrorBanner`, `DataState`
+- **Track-specific**: `TrackCheckbox`, `TrackSelectionToolbar`,
+  `TrackContextMenu`
+- **Admin helpers**: `admin/AdminPanel`, `admin/AdminSection`
+- **Library helpers**: `library/BrowseToolbar`
+
+Shared hooks are in `src/lib/`:
+
+- `useTrackSelection` — selection mode, range selection, select-all, and
+  export lifecycle for track tables (used by `TrackList` and playlist
+  detail).
+
 ## Develop
 
 ```sh

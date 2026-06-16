@@ -1,5 +1,14 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+export interface Tweaks {
+  theme: "light" | "dark";
+  depth: number;
+  radius: number;
+  density: "airy" | "balanced" | "dense";
+  layout: "compact" | "sidebar" | "wide";
+  glow: boolean;
+}
+
 export interface DiscordActivityPayload {
   trackId?: string;
   title: string;
@@ -85,6 +94,11 @@ export interface ElectronApi {
   ): Promise<{ ok: boolean; error?: string }>;
   clearDiscordActivity(): Promise<{ ok: boolean }>;
   exportTrackFiles(items: ExportTrackFileItem[]): Promise<ExportTrackFilesResult>;
+  getTweaks(): Promise<{ tweaks: Partial<Tweaks>; audioSinkId: string }>;
+  saveTweaks(payload: {
+    tweaks?: Partial<Tweaks>;
+    audioSinkId?: string;
+  }): Promise<{ ok: boolean }>;
 }
 
 const api: ElectronApi = {
@@ -107,6 +121,8 @@ const api: ElectronApi = {
     ipcRenderer.invoke("discord:activity", payload),
   clearDiscordActivity: () => ipcRenderer.invoke("discord:clear"),
   exportTrackFiles: (items) => ipcRenderer.invoke("tracks:export-files", items),
+  getTweaks: () => ipcRenderer.invoke("tweaks:get"),
+  saveTweaks: (payload) => ipcRenderer.invoke("tweaks:save", payload),
 };
 
 contextBridge.exposeInMainWorld("electron", api);

@@ -10,6 +10,19 @@ import { pipeline } from "node:stream/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { OpenDialogOptions, Rectangle } from "electron";
 
+export type Theme = "light" | "dark";
+export type Density = "airy" | "balanced" | "dense";
+export type Layout = "compact" | "sidebar" | "wide";
+
+export interface Tweaks {
+  theme: Theme;
+  depth: number;
+  radius: number;
+  density: Density;
+  layout: Layout;
+  glow: boolean;
+}
+
 interface Config {
   backendUrl?: string;
   /** Discord application (client) ID from https://discord.com/developers/applications.
@@ -26,6 +39,11 @@ interface Config {
   fh6GameDir?: string;
   /** Local bridge port exposed by the injected FH6 DLL. */
   fh6BridgePort?: number;
+  /** UI tweaks from the live Tweaks panel. Stored here in Electron so they
+   *  survive app restarts even though the local proxy port changes. */
+  tweaks?: Partial<Tweaks>;
+  /** Persisted audio output sink id. Empty string means system default. */
+  audioSinkId?: string;
 }
 
 interface SavePatch {
@@ -677,6 +695,19 @@ ipcMain.handle("config:get", async () => {
     fh6GameDir: cfg.fh6GameDir ?? "",
     fh6BridgePort: cfg.fh6BridgePort ?? DEFAULT_FH6_BRIDGE_PORT,
   };
+});
+
+ipcMain.handle("tweaks:get", async () => {
+  const cfg = await loadConfig();
+  return { tweaks: cfg.tweaks ?? {}, audioSinkId: cfg.audioSinkId ?? "" };
+});
+
+ipcMain.handle("tweaks:save", async (_e, payload: { tweaks?: Partial<Tweaks>; audioSinkId?: string }) => {
+  const patch: Config = {};
+  if (payload.tweaks) patch.tweaks = payload.tweaks;
+  if (typeof payload.audioSinkId === "string") patch.audioSinkId = payload.audioSinkId;
+  await saveConfigPatch(patch);
+  return { ok: true };
 });
 
 ipcMain.handle("config:save", async (_e, patch: SavePatch) => {

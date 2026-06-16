@@ -4,10 +4,16 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-import { isElectron, setTitleBarTheme } from "../lib/platform";
+import {
+  getTweaks,
+  isElectron,
+  saveTweaks,
+  setTitleBarTheme,
+} from "../lib/platform";
 
 export type Theme = "light" | "dark";
 export type Density = "airy" | "balanced" | "dense";
@@ -65,6 +71,7 @@ const Ctx = createContext<ThemeState | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [tweaks, setTweaks] = useState<Tweaks>(() => readInitial());
+  const electronLoadedRef = useRef(false);
 
   useEffect(() => {
     const el = document.documentElement;
@@ -75,7 +82,30 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     el.setAttribute("data-layout", tweaks.layout);
     el.setAttribute("data-glow", tweaks.glow ? "on" : "off");
     localStorage.setItem(STORAGE_KEY, JSON.stringify(tweaks));
+    if (isElectron && electronLoadedRef.current) {
+      void saveTweaks({ tweaks });
+    }
   }, [tweaks]);
+
+  // In Electron the local proxy port changes every launch, so localStorage
+  // from the previous run is on a different origin. Load the canonical copy
+  // from config.json once at startup and merge it on top of defaults.
+  useEffect(() => {
+    if (!isElectron) return;
+    let cancelled = false;
+    getTweaks()
+      .then(({ tweaks: electronTweaks }) => {
+        if (cancelled) return;
+        electronLoadedRef.current = true;
+        setTweaks((prev) => ({ ...prev, ...electronTweaks }));
+      })
+      .catch(() => {
+        electronLoadedRef.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isElectron) return;

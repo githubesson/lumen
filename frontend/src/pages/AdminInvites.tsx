@@ -10,7 +10,8 @@ import { Button } from "../components/Button";
 import ErrorBanner from "../components/ErrorBanner";
 import { Field, TextInput } from "../components/Field";
 import { Select } from "../components/Select";
-import { AdminSectionTitle } from "./admin/AdminSectionTitle";
+import AdminPanel from "../components/admin/AdminPanel";
+import AdminSection from "../components/admin/AdminSection";
 import { copyText } from "../lib/clipboard";
 
 type Status = "active" | "revoked" | "exhausted" | "expired";
@@ -87,7 +88,7 @@ export function InvitesAdminSection() {
   };
 
   return (
-    <div style={{ display: "grid", gap: 20 }}>
+    <AdminPanel>
       <p
         style={{
           color: "var(--fg-muted)",
@@ -100,14 +101,11 @@ export function InvitesAdminSection() {
         after creation — copy it then.
       </p>
 
-      <section
-        aria-labelledby="new-invite"
-        className="surface"
-        style={{ padding: 20 }}
+      <AdminSection
+        title="New invite"
+        titleId="new-invite"
+        surface
       >
-        <AdminSectionTitle id="new-invite" style={{ margin: "0 0 14px" }}>
-          New invite
-        </AdminSectionTitle>
         <form
           onSubmit={create}
           style={{
@@ -161,7 +159,7 @@ export function InvitesAdminSection() {
             Create
           </Button>
         </form>
-      </section>
+      </AdminSection>
 
       {justCreated?.token && (
         <section
@@ -216,10 +214,7 @@ export function InvitesAdminSection() {
 
       {error && <ErrorBanner message={error} />}
 
-      <section>
-        <AdminSectionTitle style={{ margin: "0 0 12px" }}>
-          All invites
-        </AdminSectionTitle>
+      <AdminSection title="All invites">
         <table className="table">
           <thead>
             <tr>
@@ -286,7 +281,7 @@ export function InvitesAdminSection() {
             })}
           </tbody>
         </table>
-      </section>
-    </div>
+      </AdminSection>
+    </AdminPanel>
   );
 }
