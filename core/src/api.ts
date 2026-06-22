@@ -1043,6 +1043,20 @@ export function streamUrl(id: string): string {
   return url(`/api/tracks/${trackPathID(id)}/stream`);
 }
 
+/**
+ * URL for downloading a track as a single file. Identical to streamUrl for
+ * local tracks; for TIDAL tracks it appends ?download=1 so the backend
+ * assembles a contiguous file from the HLS playlist instead of returning the
+ * rewritten playlist that live playback uses.
+ */
+export function downloadStreamUrl(id: string): string {
+  const base = `/api/tracks/${trackPathID(id)}/stream`;
+  if (id.toLowerCase().startsWith("tidal:")) {
+    return url(`${base}?download=1`);
+  }
+  return url(base);
+}
+
 function withCoverSize(path: string, size?: number): string {
   if (!size || !Number.isFinite(size) || size <= 0) return url(path);
   const qs = new URLSearchParams({ size: String(Math.round(size)) });

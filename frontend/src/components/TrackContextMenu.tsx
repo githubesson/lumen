@@ -342,18 +342,16 @@ export default function TrackContextMenu({
           <span>Share…</span>
         </button>
       )}
-      {isLocal && (
-        <button
-          type="button"
-          role="menuitem"
-          className="ctx-item"
-          onClick={() => void runDownload()}
-          disabled={downloading}
-        >
-          <ArrowDownTrayIcon className="size-3.5" />
-          <span>{downloading ? "Preparing download..." : "Download file"}</span>
-        </button>
-      )}
+      <button
+        type="button"
+        role="menuitem"
+        className="ctx-item"
+        onClick={() => void runDownload()}
+        disabled={downloading}
+      >
+        <ArrowDownTrayIcon className="size-3.5" />
+        <span>{downloading ? "Preparing download..." : "Download file"}</span>
+      </button>
       {isAdmin && onEdit && (
         <button
           type="button"

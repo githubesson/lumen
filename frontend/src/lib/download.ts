@@ -1,6 +1,6 @@
 // Download + audio-format utilities, extracted from TrackContextMenu so they
 // live as pure helpers (and so UploadDialog can share the audio allowlist).
-import { api, streamUrl, type TrackDetail, type TrackListItem } from "../api";
+import { api, downloadStreamUrl, type TrackDetail, type TrackListItem } from "../api";
 import {
   exportTrackFiles,
   canExportTrackFiles,
@@ -24,7 +24,7 @@ export function triggerDownload(
   ext?: string,
 ) {
   const a = document.createElement("a");
-  a.href = streamUrl(track.id);
+  a.href = downloadStreamUrl(track.id);
   a.download = downloadFilename(track, detail, ext);
   a.rel = "noopener";
   document.body.appendChild(a);
@@ -45,9 +45,12 @@ export interface BatchExportResult {
 export async function exportTracksAsFiles(
   tracks: TrackListItem[],
 ): Promise<BatchExportResult> {
-  const localTracks = tracks.filter(isLocalTrack);
-  const skipped = tracks.length - localTracks.length;
-  if (localTracks.length === 0) {
+  // The backend /stream endpoint now serves a full, contiguous file for
+  // every supported source (local files on disk, and TIDAL tracks via HLS
+  // segment assembly), so all tracks are exportable.
+  const exportable = tracks;
+  const skipped = tracks.length - exportable.length;
+  if (exportable.length === 0) {
     return {
       canceled: false,
       exported: 0,
@@ -65,7 +68,7 @@ export async function exportTracksAsFiles(
   }> = [];
   let failed = 0;
   const errors: string[] = [];
-  for (const track of localTracks) {
+  for (const track of exportable) {
     try {
       let detail: TrackDetail | null = null;
       try {
@@ -87,7 +90,7 @@ export async function exportTracksAsFiles(
   if (canExportTrackFiles) {
     const res = await exportTrackFiles(
       prepared.map(({ track, detail, ext }) => ({
-        url: streamUrl(track.id),
+        url: downloadStreamUrl(track.id),
         filename: downloadFilename(track, detail, ext),
       })),
     );
@@ -158,7 +161,7 @@ export function sanitizeFilename(name: string) {
 }
 
 export async function extensionFromStream(trackId: string) {
-  const url = streamUrl(trackId);
+  const url = downloadStreamUrl(trackId);
   try {
     const res = await fetch(url, {
       method: "HEAD",
@@ -232,10 +235,6 @@ export function extensionForContentType(contentType?: string) {
     default:
       return undefined;
   }
-}
-
-function isLocalTrack(track: TrackListItem): boolean {
-  return !track.source || track.source === "local";
 }
 
 function sleep(ms: number) {

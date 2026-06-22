@@ -9,7 +9,7 @@ import {
   useFavoriteActions,
   api,
   libraryChanged,
-  streamUrl,
+  downloadStreamUrl,
   useAuth,
   type TrackDetail,
   type TrackListItem,
@@ -123,12 +123,11 @@ export function TrackActionsMenuButton({
   return (
     <Host
       colorScheme={theme.scheme}
-      matchContents
       style={{ width: size, height: size }}
     >
       <Menu
         label={
-          <RNHostView matchContents>
+          <RNHostView style={{ width: size, height: size }}>
             <CircleMenuLabel
               size={size}
               tintColor={theme.color.fg}
@@ -397,7 +396,7 @@ export function useTrackActionModel(track: TrackListItem) {
       const filename = downloadFilename(track, detail, ext);
       const selectedDir = await Directory.pickDirectoryAsync();
       const destination = new File(selectedDir, filename);
-      const file = await downloadStreamToFile(streamUrl(track.id), destination);
+      const file = await downloadStreamToFile(downloadStreamUrl(track.id), destination);
 
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert("Downloaded", `Saved ${file.name}.`);

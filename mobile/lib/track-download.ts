@@ -1,6 +1,6 @@
 import { File } from "expo-file-system";
 import {
-  streamUrl,
+  downloadStreamUrl,
   type TrackDetail,
   type TrackListItem,
 } from "@music-library/core";
@@ -64,7 +64,7 @@ export function extensionForFormat(format?: string) {
 }
 
 export async function extensionFromStream(trackId: string) {
-  const url = streamUrl(trackId);
+  const url = downloadStreamUrl(trackId);
   try {
     const res = await fetch(url, {
       method: "HEAD",

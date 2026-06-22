@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"io"
@@ -28,6 +30,7 @@ import (
 	"github.com/githubesson/lumen/internal/httpx"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/mediaembed"
 	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/storage"
 	"github.com/githubesson/lumen/internal/tidal"
@@ -552,8 +555,13 @@ func (h *Tracks) Stream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
+	download := r.URL.Query().Has("download")
 	if ref.Source == trackref.SourceTIDAL {
-		h.streamTIDAL(w, r, ref.ID)
+		if download {
+			h.streamTIDALDownload(w, r, ref.ID)
+		} else {
+			h.streamTIDAL(w, r, ref.ID)
+		}
 		return
 	}
 	id := ref.LocalID
@@ -561,6 +569,13 @@ func (h *Tracks) Stream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
+	// A bare UUID (or local:<uuid>) may actually point at a materialized
+	// remote track row — e.g. a TIDAL track added to a playlist gets a
+	// tracks row with source='tidal' and file_path='tidal:<id>'. The local
+	// file path below would fail (and possibly 403), so infer the source
+	// from the DB row and reroute to the TIDAL path using the row's
+	// external_id. Playback uses the rewritten HLS playlist; ?download=1
+	// assembles a single file instead.
 	t, err := h.Library.GetTrack(r.Context(), id, u.ID)
 	if err != nil {
 		if errors.Is(err, library.ErrNotFound) {
@@ -571,6 +586,16 @@ func (h *Tracks) Stream(w http.ResponseWriter, r *http.Request) {
 		}
 		h.log().Error("stream: track lookup failed", "track", id, "user", u.ID, "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if strings.EqualFold(t.Source, trackref.SourceTIDAL) && t.ExternalID != "" {
+		h.log().Debug("stream: bare uuid resolved to tidal row; rerouting",
+			"track", id, "user", u.ID, "tidal_track", t.ExternalID, "download", download)
+		if download {
+			h.streamTIDALDownload(w, r, t.ExternalID)
+		} else {
+			h.streamTIDAL(w, r, t.ExternalID)
+		}
 		return
 	}
 	roots := h.Ingest.AllRoots(r.Context())
@@ -644,6 +669,149 @@ func (h *Tracks) streamTIDAL(w http.ResponseWriter, r *http.Request, tidalID str
 		"status", resp.StatusCode,
 		"content_type", resp.Header.Get("Content-Type"))
 	writeTIDALProxyResponse(w, resp)
+}
+
+// streamTIDALDownload assembles a single, contiguous audio file for download
+// by descending into the HLS playlist, fetching every segment, decrypting
+// AES-128-CBC segments per #EXT-X-KEY, and concatenating the decrypted bytes
+// into one streamed body. Triggered by ?download=1 on the /stream endpoint so
+// live playback (which needs the rewritten HLS playlist) is unaffected.
+//
+// When ffmpeg is available, the assembled file is remuxed with embedded
+// metadata (title, artist, album, year, track no, ISRC) and cover art
+// fetched from TIDAL's CDN, producing a fully tagged MP4/FLAC with Range
+// support. Without ffmpeg, the raw assembled stream is served as-is.
+func (h *Tracks) streamTIDALDownload(w http.ResponseWriter, r *http.Request, tidalID string) {
+	if h.TIDAL == nil {
+		h.log().Warn("download: tidal client not configured", "tidal_track", tidalID)
+		http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	resp, err := h.TIDAL.FileResponse(r.Context(), tidalID, r)
+	if err != nil {
+		if errors.Is(err, tidal.ErrNotConfigured) {
+			h.log().Warn("download: tidal proxy not configured", "tidal_track", tidalID, "err", err)
+			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		if errors.Is(err, tidal.ErrDASHManifest) {
+			h.log().Warn("download: tidal dash manifest unsupported", "tidal_track", tidalID, "err", err)
+			http.Error(w, "tidal stream format is not supported yet", http.StatusBadGateway)
+			return
+		}
+		if errors.Is(err, tidal.ErrPreviewManifest) {
+			h.log().Warn("download: tidal preview manifest rejected", "tidal_track", tidalID, "err", err)
+			http.Error(w, tidalStreamErrorMessage(err), http.StatusBadGateway)
+			return
+		}
+		h.log().Warn("download: tidal file assembly failed", "tidal_track", tidalID, "err", err)
+		http.Error(w, tidalStreamErrorMessage(err), http.StatusBadGateway)
+		return
+	}
+
+	// Try to embed metadata + cover art via ffmpeg. If anything fails, fall
+	// back to the raw assembled file — the download still works, just without
+	// tags. This is best-effort: a missing cover or a failed ffmpeg run should
+	// never block the download.
+	if mediaembed.Available() {
+		if tagged, ok := h.embedTIDALMetadata(r.Context(), resp, tidalID); ok {
+			defer tagged.Cleanup()
+			ct := "audio/mp4"
+			if tagged.Format == mediaembed.FormatFLAC {
+				ct = "audio/flac"
+			}
+			w.Header().Set("Content-Type", ct)
+			w.Header().Set("Accept-Ranges", "bytes")
+			w.Header().Set("Content-Length", strconv.FormatInt(tagged.Size, 10))
+			w.Header().Set("Cache-Control", "private, max-age=0")
+			h.log().Info("download: tidal track served with embedded metadata",
+				"tidal_track", tidalID,
+				"size", tagged.Size,
+				"format", tagged.Format)
+			http.ServeContent(w, r, "track"+tagged.Ext, time.Time{}, tagged.File)
+			return
+		}
+		// embedTIDALMetadata already closed resp.Body on failure; the
+		// raw fallback path below needs a fresh FileResponse.
+		resp, err = h.TIDAL.FileResponse(r.Context(), tidalID, r)
+		if err != nil {
+			h.log().Warn("download: tidal raw fallback failed", "tidal_track", tidalID, "err", err)
+			http.Error(w, tidalStreamErrorMessage(err), http.StatusBadGateway)
+			return
+		}
+	}
+
+	h.log().Info("download: tidal track file assembled (raw, no metadata)",
+		"tidal_track", tidalID,
+		"status", resp.StatusCode,
+		"content_type", resp.Header.Get("Content-Type"))
+	writeTIDALProxyResponse(w, resp)
+}
+
+// embedTIDALMetadata fetches track metadata + cover art from TIDAL, then
+// pipes the raw assembled audio through ffmpeg to produce a tagged file.
+// Returns (result, true) on success. On any failure, closes resp.Body and
+// returns (nil, false) so the caller can fall back to a raw download.
+func (h *Tracks) embedTIDALMetadata(ctx context.Context, raw *http.Response, tidalID string) (*mediaembed.Result, bool) {
+	track, err := h.TIDAL.Track(ctx, tidalID)
+	if err != nil {
+		h.log().Warn("download: tidal metadata fetch failed; serving raw", "tidal_track", tidalID, "err", err)
+		raw.Body.Close()
+		return nil, false
+	}
+
+	var coverBytes []byte
+	if track.CoverURL != "" {
+		coverBytes, err = fetchTIDALCoverBytes(ctx, track.CoverURL)
+		if err != nil {
+			h.log().Warn("download: tidal cover fetch failed; embedding without cover",
+				"tidal_track", tidalID, "cover_url", track.CoverURL, "err", err)
+		}
+	}
+
+	hint := mediaembed.HintFromContentType(raw.Header.Get("Content-Type"))
+	meta := mediaembed.Metadata{
+		Title:       track.Title,
+		Artist:      strings.Join(track.Artists, "; "),
+		Album:       track.AlbumTitle,
+		AlbumArtist: track.AlbumArtist,
+		Year:        track.Year,
+		TrackNo:     track.TrackNo,
+		DiscNo:      track.DiscNo,
+		ISRC:        track.ISRC,
+	}
+
+	result, err := mediaembed.Embed(ctx, raw.Body, coverBytes, meta, hint)
+	if err != nil {
+		h.log().Warn("download: ffmpeg metadata embed failed; serving raw",
+			"tidal_track", tidalID, "err", err)
+		return nil, false
+	}
+	return result, true
+}
+
+// fetchTIDALCoverBytes downloads cover art from the TIDAL CDN
+// (resources.tidal.com). Returns raw image bytes (JPEG/PNG) or an error.
+func fetchTIDALCoverBytes(ctx context.Context, coverURL string) ([]byte, error) {
+	u, err := allowedRemoteCoverURL(coverURL)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", httpx.BrowserUserAgent)
+	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+	resp, err := remoteCoverHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("cover fetch status %s", resp.Status)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, maxRemoteCoverBytes))
 }
 
 func (h *Tracks) TIDALHLS(w http.ResponseWriter, r *http.Request) {

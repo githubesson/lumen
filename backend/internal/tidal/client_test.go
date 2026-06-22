@@ -1,12 +1,21 @@
 package tidal
 
 import (
+	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/githubesson/lumen/internal/httpx"
 )
 
 func TestRewriteHLSPlaylist(t *testing.T) {
@@ -229,5 +238,319 @@ func TestHifiStatus(t *testing.T) {
 	}
 	if status.Version != "2.10" || status.CountryCode != "PL" || status.Quality != "LOSSLESS" {
 		t.Fatalf("unexpected status: %+v", status)
+	}
+}
+
+// hifiMediaServer stands up a fake hifi-api plus a TIDAL-like media origin
+// that serves playlists, segments, and keys. The hifi-api's /trackManifests/
+// returns attributes.uri pointing at the media server's root playlist.
+func hifiMediaServer(t *testing.T, playlistBody string) *httptest.Server {
+	t.Helper()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/trackManifests/":
+			mediaURL := srv.URL + "/media/playlist.m3u8"
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"version":"2.10","data":{"data":{"attributes":{"trackPresentation":"FULL","uri":"` + mediaURL + `","formats":["FLAC"]}}}}`))
+		case r.URL.Path == "/media/playlist.m3u8":
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			_, _ = w.Write([]byte(playlistBody))
+		case strings.HasPrefix(r.URL.Path, "/media/seg"):
+			w.Header().Set("Content-Type", "audio/mp4")
+			_, _ = w.Write([]byte(r.URL.Path[len("/media/"):])) // payload = "seg1.aac" etc.
+		case r.URL.Path == "/media/keys/1.key":
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(aesKeyFixture)
+		case r.URL.Path == "/track/":
+			http.Error(w, "should not fallback", http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	return srv
+}
+
+var aesKeyFixture = []byte("0123456789abcdef") // 16 bytes
+
+// allowLoopbackMedia swaps the package-level media policy + host allowlist so
+// the client can fetch playlists/segments/keys from httptest's loopback
+// origin. It returns an HTTP client whose dialer permits loopback (to assign
+// onto Client.stream) and a restore func.
+func allowLoopbackMedia() (*http.Client, func()) {
+	prevPolicy := mediaDownloadPolicy
+	prevHost := mediaHostAllowed
+	mediaDownloadPolicy = httpx.DownloadPolicy{AllowLoopback: true}
+	mediaHostAllowed = func(string) bool { return true }
+	client := httpx.NewDownloadClient(httpx.DownloadPolicy{AllowLoopback: true}, net.DefaultResolver)
+	return client, func() {
+		mediaDownloadPolicy = prevPolicy
+		mediaHostAllowed = prevHost
+	}
+}
+
+func TestFileResponseConcatenatesSegments(t *testing.T) {
+	streamClient, restore := allowLoopbackMedia()
+	defer restore()
+
+	playlist := strings.Join([]string{
+		"#EXTM3U",
+		"#EXT-X-VERSION:3",
+		"#EXT-X-TARGETDURATION:10",
+		"#EXTINF:10.0,",
+		"seg1.aac",
+		"#EXTINF:10.0,",
+		"seg2.aac",
+		"#EXT-X-ENDLIST",
+		"",
+	}, "\n")
+	srv := hifiMediaServer(t, playlist)
+	defer srv.Close()
+
+	c := NewClient(Config{HifiAPIURL: srv.URL, Quality: "LOSSLESS"})
+	c.stream = streamClient
+	resp, err := c.FileResponse(context.Background(), "123", nil)
+	if err != nil {
+		t.Fatalf("FileResponse returned error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "audio/mp4" {
+		t.Fatalf("Content-Type = %q, want audio/mp4", ct)
+	}
+	if ar := resp.Header.Get("Accept-Ranges"); ar != "none" {
+		t.Fatalf("Accept-Ranges = %q, want none", ar)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	want := "seg1.aacseg2.aac"
+	if string(body) != want {
+		t.Fatalf("body = %q, want %q", string(body), want)
+	}
+}
+
+func TestFileResponseMasterPlaylistPicksHighestBandwidth(t *testing.T) {
+	streamClient, restore := allowLoopbackMedia()
+	defer restore()
+
+	// Override: serve a master playlist at /media/playlist.m3u8 whose
+	// variants point at /media/low.m3u8 and /media/high.m3u8.
+	master := strings.Join([]string{
+		"#EXTM3U",
+		"#EXT-X-STREAM-INF:BANDWIDTH=1000",
+		"low.m3u8",
+		"#EXT-X-STREAM-INF:BANDWIDTH=5000",
+		"high.m3u8",
+		"",
+	}, "\n")
+	lowMedia := strings.Join([]string{"#EXTM3U", "#EXTINF:1.0,", "lowseg.aac", "#EXT-X-ENDLIST", ""}, "\n")
+	highMedia := strings.Join([]string{"#EXTM3U", "#EXTINF:1.0,", "highseg.aac", "#EXT-X-ENDLIST", ""}, "\n")
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/trackManifests/":
+			mediaURL := srv.URL + "/media/playlist.m3u8"
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"version":"2.10","data":{"data":{"attributes":{"trackPresentation":"FULL","uri":"` + mediaURL + `"}}}}`))
+		case r.URL.Path == "/media/playlist.m3u8":
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			_, _ = w.Write([]byte(master))
+		case r.URL.Path == "/media/low.m3u8":
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			_, _ = w.Write([]byte(lowMedia))
+		case r.URL.Path == "/media/high.m3u8":
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			_, _ = w.Write([]byte(highMedia))
+		case strings.HasPrefix(r.URL.Path, "/media/"):
+			w.Header().Set("Content-Type", "audio/mp4")
+			_, _ = w.Write([]byte(r.URL.Path[len("/media/"):]))
+		case r.URL.Path == "/track/":
+			http.Error(w, "no fallback", http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{HifiAPIURL: srv.URL, Quality: "LOSSLESS"})
+	c.stream = streamClient
+	resp, err := c.FileResponse(context.Background(), "123", nil)
+	if err != nil {
+		t.Fatalf("FileResponse returned error: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "highseg.aac" {
+		t.Fatalf("body = %q, want highseg.aac (highest bandwidth)", string(body))
+	}
+}
+
+func TestFileResponseAES128Decrypts(t *testing.T) {
+	streamClient, restore := allowLoopbackMedia()
+	defer restore()
+
+	key := aesKeyFixture
+	iv, _ := hex.DecodeString("00000000000000000000000000000001")
+	plain1 := []byte("the quick brown fox jumps over the lazy dog") // 43 bytes
+	plain2 := []byte("final segment!")                               // 14 bytes
+
+	enc1 := encryptAES128CBC(plain1, key, iv)
+	enc2 := encryptAES128CBC(plain2, key, iv)
+
+	playlist := strings.Join([]string{
+		"#EXTM3U",
+		"#EXT-X-VERSION:3",
+		`#EXT-X-KEY:METHOD=AES-128,URI="keys/1.key",IV=0x` + hex.EncodeToString(iv),
+		"#EXTINF:10.0,",
+		"seg1.aac",
+		"#EXTINF:10.0,",
+		"seg2.aac",
+		"#EXT-X-ENDLIST",
+		"",
+	}, "\n")
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/trackManifests/":
+			mediaURL := srv.URL + "/media/playlist.m3u8"
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"version":"2.10","data":{"data":{"attributes":{"trackPresentation":"FULL","uri":"` + mediaURL + `"}}}}`))
+		case r.URL.Path == "/media/playlist.m3u8":
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			_, _ = w.Write([]byte(playlist))
+		case r.URL.Path == "/media/seg1.aac":
+			w.Header().Set("Content-Type", "audio/mp4")
+			_, _ = w.Write(enc1)
+		case r.URL.Path == "/media/seg2.aac":
+			w.Header().Set("Content-Type", "audio/mp4")
+			_, _ = w.Write(enc2)
+		case r.URL.Path == "/media/keys/1.key":
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(key)
+		case r.URL.Path == "/track/":
+			http.Error(w, "no fallback", http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{HifiAPIURL: srv.URL, Quality: "LOSSLESS"})
+	c.stream = streamClient
+	resp, err := c.FileResponse(context.Background(), "123", nil)
+	if err != nil {
+		t.Fatalf("FileResponse returned error: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	want := append(append([]byte{}, plain1...), plain2...)
+	if !bytes.Equal(body, want) {
+		t.Fatalf("decrypted body = %q, want %q", string(body), string(want))
+	}
+}
+
+func TestFileResponsePreviewRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/trackManifests/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"version":"2.10","data":{"data":{"attributes":{"trackPresentation":"PREVIEW","previewReason":"no subscription"}}}}`))
+		case "/track/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"version":"2.10","data":{"assetPresentation":"PREVIEW","manifest":""}}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{HifiAPIURL: srv.URL, Quality: "LOSSLESS"})
+	_, err := c.FileResponse(context.Background(), "123", nil)
+	if !errors.Is(err, ErrPreviewManifest) {
+		t.Fatalf("err = %v, want ErrPreviewManifest", err)
+	}
+}
+
+func encryptAES128CBC(plain, key, iv []byte) []byte {
+	block, _ := aes.NewCipher(key)
+	pad := 16 - len(plain)%16
+	padded := append(append([]byte{}, plain...), bytes.Repeat([]byte{byte(pad)}, pad)...)
+	out := make([]byte, len(padded))
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(out, padded)
+	return out
+}
+
+// TestFileResponseFMP4InitSegment verifies the #EXT-X-MAP init section is
+// fetched and prepended so the concatenated file has valid ftyp/moov boxes.
+// Without this, downloaded .m4a files are orphaned moof/mdat fragments and
+// are unplayable.
+func TestFileResponseFMP4InitSegment(t *testing.T) {
+	streamClient, restore := allowLoopbackMedia()
+	defer restore()
+
+	initBytes := []byte{0x00, 0x00, 0x00, 0x20, 'f', 't', 'y', 'p'} // ftyp box header
+	seg1 := []byte("moofmdat-segment-1-payload")
+	seg2 := []byte("moofmdat-segment-2-payload")
+
+	playlist := strings.Join([]string{
+		"#EXTM3U",
+		"#EXT-X-VERSION:6",
+		"#EXT-X-TARGETDURATION:10",
+		`#EXT-X-MAP:URI="init.mp4"`,
+		"#EXTINF:10.0,",
+		"seg1.m4s",
+		"#EXTINF:10.0,",
+		"seg2.m4s",
+		"#EXT-X-ENDLIST",
+		"",
+	}, "\n")
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/trackManifests/":
+			mediaURL := srv.URL + "/media/playlist.m3u8"
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"version":"2.10","data":{"data":{"attributes":{"trackPresentation":"FULL","uri":"` + mediaURL + `"}}}}`))
+		case r.URL.Path == "/media/playlist.m3u8":
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			_, _ = w.Write([]byte(playlist))
+		case r.URL.Path == "/media/init.mp4":
+			w.Header().Set("Content-Type", "audio/mp4")
+			_, _ = w.Write(initBytes)
+		case r.URL.Path == "/media/seg1.m4s":
+			w.Header().Set("Content-Type", "audio/mp4")
+			_, _ = w.Write(seg1)
+		case r.URL.Path == "/media/seg2.m4s":
+			w.Header().Set("Content-Type", "audio/mp4")
+			_, _ = w.Write(seg2)
+		case r.URL.Path == "/track/":
+			http.Error(w, "no fallback", http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{HifiAPIURL: srv.URL, Quality: "LOSSLESS"})
+	c.stream = streamClient
+	resp, err := c.FileResponse(context.Background(), "123", nil)
+	if err != nil {
+		t.Fatalf("FileResponse returned error: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	want := append(append(append([]byte{}, initBytes...), seg1...), seg2...)
+	if !bytes.Equal(body, want) {
+		t.Fatalf("body = %q, want init+seg1+seg2 = %q", string(body), string(want))
+	}
+	// The init bytes must come first — a corrupted file (missing init) would
+	// start with "moof" instead of the ftyp header.
+	if !bytes.HasPrefix(body, initBytes) {
+		t.Fatalf("body does not start with init segment (ftyp)")
 	}
 }

@@ -16,6 +16,7 @@ import {
   Text,
   View,
   Share as NativeShare,
+  useWindowDimensions,
   type LayoutChangeEvent,
 } from "react-native";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
@@ -692,8 +693,10 @@ function StoryShareMenuButton({
   onPickCustom: () => void;
 }) {
   const theme = useTheme();
+  const { width } = useWindowDimensions();
   const swiftUI = getOptionalSwiftUI();
   const label = loading ? "Rendering Story..." : "Instagram Story";
+  const buttonWidth = Math.max(0, width - theme.space.lg * 2);
 
   if (!swiftUI) {
     return (
@@ -711,18 +714,23 @@ function StoryShareMenuButton({
   const { Button, Divider, Host, Menu, RNHostView } = swiftUI;
 
   return (
-    <Host colorScheme={theme.scheme} style={{ width: "100%" }}>
+    <Host colorScheme={theme.scheme} style={{ width: buttonWidth }}>
       <Menu
         label={
-          <RNHostView matchContents>
-            <StoryMenuLabel label={label} loading={loading} disabled={disabled} />
+          <RNHostView matchContents style={{ width: buttonWidth }}>
+            <StoryMenuLabel
+              label={label}
+              loading={loading}
+              disabled={disabled}
+              width={buttonWidth}
+            />
           </RNHostView>
         }
         modifiers={[
           swiftAccessibilityLabel("Instagram Story background"),
           swiftButtonStyle("plain"),
           swiftControlSize("regular"),
-          swiftFrame({ maxWidth: 1000 }),
+          swiftFrame({ width: buttonWidth }),
           swiftDisabled(disabled),
         ]}
       >
@@ -755,10 +763,12 @@ function StoryMenuLabel({
   label,
   loading,
   disabled,
+  width,
 }: {
   label: string;
   loading: boolean;
   disabled: boolean;
+  width: number;
 }) {
   const theme = useTheme();
   return (
@@ -766,6 +776,7 @@ function StoryMenuLabel({
       style={[
         styles.button,
         {
+          width,
           opacity: disabled ? 0.45 : 1,
           backgroundColor: theme.color.accent,
           borderColor: theme.color.accent,
