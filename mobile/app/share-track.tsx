@@ -9,6 +9,7 @@ import {
 import {
   ActivityIndicator,
   Alert,
+  ActionSheetIOS,
   PanResponder,
   Pressable,
   ScrollView,
@@ -16,7 +17,6 @@ import {
   Text,
   View,
   Share as NativeShare,
-  useWindowDimensions,
   type LayoutChangeEvent,
 } from "react-native";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
@@ -43,14 +43,6 @@ import {
   type TrackDetail,
 } from "@music-library/core";
 import { CoverArt } from "../components/cover-art";
-import {
-  getOptionalSwiftUI,
-  swiftAccessibilityLabel,
-  swiftButtonStyle,
-  swiftControlSize,
-  swiftDisabled,
-  swiftFrame,
-} from "../components/optional-swift-ui";
 import { formatDurationSec } from "../lib/format";
 import { qk } from "../lib/query-keys";
 import { useTheme } from "../theme/theme";
@@ -693,116 +685,73 @@ function StoryShareMenuButton({
   onPickCustom: () => void;
 }) {
   const theme = useTheme();
-  const { width } = useWindowDimensions();
-  const swiftUI = getOptionalSwiftUI();
   const label = loading ? "Rendering Story..." : "Instagram Story";
-  const buttonWidth = Math.max(0, width - theme.space.lg * 2);
 
-  if (!swiftUI) {
-    return (
-      <ActionButton
-        label={label}
-        icon="camera"
-        primary
-        disabled={disabled}
-        loading={loading}
-        onPress={onGenerated}
-      />
-    );
-  }
+  const openStoryOptions = useCallback(() => {
+    if (disabled || loading) return;
+    void Haptics.selectionAsync();
 
-  const { Button, Divider, Host, Menu, RNHostView } = swiftUI;
+    const customLabel = hasCustomBackground
+      ? "Use Custom Image"
+      : "Choose Custom Image";
 
-  return (
-    <Host colorScheme={theme.scheme} style={{ width: buttonWidth }}>
-      <Menu
-        label={
-          <RNHostView matchContents style={{ width: buttonWidth }}>
-            <StoryMenuLabel
-              label={label}
-              loading={loading}
-              disabled={disabled}
-              width={buttonWidth}
-            />
-          </RNHostView>
-        }
-        modifiers={[
-          swiftAccessibilityLabel("Instagram Story background"),
-          swiftButtonStyle("plain"),
-          swiftControlSize("regular"),
-          swiftFrame({ width: buttonWidth }),
-          swiftDisabled(disabled),
-        ]}
-      >
-        <Button
-          label="Use Generated Colors"
-          systemImage="paintpalette"
-          onPress={onGenerated}
-        />
-        <Button
-          label={hasCustomBackground ? "Use Custom Image" : "Choose Custom Image"}
-          systemImage="photo"
-          onPress={onCustom}
-        />
-        {hasCustomBackground ? (
-          <>
-            <Divider />
-            <Button
-              label="Choose Different Image"
-              systemImage="photo.on.rectangle"
-              onPress={onPickCustom}
-            />
-          </>
-        ) : null}
-      </Menu>
-    </Host>
-  );
-}
+    if (process.env.EXPO_OS === "ios") {
+      const options = ["Use Generated Colors", customLabel];
+      if (hasCustomBackground) {
+        options.push("Choose Different Image");
+      }
+      options.push("Cancel");
 
-function StoryMenuLabel({
-  label,
-  loading,
-  disabled,
-  width,
-}: {
-  label: string;
-  loading: boolean;
-  disabled: boolean;
-  width: number;
-}) {
-  const theme = useTheme();
-  return (
-    <View
-      style={[
-        styles.button,
+      const cancelButtonIndex = options.length - 1;
+      ActionSheetIOS.showActionSheetWithOptions(
         {
-          width,
-          opacity: disabled ? 0.45 : 1,
-          backgroundColor: theme.color.accent,
-          borderColor: theme.color.accent,
+          options,
+          cancelButtonIndex,
+          tintColor: theme.color.accent,
+          userInterfaceStyle: theme.scheme,
         },
-      ]}
-    >
-      {loading ? (
-        <ActivityIndicator color={theme.color.onAccent} />
-      ) : (
-        <SymbolView
-          name="camera"
-          size={18}
-          weight="semibold"
-          tintColor={theme.color.onAccent}
-        />
-      )}
-      <Text
-        style={{
-          color: theme.color.onAccent,
-          fontSize: 17,
-          fontWeight: "700",
-        }}
-      >
-        {label}
-      </Text>
-    </View>
+        (selectedIndex) => {
+          if (selectedIndex === cancelButtonIndex) return;
+          if (selectedIndex === 0) {
+            onGenerated();
+          } else if (selectedIndex === 1) {
+            onCustom();
+          } else if (hasCustomBackground && selectedIndex === 2) {
+            onPickCustom();
+          }
+        },
+      );
+      return;
+    }
+
+    Alert.alert("Instagram Story Background", undefined, [
+      { text: "Use Generated Colors", onPress: onGenerated },
+      { text: customLabel, onPress: onCustom },
+      ...(hasCustomBackground
+        ? [{ text: "Choose Different Image", onPress: onPickCustom }]
+        : []),
+      { text: "Cancel", style: "cancel" },
+    ]);
+  }, [
+    disabled,
+    hasCustomBackground,
+    loading,
+    onCustom,
+    onGenerated,
+    onPickCustom,
+    theme.color.accent,
+    theme.scheme,
+  ]);
+
+  return (
+    <ActionButton
+      label={label}
+      icon="camera"
+      primary
+      disabled={disabled}
+      loading={loading}
+      onPress={openStoryOptions}
+    />
   );
 }
 
