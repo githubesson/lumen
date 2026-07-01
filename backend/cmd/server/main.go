@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/githubesson/lumen/internal/activity"
 	"github.com/githubesson/lumen/internal/apitracker"
 	"github.com/githubesson/lumen/internal/artistgrid"
 	"github.com/githubesson/lumen/internal/auth"
@@ -57,6 +58,7 @@ func main() {
 	invitesStore := invites.NewStore(pool)
 	libraryStore := library.NewStore(pool)
 	playlistsStore := playlists.NewStore(pool)
+	activityStore := activity.NewStore(pool)
 	musicRootsStore := musicroots.NewStore(pool)
 	apiTrackerStore := apitracker.NewStore(pool)
 	artistGridStore := artistgrid.NewStore(pool)
@@ -157,6 +159,7 @@ func main() {
 		Ingest:         ingestSvc,
 		Library:        libraryStore,
 		Playlists:      playlistsStore,
+		Activity:       activityStore,
 		TIDAL:          tidalClient,
 		Storage:        store,
 		MusicRoots:     musicRootsStore,

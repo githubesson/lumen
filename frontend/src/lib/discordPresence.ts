@@ -1,5 +1,11 @@
 import { useEffect, useRef } from "react";
-import { signAlbumCoverUrl, type TrackListItem } from "../api";
+import { ACTIVITY_DEVICE_ID_STORAGE_KEY } from "@music-library/core";
+import {
+  api,
+  signAlbumCoverUrl,
+  type PlaybackActivity,
+  type TrackListItem,
+} from "../api";
 import { usePlayer, usePlayerAdapter } from "../context/Player";
 import {
   clearDiscordActivity,
@@ -11,6 +17,8 @@ interface SignedCoverCacheEntry {
   url: string;
   expiresAt: number; // unix seconds
 }
+
+const REMOTE_ACTIVITY_POLL_MS = 5_000;
 
 /**
  * Push the currently playing track to Discord Rich Presence when running
@@ -26,6 +34,7 @@ export function useDiscordPresence() {
   const adapter = usePlayerAdapter();
   const currentRef = useRef<TrackListItem | null>(null);
   const coverUrlCacheRef = useRef<Map<string, SignedCoverCacheEntry>>(new Map());
+  const remoteActivityPushedRef = useRef(false);
 
   useEffect(() => {
     currentRef.current = current;
@@ -83,9 +92,10 @@ export function useDiscordPresence() {
   useEffect(() => {
     if (!isElectron) return;
     if (!current) {
-      void clearDiscordActivity();
+      if (!remoteActivityPushedRef.current) void clearDiscordActivity();
       return;
     }
+    remoteActivityPushedRef.current = false;
     const trackId = current.id;
     void (async () => {
       const coverUrl = await resolveSignedCoverUrl(
@@ -106,6 +116,62 @@ export function useDiscordPresence() {
     })();
   }, [current]);
 
+  // When the desktop player is idle, mirror the freshest activity from another
+  // signed-in client (usually mobile) into Discord Rich Presence.
+  useEffect(() => {
+    if (!isElectron) return;
+    let cancelled = false;
+    const poll = () => {
+      const localDeviceId =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem(ACTIVITY_DEVICE_ID_STORAGE_KEY) ?? undefined
+          : undefined;
+      void (async () => {
+        if (currentRef.current) return;
+        let activity: PlaybackActivity | null = null;
+        try {
+          activity = (
+            await api.getCurrentPlaybackActivity(localDeviceId)
+          ).activity;
+        } catch {
+          return;
+        }
+        if (cancelled || currentRef.current) return;
+        if (!activity) {
+          if (remoteActivityPushedRef.current) {
+            remoteActivityPushedRef.current = false;
+            await clearDiscordActivity();
+          }
+          return;
+        }
+        const track = activityToTrack(activity);
+        const coverUrl = await resolveSignedCoverUrl(
+          track,
+          coverUrlCacheRef.current,
+        );
+        if (cancelled || currentRef.current) return;
+        remoteActivityPushedRef.current = true;
+        await pushDiscordActivity({
+          trackId: activity.track_id,
+          title: activity.title,
+          artist: activity.artist || undefined,
+          album: activity.album || undefined,
+          coverUrl,
+          durationSec: activity.duration_sec,
+          elapsedSec: activity.position_sec,
+          isPlaying: activity.is_playing,
+        });
+      })();
+    };
+
+    poll();
+    const interval = window.setInterval(poll, REMOTE_ACTIVITY_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
   // Clear presence when the tab/app closes so users don't end up "listening"
   // to a ghost track forever.
   useEffect(() => {
@@ -114,6 +180,18 @@ export function useDiscordPresence() {
     window.addEventListener("beforeunload", onUnload);
     return () => window.removeEventListener("beforeunload", onUnload);
   }, []);
+}
+
+function activityToTrack(activity: PlaybackActivity): TrackListItem {
+  return {
+    id: activity.track_id,
+    title: activity.title,
+    artist: activity.artist,
+    album_id: activity.album_id,
+    album_title: activity.album,
+    cover_url: activity.cover_url,
+    duration_ms: (activity.duration_sec ?? 0) * 1000,
+  };
 }
 
 /**

@@ -7,6 +7,7 @@ import {
 } from "react";
 import {
   asyncifySyncStorage,
+  usePlaybackActivityPublisher,
   usePlayerCore,
   type AudioAdapter,
   type PlayerControls,
@@ -46,6 +47,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const { state, controls, time } = usePlayerCore({
     adapter,
     storage: webStorage,
+  });
+  usePlaybackActivityPublisher({
+    state,
+    time,
+    storage: webStorage,
+    deviceName: "Desktop",
   });
 
   // Media Session API — surface in OS media controls / Bluetooth buttons.

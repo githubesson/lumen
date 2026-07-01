@@ -15,6 +15,7 @@ import {
 import { AppState, Platform } from "react-native";
 import {
   trackCoverUrl,
+  usePlaybackActivityPublisher,
   usePlayerCore,
   type PlayerControls,
   type PlayerState,
@@ -108,6 +109,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     adapter,
     storage: asyncStorageAdapter,
     interpolateProgress: appState === "active",
+  });
+  usePlaybackActivityPublisher({
+    state,
+    time,
+    storage: asyncStorageAdapter,
+    deviceName: Platform.OS === "ios" ? "iPhone" : "Mobile",
   });
   const lockScreenActiveRef = useRef(false);
   const nowPlayingMetadata = useMemo(
@@ -230,4 +237,3 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     </PlayerCurrentCtx.Provider>
   );
 }
-

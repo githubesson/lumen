@@ -1,39 +1,32 @@
 import { useCallback, useMemo, useState } from "react";
-import {
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { RefreshControl, ScrollView, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { Stack, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { SymbolView, type SymbolViewProps } from "expo-symbols";
-import { Image } from "expo-image";
 import {
-  albumCoverUrl,
   api,
   useAuth,
   type ReplayData,
   type TrackListItem,
 } from "@music-library/core";
-import { AdaptiveGlass } from "../../../components/adaptive-glass";
-import { CoverArt } from "../../../components/cover-art";
 import { EmptyState } from "../../../components/empty-state";
 import {
   useBottomDockInset,
   useDockScrollHandler,
 } from "../../../components/dock/dock-context";
+import { BrowseLinksCard } from "../../../components/library/browse-links-card";
+import { HomeHeaderCapsule } from "../../../components/library/home-header-capsule";
+import { HorizontalShelf } from "../../../components/horizontal-shelf";
+import { Section } from "../../../components/section";
+import { RankedTrackRow } from "../../../components/library/ranked-track-row";
+import { ResumeCard } from "../../../components/library/resume-card";
+import { AlbumTile, TrackTile } from "../../../components/library/shelf-tiles";
+import { WelcomeCard } from "../../../components/library/welcome-card";
 import { usePlayTrack } from "../../../context/player";
 import { qk } from "../../../lib/query-keys";
 import { usePlayQueue } from "../../../lib/use-play-queue";
-import { useTheme, type ThemeTokens } from "../../../theme/theme";
+import { useTheme } from "../../../theme/theme";
 
-const SHELF_TILE_SIZE = 124;
-const HEADER_CAPSULE_HEIGHT = 44;
-const HEADER_ACTION_WIDTH = 54;
 const REDISCOVER_COUNT = 10;
 
 // ── Small deterministic helpers ─────────────────────────────────────────────
@@ -264,7 +257,6 @@ export default function HomeScreen() {
           title: greeting,
           headerRight: () => (
             <HomeHeaderCapsule
-              theme={theme}
               onSearchPress={onSearchPress}
               onUploadPress={onUploadPress}
             />
@@ -295,28 +287,23 @@ export default function HomeScreen() {
           <>
             {isNewHere && (
               <WelcomeCard
-                theme={theme}
                 onBrowse={() => goBrowse("tracks")}
                 onUpload={onUploadPress}
+                style={{ marginHorizontal: theme.space.lg }}
               />
             )}
 
             {lastPlayed && (
               <View style={{ gap: theme.space.lg }}>
                 <ResumeCard
-                  theme={theme}
                   track={lastPlayed}
                   onPress={onRecentPress}
+                  style={{ marginHorizontal: theme.space.lg }}
                 />
                 {recentShelf.length > 0 && (
                   <HorizontalShelf>
                     {recentShelf.map((t) => (
-                      <TrackTile
-                        key={t.id}
-                        theme={theme}
-                        track={t}
-                        onPress={onRecentPress}
-                      />
+                      <TrackTile key={t.id} track={t} onPress={onRecentPress} />
                     ))}
                   </HorizontalShelf>
                 )}
@@ -325,7 +312,6 @@ export default function HomeScreen() {
 
             {hasReplay && topTracks.length > 0 && (
               <Section
-                theme={theme}
                 eyebrow="Last 30 days"
                 title="On repeat"
                 actionLabel="See all"
@@ -338,7 +324,6 @@ export default function HomeScreen() {
                   {topTracks.map((t, i) => (
                     <RankedTrackRow
                       key={t.id}
-                      theme={theme}
                       rank={i + 1}
                       track={t}
                       plays={topTrackPlays.get(t.id) ?? 0}
@@ -350,12 +335,11 @@ export default function HomeScreen() {
             )}
 
             {hasReplay && topAlbums.length > 0 && (
-              <Section theme={theme} eyebrow="Heavy rotation" title="Your albums">
+              <Section eyebrow="Heavy rotation" title="Your albums">
                 <HorizontalShelf>
                   {topAlbums.map((a) => (
                     <AlbumTile
                       key={a.id}
-                      theme={theme}
                       id={a.id}
                       title={a.title}
                       subtitle={a.artist}
@@ -368,7 +352,6 @@ export default function HomeScreen() {
 
             {favoritesShelf.length > 0 && (
               <Section
-                theme={theme}
                 eyebrow="From your favorites"
                 title="Loved by you"
                 actionLabel="Shuffle"
@@ -379,7 +362,6 @@ export default function HomeScreen() {
                   {favoritesShelf.map((t) => (
                     <TrackTile
                       key={t.id}
-                      theme={theme}
                       track={t}
                       onPress={onFavoriteTilePress}
                     />
@@ -390,7 +372,6 @@ export default function HomeScreen() {
 
             {(rediscoverQuery.data?.items.length ?? 0) > 0 && (
               <Section
-                theme={theme}
                 eyebrow="A daily dig through the shelves"
                 title="Rediscover"
               >
@@ -398,7 +379,6 @@ export default function HomeScreen() {
                   {rediscoverQuery.data!.items.map((a) => (
                     <AlbumTile
                       key={a.id}
-                      theme={theme}
                       id={a.id}
                       title={a.title}
                       subtitle={a.artist_name ?? undefined}
@@ -409,38 +389,11 @@ export default function HomeScreen() {
               </Section>
             )}
 
-            <Section theme={theme} title="Your library">
-              <View
-                style={[
-                  styles.card,
-                  {
-                    marginHorizontal: theme.space.lg,
-                    backgroundColor: theme.color.bgElev1,
-                    borderRadius: theme.radius.md,
-                  },
-                ]}
-              >
-                <BrowseLinkRow
-                  theme={theme}
-                  icon="music.note"
-                  label="Songs"
-                  onPress={() => goBrowse("tracks")}
-                />
-                <BrowseLinkRow
-                  theme={theme}
-                  icon="square.stack"
-                  label="Albums"
-                  divider
-                  onPress={() => goBrowse("albums")}
-                />
-                <BrowseLinkRow
-                  theme={theme}
-                  icon="music.mic"
-                  label="Artists"
-                  divider
-                  onPress={() => goBrowse("artists")}
-                />
-              </View>
+            <Section title="Your library">
+              <BrowseLinksCard
+                onBrowse={goBrowse}
+                style={{ marginHorizontal: theme.space.lg }}
+              />
             </Section>
           </>
         )}
@@ -448,602 +401,3 @@ export default function HomeScreen() {
     </>
   );
 }
-
-// ── Pieces ──────────────────────────────────────────────────────────────────
-
-function Section({
-  theme,
-  eyebrow,
-  title,
-  actionLabel,
-  actionIcon,
-  onAction,
-  children,
-}: {
-  theme: ThemeTokens;
-  eyebrow?: string;
-  title: string;
-  actionLabel?: string;
-  actionIcon?: SymbolViewProps["name"];
-  onAction?: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <View style={{ gap: theme.space.sm }}>
-      <View
-        style={{
-          paddingHorizontal: theme.space.lg,
-          flexDirection: "row",
-          alignItems: "flex-end",
-          justifyContent: "space-between",
-        }}
-      >
-        <View style={{ gap: 2, flex: 1, minWidth: 0 }}>
-          {eyebrow && (
-            <Text
-              style={{
-                color: theme.color.fgMuted,
-                fontSize: 11,
-                letterSpacing: 0.6,
-                textTransform: "uppercase",
-              }}
-            >
-              {eyebrow}
-            </Text>
-          )}
-          <Text
-            style={{
-              color: theme.color.fg,
-              fontSize: 20,
-              fontWeight: "600",
-              letterSpacing: -0.2,
-            }}
-          >
-            {title}
-          </Text>
-        </View>
-        {actionLabel && onAction && (
-          <Pressable
-            onPress={onAction}
-            accessibilityRole="button"
-            accessibilityLabel={actionLabel}
-            hitSlop={8}
-            style={({ pressed }) => ({
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 5,
-              paddingBottom: 2,
-              opacity: pressed ? 0.6 : 1,
-            })}
-          >
-            {actionIcon && (
-              <SymbolView
-                name={actionIcon}
-                size={13}
-                weight="semibold"
-                tintColor={theme.color.accent}
-              />
-            )}
-            <Text
-              style={{
-                color: theme.color.accent,
-                fontSize: 14,
-                fontWeight: "500",
-              }}
-            >
-              {actionLabel}
-            </Text>
-          </Pressable>
-        )}
-      </View>
-      {children}
-    </View>
-  );
-}
-
-function HorizontalShelf({ children }: { children: React.ReactNode }) {
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
-    >
-      {children}
-    </ScrollView>
-  );
-}
-
-/**
- * Big "pick up where you left off" card for the most recent play. Liquid
- * Glass surface with the artwork flush to the card's left edge so it lines up
- * exactly with the shelf tiles below.
- */
-function ResumeCard({
-  theme,
-  track,
-  onPress,
-}: {
-  theme: ThemeTokens;
-  track: TrackListItem;
-  onPress: (t: TrackListItem) => void;
-}) {
-  return (
-    <Pressable
-      onPress={() => {
-        void Haptics.selectionAsync();
-        onPress(track);
-      }}
-      accessibilityRole="button"
-      accessibilityLabel={`Resume ${track.title}${track.artist ? ` by ${track.artist}` : ""}`}
-      style={({ pressed }) => ({
-        marginHorizontal: theme.space.lg,
-        opacity: pressed ? 0.8 : 1,
-      })}
-    >
-      <AdaptiveGlass
-        interactive
-        style={{
-          borderRadius: theme.radius.lg,
-          borderCurve: "continuous",
-          overflow: "hidden",
-        }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            gap: theme.space.md,
-          }}
-        >
-          <CoverArt track={track} size={84} priority="high" radius={0} />
-          <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-            <Text
-              style={{
-                color: theme.color.fgMuted,
-                fontSize: 11,
-                letterSpacing: 0.6,
-                textTransform: "uppercase",
-              }}
-            >
-              Jump back in
-            </Text>
-            <Text
-              numberOfLines={1}
-              style={{ color: theme.color.fg, fontSize: 17, fontWeight: "600" }}
-            >
-              {track.title}
-            </Text>
-            {track.artist ? (
-              <Text
-                numberOfLines={1}
-                style={{ color: theme.color.fgMuted, fontSize: 14 }}
-              >
-                {track.artist}
-              </Text>
-            ) : null}
-          </View>
-          <SymbolView
-            name="play.circle.fill"
-            size={36}
-            tintColor={theme.color.accent}
-            style={{ marginRight: theme.space.md }}
-          />
-        </View>
-      </AdaptiveGlass>
-    </Pressable>
-  );
-}
-
-function TrackTile({
-  theme,
-  track,
-  onPress,
-}: {
-  theme: ThemeTokens;
-  track: TrackListItem;
-  onPress: (t: TrackListItem) => void;
-}) {
-  return (
-    <Pressable
-      onPress={() => {
-        void Haptics.selectionAsync();
-        onPress(track);
-      }}
-      accessibilityRole="button"
-      accessibilityLabel={
-        track.artist ? `${track.title} by ${track.artist}` : track.title
-      }
-      style={({ pressed }) => ({
-        width: SHELF_TILE_SIZE,
-        opacity: pressed ? 0.7 : 1,
-      })}
-    >
-      <CoverArt track={track} size={SHELF_TILE_SIZE} priority="low" />
-      <Text
-        numberOfLines={1}
-        style={{
-          color: theme.color.fg,
-          fontSize: 14,
-          fontWeight: "500",
-          marginTop: 8,
-        }}
-      >
-        {track.title}
-      </Text>
-      {track.artist ? (
-        <Text
-          numberOfLines={1}
-          style={{ color: theme.color.fgMuted, fontSize: 12 }}
-        >
-          {track.artist}
-        </Text>
-      ) : null}
-    </Pressable>
-  );
-}
-
-function AlbumTile({
-  theme,
-  id,
-  title,
-  subtitle,
-  onPress,
-}: {
-  theme: ThemeTokens;
-  id: string;
-  title: string;
-  subtitle?: string;
-  onPress: (id: string) => void;
-}) {
-  return (
-    <Pressable
-      onPress={() => onPress(id)}
-      accessibilityRole="button"
-      accessibilityLabel={subtitle ? `${title} by ${subtitle}` : title}
-      style={({ pressed }) => ({
-        width: SHELF_TILE_SIZE,
-        opacity: pressed ? 0.7 : 1,
-      })}
-    >
-      <View
-        style={{
-          width: SHELF_TILE_SIZE,
-          height: SHELF_TILE_SIZE,
-          borderRadius: theme.radius.sm,
-          borderCurve: "continuous",
-          overflow: "hidden",
-          backgroundColor: theme.color.bgElev2,
-        }}
-      >
-        <Image
-          source={{ uri: albumCoverUrl(id, 256) }}
-          style={{ width: SHELF_TILE_SIZE, height: SHELF_TILE_SIZE }}
-          contentFit="cover"
-          cachePolicy="memory-disk"
-          recyclingKey={`album:${id}:${SHELF_TILE_SIZE}`}
-        />
-      </View>
-      <Text
-        numberOfLines={1}
-        style={{
-          color: theme.color.fg,
-          fontSize: 14,
-          fontWeight: "500",
-          marginTop: 8,
-        }}
-      >
-        {title}
-      </Text>
-      {subtitle ? (
-        <Text
-          numberOfLines={1}
-          style={{ color: theme.color.fgMuted, fontSize: 12 }}
-        >
-          {subtitle}
-        </Text>
-      ) : null}
-    </Pressable>
-  );
-}
-
-/**
- * Editorial chart row: oversized rank numeral, artwork, then title with the
- * play count folded into the subtitle so long titles get the full width.
- */
-function RankedTrackRow({
-  theme,
-  rank,
-  track,
-  plays,
-  onPress,
-}: {
-  theme: ThemeTokens;
-  rank: number;
-  track: TrackListItem;
-  plays: number;
-  onPress: (t: TrackListItem) => void;
-}) {
-  const playsLabel = `${plays.toLocaleString()} ${plays === 1 ? "play" : "plays"}`;
-  return (
-    <Pressable
-      onPress={() => {
-        void Haptics.selectionAsync();
-        onPress(track);
-      }}
-      accessibilityRole="button"
-      accessibilityLabel={
-        track.artist ? `${track.title} by ${track.artist}` : track.title
-      }
-      style={({ pressed }) => ({
-        flexDirection: "row",
-        alignItems: "center",
-        paddingHorizontal: theme.space.lg,
-        paddingVertical: theme.space.sm,
-        gap: theme.space.md,
-        opacity: pressed ? 0.6 : 1,
-      })}
-    >
-      <Text
-        style={{
-          width: 30,
-          color: rank === 1 ? theme.color.accent : theme.color.fgMuted,
-          fontSize: 22,
-          fontWeight: "700",
-          letterSpacing: -0.5,
-          fontVariant: ["tabular-nums"],
-          textAlign: "center",
-        }}
-      >
-        {rank}
-      </Text>
-      <CoverArt track={track} size={48} transitionMs={0} priority="low" />
-      <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
-        <Text
-          numberOfLines={1}
-          style={{ color: theme.color.fg, fontSize: 16, fontWeight: "500" }}
-        >
-          {track.title}
-        </Text>
-        <Text
-          numberOfLines={1}
-          style={{
-            color: theme.color.fgMuted,
-            fontSize: 13,
-            fontVariant: ["tabular-nums"],
-          }}
-        >
-          {track.artist ? `${track.artist} · ${playsLabel}` : playsLabel}
-        </Text>
-      </View>
-    </Pressable>
-  );
-}
-
-function BrowseLinkRow({
-  theme,
-  icon,
-  label,
-  divider,
-  onPress,
-}: {
-  theme: ThemeTokens;
-  icon: SymbolViewProps["name"];
-  label: string;
-  divider?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <>
-      {divider && (
-        <View
-          style={{
-            height: StyleSheet.hairlineWidth,
-            marginLeft: 52,
-            backgroundColor: theme.color.separator,
-          }}
-        />
-      )}
-      <Pressable
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={`Browse ${label}`}
-        style={({ pressed }) => ({
-          flexDirection: "row",
-          alignItems: "center",
-          paddingHorizontal: theme.space.md,
-          paddingVertical: 13,
-          gap: theme.space.md,
-          backgroundColor: pressed ? theme.color.bgElev2 : "transparent",
-        })}
-      >
-        <SymbolView
-          name={icon}
-          size={20}
-          weight="medium"
-          tintColor={theme.color.accent}
-        />
-        <Text style={{ flex: 1, color: theme.color.fg, fontSize: 16 }}>
-          {label}
-        </Text>
-        <SymbolView
-          name="chevron.right"
-          size={13}
-          weight="semibold"
-          tintColor={theme.color.fgMuted}
-        />
-      </Pressable>
-    </>
-  );
-}
-
-function WelcomeCard({
-  theme,
-  onBrowse,
-  onUpload,
-}: {
-  theme: ThemeTokens;
-  onBrowse: () => void;
-  onUpload: () => void;
-}) {
-  return (
-    <View
-      style={{
-        marginHorizontal: theme.space.lg,
-        backgroundColor: theme.color.bgElev1,
-        borderRadius: theme.radius.lg,
-        borderCurve: "continuous",
-        padding: theme.space.xl,
-        alignItems: "center",
-        gap: theme.space.md,
-      }}
-    >
-      <SymbolView name="sparkles" size={40} tintColor={theme.color.accent} />
-      <Text
-        style={{
-          color: theme.color.fg,
-          fontSize: 18,
-          fontWeight: "600",
-          textAlign: "center",
-        }}
-      >
-        Make this place yours
-      </Text>
-      <Text
-        style={{
-          color: theme.color.fgMuted,
-          fontSize: 14,
-          textAlign: "center",
-          maxWidth: 280,
-        }}
-      >
-        Play a few songs and favorite the keepers — this page fills in with
-        your recents, heavy rotation, and daily rediscoveries.
-      </Text>
-      <View style={{ flexDirection: "row", gap: theme.space.md, marginTop: 4 }}>
-        <Pressable
-          onPress={onBrowse}
-          accessibilityRole="button"
-          style={({ pressed }) => ({
-            backgroundColor: theme.color.accent,
-            borderRadius: 999,
-            paddingHorizontal: 18,
-            paddingVertical: 10,
-            opacity: pressed ? 0.7 : 1,
-          })}
-        >
-          <Text
-            style={{
-              color: theme.color.onAccent,
-              fontSize: 15,
-              fontWeight: "600",
-            }}
-          >
-            Browse library
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={onUpload}
-          accessibilityRole="button"
-          style={({ pressed }) => ({
-            backgroundColor: theme.color.bgElev2,
-            borderRadius: 999,
-            paddingHorizontal: 18,
-            paddingVertical: 10,
-            opacity: pressed ? 0.7 : 1,
-          })}
-        >
-          <Text
-            style={{ color: theme.color.fg, fontSize: 15, fontWeight: "600" }}
-          >
-            Upload music
-          </Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-function HomeHeaderCapsule({
-  theme,
-  onSearchPress,
-  onUploadPress,
-}: {
-  theme: ThemeTokens;
-  onSearchPress: () => void;
-  onUploadPress: () => void;
-}) {
-  const dividerColor =
-    theme.scheme === "dark" ? "rgba(255,255,255,0.16)" : "rgba(0,0,0,0.14)";
-  return (
-    <View style={styles.headerCapsuleWrap}>
-      <AdaptiveGlass style={styles.headerCapsule}>
-        <View style={styles.headerCapsuleRow}>
-          <Pressable
-            onPress={onSearchPress}
-            accessibilityRole="button"
-            accessibilityLabel="Search your library"
-            style={({ pressed }) => [
-              styles.headerCapsuleButton,
-              pressed ? { opacity: 0.6 } : null,
-            ]}
-          >
-            <SymbolView
-              name="magnifyingglass"
-              size={21}
-              weight="semibold"
-              tintColor={theme.color.fg}
-            />
-          </Pressable>
-          <View
-            style={[styles.headerCapsuleDivider, { backgroundColor: dividerColor }]}
-          />
-          <Pressable
-            onPress={onUploadPress}
-            accessibilityRole="button"
-            accessibilityLabel="Upload music"
-            style={({ pressed }) => [
-              styles.headerCapsuleButton,
-              pressed ? { opacity: 0.6 } : null,
-            ]}
-          >
-            <SymbolView name="plus" size={24} tintColor={theme.color.fg} />
-          </Pressable>
-        </View>
-      </AdaptiveGlass>
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  card: {
-    borderCurve: "continuous",
-    overflow: "hidden",
-  },
-  headerCapsuleWrap: {
-    height: HEADER_CAPSULE_HEIGHT,
-    overflow: "hidden",
-    transform: [{ translateX: 8 }],
-  },
-  headerCapsule: {
-    height: HEADER_CAPSULE_HEIGHT,
-    borderRadius: HEADER_CAPSULE_HEIGHT / 2,
-    borderCurve: "continuous",
-    overflow: "hidden",
-  },
-  headerCapsuleRow: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  headerCapsuleButton: {
-    width: HEADER_ACTION_WIDTH,
-    height: HEADER_CAPSULE_HEIGHT,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerCapsuleDivider: {
-    width: StyleSheet.hairlineWidth,
-    height: 18,
-    opacity: 0.7,
-  },
-});

@@ -476,6 +476,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ completion }),
     }),
+  upsertPlaybackActivity: (input: PlaybackActivityInput) =>
+    request<PlaybackActivity>("/api/activity", {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
+  getCurrentPlaybackActivity: (excludeDeviceId?: string) =>
+    request<CurrentPlaybackActivityResponse>(
+      `/api/activity/current${buildQuery({ exclude_device_id: excludeDeviceId })}`,
+    ),
+  clearPlaybackActivity: (deviceId: string) =>
+    requestVoid(`/api/activity/${encodeURIComponent(deviceId)}`, {
+      method: "DELETE",
+    }),
 
   uploadMusic: (files: File[], scope: "personal" | "global") => {
     const fd = new FormData();
@@ -617,6 +630,28 @@ export interface TrackListItem {
   /** True when the track is the current user's own personal upload — only
    *  these can be deleted via `deleteTrack`. */
   owned?: boolean;
+}
+
+export interface PlaybackActivityInput {
+  device_id: string;
+  device_name: string;
+  track_id: string;
+  title: string;
+  artist?: string;
+  album?: string;
+  album_id?: string;
+  cover_url?: string;
+  duration_sec?: number;
+  position_sec: number;
+  is_playing: boolean;
+}
+
+export interface PlaybackActivity extends PlaybackActivityInput {
+  updated_at: string;
+}
+
+export interface CurrentPlaybackActivityResponse {
+  activity: PlaybackActivity | null;
 }
 
 export interface SearchResponse {

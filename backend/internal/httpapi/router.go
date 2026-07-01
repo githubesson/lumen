@@ -8,6 +8,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/githubesson/lumen/internal/activity"
 	"github.com/githubesson/lumen/internal/apitracker"
 	"github.com/githubesson/lumen/internal/artistgrid"
 	"github.com/githubesson/lumen/internal/auth"
@@ -33,6 +34,7 @@ type Deps struct {
 	Ingest         *ingest.Service
 	Library        *library.Store
 	Playlists      *playlists.Store
+	Activity       *activity.Store
 	TIDAL          *tidal.Client
 	Storage        storage.Storage
 	MusicRoots     *musicroots.Store
@@ -70,6 +72,7 @@ func NewRouter(d Deps) http.Handler {
 	invH := &handlers.Invites{Store: d.Invites}
 	libH := &handlers.Library{Ingest: d.Ingest, Library: d.Library}
 	plH := &handlers.Playlists{Store: d.Playlists, Users: d.Users, Library: d.Library, TIDAL: d.TIDAL}
+	activityH := &handlers.Activity{Store: d.Activity}
 	searchH := &handlers.Search{Library: d.Library, TIDAL: d.TIDAL}
 	tidalH := &handlers.TIDAL{TIDAL: d.TIDAL}
 	adminUsersH := &handlers.AdminUsers{DB: d.DB, Users: d.Users, Playlists: d.Playlists}
@@ -161,6 +164,10 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/auth/me", authH.Me)
 			r.Post("/auth/logout", authH.Logout)
 			r.With(appmw.RateLimitByIP(5, 10*time.Minute)).Post("/auth/reset-password", authH.ResetPassword)
+
+			r.Put("/activity", activityH.Upsert)
+			r.Get("/activity/current", activityH.Current)
+			r.Delete("/activity/{device_id}", activityH.Delete)
 
 			r.Get("/tracks", tracksH.List)
 			r.Get("/search", searchH.Search)
