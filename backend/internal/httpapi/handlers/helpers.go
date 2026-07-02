@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -31,6 +33,15 @@ func copyFileLimited(dst io.Writer, src io.Reader, maxBytes int64) (int64, error
 }
 
 func zeroTime() time.Time { return time.Time{} }
+
+// pageParams returns the limit/offset pagination query parameters. Missing or
+// malformed values come back as zero; each store applies its own default and
+// cap, so no clamping happens here.
+func pageParams(q url.Values) (limit, offset int) {
+	limit, _ = strconv.Atoi(q.Get("limit"))
+	offset, _ = strconv.Atoi(q.Get("offset"))
+	return limit, offset
+}
 
 // writeJSON encodes v as the response body with the given status.
 func writeJSON(w http.ResponseWriter, status int, v any) {

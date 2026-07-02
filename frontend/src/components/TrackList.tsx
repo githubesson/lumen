@@ -6,20 +6,26 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { HeartIcon, PencilSquareIcon } from "@heroicons/react/16/solid";
+import { PencilSquareIcon } from "@heroicons/react/16/solid";
 import { trackCoverUrl, type TrackListItem } from "../api";
 import { displayText, fmtDurationMs } from "../lib/format";
+import { isLocalTrack } from "../lib/track";
 import CoverArt from "./CoverArt";
-import { EditTrackDialog, MoveToAlbumDialog } from "./EditDialog";
+import { EditTrackDialog } from "./edit/EditTrackDialog";
+import { MoveToAlbumDialog } from "./edit/MoveToAlbumDialog";
 import Tooltip from "./Tooltip";
 import { useTrackContextMenu } from "./TrackContextMenu";
 import { useAuth } from "../context/Auth";
 import { useFavorites } from "../context/Favorites";
 import { usePlayer } from "../context/Player";
-import { usePopKey } from "../lib/useTransitionMount";
 import { useTrackSelection } from "../lib/useTrackSelection";
 import { useWindowedSlice } from "../lib/useWindowedSlice";
-import TrackCheckbox from "./TrackCheckbox";
+import {
+  FavoriteButton,
+  SelectAllHeaderCell,
+  TrackIndexCell,
+  TrackSelectCell,
+} from "./TrackRowCells";
 import TrackSelectionToolbar from "./TrackSelectionToolbar";
 
 interface Props {
@@ -173,14 +179,11 @@ export default function TrackList({
         <thead>
           <tr>
             {selectionMode && (
-              <th className="col-select">
-                <TrackCheckbox
-                  checked={allSelected}
-                  indeterminate={someSelected && !allSelected}
-                  ariaLabel={allSelected ? "Deselect all tracks" : "Select all tracks"}
-                  onChange={selectAll}
-                />
-              </th>
+              <SelectAllHeaderCell
+                allSelected={allSelected}
+                someSelected={someSelected}
+                onToggle={selectAll}
+              />
             )}
             <th className="col-idx">#</th>
             {showCover && <th className="col-art" aria-label="Cover" />}
@@ -295,7 +298,6 @@ export const TrackRow = memo(function TrackRow({
   onEdit,
   onContextMenu,
 }: TrackRowProps) {
-  const popKey = usePopKey(fav);
   const akaParts = useMemo(
     () => (track.aka ? track.aka.split(" • ") : null),
     [track.aka],
@@ -315,27 +317,13 @@ export const TrackRow = memo(function TrackRow({
       onContextMenu={(e) => onContextMenu(track, e)}
     >
       {selectionMode && (
-        <td className="col-select">
-          <TrackCheckbox
-            checked={selected}
-            ariaLabel={`Select ${displayText(track.title, "track")}`}
-            onChange={(e) => onToggleSelect(track, index, e.shiftKey)}
-          />
-        </td>
+        <TrackSelectCell
+          selected={selected}
+          label={displayText(track.title, "track")}
+          onToggle={(range) => onToggleSelect(track, index, range)}
+        />
       )}
-      <td className="col-idx">
-        <span className="play-cell">
-          {isNow && isPlaying ? (
-            <span className="playing-bars idx-bars" aria-label="now playing">
-              <span />
-              <span />
-              <span />
-            </span>
-          ) : (
-            <span className="idx-num">{String(index + 1).padStart(2, "0")}</span>
-          )}
-        </span>
-      </td>
+      <TrackIndexCell index={index} isPlaying={isNow && isPlaying} />
       {showCover && (
         <td className="col-art">
           <CoverArt
@@ -414,27 +402,9 @@ export const TrackRow = memo(function TrackRow({
               <PencilSquareIcon className="size-3.5" />
             </button>
           )}
-          <button
-            type="button"
-            className={fav ? "active" : undefined}
-            aria-label={fav ? "Remove from favorites" : "Add to favorites"}
-            aria-pressed={fav}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleFav(track.id);
-            }}
-          >
-            <HeartIcon
-              key={popKey}
-              className={`size-3.5 ${popKey > 0 ? "motion-safe:animate-heart-pop" : ""}`}
-            />
-          </button>
+          <FavoriteButton fav={fav} onToggle={() => onToggleFav(track.id)} />
         </div>
       </td>
     </tr>
   );
 });
-
-function isLocalTrack(track: TrackListItem): boolean {
-  return !track.source || track.source === "local";
-}

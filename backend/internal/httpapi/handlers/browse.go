@@ -43,8 +43,7 @@ func (h *Browse) ListAlbums(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	limit, _ := strconv.Atoi(q.Get("limit"))
-	offset, _ := strconv.Atoi(q.Get("offset"))
+	limit, offset := pageParams(q)
 	query := strings.TrimSpace(q.Get("q"))
 
 	items, err := h.Library.ListAlbums(r.Context(), u.ID, limit, offset, query)
@@ -181,8 +180,7 @@ func (h *Browse) ListArtists(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	limit, _ := strconv.Atoi(q.Get("limit"))
-	offset, _ := strconv.Atoi(q.Get("offset"))
+	limit, offset := pageParams(q)
 	query := strings.TrimSpace(q.Get("q"))
 
 	items, err := h.Library.ListArtists(r.Context(), u.ID, limit, offset, query)

@@ -8,6 +8,7 @@ import {
 } from "@heroicons/react/16/solid";
 import { Button } from "../components/Button";
 import ErrorBanner from "../components/ErrorBanner";
+import { TextInput } from "../components/Field";
 import { Select } from "../components/Select";
 import { api, type Playlist } from "../api";
 import {
@@ -407,8 +408,7 @@ export default function FH6Radio() {
           </label>
           <label>
             Search
-            <input
-              className="input"
+            <TextInput
               value={sourceDraft.search}
               placeholder="Optional"
               onChange={(e) => updateSourceDraft({ search: e.currentTarget.value })}
@@ -439,8 +439,7 @@ export default function FH6Radio() {
           </label>
           <label>
             Limit
-            <input
-              className="input"
+            <TextInput
               type="number"
               min={1}
               max={1000}

@@ -2,6 +2,7 @@ import {
   Bars3BottomLeftIcon,
   Squares2X2Icon,
 } from "@heroicons/react/16/solid";
+import { NativeSelect } from "../Field";
 import SearchInput from "../SearchInput";
 import SegmentedControl from "../SegmentedControl";
 
@@ -100,8 +101,7 @@ export default function BrowseToolbar({
       )}
 
       {view === "tracks" && sort != null && onSortChange != null && (
-        <select
-          className="input"
+        <NativeSelect
           style={{ width: "auto" }}
           value={sort}
           onChange={(e) => onSortChange(e.target.value as SortKey)}
@@ -112,7 +112,7 @@ export default function BrowseToolbar({
               {sortLabels[k]}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       )}
 
       {view === "tracks" && displayMode != null && onDisplayModeChange != null && (

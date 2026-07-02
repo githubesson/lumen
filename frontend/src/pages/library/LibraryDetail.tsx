@@ -19,7 +19,7 @@ import { useEntityDetail } from "../../lib/useEntityDetail";
 import TrackList from "../../components/TrackList";
 import CoverArt from "../../components/CoverArt";
 import { Button } from "../../components/Button";
-import { EditAlbumDialog } from "../../components/EditDialog";
+import { EditAlbumDialog } from "../../components/edit/EditAlbumDialog";
 import EmptyState from "../../components/EmptyState";
 import ErrorBanner from "../../components/ErrorBanner";
 import ListPageHeader from "../../components/ListPageHeader";
@@ -452,13 +452,7 @@ function DetailTrackSearchBar({
         style={{ width: 260 }}
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.preventDefault();
-            onQueryChange("");
-            (e.target as HTMLInputElement).blur();
-          }
-        }}
+        onClear={() => onQueryChange("")}
         placeholder={`Search this ${kind}`}
         aria-label={`Search this ${kind}`}
       />

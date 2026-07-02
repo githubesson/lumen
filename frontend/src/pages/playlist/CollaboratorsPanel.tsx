@@ -9,7 +9,7 @@ import {
 import { Button } from "../../components/Button";
 import ErrorBanner from "../../components/ErrorBanner";
 import EmptyState from "../../components/EmptyState";
-import { Field, TextInput } from "../../components/Field";
+import { Field, NativeSelect, TextInput } from "../../components/Field";
 
 export default function CollaboratorsPanel({
   playlistId,
@@ -87,14 +87,13 @@ export default function CollaboratorsPanel({
             />
           </Field>
           <Field label="Role">
-            <select
-              className="input"
+            <NativeSelect
               value={role}
               onChange={(e) => setRole(e.target.value as CollaboratorRole)}
             >
               <option value="editor">Editor</option>
               <option value="viewer">Viewer</option>
-            </select>
+            </NativeSelect>
           </Field>
           <Button
             type="submit"
@@ -137,8 +136,7 @@ export default function CollaboratorsPanel({
                 </div>
               </div>
               {isOwner && c.status === "accepted" ? (
-                <select
-                  className="input"
+                <NativeSelect
                   style={{ width: 110 }}
                   value={c.role}
                   onChange={(e) =>
@@ -148,7 +146,7 @@ export default function CollaboratorsPanel({
                 >
                   <option value="editor">Editor</option>
                   <option value="viewer">Viewer</option>
-                </select>
+                </NativeSelect>
               ) : (
                 <span className="badge">{c.role}</span>
               )}

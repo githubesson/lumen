@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { Button } from "./Button";
 
 /**
  * Right-aligned dialog action row. The default bordered variant is the sticky
@@ -39,5 +40,36 @@ export default function DialogFooter({
         {children}
       </div>
     </div>
+  );
+}
+
+/**
+ * The standard Cancel + submit pair for dialog forms. The submit button is
+ * `type="submit"` so it drives the surrounding `<form>`.
+ */
+export function SaveCancelFooter({
+  onCancel,
+  busy,
+  disabled,
+  saveLabel = "Save",
+  busyLabel = "Saving…",
+  style,
+}: {
+  onCancel: () => void;
+  busy: boolean;
+  disabled?: boolean;
+  saveLabel?: string;
+  busyLabel?: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <DialogFooter bordered={false} style={style}>
+      <Button variant="ghost" onClick={onCancel} disabled={busy}>
+        Cancel
+      </Button>
+      <Button type="submit" variant="primary" disabled={busy || disabled}>
+        {busy ? busyLabel : saveLabel}
+      </Button>
+    </DialogFooter>
   );
 }

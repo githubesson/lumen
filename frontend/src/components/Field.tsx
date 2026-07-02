@@ -3,9 +3,11 @@ import {
   forwardRef,
   isValidElement,
   useId,
+  type CSSProperties,
   type InputHTMLAttributes,
   type ReactElement,
   type ReactNode,
+  type SelectHTMLAttributes,
 } from "react";
 
 interface FieldProps {
@@ -52,3 +54,44 @@ export const TextInput = forwardRef<
     <input ref={ref} {...rest} className={`input ${className ?? ""}`.trim()} />
   );
 });
+
+/**
+ * Plain `<select>` with the shared `.input` chrome. For the richer custom
+ * dropdown (typeahead, minimal variant) use `Select` instead; this is the
+ * lightweight native control for short option lists in forms.
+ */
+export const NativeSelect = forwardRef<
+  HTMLSelectElement,
+  SelectHTMLAttributes<HTMLSelectElement>
+>(function NativeSelect({ className, ...rest }, ref) {
+  return (
+    <select ref={ref} {...rest} className={`input ${className ?? ""}`.trim()} />
+  );
+});
+
+/**
+ * Side-by-side fields inside a dialog form — the repeated
+ * `display:grid; gap:12; gridTemplateColumns:…` rows in the edit dialogs.
+ */
+export function FieldRow({
+  columns = 2,
+  style,
+  children,
+}: {
+  columns?: number;
+  style?: CSSProperties;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 12,
+        gridTemplateColumns: `repeat(${columns}, 1fr)`,
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}

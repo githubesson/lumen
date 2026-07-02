@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/githubesson/lumen/internal/library"
@@ -31,8 +30,7 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	query := strings.TrimSpace(q.Get("q"))
-	limit, _ := strconv.Atoi(q.Get("limit"))
-	offset, _ := strconv.Atoi(q.Get("offset"))
+	limit, offset := pageParams(q)
 	if limit <= 0 || limit > 50 {
 		limit = 25
 	}

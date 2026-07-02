@@ -8,7 +8,6 @@ import {
   ArrowsRightLeftIcon,
   BackwardIcon,
   ForwardIcon,
-  HeartIcon,
   PauseIcon,
   PlayIcon,
   QueueListIcon,
@@ -18,9 +17,9 @@ import {
 import { trackCoverUrl } from "../api";
 import CoverArt from "./CoverArt";
 import { useTrackContextMenu } from "./TrackContextMenu";
+import { FavoriteButton } from "./TrackRowCells";
 import { useFavorites } from "../context/Favorites";
 import { usePlayer, usePlayerTime } from "../context/Player";
-import { usePopKey } from "../lib/useTransitionMount";
 import { useAccentFromCover } from "../lib/accent";
 import { displayText, fmtDurationSec } from "../lib/format";
 import {
@@ -71,7 +70,6 @@ export default function MiniPlayer() {
       : "\u2014";
 
   const fav = displayCurrent ? isFavorite(displayCurrent.id) : false;
-  const popKey = usePopKey(fav);
   const coverSrc = displayCurrent ? trackCoverUrl(displayCurrent) : null;
   useAccentFromCover(coverSrc);
   const { bind: bindCtx, menu: trackCtxMenu } = useTrackContextMenu();
@@ -217,20 +215,13 @@ export default function MiniPlayer() {
 
       {/* Utility */}
       <div className="utility">
-        <button
-          type="button"
-          className={"t-btn" + (fav ? " active" : "")}
-          aria-label={fav ? "Remove from favorites" : "Add to favorites"}
-          aria-pressed={fav}
+        <FavoriteButton
+          className="t-btn"
+          iconClassName="shrink-0"
+          fav={fav}
           disabled={!displayCurrent}
-          onClick={() => displayCurrent && void toggleFavorite(displayCurrent.id)}
-        >
-          <HeartIcon
-            key={popKey}
-            className={`size-3.5 shrink-0 ${popKey > 0 ? "motion-safe:animate-heart-pop" : ""}`}
-            aria-hidden="true"
-          />
-        </button>
+          onToggle={() => displayCurrent && void toggleFavorite(displayCurrent.id)}
+        />
         <button
           ref={queueBtnRef}
           type="button"

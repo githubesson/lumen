@@ -33,6 +33,7 @@ import {
   extensionFromStream,
   triggerDownload,
 } from "../lib/download";
+import { isLocalTrack } from "../lib/track";
 import { useDismiss } from "../lib/useDismiss";
 import { useAuth } from "../context/Auth";
 import { useFavorites } from "../context/Favorites";
@@ -550,8 +551,4 @@ export function useTrackContextMenu() {
   ) : null;
 
   return { bind, menu, close, isOpen: state !== null };
-}
-
-function isLocalTrack(track: TrackListItem): boolean {
-  return !track.source || track.source === "local";
 }
