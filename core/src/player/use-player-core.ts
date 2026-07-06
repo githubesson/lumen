@@ -281,6 +281,10 @@ export function usePlayerCore({
     });
     const offEnd = adapter.on("ended", () => {
       if (repeat === "one") {
+        // Restart the same track. Re-arm play reporting so each loop counts
+        // as a fresh play — otherwise playbackReportedRef stays pinned to this
+        // trackId and the timeupdate guard never fires recordPlay again.
+        playbackReportedRef.current = null;
         adapter.seek(0);
         void adapter.play().catch(() => {});
         return;
