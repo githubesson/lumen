@@ -12,9 +12,9 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import {
   focusManager,
   QueryClient,
-  QueryClientProvider,
   onlineManager,
 } from "@tanstack/react-query";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import NetInfo from "@react-native-community/netinfo";
 import {
   ThemeProvider as NavThemeProvider,
@@ -31,6 +31,8 @@ import {
 import { PlayerProvider } from "../context/player";
 import { ThemeProvider, useTheme } from "../theme/theme";
 import { invalidateLibrary } from "../lib/query-keys";
+import { DownloadsProvider } from "../lib/downloads";
+import { fileSystemPersister } from "../lib/query-persister";
 
 // Resolve the backend base URL. Prefer a build-time env var (EXPO_PUBLIC_...)
 // for flexibility across dev / staging / prod; fall back to app.json `extra`.
@@ -44,14 +46,31 @@ const apiBaseUrl =
 // `api.me()`. Module side-effect is safe: imports resolve synchronously.
 setBaseUrl(apiBaseUrl);
 
-// React Query: one client for the app. Sensible defaults for a mobile
-// streaming app — short stale-time, retry once, pause while offline.
+// How long a persisted page cache stays usable offline. Kept generous so the
+// app still renders after days without a launch; `gcTime` matches so restored
+// queries aren't evicted from memory before `maxAge`. `CACHE_BUSTER` drops the
+// whole on-disk cache when the app version changes (schema/shape drift).
+const CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+const CACHE_BUSTER = `v1:${Constants.expoConfig?.version ?? "0"}`;
+// While online we refresh in the background on this cadence, keeping the
+// on-disk cache current for the next offline launch.
+const ONLINE_REFRESH_INTERVAL = 10 * 60 * 1000;
+
+// React Query: one client for the app. The disk-persisted cache is strictly an
+// offline fallback — when online we treat data as always stale so every screen
+// fetches live (`staleTime: 0` + refetch on mount/reconnect/focus), and poll
+// every 10 min to keep the persisted snapshot fresh. Offline, `onlineManager`
+// pauses all of this and the restored cache is what renders. `gcTime` is long
+// so restored queries survive in memory up to the persisted `maxAge`.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5 * 60 * 1000,
+      staleTime: 0,
+      gcTime: CACHE_MAX_AGE,
       retry: 1,
       refetchOnReconnect: true,
+      refetchInterval: ONLINE_REFRESH_INTERVAL,
+      refetchIntervalInBackground: false,
     },
   },
 });
@@ -93,18 +112,27 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <QueryClientProvider client={queryClient}>
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={{
+          persister: fileSystemPersister,
+          maxAge: CACHE_MAX_AGE,
+          buster: CACHE_BUSTER,
+        }}
+      >
         <NavThemeProvider value={navTheme}>
           <ThemeProvider>
-            <AuthProvider>
-              <AccountScopedProviders>
-                <AuthGate />
-                <ThemedStatusBar />
-              </AccountScopedProviders>
-            </AuthProvider>
+            <DownloadsProvider>
+              <AuthProvider>
+                <AccountScopedProviders>
+                  <AuthGate />
+                  <ThemedStatusBar />
+                </AccountScopedProviders>
+              </AuthProvider>
+            </DownloadsProvider>
           </ThemeProvider>
         </NavThemeProvider>
-      </QueryClientProvider>
+      </PersistQueryClientProvider>
     </GestureHandlerRootView>
   );
 }
@@ -122,6 +150,9 @@ function AccountScopedProviders({ children }: { children: ReactNode }) {
     }
     if (previousAccountKey.current !== accountKey) {
       queryClient.clear();
+      // Drop the on-disk cache too, so a signed-out/switched account can't
+      // restore the previous account's pages on the next cold launch.
+      void fileSystemPersister.removeClient();
       previousAccountKey.current = accountKey;
     }
   }, [accountKey, status]);

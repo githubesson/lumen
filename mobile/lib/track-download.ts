@@ -5,7 +5,16 @@ import {
   type TrackListItem,
 } from "@music-library/core";
 
-export async function downloadStreamToFile(url: string, destination: File) {
+/**
+ * Fetch a track stream and return its validated bytes plus the server's
+ * content type. Throws on a non-2xx response, a non-audio content type, or
+ * bytes that do not look like a media file — so callers never persist an
+ * error page as audio. Shared by the "save to Files" export and offline
+ * downloads so both apply identical validation in a single request.
+ */
+export async function fetchStreamBytes(
+  url: string,
+): Promise<{ bytes: Uint8Array; contentType?: string }> {
   const response = await fetch(url, { credentials: "include" });
   if (!response.ok) {
     const message = await response.text().catch(() => "");
@@ -26,6 +35,11 @@ export async function downloadStreamToFile(url: string, destination: File) {
     throw new Error("Downloaded stream was not a valid audio file.");
   }
 
+  return { bytes, contentType };
+}
+
+export async function downloadStreamToFile(url: string, destination: File) {
+  const { bytes } = await fetchStreamBytes(url);
   destination.create({ intermediates: true, overwrite: true });
   destination.write(bytes);
   return destination;

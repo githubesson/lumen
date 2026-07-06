@@ -23,6 +23,7 @@ import {
 } from "@music-library/core";
 import { useExpoAudioAdapter } from "../adapters/expo-audio-adapter";
 import { asyncStorageAdapter } from "../adapters/async-storage-adapter";
+import { downloadStore } from "../lib/downloads";
 import {
   addLockScreenCommandListener,
   isLockScreenControlsAvailable,
@@ -109,6 +110,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     adapter,
     storage: asyncStorageAdapter,
     interpolateProgress: appState === "active",
+    // Play the offline copy when a track has been downloaded; otherwise stream.
+    resolveTrackUri: downloadStore.uriFor,
   });
   usePlaybackActivityPublisher({
     state,

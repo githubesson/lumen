@@ -1,5 +1,12 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import ReorderableList, {
   reorderItems,
@@ -40,6 +47,11 @@ import {
 import { TrackActionsContextMenu } from "../../../components/track-actions-menu";
 import { qk } from "../../../lib/query-keys";
 import { usePlayQueue } from "../../../lib/use-play-queue";
+import {
+  downloadStore,
+  usePlaylistDownload,
+  type PlaylistDownloadStatus,
+} from "../../../lib/downloads";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
 
 const TRACK_ART_SIZE = 40;
@@ -325,6 +337,13 @@ export default function PlaylistDetailScreen() {
                 Play
               </Text>
             </Pressable>
+          ) : null}
+          {tracks.length > 0 ? (
+            <PlaylistDownloadButton
+              theme={theme}
+              playlistId={p.id}
+              tracks={tracks}
+            />
           ) : null}
           {p.visibility === "collaborative" ? (
             <Pressable
@@ -662,6 +681,97 @@ function SortMenuButton({
         </Pressable>
       ) : null}
     </View>
+  );
+}
+
+const DOWNLOAD_STATUS_COPY: Record<PlaylistDownloadStatus, string> = {
+  idle: "Download",
+  partial: "Download",
+  downloading: "Downloading",
+  downloaded: "Downloaded",
+};
+
+/**
+ * Playlist offline-download toggle. Mirrors the header pill buttons: tap to
+ * store every track for offline playback, tap again once downloaded to remove
+ * the local copies. Reflects live progress while a batch is in flight.
+ */
+function PlaylistDownloadButton({
+  theme,
+  playlistId,
+  tracks,
+}: {
+  theme: ThemeTokens;
+  playlistId: string;
+  tracks: TrackListItem[];
+}) {
+  const { status, total, downloaded } = usePlaylistDownload(tracks);
+  const isDownloaded = status === "downloaded";
+  const isDownloading = status === "downloading";
+
+  const onPress = useCallback(() => {
+    if (isDownloading) return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (isDownloaded) {
+      Alert.alert(
+        "Remove download?",
+        "The offline copies for this playlist will be deleted from this device.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Remove",
+            style: "destructive",
+            onPress: () =>
+              void downloadStore.removePlaylist(
+                playlistId,
+                tracks.map((track) => track.id),
+              ),
+          },
+        ],
+      );
+      return;
+    }
+    void downloadStore.downloadPlaylist(playlistId, tracks);
+  }, [isDownloaded, isDownloading, playlistId, tracks]);
+
+  const label = isDownloading
+    ? `${downloaded}/${total}`
+    : DOWNLOAD_STATUS_COPY[status];
+  const tint = isDownloaded ? theme.color.accent : theme.color.fg;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={
+        isDownloaded ? "Remove playlist download" : "Download playlist"
+      }
+      onPress={onPress}
+      style={({ pressed }) => ({
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 7,
+        backgroundColor: theme.color.bgElev1,
+        borderRadius: theme.radius.md,
+        paddingHorizontal: 14,
+        paddingVertical: 9,
+        opacity: pressed ? 0.8 : 1,
+        borderCurve: "continuous",
+      })}
+    >
+      {isDownloading ? (
+        <ActivityIndicator size="small" color={theme.color.fg} />
+      ) : (
+        <SymbolView
+          name={isDownloaded ? "checkmark.circle.fill" : "arrow.down.circle"}
+          size={15}
+          tintColor={tint}
+        />
+      )}
+      <Text style={{ color: tint, fontWeight: "500", fontSize: 14 }}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
