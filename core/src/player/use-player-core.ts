@@ -24,6 +24,13 @@ export interface UsePlayerCoreOptions {
   adapter: AudioAdapter;
   storage: Storage;
   interpolateProgress?: boolean;
+  /**
+   * Resolve a playable URI for a track id before falling back to the network
+   * stream. Returns a local `file://` URI when the track is available offline,
+   * or `undefined`/empty to stream. Read synchronously on every source swap,
+   * so it must be cheap (e.g. an in-memory lookup).
+   */
+  resolveTrackUri?: (trackId: string) => string | null | undefined;
 }
 
 export interface UsePlayerCoreReturn {
@@ -57,6 +64,7 @@ export function usePlayerCore({
   adapter,
   storage,
   interpolateProgress = true,
+  resolveTrackUri,
 }: UsePlayerCoreOptions): UsePlayerCoreReturn {
   const [current, setCurrent] = useState<TrackListItem | null>(null);
   // `queue` is the actual play order — when shuffle is on it's a Fisher-Yates
@@ -232,11 +240,11 @@ export function usePlayerCore({
     if (!current) return;
     if (loadedTrackIdRef.current === current.id) return;
     loadedTrackIdRef.current = current.id;
-    adapter.load(streamUrl(current.id));
+    adapter.load(resolveTrackUri?.(current.id) || streamUrl(current.id));
     if (isPlaying) {
       adapter.play().catch(() => setIsPlaying(false));
     }
-  }, [adapter, current, isPlaying]);
+  }, [adapter, current, isPlaying, resolveTrackUri]);
 
   // When isPlaying toggles without a track change, sync the adapter.
   useEffect(() => {
