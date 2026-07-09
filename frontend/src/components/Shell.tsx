@@ -365,22 +365,24 @@ export default function Shell() {
         onClose={() => setUploadOpen(false)}
       />
 
-      <Suspense fallback={null}>
-        <CommandPalette
-          open={paletteOpen}
-          onOpenChange={setPaletteOpen}
-          playlists={playlists}
-          pendingInvites={pendingCount}
-          onOpenTweaks={() => {
-            setPaletteOpen(false);
-            setTweaksOpen(true);
-          }}
-          onOpenUpload={() => {
-            setPaletteOpen(false);
-            setUploadOpen(true);
-          }}
-        />
-      </Suspense>
+      {paletteOpen && (
+        <Suspense fallback={null}>
+          <CommandPalette
+            open
+            onOpenChange={setPaletteOpen}
+            playlists={playlists}
+            pendingInvites={pendingCount}
+            onOpenTweaks={() => {
+              setPaletteOpen(false);
+              setTweaksOpen(true);
+            }}
+            onOpenUpload={() => {
+              setPaletteOpen(false);
+              setUploadOpen(true);
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

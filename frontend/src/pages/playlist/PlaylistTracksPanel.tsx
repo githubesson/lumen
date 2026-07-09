@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, useRef } from "react";
 import { TrashIcon } from "@heroicons/react/16/solid";
 import {
   albumCoverUrl,
@@ -16,9 +16,15 @@ import {
   TrackSelectCell,
 } from "../../components/TrackRowCells";
 import TrackSelectionToolbar from "../../components/TrackSelectionToolbar";
+import CoverArt from "../../components/CoverArt";
 import { displayText, fmtDurationMs } from "../../lib/format";
 import { isLocalTrack } from "../../lib/track";
 import { useTrackSelection } from "../../lib/useTrackSelection";
+import { useWindowedSlice } from "../../lib/useWindowedSlice";
+
+const playlistEntryId = (entry: PlaylistTrackEntry) => entry.track_id;
+const playlistEntriesToQueue = (items: PlaylistTrackEntry[]) =>
+  items.map(toQueueItem);
 
 /**
  * The Tracks tab of the playlist page: search-result count, selection
@@ -37,7 +43,7 @@ export default function PlaylistTracksPanel({
   onPlay,
   onToggleFav,
   isFav,
-  isCurrent,
+  currentTrackId,
   isPlaying,
   selectionControlsHostId,
 }: {
@@ -52,7 +58,7 @@ export default function PlaylistTracksPanel({
   onPlay: (t: PlaylistTrackEntry) => void;
   onToggleFav: (id: string) => void;
   isFav: (id: string) => boolean;
-  isCurrent: (id: string) => boolean;
+  currentTrackId: string | null;
   isPlaying: boolean;
   selectionControlsHostId?: string;
 }) {
@@ -91,7 +97,7 @@ export default function PlaylistTracksPanel({
         onPlay={onPlay}
         onToggleFav={onToggleFav}
         isFav={isFav}
-        isCurrent={isCurrent}
+        currentTrackId={currentTrackId}
         isPlaying={isPlaying}
         selectionControlsHostId={selectionControlsHostId}
       />
@@ -108,7 +114,7 @@ function TracksTable({
   onPlay,
   onToggleFav,
   isFav,
-  isCurrent,
+  currentTrackId,
   isPlaying,
   selectionControlsHostId,
 }: {
@@ -120,7 +126,7 @@ function TracksTable({
   onPlay: (t: PlaylistTrackEntry) => void;
   onToggleFav: (id: string) => void;
   isFav: (id: string) => boolean;
-  isCurrent: (id: string) => boolean;
+  currentTrackId: string | null;
   isPlaying: boolean;
   selectionControlsHostId?: string;
 }) {
@@ -140,8 +146,8 @@ function TracksTable({
     exportSelected,
   } = useTrackSelection<PlaylistTrackEntry>({
     items: tracks,
-    getId: (t) => t.track_id,
-    toExportItems: (items) => items.map(toQueueItem),
+    getId: playlistEntryId,
+    toExportItems: playlistEntriesToQueue,
   });
 
   const selectedLocalTracks = useMemo(
@@ -152,6 +158,61 @@ function TracksTable({
   const handleExportSelected = useCallback(() => {
     void exportSelected();
   }, [exportSelected]);
+
+  // Parent actions and queue references change as playlist/player state moves.
+  // Rows receive stable dispatchers and read the latest values through refs, so
+  // React.memo can skip every unaffected visible row.
+  const queueRef = useRef(queue);
+  const queueByIdRef = useRef(queueById);
+  const bindRef = useRef(bind);
+  const onRemoveRef = useRef(onRemove);
+  const onPlayRef = useRef(onPlay);
+  const onToggleFavRef = useRef(onToggleFav);
+  const toggleSelectionRef = useRef(toggleSelection);
+  queueRef.current = queue;
+  queueByIdRef.current = queueById;
+  bindRef.current = bind;
+  onRemoveRef.current = onRemove;
+  onPlayRef.current = onPlay;
+  onToggleFavRef.current = onToggleFav;
+  toggleSelectionRef.current = toggleSelection;
+
+  const handlePlay = useCallback(
+    (entry: PlaylistTrackEntry) => onPlayRef.current(entry),
+    [],
+  );
+  const handleToggleSelection = useCallback(
+    (entry: PlaylistTrackEntry, index: number, range: boolean) =>
+      toggleSelectionRef.current(entry, index, range),
+    [],
+  );
+  const handleToggleFav = useCallback(
+    (id: string) => onToggleFavRef.current(id),
+    [],
+  );
+  const handleRemove = useCallback(
+    (position: number) => onRemoveRef.current(position),
+    [],
+  );
+  const handleContextMenu = useCallback(
+    (
+      entry: PlaylistTrackEntry,
+      event: React.MouseEvent<HTMLTableRowElement>,
+    ) => {
+      const queueItem = queueByIdRef.current.get(entry.track_id);
+      if (!queueItem) return;
+      bindRef.current(queueItem, { queue: queueRef.current })(event);
+    },
+    [],
+  );
+
+  const tableRef = useRef<HTMLTableElement>(null);
+  const { start, end, topSpacerPx, bottomSpacerPx } = useWindowedSlice(
+    tableRef,
+    tracks.length,
+  );
+  const visibleTracks = tracks.slice(start, end);
+  const columnCount = 7 + (selectionMode ? 1 : 0);
 
   return (
     <>
@@ -177,7 +238,10 @@ function TracksTable({
         }}
         hostId={selectionControlsHostId}
       />
-      <table className={`table${selectionMode ? " table-selecting" : ""}`}>
+      <table
+        ref={tableRef}
+        className={`table${selectionMode ? " table-selecting" : ""}`}
+      >
         <thead>
           <tr>
             {selectionMode && (
@@ -197,29 +261,38 @@ function TracksTable({
           </tr>
         </thead>
         <tbody>
-          {tracks.map((t, i) => {
-            const queueItem = queueById.get(t.track_id);
+          {topSpacerPx > 0 && (
+            <tr aria-hidden="true" className="vt-spacer">
+              <td colSpan={columnCount} style={{ height: topSpacerPx }} />
+            </tr>
+          )}
+          {visibleTracks.map((t, i) => {
+            const index = start + i;
+            const isNow = currentTrackId === t.track_id;
             return (
               <PlaylistRow
                 key={`${t.position}-${t.track_id}`}
                 entry={t}
-                index={i}
-                isNow={isCurrent(t.track_id)}
-                isPlaying={isPlaying && isCurrent(t.track_id)}
+                index={index}
+                isNow={isNow}
+                isPlaying={isPlaying && isNow}
                 fav={isFav(t.track_id)}
                 canEdit={canEdit}
                 selectionMode={selectionMode}
                 selected={selectedIds.has(t.track_id)}
-                onPlay={() => onPlay(t)}
-                onToggleSelect={(range) => toggleSelection(t, i, range)}
-                onToggleFav={() => onToggleFav(t.track_id)}
-                onRemove={() => onRemove(t.position)}
-                onContextMenu={
-                  queueItem ? bind(queueItem, { queue }) : undefined
-                }
+                onPlay={handlePlay}
+                onToggleSelect={handleToggleSelection}
+                onToggleFav={handleToggleFav}
+                onRemove={handleRemove}
+                onContextMenu={handleContextMenu}
               />
             );
           })}
+          {bottomSpacerPx > 0 && (
+            <tr aria-hidden="true" className="vt-spacer">
+              <td colSpan={columnCount} style={{ height: bottomSpacerPx }} />
+            </tr>
+          )}
         </tbody>
       </table>
     </>
@@ -249,11 +322,18 @@ const PlaylistRow = memo(function PlaylistRow({
   canEdit: boolean;
   selectionMode: boolean;
   selected: boolean;
-  onPlay: () => void;
-  onToggleSelect: (range: boolean) => void;
-  onToggleFav: () => void;
-  onRemove: () => void;
-  onContextMenu?: React.MouseEventHandler<HTMLTableRowElement>;
+  onPlay: (entry: PlaylistTrackEntry) => void;
+  onToggleSelect: (
+    entry: PlaylistTrackEntry,
+    index: number,
+    range: boolean,
+  ) => void;
+  onToggleFav: (id: string) => void;
+  onRemove: (position: number) => void;
+  onContextMenu: (
+    entry: PlaylistTrackEntry,
+    event: React.MouseEvent<HTMLTableRowElement>,
+  ) => void;
 }) {
   const added = entry.added_at
     ? new Date(entry.added_at).toLocaleDateString()
@@ -263,38 +343,41 @@ const PlaylistRow = memo(function PlaylistRow({
       className={`${isNow ? "playing" : ""}${selected ? " selected" : ""}`.trim() || undefined}
       aria-selected={selectionMode ? selected : undefined}
       onClick={(e) => {
-        if (selectionMode) onToggleSelect(e.shiftKey);
+        if (selectionMode) onToggleSelect(entry, index, e.shiftKey);
       }}
       onDoubleClick={() => {
-        if (!selectionMode) onPlay();
+        if (!selectionMode) onPlay(entry);
       }}
-      onContextMenu={onContextMenu}
+      onContextMenu={(event) => onContextMenu(entry, event)}
     >
       {selectionMode && (
         <TrackSelectCell
           selected={selected}
           label={displayText(entry.title, "track")}
-          onToggle={onToggleSelect}
+          onToggle={(range) => onToggleSelect(entry, index, range)}
         />
       )}
       <TrackIndexCell
         index={index}
         isPlaying={isNow && isPlaying}
-        onPlay={onPlay}
+        onPlay={() => onPlay(entry)}
         playLabel={`Play ${entry.title}`}
       />
       <td className="col-art">
-        <div
+        <CoverArt
           className="mini-art"
-          style={{
-            backgroundImage: `url(${entry.album_id ? albumCoverUrl(entry.album_id) : coverUrl(entry.track_id)})`,
-          }}
-          aria-hidden="true"
+          src={
+            entry.album_id
+              ? albumCoverUrl(entry.album_id)
+              : coverUrl(entry.track_id)
+          }
+          seed={entry.album_id ?? entry.track_id}
+          label={entry.album_title || entry.title}
         />
       </td>
       <td
         onClick={() => {
-          if (!selectionMode) onPlay();
+          if (!selectionMode) onPlay(entry);
         }}
       >
         <div className="track-title">{displayText(entry.title)}</div>
@@ -310,14 +393,17 @@ const PlaylistRow = memo(function PlaylistRow({
       <td className="col-dur">{fmtDurationMs(entry.duration_ms)}</td>
       <td className="col-acts">
         <div className="row-actions">
-          <FavoriteButton fav={fav} onToggle={onToggleFav} />
+          <FavoriteButton
+            fav={fav}
+            onToggle={() => onToggleFav(entry.track_id)}
+          />
           {canEdit && (
             <button
               type="button"
               aria-label="Remove from playlist"
               onClick={(e) => {
                 e.stopPropagation();
-                onRemove();
+                onRemove(entry.position);
               }}
             >
               <TrashIcon className="size-3.5" />

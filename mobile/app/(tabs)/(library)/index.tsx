@@ -22,8 +22,10 @@ import { RankedTrackRow } from "../../../components/library/ranked-track-row";
 import { ResumeCard } from "../../../components/library/resume-card";
 import { AlbumTile, TrackTile } from "../../../components/library/shelf-tiles";
 import { WelcomeCard } from "../../../components/library/welcome-card";
+import { useFavoritesQuery } from "../../../context/favorites";
 import { usePlayTrack } from "../../../context/player";
 import { qk } from "../../../lib/query-keys";
+import { QUERY_STALE_TIME } from "../../../lib/query-policy";
 import { usePlayQueue } from "../../../lib/use-play-queue";
 import { useTheme } from "../../../theme/theme";
 
@@ -102,19 +104,17 @@ export default function HomeScreen() {
     enabled: !!userId,
   });
 
-  const favoritesQuery = useQuery({
-    queryKey: qk.favorites(userId),
-    queryFn: ({ signal }) => api.listFavorites({ signal }),
-    enabled: !!userId,
-  });
+  const favoritesQuery = useFavoritesQuery();
 
   const replayQuery = useQuery<ReplayData>({
     queryKey: qk.replay("last-30"),
     queryFn: ({ signal }) => api.getReplay(last30Range(), { signal }),
+    staleTime: QUERY_STALE_TIME.replay,
   });
 
   const rediscoverQuery = useQuery({
     queryKey: qk.homeRediscover(seed),
+    staleTime: QUERY_STALE_TIME.rediscover,
     queryFn: async ({ signal }) => {
       const probe = await api.listAlbumsPage({
         q: "",

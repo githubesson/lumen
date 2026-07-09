@@ -359,7 +359,7 @@ export default function PlaylistDetail() {
           }}
           onToggleFav={(id) => void toggleFav(id)}
           isFav={isFavorite}
-          isCurrent={(tid) => current?.id === tid}
+          currentTrackId={current?.id ?? null}
           isPlaying={isPlaying}
           selectionControlsHostId={PLAYLIST_SELECTION_CONTROLS_ID}
         />

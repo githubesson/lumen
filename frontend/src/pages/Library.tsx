@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { PlayIcon } from "@heroicons/react/16/solid";
 import {
@@ -22,7 +22,10 @@ import PageHeader from "../components/PageHeader";
 import { useTrackContextMenu } from "../components/TrackContextMenu";
 import BrowseToolbar from "../components/library/BrowseToolbar";
 import { usePlayer } from "../context/Player";
-import { usePaginatedList } from "../lib/usePaginatedList";
+import {
+  usePaginatedList,
+  type PageRequest,
+} from "../lib/usePaginatedList";
 import GridView from "./library/GridView";
 import {
   AlbumDetailView,
@@ -131,6 +134,7 @@ function LibraryBrowse({
 }) {
   const [displayMode, setDisplayMode] = useState<"grid" | "list">("list");
   const [sort, setSort] = useState<SortKey>("recent");
+  const requestQuery = useDebouncedValue(query, 250);
 
   return (
     <div className="view">
@@ -149,10 +153,14 @@ function LibraryBrowse({
       />
 
       {view === "tracks" && (
-        <TracksView query={query} sort={sort} displayMode={displayMode} />
+        <TracksView query={requestQuery} sort={sort} displayMode={displayMode} />
       )}
-      {view === "albums" && <AlbumsView query={query} onOpen={onOpenAlbum} />}
-      {view === "artists" && <ArtistsView query={query} onOpen={onOpenArtist} />}
+      {view === "albums" && (
+        <AlbumsView query={requestQuery} onOpen={onOpenAlbum} />
+      )}
+      {view === "artists" && (
+        <ArtistsView query={requestQuery} onOpen={onOpenArtist} />
+      )}
     </div>
   );
 }
@@ -178,22 +186,24 @@ function TracksView({
   displayMode: "grid" | "list";
 }) {
   const [searchWarning, setSearchWarning] = useState<string | null>(null);
-  const fetcher = useCallback(async (p: {
-    limit: number;
-    offset: number;
-    q?: string;
-  }): Promise<Page<TrackListItem>> => {
-    if (p.q?.trim()) {
-      const res = await api.searchTracks({ ...p, limit: Math.min(p.limit, 50) });
-      setSearchWarning(res.warnings?.join(" ") || null);
-      return {
-        items: res.tracks ?? [],
-        total: p.offset + (res.tracks?.length ?? 0),
-      };
-    }
-    setSearchWarning(null);
-    return api.listTracksPage(p);
-  }, []);
+  const fetcher = useCallback(
+    async (p: PageRequest): Promise<Page<TrackListItem>> => {
+      if (p.q?.trim()) {
+        const res = await api.searchTracks({
+          ...p,
+          limit: Math.min(p.limit, 50),
+        });
+        setSearchWarning(res.warnings?.join(" ") || null);
+        return {
+          items: res.tracks ?? [],
+          total: p.offset + (res.tracks?.length ?? 0),
+        };
+      }
+      setSearchWarning(null);
+      return api.listTracksPage(p);
+    },
+    [],
+  );
   const { items, total, loadingMore, error, sentinelRef } = usePaginatedList(
     fetcher,
     query,
@@ -243,7 +253,7 @@ function AlbumsView({
   onOpen: (id: string) => void;
 }) {
   const fetcher = useCallback(
-    (p: { limit: number; offset: number; q?: string }) => api.listAlbumsPage(p),
+    (p: PageRequest) => api.listAlbumsPage(p),
     [],
   );
   return (
@@ -266,7 +276,7 @@ function ArtistsView({
   onOpen: (id: string) => void;
 }) {
   const fetcher = useCallback(
-    (p: { limit: number; offset: number; q?: string }) => api.listArtistsPage(p),
+    (p: PageRequest) => api.listArtistsPage(p),
     [],
   );
   return (
@@ -421,4 +431,15 @@ function LibraryEmptyState() {
       }
     />
   );
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timeout);
+  }, [value, delayMs]);
+
+  return debounced;
 }

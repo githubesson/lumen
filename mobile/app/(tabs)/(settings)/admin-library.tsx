@@ -39,6 +39,7 @@ export default function AdminLibraryScreen() {
   const rescanQuery = useQuery({
     queryKey: qk.adminRescanStatus,
     queryFn: ({ signal }) => api.rescanStatus({ signal }),
+    staleTime: 0,
     // Poll every 2s while rescanning so progress updates live.
     refetchInterval: (q) =>
       (q.state.data as RescanStatus | undefined)?.running ? 2000 : false,

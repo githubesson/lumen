@@ -23,7 +23,6 @@ import {
 } from "@react-navigation/native";
 import {
   AuthProvider,
-  FavoritesProvider,
   libraryChanged,
   setBaseUrl,
   useAuth,
@@ -32,7 +31,11 @@ import { PlayerProvider } from "../context/player";
 import { ThemeProvider, useTheme } from "../theme/theme";
 import { invalidateLibrary } from "../lib/query-keys";
 import { DownloadsProvider } from "../lib/downloads";
-import { fileSystemPersister } from "../lib/query-persister";
+import {
+  fileSystemPersister,
+  shouldPersistQuery,
+} from "../lib/query-persister";
+import { QUERY_STALE_TIME } from "../lib/query-policy";
 
 // Resolve the backend base URL. Prefer a build-time env var (EXPO_PUBLIC_...)
 // for flexibility across dev / staging / prod; fall back to app.json `extra`.
@@ -51,26 +54,20 @@ setBaseUrl(apiBaseUrl);
 // queries aren't evicted from memory before `maxAge`. `CACHE_BUSTER` drops the
 // whole on-disk cache when the app version changes (schema/shape drift).
 const CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-const CACHE_BUSTER = `v1:${Constants.expoConfig?.version ?? "0"}`;
-// While online we refresh in the background on this cadence, keeping the
-// on-disk cache current for the next offline launch.
-const ONLINE_REFRESH_INTERVAL = 10 * 60 * 1000;
+const CACHE_BUSTER = `v2:${Constants.expoConfig?.version ?? "0"}`;
 
-// React Query: one client for the app. The disk-persisted cache is strictly an
-// offline fallback — when online we treat data as always stale so every screen
-// fetches live (`staleTime: 0` + refetch on mount/reconnect/focus), and poll
-// every 10 min to keep the persisted snapshot fresh. Offline, `onlineManager`
-// pauses all of this and the restored cache is what renders. `gcTime` is long
-// so restored queries survive in memory up to the persisted `maxAge`.
+// React Query: one client for the app. Mutations and the library event bus
+// invalidate affected keys immediately; the freshness window only prevents
+// repeated mount/focus requests for data fetched in the last couple of minutes.
+// Offline, `onlineManager` pauses requests and the selective persisted cache is
+// what renders. `gcTime` matches the disk cache's maximum age.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 0,
+      staleTime: QUERY_STALE_TIME.default,
       gcTime: CACHE_MAX_AGE,
       retry: 1,
       refetchOnReconnect: true,
-      refetchInterval: ONLINE_REFRESH_INTERVAL,
-      refetchIntervalInBackground: false,
     },
   },
 });
@@ -118,6 +115,10 @@ export default function RootLayout() {
           persister: fileSystemPersister,
           maxAge: CACHE_MAX_AGE,
           buster: CACHE_BUSTER,
+          dehydrateOptions: {
+            shouldDehydrateMutation: () => false,
+            shouldDehydrateQuery: shouldPersistQuery,
+          },
         }}
       >
         <NavThemeProvider value={navTheme}>
@@ -165,11 +166,7 @@ function AccountScopedProviders({ children }: { children: ReactNode }) {
   // `queryClient` is a module-scoped singleton, so an empty dep array is right.
   useEffect(() => libraryChanged.on(() => invalidateLibrary(queryClient)), []);
 
-  return (
-    <FavoritesProvider key={`favorites:${accountKey}`}>
-      <PlayerProvider key={`player:${accountKey}`}>{children}</PlayerProvider>
-    </FavoritesProvider>
-  );
+  return <PlayerProvider key={`player:${accountKey}`}>{children}</PlayerProvider>;
 }
 
 /**

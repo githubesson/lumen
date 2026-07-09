@@ -1,5 +1,8 @@
 import { type Page } from "../../api";
-import { usePaginatedList } from "../../lib/usePaginatedList";
+import {
+  usePaginatedList,
+  type PageRequest,
+} from "../../lib/usePaginatedList";
 import ErrorBanner from "../../components/ErrorBanner";
 import EmptyState from "../../components/EmptyState";
 import LoadingState from "../../components/LoadingState";
@@ -22,11 +25,7 @@ export default function GridView<T>({
   emptyLabel,
   renderCard,
 }: {
-  fetcher: (params: {
-    limit: number;
-    offset: number;
-    q?: string;
-  }) => Promise<Page<T>>;
+  fetcher: (params: PageRequest) => Promise<Page<T>>;
   query: string;
   pageSize: number;
   unit: string;

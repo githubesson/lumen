@@ -41,6 +41,7 @@ import { RankedShelfTile } from "../../../components/replay/ranked-shelf-tile";
 import { SummaryGrid } from "../../../components/replay/summary-grid";
 import { TopTrackList } from "../../../components/replay/top-track-list";
 import { qk } from "../../../lib/query-keys";
+import { QUERY_STALE_TIME } from "../../../lib/query-policy";
 import { usePlayQueue } from "../../../lib/use-play-queue";
 import { useTheme } from "../../../theme/theme";
 
@@ -57,6 +58,7 @@ export default function ReplayScreen() {
   const replayQuery = useQuery<ReplayData, ApiError>({
     queryKey: qk.replay(periodKey(period)),
     queryFn: ({ signal }) => api.getReplay(range, { signal }),
+    staleTime: QUERY_STALE_TIME.replay,
   });
 
   const data = replayQuery.data;

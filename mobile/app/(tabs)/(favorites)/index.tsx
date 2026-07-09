@@ -11,6 +11,7 @@ import {
   useBottomDockInset,
   useDockScrollHandler,
 } from "../../../components/dock/dock-context";
+import { useFavoritesQuery } from "../../../context/favorites";
 import { qk } from "../../../lib/query-keys";
 import { usePlayQueue } from "../../../lib/use-play-queue";
 import { useTheme } from "../../../theme/theme";
@@ -25,14 +26,13 @@ export default function FavoritesScreen() {
   const { me } = useAuth();
   const userId = me?.id;
 
-  const query = useQuery({
-    queryKey: mode === "favorites" ? qk.favorites(userId) : qk.recent(userId),
-    queryFn: ({ signal }) =>
-      mode === "favorites"
-        ? api.listFavorites({ signal })
-        : api.listRecent(100, { signal }),
-    enabled: !!userId,
+  const favoritesQuery = useFavoritesQuery(mode === "favorites");
+  const recentQuery = useQuery({
+    queryKey: qk.recent(userId),
+    queryFn: ({ signal }) => api.listRecent(100, { signal }),
+    enabled: mode === "recent" && !!userId,
   });
+  const query = mode === "favorites" ? favoritesQuery : recentQuery;
 
   const tracks = useMemo<TrackListItem[]>(
     () => query.data ?? [],

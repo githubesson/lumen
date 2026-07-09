@@ -104,27 +104,32 @@ export default function CommandPalette({
     }
     setLoading(true);
     const id = ++reqId.current;
+    const controller = new AbortController();
     const t = window.setTimeout(async () => {
       try {
         const [albumsPage, artistsPage, trackResult] = await Promise.all([
-          api.listAlbumsPage({ q, limit: 8 }),
-          api.listArtistsPage({ q, limit: 8 }),
-          api.searchTracks({ q, limit: 20 }),
+          api.listAlbumsPage({ q, limit: 8, signal: controller.signal }),
+          api.listArtistsPage({ q, limit: 8, signal: controller.signal }),
+          api.searchTracks({ q, limit: 20, signal: controller.signal }),
         ]);
-        if (id !== reqId.current) return;
+        if (controller.signal.aborted || id !== reqId.current) return;
         setAlbums(albumsPage.items ?? []);
         setArtists(artistsPage.items ?? []);
         setTracks(trackResult.tracks ?? []);
         setSearchError(trackResult.warnings?.join(" ") || null);
         setLoading(false);
       } catch (err) {
+        if (controller.signal.aborted) return;
         if (id === reqId.current) {
           setSearchError(errorMessage(err, "Search failed."));
           setLoading(false);
         }
       }
     }, 160);
-    return () => window.clearTimeout(t);
+    return () => {
+      controller.abort();
+      window.clearTimeout(t);
+    };
   }, [query, open]);
 
   const close = () => onOpenChange(false);

@@ -5,8 +5,6 @@ import { Directory, File } from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
 import {
-  useFavorite,
-  useFavoriteActions,
   api,
   libraryChanged,
   downloadStreamUrl,
@@ -14,6 +12,7 @@ import {
   type TrackDetail,
   type TrackListItem,
 } from "@music-library/core";
+import { useFavorite, useFavoriteActions } from "../context/favorites";
 import { usePlayTrack } from "../context/player";
 import { AdaptiveGlass } from "./adaptive-glass";
 import { useTheme } from "../theme/theme";
@@ -296,8 +295,8 @@ export function useTrackActionModel(track: TrackListItem) {
 
   const toggleFavorite = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    void toggleFav(track.id);
-  }, [toggleFav, track.id]);
+    void toggleFav(track);
+  }, [toggleFav, track]);
 
   const openAlbum = useCallback(() => {
     void (async () => {

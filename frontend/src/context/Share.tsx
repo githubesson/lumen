@@ -1,12 +1,19 @@
 import {
+  Suspense,
   createContext,
+  lazy,
   useCallback,
   useContext,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
-import { ShareDialog } from "../components/ShareDialog";
+
+const ShareDialog = lazy(() =>
+  import("../components/ShareDialog").then((module) => ({
+    default: module.ShareDialog,
+  })),
+);
 
 interface ShareCtxValue {
   /** Open the share dialog for the given track id. */
@@ -23,13 +30,21 @@ const ShareContext = createContext<ShareCtxValue | null>(null);
  */
 export function ShareProvider({ children }: { children: ReactNode }) {
   const [id, setId] = useState<string | null>(null);
-  const open = useCallback((trackId: string) => setId(trackId), []);
+  const [dialogLoaded, setDialogLoaded] = useState(false);
+  const open = useCallback((trackId: string) => {
+    setDialogLoaded(true);
+    setId(trackId);
+  }, []);
   const close = useCallback(() => setId(null), []);
   const value = useMemo<ShareCtxValue>(() => ({ open }), [open]);
   return (
     <ShareContext.Provider value={value}>
       {children}
-      <ShareDialog open={id !== null} trackId={id} onClose={close} />
+      {dialogLoaded && (
+        <Suspense fallback={null}>
+          <ShareDialog open={id !== null} trackId={id} onClose={close} />
+        </Suspense>
+      )}
     </ShareContext.Provider>
   );
 }

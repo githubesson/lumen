@@ -31,32 +31,39 @@ export default function AddTracksDialog({
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
+    if (!open) return;
+    const controller = new AbortController();
     const t = setTimeout(() => {
       const q = query.trim();
       const req = q
-        ? api.searchTracks({ q, limit: 50 }).then((res) => {
-            if (!cancelled) setError(res.warnings?.join(" ") || null);
-            return res.tracks ?? [];
-          })
-        : api.listTracks({ limit: 200 }).then((res) => {
-            if (!cancelled) setError(null);
-            return res;
-          });
+        ? api
+            .searchTracks({ q, limit: 50, signal: controller.signal })
+            .then((res) => {
+              if (!controller.signal.aborted) {
+                setError(res.warnings?.join(" ") || null);
+              }
+              return res.tracks ?? [];
+            })
+        : api
+            .listTracks({ limit: 200, signal: controller.signal })
+            .then((res) => {
+              if (!controller.signal.aborted) setError(null);
+              return res;
+            });
       req
-        .then((d) => !cancelled && setTracks(d ?? []))
+        .then((d) => !controller.signal.aborted && setTracks(d ?? []))
         .catch((err) => {
-          if (!cancelled) {
+          if (!controller.signal.aborted) {
             setTracks([]);
             setError(errorMessage(err, "Search failed."));
           }
         });
     }, 150);
     return () => {
-      cancelled = true;
+      controller.abort();
       clearTimeout(t);
     };
-  }, [query]);
+  }, [open, query]);
 
   const toggle = (id: string) =>
     setSelected((prev) => {

@@ -45,6 +45,7 @@ import {
   useDockScrollHandler,
 } from "../../../components/dock/dock-context";
 import { qk } from "../../../lib/query-keys";
+import { QUERY_STALE_TIME } from "../../../lib/query-policy";
 import { useDebouncedValue } from "../../../lib/use-debounced-value";
 import { usePlayQueue } from "../../../lib/use-play-queue";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
@@ -81,6 +82,7 @@ function useLibraryListQuery<T>({
   return useInfiniteQuery({
     queryKey,
     enabled,
+    staleTime: QUERY_STALE_TIME.libraryList,
     queryFn: ({ pageParam = 0, signal }) =>
       fetchPage({ q: search, limit: PAGE_SIZE, offset: pageParam, signal }),
     initialPageParam: 0,

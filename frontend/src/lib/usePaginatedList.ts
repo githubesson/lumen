@@ -15,6 +15,13 @@ interface Options {
   loadAll?: boolean;
 }
 
+export interface PageRequest {
+  limit: number;
+  offset: number;
+  q?: string;
+  signal: AbortSignal;
+}
+
 /**
  * Paginated list loader with infinite scroll, race-safe resets, and
  * library-change awareness. Every fetch that resolves after a newer reset
@@ -26,7 +33,7 @@ interface Options {
  * viewport.
  */
 export function usePaginatedList<T>(
-  fetcher: (params: { limit: number; offset: number; q?: string }) => Promise<Page<T>>,
+  fetcher: (params: PageRequest) => Promise<Page<T>>,
   query: string,
   opts: Options = {},
 ) {
@@ -40,6 +47,7 @@ export function usePaginatedList<T>(
 
   const tokenRef = useRef(0);
   const loadingRef = useRef(false);
+  const activeRequestRef = useRef<AbortController | null>(null);
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
@@ -47,32 +55,38 @@ export function usePaginatedList<T>(
     async (offset: number, reset: boolean) => {
       if (reset) {
         tokenRef.current += 1;
+        activeRequestRef.current?.abort();
+        setLoadingMore(false);
       } else {
         if (loadingRef.current) return;
-        loadingRef.current = true;
         setLoadingMore(true);
       }
+      loadingRef.current = true;
       const token = tokenRef.current;
+      const controller = new AbortController();
+      activeRequestRef.current = controller;
       try {
         const page = await fetcherRef.current({
           limit: pageSize,
           offset,
           q: query.trim() || undefined,
+          signal: controller.signal,
         });
-        if (token !== tokenRef.current) return;
+        if (controller.signal.aborted || token !== tokenRef.current) return;
         setTotal(page.total);
         setItems((prev) =>
           reset || !prev ? page.items : [...prev, ...page.items],
         );
         setError(null);
       } catch (err) {
-        if (token !== tokenRef.current) return;
+        if (controller.signal.aborted || token !== tokenRef.current) return;
         setError(errorMessage(err, "Failed to load."));
         if (reset) setItems([]);
       } finally {
-        if (!reset) {
+        if (activeRequestRef.current === controller) {
+          activeRequestRef.current = null;
           loadingRef.current = false;
-          setLoadingMore(false);
+          if (!reset) setLoadingMore(false);
         }
       }
     },
@@ -85,6 +99,15 @@ export function usePaginatedList<T>(
     setTotal(null);
     void loadPage(0, true);
   }, [loadPage]);
+
+  useEffect(
+    () => () => {
+      const activeRequest = activeRequestRef.current;
+      activeRequestRef.current = null;
+      activeRequest?.abort();
+    },
+    [],
+  );
 
   // Bulk library updates and periodic polling both reset pagination.
   useEffect(() => {

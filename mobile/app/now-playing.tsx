@@ -11,7 +11,6 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { useFavorite, useFavoriteActions } from "@music-library/core";
 import { TrackActionsMenuButton } from "../components/track-actions-menu";
 import { NowPlayingBottomControls } from "../components/now-playing/bottom-controls";
 import {
@@ -23,6 +22,7 @@ import { HeroArtwork } from "../components/now-playing/hero-artwork";
 import { HeroMeta } from "../components/now-playing/hero-meta";
 import { QueueSection } from "../components/now-playing/queue-section";
 import { SheetGrabber } from "../components/now-playing/sheet-grabber";
+import { useFavorite, useFavoriteActions } from "../context/favorites";
 import {
   useCurrentTrack,
   usePlayerControls,
@@ -347,7 +347,7 @@ export default function NowPlayingScreen() {
               }
               onPress={() => {
                 void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                void toggleFavorite(track.id);
+                void toggleFavorite(track);
               }}
             />
             <TrackActionsMenuButton
