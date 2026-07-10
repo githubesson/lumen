@@ -75,10 +75,7 @@ export function useWindowedSlice(
         viewportTop = -listRect.top;
         viewportHeight = window.innerHeight;
       }
-      const start = Math.max(
-        0,
-        Math.floor(viewportTop / rowHeight) - overscan,
-      );
+      const start = Math.max(0, Math.floor(viewportTop / rowHeight) - overscan);
       const end = Math.min(
         totalCount,
         Math.ceil((viewportTop + viewportHeight) / rowHeight) + overscan,
@@ -99,11 +96,9 @@ export function useWindowedSlice(
     // rAF-throttled so bursts during momentum scroll collapse into one
     // compute per frame.
     const scrollTarget: EventTarget = scroller ?? window;
-    scrollTarget.addEventListener(
-      "scroll",
-      scheduleCompute,
-      { passive: true } as AddEventListenerOptions,
-    );
+    scrollTarget.addEventListener("scroll", scheduleCompute, {
+      passive: true,
+    } as AddEventListenerOptions);
 
     // Viewport resize → ResizeObserver instead of window `resize`. The raw
     // event fires 60–100× per second during a drag, and even with rAF
@@ -143,6 +138,10 @@ export function useWindowedSlice(
 function findScrollParent(el: HTMLElement): HTMLElement | null {
   let p: HTMLElement | null = el.parentElement;
   while (p && p !== document.body) {
+    if (p.hasAttribute("data-horizontal-scroll")) {
+      p = p.parentElement;
+      continue;
+    }
     const s = getComputedStyle(p);
     if (/(auto|scroll)/.test(s.overflowY) || /(auto|scroll)/.test(s.overflow)) {
       return p;

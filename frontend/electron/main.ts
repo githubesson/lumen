@@ -8,6 +8,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pipeline } from "node:stream/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
 import type { OpenDialogOptions, Rectangle } from "electron";
 
 export type Theme = "light" | "dark";
@@ -573,6 +574,70 @@ function proxyApi(req: IncomingMessage, res: ServerResponse): void {
   req.pipe(upstream);
 }
 
+// Node's normal request proxy does not carry HTTP Upgrade tunnels. Forward
+// the renderer's WebSocket handshake and then splice both sockets together so
+// the packaged Electron app uses the same /api/activity/ws endpoint as web.
+function proxyWebSocket(
+  req: IncomingMessage,
+  socket: Duplex,
+  head: Buffer,
+): void {
+  if (!backendUrl) {
+    socket.destroy();
+    return;
+  }
+  let target: URL;
+  try {
+    target = new URL(req.url ?? "/", backendUrl);
+  } catch {
+    socket.destroy();
+    return;
+  }
+
+  const lib = target.protocol === "https:" ? https : http;
+  const headers = {
+    ...req.headers,
+    host: target.host,
+    // The renderer talks to a loopback origin while the upstream sees the
+    // configured backend host. Rewrite Origin so the backend's same-origin
+    // WebSocket check remains strict instead of being disabled globally.
+    origin: target.origin,
+  };
+  const upstream = lib.request({
+    protocol: target.protocol,
+    hostname: target.hostname,
+    port: target.port || (target.protocol === "https:" ? 443 : 80),
+    path: target.pathname + target.search,
+    method: req.method,
+    headers,
+  });
+
+  upstream.on("upgrade", (response, upstreamSocket, upstreamHead) => {
+    writeRawResponseHead(socket, response);
+    upstreamSocket.on("error", () => socket.destroy());
+    if (upstreamHead.length > 0) socket.write(upstreamHead);
+    if (head.length > 0) upstreamSocket.write(head);
+    upstreamSocket.pipe(socket);
+    socket.pipe(upstreamSocket);
+  });
+  upstream.on("response", (response) => {
+    writeRawResponseHead(socket, response);
+    response.pipe(socket);
+  });
+  upstream.on("error", () => socket.destroy());
+  socket.on("error", () => upstream.destroy());
+  upstream.end();
+}
+
+function writeRawResponseHead(socket: Duplex, response: IncomingMessage): void {
+  const statusLine = `HTTP/${response.httpVersion} ${response.statusCode ?? 502} ${response.statusMessage ?? "Bad Gateway"}`;
+  const headers: string[] = [statusLine];
+  for (let i = 0; i < response.rawHeaders.length; i += 2) {
+    headers.push(`${response.rawHeaders[i]}: ${response.rawHeaders[i + 1]}`);
+  }
+  socket.write(`${headers.join("\r\n")}\r\n\r\n`);
+}
+
 async function serveStatic(req: IncomingMessage, res: ServerResponse): Promise<void> {
   let filePath: string;
   try {
@@ -611,6 +676,13 @@ function startProxyServer(): Promise<number> {
         proxyApi(req, res);
       } else {
         void serveStatic(req, res);
+      }
+    });
+    server.on("upgrade", (req, socket, head) => {
+      if (req.url?.startsWith("/api/")) {
+        proxyWebSocket(req, socket, head);
+      } else {
+        socket.destroy();
       }
     });
     server.once("error", reject);

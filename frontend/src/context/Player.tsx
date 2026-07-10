@@ -53,6 +53,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     time,
     storage: webStorage,
     deviceName: "Desktop",
+    adapter,
   });
 
   // Media Session API — surface in OS media controls / Bluetooth buttons.

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/githubesson/lumen/internal/httpx"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -28,6 +29,7 @@ type Config struct {
 	CountryCode string
 	Quality     string
 	HifiAPIURL  string
+	Background  context.Context
 }
 
 type Status struct {
@@ -44,15 +46,23 @@ type Client struct {
 	cfg    Config
 	api    *http.Client
 	stream *http.Client
+	ctx    context.Context
 
 	mu          sync.Mutex
 	streamCache map[string]cachedStream
+	streamGroup singleflight.Group
 }
 
 type cachedStream struct {
 	URL       string
 	ExpiresAt time.Time
 }
+
+const (
+	streamCacheTTL        = 10 * time.Minute
+	streamCacheMaxEntries = 1024
+	streamResolveTimeout  = 30 * time.Second
+)
 
 func NewClient(cfg Config) *Client {
 	cfg.CountryCode = defaultCountry(cfg.CountryCode)
@@ -62,6 +72,7 @@ func NewClient(cfg Config) *Client {
 		cfg:         cfg,
 		api:         &http.Client{Timeout: 30 * time.Second},
 		stream:      httpx.DefaultDownloadClient(),
+		ctx:         backgroundContext(cfg.Background),
 		streamCache: map[string]cachedStream{},
 	}
 }
@@ -366,9 +377,7 @@ func (c *Client) StreamURL(ctx context.Context, id string) (string, error) {
 		return "", ErrNotConfigured
 	}
 	key := c.cacheKey(id)
-	c.mu.Lock()
-	if cached, ok := c.streamCache[key]; ok && time.Now().Before(cached.ExpiresAt) {
-		c.mu.Unlock()
+	if cached, ok := c.cachedStreamURL(key, time.Now()); ok {
 		slog.Debug("tidal hifi stream cache hit",
 			"track", id,
 			"quality", defaultQuality(c.cfg.Quality),
@@ -376,18 +385,75 @@ func (c *Client) StreamURL(ctx context.Context, id string) (string, error) {
 			"expires_in_sec", int(time.Until(cached.ExpiresAt).Seconds()))
 		return cached.URL, nil
 	}
-	c.mu.Unlock()
 	slog.Debug("tidal hifi stream cache miss", "track", id, "quality", defaultQuality(c.cfg.Quality))
-	streamURL, err := c.resolveHifiStream(ctx, id)
-	if err != nil {
-		slog.Warn("tidal hifi stream manifest resolve failed", "track", id, "quality", defaultQuality(c.cfg.Quality), "err", err)
-		return "", fmt.Errorf("hifi-api playback failed: %w", err)
+	result := c.streamGroup.DoChan(key, func() (any, error) {
+		// A request may have filled the cache while this caller was joining the
+		// singleflight operation.
+		if cached, ok := c.cachedStreamURL(key, time.Now()); ok {
+			return cached.URL, nil
+		}
+		// Shared resolution must not be owned by the first request's lifetime:
+		// later waiters can still use the result if that client disconnects.
+		resolveCtx, cancel := context.WithTimeout(c.ctx, streamResolveTimeout)
+		defer cancel()
+		streamURL, err := c.resolveHifiStream(resolveCtx, id)
+		if err != nil {
+			slog.Warn("tidal hifi stream manifest resolve failed", "track", id, "quality", defaultQuality(c.cfg.Quality), "err", err)
+			return "", fmt.Errorf("hifi-api playback failed: %w", err)
+		}
+		c.storeCachedStream(key, streamURL, time.Now())
+		slog.Debug("tidal hifi stream cached", "track", id, "quality", defaultQuality(c.cfg.Quality), "url", logSafeURL(streamURL))
+		return streamURL, nil
+	})
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case res := <-result:
+		if res.Err != nil {
+			return "", res.Err
+		}
+		return res.Val.(string), nil
 	}
+}
+
+func backgroundContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+func (c *Client) cachedStreamURL(key string, now time.Time) (cachedStream, bool) {
 	c.mu.Lock()
-	c.streamCache[key] = cachedStream{URL: streamURL, ExpiresAt: time.Now().Add(10 * time.Minute)}
-	c.mu.Unlock()
-	slog.Debug("tidal hifi stream cached", "track", id, "quality", defaultQuality(c.cfg.Quality), "url", logSafeURL(streamURL))
-	return streamURL, nil
+	defer c.mu.Unlock()
+	cached, ok := c.streamCache[key]
+	if !ok {
+		return cachedStream{}, false
+	}
+	if !now.Before(cached.ExpiresAt) {
+		delete(c.streamCache, key)
+		return cachedStream{}, false
+	}
+	return cached, true
+}
+
+func (c *Client) storeCachedStream(key, streamURL string, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for cacheKey, cached := range c.streamCache {
+		if !now.Before(cached.ExpiresAt) {
+			delete(c.streamCache, cacheKey)
+		}
+	}
+	for len(c.streamCache) >= streamCacheMaxEntries {
+		// Stream URLs all have the same short TTL. Arbitrary eviction keeps the
+		// structure bounded without adding an LRU dependency to a tiny cache.
+		for cacheKey := range c.streamCache {
+			delete(c.streamCache, cacheKey)
+			break
+		}
+	}
+	c.streamCache[key] = cachedStream{URL: streamURL, ExpiresAt: now.Add(streamCacheTTL)}
 }
 
 func (c *Client) forgetStream(id string) {

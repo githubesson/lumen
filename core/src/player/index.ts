@@ -10,7 +10,9 @@ export {
 } from "./use-player-core";
 export {
   ACTIVITY_DEVICE_ID_STORAGE_KEY,
+  getLatestPlaybackActivity,
   getOrCreateActivityDeviceId,
+  subscribePlaybackActivity,
   usePlaybackActivityPublisher,
   type PlaybackActivityPublisherOptions,
 } from "./activity-sync";

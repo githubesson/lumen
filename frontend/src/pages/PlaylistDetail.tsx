@@ -169,7 +169,11 @@ export default function PlaylistDetail() {
   };
 
   const onDelete = async () => {
-    if (!id || !window.confirm(`Delete "${playlist.name}"? This cannot be undone.`)) return;
+    if (
+      !id ||
+      !window.confirm(`Delete "${playlist.name}"? This cannot be undone.`)
+    )
+      return;
     try {
       await api.deletePlaylist(id);
       navigate("/playlists", { replace: true });
@@ -184,11 +188,15 @@ export default function PlaylistDetail() {
         kind={
           <>
             {playlist.visibility === "collaborative" ? (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span
+                style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+              >
                 <UsersIcon className="size-3" /> Collaborative
               </span>
             ) : (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span
+                style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+              >
                 <LockClosedIcon className="size-3" /> Private
               </span>
             )}
@@ -205,7 +213,10 @@ export default function PlaylistDetail() {
         heroTrack={firstCoverTrack}
         fallbackGradient={swatchFor(playlist.id)}
         fallbackIcon={
-          <MusicalNoteIcon className="size-12" style={{ color: "var(--accent-fg)" }} />
+          <MusicalNoteIcon
+            className="size-12"
+            style={{ color: "var(--accent-fg)" }}
+          />
         }
         meta={
           <>
@@ -215,7 +226,9 @@ export default function PlaylistDetail() {
             {tracks.length > 0 && (
               <>
                 <span className="dot" />
-                <span>{fmtTotalMs(tracks.reduce((s, t) => s + t.duration_ms, 0))}</span>
+                <span>
+                  {fmtTotalMs(tracks.reduce((s, t) => s + t.duration_ms, 0))}
+                </span>
               </>
             )}
           </>
@@ -260,14 +273,7 @@ export default function PlaylistDetail() {
         }
       />
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
+      <div className="playlist-toolbar">
         <SegmentedControl
           value={tab}
           onChange={setTab}
@@ -295,9 +301,9 @@ export default function PlaylistDetail() {
               : []),
           ]}
         />
-        <div style={{ flex: 1 }} />
+        <div className="playlist-toolbar-spacer" />
         {tab === "tracks" && tracks.length > 1 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <div className="playlist-sort-controls">
             <div
               id={PLAYLIST_SELECTION_CONTROLS_ID}
               className="track-selectbar-host"
@@ -334,7 +340,7 @@ export default function PlaylistDetail() {
         )}
         <SearchInput
           ref={searchInputRef}
-          style={{ width: 260 }}
+          className="playlist-search"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           onClear={() => setSearchQuery("")}

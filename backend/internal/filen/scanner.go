@@ -47,6 +47,7 @@ type Scanner struct {
 
 	mu       sync.Mutex
 	inflight map[uuid.UUID]struct{}
+	jobs     sync.WaitGroup
 }
 
 func (s *Scanner) Run(ctx context.Context) {
@@ -79,7 +80,9 @@ func (s *Scanner) StartPinScan(ctx context.Context, id uuid.UUID) (bool, error) 
 		s.finish(id)
 		return false, err
 	}
+	s.jobs.Add(1)
 	go func() {
+		defer s.jobs.Done()
 		defer s.finish(id)
 		if _, err := s.ScanPin(ctx, pin); err != nil && s.Logger != nil {
 			s.Logger.Warn("filen manual scan failed", "pin", id, "err", err)
@@ -101,7 +104,9 @@ func (s *Scanner) scanDue(ctx context.Context) {
 		if !s.tryBegin(pin.ID) {
 			continue
 		}
+		s.jobs.Add(1)
 		go func() {
+			defer s.jobs.Done()
 			defer s.finish(pin.ID)
 			if _, err := s.ScanPin(ctx, pin); err != nil && s.Logger != nil {
 				s.Logger.Warn("filen scheduled scan failed", "pin", pin.ID, "err", err)
@@ -109,6 +114,10 @@ func (s *Scanner) scanDue(ctx context.Context) {
 		}()
 	}
 }
+
+// Wait blocks until all scheduled and manually-triggered scans have stopped.
+// Call it after Run has returned so no new jobs can be added.
+func (s *Scanner) Wait() { s.jobs.Wait() }
 
 func (s *Scanner) ScanPin(ctx context.Context, pin Pin) (ScanSummary, error) {
 	summary := ScanSummary{PinID: pin.ID, StartedAt: time.Now().UTC()}

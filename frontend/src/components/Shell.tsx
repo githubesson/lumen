@@ -11,6 +11,7 @@ import {
   AdjustmentsHorizontalIcon,
   ArrowLeftEndOnRectangleIcon,
   ArrowUpTrayIcon,
+  Bars3Icon,
   ChevronDoubleLeftIcon,
   ChevronDoubleRightIcon,
   ChevronRightIcon,
@@ -27,6 +28,7 @@ import {
   ServerStackIcon,
   SparklesIcon,
   SunIcon,
+  XMarkIcon,
 } from "@heroicons/react/16/solid";
 import { api, type Playlist } from "../api";
 import { useAuth } from "../context/Auth";
@@ -48,7 +50,9 @@ type NavItemCfg = {
   icon: typeof QueueListIcon;
 };
 
-const BROWSE: NavItemCfg[] = [{ label: "Tracks", to: "/library", icon: QueueListIcon }];
+const BROWSE: NavItemCfg[] = [
+  { label: "Tracks", to: "/library", icon: QueueListIcon },
+];
 
 const LIBRARY: NavItemCfg[] = [
   { label: "Favorites", to: "/favorites", icon: HeartIcon },
@@ -68,12 +72,16 @@ export default function Shell() {
   const [tweaksOpen, setTweaksOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [fh6RadioEnabled, setFh6RadioEnabled] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useDiscordPresence();
 
   useEffect(() => {
     if (!me || me.must_reset_password) return;
-    void api.listPlaylists().then((p) => setPlaylists(p ?? [])).catch(() => {});
+    void api
+      .listPlaylists()
+      .then((p) => setPlaylists(p ?? []))
+      .catch(() => {});
     void api
       .listPendingInvites()
       .then((p) => setPendingCount(p?.length ?? 0))
@@ -89,6 +97,10 @@ export default function Shell() {
       ?.then((cfg) => setFh6RadioEnabled(cfg.fh6RadioEnabled === true))
       .catch(() => setFh6RadioEnabled(false));
   }, []);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location.pathname]);
 
   const onLogout = async () => {
     await logout();
@@ -117,7 +129,12 @@ export default function Shell() {
       e.preventDefault();
       setPaletteOpen((o) => !o);
     },
-    { id: "palette:toggle", label: "Toggle command palette", group: "Navigation", allowInInput: true },
+    {
+      id: "palette:toggle",
+      label: "Toggle command palette",
+      group: "Navigation",
+      allowInInput: true,
+    },
   );
   useKey(
     "ctrl+b",
@@ -133,7 +150,11 @@ export default function Shell() {
   return (
     <div className="app">
       {/* Sidebar */}
-      <aside className="sidebar" aria-label="Sidebar">
+      <aside
+        id="app-sidebar"
+        className={`sidebar${mobileNavOpen ? " mobile-open" : ""}`}
+        aria-label="Sidebar"
+      >
         <Link to="/" className="brand">
           <div className="brand-mark">L</div>
           <div className="brand-text">
@@ -143,7 +164,12 @@ export default function Shell() {
 
         <div className="nav">
           <div className="nav-section-title">Browse</div>
-          <NavItem to="/" icon={<MusicalNoteIcon className="nav-icon" />} label="Home" end />
+          <NavItem
+            to="/"
+            icon={<MusicalNoteIcon className="nav-icon" />}
+            label="Home"
+            end
+          />
           {BROWSE.map((i) => (
             <NavItem
               key={i.to}
@@ -208,7 +234,11 @@ export default function Shell() {
           {playlists.length === 0 && (
             <div
               className="mono"
-              style={{ padding: "4px 10px", fontSize: 10, color: "var(--fg-subtle)" }}
+              style={{
+                padding: "4px 10px",
+                fontSize: 10,
+                color: "var(--fg-subtle)",
+              }}
             >
               None yet
             </div>
@@ -231,11 +261,68 @@ export default function Shell() {
           ))}
         </div>
 
+        <div
+          className="mobile-sidebar-actions"
+          aria-label="Application actions"
+        >
+          <button
+            className="nav-item mobile-sidebar-action"
+            type="button"
+            onClick={() => {
+              setMobileNavOpen(false);
+              setUploadOpen(true);
+            }}
+          >
+            <ArrowUpTrayIcon className="nav-icon" aria-hidden="true" />
+            <span className="nav-label">Add music</span>
+          </button>
+          <button
+            className="nav-item mobile-sidebar-action"
+            type="button"
+            onClick={toggleTheme}
+          >
+            {theme === "dark" ? (
+              <SunIcon className="nav-icon" aria-hidden="true" />
+            ) : (
+              <MoonIcon className="nav-icon" aria-hidden="true" />
+            )}
+            <span className="nav-label">
+              {theme === "dark" ? "Light mode" : "Dark mode"}
+            </span>
+          </button>
+          <button
+            className="nav-item mobile-sidebar-action"
+            type="button"
+            onClick={() => {
+              setMobileNavOpen(false);
+              setTweaksOpen(true);
+            }}
+          >
+            <AdjustmentsHorizontalIcon
+              className="nav-icon"
+              aria-hidden="true"
+            />
+            <span className="nav-label">Tweaks</span>
+          </button>
+          {isElectron && (
+            <button
+              className="nav-item mobile-sidebar-action"
+              type="button"
+              onClick={() => void electron?.openSettings()}
+            >
+              <ServerStackIcon className="nav-icon" aria-hidden="true" />
+              <span className="nav-label">Server settings</span>
+            </button>
+          )}
+        </div>
+
         <div className="sidebar-footer">
           <div className="avatar">{initial}</div>
           <div className="user-text" style={{ flex: 1, minWidth: 0 }}>
             <div className="user-name">{me?.username}</div>
-            <div className="user-plan">{me?.role === "admin" ? "admin" : "local library"}</div>
+            <div className="user-plan">
+              {me?.role === "admin" ? "admin" : "local library"}
+            </div>
           </div>
           <button
             className="iconbtn"
@@ -247,15 +334,40 @@ export default function Shell() {
           </button>
         </div>
       </aside>
+      <button
+        type="button"
+        className={`mobile-nav-backdrop${mobileNavOpen ? " visible" : ""}`}
+        aria-label="Close navigation"
+        aria-hidden={!mobileNavOpen}
+        tabIndex={mobileNavOpen ? 0 : -1}
+        onClick={() => setMobileNavOpen(false)}
+      />
 
       {/* Main */}
       <main className="main">
         <div className="topbar">
           <button
             type="button"
-            className="iconbtn"
+            className="iconbtn sidebar-toggle-mobile"
+            onClick={() => setMobileNavOpen((open) => !open)}
+            aria-controls="app-sidebar"
+            aria-expanded={mobileNavOpen}
+            aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
+            title={mobileNavOpen ? "Close navigation" : "Open navigation"}
+          >
+            {mobileNavOpen ? (
+              <XMarkIcon className="size-4" aria-hidden="true" />
+            ) : (
+              <Bars3Icon className="size-4" aria-hidden="true" />
+            )}
+          </button>
+          <button
+            type="button"
+            className="iconbtn sidebar-toggle-desktop"
             onClick={toggleSidebar}
-            aria-label={layout === "compact" ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={
+              layout === "compact" ? "Expand sidebar" : "Collapse sidebar"
+            }
             title={layout === "compact" ? "Expand sidebar" : "Collapse sidebar"}
           >
             {layout === "compact" ? (
@@ -266,8 +378,10 @@ export default function Shell() {
           </button>
           <div className="crumbs">
             {crumbs.map((c, i) => (
-              <span key={`${c.label}-${i}`} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                {i > 0 && <ChevronRightIcon className="size-3" aria-hidden="true" />}
+              <span key={`${c.label}-${i}`} className="crumb">
+                {i > 0 && (
+                  <ChevronRightIcon className="size-3" aria-hidden="true" />
+                )}
                 {c.current ? (
                   <b>{c.label}</b>
                 ) : c.to ? (
@@ -283,7 +397,7 @@ export default function Shell() {
 
           <button
             type="button"
-            className="search"
+            className="search topbar-search"
             onClick={() => setPaletteOpen(true)}
             aria-label="Open command palette"
             style={{
@@ -293,14 +407,14 @@ export default function Shell() {
             }}
           >
             <MagnifyingGlassIcon className="size-3.5" aria-hidden="true" />
-            <span style={{ flex: 1, color: "var(--fg-subtle)", fontSize: 12.5 }}>
+            <span className="topbar-search-label">
               Search library, albums, tracks…
             </span>
             <kbd>⌘K</kbd>
           </button>
 
           <button
-            className="iconbtn"
+            className="iconbtn topbar-secondary"
             type="button"
             title="Add music"
             aria-label="Add music"
@@ -310,9 +424,11 @@ export default function Shell() {
           </button>
 
           <button
-            className="iconbtn"
+            className="iconbtn topbar-secondary"
             type="button"
-            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            title={
+              theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+            }
             aria-label="Toggle theme"
             onClick={toggleTheme}
           >
@@ -324,7 +440,9 @@ export default function Shell() {
           </button>
 
           <button
-            className={"iconbtn" + (tweaksOpen ? " active" : "")}
+            className={
+              "iconbtn topbar-secondary" + (tweaksOpen ? " active" : "")
+            }
             type="button"
             title="Tweaks"
             aria-label="Tweaks"
@@ -336,7 +454,7 @@ export default function Shell() {
 
           {isElectron && (
             <button
-              className="iconbtn"
+              className="iconbtn topbar-secondary"
               type="button"
               title="Change server URL"
               aria-label="Change server URL"
@@ -423,13 +541,22 @@ function buildCrumbs(
     return [{ label: "Library", current: true }];
   }
   if (pathname.startsWith("/favorites")) {
-    return [{ label: "Library", to: "/library" }, { label: "Favorites", current: true }];
+    return [
+      { label: "Library", to: "/library" },
+      { label: "Favorites", current: true },
+    ];
   }
   if (pathname.startsWith("/recent")) {
-    return [{ label: "Library", to: "/library" }, { label: "Recent", current: true }];
+    return [
+      { label: "Library", to: "/library" },
+      { label: "Recent", current: true },
+    ];
   }
   if (pathname.startsWith("/replay")) {
-    return [{ label: "Library", to: "/library" }, { label: "Replay", current: true }];
+    return [
+      { label: "Library", to: "/library" },
+      { label: "Replay", current: true },
+    ];
   }
   if (pathname.startsWith("/fh6-radio")) {
     return [{ label: "Lumen Radio", current: true }];

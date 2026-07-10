@@ -118,6 +118,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     time,
     storage: asyncStorageAdapter,
     deviceName: Platform.OS === "ios" ? "iPhone" : "Mobile",
+    adapter,
   });
   const lockScreenActiveRef = useRef(false);
   const nowPlayingMetadata = useMemo(

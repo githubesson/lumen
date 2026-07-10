@@ -13,7 +13,9 @@ Go HTTP API for Lumen, the self-hosted, invite-only music library.
 - **Library** — admin-managed music roots, filesystem scanning and ingest with
   a watcher + rescan support, metadata extraction, cover art, search.
 - **Playback** — ranged audio streaming (scrub-friendly), play history/stats,
-  optional ffmpeg transcoding behind `ENABLE_TRANSCODING`.
+  cross-device activity over an authenticated WebSocket with REST/Postgres
+  snapshot recovery, and optional ffmpeg transcoding behind
+  `ENABLE_TRANSCODING`.
 - **Playlists & favorites** — CRUD plus per-user state.
 - **Sharing** — public `/share/…` link-preview pages (what Discord and chat
   apps scrape), `/embed/…` embeddable players, and server-rendered preview
@@ -48,7 +50,7 @@ filen-downloader/     Node 20 helper the Docker image bundles for Filen links
 
 ## Run (local)
 
-Requires Go 1.22+ and a Postgres 16 instance:
+Requires Go 1.23+ and a Postgres 16 instance:
 
 ```sh
 docker run --rm -e POSTGRES_PASSWORD=mlib -e POSTGRES_USER=mlib -e POSTGRES_DB=mlib -p 5432:5432 postgres:16
@@ -59,6 +61,12 @@ DATABASE_URL=postgres://mlib:mlib@localhost:5432/mlib?sslmode=disable COOKIE_SEC
 Migrations run automatically on boot. `COOKIE_SECURE=false` is needed over
 plain HTTP so the session cookie isn't dropped. All knobs are listed in
 [.env.example](./.env.example).
+
+Configuration is validated strictly at startup: booleans must be accepted by
+Go's `strconv.ParseBool`, durations must parse and be greater than zero, and
+`TRUSTED_PROXIES` entries must be IP literals or CIDR ranges. Invalid values
+stop startup with the variable name instead of silently falling back. Check
+existing deployment environment files before upgrading.
 
 ## Test / lint
 

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -55,6 +56,46 @@ type Config struct {
 }
 
 func FromEnv() (*Config, error) {
+	cookieSecure, err := boolenv("COOKIE_SECURE", true)
+	if err != nil {
+		return nil, err
+	}
+	enableTranscoding, err := boolenv("ENABLE_TRANSCODING", false)
+	if err != nil {
+		return nil, err
+	}
+	sessionTTL, err := durenv("SESSION_TTL", 30*24*time.Hour)
+	if err != nil {
+		return nil, err
+	}
+	apiPoll, err := durenv("API_TRACKER_SCAN_POLL_INTERVAL", 5*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	apiFileTimeout, err := durenv("API_TRACKER_FILE_TIMEOUT", 30*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	artistPoll, err := durenv("ARTISTGRID_SCAN_POLL_INTERVAL", 5*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	artistFileTimeout, err := durenv("ARTISTGRID_FILE_TIMEOUT", 30*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	filenPoll, err := durenv("FILEN_SCAN_POLL_INTERVAL", 5*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	filenFileTimeout, err := durenv("FILEN_FILE_TIMEOUT", 30*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	trustedProxies, err := proxyenv("TRUSTED_PROXIES")
+	if err != nil {
+		return nil, err
+	}
 	c := &Config{
 		HTTPAddr:                   getenv("HTTP_ADDR", ":8080"),
 		DatabaseURL:                os.Getenv("DATABASE_URL"),
@@ -63,22 +104,22 @@ func FromEnv() (*Config, error) {
 		AdminUsername:              getenv("ADMIN_USERNAME", "admin"),
 		AdminPassword:              os.Getenv("ADMIN_PASSWORD"),
 		CookieName:                 getenv("SESSION_COOKIE", "mlsession"),
-		CookieSecure:               boolenv("COOKIE_SECURE", true),
-		SessionTTL:                 durenv("SESSION_TTL", 30*24*time.Hour),
+		CookieSecure:               cookieSecure,
+		SessionTTL:                 sessionTTL,
 		APITrackerBaseURL:          getenv("API_TRACKER_BASE_URL", ""),
-		APITrackerScanPollInterval: durenv("API_TRACKER_SCAN_POLL_INTERVAL", 5*time.Minute),
-		APITrackerFileTimeout:      durenv("API_TRACKER_FILE_TIMEOUT", 30*time.Minute),
-		ArtistGridScanPollInterval: durenv("ARTISTGRID_SCAN_POLL_INTERVAL", 5*time.Minute),
-		ArtistGridFileTimeout:      durenv("ARTISTGRID_FILE_TIMEOUT", 30*time.Minute),
-		FilenScanPollInterval:      durenv("FILEN_SCAN_POLL_INTERVAL", 5*time.Minute),
-		FilenFileTimeout:           durenv("FILEN_FILE_TIMEOUT", 30*time.Minute),
+		APITrackerScanPollInterval: apiPoll,
+		APITrackerFileTimeout:      apiFileTimeout,
+		ArtistGridScanPollInterval: artistPoll,
+		ArtistGridFileTimeout:      artistFileTimeout,
+		FilenScanPollInterval:      filenPoll,
+		FilenFileTimeout:           filenFileTimeout,
 		FilenDownloaderNode:        getenv("FILEN_DOWNLOADER_NODE", "node"),
 		FilenDownloaderScript:      getenv("FILEN_DOWNLOADER_SCRIPT", ""),
 		TIDALCountryCode:           strings.ToUpper(getenv("TIDAL_COUNTRY_CODE", "US")),
 		TIDALQuality:               strings.ToUpper(getenv("TIDAL_QUALITY", "LOSSLESS")),
 		TIDALHifiAPIURL:            getenv("TIDAL_HIFI_API_URL", ""),
-		EnableTranscoding:          boolenv("ENABLE_TRANSCODING", false),
-		TrustedProxies:             splitenv("TRUSTED_PROXIES"),
+		EnableTranscoding:          enableTranscoding,
+		TrustedProxies:             trustedProxies,
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
@@ -119,28 +160,31 @@ func getenv(k, def string) string {
 	return def
 }
 
-func boolenv(k string, def bool) bool {
+func boolenv(k string, def bool) (bool, error) {
 	v := os.Getenv(k)
 	if v == "" {
-		return def
+		return def, nil
 	}
 	b, err := strconv.ParseBool(v)
 	if err != nil {
-		return def
+		return false, fmt.Errorf("%s must be a boolean, got %q: %w", k, v, err)
 	}
-	return b
+	return b, nil
 }
 
-func durenv(k string, def time.Duration) time.Duration {
+func durenv(k string, def time.Duration) (time.Duration, error) {
 	v := os.Getenv(k)
 	if v == "" {
-		return def
+		return def, nil
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil {
-		return def
+		return 0, fmt.Errorf("%s must be a duration, got %q: %w", k, v, err)
 	}
-	return d
+	if d <= 0 {
+		return 0, fmt.Errorf("%s must be greater than zero, got %q", k, v)
+	}
+	return d, nil
 }
 
 func splitenv(k string) []string {
@@ -156,4 +200,18 @@ func splitenv(k string) []string {
 		}
 	}
 	return out
+}
+
+func proxyenv(k string) ([]string, error) {
+	values := splitenv(k)
+	for _, value := range values {
+		if net.ParseIP(value) != nil {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(value); err == nil {
+			continue
+		}
+		return nil, fmt.Errorf("%s contains invalid IP or CIDR %q", k, value)
+	}
+	return values, nil
 }

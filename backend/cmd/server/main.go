@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -46,6 +47,19 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	// Request-shared work (notably TIDAL singleflight resolution) stays alive
+	// until the HTTP drain completes. Background scanners still stop as soon as
+	// the signal context above is canceled.
+	drainCtx, cancelDrain := context.WithCancel(context.Background())
+	defer cancelDrain()
+	var workers sync.WaitGroup
+	startWorker := func(run func()) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			run()
+		}()
+	}
 
 	pool, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -67,8 +81,10 @@ func main() {
 		CountryCode: cfg.TIDALCountryCode,
 		Quality:     cfg.TIDALQuality,
 		HifiAPIURL:  cfg.TIDALHifiAPIURL,
+		Background:  drainCtx,
 	})
 	sessions := auth.NewSessionStore(pool, cfg.CookieName, cfg.CookieSecure, cfg.SessionTTL)
+	startWorker(func() { runSessionCleanup(ctx, logger, sessions) })
 
 	if err := auth.SeedAdmin(ctx, logger, usersStore, cfg.AdminUsername, cfg.AdminPassword); err != nil {
 		logger.Error("admin seed failed", "err", err)
@@ -98,11 +114,11 @@ func main() {
 	var watcher *ingest.Watcher
 	if _, err := os.Stat(cfg.MusicPath); err == nil {
 		watcher = ingest.NewWatcher(ingestSvc)
-		go func() {
+		startWorker(func() {
 			if err := watcher.Run(ctx); err != nil {
 				logger.Warn("watcher stopped", "err", err)
 			}
-		}()
+		})
 	} else {
 		logger.Warn("music path not found; watcher disabled", "path", cfg.MusicPath)
 	}
@@ -128,7 +144,7 @@ func main() {
 		PollInterval: cfg.APITrackerScanPollInterval,
 		FileTimeout:  cfg.APITrackerFileTimeout,
 	}
-	go apiTrackerScanner.Run(ctx)
+	startWorker(func() { apiTrackerScanner.Run(ctx) })
 	artistGridScanner := &artistgrid.Scanner{
 		Store:        artistGridStore,
 		Client:       artistgrid.NewClient(),
@@ -138,7 +154,7 @@ func main() {
 		PollInterval: cfg.ArtistGridScanPollInterval,
 		FileTimeout:  cfg.ArtistGridFileTimeout,
 	}
-	go artistGridScanner.Run(ctx)
+	startWorker(func() { artistGridScanner.Run(ctx) })
 	filenScanner := &filen.Scanner{
 		Store:        filenStore,
 		Ingest:       ingestSvc,
@@ -149,7 +165,7 @@ func main() {
 		NodePath:     cfg.FilenDownloaderNode,
 		ScriptPath:   cfg.FilenDownloaderScript,
 	}
-	go filenScanner.Run(ctx)
+	startWorker(func() { filenScanner.Run(ctx) })
 
 	handler := httpapi.NewRouter(httpapi.Deps{
 		DB:             pool,
@@ -171,6 +187,8 @@ func main() {
 		FilenScan:      filenScanner,
 		Preview:        previewBuilder,
 		MusicRoot:      cfg.MusicPath,
+		Background:     ctx,
+		StartJob:       startWorker,
 		RefreshScan:    refresh,
 		CoverSignKey:   cfg.CoverSignKey,
 		TrustedProxies: cfg.TrustedProxies,
@@ -180,6 +198,8 @@ func main() {
 		Addr:              cfg.HTTPAddr,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    64 << 10,
 	}
 
 	go func() {
@@ -194,5 +214,59 @@ func main() {
 	logger.Info("shutting down")
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer shutCancel()
-	_ = srv.Shutdown(shutCtx)
+	if err := srv.Shutdown(shutCtx); err != nil {
+		logger.Warn("http shutdown incomplete", "err", err)
+	}
+	cancelDrain()
+	if !waitFor(shutCtx, workers.Wait) {
+		logger.Warn("background workers did not stop before shutdown deadline")
+		return
+	}
+	if !waitFor(shutCtx, func() {
+		apiTrackerScanner.Wait()
+		artistGridScanner.Wait()
+		filenScanner.Wait()
+	}) {
+		logger.Warn("background scan jobs did not stop before shutdown deadline")
+	}
+}
+
+func runSessionCleanup(ctx context.Context, logger *slog.Logger, sessions *auth.SessionStore) {
+	cleanup := func() {
+		deleted, err := sessions.DeleteExpired(ctx)
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				logger.Warn("expired session cleanup failed", "err", err)
+			}
+			return
+		}
+		if deleted > 0 {
+			logger.Info("expired sessions removed", "count", deleted)
+		}
+	}
+	cleanup()
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cleanup()
+		}
+	}
+}
+
+func waitFor(ctx context.Context, wait func()) bool {
+	done := make(chan struct{})
+	go func() {
+		wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }

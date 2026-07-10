@@ -66,7 +66,11 @@ export default function PlaylistTracksPanel({
     return (
       <EmptyState
         title="No tracks yet."
-        hint={canEdit ? 'Click "Add tracks" above to pull some in from your library.' : undefined}
+        hint={
+          canEdit
+            ? 'Click "Add tracks" above to pull some in from your library.'
+            : undefined
+        }
       />
     );
   }
@@ -238,63 +242,70 @@ function TracksTable({
         }}
         hostId={selectionControlsHostId}
       />
-      <table
-        ref={tableRef}
-        className={`table${selectionMode ? " table-selecting" : ""}`}
-      >
-        <thead>
-          <tr>
-            {selectionMode && (
-              <SelectAllHeaderCell
-                allSelected={allSelected}
-                someSelected={someSelected}
-                onToggle={selectAll}
-              />
-            )}
-            <th className="col-idx">#</th>
-            <th className="col-art" />
-            <th>Title</th>
-            <th>Album</th>
-            <th className="col-added">Added</th>
-            <th className="col-dur">Time</th>
-            <th className="col-acts" />
-          </tr>
-        </thead>
-        <tbody>
-          {topSpacerPx > 0 && (
-            <tr aria-hidden="true" className="vt-spacer">
-              <td colSpan={columnCount} style={{ height: topSpacerPx }} />
-            </tr>
-          )}
-          {visibleTracks.map((t, i) => {
-            const index = start + i;
-            const isNow = currentTrackId === t.track_id;
-            return (
-              <PlaylistRow
-                key={`${t.position}-${t.track_id}`}
-                entry={t}
-                index={index}
-                isNow={isNow}
-                isPlaying={isPlaying && isNow}
-                fav={isFav(t.track_id)}
-                canEdit={canEdit}
-                selectionMode={selectionMode}
-                selected={selectedIds.has(t.track_id)}
-                onPlay={handlePlay}
-                onToggleSelect={handleToggleSelection}
-                onToggleFav={handleToggleFav}
-                onRemove={handleRemove}
-                onContextMenu={handleContextMenu}
-              />
-            );
-          })}
-          {bottomSpacerPx > 0 && (
-            <tr aria-hidden="true" className="vt-spacer">
-              <td colSpan={columnCount} style={{ height: bottomSpacerPx }} />
-            </tr>
-          )}
-        </tbody>
-      </table>
+      <div className="table-scroll" data-horizontal-scroll="">
+        <div className="table-scroll-inner">
+          <table
+            ref={tableRef}
+            className={`table${selectionMode ? " table-selecting" : ""}`}
+          >
+            <thead>
+              <tr>
+                {selectionMode && (
+                  <SelectAllHeaderCell
+                    allSelected={allSelected}
+                    someSelected={someSelected}
+                    onToggle={selectAll}
+                  />
+                )}
+                <th className="col-idx">#</th>
+                <th className="col-art" />
+                <th>Title</th>
+                <th>Album</th>
+                <th className="col-added">Added</th>
+                <th className="col-dur">Time</th>
+                <th className="col-acts" />
+              </tr>
+            </thead>
+            <tbody>
+              {topSpacerPx > 0 && (
+                <tr aria-hidden="true" className="vt-spacer">
+                  <td colSpan={columnCount} style={{ height: topSpacerPx }} />
+                </tr>
+              )}
+              {visibleTracks.map((t, i) => {
+                const index = start + i;
+                const isNow = currentTrackId === t.track_id;
+                return (
+                  <PlaylistRow
+                    key={`${t.position}-${t.track_id}`}
+                    entry={t}
+                    index={index}
+                    isNow={isNow}
+                    isPlaying={isPlaying && isNow}
+                    fav={isFav(t.track_id)}
+                    canEdit={canEdit}
+                    selectionMode={selectionMode}
+                    selected={selectedIds.has(t.track_id)}
+                    onPlay={handlePlay}
+                    onToggleSelect={handleToggleSelection}
+                    onToggleFav={handleToggleFav}
+                    onRemove={handleRemove}
+                    onContextMenu={handleContextMenu}
+                  />
+                );
+              })}
+              {bottomSpacerPx > 0 && (
+                <tr aria-hidden="true" className="vt-spacer">
+                  <td
+                    colSpan={columnCount}
+                    style={{ height: bottomSpacerPx }}
+                  />
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </>
   );
 }
@@ -340,7 +351,10 @@ const PlaylistRow = memo(function PlaylistRow({
     : "—";
   return (
     <tr
-      className={`${isNow ? "playing" : ""}${selected ? " selected" : ""}`.trim() || undefined}
+      className={
+        `${isNow ? "playing" : ""}${selected ? " selected" : ""}`.trim() ||
+        undefined
+      }
       aria-selected={selectionMode ? selected : undefined}
       onClick={(e) => {
         if (selectionMode) onToggleSelect(entry, index, e.shiftKey);

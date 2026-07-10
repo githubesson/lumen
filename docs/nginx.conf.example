@@ -26,6 +26,11 @@ upstream music_library_frontend {
     keepalive 32;
 }
 
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
 server {
     listen 80;
     listen [::]:80;
@@ -53,6 +58,14 @@ server {
                application/xml+rss application/atom+xml image/svg+xml;
 
     # Backend — API, streaming, cover art.
+    location = /api/activity/ws {
+        proxy_pass http://music_library_backend;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 1h;
+        proxy_buffering off;
+    }
+
     location /api/ {
         proxy_pass http://music_library_backend;
 

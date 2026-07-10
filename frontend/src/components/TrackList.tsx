@@ -172,73 +172,80 @@ export default function TrackList({
         }}
         hostId={selectionControlsHostId}
       />
-      <table
-        className={`table${selectionMode ? " table-selecting" : ""}`}
-        ref={tableRef}
-      >
-        <thead>
-          <tr>
-            {selectionMode && (
-              <SelectAllHeaderCell
-                allSelected={allSelected}
-                someSelected={someSelected}
-                onToggle={selectAll}
-              />
-            )}
-            <th className="col-idx">#</th>
-            {showCover && <th className="col-art" aria-label="Cover" />}
-            <th>Title</th>
-            {showAlbum && <th>Album</th>}
-            {extraColumn && (
-              <th className={extraColumn.className ?? "col-extra"}>
-                {extraColumn.header}
-              </th>
-            )}
-            <th className="col-dur">Time</th>
-            <th className="col-acts" aria-label="Actions" />
-          </tr>
-        </thead>
-        <tbody>
-          {topSpacerPx > 0 && (
-            <tr aria-hidden="true" className="vt-spacer">
-              <td colSpan={columnCount} style={{ height: topSpacerPx }} />
-            </tr>
-          )}
-          {visible.map((t, i) => (
-            <TrackRow
-              key={t.id}
-              track={t}
-              index={start + i}
-              showCover={showCover}
-              showAlbum={showAlbum}
-              extra={
-                extraColumn
-                  ? {
-                      content: extraColumn.render(t),
-                      className: extraColumn.className,
-                    }
-                  : undefined
-              }
-              isNow={current?.id === t.id}
-              isPlaying={isPlaying && current?.id === t.id}
-              fav={isFavorite(t.id)}
-              canEdit={isAdmin && isLocalTrack(t)}
-              selectionMode={selectionMode}
-              selected={selectedIds.has(t.id)}
-              onPlay={handlePlay}
-              onToggleSelect={handleToggleSelection}
-              onToggleFav={handleToggleFav}
-              onEdit={isAdmin ? handleEdit : undefined}
-              onContextMenu={handleContextMenu}
-            />
-          ))}
-          {bottomSpacerPx > 0 && (
-            <tr aria-hidden="true" className="vt-spacer">
-              <td colSpan={columnCount} style={{ height: bottomSpacerPx }} />
-            </tr>
-          )}
-        </tbody>
-      </table>
+      <div className="table-scroll" data-horizontal-scroll="">
+        <div className="table-scroll-inner">
+          <table
+            className={`table${selectionMode ? " table-selecting" : ""}`}
+            ref={tableRef}
+          >
+            <thead>
+              <tr>
+                {selectionMode && (
+                  <SelectAllHeaderCell
+                    allSelected={allSelected}
+                    someSelected={someSelected}
+                    onToggle={selectAll}
+                  />
+                )}
+                <th className="col-idx">#</th>
+                {showCover && <th className="col-art" aria-label="Cover" />}
+                <th>Title</th>
+                {showAlbum && <th>Album</th>}
+                {extraColumn && (
+                  <th className={extraColumn.className ?? "col-extra"}>
+                    {extraColumn.header}
+                  </th>
+                )}
+                <th className="col-dur">Time</th>
+                <th className="col-acts" aria-label="Actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {topSpacerPx > 0 && (
+                <tr aria-hidden="true" className="vt-spacer">
+                  <td colSpan={columnCount} style={{ height: topSpacerPx }} />
+                </tr>
+              )}
+              {visible.map((t, i) => (
+                <TrackRow
+                  key={t.id}
+                  track={t}
+                  index={start + i}
+                  showCover={showCover}
+                  showAlbum={showAlbum}
+                  extra={
+                    extraColumn
+                      ? {
+                          content: extraColumn.render(t),
+                          className: extraColumn.className,
+                        }
+                      : undefined
+                  }
+                  isNow={current?.id === t.id}
+                  isPlaying={isPlaying && current?.id === t.id}
+                  fav={isFavorite(t.id)}
+                  canEdit={isAdmin && isLocalTrack(t)}
+                  selectionMode={selectionMode}
+                  selected={selectedIds.has(t.id)}
+                  onPlay={handlePlay}
+                  onToggleSelect={handleToggleSelection}
+                  onToggleFav={handleToggleFav}
+                  onEdit={isAdmin ? handleEdit : undefined}
+                  onContextMenu={handleContextMenu}
+                />
+              ))}
+              {bottomSpacerPx > 0 && (
+                <tr aria-hidden="true" className="vt-spacer">
+                  <td
+                    colSpan={columnCount}
+                    style={{ height: bottomSpacerPx }}
+                  />
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
       <EditTrackDialog
         open={editId !== null}
         trackId={editId}
@@ -305,7 +312,10 @@ export const TrackRow = memo(function TrackRow({
 
   return (
     <tr
-      className={`${isNow ? "playing" : ""}${selected ? " selected" : ""}`.trim() || undefined}
+      className={
+        `${isNow ? "playing" : ""}${selected ? " selected" : ""}`.trim() ||
+        undefined
+      }
       aria-selected={selectionMode ? selected : undefined}
       onClick={(e) => {
         if (!selectionMode) return;
@@ -377,10 +387,15 @@ export const TrackRow = memo(function TrackRow({
             </Tooltip>
           )}
         </div>
-        <div className="track-sub">{displayText(track.artist, "Unknown artist")}</div>
+        <div className="track-sub">
+          {displayText(track.artist, "Unknown artist")}
+        </div>
       </td>
       {showAlbum && (
-        <td className="mono" style={{ color: "var(--fg-subtle)", fontSize: 11 }}>
+        <td
+          className="mono"
+          style={{ color: "var(--fg-subtle)", fontSize: 11 }}
+        >
           {track.album_title ? displayText(track.album_title) : "—"}
         </td>
       )}

@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	ErrNotFound  = errors.New("playlist not found")
-	ErrForbidden = errors.New("forbidden")
+	ErrNotFound     = errors.New("playlist not found")
+	ErrForbidden    = errors.New("forbidden")
+	ErrInvalidOrder = errors.New("playlist order does not match current entries")
 )
 
 type Visibility string
@@ -242,12 +243,28 @@ func (s *Store) TracksDetailed(ctx context.Context, id, viewerID uuid.UUID) ([]T
 	return out, rows.Err()
 }
 
+// lockPlaylist serializes track-list mutations on a playlist. Locking the
+// parent row is preferable to locking the current playlist_tracks rows because
+// an empty playlist has no child row to lock, and it also prevents concurrent
+// playlist deletion while the mutation is in progress.
+func lockPlaylist(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	var lockedID uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT id FROM playlists WHERE id = $1 FOR UPDATE`, id).Scan(&lockedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
+}
+
 // AddTracks appends trackIDs to the end of the playlist, preserving order.
 func (s *Store) AddTracks(ctx context.Context, id uuid.UUID, trackIDs []uuid.UUID, addedBy uuid.UUID) error {
 	if len(trackIDs) == 0 {
 		return nil
 	}
 	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+		if err := lockPlaylist(ctx, tx, id); err != nil {
+			return err
+		}
 		var maxPos int
 		if err := tx.QueryRow(ctx, `
 			SELECT COALESCE(MAX(position), -1) FROM playlist_tracks WHERE playlist_id = $1`, id,
@@ -271,6 +288,9 @@ func (s *Store) AddTracks(ctx context.Context, id uuid.UUID, trackIDs []uuid.UUI
 // RemoveTrackAt deletes one position then compacts remaining positions.
 func (s *Store) RemoveTrackAt(ctx context.Context, id uuid.UUID, position int) error {
 	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+		if err := lockPlaylist(ctx, tx, id); err != nil {
+			return err
+		}
 		tag, err := tx.Exec(ctx, `DELETE FROM playlist_tracks WHERE playlist_id = $1 AND position = $2`, id, position)
 		if err != nil {
 			return err
@@ -299,43 +319,119 @@ func (s *Store) RemoveTrackAt(ctx context.Context, id uuid.UUID, position int) e
 	})
 }
 
-// ReplaceOrder rewrites positions for a playlist from an ordered slice of
-// existing track_ids. Any IDs not currently in the playlist are ignored.
-func (s *Store) ReplaceOrder(ctx context.Context, id uuid.UUID, trackIDs []uuid.UUID) error {
+// orderedEntries returns the current entries in the requested order. For
+// duplicate tracks, occurrences are matched in their previous position order,
+// which deterministically preserves each occurrence's attribution. A reorder
+// must be an exact permutation: silently dropping, adding, or duplicating an
+// entry would otherwise turn a stale client request into data loss.
+func orderedEntries(existing []TrackEntry, trackIDs []uuid.UUID) ([]TrackEntry, error) {
+	if len(existing) != len(trackIDs) {
+		return nil, ErrInvalidOrder
+	}
+
+	byTrack := make(map[uuid.UUID][]TrackEntry, len(existing))
+	for _, entry := range existing {
+		byTrack[entry.TrackID] = append(byTrack[entry.TrackID], entry)
+	}
+
+	ordered := make([]TrackEntry, 0, len(trackIDs))
+	for _, trackID := range trackIDs {
+		occurrences := byTrack[trackID]
+		if len(occurrences) == 0 {
+			return nil, ErrInvalidOrder
+		}
+		ordered = append(ordered, occurrences[0])
+		byTrack[trackID] = occurrences[1:]
+	}
+	return ordered, nil
+}
+
+type reorderEntry struct {
+	TrackEntry
+	visible bool
+}
+
+func mergeVisibleOrder(allEntries []reorderEntry, orderedVisible []TrackEntry) []reorderEntry {
+	visibleIndex := 0
+	for i := range allEntries {
+		if !allEntries[i].visible {
+			continue
+		}
+		allEntries[i].TrackEntry = orderedVisible[visibleIndex]
+		visibleIndex++
+	}
+	return allEntries
+}
+
+// ReplaceOrder rewrites the entries visible to viewerID from an exact
+// permutation of their current track IDs. Entries owned by another user are
+// retained in their existing relative slots, while references to soft-deleted
+// tracks are pruned because no client can include them in a reorder request.
+func (s *Store) ReplaceOrder(ctx context.Context, id, viewerID uuid.UUID, trackIDs []uuid.UUID) error {
 	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
-		// Snapshot current rows keyed by track_id -> added_by, added_at so we
-		// preserve attribution across the rewrite.
-		existing := map[uuid.UUID]TrackEntry{}
+		if err := lockPlaylist(ctx, tx, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM playlist_tracks pt
+			USING tracks t
+			WHERE pt.playlist_id = $1
+			  AND t.id = pt.track_id
+			  AND t.deleted_at IS NOT NULL`, id); err != nil {
+			return err
+		}
+
+		// Snapshot all remaining entries. Only the viewer-visible projection is
+		// validated/reordered; hidden personal entries keep their relative slots.
+		var (
+			allEntries     []reorderEntry
+			visibleEntries []TrackEntry
+		)
 		rows, err := tx.Query(ctx, `
-			SELECT position, track_id, added_by, added_at FROM playlist_tracks WHERE playlist_id = $1`, id)
+			SELECT pt.position, pt.track_id, pt.added_by, pt.added_at,
+			       (t.owner_id IS NULL OR t.owner_id = $2) AS visible
+			FROM playlist_tracks pt
+			JOIN tracks t ON t.id = pt.track_id AND t.deleted_at IS NULL
+			WHERE pt.playlist_id = $1
+			ORDER BY pt.position`, id, viewerID)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
-			var te TrackEntry
-			if err := rows.Scan(&te.Position, &te.TrackID, &te.AddedBy, &te.AddedAt); err != nil {
+			var entry reorderEntry
+			if err := rows.Scan(
+				&entry.Position, &entry.TrackID, &entry.AddedBy, &entry.AddedAt,
+				&entry.visible,
+			); err != nil {
 				rows.Close()
 				return err
 			}
-			existing[te.TrackID] = te
+			allEntries = append(allEntries, entry)
+			if entry.visible {
+				visibleEntries = append(visibleEntries, entry.TrackEntry)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
 		}
 		rows.Close()
+
+		orderedVisible, err := orderedEntries(visibleEntries, trackIDs)
+		if err != nil {
+			return err
+		}
+		allEntries = mergeVisibleOrder(allEntries, orderedVisible)
 
 		if _, err := tx.Exec(ctx, `DELETE FROM playlist_tracks WHERE playlist_id = $1`, id); err != nil {
 			return err
 		}
-		pos := 0
-		for _, tid := range trackIDs {
-			prev, ok := existing[tid]
-			if !ok {
-				continue
-			}
+		for pos, entry := range allEntries {
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO playlist_tracks (playlist_id, position, track_id, added_by, added_at)
-				VALUES ($1, $2, $3, $4, $5)`, id, pos, tid, prev.AddedBy, prev.AddedAt); err != nil {
+				VALUES ($1, $2, $3, $4, $5)`, id, pos, entry.TrackID, entry.AddedBy, entry.AddedAt); err != nil {
 				return err
 			}
-			pos++
 		}
 		if _, err := tx.Exec(ctx, `UPDATE playlists SET updated_at = NOW() WHERE id = $1`, id); err != nil {
 			return err

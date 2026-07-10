@@ -1,10 +1,11 @@
 module github.com/githubesson/lumen
 
-go 1.22.0
+go 1.23
 
 toolchain go1.24.0
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-chi/chi/v5 v5.1.0

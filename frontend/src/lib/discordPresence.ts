@@ -1,7 +1,9 @@
-import { useEffect, useRef } from "react";
-import { ACTIVITY_DEVICE_ID_STORAGE_KEY } from "@music-library/core";
+import { useCallback, useEffect, useRef } from "react";
 import {
-  api,
+  getLatestPlaybackActivity,
+  subscribePlaybackActivity,
+} from "@music-library/core";
+import {
   signAlbumCoverUrl,
   type PlaybackActivity,
   type TrackListItem,
@@ -18,8 +20,6 @@ interface SignedCoverCacheEntry {
   expiresAt: number; // unix seconds
 }
 
-const REMOTE_ACTIVITY_POLL_MS = 5_000;
-
 /**
  * Push the currently playing track to Discord Rich Presence when running
  * inside Electron. No-ops in the browser build.
@@ -35,10 +35,49 @@ export function useDiscordPresence() {
   const currentRef = useRef<TrackListItem | null>(null);
   const coverUrlCacheRef = useRef<Map<string, SignedCoverCacheEntry>>(new Map());
   const remoteActivityPushedRef = useRef(false);
+  const remotePushGenerationRef = useRef(0);
 
   useEffect(() => {
     currentRef.current = current;
   }, [current]);
+
+  const pushRemoteActivity = useCallback(
+    async (activity: PlaybackActivity | null) => {
+      const generation = ++remotePushGenerationRef.current;
+      if (currentRef.current) return;
+      if (!activity) {
+        if (remoteActivityPushedRef.current) {
+          remoteActivityPushedRef.current = false;
+          await clearDiscordActivity();
+        }
+        return;
+      }
+
+      const track = activityToTrack(activity);
+      const coverUrl = await resolveSignedCoverUrl(
+        track,
+        coverUrlCacheRef.current,
+      );
+      if (
+        generation !== remotePushGenerationRef.current ||
+        currentRef.current
+      ) {
+        return;
+      }
+      remoteActivityPushedRef.current = true;
+      await pushDiscordActivity({
+        trackId: activity.track_id,
+        title: activity.title,
+        artist: activity.artist || undefined,
+        album: activity.album || undefined,
+        coverUrl,
+        durationSec: activity.duration_sec,
+        elapsedSec: activity.position_sec,
+        isPlaying: activity.is_playing,
+      });
+    },
+    [],
+  );
 
   // Push on every interesting adapter event. The adapter fires these directly
   // from the underlying audio element, so there's no quantization or rAF
@@ -92,9 +131,12 @@ export function useDiscordPresence() {
   useEffect(() => {
     if (!isElectron) return;
     if (!current) {
-      if (!remoteActivityPushedRef.current) void clearDiscordActivity();
+      const remote = getLatestPlaybackActivity();
+      if (remote) void pushRemoteActivity(remote);
+      else if (!remoteActivityPushedRef.current) void clearDiscordActivity();
       return;
     }
+    remotePushGenerationRef.current++;
     remoteActivityPushedRef.current = false;
     const trackId = current.id;
     void (async () => {
@@ -114,63 +156,16 @@ export function useDiscordPresence() {
         isPlaying: true,
       });
     })();
-  }, [current]);
+  }, [current, pushRemoteActivity]);
 
-  // When the desktop player is idle, mirror the freshest activity from another
-  // signed-in client (usually mobile) into Discord Rich Presence.
+  // The player-owned WebSocket publishes live snapshots from other signed-in
+  // devices. Keep Discord mirrored while this desktop player is idle.
   useEffect(() => {
     if (!isElectron) return;
-    let cancelled = false;
-    const poll = () => {
-      const localDeviceId =
-        typeof window !== "undefined"
-          ? window.localStorage.getItem(ACTIVITY_DEVICE_ID_STORAGE_KEY) ?? undefined
-          : undefined;
-      void (async () => {
-        if (currentRef.current) return;
-        let activity: PlaybackActivity | null = null;
-        try {
-          activity = (
-            await api.getCurrentPlaybackActivity(localDeviceId)
-          ).activity;
-        } catch {
-          return;
-        }
-        if (cancelled || currentRef.current) return;
-        if (!activity) {
-          if (remoteActivityPushedRef.current) {
-            remoteActivityPushedRef.current = false;
-            await clearDiscordActivity();
-          }
-          return;
-        }
-        const track = activityToTrack(activity);
-        const coverUrl = await resolveSignedCoverUrl(
-          track,
-          coverUrlCacheRef.current,
-        );
-        if (cancelled || currentRef.current) return;
-        remoteActivityPushedRef.current = true;
-        await pushDiscordActivity({
-          trackId: activity.track_id,
-          title: activity.title,
-          artist: activity.artist || undefined,
-          album: activity.album || undefined,
-          coverUrl,
-          durationSec: activity.duration_sec,
-          elapsedSec: activity.position_sec,
-          isPlaying: activity.is_playing,
-        });
-      })();
-    };
-
-    poll();
-    const interval = window.setInterval(poll, REMOTE_ACTIVITY_POLL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, []);
+    return subscribePlaybackActivity((activity) => {
+      void pushRemoteActivity(activity);
+    });
+  }, [pushRemoteActivity]);
 
   // Clear presence when the tab/app closes so users don't end up "listening"
   // to a ghost track forever.

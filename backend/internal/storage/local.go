@@ -34,23 +34,70 @@ func (l *Local) resolve(key string) (string, error) {
 }
 
 func (l *Local) Put(ctx context.Context, key string, r io.Reader, _ int64, contentType string) (ObjectInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return ObjectInfo{}, err
+	}
 	p, err := l.resolve(key)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return ObjectInfo{}, err
 	}
-	f, err := os.Create(p)
+
+	// Write beside the destination and rename only after the complete object is
+	// ready. A failed or canceled Put therefore never exposes a truncated
+	// object and leaves an existing value untouched.
+	f, err := os.CreateTemp(dir, "."+filepath.Base(p)+".tmp-*")
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	defer f.Close()
-	n, err := io.Copy(f, r)
+	tmp := f.Name()
+	committed := false
+	defer func() {
+		_ = f.Close()
+		if !committed {
+			_ = os.Remove(tmp)
+		}
+	}()
+
+	if err := f.Chmod(0o644); err != nil {
+		return ObjectInfo{}, err
+	}
+	n, err := io.Copy(f, &contextReader{ctx: ctx, r: r})
 	if err != nil {
 		return ObjectInfo{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := f.Sync(); err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := f.Close(); err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := os.Rename(tmp, p); err != nil {
+		return ObjectInfo{}, err
+	}
+	committed = true
 	return ObjectInfo{Key: key, Size: n, ContentType: contentType}, nil
+}
+
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
 }
 
 func (l *Local) Get(ctx context.Context, key string) (io.ReadSeekCloser, ObjectInfo, error) {

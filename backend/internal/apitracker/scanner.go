@@ -50,6 +50,7 @@ type Scanner struct {
 
 	mu       sync.Mutex
 	inflight map[uuid.UUID]struct{}
+	jobs     sync.WaitGroup
 }
 
 type ScanSummary struct {
@@ -107,7 +108,9 @@ func (s *Scanner) StartPinScan(ctx context.Context, id uuid.UUID) (bool, error) 
 		s.end(id)
 		return false, err
 	}
+	s.jobs.Add(1)
 	go func() {
+		defer s.jobs.Done()
 		defer s.end(id)
 		_, err := s.ScanPin(ctx, pin)
 		if err != nil && s.Logger != nil {
@@ -129,7 +132,9 @@ func (s *Scanner) scanDue(ctx context.Context) {
 		if !s.tryBegin(pin.ID) {
 			continue
 		}
+		s.jobs.Add(1)
 		go func(pin Pin) {
+			defer s.jobs.Done()
 			defer s.end(pin.ID)
 			_, err := s.ScanPin(ctx, pin)
 			if err != nil && s.Logger != nil {
@@ -138,6 +143,10 @@ func (s *Scanner) scanDue(ctx context.Context) {
 		}(pin)
 	}
 }
+
+// Wait blocks until all scheduled and manually-triggered scans have stopped.
+// Call it after Run has returned so no new jobs can be added.
+func (s *Scanner) Wait() { s.jobs.Wait() }
 
 func (s *Scanner) ScanPin(ctx context.Context, pin Pin) (ScanSummary, error) {
 	summary := ScanSummary{PinID: pin.ID, TrackerID: pin.TrackerID}

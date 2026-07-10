@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -19,6 +20,15 @@ import (
 )
 
 var errFileTooLarge = errors.New("file too large")
+
+// JSON API payloads are metadata, never media. Keep a shared upper bound so a
+// forgotten handler-specific limit cannot make the decoder consume an
+// unbounded request. Auth and optional-body endpoints intentionally use their
+// own smaller/custom decode policies.
+const (
+	maxJSONBodyBytes   int64 = 1 << 20
+	maxJSONStringBytes       = 64 << 10
+)
 
 func copyFileLimited(dst io.Writer, src io.Reader, maxBytes int64) (int64, error) {
 	limited := &io.LimitedReader{R: src, N: maxBytes + 1}
@@ -50,16 +60,77 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// decodeJSON decodes the request body into dst. On failure it writes the
-// standard "bad request" 400 and returns false so the caller can simply
-// `return`. Handlers with a different decode policy (auth's MaxBytes-aware
-// decodeBody, invites' EOF-tolerant optional body) keep their own logic.
+// decodeJSON decodes exactly one JSON value into dst. On failure it writes the
+// response and returns false so the caller can simply `return`. Handlers with
+// a different decode policy (auth's smaller body limit, invites' EOF-tolerant
+// optional body) keep their own logic.
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(dst); err != nil {
+		writeJSONDecodeError(w, err)
+		return false
+	}
+	if err := validateJSONValue(reflect.ValueOf(dst)); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return false
 	}
+	// Only whitespace may follow the first value. Decoding into an empty
+	// struct avoids retaining a second, potentially large JSON value.
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeJSONDecodeError(w, err)
+		return false
+	}
 	return true
+}
+
+func validateJSONValue(v reflect.Value) error {
+	if !v.IsValid() {
+		return nil
+	}
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if v.IsNil() {
+			return nil
+		}
+		return validateJSONValue(v.Elem())
+	case reflect.String:
+		if v.Len() > maxJSONStringBytes {
+			return errors.New("JSON string too large")
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			if err := validateJSONValue(v.Index(i)); err != nil {
+				return err
+			}
+		}
+	case reflect.Map:
+		iter := v.MapRange()
+		for iter.Next() {
+			if err := validateJSONValue(iter.Key()); err != nil {
+				return err
+			}
+			if err := validateJSONValue(iter.Value()); err != nil {
+				return err
+			}
+		}
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			if err := validateJSONValue(v.Field(i)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func writeJSONDecodeError(w http.ResponseWriter, err error) {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	http.Error(w, "bad request", http.StatusBadRequest)
 }
 
 // pathUUID parses a UUID from the chi URL parameter named `name`. On a parse

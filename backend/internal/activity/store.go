@@ -127,7 +127,7 @@ func (s *Store) Current(ctx context.Context, userID uuid.UUID, excludeDeviceID s
 		WHERE user_id = $1
 		  AND updated_at >= $2
 		  AND ($3 = '' OR device_id <> $3)
-		ORDER BY is_playing DESC, updated_at DESC
+		ORDER BY updated_at DESC
 		LIMIT 1`, userID, cutoff, excludeDeviceID,
 	).Scan(
 		&out.UserID, &out.DeviceID, &out.DeviceName, &out.TrackID, &out.Title,
