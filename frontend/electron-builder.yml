@@ -27,6 +27,21 @@ win:
     - target: nsis
       arch:
         - x64
+dmg:
+  background: electron/assets/dmg-background.png
+  window:
+    width: 540
+    height: 380
+  iconSize: 80
+  iconTextSize: 12
+  contents:
+    - x: 130
+      y: 220
+      type: file
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
 portable:
   artifactName: ${productName}-${version}-portable.${ext}
 nsis:

@@ -7,11 +7,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "dmg:background": "node scripts/generate-dmg-background.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "electron:compile": "node scripts/electron-buildenv.mjs && tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.setup.json",
     "electron:dev": "npm run build && npm run electron:compile && electron .",
-    "electron:build": "npm run build && npm run electron:compile && electron-builder --win --publish never --config electron-builder.yml"
+    "electron:build": "npm run build && npm run electron:compile && electron-builder --win --publish never --config electron-builder.yml",
+    "electron:build:mac": "npm run build && npm run electron:compile && npm run dmg:background && electron-builder --mac --publish never --config electron-builder.yml"
   },
   "dependencies": {
     "@heroicons/react": "^2.1.5",
@@ -31,7 +33,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "electron": "^33.2.0",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "^26.15.3",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.5.4",
     "vite": "^5.4.3"
