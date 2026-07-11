@@ -1,0 +1,4 @@
+ALTER TABLE playback_activity
+    ADD COLUMN volume DOUBLE PRECISION NOT NULL DEFAULT 1
+        CHECK (volume >= 0 AND volume <= 1),
+    ADD COLUMN muted BOOLEAN NOT NULL DEFAULT FALSE;

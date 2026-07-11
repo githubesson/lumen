@@ -69,32 +69,36 @@ type Activity struct {
 }
 
 type playbackActivityReq struct {
-	DeviceID    string `json:"device_id"`
-	DeviceName  string `json:"device_name"`
-	TrackID     string `json:"track_id"`
-	Title       string `json:"title"`
-	Artist      string `json:"artist,omitempty"`
-	Album       string `json:"album,omitempty"`
-	AlbumID     string `json:"album_id,omitempty"`
-	CoverURL    string `json:"cover_url,omitempty"`
-	DurationSec int    `json:"duration_sec,omitempty"`
-	PositionSec int    `json:"position_sec"`
-	IsPlaying   bool   `json:"is_playing"`
+	DeviceID    string   `json:"device_id"`
+	DeviceName  string   `json:"device_name"`
+	TrackID     string   `json:"track_id"`
+	Title       string   `json:"title"`
+	Artist      string   `json:"artist,omitempty"`
+	Album       string   `json:"album,omitempty"`
+	AlbumID     string   `json:"album_id,omitempty"`
+	CoverURL    string   `json:"cover_url,omitempty"`
+	DurationSec int      `json:"duration_sec,omitempty"`
+	PositionSec int      `json:"position_sec"`
+	IsPlaying   bool     `json:"is_playing"`
+	Volume      *float64 `json:"volume,omitempty"`
+	Muted       *bool    `json:"muted,omitempty"`
 }
 
 type playbackActivityResp struct {
-	DeviceID    string `json:"device_id"`
-	DeviceName  string `json:"device_name"`
-	TrackID     string `json:"track_id"`
-	Title       string `json:"title"`
-	Artist      string `json:"artist,omitempty"`
-	Album       string `json:"album,omitempty"`
-	AlbumID     string `json:"album_id,omitempty"`
-	CoverURL    string `json:"cover_url,omitempty"`
-	DurationSec int    `json:"duration_sec,omitempty"`
-	PositionSec int    `json:"position_sec"`
-	IsPlaying   bool   `json:"is_playing"`
-	UpdatedAt   string `json:"updated_at"`
+	DeviceID    string  `json:"device_id"`
+	DeviceName  string  `json:"device_name"`
+	TrackID     string  `json:"track_id"`
+	Title       string  `json:"title"`
+	Artist      string  `json:"artist,omitempty"`
+	Album       string  `json:"album,omitempty"`
+	AlbumID     string  `json:"album_id,omitempty"`
+	CoverURL    string  `json:"cover_url,omitempty"`
+	DurationSec int     `json:"duration_sec,omitempty"`
+	PositionSec int     `json:"position_sec"`
+	IsPlaying   bool    `json:"is_playing"`
+	Volume      float64 `json:"volume"`
+	Muted       bool    `json:"muted"`
+	UpdatedAt   string  `json:"updated_at"`
 }
 
 type currentPlaybackActivityResp struct {
@@ -183,6 +187,8 @@ func (h *Activity) Upsert(w http.ResponseWriter, r *http.Request) {
 		DurationSec: req.DurationSec,
 		PositionSec: req.PositionSec,
 		IsPlaying:   req.IsPlaying,
+		Volume:      req.Volume,
+		Muted:       req.Muted,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -342,6 +348,8 @@ func (h *Activity) readPlaybackSocket(
 				DurationSec: msg.Activity.DurationSec,
 				PositionSec: msg.Activity.PositionSec,
 				IsPlaying:   msg.Activity.IsPlaying,
+				Volume:      msg.Activity.Volume,
+				Muted:       msg.Activity.Muted,
 			})
 			cancel()
 			if err != nil {
@@ -791,6 +799,8 @@ func toPlaybackActivityResp(a *activity.Activity) *playbackActivityResp {
 		DurationSec: a.DurationSec,
 		PositionSec: a.PositionSec,
 		IsPlaying:   a.IsPlaying,
+		Volume:      a.Volume,
+		Muted:       a.Muted,
 		UpdatedAt:   a.UpdatedAt.Format(time.RFC3339Nano),
 	}
 }

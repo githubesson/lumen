@@ -376,6 +376,8 @@ export function usePlaybackActivityPublisher({
       deviceName,
       stateRef.current.current,
       stateRef.current.isPlaying,
+      stateRef.current.volume,
+      stateRef.current.muted,
       timeRef.current,
     );
     const revision = ++revisionRef.current;
@@ -522,7 +524,13 @@ export function usePlaybackActivityPublisher({
 
   useEffect(() => {
     publish();
-  }, [publish, state.current?.id, state.isPlaying]);
+  }, [
+    publish,
+    state.current?.id,
+    state.isPlaying,
+    state.volume,
+    state.muted,
+  ]);
 
   useEffect(() => {
     if (!adapter) return;
@@ -555,6 +563,8 @@ function buildActivityPayload(
   deviceName: string,
   track: TrackListItem | null,
   isPlaying: boolean,
+  volume: number,
+  muted: boolean,
   time: TimeState,
 ): PlaybackActivityInput | null {
   if (!track) return null;
@@ -574,6 +584,8 @@ function buildActivityPayload(
     duration_sec: durationSec > 0 ? durationSec : undefined,
     position_sec: Math.max(0, Math.floor(time.currentTime || 0)),
     is_playing: isPlaying,
+    volume: Math.max(0, Math.min(1, volume)),
+    muted,
   };
 }
 

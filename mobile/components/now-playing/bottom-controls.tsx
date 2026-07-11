@@ -9,6 +9,7 @@ import {
 import * as Haptics from "expo-haptics";
 import {
   usePlayerControls,
+  useCurrentTrack,
   usePlayerPlayback,
   usePlayerTime,
   usePlayerVolume,
@@ -35,6 +36,7 @@ export const NowPlayingBottomControls = memo(function NowPlayingBottomControls({
   style?: StyleProp<ViewStyle>;
 }) {
   const controls = usePlayerControls();
+  const current = useCurrentTrack();
   const { isPlaying, shuffle } = usePlayerPlayback();
   const { volume, muted } = usePlayerVolume();
   const time = usePlayerTime();
@@ -49,6 +51,7 @@ export const NowPlayingBottomControls = memo(function NowPlayingBottomControls({
   return (
     <View style={style}>
       <ProgressScrubber
+        trackKey={current?.id ?? null}
         time={time}
         isPlaying={isPlaying}
         onSeek={(seconds) => controls.seek(seconds)}

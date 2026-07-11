@@ -24,6 +24,8 @@ type Activity struct {
 	DurationSec int
 	PositionSec int
 	IsPlaying   bool
+	Volume      float64
+	Muted       bool
 	UpdatedAt   time.Time
 }
 
@@ -40,6 +42,8 @@ type UpsertInput struct {
 	DurationSec int
 	PositionSec int
 	IsPlaying   bool
+	Volume      *float64
+	Muted       *bool
 }
 
 type Store struct {
@@ -72,15 +76,21 @@ func (s *Store) Upsert(ctx context.Context, in UpsertInput) (*Activity, error) {
 	if in.DurationSec < 0 {
 		in.DurationSec = 0
 	}
+	if in.Volume != nil {
+		volume := max(0, min(1, *in.Volume))
+		in.Volume = &volume
+	}
 
 	var out Activity
 	err := s.db.QueryRow(ctx, `
 		INSERT INTO playback_activity (
 			user_id, device_id, device_name, track_id, title, artist, album,
-			album_id, cover_url, duration_sec, position_sec, is_playing, updated_at
+			album_id, cover_url, duration_sec, position_sec, is_playing,
+			volume, muted, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''),
-			NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, 0), $11, $12, NOW()
+			NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, 0), $11, $12,
+			COALESCE($13, 1), COALESCE($14, FALSE), NOW()
 		)
 		ON CONFLICT (user_id, device_id) DO UPDATE SET
 			device_name = EXCLUDED.device_name,
@@ -93,19 +103,22 @@ func (s *Store) Upsert(ctx context.Context, in UpsertInput) (*Activity, error) {
 			duration_sec = EXCLUDED.duration_sec,
 			position_sec = EXCLUDED.position_sec,
 			is_playing = EXCLUDED.is_playing,
+			volume = COALESCE($13, playback_activity.volume),
+			muted = COALESCE($14, playback_activity.muted),
 			updated_at = NOW()
 		RETURNING
 			user_id, device_id, device_name, track_id, title,
 			COALESCE(artist, ''), COALESCE(album, ''), COALESCE(album_id, ''),
 			COALESCE(cover_url, ''), COALESCE(duration_sec, 0), position_sec,
-			is_playing, updated_at`,
+			is_playing, volume, muted, updated_at`,
 		in.UserID, in.DeviceID, in.DeviceName, in.TrackID, in.Title, in.Artist,
 		in.Album, in.AlbumID, in.CoverURL, in.DurationSec, in.PositionSec,
-		in.IsPlaying,
+		in.IsPlaying, in.Volume, in.Muted,
 	).Scan(
 		&out.UserID, &out.DeviceID, &out.DeviceName, &out.TrackID, &out.Title,
 		&out.Artist, &out.Album, &out.AlbumID, &out.CoverURL,
-		&out.DurationSec, &out.PositionSec, &out.IsPlaying, &out.UpdatedAt,
+		&out.DurationSec, &out.PositionSec, &out.IsPlaying, &out.Volume,
+		&out.Muted, &out.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -122,7 +135,7 @@ func (s *Store) Current(ctx context.Context, userID uuid.UUID, excludeDeviceID s
 			user_id, device_id, device_name, track_id, title,
 			COALESCE(artist, ''), COALESCE(album, ''), COALESCE(album_id, ''),
 			COALESCE(cover_url, ''), COALESCE(duration_sec, 0), position_sec,
-			is_playing, updated_at
+			is_playing, volume, muted, updated_at
 		FROM playback_activity
 		WHERE user_id = $1
 		  AND updated_at >= $2
@@ -132,7 +145,8 @@ func (s *Store) Current(ctx context.Context, userID uuid.UUID, excludeDeviceID s
 	).Scan(
 		&out.UserID, &out.DeviceID, &out.DeviceName, &out.TrackID, &out.Title,
 		&out.Artist, &out.Album, &out.AlbumID, &out.CoverURL,
-		&out.DurationSec, &out.PositionSec, &out.IsPlaying, &out.UpdatedAt,
+		&out.DurationSec, &out.PositionSec, &out.IsPlaying, &out.Volume,
+		&out.Muted, &out.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -157,7 +171,7 @@ func (s *Store) ListRecent(
 			user_id, device_id, device_name, track_id, title,
 			COALESCE(artist, ''), COALESCE(album, ''), COALESCE(album_id, ''),
 			COALESCE(cover_url, ''), COALESCE(duration_sec, 0), position_sec,
-			is_playing, updated_at
+			is_playing, volume, muted, updated_at
 		FROM playback_activity
 		WHERE user_id = $1 AND updated_at >= $2
 		ORDER BY updated_at DESC`, userID, cutoff)
@@ -172,7 +186,8 @@ func (s *Store) ListRecent(
 		if err := rows.Scan(
 			&row.UserID, &row.DeviceID, &row.DeviceName, &row.TrackID, &row.Title,
 			&row.Artist, &row.Album, &row.AlbumID, &row.CoverURL,
-			&row.DurationSec, &row.PositionSec, &row.IsPlaying, &row.UpdatedAt,
+			&row.DurationSec, &row.PositionSec, &row.IsPlaying, &row.Volume,
+			&row.Muted, &row.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

@@ -55,6 +55,8 @@ func TestActivitySocketBroadcastsPersonalizedSnapshots(t *testing.T) {
 		t.Fatalf("device B initial activity = %+v, want nil", initial.Activity)
 	}
 
+	volume := 0.42
+	muted := true
 	if err := wsjson.Write(ctx, deviceA, playbackSocketClientMessage{
 		Type:     "activity.update",
 		Protocol: playbackSocketProtocolVersion,
@@ -66,6 +68,8 @@ func TestActivitySocketBroadcastsPersonalizedSnapshots(t *testing.T) {
 			Title:       "First track",
 			PositionSec: 12,
 			IsPlaying:   true,
+			Volume:      &volume,
+			Muted:       &muted,
 		},
 	}); err != nil {
 		t.Fatalf("write update: %v", err)
@@ -77,6 +81,9 @@ func TestActivitySocketBroadcastsPersonalizedSnapshots(t *testing.T) {
 	}
 	if updated.Activity == nil || updated.Activity.DeviceID != "a" || updated.Activity.PositionSec != 12 {
 		t.Fatalf("device B activity = %+v, want device A at 12s", updated.Activity)
+	}
+	if updated.Activity.Volume != volume || !updated.Activity.Muted {
+		t.Fatalf("device B volume = %v muted = %v, want %v/true", updated.Activity.Volume, updated.Activity.Muted, volume)
 	}
 
 	if err := wsjson.Write(ctx, deviceA, playbackSocketClientMessage{
@@ -297,6 +304,19 @@ func (s *activitySocketStore) Upsert(
 ) (*activity.Activity, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	key := activitySocketKey(in.UserID, in.DeviceID)
+	volume := 1.0
+	muted := false
+	if previous, ok := s.rows[key]; ok {
+		volume = previous.Volume
+		muted = previous.Muted
+	}
+	if in.Volume != nil {
+		volume = *in.Volume
+	}
+	if in.Muted != nil {
+		muted = *in.Muted
+	}
 	row := activity.Activity{
 		UserID:      in.UserID,
 		DeviceID:    in.DeviceID,
@@ -310,9 +330,11 @@ func (s *activitySocketStore) Upsert(
 		DurationSec: in.DurationSec,
 		PositionSec: in.PositionSec,
 		IsPlaying:   in.IsPlaying,
+		Volume:      volume,
+		Muted:       muted,
 		UpdatedAt:   time.Now(),
 	}
-	s.rows[activitySocketKey(in.UserID, in.DeviceID)] = row
+	s.rows[key] = row
 	return &row, nil
 }
 

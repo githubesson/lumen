@@ -195,6 +195,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     );
   }, [remoteCurrent, targetDevice]);
 
+  useEffect(() => {
+    const activity = targetDevice?.activity;
+    if (!activity) return;
+    setControlledState((current) => ({
+      ...current,
+      volume:
+        typeof activity.volume === "number"
+          ? Math.max(0, Math.min(1, activity.volume))
+          : current.volume,
+      muted:
+        typeof activity.muted === "boolean" ? activity.muted : current.muted,
+    }));
+  }, [targetDevice?.activity?.muted, targetDevice?.activity?.volume]);
+
   const selectTarget = useCallback(
     (nextDeviceId: string | null) => {
       if (nextDeviceId && state.isPlaying) controls.pause();
@@ -210,6 +224,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         (device) => device.deviceId === nextDeviceId,
       )?.activity;
       const nextTrack = activityTrack(nextActivity ?? null);
+      const nextVolume = nextActivity?.volume;
+      const nextMuted = nextActivity?.muted;
+      setControlledState((current) => ({
+        ...current,
+        volume:
+          typeof nextVolume === "number"
+            ? Math.max(0, Math.min(1, nextVolume))
+            : current.volume,
+        muted: typeof nextMuted === "boolean" ? nextMuted : current.muted,
+      }));
       setControlledQueue(nextTrack ? [nextTrack] : []);
     },
     [

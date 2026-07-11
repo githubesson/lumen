@@ -32,10 +32,16 @@ that excludes the receiving device.
     "track_id": "track-id",
     "title": "Track title",
     "position_sec": 12,
-    "is_playing": true
+    "is_playing": true,
+    "volume": 0.65,
+    "muted": false
   }
 }
 ```
+
+`volume` and `muted` are optional for older publishers. Updated clients send
+them on connection and whenever output volume changes, allowing controllers to
+reconcile their controls with the target's authoritative state.
 
 ## Device registration
 

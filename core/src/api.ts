@@ -644,6 +644,8 @@ export interface PlaybackActivityInput {
   duration_sec?: number;
   position_sec: number;
   is_playing: boolean;
+  volume?: number;
+  muted?: boolean;
 }
 
 export interface PlaybackActivity extends PlaybackActivityInput {

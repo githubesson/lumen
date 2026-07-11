@@ -120,17 +120,40 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   }, [remoteSession.connected, targetDevice, targetDeviceId]);
 
+  useEffect(() => {
+    const activity = targetDevice?.activity;
+    if (!activity) return;
+    setControlledState((current) => ({
+      ...current,
+      volume:
+        typeof activity.volume === "number"
+          ? Math.max(0, Math.min(1, activity.volume))
+          : current.volume,
+      muted:
+        typeof activity.muted === "boolean" ? activity.muted : current.muted,
+    }));
+  }, [targetDevice?.activity?.muted, targetDevice?.activity?.volume]);
+
   const selectTarget = useCallback((nextDeviceId: string | null) => {
     if (nextDeviceId && state.isPlaying) controls.pause();
     setTargetDeviceId(nextDeviceId);
     setLastCommandResult(null);
+    const nextActivity = remoteDevices.find(
+      (device) => device.deviceId === nextDeviceId,
+    )?.activity;
     setControlledState({
-      volume: state.volume,
-      muted: state.muted,
+      volume:
+        typeof nextActivity?.volume === "number"
+          ? Math.max(0, Math.min(1, nextActivity.volume))
+          : state.volume,
+      muted:
+        typeof nextActivity?.muted === "boolean"
+          ? nextActivity.muted
+          : state.muted,
       shuffle: state.shuffle,
       repeat: state.repeat,
     });
-  }, [controls, state.isPlaying, state.muted, state.repeat, state.shuffle, state.volume]);
+  }, [controls, remoteDevices, state.isPlaying, state.muted, state.repeat, state.shuffle, state.volume]);
 
   const sendCommand = useCallback<RemotePlaybackCtxValue["sendCommand"]>(
     async (action, args = {}) => {

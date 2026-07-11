@@ -21,11 +21,13 @@ const PROGRESS_DISPLAY_INTERVAL_MS = 250;
  * calls `onSeek` with the committed position when the drag ends.
  */
 export function ProgressScrubber({
+  trackKey,
   time,
   isPlaying,
   onSeek,
   style,
 }: {
+  trackKey: string | null;
   time: TimeState;
   isPlaying: boolean;
   /** Receives the committed position in seconds after a drag ends. */
@@ -34,7 +36,7 @@ export function ProgressScrubber({
 }) {
   const theme = useTheme();
   const { displayTime, progress, remaining, beginSeek, previewSeek, commitSeek } =
-    useEstimatedPlaybackTime(time, isPlaying);
+    useEstimatedPlaybackTime(time, isPlaying, trackKey);
 
   return (
     <View style={[styles.container, style]}>
@@ -72,10 +74,15 @@ export function ProgressScrubber({
  * user drags the scrubber (`beginSeek`..`commitSeek`) the estimator is
  * paused and the dragged value is shown instead.
  */
-function useEstimatedPlaybackTime(time: TimeState, isPlaying: boolean) {
+function useEstimatedPlaybackTime(
+  time: TimeState,
+  isPlaying: boolean,
+  trackKey: string | null,
+) {
   const [appState, setAppState] = useState(() => AppState.currentState);
   const [displayTime, setDisplayTime] = useState(time.currentTime);
   const seekingRef = useRef(false);
+  const trackKeyRef = useRef(trackKey);
   const anchorRef = useRef({
     baseTime: time.currentTime,
     wallTime: performance.now(),
@@ -89,14 +96,17 @@ function useEstimatedPlaybackTime(time: TimeState, isPlaying: boolean) {
   }, []);
 
   useEffect(() => {
+    const trackChanged = trackKeyRef.current !== trackKey;
+    trackKeyRef.current = trackKey;
     anchorRef.current = {
       baseTime: time.currentTime,
       wallTime: performance.now(),
     };
-    if (!isPlaying || seekingRef.current) {
+    if (trackChanged) seekingRef.current = false;
+    if (trackChanged || !isPlaying || seekingRef.current) {
       setDisplayTime(time.currentTime);
     }
-  }, [isPlaying, time.currentTime]);
+  }, [isPlaying, time.currentTime, trackKey]);
 
   useEffect(() => {
     if (appState !== "active" || !isPlaying || seekingRef.current) {
