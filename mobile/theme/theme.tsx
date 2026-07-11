@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useColorScheme } from "react-native";
+import { Appearance, useColorScheme } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export type ColorScheme = "light" | "dark";
@@ -125,6 +125,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    Appearance.setColorScheme(mode === "system" ? null : mode);
+  }, [mode]);
 
   const setMode = useCallback((m: ThemeMode) => {
     setModeState(m);

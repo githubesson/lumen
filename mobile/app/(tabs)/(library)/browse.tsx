@@ -122,7 +122,22 @@ export default function BrowseScreen() {
     queryKey: qk.tracksList(deferredSearch),
     enabled: mode === "tracks",
     search: deferredSearch,
-    fetchPage: (args) => api.listTracksPage(args),
+    fetchPage: async (args) => {
+      if (!args.q) return api.listTracksPage(args);
+
+      // /api/tracks is the local-library browse endpoint. Text searches need
+      // the unified endpoint so remote TIDAL matches are included as well.
+      // Search returns up to PAGE_SIZE results per source and no total count,
+      // so expose the combined result as a single page.
+      const result = await api.searchTracks({
+        ...args,
+        sources: ["local", "tidal"],
+      });
+      return {
+        items: result.tracks ?? [],
+        total: result.tracks?.length ?? 0,
+      };
+    },
   });
 
   const albumsQuery = useLibraryListQuery({
