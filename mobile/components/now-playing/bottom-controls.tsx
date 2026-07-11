@@ -17,6 +17,7 @@ import { ProgressScrubber } from "./progress-scrubber";
 import { TransportControls } from "./transport-controls";
 import { VolumeRow } from "./volume-row";
 import { AirPlayButton, QueueToggleButton } from "./toolbar-buttons";
+import { PlaybackDeviceButton } from "../playback-device-button";
 import { TABLET_BREAKPOINT, TABLET_CONTENT_MAX_WIDTH } from "./constants";
 
 /**
@@ -70,17 +71,17 @@ export const NowPlayingBottomControls = memo(function NowPlayingBottomControls({
       {isTabletLayout ? (
         <View style={[styles.toolbar, styles.toolbarTablet]}>
           <AirPlayButton />
-          <View style={styles.toolbarRight}>
-            <QueueToggleButton
-              queueOpen={queueOpen}
-              shuffle={shuffle}
-              onPress={toggleQueue}
-            />
-          </View>
+          <PlaybackDeviceButton glass />
+          <QueueToggleButton
+            queueOpen={queueOpen}
+            shuffle={shuffle}
+            onPress={toggleQueue}
+          />
         </View>
       ) : (
         <View style={styles.toolbar}>
           <AirPlayButton />
+          <PlaybackDeviceButton glass />
           <QueueToggleButton
             queueOpen={queueOpen}
             shuffle={shuffle}
@@ -123,10 +124,5 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: TABLET_CONTENT_MAX_WIDTH,
     marginTop: 38,
-  },
-  toolbarRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 24,
   },
 });

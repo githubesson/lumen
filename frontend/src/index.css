@@ -1419,6 +1419,73 @@ textarea { font: inherit; color: inherit; }
 /* ============================================================
    Player bar
    ============================================================ */
+.player-shell {
+  grid-area: player;
+  position: relative;
+  min-width: 0;
+}
+
+.player-shell > .player-bar {
+  width: 100%;
+}
+
+.remote-control-indicator {
+  --remote-tone: oklch(0.72 0.11 265);
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 8;
+  height: 28px;
+  max-width: calc(100% - 24px);
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transform: translate(-50%, -50%);
+  border: 1px solid color-mix(in oklch, var(--remote-tone) 50%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--bg-elev-2) 86%, var(--remote-tone));
+  color: var(--fg);
+  box-shadow:
+    0 1px 0 color-mix(in oklch, var(--fg) 8%, transparent) inset,
+    0 0 0 1px color-mix(in oklch, var(--remote-tone) 10%, transparent),
+    0 0 18px color-mix(in oklch, var(--remote-tone) 28%, transparent),
+    0 8px 20px oklch(0 0 0 / 0.24);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: remote-control-indicator-in 180ms ease-out;
+}
+
+.remote-control-indicator svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  color: var(--remote-tone);
+  filter: drop-shadow(0 0 6px color-mix(in oklch, var(--remote-tone) 42%, transparent));
+}
+
+@keyframes remote-control-indicator-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -44%) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .remote-control-indicator {
+    animation: none;
+  }
+}
+
 .player-bar {
   grid-area: player;
   background: var(--bg-elev-1);
@@ -1622,6 +1689,38 @@ textarea { font: inherit; color: inherit; }
 .volume .bar { height: 4px; }
 .transport-volume { display: none; }
 
+.device-picker-btn {
+  position: relative;
+}
+.device-picker-btn.active {
+  background: color-mix(in oklch, var(--remote-tone, oklch(0.72 0.11 265)) 12%, var(--bg-elev-2));
+  color: oklch(0.76 0.1 265);
+}
+.device-picker-btn.pending svg {
+  animation: device-command-pulse 900ms ease-in-out infinite alternate;
+}
+.device-picker-btn.error {
+  color: var(--danger-fg);
+}
+.device-picker-live {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: oklch(0.76 0.13 155);
+  box-shadow: 0 0 7px oklch(0.76 0.13 155 / 0.75);
+}
+.device-picker-btn.error .device-picker-live {
+  background: var(--danger-fg);
+  box-shadow: 0 0 7px color-mix(in oklch, var(--danger-fg) 70%, transparent);
+}
+@keyframes device-command-pulse {
+  from { opacity: 0.5; }
+  to { opacity: 1; }
+}
+
 html[data-mini-player] body {
   background: transparent;
   overflow: hidden;
@@ -1636,6 +1735,16 @@ html[data-mini-player] .app {
   display: block;
   padding: 0;
   background: transparent;
+}
+
+html[data-mini-player] .player-shell {
+  height: 100vh;
+}
+
+html[data-mini-player] .remote-control-indicator {
+  top: 8px;
+  transform: translateX(-50%);
+  animation: none;
 }
 
 html[data-mini-player] .sidebar,
@@ -2874,6 +2983,177 @@ html[data-mini-player] .np-text {
 /* ============================================================
    Queue popover (anchored above the mini-player queue button)
    ============================================================ */
+.device-pop {
+  position: fixed;
+  z-index: 96;
+  overflow: hidden;
+  color: var(--fg);
+  background: color-mix(in oklch, var(--bg-elev-2) 94%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow:
+    var(--shadow-lg),
+    0 0 0 1px color-mix(in oklch, oklch(0.72 0.11 265) 12%, transparent),
+    0 12px 34px oklch(0 0 0 / 0.32);
+  -webkit-backdrop-filter: blur(16px) saturate(1.1);
+  backdrop-filter: blur(16px) saturate(1.1);
+  transform-origin: bottom right;
+  animation: queue-pop-in 180ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+.device-pop-head {
+  min-height: 52px;
+  padding: 10px 10px 9px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.device-pop-eyebrow,
+.device-pop-section {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.device-pop-title {
+  margin-top: 2px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.device-pop-socket {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--fg-faint);
+}
+.device-pop-socket svg {
+  width: 11px;
+  height: 11px;
+}
+.device-pop-socket.online {
+  color: oklch(0.72 0.12 155);
+}
+.device-pop-close {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+}
+.device-pop-body {
+  padding: 6px;
+}
+.device-pop-section {
+  padding: 10px 8px 5px;
+}
+.device-pop-row {
+  position: relative;
+  width: 100%;
+  min-height: 50px;
+  padding: 7px 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.device-pop-row:hover {
+  background: var(--bg-elev-3);
+}
+.device-pop-row.active {
+  background: color-mix(in oklch, oklch(0.72 0.11 265) 12%, var(--bg-elev-3));
+}
+.device-pop-row:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--ring) inset;
+}
+.device-pop-icon {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  color: var(--fg-muted);
+  background: var(--bg-inset);
+}
+.device-pop-icon.remote {
+  color: oklch(0.76 0.1 265);
+  border-color: color-mix(in oklch, oklch(0.72 0.11 265) 28%, var(--border));
+}
+.device-pop-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.device-pop-online {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--bg-elev-2);
+  border-radius: 999px;
+  background: oklch(0.76 0.13 155);
+}
+.device-pop-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.device-pop-name {
+  font-size: 12.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.device-pop-meta {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--fg-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.device-pop-check {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  color: oklch(0.76 0.1 265);
+}
+.device-pop-empty {
+  padding: 16px 12px 18px;
+  color: var(--fg-subtle);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+}
+.device-pop-error {
+  padding: 8px 12px;
+  border-top: 1px solid color-mix(in oklch, var(--danger) 35%, var(--border-soft));
+  background: var(--danger-soft);
+  color: var(--danger-fg);
+  font-size: 10.5px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .device-pop,
+  .device-picker-btn.pending svg {
+    animation: none;
+  }
+}
+
 .queue-pop {
   position: fixed;
   z-index: 95;
@@ -4035,7 +4315,7 @@ html[data-mini-player] .window-controls {
     display: none;
   }
 
-  html[data-mini-player] .utility > .t-btn:first-of-type {
+  html[data-mini-player] .utility > .t-btn:nth-of-type(2) {
     display: none;
   }
 }

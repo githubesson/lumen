@@ -14,7 +14,8 @@ Go HTTP API for Lumen, the self-hosted, invite-only music library.
   a watcher + rescan support, metadata extraction, cover art, search.
 - **Playback** — ranged audio streaming (scrub-friendly), play history/stats,
   cross-device activity over an authenticated WebSocket with REST/Postgres
-  snapshot recovery, and optional ffmpeg transcoding behind
+  snapshot recovery and addressed remote-control commands (see
+  [docs/playback-websocket.md](docs/playback-websocket.md)), and optional ffmpeg transcoding behind
   `ENABLE_TRANSCODING`.
 - **Playlists & favorites** — CRUD plus per-user state.
 - **Sharing** — public `/share/…` link-preview pages (what Discord and chat

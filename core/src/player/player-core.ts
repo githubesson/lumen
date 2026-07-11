@@ -15,6 +15,8 @@ export interface PlayerState {
 
 export interface PlayerControls {
   play: (track: TrackListItem, queue?: TrackListItem[]) => void;
+  resume: () => void;
+  pause: () => void;
   toggle: () => void;
   next: () => void;
   prev: () => void;
@@ -22,8 +24,11 @@ export interface PlayerControls {
   jumpTo: (index: number) => void;
   seek: (seconds: number) => void;
   setVolume: (v: number) => void;
+  setMuted: (muted: boolean) => void;
   toggleMute: () => void;
+  setShuffle: (shuffle: boolean) => void;
   toggleShuffle: () => void;
+  setRepeat: (repeat: RepeatMode) => void;
   cycleRepeat: () => void;
 }
 

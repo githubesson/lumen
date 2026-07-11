@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import QueuePopover from "./QueuePopover";
+import PlaybackDevicePopover from "./PlaybackDevicePopover";
+import RemoteControlIndicator from "./RemoteControlIndicator";
 import {
   ArrowPathRoundedSquareIcon,
   ArrowsPointingInIcon,
   ArrowsPointingOutIcon,
   ArrowsRightLeftIcon,
   BackwardIcon,
+  ComputerDesktopIcon,
   ForwardIcon,
   PauseIcon,
   PlayIcon,
@@ -14,12 +17,17 @@ import {
   SpeakerWaveIcon,
   SpeakerXMarkIcon,
 } from "@heroicons/react/16/solid";
+import type { TrackListItem } from "@music-library/core";
 import { trackCoverUrl } from "../api";
 import CoverArt from "./CoverArt";
 import { useTrackContextMenu } from "./TrackContextMenu";
 import { FavoriteButton } from "./TrackRowCells";
 import { useFavorites } from "../context/Favorites";
-import { usePlayer, usePlayerTime } from "../context/Player";
+import {
+  usePlayer,
+  usePlayerTime,
+  useRemotePlayback,
+} from "../context/Player";
 import { useAccentFromCover } from "../lib/accent";
 import { displayText, fmtDurationSec } from "../lib/format";
 import {
@@ -45,22 +53,63 @@ export default function MiniPlayer() {
     toggleShuffle,
     cycleRepeat,
   } = usePlayer();
+  const {
+    targetDevice,
+    commandPending,
+    lastCommandResult,
+    controlledVolume,
+    controlledMuted,
+    controlledShuffle,
+    controlledRepeat,
+    sendCommand,
+  } = useRemotePlayback();
   const { isFavorite, toggle: toggleFavorite } = useFavorites();
   const fh6Snapshot = useFH6Snapshot();
   const isFH6Page = location.pathname.startsWith("/fh6-radio");
+  const remoteActivity = targetDevice?.activity ?? null;
+  const remoteTrack: TrackListItem | null = remoteActivity
+    ? {
+        id: remoteActivity.track_id,
+        title: remoteActivity.title,
+        artist: remoteActivity.artist,
+        album_id: remoteActivity.album_id,
+        album_title: remoteActivity.album,
+        cover_url: remoteActivity.cover_url,
+        duration_ms: (remoteActivity.duration_sec ?? 0) * 1000,
+      }
+    : null;
+  const isRemoteMode = !!targetDevice;
+  const isFH6Mode = isFH6Page && !isRemoteMode;
   const fh6Source = fh6Snapshot?.state?.sources?.available?.find(
     (s) => s.name === "lumen",
   );
   const fh6Track = fh6Snapshot?.state?.track;
   const fh6HasTrack = !!fh6Track?.title;
   const fh6Playing = fh6Source?.playback_state === "playing";
-  const displayCurrent = isFH6Page ? null : current;
-  const displayHasTrack = isFH6Page ? fh6HasTrack : !!current;
-  const displayPlaying = isFH6Page ? fh6Playing : isPlaying;
-  const displayTitle = isFH6Page
+  const displayCurrent = isRemoteMode
+    ? remoteTrack
+    : isFH6Mode
+      ? null
+      : current;
+  const displayHasTrack = isRemoteMode
+    ? !!remoteActivity
+    : isFH6Mode
+      ? fh6HasTrack
+      : !!current;
+  const displayPlaying = isRemoteMode
+    ? !!remoteActivity?.is_playing
+    : isFH6Mode
+      ? fh6Playing
+      : isPlaying;
+  const displayTitle = isRemoteMode
+    ? displayText(remoteActivity?.title, `Nothing playing on ${targetDevice.deviceName}`)
+    : isFH6Mode
     ? displayText(fh6Track?.title, "Waiting for FH6")
     : displayText(current?.title, "Nothing playing");
-  const displayArtist = isFH6Page
+  const displayArtist = isRemoteMode
+    ? [remoteActivity?.artist, remoteActivity?.album].filter(Boolean).join(" \u00b7 ") ||
+      targetDevice.deviceName
+    : isFH6Mode
     ? [fh6Track?.artist, fh6Track?.album].filter(Boolean).join(" \u00b7 ") ||
       "Lumen Radio"
     : current
@@ -74,9 +123,19 @@ export default function MiniPlayer() {
   useAccentFromCover(coverSrc);
   const { bind: bindCtx, menu: trackCtxMenu } = useTrackContextMenu();
   const queueBtnRef = useRef<HTMLButtonElement>(null);
+  const deviceBtnRef = useRef<HTMLButtonElement>(null);
   const [queueOpen, setQueueOpen] = useState(false);
+  const [deviceOpen, setDeviceOpen] = useState(false);
   const [miniPlayerMode, setMiniPlayerMode] = useState(false);
   const canResizeWindow = canSetMiniPlayer;
+  const shownVolume = isRemoteMode ? controlledVolume : volume;
+  const shownMuted = isRemoteMode ? controlledMuted : muted;
+  const shownShuffle = isRemoteMode ? controlledShuffle : shuffle;
+  const shownRepeat = isRemoteMode ? controlledRepeat : repeat;
+  const commandError =
+    lastCommandResult && lastCommandResult.status !== "applied"
+      ? lastCommandResult.error || `Command ${lastCommandResult.status}`
+      : null;
 
   useEffect(() => {
     document.documentElement.toggleAttribute(
@@ -99,23 +158,26 @@ export default function MiniPlayer() {
   };
 
   return (
-    <section
-      className={"player-bar" + (miniPlayerMode ? " player-bar-window" : "")}
-      aria-label="Player"
-      data-has-track={displayHasTrack ? "true" : "false"}
-      data-playing={displayPlaying ? "true" : "false"}
-    >
-      {trackCtxMenu}
+    <div className="player-shell">
+      <section
+        className={"player-bar" + (miniPlayerMode ? " player-bar-window" : "")}
+        aria-label="Player"
+        data-has-track={displayHasTrack ? "true" : "false"}
+        data-playing={displayPlaying ? "true" : "false"}
+      >
+        {trackCtxMenu}
       {/* Now playing */}
       <div
         className="np"
-        onContextMenu={displayCurrent ? bindCtx(displayCurrent) : undefined}
+        onContextMenu={
+          displayCurrent && !isRemoteMode ? bindCtx(displayCurrent) : undefined
+        }
       >
         <CoverArt
           className="np-art"
           src={coverSrc}
           seed={displayCurrent?.album_id ?? displayCurrent?.id ?? "fh6-radio"}
-          label={isFH6Page ? "Lumen Radio" : displayText(displayCurrent?.album_title || displayCurrent?.title, "\u00b7")}
+          label={isFH6Mode ? "Lumen Radio" : displayText(displayCurrent?.album_title || displayCurrent?.title, "\u00b7")}
           forcePlaceholder={!displayCurrent}
         />
         <div className="np-text">
@@ -129,11 +191,15 @@ export default function MiniPlayer() {
         <div className="transport-row">
           <button
             type="button"
-            className={"t-btn" + (shuffle ? " active" : "")}
+            className={"t-btn" + (shownShuffle ? " active" : "")}
             aria-label="Shuffle"
-            aria-pressed={shuffle}
-            onClick={toggleShuffle}
-            disabled={isFH6Page}
+            aria-pressed={shownShuffle}
+            onClick={() => {
+              if (isRemoteMode) {
+                void sendCommand("set_shuffle", { shuffle: !shownShuffle });
+              } else toggleShuffle();
+            }}
+            disabled={isFH6Mode || commandPending}
           >
             <ArrowsRightLeftIcon className="size-3.5" />
           </button>
@@ -141,8 +207,21 @@ export default function MiniPlayer() {
             type="button"
             className="t-btn"
             aria-label="Previous"
-            onClick={isFH6Page ? () => void fh6Transport("previous") : prev}
-            disabled={isFH6Page ? !fh6Snapshot?.state : !current}
+            onClick={
+              isRemoteMode
+                ? () => void sendCommand("previous")
+                : isFH6Mode
+                  ? () => void fh6Transport("previous")
+                  : prev
+            }
+            disabled={
+              commandPending ||
+              (isRemoteMode
+                ? !remoteActivity
+                : isFH6Mode
+                  ? !fh6Snapshot?.state
+                  : !current)
+            }
           >
             <BackwardIcon className="size-3.5" />
           </button>
@@ -150,8 +229,25 @@ export default function MiniPlayer() {
             type="button"
             className="play-btn"
             aria-label={displayPlaying ? "Pause" : "Play"}
-            onClick={isFH6Page ? () => void fh6Transport(displayPlaying ? "pause" : "play") : toggle}
-            disabled={isFH6Page ? !fh6Snapshot?.state : !current}
+            onClick={
+              isRemoteMode
+                ? () =>
+                    void sendCommand("set_playing", {
+                      playing: !displayPlaying,
+                    })
+                : isFH6Mode
+                  ? () =>
+                      void fh6Transport(displayPlaying ? "pause" : "play")
+                  : toggle
+            }
+            disabled={
+              commandPending ||
+              (isRemoteMode
+                ? !remoteActivity
+                : isFH6Mode
+                  ? !fh6Snapshot?.state
+                  : !current)
+            }
           >
             {displayPlaying ? (
               <PauseIcon className="size-4" />
@@ -163,20 +259,44 @@ export default function MiniPlayer() {
             type="button"
             className="t-btn"
             aria-label="Next"
-            onClick={isFH6Page ? () => void fh6Transport("next") : next}
-            disabled={isFH6Page ? !fh6Snapshot?.state : !current}
+            onClick={
+              isRemoteMode
+                ? () => void sendCommand("next")
+                : isFH6Mode
+                  ? () => void fh6Transport("next")
+                  : next
+            }
+            disabled={
+              commandPending ||
+              (isRemoteMode
+                ? !remoteActivity
+                : isFH6Mode
+                  ? !fh6Snapshot?.state
+                  : !current)
+            }
           >
             <ForwardIcon className="size-3.5" />
           </button>
           <button
             type="button"
-            className={"t-btn" + (repeat !== "off" ? " active" : "")}
-            aria-label={`Repeat: ${repeat}`}
-            onClick={cycleRepeat}
-            disabled={isFH6Page}
+            className={"t-btn" + (shownRepeat !== "off" ? " active" : "")}
+            aria-label={`Repeat: ${shownRepeat}`}
+            onClick={() => {
+              if (isRemoteMode) {
+                void sendCommand("set_repeat", {
+                  repeat:
+                    shownRepeat === "off"
+                      ? "all"
+                      : shownRepeat === "all"
+                        ? "one"
+                        : "off",
+                });
+              } else cycleRepeat();
+            }}
+            disabled={isFH6Mode || commandPending}
           >
             <ArrowPathRoundedSquareIcon className="size-3.5" />
-            {repeat === "one" && (
+            {shownRepeat === "one" && (
               <span
                 aria-hidden="true"
                 style={{
@@ -192,16 +312,33 @@ export default function MiniPlayer() {
           </button>
           <VolumeControl
             className="volume transport-volume"
-            muted={muted}
-            volume={volume}
-            onToggleMute={toggleMute}
-            onSeek={setVolume}
+            muted={shownMuted}
+            volume={shownVolume}
+            onToggleMute={() => {
+              if (isRemoteMode) {
+                void sendCommand("set_muted", { muted: !shownMuted });
+              } else toggleMute();
+            }}
+            onSeek={(nextVolume) => {
+              if (isRemoteMode) {
+                void sendCommand("set_volume", { volume: nextVolume });
+              } else setVolume(nextVolume);
+            }}
           />
         </div>
         <ProgressBar
           miniPlayerMode={miniPlayerMode}
           override={
-            isFH6Page
+            isRemoteMode && remoteActivity
+              ? {
+                  currentTime: remoteActivity.position_sec,
+                  duration: remoteActivity.duration_sec ?? 0,
+                  isPlaying: remoteActivity.is_playing,
+                  updatedAt: remoteActivity.updated_at,
+                  onSeek: (seconds) =>
+                    void sendCommand("seek", { position_sec: seconds }),
+                }
+              : isFH6Mode
               ? {
                   currentTime: (fh6Track?.position_ms ?? 0) / 1000,
                   duration: (fh6Track?.duration_ms ?? 0) / 1000,
@@ -215,11 +352,46 @@ export default function MiniPlayer() {
 
       {/* Utility */}
       <div className="utility">
+        <button
+          ref={deviceBtnRef}
+          type="button"
+          className={
+            "t-btn device-picker-btn" +
+            (isRemoteMode || deviceOpen ? " active" : "") +
+            (commandPending ? " pending" : "") +
+            (commandError ? " error" : "")
+          }
+          title={
+            commandError
+              ? commandError
+              : targetDevice
+              ? `Controlling ${targetDevice.deviceName}`
+              : "Choose playback device"
+          }
+          aria-label={
+            targetDevice
+              ? `Playback device: ${targetDevice.deviceName}`
+              : "Choose playback device"
+          }
+          aria-expanded={deviceOpen}
+          onClick={() => setDeviceOpen((open) => !open)}
+        >
+          <ComputerDesktopIcon className="size-3.5" />
+          {isRemoteMode && (
+            <span className="device-picker-live" aria-hidden="true" />
+          )}
+        </button>
+        <PlaybackDevicePopover
+          open={deviceOpen}
+          anchor={deviceBtnRef.current}
+          miniPlayerMode={miniPlayerMode}
+          onClose={() => setDeviceOpen(false)}
+        />
         <FavoriteButton
           className="t-btn"
           iconClassName="shrink-0"
           fav={fav}
-          disabled={!displayCurrent}
+          disabled={!displayCurrent || isRemoteMode}
           onToggle={() => displayCurrent && void toggleFavorite(displayCurrent.id)}
         />
         <button
@@ -230,6 +402,7 @@ export default function MiniPlayer() {
           aria-label="Queue"
           aria-expanded={queueOpen}
           onClick={() => setQueueOpen((v) => !v)}
+          disabled={isRemoteMode}
         >
           <QueueListIcon className="size-3.5" />
         </button>
@@ -238,7 +411,7 @@ export default function MiniPlayer() {
           anchor={queueBtnRef.current}
           miniPlayerMode={miniPlayerMode}
           externalQueue={
-            isFH6Page
+            isFH6Mode
               ? {
                   title: "Lumen Radio Queue",
                   tracks: fh6Snapshot?.queue ?? [],
@@ -252,10 +425,18 @@ export default function MiniPlayer() {
         <div className="mini-divider" aria-hidden="true" />
         <VolumeControl
           className="volume"
-          muted={muted}
-          volume={volume}
-          onToggleMute={toggleMute}
-          onSeek={setVolume}
+          muted={shownMuted}
+          volume={shownVolume}
+          onToggleMute={() => {
+            if (isRemoteMode) {
+              void sendCommand("set_muted", { muted: !shownMuted });
+            } else toggleMute();
+          }}
+          onSeek={(nextVolume) => {
+            if (isRemoteMode) {
+              void sendCommand("set_volume", { volume: nextVolume });
+            } else setVolume(nextVolume);
+          }}
         />
         {canResizeWindow && (
           <button
@@ -276,7 +457,9 @@ export default function MiniPlayer() {
           </button>
         )}
       </div>
-    </section>
+      </section>
+      <RemoteControlIndicator />
+    </div>
   );
 
   function fh6Transport(action: string, body?: unknown) {
@@ -325,12 +508,29 @@ function ProgressBar({
   override?: {
     currentTime: number;
     duration: number;
+    isPlaying?: boolean;
+    updatedAt?: string;
     onSeek: (seconds: number) => void;
   };
 }) {
   const { currentTime, duration } = usePlayerTime();
   const { seek } = usePlayer();
-  const shownCurrentTime = override?.currentTime ?? currentTime;
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (!override?.isPlaying) return;
+    const interval = setInterval(() => setClock(Date.now()), 500);
+    return () => clearInterval(interval);
+  }, [override?.isPlaying]);
+  const updatedAt = override?.updatedAt
+    ? Date.parse(override.updatedAt)
+    : Number.NaN;
+  const elapsed =
+    override?.isPlaying && Number.isFinite(updatedAt)
+      ? Math.max(0, (clock - updatedAt) / 1000)
+      : 0;
+  const shownCurrentTime = override
+    ? Math.min(override.duration || Infinity, override.currentTime + elapsed)
+    : currentTime;
   const shownDuration = override?.duration ?? duration;
   const progress = shownDuration > 0 ? shownCurrentTime / shownDuration : 0;
   const remainingTime = shownDuration > 0 ? Math.max(0, shownDuration - shownCurrentTime) : 0;

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -91,6 +92,106 @@ func TestActivitySocketBroadcastsPersonalizedSnapshots(t *testing.T) {
 	}
 }
 
+func TestActivitySocketRoutesRemoteControlCommands(t *testing.T) {
+	userID := uuid.New()
+	sessions := &activitySocketSessions{
+		cookieName: "test_session",
+		user:       &models.User{ID: userID, Username: "controller"},
+	}
+	store := &activitySocketStore{rows: make(map[string]activity.Activity)}
+	background, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := &Activity{
+		Store:      store,
+		Hub:        activity.NewHub(),
+		Sessions:   sessions,
+		Background: background,
+	}
+	handler := middleware.Authenticate(sessions)(
+		middleware.RequireUser(http.HandlerFunc(h.Socket)),
+	)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	ctx, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelDial()
+	controller := dialActivitySocket(t, ctx, server.URL, sessions.cookieName, "phone")
+	defer controller.CloseNow()
+	target := dialActivitySocket(t, ctx, server.URL, sessions.cookieName, "desktop")
+	defer target.CloseNow()
+	readActivitySocketMessage(t, ctx, controller)
+	readActivitySocketMessage(t, ctx, target)
+
+	writeSocketMessage(t, ctx, controller, playbackSocketClientMessage{
+		Type:           "device.hello",
+		Protocol:       playbackSocketProtocolVersion,
+		Revision:       1,
+		DeviceName:     "iPhone",
+		Capabilities:   []string{"playback", "seek", "volume", "queue"},
+		ControlEnabled: true,
+	})
+	writeSocketMessage(t, ctx, target, playbackSocketClientMessage{
+		Type:           "device.hello",
+		Protocol:       playbackSocketProtocolVersion,
+		Revision:       1,
+		DeviceName:     "Desktop",
+		Capabilities:   []string{"playback", "seek", "volume", "queue"},
+		ControlEnabled: true,
+	})
+
+	controllerDevices := readDeviceSnapshotContaining(t, ctx, controller, "desktop")
+	if len(controllerDevices.Devices) != 2 {
+		t.Fatalf("controller devices = %+v, want two", controllerDevices.Devices)
+	}
+	readDeviceSnapshotContaining(t, ctx, target, "phone")
+
+	commandID := uuid.NewString()
+	writeSocketMessage(t, ctx, controller, playbackSocketClientMessage{
+		Type:           "playback.command",
+		Protocol:       playbackSocketProtocolVersion,
+		Revision:       2,
+		CommandID:      commandID,
+		TargetDeviceID: "desktop",
+		Action:         "set_playing",
+		Args:           json.RawMessage(`{"playing":false}`),
+	})
+	routed := readSocketMessageType(t, ctx, target, "playback.command")
+	if routed.CommandID != commandID || routed.SourceDeviceID != "phone" ||
+		routed.TargetDeviceID != "desktop" || routed.Action != "set_playing" {
+		t.Fatalf("routed command = %+v", routed)
+	}
+	if string(routed.Args) != `{"playing":false}` {
+		t.Fatalf("routed args = %s", routed.Args)
+	}
+
+	writeSocketMessage(t, ctx, target, playbackSocketClientMessage{
+		Type:      "playback.command_result",
+		Protocol:  playbackSocketProtocolVersion,
+		Revision:  2,
+		CommandID: commandID,
+		Status:    "applied",
+	})
+	result := readSocketMessageType(t, ctx, controller, "playback.command_result")
+	if result.CommandID != commandID || result.Status != "applied" ||
+		result.TargetDeviceID != "desktop" {
+		t.Fatalf("command result = %+v", result)
+	}
+
+	writeSocketMessage(t, ctx, controller, playbackSocketClientMessage{
+		Type:           "playback.command",
+		Protocol:       playbackSocketProtocolVersion,
+		Revision:       3,
+		CommandID:      uuid.NewString(),
+		TargetDeviceID: "offline-device",
+		Action:         "next",
+		Args:           json.RawMessage(`{}`),
+	})
+	offline := readSocketMessageType(t, ctx, controller, "playback.command_result")
+	if offline.Status != "offline" || offline.TargetDeviceID != "offline-device" {
+		t.Fatalf("offline result = %+v", offline)
+	}
+}
+
 func dialActivitySocket(
 	t *testing.T,
 	ctx context.Context,
@@ -123,6 +224,50 @@ func readActivitySocketMessage(
 		t.Fatalf("read socket message: %v", err)
 	}
 	return msg
+}
+
+func writeSocketMessage(
+	t *testing.T,
+	ctx context.Context,
+	conn *websocket.Conn,
+	msg playbackSocketClientMessage,
+) {
+	t.Helper()
+	if err := wsjson.Write(ctx, conn, msg); err != nil {
+		t.Fatalf("write socket message %s: %v", msg.Type, err)
+	}
+}
+
+func readSocketMessageType(
+	t *testing.T,
+	ctx context.Context,
+	conn *websocket.Conn,
+	wantType string,
+) playbackSocketServerMessage {
+	t.Helper()
+	for {
+		msg := readActivitySocketMessage(t, ctx, conn)
+		if msg.Type == wantType {
+			return msg
+		}
+	}
+}
+
+func readDeviceSnapshotContaining(
+	t *testing.T,
+	ctx context.Context,
+	conn *websocket.Conn,
+	deviceID string,
+) playbackSocketServerMessage {
+	t.Helper()
+	for {
+		msg := readSocketMessageType(t, ctx, conn, "devices.snapshot")
+		for _, device := range msg.Devices {
+			if device.DeviceID == deviceID {
+				return msg
+			}
+		}
+	}
 }
 
 type activitySocketSessions struct {
@@ -191,6 +336,23 @@ func (s *activitySocketStore) Current(
 		}
 	}
 	return latest, nil
+}
+
+func (s *activitySocketStore) ListRecent(
+	_ context.Context,
+	userID uuid.UUID,
+	maxAge time.Duration,
+) ([]activity.Activity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cutoff := time.Now().Add(-maxAge)
+	out := make([]activity.Activity, 0)
+	for _, row := range s.rows {
+		if row.UserID == userID && !row.UpdatedAt.Before(cutoff) {
+			out = append(out, row)
+		}
+	}
+	return out, nil
 }
 
 func (s *activitySocketStore) Delete(

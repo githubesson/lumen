@@ -78,8 +78,8 @@ export function usePlayerCore({
   const [duration, setDuration] = useState(0);
   const [volume, setVolumeState] = useState<number>(0.8);
   const [muted, setMuted] = useState(false);
-  const [shuffle, setShuffle] = useState(false);
-  const [repeat, setRepeat] = useState<RepeatMode>("off");
+  const [shuffle, setShuffleState] = useState(false);
+  const [repeat, setRepeatState] = useState<RepeatMode>("off");
   const playbackReportedRef = useRef<string | null>(null);
   const loadedTrackIdRef = useRef<string | null>(null);
   // Anchor used to interpolate currentTime against the wall clock between the
@@ -133,6 +133,14 @@ export function usePlayerCore({
   const toggle = useCallback<PlayerControls["toggle"]>(() => {
     if (!current) return;
     setIsPlaying((p) => !p);
+  }, [current]);
+
+  const resume = useCallback<PlayerControls["resume"]>(() => {
+    if (current) setIsPlaying(true);
+  }, [current]);
+
+  const pause = useCallback<PlayerControls["pause"]>(() => {
+    if (current) setIsPlaying(false);
   }, [current]);
 
   const next = useCallback<PlayerControls["next"]>(() => {
@@ -207,11 +215,15 @@ export function usePlayerCore({
     [],
   );
 
-  const toggleShuffle = useCallback<PlayerControls["toggleShuffle"]>(() => {
-    const turningOn = !shuffle;
-    setShuffle(turningOn);
+  const setMutedValue = useCallback<PlayerControls["setMuted"]>((value) => {
+    setMuted(value);
+  }, []);
+
+  const setShuffle = useCallback<PlayerControls["setShuffle"]>((value) => {
+    if (value === shuffle) return;
+    setShuffleState(value);
     if (!queue.length) return;
-    if (turningOn) {
+    if (value) {
       // Reshuffle remaining queue; keep the currently playing track at 0 so
       // playback doesn't jump.
       const source = sourceQueue.length ? sourceQueue : queue;
@@ -229,8 +241,16 @@ export function usePlayerCore({
     }
   }, [shuffle, queue, sourceQueue, current]);
 
+  const toggleShuffle = useCallback<PlayerControls["toggleShuffle"]>(() => {
+    setShuffle(!shuffle);
+  }, [setShuffle, shuffle]);
+
+  const setRepeat = useCallback<PlayerControls["setRepeat"]>((value) => {
+    setRepeatState(value);
+  }, []);
+
   const cycleRepeat = useCallback<PlayerControls["cycleRepeat"]>(
-    () => setRepeat((r) => nextRepeatMode(r)),
+    () => setRepeatState((r) => nextRepeatMode(r)),
     [],
   );
 
@@ -355,26 +375,36 @@ export function usePlayerCore({
   const controls = useMemo<PlayerControls>(
     () => ({
       play,
+      resume,
+      pause,
       toggle,
       next,
       prev,
       jumpTo,
       seek,
       setVolume,
+      setMuted: setMutedValue,
       toggleMute,
+      setShuffle,
       toggleShuffle,
+      setRepeat,
       cycleRepeat,
     }),
     [
       play,
+      resume,
+      pause,
       toggle,
       next,
       prev,
       jumpTo,
       seek,
       setVolume,
+      setMutedValue,
       toggleMute,
+      setShuffle,
       toggleShuffle,
+      setRepeat,
       cycleRepeat,
     ],
   );

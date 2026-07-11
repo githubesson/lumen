@@ -26,6 +26,7 @@ import { PlayerProvider } from "../context/player";
 import { ThemeProvider, useTheme } from "../theme/theme";
 import { invalidateLibrary } from "../lib/query-keys";
 import { DownloadsProvider } from "../lib/downloads";
+import { RemoteControlIndicator } from "../components/remote-control-indicator";
 import {
   fileSystemPersister,
   shouldPersistQuery,
@@ -164,7 +165,12 @@ function AccountScopedProviders({ children }: { children: ReactNode }) {
   // `queryClient` is a module-scoped singleton, so an empty dep array is right.
   useEffect(() => libraryChanged.on(() => invalidateLibrary(queryClient)), []);
 
-  return <PlayerProvider key={`player:${accountKey}`}>{children}</PlayerProvider>;
+  return (
+    <PlayerProvider key={`player:${accountKey}`}>
+      {children}
+      <RemoteControlIndicator />
+    </PlayerProvider>
+  );
 }
 
 /**

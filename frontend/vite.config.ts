@@ -1,6 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { fileURLToPath } from "node:url";
+
+const coreSource = (path: string) =>
+  fileURLToPath(new URL(`../core/src/${path}`, import.meta.url));
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -8,15 +12,15 @@ export default defineConfig({
     alias: [
       {
         find: "@music-library/core/api",
-        replacement: "../core/src/api.ts",
+        replacement: coreSource("api.ts"),
       },
       {
         find: "@music-library/core/events",
-        replacement: "../core/src/events.ts",
+        replacement: coreSource("events.ts"),
       },
       {
         find: /^@music-library\/core$/,
-        replacement: "../core/src/index.ts",
+        replacement: coreSource("index.ts"),
       },
     ],
   },

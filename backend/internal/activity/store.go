@@ -143,6 +143,47 @@ func (s *Store) Current(ctx context.Context, userID uuid.UUID, excludeDeviceID s
 	return &out, nil
 }
 
+// ListRecent returns the freshest playback snapshot for every recently active
+// device. Online presence comes from Hub; this method only supplies durable
+// state to enrich device snapshots after reconnects and across controllers.
+func (s *Store) ListRecent(
+	ctx context.Context,
+	userID uuid.UUID,
+	maxAge time.Duration,
+) ([]Activity, error) {
+	cutoff := time.Now().Add(-maxAge)
+	rows, err := s.db.Query(ctx, `
+		SELECT
+			user_id, device_id, device_name, track_id, title,
+			COALESCE(artist, ''), COALESCE(album, ''), COALESCE(album_id, ''),
+			COALESCE(cover_url, ''), COALESCE(duration_sec, 0), position_sec,
+			is_playing, updated_at
+		FROM playback_activity
+		WHERE user_id = $1 AND updated_at >= $2
+		ORDER BY updated_at DESC`, userID, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]Activity, 0)
+	for rows.Next() {
+		var row Activity
+		if err := rows.Scan(
+			&row.UserID, &row.DeviceID, &row.DeviceName, &row.TrackID, &row.Title,
+			&row.Artist, &row.Album, &row.AlbumID, &row.CoverURL,
+			&row.DurationSec, &row.PositionSec, &row.IsPlaying, &row.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s *Store) Delete(ctx context.Context, userID uuid.UUID, deviceID string) error {
 	deviceID = clean(deviceID)
 	if deviceID == "" {

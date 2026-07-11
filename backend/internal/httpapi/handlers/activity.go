@@ -1,9 +1,14 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,11 +31,29 @@ const (
 	playbackSocketRefreshInterval = 30 * time.Second
 	playbackSocketWriteTimeout    = 10 * time.Second
 	playbackSocketReadLimit       = 64 << 10
+	playbackDeviceNameMaxLength   = 100
+	playbackCommandErrorMaxLength = 500
+	playbackCommandMaxPerSecond   = 30
 )
+
+const (
+	playbackCapabilityPlayback = "playback"
+	playbackCapabilitySeek     = "seek"
+	playbackCapabilityVolume   = "volume"
+	playbackCapabilityQueue    = "queue"
+)
+
+var playbackCapabilities = map[string]struct{}{
+	playbackCapabilityPlayback: {},
+	playbackCapabilitySeek:     {},
+	playbackCapabilityVolume:   {},
+	playbackCapabilityQueue:    {},
+}
 
 type playbackActivityStore interface {
 	Upsert(context.Context, activity.UpsertInput) (*activity.Activity, error)
 	Current(context.Context, uuid.UUID, string, time.Duration) (*activity.Activity, error)
+	ListRecent(context.Context, uuid.UUID, time.Duration) ([]activity.Activity, error)
 	Delete(context.Context, uuid.UUID, string) error
 }
 
@@ -79,17 +102,63 @@ type currentPlaybackActivityResp struct {
 }
 
 type playbackSocketClientMessage struct {
-	Type     string               `json:"type"`
-	Protocol int                  `json:"protocol"`
-	Revision uint64               `json:"revision"`
-	DeviceID string               `json:"device_id,omitempty"`
-	Activity *playbackActivityReq `json:"activity,omitempty"`
+	Type           string               `json:"type"`
+	Protocol       int                  `json:"protocol"`
+	Revision       uint64               `json:"revision"`
+	DeviceID       string               `json:"device_id,omitempty"`
+	DeviceName     string               `json:"device_name,omitempty"`
+	Capabilities   []string             `json:"capabilities,omitempty"`
+	ControlEnabled bool                 `json:"control_enabled,omitempty"`
+	Activity       *playbackActivityReq `json:"activity,omitempty"`
+	CommandID      string               `json:"command_id,omitempty"`
+	TargetDeviceID string               `json:"target_device_id,omitempty"`
+	Action         string               `json:"action,omitempty"`
+	Args           json.RawMessage      `json:"args,omitempty"`
+	Status         string               `json:"status,omitempty"`
+	Error          string               `json:"error,omitempty"`
 }
 
 type playbackSocketServerMessage struct {
-	Type     string                `json:"type"`
-	Protocol int                   `json:"protocol"`
-	Activity *playbackActivityResp `json:"activity"`
+	Type           string                `json:"type"`
+	Protocol       int                   `json:"protocol"`
+	Activity       *playbackActivityResp `json:"activity"`
+	Devices        []playbackDeviceResp  `json:"devices,omitempty"`
+	CommandID      string                `json:"command_id,omitempty"`
+	SourceDeviceID string                `json:"source_device_id,omitempty"`
+	TargetDeviceID string                `json:"target_device_id,omitempty"`
+	Action         string                `json:"action,omitempty"`
+	Args           json.RawMessage       `json:"args,omitempty"`
+	Status         string                `json:"status,omitempty"`
+	Error          string                `json:"error,omitempty"`
+}
+
+type playbackDeviceResp struct {
+	DeviceID       string                `json:"device_id"`
+	DeviceName     string                `json:"device_name"`
+	Online         bool                  `json:"online"`
+	ControlEnabled bool                  `json:"control_enabled"`
+	Capabilities   []string              `json:"capabilities"`
+	ConnectedAt    string                `json:"connected_at"`
+	Activity       *playbackActivityResp `json:"activity"`
+}
+
+type playbackCommandTrack struct {
+	ID            string `json:"id"`
+	DBTrackID     string `json:"db_track_id,omitempty"`
+	Source        string `json:"source,omitempty"`
+	SourceID      string `json:"source_id,omitempty"`
+	SourceAlbumID string `json:"source_album_id,omitempty"`
+	Title         string `json:"title"`
+	AlbumID       string `json:"album_id,omitempty"`
+	AlbumTitle    string `json:"album_title,omitempty"`
+	TrackNo       int    `json:"track_no,omitempty"`
+	DurationMS    int    `json:"duration_ms"`
+	Artist        string `json:"artist,omitempty"`
+	AKA           string `json:"aka,omitempty"`
+	Favorited     bool   `json:"favorited,omitempty"`
+	HasCover      bool   `json:"has_cover,omitempty"`
+	CoverURL      string `json:"cover_url,omitempty"`
+	Owned         bool   `json:"owned,omitempty"`
 }
 
 func (h *Activity) Upsert(w http.ResponseWriter, r *http.Request) {
@@ -183,6 +252,8 @@ func (h *Activity) Socket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.CloseNow()
 	conn.SetReadLimit(playbackSocketReadLimit)
+	subscription, unsubscribe := h.Hub.Register(u.ID, deviceID)
+	defer unsubscribe()
 
 	background := h.Background
 	if background == nil {
@@ -191,16 +262,13 @@ func (h *Activity) Socket(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(background)
 	defer cancel()
 
-	changes, unsubscribe := h.Hub.Subscribe(u.ID)
-	defer unsubscribe()
-
 	readDone := make(chan error, 1)
 	writerDone := make(chan error, 1)
 	go func() {
-		readDone <- h.readPlaybackSocket(ctx, conn, u.ID, deviceID)
+		readDone <- h.readPlaybackSocket(ctx, conn, subscription)
 	}()
 	go func() {
-		writerDone <- h.writePlaybackSocket(ctx, conn, u.ID, deviceID, sessionToken, changes)
+		writerDone <- h.writePlaybackSocket(ctx, conn, subscription, sessionToken)
 	}()
 
 	var firstErr error
@@ -219,10 +287,11 @@ func (h *Activity) Socket(w http.ResponseWriter, r *http.Request) {
 func (h *Activity) readPlaybackSocket(
 	ctx context.Context,
 	conn *websocket.Conn,
-	userID uuid.UUID,
-	deviceID string,
+	subscription *activity.Subscription,
 ) error {
 	var lastRevision uint64
+	commandWindowStarted := time.Now()
+	commandCount := 0
 	for {
 		var msg playbackSocketClientMessage
 		if err := wsjson.Read(ctx, conn, &msg); err != nil {
@@ -236,17 +305,33 @@ func (h *Activity) readPlaybackSocket(
 		}
 
 		switch msg.Type {
+		case "device.hello":
+			deviceName, capabilities, err := validateDeviceHello(
+				msg.DeviceName,
+				msg.Capabilities,
+			)
+			if err != nil {
+				return err
+			}
+			if !h.Hub.Announce(
+				subscription,
+				deviceName,
+				capabilities,
+				msg.ControlEnabled,
+			) {
+				return errors.New("device connection is no longer current")
+			}
 		case "activity.update":
 			if msg.Activity == nil {
 				return errors.New("activity payload required")
 			}
-			if strings.TrimSpace(msg.Activity.DeviceID) != deviceID {
+			if strings.TrimSpace(msg.Activity.DeviceID) != subscription.DeviceID {
 				return errors.New("activity device_id does not match connection")
 			}
 			requestCtx, cancel := context.WithTimeout(ctx, playbackSocketWriteTimeout)
 			_, err := h.Store.Upsert(requestCtx, activity.UpsertInput{
-				UserID:      userID,
-				DeviceID:    deviceID,
+				UserID:      subscription.UserID,
+				DeviceID:    subscription.DeviceID,
 				DeviceName:  msg.Activity.DeviceName,
 				TrackID:     msg.Activity.TrackID,
 				Title:       msg.Activity.Title,
@@ -263,33 +348,63 @@ func (h *Activity) readPlaybackSocket(
 				return err
 			}
 		case "activity.clear":
-			if msg.DeviceID != "" && strings.TrimSpace(msg.DeviceID) != deviceID {
+			if msg.DeviceID != "" && strings.TrimSpace(msg.DeviceID) != subscription.DeviceID {
 				return errors.New("clear device_id does not match connection")
 			}
 			requestCtx, cancel := context.WithTimeout(ctx, playbackSocketWriteTimeout)
-			err := h.Store.Delete(requestCtx, userID, deviceID)
+			err := h.Store.Delete(requestCtx, subscription.UserID, subscription.DeviceID)
 			cancel()
 			if err != nil {
 				return err
+			}
+		case "playback.command":
+			now := time.Now()
+			if now.Sub(commandWindowStarted) >= time.Second {
+				commandWindowStarted = now
+				commandCount = 0
+			}
+			commandCount++
+			if commandCount > playbackCommandMaxPerSecond {
+				return errors.New("playback command rate exceeded")
+			}
+			command, err := validatePlaybackCommand(msg)
+			if err != nil {
+				return err
+			}
+			if result := h.Hub.RouteCommand(subscription, command); result != nil {
+				h.Hub.SendResult(subscription, *result)
+			}
+		case "playback.command_result":
+			commandID, status, message, err := validatePlaybackCommandResult(msg)
+			if err != nil {
+				return err
+			}
+			if !h.Hub.ResolveCommand(subscription, status, commandID, message) {
+				return errors.New("unknown or unauthorized command result")
 			}
 		default:
 			return errors.New("unsupported playback sync message")
 		}
 
 		lastRevision = msg.Revision
-		h.notify(userID)
+		if msg.Type == "activity.update" || msg.Type == "activity.clear" {
+			h.notify(subscription.UserID)
+		}
 	}
 }
 
 func (h *Activity) writePlaybackSocket(
 	ctx context.Context,
 	conn *websocket.Conn,
-	userID uuid.UUID,
-	deviceID string,
+	subscription *activity.Subscription,
 	sessionToken string,
-	changes <-chan struct{},
 ) error {
-	if err := h.writePlaybackSnapshot(ctx, conn, userID, deviceID); err != nil {
+	if err := h.writePlaybackSnapshot(
+		ctx,
+		conn,
+		subscription.UserID,
+		subscription.DeviceID,
+	); err != nil {
 		return err
 	}
 
@@ -302,8 +417,29 @@ func (h *Activity) writePlaybackSocket(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-changes:
-			if err := h.writePlaybackSnapshot(ctx, conn, userID, deviceID); err != nil {
+		case <-subscription.Done:
+			return context.Canceled
+		case <-subscription.ActivityChanges:
+			if err := h.writePlaybackSnapshot(
+				ctx,
+				conn,
+				subscription.UserID,
+				subscription.DeviceID,
+			); err != nil {
+				return err
+			}
+		case <-subscription.DeviceChanges:
+			if h.Hub.IsAnnounced(subscription) {
+				if err := h.writeDeviceSnapshot(ctx, conn, subscription.UserID); err != nil {
+					return err
+				}
+			}
+		case command := <-subscription.Commands:
+			if err := writePlaybackCommand(ctx, conn, command); err != nil {
+				return err
+			}
+		case result := <-subscription.Results:
+			if err := writePlaybackCommandResult(ctx, conn, result); err != nil {
 				return err
 			}
 		case <-refreshTicker.C:
@@ -315,8 +451,18 @@ func (h *Activity) writePlaybackSocket(
 			}
 			// Refreshes let a stale activity disappear after its lease expires even
 			// when the source device vanished without sending activity.clear.
-			if err := h.writePlaybackSnapshot(ctx, conn, userID, deviceID); err != nil {
+			if err := h.writePlaybackSnapshot(
+				ctx,
+				conn,
+				subscription.UserID,
+				subscription.DeviceID,
+			); err != nil {
 				return err
+			}
+			if h.Hub.IsAnnounced(subscription) {
+				if err := h.writeDeviceSnapshot(ctx, conn, subscription.UserID); err != nil {
+					return err
+				}
 			}
 		case <-pingTicker.C:
 			pingCtx, cancel := context.WithTimeout(ctx, playbackSocketWriteTimeout)
@@ -350,9 +496,274 @@ func (h *Activity) writePlaybackSnapshot(
 	})
 }
 
+func (h *Activity) writeDeviceSnapshot(
+	ctx context.Context,
+	conn *websocket.Conn,
+	userID uuid.UUID,
+) error {
+	requestCtx, cancel := context.WithTimeout(ctx, playbackSocketWriteTimeout)
+	recent, err := h.Store.ListRecent(requestCtx, userID, playbackActivityMaxAge)
+	cancel()
+	if err != nil {
+		return err
+	}
+	activityByDevice := make(map[string]*playbackActivityResp, len(recent))
+	for i := range recent {
+		activityByDevice[recent[i].DeviceID] = toPlaybackActivityResp(&recent[i])
+	}
+
+	devices := h.Hub.Devices(userID)
+	response := make([]playbackDeviceResp, 0, len(devices))
+	for _, device := range devices {
+		response = append(response, playbackDeviceResp{
+			DeviceID:       device.DeviceID,
+			DeviceName:     device.DeviceName,
+			Online:         true,
+			ControlEnabled: device.ControlEnabled,
+			Capabilities:   device.Capabilities,
+			ConnectedAt:    device.ConnectedAt.Format(time.RFC3339Nano),
+			Activity:       activityByDevice[device.DeviceID],
+		})
+	}
+
+	writeCtx, cancel := context.WithTimeout(ctx, playbackSocketWriteTimeout)
+	defer cancel()
+	return wsjson.Write(writeCtx, conn, playbackSocketServerMessage{
+		Type:     "devices.snapshot",
+		Protocol: playbackSocketProtocolVersion,
+		Devices:  response,
+	})
+}
+
+func writePlaybackCommand(
+	ctx context.Context,
+	conn *websocket.Conn,
+	command activity.Command,
+) error {
+	writeCtx, cancel := context.WithTimeout(ctx, playbackSocketWriteTimeout)
+	defer cancel()
+	return wsjson.Write(writeCtx, conn, playbackSocketServerMessage{
+		Type:           "playback.command",
+		Protocol:       playbackSocketProtocolVersion,
+		CommandID:      command.CommandID,
+		SourceDeviceID: command.SourceDeviceID,
+		TargetDeviceID: command.TargetDeviceID,
+		Action:         command.Action,
+		Args:           command.Args,
+	})
+}
+
+func writePlaybackCommandResult(
+	ctx context.Context,
+	conn *websocket.Conn,
+	result activity.CommandResult,
+) error {
+	writeCtx, cancel := context.WithTimeout(ctx, playbackSocketWriteTimeout)
+	defer cancel()
+	return wsjson.Write(writeCtx, conn, playbackSocketServerMessage{
+		Type:           "playback.command_result",
+		Protocol:       playbackSocketProtocolVersion,
+		CommandID:      result.CommandID,
+		SourceDeviceID: result.SourceDeviceID,
+		TargetDeviceID: result.TargetDeviceID,
+		Status:         result.Status,
+		Error:          result.Error,
+	})
+}
+
+func validateDeviceHello(deviceName string, capabilities []string) (string, []string, error) {
+	deviceName = strings.TrimSpace(deviceName)
+	if deviceName == "" {
+		return "", nil, errors.New("device_name required")
+	}
+	if len(deviceName) > playbackDeviceNameMaxLength {
+		return "", nil, errors.New("device_name too long")
+	}
+	seen := make(map[string]struct{}, len(capabilities))
+	out := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		capability = strings.TrimSpace(capability)
+		if _, ok := playbackCapabilities[capability]; !ok {
+			return "", nil, fmt.Errorf("unsupported capability %q", capability)
+		}
+		if _, ok := seen[capability]; ok {
+			continue
+		}
+		seen[capability] = struct{}{}
+		out = append(out, capability)
+	}
+	sort.Strings(out)
+	return deviceName, out, nil
+}
+
+func validatePlaybackCommand(msg playbackSocketClientMessage) (activity.Command, error) {
+	commandID := strings.TrimSpace(msg.CommandID)
+	parsedCommandID, err := uuid.Parse(commandID)
+	if err != nil {
+		return activity.Command{}, errors.New("valid command_id required")
+	}
+	targetDeviceID := strings.TrimSpace(msg.TargetDeviceID)
+	if targetDeviceID == "" || len(targetDeviceID) > 200 {
+		return activity.Command{}, errors.New("valid target_device_id required")
+	}
+	action := strings.TrimSpace(msg.Action)
+	args, capability, err := validatePlaybackCommandArgs(action, msg.Args)
+	if err != nil {
+		return activity.Command{}, err
+	}
+	return activity.Command{
+		CommandID:          parsedCommandID.String(),
+		TargetDeviceID:     targetDeviceID,
+		Action:             action,
+		RequiredCapability: capability,
+		Args:               args,
+	}, nil
+}
+
+func validatePlaybackCommandArgs(
+	action string,
+	raw json.RawMessage,
+) (json.RawMessage, string, error) {
+	switch action {
+	case "play_track":
+		var args struct {
+			Track playbackCommandTrack   `json:"track"`
+			Queue []playbackCommandTrack `json:"queue"`
+		}
+		if err := decodeStrictArgs(raw, &args); err != nil ||
+			!validPlaybackCommandTrack(args.Track) || len(args.Queue) == 0 || len(args.Queue) > 50 {
+			return nil, "", errors.New("play_track requires a valid track and queue of 1 to 50 tracks")
+		}
+		for _, track := range args.Queue {
+			if !validPlaybackCommandTrack(track) {
+				return nil, "", errors.New("play_track queue contains an invalid track")
+			}
+		}
+		return marshalCommandArgs(args), playbackCapabilityPlayback, nil
+	case "set_playing":
+		var args struct {
+			Playing *bool `json:"playing"`
+		}
+		if err := decodeStrictArgs(raw, &args); err != nil || args.Playing == nil {
+			return nil, "", errors.New("set_playing requires boolean playing")
+		}
+		return marshalCommandArgs(struct {
+			Playing bool `json:"playing"`
+		}{Playing: *args.Playing}), playbackCapabilityPlayback, nil
+	case "next", "previous":
+		var args struct{}
+		if err := decodeStrictArgs(raw, &args); err != nil {
+			return nil, "", fmt.Errorf("%s does not accept arguments", action)
+		}
+		return json.RawMessage(`{}`), playbackCapabilityPlayback, nil
+	case "seek":
+		var args struct {
+			PositionSec *float64 `json:"position_sec"`
+		}
+		if err := decodeStrictArgs(raw, &args); err != nil || args.PositionSec == nil ||
+			*args.PositionSec < 0 || *args.PositionSec > 24*60*60 {
+			return nil, "", errors.New("seek requires position_sec between 0 and 86400")
+		}
+		return marshalCommandArgs(struct {
+			PositionSec float64 `json:"position_sec"`
+		}{PositionSec: *args.PositionSec}), playbackCapabilitySeek, nil
+	case "set_volume":
+		var args struct {
+			Volume *float64 `json:"volume"`
+		}
+		if err := decodeStrictArgs(raw, &args); err != nil || args.Volume == nil ||
+			*args.Volume < 0 || *args.Volume > 1 {
+			return nil, "", errors.New("set_volume requires volume between 0 and 1")
+		}
+		return marshalCommandArgs(struct {
+			Volume float64 `json:"volume"`
+		}{Volume: *args.Volume}), playbackCapabilityVolume, nil
+	case "set_muted":
+		var args struct {
+			Muted *bool `json:"muted"`
+		}
+		if err := decodeStrictArgs(raw, &args); err != nil || args.Muted == nil {
+			return nil, "", errors.New("set_muted requires boolean muted")
+		}
+		return marshalCommandArgs(struct {
+			Muted bool `json:"muted"`
+		}{Muted: *args.Muted}), playbackCapabilityVolume, nil
+	case "set_shuffle":
+		var args struct {
+			Shuffle *bool `json:"shuffle"`
+		}
+		if err := decodeStrictArgs(raw, &args); err != nil || args.Shuffle == nil {
+			return nil, "", errors.New("set_shuffle requires boolean shuffle")
+		}
+		return marshalCommandArgs(struct {
+			Shuffle bool `json:"shuffle"`
+		}{Shuffle: *args.Shuffle}), playbackCapabilityQueue, nil
+	case "set_repeat":
+		var args struct {
+			Repeat *string `json:"repeat"`
+		}
+		if err := decodeStrictArgs(raw, &args); err != nil || args.Repeat == nil ||
+			(*args.Repeat != "off" && *args.Repeat != "all" && *args.Repeat != "one") {
+			return nil, "", errors.New("set_repeat requires repeat off, all, or one")
+		}
+		return marshalCommandArgs(struct {
+			Repeat string `json:"repeat"`
+		}{Repeat: *args.Repeat}), playbackCapabilityQueue, nil
+	default:
+		return nil, "", errors.New("unsupported playback command action")
+	}
+}
+
+func validPlaybackCommandTrack(track playbackCommandTrack) bool {
+	return strings.TrimSpace(track.ID) != "" && len(track.ID) <= 500 &&
+		strings.TrimSpace(track.Title) != "" && len(track.Title) <= 1000 &&
+		track.DurationMS >= 0 && track.DurationMS <= 24*60*60*1000
+}
+
+func validatePlaybackCommandResult(
+	msg playbackSocketClientMessage,
+) (commandID, status, message string, err error) {
+	parsedCommandID, err := uuid.Parse(strings.TrimSpace(msg.CommandID))
+	if err != nil {
+		return "", "", "", errors.New("valid command_id required")
+	}
+	status = strings.TrimSpace(msg.Status)
+	if status != "applied" && status != "rejected" && status != "unsupported" {
+		return "", "", "", errors.New("invalid playback command result status")
+	}
+	message = strings.TrimSpace(msg.Error)
+	if len(message) > playbackCommandErrorMaxLength {
+		return "", "", "", errors.New("playback command result error too long")
+	}
+	return parsedCommandID.String(), status, message, nil
+}
+
+func decodeStrictArgs(raw json.RawMessage, dst any) error {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		raw = json.RawMessage(`{}`)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("multiple JSON values in command arguments")
+	}
+	return nil
+}
+
+func marshalCommandArgs(value any) json.RawMessage {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return encoded
+}
+
 func (h *Activity) notify(userID uuid.UUID) {
 	if h.Hub != nil {
-		h.Hub.Notify(userID)
+		h.Hub.NotifyActivity(userID)
 	}
 }
 
