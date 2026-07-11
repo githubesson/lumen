@@ -144,6 +144,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   });
   const remoteSession = usePlaybackRemoteSession();
   const [targetDeviceId, setTargetDeviceId] = useState<string | null>(null);
+  const [targetDeviceSnapshot, setTargetDeviceSnapshot] =
+    useState<PlaybackDevice | null>(null);
   const [pendingCommandCount, setPendingCommandCount] = useState(0);
   const [lastCommandResult, setLastCommandResult] =
     useState<RemotePlaybackCommandResult | null>(null);
@@ -164,23 +166,25 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       ),
     [remoteSession.deviceId, remoteSession.devices],
   );
-  const targetDevice = useMemo(
+  const liveTargetDevice = useMemo(
     () =>
       remoteDevices.find((device) => device.deviceId === targetDeviceId) ??
       null,
     [remoteDevices, targetDeviceId],
   );
+  const targetDevice =
+    liveTargetDevice ??
+    (targetDeviceSnapshot?.deviceId === targetDeviceId
+      ? targetDeviceSnapshot
+      : null);
   const remoteCurrent = useMemo(
     () => activityTrack(targetDevice?.activity ?? null),
     [targetDevice?.activity],
   );
 
   useEffect(() => {
-    if (targetDeviceId && remoteSession.connected && !targetDevice) {
-      setTargetDeviceId(null);
-      setControlledQueue([]);
-    }
-  }, [remoteSession.connected, targetDevice, targetDeviceId]);
+    if (liveTargetDevice) setTargetDeviceSnapshot(liveTargetDevice);
+  }, [liveTargetDevice]);
 
   useEffect(() => {
     if (!targetDevice) return;
@@ -212,28 +216,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const selectTarget = useCallback(
     (nextDeviceId: string | null) => {
       if (nextDeviceId && state.isPlaying) controls.pause();
+      const nextDevice =
+        remoteDevices.find((device) => device.deviceId === nextDeviceId) ??
+        null;
+      const nextActivity = nextDevice?.activity;
+      const nextTrack = activityTrack(nextActivity ?? null);
       setTargetDeviceId(nextDeviceId);
+      setTargetDeviceSnapshot(nextDevice);
       setLastCommandResult(null);
       setControlledState({
-        volume: state.volume,
-        muted: state.muted,
+        volume:
+          typeof nextActivity?.volume === "number"
+            ? Math.max(0, Math.min(1, nextActivity.volume))
+            : state.volume,
+        muted:
+          typeof nextActivity?.muted === "boolean"
+            ? nextActivity.muted
+            : state.muted,
         shuffle: state.shuffle,
         repeat: state.repeat,
       });
-      const nextActivity = remoteDevices.find(
-        (device) => device.deviceId === nextDeviceId,
-      )?.activity;
-      const nextTrack = activityTrack(nextActivity ?? null);
-      const nextVolume = nextActivity?.volume;
-      const nextMuted = nextActivity?.muted;
-      setControlledState((current) => ({
-        ...current,
-        volume:
-          typeof nextVolume === "number"
-            ? Math.max(0, Math.min(1, nextVolume))
-            : current.volume,
-        muted: typeof nextMuted === "boolean" ? nextMuted : current.muted,
-      }));
       setControlledQueue(nextTrack ? [nextTrack] : []);
     },
     [
@@ -618,7 +620,11 @@ function optimisticControlledState(
   switch (action) {
     case "set_volume":
       return typeof args.volume === "number"
-        ? { ...state, volume: Math.max(0, Math.min(1, args.volume)) }
+        ? {
+            ...state,
+            volume: Math.max(0, Math.min(1, args.volume)),
+            muted: args.volume > 0 ? false : state.muted,
+          }
         : state;
     case "set_muted":
       return typeof args.muted === "boolean"

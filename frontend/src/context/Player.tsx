@@ -461,7 +461,11 @@ function optimisticControlledState(
   switch (action) {
     case "set_volume":
       return typeof args.volume === "number"
-        ? { ...state, volume: Math.max(0, Math.min(1, args.volume)) }
+        ? {
+            ...state,
+            volume: Math.max(0, Math.min(1, args.volume)),
+            muted: args.volume > 0 ? false : state.muted,
+          }
         : state;
     case "set_muted":
       return typeof args.muted === "boolean"

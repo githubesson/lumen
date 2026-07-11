@@ -77,6 +77,7 @@ export function usePlayerCore({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolumeState] = useState<number>(0.8);
+  const [volumeHydrated, setVolumeHydrated] = useState(false);
   const [muted, setMuted] = useState(false);
   const [shuffle, setShuffleState] = useState(false);
   const [repeat, setRepeatState] = useState<RepeatMode>("off");
@@ -94,21 +95,30 @@ export function usePlayerCore({
   useEffect(() => {
     let cancelled = false;
     void storage.getItem(VOLUME_STORAGE_KEY).then((v) => {
-      if (cancelled || v == null) return;
-      const parsed = parseFloat(v);
-      if (Number.isFinite(parsed)) setVolumeState(clampVolume(parsed));
+      if (cancelled) return;
+      if (v != null) {
+        const parsed = parseFloat(v);
+        if (Number.isFinite(parsed)) setVolumeState(clampVolume(parsed));
+      }
+      setVolumeHydrated(true);
     });
     return () => {
       cancelled = true;
     };
   }, [storage]);
 
-  // Push volume / mute to the adapter and persist.
+  // Push volume / mute to the adapter immediately. Persistence waits for the
+  // initial read so the default value cannot overwrite a saved volume while
+  // asynchronous storage is still hydrating.
   useEffect(() => {
     adapter.setVolume(volume);
     adapter.setMuted(muted);
+  }, [adapter, volume, muted]);
+
+  useEffect(() => {
+    if (!volumeHydrated) return;
     void storage.setItem(VOLUME_STORAGE_KEY, String(volume));
-  }, [adapter, storage, volume, muted]);
+  }, [storage, volume, volumeHydrated]);
 
   const play = useCallback<PlayerControls["play"]>(
     (track, q) => {
