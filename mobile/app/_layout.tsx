@@ -1,10 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import {
-  ActivityIndicator,
-  AppState,
-  View,
-  useColorScheme,
-} from "react-native";
+import { ActivityIndicator, AppState, View } from "react-native";
 import Constants from "expo-constants";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -92,11 +87,6 @@ onlineManager.setEventListener((setOnline) => {
  * client build.
  */
 export default function RootLayout() {
-  // @react-navigation/native ThemeProvider prevents header-button flicker
-  // when the tab navigator swaps stacks.
-  const colorScheme = useColorScheme();
-  const navTheme = colorScheme === "dark" ? NavDarkTheme : NavDefaultTheme;
-
   useEffect(() => {
     focusManager.setFocused(AppState.currentState === "active");
     const subscription = AppState.addEventListener("change", (status) => {
@@ -121,8 +111,8 @@ export default function RootLayout() {
           },
         }}
       >
-        <NavThemeProvider value={navTheme}>
-          <ThemeProvider>
+        <ThemeProvider>
+          <ThemedNavigation>
             <DownloadsProvider>
               <AuthProvider>
                 <AccountScopedProviders>
@@ -131,11 +121,19 @@ export default function RootLayout() {
                 </AccountScopedProviders>
               </AuthProvider>
             </DownloadsProvider>
-          </ThemeProvider>
-        </NavThemeProvider>
+          </ThemedNavigation>
+        </ThemeProvider>
       </PersistQueryClientProvider>
     </GestureHandlerRootView>
   );
+}
+
+/** Keep React Navigation's UIKit-owned headers on the app's resolved theme,
+ * including a persisted override that differs from the device setting. */
+function ThemedNavigation({ children }: { children: ReactNode }) {
+  const theme = useTheme();
+  const navTheme = theme.scheme === "dark" ? NavDarkTheme : NavDefaultTheme;
+  return <NavThemeProvider value={navTheme}>{children}</NavThemeProvider>;
 }
 
 function AccountScopedProviders({ children }: { children: ReactNode }) {

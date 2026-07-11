@@ -112,36 +112,54 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // theme we treat that (and null) as light.
   const systemRaw = useColorScheme();
   const system: ColorScheme = systemRaw === "dark" ? "dark" : "light";
-  const [mode, setModeState] = useState<ThemeMode>("system");
+  // Do not mount native navigation/glass views until the persisted override is
+  // known. Mounting once with the system scheme and correcting it a frame
+  // later leaves UIKit-owned materials (notably header glass) in the initial
+  // appearance until another explicit theme change.
+  const [mode, setModeState] = useState<ThemeMode | null>(null);
 
   // Restore persisted mode.
   useEffect(() => {
     let cancelled = false;
-    void AsyncStorage.getItem(MODE_KEY).then((v) => {
-      if (cancelled) return;
-      if (v === "light" || v === "dark" || v === "system") setModeState(v);
-    });
+    void AsyncStorage.getItem(MODE_KEY)
+      .then((v) => {
+        if (cancelled) return;
+        const restored: ThemeMode =
+          v === "light" || v === "dark" || v === "system" ? v : "system";
+        // Set UIKit's appearance before children containing native materials
+        // are mounted.
+        Appearance.setColorScheme(
+          restored === "system" ? "unspecified" : restored,
+        );
+        setModeState(restored);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        Appearance.setColorScheme("unspecified");
+        setModeState("system");
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  useEffect(() => {
-    Appearance.setColorScheme(mode === "system" ? null : mode);
-  }, [mode]);
-
   const setMode = useCallback((m: ThemeMode) => {
+    // Keep native UIKit materials and React tokens on the same update.
+    Appearance.setColorScheme(m === "system" ? "unspecified" : m);
     setModeState(m);
     void AsyncStorage.setItem(MODE_KEY, m);
   }, []);
 
-  const scheme: ColorScheme = mode === "system" ? system : mode;
+  const resolvedMode = mode ?? "system";
+  const scheme: ColorScheme = resolvedMode === "system" ? system : resolvedMode;
   const tokens = useMemo(() => buildTokens(scheme), [scheme]);
 
   const value = useMemo<ThemeContextValue>(
-    () => ({ tokens, mode, setMode }),
-    [tokens, mode, setMode],
+    () => ({ tokens, mode: resolvedMode, setMode }),
+    [tokens, resolvedMode, setMode],
   );
+
+  if (mode === null) return null;
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

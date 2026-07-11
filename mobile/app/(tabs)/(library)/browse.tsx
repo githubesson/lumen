@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   RefreshControl,
   TextInput,
@@ -16,6 +17,7 @@ import {
   View,
 } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
+import { useHeaderHeight } from "@react-navigation/elements";
 import { useInfiniteQuery, type QueryKey } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -97,6 +99,7 @@ export default function BrowseScreen() {
   const theme = useTheme();
   const router = useRouter();
   const params = useLocalSearchParams<{ mode?: string; focusSearch?: string }>();
+  const headerHeight = useHeaderHeight();
   const dockInset = useBottomDockInset();
   const dockScroll = useDockScrollHandler();
   const [mode, setMode] = useState<Mode>(
@@ -294,6 +297,12 @@ export default function BrowseScreen() {
     ListHeaderComponent: header,
     keyExtractor,
     contentInsetAdjustmentBehavior: "automatic" as const,
+    // FlashList v2 wraps its ScrollView in a recycler container. On iOS that
+    // can leave the initial offset at zero after the native large-title inset
+    // is applied, visually adding the header height twice. Seed the same
+    // negative offset that a root FlatList receives automatically.
+    contentOffset:
+      Platform.OS === "ios" ? { x: 0, y: -headerHeight } : undefined,
     contentContainerStyle: { paddingBottom: dockInset + 24 },
     style: { backgroundColor: theme.color.bg },
     onEndReached,
