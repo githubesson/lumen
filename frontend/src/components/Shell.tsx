@@ -12,6 +12,7 @@ import {
   ArrowLeftEndOnRectangleIcon,
   ArrowUpTrayIcon,
   Bars3Icon,
+  BookOpenIcon,
   ChevronDoubleLeftIcon,
   ChevronDoubleRightIcon,
   ChevronRightIcon,
@@ -37,7 +38,9 @@ import { useKey } from "../lib/keybindings";
 import { useDiscordPresence } from "../lib/discordPresence";
 import { swatchFor } from "../lib/swatch";
 import { electron, getDesktopConfig, isElectron } from "../lib/platform";
+import { useLyricsPanel } from "../context/LyricsPanel";
 import MiniPlayer from "./MiniPlayer";
+import LyricsSidebar from "./LyricsSidebar";
 import UploadDialog from "./UploadDialog";
 import TweaksPanel from "./TweaksPanel";
 import WindowControls from "./WindowControls";
@@ -63,6 +66,7 @@ const LIBRARY: NavItemCfg[] = [
 export default function Shell() {
   const { me, logout } = useAuth();
   const { theme, toggle: toggleTheme, layout, setLayout } = useTheme();
+  const { open: lyricsOpen, toggle: toggleLyrics } = useLyricsPanel();
   const navigate = useNavigate();
   const location = useLocation();
   const params = useParams();
@@ -148,7 +152,7 @@ export default function Shell() {
   const initial = (me?.username ?? "?").slice(0, 2).toUpperCase();
 
   return (
-    <div className="app">
+    <div className="app" data-lyrics-open={lyricsOpen ? "true" : undefined}>
       {/* Sidebar */}
       <aside
         id="app-sidebar"
@@ -414,6 +418,17 @@ export default function Shell() {
           </button>
 
           <button
+            className={"iconbtn" + (lyricsOpen ? " active" : "")}
+            type="button"
+            title="Lyrics"
+            aria-label="Toggle lyrics panel"
+            aria-pressed={lyricsOpen}
+            onClick={toggleLyrics}
+          >
+            <BookOpenIcon className="size-4" aria-hidden="true" />
+          </button>
+
+          <button
             className="iconbtn topbar-secondary"
             type="button"
             title="Add music"
@@ -471,6 +486,8 @@ export default function Shell() {
           <Outlet />
         </div>
       </main>
+
+      <LyricsSidebar />
 
       {/* Player */}
       <MiniPlayer />
