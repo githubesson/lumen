@@ -7,6 +7,24 @@ export interface Me {
   must_reset_password: boolean;
 }
 
+export interface LastFMStatus {
+  configured: boolean;
+  connected: boolean;
+  pending: boolean;
+  username?: string;
+  last_error?: string;
+}
+
+export interface LastFMConnectResponse {
+  authorization_url: string;
+}
+
+export interface LastFMAuthorizationPollOptions {
+  signal?: AbortSignal;
+  intervalMs?: number;
+  timeoutMs?: number;
+}
+
 export interface Invite {
   id: string;
   token?: string;
@@ -169,6 +187,56 @@ async function requestVoid(
   init: RequestInit = {},
 ): Promise<void> {
   await rawFetch(path, init);
+}
+
+function abortError(): Error {
+  const error = new Error("Last.fm authorization polling was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(abortError());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function waitForLastFMAuthorization(
+  options: LastFMAuthorizationPollOptions = {},
+): Promise<{ username: string }> {
+  const intervalMs = Math.max(500, options.intervalMs ?? 3000);
+  const timeoutMs = Math.max(intervalMs, options.timeoutMs ?? 10 * 60_000);
+  const deadline = Date.now() + timeoutMs;
+
+  while (true) {
+    if (options.signal?.aborted) throw abortError();
+    try {
+      return await request<{ username: string }>(
+        "/api/integrations/lastfm/complete",
+        { method: "POST", signal: options.signal },
+      );
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 409) throw error;
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new ApiError(
+        408,
+        "Timed out waiting for Last.fm authorization. You can try again.",
+      );
+    }
+    await abortableDelay(Math.min(intervalMs, remainingMs), options.signal);
+  }
 }
 
 type RawArtistGridPin = Partial<ArtistGridPin> & {
@@ -476,6 +544,31 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ completion }),
     }),
+  scrobbleTrack: (id: string, startedAt: number, listenedSeconds: number) =>
+    requestVoid(`/api/tracks/${trackPathID(id)}/scrobble`, {
+      method: "POST",
+      body: JSON.stringify({
+        started_at: startedAt,
+        listened_seconds: listenedSeconds,
+      }),
+    }),
+  updateNowPlaying: (id: string) =>
+    requestVoid(`/api/tracks/${trackPathID(id)}/now-playing`, {
+      method: "POST",
+    }),
+  getLastFMStatus: () => request<LastFMStatus>("/api/integrations/lastfm"),
+  connectLastFM: () =>
+    request<LastFMConnectResponse>("/api/integrations/lastfm/connect", {
+      method: "POST",
+    }),
+  completeLastFM: (options: RequestOptions = {}) =>
+    request<{ username: string }>("/api/integrations/lastfm/complete", {
+      method: "POST",
+      signal: options.signal,
+    }),
+  waitForLastFMAuthorization,
+  disconnectLastFM: () =>
+    requestVoid("/api/integrations/lastfm", { method: "DELETE" }),
   upsertPlaybackActivity: (input: PlaybackActivityInput) =>
     request<PlaybackActivity>("/api/activity", {
       method: "PUT",

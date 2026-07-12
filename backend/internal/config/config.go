@@ -36,6 +36,8 @@ type Config struct {
 	TIDALCountryCode           string
 	TIDALQuality               string
 	TIDALHifiAPIURL            string
+	LastFMAPIKey               string
+	LastFMSharedSecret         string
 	EnableTranscoding          bool
 	TrustedProxies             []string
 	// CoverSignKey is the HMAC secret used to mint/verify public signed
@@ -118,6 +120,8 @@ func FromEnv() (*Config, error) {
 		TIDALCountryCode:           strings.ToUpper(getenv("TIDAL_COUNTRY_CODE", "US")),
 		TIDALQuality:               strings.ToUpper(getenv("TIDAL_QUALITY", "LOSSLESS")),
 		TIDALHifiAPIURL:            getenv("TIDAL_HIFI_API_URL", ""),
+		LastFMAPIKey:               getenv("LASTFM_API_KEY", ""),
+		LastFMSharedSecret:         getenv("LASTFM_SHARED_SECRET", ""),
 		EnableTranscoding:          enableTranscoding,
 		TrustedProxies:             trustedProxies,
 	}

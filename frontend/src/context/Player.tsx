@@ -72,7 +72,7 @@ const webStorage = asyncifySyncStorage({
  * adapter drives.
  */
 export function PlayerProvider({ children }: { children: ReactNode }) {
-  const { adapter, audioRef } = useHtmlAudioAdapter();
+  const { adapter, audioRefs } = useHtmlAudioAdapter();
   const { state, controls, time } = usePlayerCore({
     adapter,
     storage: webStorage,
@@ -389,9 +389,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       <PlayerCtx.Provider value={value}>
         <PlayerTimeCtx.Provider value={time}>
           <PlayerAdapterCtx.Provider value={adapter}>
-            <AudioOutputProvider audioRef={audioRef}>
+            <AudioOutputProvider audioRefs={audioRefs}>
               {children}
-              <audio ref={audioRef} preload="metadata" />
+              <audio ref={audioRefs[0]} preload="auto" />
+              <audio ref={audioRefs[1]} preload="auto" />
             </AudioOutputProvider>
           </PlayerAdapterCtx.Provider>
         </PlayerTimeCtx.Provider>

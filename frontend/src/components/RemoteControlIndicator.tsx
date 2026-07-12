@@ -31,9 +31,10 @@ export default function RemoteControlIndicator() {
 
   if (!event) return null;
 
+  // Keep this node unkeyed while visible: subsequent remote commands update
+  // its metadata and extend the timer without replaying the entrance animation.
   return (
     <div
-      key={event.commandId}
       className="remote-control-indicator"
       role="status"
       aria-live="polite"

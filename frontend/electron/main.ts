@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, screen, session, dialog } from "electron";
+import { app, BrowserWindow, Menu, ipcMain, screen, session, dialog, shell } from "electron";
 import * as path from "node:path";
 import * as http from "node:http";
 import * as https from "node:https";
@@ -851,6 +851,25 @@ ipcMain.handle("setup:cancel", async () => {
 ipcMain.handle("settings:open", () => {
   openSetup();
   return { ok: true };
+});
+
+ipcMain.handle("external:open", async (_e, rawUrl: unknown) => {
+  if (typeof rawUrl !== "string") {
+    return { ok: false, error: "URL is required." };
+  }
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      return { ok: false, error: "Only HTTP and HTTPS links can be opened." };
+    }
+    await shell.openExternal(url.href);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Could not open link.",
+    };
+  }
 });
 
 ipcMain.handle("window:mini-player:set", (_e, enabled: boolean) => {

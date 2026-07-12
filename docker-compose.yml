@@ -60,6 +60,8 @@ services:
       TIDAL_COUNTRY_CODE: ${TIDAL_COUNTRY_CODE:-US}
       TIDAL_QUALITY: ${TIDAL_QUALITY:-LOSSLESS}
       TIDAL_HIFI_API_URL: http://hifi-api:${HIFI_API_PORT:-8000}
+      LASTFM_API_KEY: ${LASTFM_API_KEY:-}
+      LASTFM_SHARED_SECRET: ${LASTFM_SHARED_SECRET:-}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     # Bind to loopback only — the host-level nginx reverse proxy connects over
     # 127.0.0.1:${BACKEND_PORT}. Drop the "127.0.0.1:" prefix to make it

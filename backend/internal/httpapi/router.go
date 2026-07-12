@@ -18,6 +18,7 @@ import (
 	appmw "github.com/githubesson/lumen/internal/httpapi/middleware"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/invites"
+	"github.com/githubesson/lumen/internal/lastfm"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/musicroots"
 	"github.com/githubesson/lumen/internal/playlists"
@@ -37,6 +38,7 @@ type Deps struct {
 	Playlists      *playlists.Store
 	Activity       *activity.Store
 	TIDAL          *tidal.Client
+	LastFM         *lastfm.Service
 	Storage        storage.Storage
 	MusicRoots     *musicroots.Store
 	APITracker     *apitracker.Store
@@ -117,12 +119,16 @@ func NewRouter(d Deps) http.Handler {
 		Background:  d.Background,
 	}
 	adminTIDALH := &handlers.AdminTIDAL{TIDAL: d.TIDAL}
+	lastFMH := &handlers.LastFM{Service: d.LastFM}
 	tracksH := &handlers.Tracks{
 		Library:      d.Library,
 		Storage:      d.Storage,
 		Ingest:       d.Ingest,
 		TIDAL:        d.TIDAL,
 		CoverSignKey: d.CoverSignKey,
+		LastFM:       d.LastFM,
+		Background:   d.Background,
+		StartJob:     d.StartJob,
 	}
 	browseH := &handlers.Browse{Library: d.Library}
 	statsH := &handlers.Stats{Library: d.Library, Playlists: d.Playlists, Storage: d.Storage}
@@ -180,6 +186,10 @@ func NewRouter(d Deps) http.Handler {
 			ordinary := r.With(appmw.Timeout(ordinaryRequestTimeout))
 			ordinary.Get("/auth/me", authH.Me)
 			ordinary.Post("/auth/logout", authH.Logout)
+			ordinary.Get("/integrations/lastfm", lastFMH.Status)
+			ordinary.Post("/integrations/lastfm/connect", lastFMH.Connect)
+			ordinary.Post("/integrations/lastfm/complete", lastFMH.Complete)
+			ordinary.Delete("/integrations/lastfm", lastFMH.Disconnect)
 			ordinary.With(appmw.RateLimitByIP(5, 10*time.Minute)).Post("/auth/reset-password", authH.ResetPassword)
 
 			ordinary.Put("/activity", activityH.Upsert)
@@ -198,6 +208,8 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/tracks/{id}/hls", tracksH.TIDALHLS)
 			r.Get("/tracks/{id}/cover", tracksH.TrackCover)
 			ordinary.Post("/tracks/{id}/play", tracksH.RecordPlay)
+			ordinary.Post("/tracks/{id}/scrobble", tracksH.Scrobble)
+			ordinary.Post("/tracks/{id}/now-playing", tracksH.NowPlaying)
 			ordinary.Post("/tracks/{id}/favorite", tracksH.Favorite)
 			ordinary.Delete("/tracks/{id}/favorite", tracksH.Unfavorite)
 			ordinary.Post("/tracks/{id}/share", shareH.Create)

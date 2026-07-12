@@ -44,6 +44,14 @@ export function getDesktopConfig() {
   return electron?.getConfig?.();
 }
 
+export async function openExternal(url: string) {
+  if (electron?.openExternal) return electron.openExternal(url);
+  const opened = window.open(url, "_blank", "noopener,noreferrer");
+  return opened
+    ? { ok: true }
+    : { ok: false, error: "The browser blocked the authorization window." };
+}
+
 export function getFH6Status() {
   return electron?.getFH6Status?.();
 }

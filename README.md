@@ -20,6 +20,7 @@ surface for invites and library management.
 - Optional ffmpeg transcoding behind a flag
 - Persistent player with queue, mini player, and now-playing view
 - Play history (recently played) and per-user play stats
+- Optional per-user Last.fm now-playing and scrobble integration
 - Uploads from the web and mobile apps
 - Track and album metadata editing
 

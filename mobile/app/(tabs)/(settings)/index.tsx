@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -10,7 +10,13 @@ import {
 import { SymbolView } from "expo-symbols";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { useAuth } from "@music-library/core";
+import * as WebBrowser from "expo-web-browser";
+import {
+  api,
+  errorMessage,
+  useAuth,
+  type LastFMStatus,
+} from "@music-library/core";
 import {
   useBottomDockInset,
   useDockScrollHandler,
@@ -26,6 +32,80 @@ export default function SettingsScreen() {
   const { me, logout } = useAuth();
   const { mode, setMode } = useThemeMode();
   const [signingOut, setSigningOut] = useState(false);
+  const [lastFM, setLastFM] = useState<LastFMStatus | null>(null);
+  const [lastFMBusy, setLastFMBusy] = useState(false);
+  const [lastFMError, setLastFMError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .getLastFMStatus()
+      .then((status) => {
+        if (!cancelled) setLastFM(status);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!lastFM?.configured || lastFM.connected || !lastFM.pending) return;
+    const controller = new AbortController();
+    setLastFMError(null);
+    void api
+      .waitForLastFMAuthorization({ signal: controller.signal })
+      .then(({ username }) => {
+        setLastFM((current) => ({
+          configured: current?.configured ?? true,
+          connected: true,
+          pending: false,
+          username,
+        }));
+      })
+      .catch((error) => {
+        if (error instanceof Error && error.name === "AbortError") return;
+        setLastFMError(
+          errorMessage(error, "Could not complete Last.fm authorization."),
+        );
+      });
+    return () => controller.abort();
+  }, [lastFM?.configured, lastFM?.connected, lastFM?.pending]);
+
+  const connectLastFM = async () => {
+    setLastFMBusy(true);
+    setLastFMError(null);
+    try {
+      const { authorization_url } = await api.connectLastFM();
+      setLastFM((current) =>
+        current ? { ...current, pending: true, last_error: undefined } : current,
+      );
+      await WebBrowser.openBrowserAsync(authorization_url, {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+      });
+    } catch (error) {
+      setLastFMError(errorMessage(error, "Could not connect Last.fm."));
+    } finally {
+      setLastFMBusy(false);
+    }
+  };
+
+  const disconnectLastFM = async () => {
+    setLastFMBusy(true);
+    setLastFMError(null);
+    try {
+      await api.disconnectLastFM();
+      setLastFM((current) => ({
+        configured: current?.configured ?? true,
+        connected: false,
+        pending: false,
+      }));
+    } catch (error) {
+      setLastFMError(errorMessage(error, "Could not disconnect Last.fm."));
+    } finally {
+      setLastFMBusy(false);
+    }
+  };
 
   const onSignOut = async () => {
     setSigningOut(true);
@@ -70,6 +150,63 @@ export default function SettingsScreen() {
             router.push("/(tabs)/(settings)/replay");
           }}
         />
+      </Section>
+
+      <Section title="Connections" theme={theme}>
+        <Pressable
+          onPress={() => {
+            void Haptics.selectionAsync();
+            if (lastFM?.connected) void disconnectLastFM();
+            else if (lastFM?.configured) void connectLastFM();
+          }}
+          disabled={lastFMBusy || !lastFM?.configured}
+          style={({ pressed }) => [
+            styles.row,
+            {
+              paddingHorizontal: theme.space.md,
+              paddingVertical: 13,
+              backgroundColor: pressed ? theme.color.bgElev2 : "transparent",
+              opacity: lastFMBusy ? 0.65 : 1,
+            },
+          ]}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <SymbolView name="waveform.path" size={18} tintColor={theme.color.fg} />
+            <View style={{ gap: 2 }}>
+              <Text style={{ color: theme.color.fg, fontSize: 16 }}>Last.fm</Text>
+              <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>
+                {!lastFM
+                  ? "Checking availability…"
+                  : !lastFM.configured
+                    ? "Server integration is not configured"
+                    : lastFM.connected
+                      ? `Scrobbling as ${lastFM.username || "connected user"}`
+                      : lastFM.pending
+                        ? "Tap to authorize again"
+                        : "Connect your account to scrobble"}
+              </Text>
+            </View>
+          </View>
+          {lastFMBusy ? (
+            <ActivityIndicator color={theme.color.fgMuted} />
+          ) : (
+            <Text style={{ color: lastFM?.connected ? theme.color.danger : theme.color.accent }}>
+              {lastFM?.connected ? "Disconnect" : "Connect"}
+            </Text>
+          )}
+        </Pressable>
+        {(lastFMError || lastFM?.last_error) ? (
+          <Text
+            style={{
+              color: theme.color.danger,
+              fontSize: 13,
+              paddingHorizontal: theme.space.md,
+              paddingBottom: 12,
+            }}
+          >
+            {lastFMError || lastFM?.last_error}
+          </Text>
+        ) : null}
       </Section>
 
       {me?.role === "admin" ? (

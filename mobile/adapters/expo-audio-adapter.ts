@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  clearPreloadedSource,
+  preload,
   type AudioLockScreenOptions,
   type AudioMetadata,
 } from "expo-audio";
@@ -46,6 +48,12 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
   const listenersRef = useRef<Map<AudioAdapterEvent, Set<() => void>>>(
     new Map(),
   );
+  const preparedRef = useRef<{
+    url: string;
+    ready: boolean;
+    generation: number;
+  } | null>(null);
+  const prepareGenerationRef = useRef(0);
   const prevStatusRef = useRef<{
     isLoaded: boolean;
     playing: boolean;
@@ -104,11 +112,64 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
   const adapter = useMemo<ExpoAudioAdapter>(
     () => ({
       load(url) {
+        const prepared = preparedRef.current;
+        if (prepared) {
+          preparedRef.current = null;
+          prepareGenerationRef.current += 1;
+          void clearPreloadedSource(prepared.url).catch(() => {});
+        }
         player.replace({ uri: url });
         // Reset the status diff so the new track's first loadedmetadata fires.
         prevStatusRef.current.isLoaded = false;
         prevStatusRef.current.duration = 0;
         prevStatusRef.current.didJustFinish = false;
+      },
+      prepareNext(url) {
+        if (preparedRef.current?.url === url) return;
+        const previous = preparedRef.current;
+        if (previous) void clearPreloadedSource(previous.url).catch(() => {});
+        const generation = ++prepareGenerationRef.current;
+        preparedRef.current = { url, ready: false, generation };
+        void preload(url, { preferredForwardBufferDuration: 20 })
+          .then(() => {
+            const prepared = preparedRef.current;
+            if (prepared?.url === url && prepared.generation === generation) {
+              prepared.ready = true;
+            }
+          })
+          .catch(() => {
+            const prepared = preparedRef.current;
+            if (prepared?.url === url && prepared.generation === generation) {
+              preparedRef.current = null;
+            }
+          });
+      },
+      activatePrepared(url) {
+        const prepared = preparedRef.current;
+        if (!prepared || prepared.url !== url || !prepared.ready) return false;
+        preparedRef.current = null;
+        prepareGenerationRef.current += 1;
+        try {
+          player.replace({ uri: url });
+          prevStatusRef.current.isLoaded = false;
+          prevStatusRef.current.duration = 0;
+          prevStatusRef.current.didJustFinish = false;
+          player.play();
+          // replace() has consumed the native preload; Android/web retain the
+          // cache entry until explicitly cleared, while iOS treats this as a
+          // harmless no-op after consumption.
+          void clearPreloadedSource(url).catch(() => {});
+          return true;
+        } catch {
+          void clearPreloadedSource(url).catch(() => {});
+          return false;
+        }
+      },
+      clearPrepared() {
+        const prepared = preparedRef.current;
+        preparedRef.current = null;
+        prepareGenerationRef.current += 1;
+        if (prepared) void clearPreloadedSource(prepared.url).catch(() => {});
       },
       async play() {
         player.play();
@@ -157,6 +218,10 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         };
       },
       dispose() {
+        const prepared = preparedRef.current;
+        preparedRef.current = null;
+        prepareGenerationRef.current += 1;
+        if (prepared) void clearPreloadedSource(prepared.url).catch(() => {});
         listenersRef.current.clear();
       },
     }),

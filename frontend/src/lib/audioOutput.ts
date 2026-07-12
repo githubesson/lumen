@@ -37,7 +37,7 @@ interface AudioOutputCtx {
 const AudioOutputContext = createContext<AudioOutputCtx | null>(null);
 
 interface ProviderProps {
-  audioRef: RefObject<HTMLAudioElement>;
+  audioRefs: readonly RefObject<HTMLAudioElement>[];
   children: ReactNode;
 }
 
@@ -77,7 +77,7 @@ async function listOutputs(): Promise<OutputDevice[]> {
     }));
 }
 
-export function AudioOutputProvider({ audioRef, children }: ProviderProps) {
+export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
   const supported = useMemo(isSupported, []);
   const [devices, setDevices] = useState<OutputDevice[]>([]);
   const [deviceId, setDeviceId] = useState<string>(() => {
@@ -92,10 +92,12 @@ export function AudioOutputProvider({ audioRef, children }: ProviderProps) {
 
   const applySink = useCallback(
     async (id: string) => {
-      const el = audioRef.current as AudioElementWithSink | null;
-      if (!el || !el.setSinkId) return;
+      const elements = audioRefs
+        .map((ref) => ref.current as AudioElementWithSink | null)
+        .filter((el): el is AudioElementWithSink => !!el?.setSinkId);
+      if (!elements.length) return;
       try {
-        await el.setSinkId(id);
+        await Promise.all(elements.map((el) => el.setSinkId!(id)));
         setError(null);
       } catch (e) {
         const msg = (e as Error).message || String(e);
@@ -110,11 +112,13 @@ export function AudioOutputProvider({ audioRef, children }: ProviderProps) {
           } catch {
             // ignore
           }
-          await el.setSinkId("").catch(() => {});
+          await Promise.all(
+            elements.map((el) => el.setSinkId!("").catch(() => {})),
+          );
         }
       }
     },
-    [audioRef],
+    [audioRefs],
   );
 
   const refresh = useCallback(async () => {
@@ -170,7 +174,7 @@ export function AudioOutputProvider({ audioRef, children }: ProviderProps) {
     let cancelled = false;
     const tryApply = () => {
       if (cancelled) return;
-      if (!audioRef.current) {
+      if (audioRefs.some((ref) => !ref.current)) {
         requestAnimationFrame(tryApply);
         return;
       }
@@ -181,7 +185,7 @@ export function AudioOutputProvider({ audioRef, children }: ProviderProps) {
     return () => {
       cancelled = true;
     };
-  }, [supported, applySink, audioRef]);
+  }, [supported, applySink, audioRefs]);
 
   // Keep the device list fresh when hardware is plugged/unplugged.
   useEffect(() => {

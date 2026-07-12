@@ -52,6 +52,7 @@ export interface ElectronApi {
   isElectron: true;
   platform: NodeJS.Platform;
   openSettings(): Promise<{ ok: boolean }>;
+  openExternal(url: string): Promise<{ ok: boolean; error?: string }>;
   getConfig(): Promise<{
     backendUrl: string;
     discordEnabled: boolean;
@@ -105,6 +106,7 @@ const api: ElectronApi = {
   isElectron: true,
   platform: process.platform,
   openSettings: () => ipcRenderer.invoke("settings:open"),
+  openExternal: (url) => ipcRenderer.invoke("external:open", url),
   getConfig: () => ipcRenderer.invoke("config:get"),
   getFH6Status: () => ipcRenderer.invoke("fh6:status"),
   chooseFH6GameDir: () => ipcRenderer.invoke("fh6:choose-game-dir"),

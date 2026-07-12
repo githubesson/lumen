@@ -21,6 +21,7 @@ import (
 	"github.com/githubesson/lumen/internal/httpapi"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/invites"
+	"github.com/githubesson/lumen/internal/lastfm"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/musicroots"
 	"github.com/githubesson/lumen/internal/playlists"
@@ -73,6 +74,7 @@ func main() {
 	libraryStore := library.NewStore(pool)
 	playlistsStore := playlists.NewStore(pool)
 	activityStore := activity.NewStore(pool)
+	lastFMStore := lastfm.NewStore(pool)
 	musicRootsStore := musicroots.NewStore(pool)
 	apiTrackerStore := apitracker.NewStore(pool)
 	artistGridStore := artistgrid.NewStore(pool)
@@ -83,6 +85,15 @@ func main() {
 		HifiAPIURL:  cfg.TIDALHifiAPIURL,
 		Background:  drainCtx,
 	})
+	lastFMClient := lastfm.NewClient(lastfm.Config{
+		APIKey:       cfg.LastFMAPIKey,
+		SharedSecret: cfg.LastFMSharedSecret,
+	})
+	lastFMService := &lastfm.Service{
+		Client:  lastFMClient,
+		Store:   lastFMStore,
+		Library: libraryStore,
+	}
 	sessions := auth.NewSessionStore(pool, cfg.CookieName, cfg.CookieSecure, cfg.SessionTTL)
 	startWorker(func() { runSessionCleanup(ctx, logger, sessions) })
 
@@ -177,6 +188,7 @@ func main() {
 		Playlists:      playlistsStore,
 		Activity:       activityStore,
 		TIDAL:          tidalClient,
+		LastFM:         lastFMService,
 		Storage:        store,
 		MusicRoots:     musicRootsStore,
 		APITracker:     apiTrackerStore,

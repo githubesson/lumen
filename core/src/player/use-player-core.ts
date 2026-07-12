@@ -40,6 +40,7 @@ export interface UsePlayerCoreReturn {
 }
 
 const TIME_STATE_GRANULARITY_SEC = 0.25;
+const NEXT_TRACK_PREPARE_RATIO = 0.7;
 
 function quantizeTime(seconds: number, duration: number): number {
   const clamped =
@@ -82,7 +83,12 @@ export function usePlayerCore({
   const [shuffle, setShuffleState] = useState(false);
   const [repeat, setRepeatState] = useState<RepeatMode>("off");
   const playbackReportedRef = useRef<string | null>(null);
+  const lastFMScrobbledRef = useRef<string | null>(null);
+  const trackStartedAtRef = useRef(Math.floor(Date.now() / 1000));
+  const listenedSecondsRef = useRef(0);
+  const listeningTickRef = useRef<number | null>(null);
   const loadedTrackIdRef = useRef<string | null>(null);
+  const preparedNextRef = useRef<{ trackId: string; uri: string } | null>(null);
   // Anchor used to interpolate currentTime against the wall clock between the
   // adapter's (infrequent) timeupdate pings.
   const anchorRef = useRef<{ audioTime: number; wallTime: number }>({
@@ -153,31 +159,78 @@ export function usePlayerCore({
     if (current) setIsPlaying(false);
   }, [current]);
 
+  const resolvePlayableUri = useCallback(
+    (trackId: string) => resolveTrackUri?.(trackId) || streamUrl(trackId),
+    [resolveTrackUri],
+  );
+
+  const clearPreparedNext = useCallback(() => {
+    preparedNextRef.current = null;
+    adapter.clearPrepared?.();
+  }, [adapter]);
+
   const next = useCallback<PlayerControls["next"]>(() => {
     if (!queue.length) return;
     const ni = index + 1;
+    let nextTrack: TrackListItem | null = null;
+    let nextIndex = ni;
+    let nextQueue: TrackListItem[] | null = null;
     if (ni >= queue.length) {
-      if (repeat !== "all") return;
+      if (repeat !== "all") {
+        clearPreparedNext();
+        setIsPlaying(false);
+        return;
+      }
       // Wrap. If shuffle is on, reshuffle for a fresh pass so you don't
       // replay the same permutation.
       if (shuffle && sourceQueue.length > 1) {
-        const reshuffled = fisherYatesWithAnchor(sourceQueue, null);
-        setQueue(reshuffled);
-        setIndex(0);
-        setCurrent(reshuffled[0] ?? null);
+        nextQueue = fisherYatesWithAnchor(sourceQueue, null);
+        nextTrack = nextQueue[0] ?? null;
       } else {
-        setIndex(0);
-        setCurrent(queue[0]);
+        nextTrack = queue[0] ?? null;
       }
-      setIsPlaying(true);
-      playbackReportedRef.current = null;
+      nextIndex = 0;
+    } else {
+      nextTrack = queue[ni] ?? null;
+    }
+
+    if (!nextTrack) {
+      clearPreparedNext();
+      setIsPlaying(false);
       return;
     }
-    setIndex(ni);
-    setCurrent(queue[ni]);
+
+    const prepared = preparedNextRef.current;
+    const nextUri = resolvePlayableUri(nextTrack.id);
+    const activated =
+      prepared?.trackId === nextTrack.id &&
+      prepared.uri === nextUri &&
+      adapter.activatePrepared?.(nextUri) === true;
+    if (activated) {
+      loadedTrackIdRef.current = nextTrack.id;
+    } else {
+      adapter.clearPrepared?.();
+    }
+    preparedNextRef.current = null;
+
+    if (nextQueue) setQueue(nextQueue);
+    setIndex(nextIndex);
+    setCurrent(nextTrack);
     setIsPlaying(true);
+    setCurrentTime(0);
+    setDuration(activated ? adapter.duration() || 0 : 0);
+    anchorRef.current = { audioTime: 0, wallTime: performance.now() };
     playbackReportedRef.current = null;
-  }, [queue, index, shuffle, repeat, sourceQueue]);
+  }, [
+    adapter,
+    clearPreparedNext,
+    index,
+    queue,
+    repeat,
+    resolvePlayableUri,
+    shuffle,
+    sourceQueue,
+  ]);
 
   const prev = useCallback<PlayerControls["prev"]>(() => {
     if (!queue.length) return;
@@ -189,21 +242,23 @@ export function usePlayerCore({
       return;
     }
     const ni = Math.max(0, index - 1);
+    clearPreparedNext();
     setIndex(ni);
     setCurrent(queue[ni]);
     setIsPlaying(true);
     playbackReportedRef.current = null;
-  }, [adapter, queue, index]);
+  }, [adapter, clearPreparedNext, queue, index]);
 
   const jumpTo = useCallback<PlayerControls["jumpTo"]>(
     (i) => {
       if (i < 0 || i >= queue.length) return;
+      clearPreparedNext();
       setIndex(i);
       setCurrent(queue[i]);
       setIsPlaying(true);
       playbackReportedRef.current = null;
     },
-    [queue],
+    [clearPreparedNext, queue],
   );
 
   const seek = useCallback<PlayerControls["seek"]>(
@@ -264,17 +319,47 @@ export function usePlayerCore({
     [],
   );
 
+  const nextTrackToPrepare = useMemo(() => {
+    if (!current || repeat === "one" || !queue.length) return null;
+    if (index + 1 < queue.length) return queue[index + 1] ?? null;
+    // A repeat-all shuffle creates a fresh permutation at the boundary, so
+    // its next track is intentionally unknown until then.
+    if (repeat === "all" && !shuffle) return queue[0] ?? null;
+    return null;
+  }, [current, index, queue, repeat, shuffle]);
+
+  useEffect(() => {
+    const prepared = preparedNextRef.current;
+    if (prepared && prepared.trackId !== nextTrackToPrepare?.id) {
+      clearPreparedNext();
+    }
+  }, [clearPreparedNext, nextTrackToPrepare?.id]);
+
   // When the track changes, replace the adapter's source and (optionally)
   // kick off playback.
   useEffect(() => {
     if (!current) return;
     if (loadedTrackIdRef.current === current.id) return;
     loadedTrackIdRef.current = current.id;
-    adapter.load(resolveTrackUri?.(current.id) || streamUrl(current.id));
+    adapter.load(resolvePlayableUri(current.id));
     if (isPlaying) {
       adapter.play().catch(() => setIsPlaying(false));
     }
-  }, [adapter, current, isPlaying, resolveTrackUri]);
+  }, [adapter, current, isPlaying, resolvePlayableUri]);
+
+  useEffect(() => {
+    if (!current) return;
+    trackStartedAtRef.current = Math.floor(Date.now() / 1000);
+    lastFMScrobbledRef.current = null;
+    listenedSecondsRef.current = 0;
+    listeningTickRef.current = performance.now();
+  }, [current?.id]);
+
+  useEffect(() => {
+    if (current && isPlaying) {
+      void api.updateNowPlaying(current.id).catch(() => {});
+    }
+  }, [current?.id, isPlaying]);
 
   // When isPlaying toggles without a track change, sync the adapter.
   useEffect(() => {
@@ -288,6 +373,14 @@ export function usePlayerCore({
 
   // Wire adapter events → hook state.
   useEffect(() => {
+    const syncListenedTime = () => {
+      const now = performance.now();
+      const previous = listeningTickRef.current;
+      if (previous != null && isPlaying) {
+        listenedSecondsRef.current += Math.max(0, (now - previous) / 1000);
+      }
+      listeningTickRef.current = isPlaying ? now : null;
+    };
     const syncAnchor = () => {
       anchorRef.current = {
         audioTime: adapter.currentTime(),
@@ -298,10 +391,22 @@ export function usePlayerCore({
       // Gently resync the anchor on every native update to prevent drift, but
       // don't touch React state here — the rAF loop owns currentTime.
       syncAnchor();
+      syncListenedTime();
       // Fire a single /play ping once past 30s OR >=50% of duration.
       const trackId = current?.id;
       const now = adapter.currentTime();
       const d = adapter.duration();
+      if (
+        nextTrackToPrepare &&
+        adapter.prepareNext &&
+        d > 0 &&
+        now / d >= NEXT_TRACK_PREPARE_RATIO &&
+        preparedNextRef.current?.trackId !== nextTrackToPrepare.id
+      ) {
+        const uri = resolvePlayableUri(nextTrackToPrepare.id);
+        preparedNextRef.current = { trackId: nextTrackToPrepare.id, uri };
+        adapter.prepareNext(uri);
+      }
       if (
         trackId &&
         playbackReportedRef.current !== trackId &&
@@ -310,6 +415,22 @@ export function usePlayerCore({
         playbackReportedRef.current = trackId;
         const completion = d > 0 ? now / d : 0;
         void api.recordPlay(trackId, completion).catch(() => {});
+      }
+      const lastFMThreshold = d > 0 ? Math.min(d / 2, 240) : Infinity;
+      if (
+        trackId &&
+        d > 30 &&
+        listenedSecondsRef.current >= lastFMThreshold &&
+        lastFMScrobbledRef.current !== trackId
+      ) {
+        lastFMScrobbledRef.current = trackId;
+        void api
+          .scrobbleTrack(
+            trackId,
+            trackStartedAtRef.current,
+            listenedSecondsRef.current,
+          )
+          .catch(() => {});
       }
     });
     const offMeta = adapter.on("loadedmetadata", () => {
@@ -323,6 +444,11 @@ export function usePlayerCore({
         // as a fresh play — otherwise playbackReportedRef stays pinned to this
         // trackId and the timeupdate guard never fires recordPlay again.
         playbackReportedRef.current = null;
+        lastFMScrobbledRef.current = null;
+        trackStartedAtRef.current = Math.floor(Date.now() / 1000);
+        listenedSecondsRef.current = 0;
+        listeningTickRef.current = performance.now();
+        if (current) void api.updateNowPlaying(current.id).catch(() => {});
         adapter.seek(0);
         void adapter.play().catch(() => {});
         return;
@@ -333,8 +459,13 @@ export function usePlayerCore({
       syncAnchor();
       setCurrentTime(quantizeTime(adapter.currentTime(), adapter.duration()));
     });
-    const offPlay = adapter.on("play", () => syncAnchor());
+    const offPlay = adapter.on("play", () => {
+      listeningTickRef.current = performance.now();
+      syncAnchor();
+    });
     const offPause = adapter.on("pause", () => {
+      syncListenedTime();
+      listeningTickRef.current = null;
       syncAnchor();
       setCurrentTime(quantizeTime(adapter.currentTime(), adapter.duration()));
     });
@@ -346,7 +477,17 @@ export function usePlayerCore({
       offPlay();
       offPause();
     };
-  }, [adapter, current, next, repeat]);
+  }, [
+    adapter,
+    current,
+    isPlaying,
+    next,
+    nextTrackToPrepare,
+    repeat,
+    resolvePlayableUri,
+  ]);
+
+  useEffect(() => () => adapter.clearPrepared?.(), [adapter]);
 
   // rAF-driven smoothing: while playing, interpolate between the adapter's
   // last-known position and the current wall-clock moment. Native update

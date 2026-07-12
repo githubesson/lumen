@@ -1430,7 +1430,7 @@ textarea { font: inherit; color: inherit; }
 }
 
 .remote-control-indicator {
-  --remote-tone: oklch(0.72 0.11 265);
+  --remote-tone: var(--accent);
   position: absolute;
   top: 0;
   left: 50%;
@@ -1442,9 +1442,9 @@ textarea { font: inherit; color: inherit; }
   align-items: center;
   gap: 7px;
   transform: translate(-50%, -50%);
-  border: 1px solid color-mix(in oklch, var(--remote-tone) 50%, var(--border));
-  border-radius: 999px;
-  background: color-mix(in oklch, var(--bg-elev-2) 86%, var(--remote-tone));
+  border: 1px solid color-mix(in oklch, var(--remote-tone) 40%, var(--border));
+  border-radius: var(--r-sm);
+  background: color-mix(in oklch, var(--remote-tone) 16%, var(--bg-elev-2));
   color: var(--fg);
   box-shadow:
     0 1px 0 color-mix(in oklch, var(--fg) 8%, transparent) inset,

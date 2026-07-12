@@ -1,6 +1,8 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { api, errorMessage, type LastFMStatus } from "@music-library/core";
 import { useTheme, type Density, type Layout, type Theme } from "../context/Theme";
 import { useAudioOutput } from "../lib/audioOutput";
+import { openExternal } from "../lib/platform";
 import { useDismiss } from "../lib/useDismiss";
 
 interface Props {
@@ -30,6 +32,86 @@ export default function TweaksPanel({ open, onClose }: Props) {
   } = useTheme();
   const audioOut = useAudioOutput();
   const ref = useRef<HTMLDivElement>(null);
+  const [lastFM, setLastFM] = useState<LastFMStatus | null>(null);
+  const [lastFMBusy, setLastFMBusy] = useState(false);
+  const [lastFMError, setLastFMError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void api
+      .getLastFMStatus()
+      .then((status) => {
+        if (!cancelled) setLastFM(status);
+      })
+      .catch(() => {
+        if (!cancelled) setLastFM(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !lastFM?.configured || lastFM.connected || !lastFM.pending) {
+      return;
+    }
+    const controller = new AbortController();
+    setLastFMError(null);
+    void api
+      .waitForLastFMAuthorization({ signal: controller.signal })
+      .then(({ username }) => {
+        setLastFM((current) => ({
+          configured: current?.configured ?? true,
+          connected: true,
+          pending: false,
+          username,
+        }));
+      })
+      .catch((error) => {
+        if (error instanceof Error && error.name === "AbortError") return;
+        setLastFMError(
+          errorMessage(error, "Could not complete Last.fm authorization."),
+        );
+      });
+    return () => controller.abort();
+  }, [lastFM?.configured, lastFM?.connected, lastFM?.pending, open]);
+
+  const connectLastFM = async () => {
+    setLastFMBusy(true);
+    setLastFMError(null);
+    try {
+      const { authorization_url } = await api.connectLastFM();
+      const opened = await openExternal(authorization_url);
+      if (!opened.ok) {
+        throw new Error(opened.error ?? "Could not open Last.fm authorization.");
+      }
+      setLastFM((current) =>
+        current ? { ...current, pending: true, last_error: undefined } : current,
+      );
+    } catch (error) {
+      setLastFMError(errorMessage(error, "Could not connect Last.fm."));
+    } finally {
+      setLastFMBusy(false);
+    }
+  };
+
+  const disconnectLastFM = async () => {
+    setLastFMBusy(true);
+    setLastFMError(null);
+    try {
+      await api.disconnectLastFM();
+      setLastFM((current) => ({
+        configured: current?.configured ?? true,
+        connected: false,
+        pending: false,
+      }));
+    } catch (error) {
+      setLastFMError(errorMessage(error, "Could not disconnect Last.fm."));
+    } finally {
+      setLastFMBusy(false);
+    }
+  };
 
   useDismiss(ref, {
     onDismiss: onClose,
@@ -208,6 +290,50 @@ export default function TweaksPanel({ open, onClose }: Props) {
           )}
         </div>
       )}
+
+      <div className="tweak-row">
+        <div className="tweak-label">
+          <span>Last.fm scrobbling</span>
+          <span>
+            {!lastFM
+              ? "checking"
+              : !lastFM.configured
+                ? "unavailable"
+                : lastFM.connected
+                  ? lastFM.username || "connected"
+                  : lastFM.pending
+                    ? "pending"
+                    : "off"}
+          </span>
+        </div>
+        {lastFM?.configured ? (
+          <div className="tweak-seg">
+            {lastFM.connected ? (
+              <button type="button" disabled={lastFMBusy} onClick={() => void disconnectLastFM()}>
+                disconnect
+              </button>
+            ) : lastFM.pending ? (
+              <>
+                <button type="button" disabled>
+                  waiting for approval…
+                </button>
+                <button type="button" disabled={lastFMBusy} onClick={() => void connectLastFM()}>
+                  restart
+                </button>
+              </>
+            ) : (
+              <button type="button" disabled={lastFMBusy} onClick={() => void connectLastFM()}>
+                connect Last.fm
+              </button>
+            )}
+          </div>
+        ) : null}
+        {(lastFMError || lastFM?.last_error) && (
+          <div className="mono" style={{ fontSize: 10, color: "var(--danger-fg)" }}>
+            {lastFMError || lastFM?.last_error}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

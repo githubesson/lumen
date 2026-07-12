@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -8,11 +9,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/githubesson/lumen/internal/ingest"
+	"github.com/githubesson/lumen/internal/lastfm"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/storage"
@@ -26,6 +29,9 @@ type Tracks struct {
 	Ingest       *ingest.Service
 	TIDAL        *tidal.Client
 	CoverSignKey []byte
+	LastFM       *lastfm.Service
+	Background   context.Context
+	StartJob     func(func())
 }
 
 // log returns the handler's structured logger, falling back to the slog
@@ -511,6 +517,27 @@ type playReq struct {
 	Completion float32 `json:"completion,omitempty"` // 0.0 - 1.0
 }
 
+type scrobbleReq struct {
+	StartedAt       int64   `json:"started_at"`       // Unix seconds UTC
+	ListenedSeconds float64 `json:"listened_seconds"` // actual playhead seconds
+}
+
+func (h *Tracks) NowPlaying(w http.ResponseWriter, r *http.Request) {
+	u, ok := requireUser(w, r)
+	if !ok {
+		return
+	}
+	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, chi.URLParam(r, "id"), true)
+	if err != nil {
+		http.Error(w, "bad track id", http.StatusBadRequest)
+		return
+	}
+	h.runLastFM(func(ctx context.Context) error {
+		return h.LastFM.NowPlaying(ctx, u.ID, id)
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // RecordPlay bumps play count + history. The client should call this after a
 // meaningful listen (e.g. 30s or 50% of duration).
 func (h *Tracks) RecordPlay(w http.ResponseWriter, r *http.Request) {
@@ -544,6 +571,55 @@ func (h *Tracks) RecordPlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Tracks) Scrobble(w http.ResponseWriter, r *http.Request) {
+	u, ok := requireUser(w, r)
+	if !ok {
+		return
+	}
+	var req scrobbleReq
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	startedAt := time.Unix(req.StartedAt, 0)
+	if req.StartedAt <= 0 || startedAt.After(time.Now().Add(time.Minute)) {
+		http.Error(w, "invalid started_at", http.StatusBadRequest)
+		return
+	}
+	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, chi.URLParam(r, "id"), true)
+	if err != nil {
+		http.Error(w, "bad track id", http.StatusBadRequest)
+		return
+	}
+	h.runLastFM(func(ctx context.Context) error {
+		return h.LastFM.Scrobble(ctx, u.ID, id, startedAt, req.ListenedSeconds)
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Tracks) runLastFM(call func(context.Context) error) {
+	if h.LastFM == nil || h.LastFM.Client == nil || !h.LastFM.Client.Configured() {
+		return
+	}
+	run := func() {
+		ctx := h.Background
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		if err := call(ctx); err != nil &&
+			!errors.Is(err, lastfm.ErrNotConnected) &&
+			!errors.Is(err, lastfm.ErrIneligible) {
+			h.log().Warn("last.fm submission failed", "err", err)
+		}
+	}
+	if h.StartJob != nil {
+		h.StartJob(run)
+		return
+	}
+	go run()
 }
 
 // pathWithin reports whether p lies inside dir (or equals it). Used to keep

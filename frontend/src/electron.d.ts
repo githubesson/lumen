@@ -64,6 +64,9 @@ declare global {
       isElectron: true;
       platform: string;
       openSettings: () => Promise<{ ok: boolean }>;
+      openExternal: (
+        url: string,
+      ) => Promise<{ ok: boolean; error?: string }>;
       getConfig: () => Promise<{
         backendUrl: string;
         discordEnabled: boolean;
