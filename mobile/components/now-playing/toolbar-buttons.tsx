@@ -99,6 +99,30 @@ export function QueueToggleButton({
   );
 }
 
+export function LyricsToggleButton({
+  lyricsOpen,
+  onPress,
+  style,
+}: {
+  lyricsOpen: boolean;
+  onPress: () => void;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const theme = useTheme();
+  return (
+    <GlassIconButton
+      icon={lyricsOpen ? "text.book.closed.fill" : "text.book.closed"}
+      iconSize={23}
+      size={44}
+      hitSlop={14}
+      tintColor={lyricsOpen ? theme.color.fg : theme.color.fgMuted}
+      accessibilityLabel={lyricsOpen ? "Hide lyrics" : "Show lyrics"}
+      onPress={onPress}
+      style={style}
+    />
+  );
+}
+
 function QueueButtonLabel({
   queueOpen,
   shuffle,

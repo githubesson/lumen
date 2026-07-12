@@ -17,7 +17,11 @@ import {
 import { ProgressScrubber } from "./progress-scrubber";
 import { TransportControls } from "./transport-controls";
 import { VolumeRow } from "./volume-row";
-import { AirPlayButton, QueueToggleButton } from "./toolbar-buttons";
+import {
+  AirPlayButton,
+  LyricsToggleButton,
+  QueueToggleButton,
+} from "./toolbar-buttons";
 import { PlaybackDeviceButton } from "../playback-device-button";
 import { TABLET_BREAKPOINT, TABLET_CONTENT_MAX_WIDTH } from "./constants";
 
@@ -28,11 +32,15 @@ import { TABLET_BREAKPOINT, TABLET_CONTENT_MAX_WIDTH } from "./constants";
  */
 export const NowPlayingBottomControls = memo(function NowPlayingBottomControls({
   queueOpen,
+  lyricsOpen,
   onToggleQueueOpen,
+  onToggleLyricsOpen,
   style,
 }: {
   queueOpen: boolean;
+  lyricsOpen: boolean;
   onToggleQueueOpen: () => void;
+  onToggleLyricsOpen: () => void;
   style?: StyleProp<ViewStyle>;
 }) {
   const controls = usePlayerControls();
@@ -46,6 +54,10 @@ export const NowPlayingBottomControls = memo(function NowPlayingBottomControls({
   const toggleQueue = () => {
     void Haptics.selectionAsync();
     onToggleQueueOpen();
+  };
+  const toggleLyrics = () => {
+    void Haptics.selectionAsync();
+    onToggleLyricsOpen();
   };
 
   return (
@@ -75,6 +87,7 @@ export const NowPlayingBottomControls = memo(function NowPlayingBottomControls({
         <View style={[styles.toolbar, styles.toolbarTablet]}>
           <AirPlayButton />
           <PlaybackDeviceButton glass />
+          <LyricsToggleButton lyricsOpen={lyricsOpen} onPress={toggleLyrics} />
           <QueueToggleButton
             queueOpen={queueOpen}
             shuffle={shuffle}
@@ -85,6 +98,7 @@ export const NowPlayingBottomControls = memo(function NowPlayingBottomControls({
         <View style={styles.toolbar}>
           <AirPlayButton />
           <PlaybackDeviceButton glass />
+          <LyricsToggleButton lyricsOpen={lyricsOpen} onPress={toggleLyrics} />
           <QueueToggleButton
             queueOpen={queueOpen}
             shuffle={shuffle}
@@ -116,9 +130,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     alignSelf: "center",
-    width: "72%",
+    width: "88%",
     minWidth: 220,
-    maxWidth: 280,
+    maxWidth: 340,
     marginTop: 44,
     paddingBottom: 4,
   },

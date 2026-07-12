@@ -20,6 +20,7 @@ import {
 import { GlassIconButton } from "../components/now-playing/glass-icon-button";
 import { HeroArtwork } from "../components/now-playing/hero-artwork";
 import { HeroMeta } from "../components/now-playing/hero-meta";
+import { LyricsSection } from "../components/now-playing/lyrics-section";
 import { QueueSection } from "../components/now-playing/queue-section";
 import { SheetGrabber } from "../components/now-playing/sheet-grabber";
 import { useFavorite, useFavoriteActions } from "../context/favorites";
@@ -51,10 +52,12 @@ export default function NowPlayingScreen() {
   const { jumpTo, toggleShuffle, cycleRepeat } = usePlayerControls();
   const { toggle: toggleFavorite } = useFavoriteActions();
   const [queueOpen, setQueueOpen] = useState(() => queueParam === "1");
+  const [lyricsOpen, setLyricsOpen] = useState(false);
   const [bodyHeight, setBodyHeight] = useState(0);
   const [bottomControlsHeight, setBottomControlsHeight] = useState(0);
   const transition = useSharedValue(0);
   const isTabletLayout = Math.min(width, height) >= TABLET_BREAKPOINT;
+  const panelOpen = queueOpen || lyricsOpen;
   const pad = isTabletLayout
     ? Math.max(52, Math.round((width - TABLET_CONTENT_MAX_WIDTH) / 2))
     : 28;
@@ -65,15 +68,16 @@ export default function NowPlayingScreen() {
   useEffect(() => {
     if (queueParam === "1") {
       setQueueOpen(true);
+      setLyricsOpen(false);
     }
   }, [queueParam]);
 
   useEffect(() => {
-    transition.value = withTiming(queueOpen ? 1 : 0, {
+    transition.value = withTiming(panelOpen ? 1 : 0, {
       duration: 240,
       easing: Easing.bezier(0.2, 0.8, 0.2, 1),
     });
-  }, [queueOpen, transition]);
+  }, [panelOpen, transition]);
 
   const measuredBottomControls =
     bottomControlsHeight ||
@@ -358,26 +362,39 @@ export default function NowPlayingScreen() {
           </Animated.View>
         </Animated.View>
 
-        <Animated.View
-          pointerEvents={queueOpen ? "auto" : "none"}
-          style={[
-            styles.queueSection,
-            { bottom: queueBottomInset, left: pad, right: pad },
-            queueSectionStyle,
-          ]}
-        >
-          <QueueSection
-            queueOpen={queueOpen}
-            queue={queue}
-            startIndex={index + 1}
-            artistLabel={track.artist ?? "current queue"}
-            shuffle={shuffle}
-            repeat={repeat}
-            onJumpToPosition={handleQueueJump}
-            onToggleShuffle={handleQueueShuffle}
-            onCycleRepeat={handleQueueRepeat}
-          />
-        </Animated.View>
+        {queueOpen ? (
+          <Animated.View
+            style={[
+              styles.queueSection,
+              { bottom: queueBottomInset, left: pad, right: pad },
+              queueSectionStyle,
+            ]}
+          >
+            <QueueSection
+              queueOpen={queueOpen}
+              queue={queue}
+              startIndex={index + 1}
+              artistLabel={track.artist ?? "current queue"}
+              shuffle={shuffle}
+              repeat={repeat}
+              onJumpToPosition={handleQueueJump}
+              onToggleShuffle={handleQueueShuffle}
+              onCycleRepeat={handleQueueRepeat}
+            />
+          </Animated.View>
+        ) : null}
+
+        {lyricsOpen ? (
+          <Animated.View
+            style={[
+              styles.queueSection,
+              { bottom: queueBottomInset, left: pad, right: pad },
+              queueSectionStyle,
+            ]}
+          >
+            <LyricsSection track={track} />
+          </Animated.View>
+        ) : null}
 
         <View
           onLayout={(event) => {
@@ -388,7 +405,15 @@ export default function NowPlayingScreen() {
         >
           <NowPlayingBottomControls
             queueOpen={queueOpen}
-            onToggleQueueOpen={() => setQueueOpen((value) => !value)}
+            lyricsOpen={lyricsOpen}
+            onToggleQueueOpen={() => {
+              setLyricsOpen(false);
+              setQueueOpen((value) => !value);
+            }}
+            onToggleLyricsOpen={() => {
+              setQueueOpen(false);
+              setLyricsOpen((value) => !value);
+            }}
           />
         </View>
       </View>

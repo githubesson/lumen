@@ -67,6 +67,8 @@ export const qk = {
   albumCoverBust: (id: Id) => ["album-cover-bust", id] as const,
   /** Public/share track fetch used by the share modal (not user-scoped). */
   shareTrack: (id: Id) => ["track", id] as const,
+  lyrics: (id: Id, title?: string, artist?: string, album?: string) =>
+    ["lyrics", id, title ?? "", artist ?? "", album ?? ""] as const,
   playlistCollaborators: (id: Id) =>
     ["playlist-collaborators", id] as const,
 
