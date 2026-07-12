@@ -5,6 +5,7 @@ import IosSpinner from "./IosSpinner";
 interface ParsedLyricLine {
   time: number;
   text: string;
+  section: boolean;
 }
 
 interface ParsedPlainLyricLine {
@@ -16,9 +17,11 @@ function parseSyncedLyrics(text: string): ParsedLyricLine[] {
   const lines: ParsedLyricLine[] = [];
 
   for (const rawLine of text.split("\n")) {
-    const lyricText = rawLine.replace(/\[[^\]]+\]/g, "").trim();
+    const lyricText = rawLine
+      .replace(/\[\d{1,3}:\d{2}(?:\.\d{1,3})?\]/g, "")
+      .trim();
     const timestamps = [
-      ...rawLine.matchAll(/\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g),
+      ...rawLine.matchAll(/\[(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?\]/g),
     ];
 
     for (const stamp of timestamps) {
@@ -29,7 +32,11 @@ function parseSyncedLyrics(text: string): ParsedLyricLine[] {
       const time = minutes * 60 + seconds + fraction;
 
       if (Number.isFinite(time) && lyricText) {
-        lines.push({ time, text: lyricText });
+        lines.push({
+          time,
+          text: lyricText,
+          section: /^\[[^\]]+\]$/.test(lyricText),
+        });
       }
     }
   }
@@ -93,7 +100,7 @@ function activeWordIndexForLine(
   const distributableDuration = Math.max(0, lineDuration - baseDuration);
 
   const weights = words.map((word) => {
-    const cleaned = word.replace(/[^A-Za-z0-9]/g, "");
+    const cleaned = word.replace(/[^\p{L}\p{N}]/gu, "");
     return Math.max(1, cleaned.length || word.length);
   });
   const totalWeight = Math.max(
@@ -179,7 +186,7 @@ function SidebarLyricsView({
   const activeWordIndex = useMemo(() => {
     if (!syncedLyrics?.length || currentIndex < 0) return null;
     const currentLine = syncedLyrics[currentIndex];
-    if (!currentLine) return null;
+    if (!currentLine || currentLine.section) return null;
     return activeWordIndexForLine(
       currentLine,
       syncedLyrics[currentIndex + 1],
@@ -228,9 +235,13 @@ function SidebarLyricsView({
             <p
               key={`${line.time}-${index}`}
               ref={index === currentIndex ? activeLineRef : null}
-              className={"player-lyrics-scroll-line " + state}
+              className={
+                "player-lyrics-scroll-line " +
+                state +
+                (line.section ? " player-lyrics-section" : "")
+              }
             >
-              {index === currentIndex
+              {index === currentIndex && !line.section
                 ? renderLyricWords(line.text, activeWordIndex)
                 : line.text}
             </p>

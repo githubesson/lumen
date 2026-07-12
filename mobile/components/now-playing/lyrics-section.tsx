@@ -9,8 +9,10 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { api, type TrackListItem } from "@music-library/core";
 import Animated, {
+  Easing,
   FadeIn,
   FadeOut,
+  interpolateColor,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -29,6 +31,11 @@ interface PlainLine {
   text: string;
   section: boolean;
 }
+
+const LINE_TRANSITION = {
+  duration: 320,
+  easing: Easing.bezier(0.22, 1, 0.36, 1),
+};
 
 export function LyricsSection({ track }: { track: TrackListItem }) {
   const theme = useTheme();
@@ -88,8 +95,18 @@ export function LyricsSection({ track }: { track: TrackListItem }) {
 
   if (lyricsQuery.isError) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 20 }}>
-        <Text selectable style={{ color: theme.color.fgMuted, textAlign: "center" }}>
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 20,
+        }}
+      >
+        <Text
+          selectable
+          style={{ color: theme.color.fgMuted, textAlign: "center" }}
+        >
           Lyrics unavailable
         </Text>
       </View>
@@ -204,64 +221,140 @@ function SyncedLyricLine({
   const past = useSharedValue(state === "past" ? 1 : 0);
 
   useEffect(() => {
-    active.value = withTiming(state === "active" ? 1 : 0, { duration: 240 });
-    past.value = withTiming(state === "past" ? 1 : 0, { duration: 240 });
+    active.value = withTiming(state === "active" ? 1 : 0, LINE_TRANSITION);
+    past.value = withTiming(state === "past" ? 1 : 0, LINE_TRANSITION);
   }, [active, past, state]);
 
-  const animatedStyle = useAnimatedStyle(() => ({
-    opacity: active.value
-      ? 1
-      : past.value
-        ? 0.3
-        : 0.48,
-    transform: [{ scale: active.value ? 1 : past.value ? 0.975 : 0.99 }],
+  const animatedStyle = useAnimatedStyle(() => {
+    const inactiveOpacity = past.value * 0.28 + (1 - past.value) * 0.42;
+    const inactiveScale = past.value * 0.97 + (1 - past.value) * 0.985;
+    return {
+      opacity: active.value + (1 - active.value) * inactiveOpacity,
+      transform: [{ scale: active.value + (1 - active.value) * inactiveScale }],
+    };
+  });
+  const textStyle = useAnimatedStyle(() => ({
+    color: line.section
+      ? theme.color.accent
+      : interpolateColor(
+          active.value,
+          [0, 1],
+          [theme.color.fgMuted, theme.color.fg],
+        ),
   }));
 
+  const words =
+    state === "active" && !line.section
+      ? line.text.trim().split(/\s+/).filter(Boolean)
+      : null;
+
   return (
-    <Animated.View onLayout={onLayout} style={[{ transformOrigin: "left center" }, animatedStyle]}>
-      <Text
-        selectable
-        style={{
-          color: line.section
-            ? theme.color.accent
-            : state === "active"
-              ? theme.color.fg
-              : theme.color.fgMuted,
-          fontSize: line.section ? 12 : state === "active" ? 19 : 18,
-          fontWeight: line.section ? "700" : state === "active" ? "600" : "500",
-          lineHeight: line.section ? 18 : 27,
-          letterSpacing: line.section ? 0.6 : 0,
-          textTransform: line.section ? "uppercase" : "none",
-        }}
-      >
-        {state === "active" && !line.section
-          ? renderWords(line.text, activeWordIndex, theme.color.fg, theme.color.fgMuted)
-          : line.text}
-      </Text>
+    <Animated.View
+      onLayout={onLayout}
+      style={[{ transformOrigin: "left center" }, animatedStyle]}
+    >
+      {words ? (
+        <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+          {words.map((word, index) => (
+            <AnimatedLyricWord
+              key={`${index}-${word}`}
+              state={
+                activeWordIndex === null || index > activeWordIndex
+                  ? "upcoming"
+                  : index === activeWordIndex
+                    ? "active"
+                    : "past"
+              }
+              trailingSpace={index < words.length - 1}
+            >
+              {word}
+            </AnimatedLyricWord>
+          ))}
+        </View>
+      ) : (
+        <Animated.Text
+          selectable
+          style={[
+            {
+              fontSize: line.section ? 12 : state === "active" ? 19 : 18,
+              fontWeight: line.section
+                ? "700"
+                : state === "active"
+                  ? "500"
+                  : "400",
+              lineHeight: line.section ? 18 : 27,
+              letterSpacing: line.section ? 0.6 : 0,
+              textTransform: line.section ? "uppercase" : "none",
+            },
+            textStyle,
+          ]}
+        >
+          {line.text}
+        </Animated.Text>
+      )}
     </Animated.View>
   );
 }
 
-function renderWords(text: string, activeIndex: number | null, activeColor: string, mutedColor: string) {
-  const tokens = text.split(/(\s+)/);
-  let word = 0;
-  return tokens.map((token, index) => {
-    if (/^\s+$/.test(token)) return token;
-    const current = word++;
-    const color =
-      activeIndex === null
-        ? mutedColor
-        : current < activeIndex
-          ? `${activeColor}B8`
-          : current === activeIndex
-            ? activeColor
-            : `${activeColor}70`;
-    return (
-      <Text key={`${index}-${token}`} style={{ color, fontWeight: current === activeIndex ? "700" : "600" }}>
-        {token}
-      </Text>
+function AnimatedLyricWord({
+  children,
+  state,
+  trailingSpace,
+}: {
+  children: string;
+  state: "past" | "active" | "upcoming";
+  trailingSpace: boolean;
+}) {
+  const theme = useTheme();
+  const progress = useSharedValue(
+    state === "active" ? 1 : state === "past" ? 2 : 0,
+  );
+
+  useEffect(() => {
+    progress.value = withTiming(
+      state === "active" ? 1 : state === "past" ? 2 : 0,
+      {
+        duration: 220,
+        easing: Easing.bezier(0.22, 1, 0.36, 1),
+      },
     );
+  }, [progress, state]);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    const distanceFromActive = Math.abs(progress.value - 1);
+    const activeAmount = Math.max(0, 1 - distanceFromActive);
+    const completedAmount = Math.max(0, progress.value - 1);
+    const opacity = 0.72 + activeAmount * 0.28 + completedAmount * 0.16;
+
+    return {
+      color: interpolateColor(
+        progress.value,
+        [0, 1, 2],
+        [`${theme.color.fg}61`, theme.color.fg, `${theme.color.fg}AE`],
+      ),
+      opacity,
+      transform: [{ scale: 1 + activeAmount * 0.04 }],
+      textShadowColor: `${theme.color.fg}29`,
+      textShadowOffset: { width: 0, height: 0 },
+      textShadowRadius: activeAmount * 10,
+    };
   });
+
+  return (
+    <Animated.Text
+      selectable
+      style={[
+        {
+          fontSize: 19,
+          lineHeight: 27,
+          fontWeight: state === "active" ? "600" : "500",
+        },
+        animatedStyle,
+      ]}
+    >
+      {trailingSpace ? `${children} ` : children}
+    </Animated.Text>
+  );
 }
 
 function parseSyncedLyrics(text?: string | null): SyncedLine[] {
@@ -271,8 +364,13 @@ function parseSyncedLyrics(text?: string | null): SyncedLine[] {
     const lyricText = rawLine
       .replace(/\[\d{1,3}:\d{2}(?:\.\d{1,3})?\]/g, "")
       .trim();
-    for (const stamp of rawLine.matchAll(/\[(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?\]/g)) {
-      const time = Number(stamp[1]) * 60 + Number(stamp[2]) + Number(`0.${(stamp[3] ?? "0").padEnd(3, "0")}`);
+    for (const stamp of rawLine.matchAll(
+      /\[(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?\]/g,
+    )) {
+      const time =
+        Number(stamp[1]) * 60 +
+        Number(stamp[2]) +
+        Number(`0.${(stamp[3] ?? "0").padEnd(3, "0")}`);
       if (Number.isFinite(time) && lyricText) {
         lines.push({
           time,
@@ -311,15 +409,31 @@ function wordIndexForLine(
 ): number | null {
   const words = line.text.trim().split(/\s+/).filter(Boolean);
   if (!words.length) return null;
-  const estimatedTail = Math.min(8, Math.max(1.2, line.text.replace(/\s+/g, "").length * 0.085));
-  const end = next ? Math.max(next.time, line.time + 0.2) : Math.max(Math.min(duration, line.time + estimatedTail), line.time + 0.2);
+  const estimatedTail = Math.min(
+    8,
+    Math.max(1.2, line.text.replace(/\s+/g, "").length * 0.085),
+  );
+  const end = next
+    ? Math.max(next.time, line.time + 0.2)
+    : Math.max(Math.min(duration, line.time + estimatedTail), line.time + 0.2);
   const lineDuration = Math.max(0.2, end - line.time);
   const elapsed = Math.min(lineDuration, Math.max(0, currentTime - line.time));
-  const weights = words.map((word) => Math.max(1, word.replace(/[^\p{L}\p{N}]/gu, "").length || word.length));
-  const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+  const weights = words.map((word) =>
+    Math.max(1, word.replace(/[^\p{L}\p{N}]/gu, "").length || word.length),
+  );
+  const totalWeight = Math.max(
+    1,
+    weights.reduce((sum, value) => sum + value, 0),
+  );
+  const minSlice = Math.min(0.14, lineDuration / words.length);
+  const distributableDuration = Math.max(
+    0,
+    lineDuration - minSlice * words.length,
+  );
   let cumulative = 0;
   for (let index = 0; index < words.length; index += 1) {
-    cumulative += (weights[index]! / totalWeight) * lineDuration;
+    cumulative +=
+      minSlice + (weights[index]! / totalWeight) * distributableDuration;
     if (elapsed <= cumulative || index === words.length - 1) return index;
   }
   return words.length - 1;

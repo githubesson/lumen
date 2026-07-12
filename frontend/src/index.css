@@ -4671,7 +4671,7 @@ html[data-mini-player] .window-controls {
   filter: none;
 }
 
-.player-lyrics-scroll-plain .player-lyrics-section {
+.player-lyrics-scroll .player-lyrics-section {
   margin: 6px 0 12px;
   color: color-mix(in oklch, var(--accent) 72%, var(--fg));
   font-size: 11px;
