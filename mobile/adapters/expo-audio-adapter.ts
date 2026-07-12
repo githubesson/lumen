@@ -4,6 +4,7 @@ import {
   preload,
   type AudioLockScreenOptions,
   type AudioMetadata,
+  type AudioStatus,
 } from "expo-audio";
 import { useReleasingSharedObject } from "expo-modules-core";
 import AudioModule from "expo-audio/build/AudioModule";
@@ -54,6 +55,9 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
     generation: number;
   } | null>(null);
   const prepareGenerationRef = useRef(0);
+  const pendingPreparedPlaybackRef = useRef<{ shouldPlay: boolean } | null>(
+    null,
+  );
   const prevStatusRef = useRef<{
     isLoaded: boolean;
     playing: boolean;
@@ -71,6 +75,16 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
     if (!set) return;
     for (const fn of set) fn();
   }, []);
+
+  const startPreparedPlaybackIfReady = useCallback(
+    (status: AudioStatus) => {
+      const pending = pendingPreparedPlaybackRef.current;
+      if (!pending || !status.isLoaded || status.didJustFinish) return;
+      pendingPreparedPlaybackRef.current = null;
+      if (pending.shouldPlay) player.play();
+    },
+    [player],
+  );
 
   // Subscribe directly to native player events so the app doesn't re-render on
   // every playback tick.
@@ -90,6 +104,8 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       const didJustFinish = status.didJustFinish;
       const duration = status.duration;
 
+      startPreparedPlaybackIfReady(status);
+
       if (!prev.isLoaded && isLoaded) {
         dispatch("loadedmetadata");
       } else if (duration > 0 && prev.duration === 0) {
@@ -107,11 +123,12 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
     return () => {
       subscription.remove();
     };
-  }, [dispatch, player]);
+  }, [dispatch, player, startPreparedPlaybackIfReady]);
 
   const adapter = useMemo<ExpoAudioAdapter>(
     () => ({
       load(url) {
+        pendingPreparedPlaybackRef.current = null;
         const prepared = preparedRef.current;
         if (prepared) {
           preparedRef.current = null;
@@ -150,31 +167,50 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         preparedRef.current = null;
         prepareGenerationRef.current += 1;
         try {
+          // A preloaded AVPlayerItem can still report loading briefly while it
+          // is moved onto the active player. At a natural track end the old
+          // player is already paused, so expo-audio's replace() deliberately
+          // does not auto-resume it. Defer play until the replacement emits a
+          // loaded status; an immediate play() can be consumed by the ended
+          // item and leave the shared timeline running over silent audio.
+          pendingPreparedPlaybackRef.current = {
+            shouldPlay: true,
+          };
           player.replace({ uri: url });
           prevStatusRef.current.isLoaded = false;
           prevStatusRef.current.duration = 0;
           prevStatusRef.current.didJustFinish = false;
-          player.play();
+          startPreparedPlaybackIfReady(player.currentStatus);
           // replace() has consumed the native preload; Android/web retain the
           // cache entry until explicitly cleared, while iOS treats this as a
           // harmless no-op after consumption.
           void clearPreloadedSource(url).catch(() => {});
           return true;
         } catch {
+          pendingPreparedPlaybackRef.current = null;
           void clearPreloadedSource(url).catch(() => {});
           return false;
         }
       },
       clearPrepared() {
+        pendingPreparedPlaybackRef.current = null;
         const prepared = preparedRef.current;
         preparedRef.current = null;
         prepareGenerationRef.current += 1;
         if (prepared) void clearPreloadedSource(prepared.url).catch(() => {});
       },
       async play() {
+        const pending = pendingPreparedPlaybackRef.current;
+        if (pending) {
+          pending.shouldPlay = true;
+          startPreparedPlaybackIfReady(player.currentStatus);
+          return;
+        }
         player.play();
       },
       pause() {
+        const pending = pendingPreparedPlaybackRef.current;
+        if (pending) pending.shouldPlay = false;
         player.pause();
       },
       seek(seconds) {
@@ -218,6 +254,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         };
       },
       dispose() {
+        pendingPreparedPlaybackRef.current = null;
         const prepared = preparedRef.current;
         preparedRef.current = null;
         prepareGenerationRef.current += 1;
@@ -225,7 +262,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         listenersRef.current.clear();
       },
     }),
-    [dispatch, player],
+    [dispatch, player, startPreparedPlaybackIfReady],
   );
 
   return adapter;
