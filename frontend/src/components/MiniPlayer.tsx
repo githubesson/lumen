@@ -9,6 +9,7 @@ import {
   ArrowsPointingOutIcon,
   ArrowsRightLeftIcon,
   BackwardIcon,
+  BookOpenIcon,
   ComputerDesktopIcon,
   ForwardIcon,
   PauseIcon,
@@ -23,6 +24,7 @@ import CoverArt from "./CoverArt";
 import { useTrackContextMenu } from "./TrackContextMenu";
 import { FavoriteButton } from "./TrackRowCells";
 import { useFavorites } from "../context/Favorites";
+import { useLyricsPanel } from "../context/LyricsPanel";
 import {
   usePlayer,
   usePlayerTime,
@@ -53,6 +55,7 @@ export default function MiniPlayer() {
     toggleShuffle,
     cycleRepeat,
   } = usePlayer();
+  const { open: lyricsOpen, setOpen: setLyricsOpen } = useLyricsPanel();
   const {
     targetDevice,
     commandPending,
@@ -107,16 +110,16 @@ export default function MiniPlayer() {
     ? displayText(fh6Track?.title, "Waiting for FH6")
     : displayText(current?.title, "Nothing playing");
   const displayArtist = isRemoteMode
-    ? [remoteActivity?.artist, remoteActivity?.album].filter(Boolean).join(" \u00b7 ") ||
+    ? [remoteActivity?.artist, remoteActivity?.album].filter(Boolean).join(" · ") ||
       targetDevice.deviceName
     : isFH6Mode
-    ? [fh6Track?.artist, fh6Track?.album].filter(Boolean).join(" \u00b7 ") ||
-      "Lumen Radio"
-    : current
-      ? `${displayText(current.artist, "\u2014")}${
-          current.album_title ? ` \u00b7 ${displayText(current.album_title)}` : ""
-        }`
-      : "\u2014";
+      ? [fh6Track?.artist, fh6Track?.album].filter(Boolean).join(" · ") ||
+        "Lumen Radio"
+      : current
+        ? `${displayText(current.artist, "—")}${
+            current.album_title ? ` · ${displayText(current.album_title)}` : ""
+          }`
+        : "—";
 
   const fav = displayCurrent ? isFavorite(displayCurrent.id) : false;
   const coverSrc = displayCurrent ? trackCoverUrl(displayCurrent) : null;
@@ -147,6 +150,12 @@ export default function MiniPlayer() {
     };
   }, [miniPlayerMode]);
 
+  useEffect(() => {
+    if (miniPlayerMode && lyricsOpen) {
+      setLyricsOpen(false);
+    }
+  }, [miniPlayerMode, lyricsOpen, setLyricsOpen]);
+
   const toggleMiniPlayerMode = async () => {
     if (!canSetMiniPlayer) return;
     const next = !miniPlayerMode;
@@ -166,7 +175,6 @@ export default function MiniPlayer() {
         data-playing={displayPlaying ? "true" : "false"}
       >
         {trackCtxMenu}
-      {/* Now playing */}
       <div
         className="np"
         onContextMenu={
@@ -177,7 +185,14 @@ export default function MiniPlayer() {
           className="np-art"
           src={coverSrc}
           seed={displayCurrent?.album_id ?? displayCurrent?.id ?? "fh6-radio"}
-          label={isFH6Mode ? "Lumen Radio" : displayText(displayCurrent?.album_title || displayCurrent?.title, "\u00b7")}
+          label={
+            isFH6Mode
+              ? "Lumen Radio"
+              : displayText(
+                  displayCurrent?.album_title || displayCurrent?.title,
+                  "·",
+                )
+          }
           forcePlaceholder={!displayCurrent}
         />
         <div className="np-text">
@@ -186,7 +201,6 @@ export default function MiniPlayer() {
         </div>
       </div>
 
-      {/* Transport */}
       <div className="transport">
         <div className="transport-row">
           <button
@@ -343,14 +357,15 @@ export default function MiniPlayer() {
                   currentTime: (fh6Track?.position_ms ?? 0) / 1000,
                   duration: (fh6Track?.duration_ms ?? 0) / 1000,
                   onSeek: (seconds) =>
-                    void fh6Transport("seek", { position_ms: Math.round(seconds * 1000) }),
+                    void fh6Transport("seek", {
+                      position_ms: Math.round(seconds * 1000),
+                    }),
                 }
               : undefined
           }
         />
       </div>
 
-      {/* Utility */}
       <div className="utility">
         <button
           ref={deviceBtnRef}
@@ -365,8 +380,8 @@ export default function MiniPlayer() {
             commandError
               ? commandError
               : targetDevice
-              ? `Controlling ${targetDevice.deviceName}`
-              : "Choose playback device"
+                ? `Controlling ${targetDevice.deviceName}`
+                : "Choose playback device"
           }
           aria-label={
             targetDevice
@@ -394,6 +409,17 @@ export default function MiniPlayer() {
           disabled={!displayCurrent || isRemoteMode}
           onToggle={() => displayCurrent && void toggleFavorite(displayCurrent.id)}
         />
+        <button
+          type="button"
+          className={"t-btn" + (lyricsOpen ? " active" : "")}
+          title="Lyrics"
+          aria-label="Toggle lyrics panel"
+          aria-pressed={lyricsOpen}
+          disabled={!displayCurrent}
+          onClick={() => setLyricsOpen(!lyricsOpen)}
+        >
+          <BookOpenIcon className="size-3.5" />
+        </button>
         <button
           ref={queueBtnRef}
           type="button"
@@ -533,7 +559,8 @@ function ProgressBar({
     : currentTime;
   const shownDuration = override?.duration ?? duration;
   const progress = shownDuration > 0 ? shownCurrentTime / shownDuration : 0;
-  const remainingTime = shownDuration > 0 ? Math.max(0, shownDuration - shownCurrentTime) : 0;
+  const remainingTime =
+    shownDuration > 0 ? Math.max(0, shownDuration - shownCurrentTime) : 0;
 
   return (
     <div className="progress">

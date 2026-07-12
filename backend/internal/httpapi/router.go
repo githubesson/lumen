@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"time"
+	"os"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -140,6 +141,8 @@ func NewRouter(d Deps) http.Handler {
 		ShareSignKey: d.CoverSignKey,
 	}
 
+	lyricsH := &handlers.Lyrics{BaseURL: os.Getenv("LRCLIB_BASE")}
+
 	// Public share landing page — what Discord / chat apps scrape to build
 	// a link preview card. Sits outside /api so the URL that users actually
 	// copy into chat looks clean (/share/track/{id}?t=…&sig=…).
@@ -201,6 +204,7 @@ func NewRouter(d Deps) http.Handler {
 
 			ordinary.Get("/tracks", tracksH.List)
 			ordinary.Get("/search", searchH.Search)
+			ordinary.With(appmw.RateLimitByIP(60, time.Minute)).Get("/lyrics", lyricsH.Handle)
 			ordinary.Get("/tidal/albums/{id}", tidalH.Album)
 			ordinary.Get("/tracks/{id}", tracksH.Get)
 			ordinary.Delete("/tracks/{id}", tracksH.Delete)

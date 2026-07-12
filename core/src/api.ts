@@ -702,6 +702,28 @@ export const api = {
 
   tidalStatus: (options: RequestOptions = {}) =>
     request<TidalStatus>("/api/admin/tidal/status", options),
+
+  // Lyrics API (lrclib proxy)
+  searchLyrics: (query: string, options: RequestOptions = {}) =>
+    request<LyricsResult[]>(
+      `/api/lyrics?q=${encodeURIComponent(query)}`,
+      options,
+    ),
+  getLyrics: (params: {
+    track_name: string;
+    artist_name?: string;
+    album_name?: string;
+    duration?: number;
+  }, options: RequestOptions = {}) =>
+    request<LyricsResult>(
+      `/api/lyrics${buildQuery({
+        track_name: params.track_name,
+        artist_name: params.artist_name,
+        album_name: params.album_name,
+        duration: params.duration,
+      })}`,
+      options,
+    ),
 };
 
 export interface TrackListItem {
@@ -1349,6 +1371,40 @@ export interface ReplayData {
   activity: ReplayActivityBucket[];
   bucket: ReplayBucket;
   available_years: number[];
+}
+
+// ── Lyrics (lrclib proxy) ─────────────────────────────────────────────────────
+
+/**
+ * Synced (LRC) or plain text lyrics from lrclib.net. The "syncedLyrics" field
+ * contains the LRC format with timestamps like [01:23.45]; "plainLyrics" is the
+ * text without timing. One of the two is always present; instrumental tracks
+ * return "instrumental" in plainLyrics.
+ */
+export interface LyricsResult {
+  id: number;
+  trackId?: number;
+  name?: string;
+  /** Synced lyrics in LRC format (e.g. "[01:23.45] Hello world"). */
+  syncedLyrics?: string | null;
+  /** Plain text lyrics without timestamps. For instrumental tracks, check
+   *  the `instrumental` field instead of this string. */
+  plainLyrics?: string | null;
+  /** The language of the lyrics (e.g. "en", "ja", "ko"). May be null. */
+  lang?: string | null;
+  isrc?: string | null;
+  spotifyId?: string | null;
+  releaseDate?: string | null;
+  duration?: number | null;
+  /** True if the track has no lyrics (instrumental). */
+  instrumental?: boolean;
+  explicit?: boolean;
+  /** Track metadata from lrclib's own database. */
+  trackName: string;
+  artistName: string;
+  albumName?: string | null;
+  /** URL to a lyrics file (if available). */
+  lyricsfile?: string | null;
 }
 
 /**
