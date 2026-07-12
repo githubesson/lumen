@@ -4611,7 +4611,7 @@ html[data-mini-player] .window-controls {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 20vh 18px 24vh;
+  padding: clamp(48px, 10vh, 120px) 18px 24vh;
   scroll-behavior: smooth;
   scroll-padding: 42% 0;
   scrollbar-width: none;
@@ -4623,6 +4623,10 @@ html[data-mini-player] .window-controls {
     black 88%,
     transparent
   );
+}
+
+.player-lyrics-scroll-plain {
+  padding-top: 36px;
 }
 
 .player-lyrics-scroll-line {
@@ -4665,6 +4669,16 @@ html[data-mini-player] .window-controls {
   color: var(--fg-muted);
   transform: none;
   filter: none;
+}
+
+.player-lyrics-scroll-plain .player-lyrics-section {
+  margin: 6px 0 12px;
+  color: color-mix(in oklch, var(--accent) 72%, var(--fg));
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
 }
 
 .player-lyrics-scroll-line .player-lyric-word {

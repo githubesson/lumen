@@ -3,8 +3,8 @@ package httpapi
 import (
 	"context"
 	"net/http"
-	"time"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -141,7 +141,11 @@ func NewRouter(d Deps) http.Handler {
 		ShareSignKey: d.CoverSignKey,
 	}
 
-	lyricsH := &handlers.Lyrics{BaseURL: os.Getenv("LRCLIB_BASE")}
+	lyricsH := &handlers.Lyrics{
+		BaseURL:        os.Getenv("LRCLIB_BASE"),
+		GeniusBaseURL:  os.Getenv("GENIUS_BASE"),
+		GeniusProxyURL: os.Getenv("GENIUS_PROXY_URL"),
+	}
 
 	// Public share landing page — what Discord / chat apps scrape to build
 	// a link preview card. Sits outside /api so the URL that users actually

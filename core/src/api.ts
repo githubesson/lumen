@@ -703,7 +703,7 @@ export const api = {
   tidalStatus: (options: RequestOptions = {}) =>
     request<TidalStatus>("/api/admin/tidal/status", options),
 
-  // Lyrics API (lrclib proxy)
+  // Lyrics API (fastest valid result from the configured providers)
   searchLyrics: (query: string, options: RequestOptions = {}) =>
     request<LyricsResult[]>(
       `/api/lyrics?q=${encodeURIComponent(query)}`,
@@ -1373,10 +1373,10 @@ export interface ReplayData {
   available_years: number[];
 }
 
-// ── Lyrics (lrclib proxy) ─────────────────────────────────────────────────────
+// ── Lyrics ────────────────────────────────────────────────────────────────────
 
 /**
- * Synced (LRC) or plain text lyrics from lrclib.net. The "syncedLyrics" field
+ * Synced (LRC) or plain text lyrics. The "syncedLyrics" field
  * contains the LRC format with timestamps like [01:23.45]; "plainLyrics" is the
  * text without timing. One of the two is always present; instrumental tracks
  * return "instrumental" in plainLyrics.
@@ -1399,7 +1399,7 @@ export interface LyricsResult {
   /** True if the track has no lyrics (instrumental). */
   instrumental?: boolean;
   explicit?: boolean;
-  /** Track metadata from lrclib's own database. */
+  /** Track metadata supplied by the winning lyrics provider. */
   trackName: string;
   artistName: string;
   albumName?: string | null;

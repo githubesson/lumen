@@ -7,6 +7,11 @@ interface ParsedLyricLine {
   text: string;
 }
 
+interface ParsedPlainLyricLine {
+  text: string;
+  section: boolean;
+}
+
 function parseSyncedLyrics(text: string): ParsedLyricLine[] {
   const lines: ParsedLyricLine[] = [];
 
@@ -32,12 +37,16 @@ function parseSyncedLyrics(text: string): ParsedLyricLine[] {
   return lines.sort((a, b) => a.time - b.time);
 }
 
-function parsePlainLyrics(text?: string): string[] {
+function parsePlainLyrics(text?: string): ParsedPlainLyricLine[] {
   if (!text) return [];
   return text
     .split("\n")
-    .map((line) => line.replace(/^\[[^\]]+\]\s*/, "").trim())
-    .filter(Boolean);
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => ({
+      text: line,
+      section: /^\[[^\]]+\]$/.test(line),
+    }));
 }
 
 function activeLineIndex(
@@ -235,8 +244,14 @@ function SidebarLyricsView({
     return (
       <div className="player-lyrics-scroll player-lyrics-scroll-plain">
         {plainLines.map((line, index) => (
-          <p key={index} className="player-lyrics-scroll-line">
-            {line}
+          <p
+            key={index}
+            className={
+              "player-lyrics-scroll-line" +
+              (line.section ? " player-lyrics-section" : "")
+            }
+          >
+            {line.text}
           </p>
         ))}
       </div>
