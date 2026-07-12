@@ -8,25 +8,36 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	fhttp "github.com/bogdanfinn/fhttp"
 	tlsclient "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
 	"golang.org/x/net/html"
+	"golang.org/x/text/unicode/norm"
 )
 
 const (
 	defaultLRCLibBase = "https://lrclib.net"
 	defaultGeniusBase = "https://genius.com"
 	maxLyricsBody     = 4 << 20
+	lrclibMaxAttempts = 3
 	geniusUserAgent   = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
 )
 
 var errLyricsNotFound = errors.New("lyrics not found")
+
+var versionTagPattern = regexp.MustCompile(`(?i)[\[(]\s*(?:v(?:er(?:sion)?)?\s*)?\d+\s*[\])]`)
+var lrcTimestampPattern = regexp.MustCompile(`\[\d{1,3}:\d{2}(?:\.\d{1,3})?\]`)
+var featuredTitleSuffixPattern = regexp.MustCompile(`(?i)\s*[\[(]\s*(?:feat(?:uring)?\.?|ft\.?)\s+.*(?:[\])])?\s*$`)
+var trailingTitleQualifierPattern = regexp.MustCompile(`\s*[\[(][^\])]+[\])]\s*$`)
 
 // Lyrics races LRCLIB against Genius and returns the first usable result.
 // Genius is searched through its public web API, then its first matching song
@@ -77,6 +88,23 @@ type geniusLyricsResult struct {
 	ArtistName   string  `json:"artistName"`
 }
 
+type geniusSong struct {
+	ID          int64
+	Title       string
+	ArtistNames string
+	URL         string
+}
+
+type lrclibCandidate struct {
+	TrackName    string  `json:"trackName"`
+	ArtistName   string  `json:"artistName"`
+	AlbumName    string  `json:"albumName"`
+	Duration     float64 `json:"duration"`
+	SyncedLyrics *string `json:"syncedLyrics"`
+	PlainLyrics  *string `json:"plainLyrics"`
+	Instrumental bool    `json:"instrumental"`
+}
+
 func (h *Lyrics) lrclibBaseURL() string {
 	if h.BaseURL != "" {
 		return strings.TrimRight(h.BaseURL, "/")
@@ -95,16 +123,16 @@ func (h *Lyrics) httpClient() *http.Client {
 	if h.Client != nil {
 		return h.Client
 	}
-	return &http.Client{Timeout: 10 * time.Second}
+	return &http.Client{Timeout: 15 * time.Second}
 }
 
 func (h *Lyrics) isSearch(q url.Values) bool {
 	return q.Has("q") && !q.Has("track_name") && !q.Has("duration")
 }
 
-// Handle starts both providers together and returns the first response that
-// actually contains lyrics. A provider error or empty result does not prevent
-// the other provider from winning.
+// Handle starts both providers together, but gives LRCLIB priority because it
+// can provide synced lyrics. A completed Genius result is held until LRCLIB
+// either returns usable lyrics or definitively fails.
 func (h *Lyrics) Handle(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -114,24 +142,33 @@ func (h *Lyrics) Handle(w http.ResponseWriter, r *http.Request) {
 	go func() { results <- h.fetchGenius(ctx, r.URL.Query()) }()
 
 	var failures []error
+	var geniusFallback *lyricsResponse
+	lrclibDone := false
 	for range 2 {
 		result := <-results
 		if result.err != nil {
 			if !errors.Is(result.err, context.Canceled) {
 				failures = append(failures, fmt.Errorf("%s: %w", result.provider, result.err))
 			}
+			if result.provider == "lrclib" {
+				lrclibDone = true
+				if geniusFallback != nil {
+					writeLyricsResponse(w, cancel, *geniusFallback)
+					return
+				}
+			}
 			continue
 		}
 
-		cancel()
-		copyLyricsHeaders(w.Header(), result.header)
-		w.Header().Set("X-Lyrics-Provider", result.provider)
-		w.WriteHeader(result.status)
-		if _, err := w.Write(result.body); err != nil {
-			slog.Warn("lyrics proxy: response write failed", "provider", result.provider, "err", err)
+		if result.provider == "lrclib" {
+			writeLyricsResponse(w, cancel, result)
+			return
 		}
-		slog.Debug("lyrics proxy: request completed", "provider", result.provider, "status", result.status, "bytes", len(result.body))
-		return
+		if lrclibDone {
+			writeLyricsResponse(w, cancel, result)
+			return
+		}
+		geniusFallback = &result
 	}
 
 	if len(failures) > 0 {
@@ -140,40 +177,55 @@ func (h *Lyrics) Handle(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "lyrics_not_found", http.StatusNotFound)
 }
 
+func writeLyricsResponse(w http.ResponseWriter, cancel context.CancelFunc, result lyricsResponse) {
+	cancel()
+	copyLyricsHeaders(w.Header(), result.header)
+	w.Header().Set("X-Lyrics-Provider", result.provider)
+	w.WriteHeader(result.status)
+	if _, err := w.Write(result.body); err != nil {
+		slog.Warn("lyrics proxy: response write failed", "provider", result.provider, "err", err)
+	}
+	slog.Debug("lyrics proxy: request completed", "provider", result.provider, "status", result.status, "bytes", len(result.body))
+}
+
 func (h *Lyrics) fetchLRCLib(ctx context.Context, query url.Values) lyricsResponse {
 	result := lyricsResponse{provider: "lrclib"}
-	endpoint := "/api/search"
-	if !h.isSearch(query) {
-		endpoint = "/api/get"
-	}
 
 	values := url.Values{}
-	for _, key := range []string{"track_name", "artist_name", "album_name", "duration", "q"} {
+	// Album is deliberately omitted from the upstream search because deluxe,
+	// remastered, and regional releases frequently use different album names.
+	// It remains available in query for local candidate tie-breaking below.
+	for _, key := range []string{"track_name", "artist_name", "q"} {
 		if value := query.Get(key); value != "" {
+			if key == "track_name" || key == "artist_name" || key == "q" {
+				value = cleanLyricsSearchTerm(value)
+			}
+			if value == "" {
+				continue
+			}
 			values.Set(key, value)
 		}
 	}
-	target := h.lrclibBaseURL() + endpoint
+	target := h.lrclibBaseURL() + "/api/search"
 	if len(values) > 0 {
 		target += "?" + values.Encode()
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-	if err != nil {
-		result.err = err
-		return result
+	var resp *http.Response
+	var body []byte
+	var err error
+	for attempt := 1; attempt <= lrclibMaxAttempts; attempt++ {
+		resp, body, err = h.fetchLRCLibAttempt(ctx, target)
+		if err == nil && !retryableLRCLibStatus(resp.StatusCode) {
+			break
+		}
+		if attempt == lrclibMaxAttempts || ctx.Err() != nil {
+			break
+		}
+		if !waitForRetry(ctx, time.Duration(attempt)*100*time.Millisecond) {
+			break
+		}
 	}
-	req.Header.Set("User-Agent", "wuby.run (lyrics-proxy)")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := h.httpClient().Do(req)
-	if err != nil {
-		result.err = err
-		return result
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxLyricsBody+1))
 	if err != nil {
 		result.err = err
 		return result
@@ -182,15 +234,123 @@ func (h *Lyrics) fetchLRCLib(ctx context.Context, query url.Values) lyricsRespon
 		result.err = errors.New("response exceeds size limit")
 		return result
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !validLRCLibBody(body, h.isSearch(query)) {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		result.err = errLyricsNotFound
 		return result
+	}
+	if h.isSearch(query) {
+		if !validLRCLibBody(body, true) {
+			result.err = errLyricsNotFound
+			return result
+		}
+	} else {
+		selected, ok := selectLRCLibCandidate(body, query)
+		if !ok {
+			result.err = errLyricsNotFound
+			return result
+		}
+		body = selected
 	}
 
 	result.status = resp.StatusCode
 	result.header = resp.Header.Clone()
 	result.body = body
 	return result
+}
+
+func (h *Lyrics) fetchLRCLibAttempt(ctx context.Context, target string) (*http.Response, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("User-Agent", "wuby.run (lyrics-proxy)")
+	req.Header.Set("Accept", "application/json")
+	resp, err := h.httpClient().Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxLyricsBody+1))
+	if err != nil {
+		return nil, nil, err
+	}
+	return resp, body, nil
+}
+
+func retryableLRCLibStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status >= 500
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func selectLRCLibCandidate(body []byte, query url.Values) ([]byte, bool) {
+	var rawCandidates []json.RawMessage
+	if json.Unmarshal(body, &rawCandidates) != nil || len(rawCandidates) == 0 {
+		return nil, false
+	}
+
+	requestedTitle := comparableLyricsTitle(query.Get("track_name"))
+	requestedArtist := comparableLyricsMetadata(query.Get("artist_name"))
+	requestedAlbum := comparableLyricsMetadata(query.Get("album_name"))
+	requestedDuration, _ := strconv.ParseFloat(query.Get("duration"), 64)
+	bestIndex, bestScore := -1, -1
+	for index, raw := range rawCandidates {
+		var candidate lrclibCandidate
+		if json.Unmarshal(raw, &candidate) != nil {
+			continue
+		}
+		if requestedTitle != "" && comparableLyricsTitle(candidate.TrackName) != requestedTitle {
+			continue
+		}
+		if requestedArtist != "" {
+			actualArtist := comparableLyricsMetadata(candidate.ArtistName)
+			if !strings.Contains(actualArtist, requestedArtist) && !strings.Contains(requestedArtist, actualArtist) {
+				continue
+			}
+		}
+
+		score := 0
+		synced := ""
+		if candidate.SyncedLyrics != nil {
+			synced = strings.TrimSpace(*candidate.SyncedLyrics)
+		}
+		timestamps := lrcTimestampPattern.FindAllStringIndex(synced, -1)
+		switch {
+		case len(timestamps) > 0:
+			score = 3000 + min(len(timestamps), 100)
+		case synced != "":
+			score = 2000
+		case nonEmpty(candidate.PlainLyrics):
+			score = 1000
+		case candidate.Instrumental:
+			score = 500
+		default:
+			continue
+		}
+		if requestedAlbum != "" && comparableLyricsMetadata(candidate.AlbumName) == requestedAlbum {
+			score += 200
+		}
+		if requestedDuration > 0 && candidate.Duration > 0 {
+			difference := math.Abs(candidate.Duration - requestedDuration)
+			score += max(0, 100-int(math.Round(difference))*10)
+		}
+		if score > bestScore {
+			bestIndex, bestScore = index, score
+		}
+	}
+	if bestIndex < 0 {
+		return nil, false
+	}
+	return rawCandidates[bestIndex], true
 }
 
 func validLRCLibBody(body []byte, search bool) bool {
@@ -225,9 +385,11 @@ func nonEmpty(value *string) bool {
 
 func (h *Lyrics) fetchGenius(ctx context.Context, query url.Values) lyricsResponse {
 	result := lyricsResponse{provider: "genius"}
-	searchQuery := strings.TrimSpace(query.Get("q"))
+	requestedTitle := cleanLyricsSearchTerm(query.Get("track_name"))
+	requestedArtist := cleanLyricsSearchTerm(query.Get("artist_name"))
+	searchQuery := cleanLyricsSearchTerm(query.Get("q"))
 	if searchQuery == "" {
-		searchQuery = strings.TrimSpace(query.Get("track_name") + " " + query.Get("artist_name"))
+		searchQuery = strings.TrimSpace(requestedTitle + " " + requestedArtist)
 	}
 	if searchQuery == "" {
 		result.err = errLyricsNotFound
@@ -249,24 +411,28 @@ func (h *Lyrics) fetchGenius(ctx context.Context, query url.Values) lyricsRespon
 		return result
 	}
 
-	var song struct {
-		ID          int64
-		Title       string
-		ArtistNames string
-		URL         string
-	}
+	var song geniusSong
+	bestMatchScore := 0
 	for _, section := range search.Response.Sections {
 		for _, hit := range section.Hits {
-			if hit.Type == "song" && hit.Result.URL != "" {
-				song.ID = hit.Result.ID
-				song.Title = hit.Result.Title
-				song.ArtistNames = hit.Result.ArtistNames
-				song.URL = hit.Result.URL
-				break
+			if hit.Type != "song" || hit.Result.URL == "" {
+				continue
 			}
-		}
-		if song.URL != "" {
-			break
+			candidate := geniusSong{
+				ID:          hit.Result.ID,
+				Title:       hit.Result.Title,
+				ArtistNames: hit.Result.ArtistNames,
+				URL:         hit.Result.URL,
+			}
+			matchScore := 1
+			if requestedTitle != "" {
+				matchScore = geniusMetadataMatchScore(candidate, requestedTitle, requestedArtist)
+			}
+			if matchScore <= bestMatchScore {
+				continue
+			}
+			song = candidate
+			bestMatchScore = matchScore
 		}
 	}
 	if song.URL == "" {
@@ -299,6 +465,68 @@ func (h *Lyrics) fetchGenius(ctx context.Context, query url.Values) lyricsRespon
 	result.header = http.Header{"Content-Type": []string{"application/json; charset=utf-8"}}
 	result.body = body
 	return result
+}
+
+func cleanLyricsSearchTerm(value string) string {
+	value = versionTagPattern.ReplaceAllString(value, " ")
+	var cleaned strings.Builder
+	for _, r := range value {
+		if r == '\u200d' || r == '\u20e3' || r == '\ufe0f' || unicode.Is(unicode.So, r) || unicode.Is(unicode.Sk, r) {
+			cleaned.WriteByte(' ')
+			continue
+		}
+		cleaned.WriteRune(r)
+	}
+	return strings.Join(strings.Fields(cleaned.String()), " ")
+}
+
+func geniusMetadataMatchScore(song geniusSong, requestedTitle, requestedArtist string) int {
+	if requestedArtist == "" {
+		return geniusTitleMatchScore(song.Title, requestedTitle)
+	}
+	wanted := comparableLyricsMetadata(requestedArtist)
+	actual := comparableLyricsMetadata(song.ArtistNames)
+	if wanted == "" || actual == "" || (!strings.Contains(actual, wanted) && !strings.Contains(wanted, actual)) {
+		return 0
+	}
+	return geniusTitleMatchScore(song.Title, requestedTitle)
+}
+
+func geniusTitleMatchScore(actual, requested string) int {
+	if comparableLyricsTitle(actual) == comparableLyricsTitle(requested) {
+		return 200
+	}
+	actualBase := comparableLyricsTitle(trailingTitleQualifierPattern.ReplaceAllString(actual, ""))
+	requestedBase := comparableLyricsTitle(trailingTitleQualifierPattern.ReplaceAllString(requested, ""))
+	if actualBase != "" && actualBase == requestedBase {
+		return 100
+	}
+	return 0
+}
+
+func comparableLyricsTitle(value string) string {
+	return comparableLyricsMetadata(featuredTitleSuffixPattern.ReplaceAllString(value, ""))
+}
+
+func comparableLyricsMetadata(value string) string {
+	value = cleanLyricsSearchTerm(value)
+	var comparable strings.Builder
+	space := false
+	for _, r := range norm.NFKD.String(strings.ToLower(value)) {
+		switch {
+		case unicode.Is(unicode.Mn, r):
+			continue
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			if space && comparable.Len() > 0 {
+				comparable.WriteByte(' ')
+			}
+			comparable.WriteRune(r)
+			space = false
+		default:
+			space = true
+		}
+	}
+	return comparable.String()
 }
 
 func (h *Lyrics) newGeniusSession() (*geniusSession, error) {
