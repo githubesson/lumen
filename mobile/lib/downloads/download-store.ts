@@ -1,11 +1,24 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Directory, File, Paths } from "expo-file-system";
 import {
+  completeHandler,
+  createDownloadTask,
+  directories,
+  getExistingDownloadTasks,
+} from "@kesha-antonov/react-native-background-downloader";
+import CookieManager from "@preeternal/react-native-cookie-manager";
+import {
   downloadStreamUrl,
+  getBaseUrl,
   trackCoverUrl,
   type TrackListItem,
 } from "@music-library/core";
-import { extensionForContentType, fetchStreamBytes } from "../track-download";
+import {
+  extensionForContentType,
+  extensionForMediaBytes,
+  isRejectedStreamContentType,
+  looksLikeMediaBytes,
+} from "../track-download";
 
 /**
  * Device-local offline audio store, Spotify-style: files live in the app's
@@ -21,8 +34,6 @@ import { extensionForContentType, fetchStreamBytes } from "../track-download";
 const STORAGE_KEY = "offline-downloads.v1";
 const DIR_NAME = "offline-audio";
 const DEFAULT_EXTENSION = "mp3";
-/** Concurrent per-track downloads when materializing a whole playlist. */
-const PLAYLIST_CONCURRENCY = 3;
 /** Subdirectory (inside the offline dir) holding downloaded cover artwork. */
 const COVER_DIR = "covers";
 /** Pixel size fetched for offline covers — large enough for the now-playing
@@ -145,6 +156,14 @@ class DownloadStore {
     return this.records.has(trackId);
   }
 
+  /** Whether any downloaded track is owned by `owner` (e.g. a playlist). */
+  hasOwner(owner: DownloadOwner): boolean {
+    for (const record of this.records.values()) {
+      if (record.owners.includes(owner)) return true;
+    }
+    return false;
+  }
+
   isActive(trackId: string): boolean {
     return this.active.has(trackId);
   }
@@ -206,6 +225,32 @@ class DownloadStore {
           coverFilename,
         });
       }
+
+      // Re-attach to native transfers that survived a process death so their
+      // completion still lands in the store. Isolated: a re-attach failure
+      // must not break hydration.
+      try {
+        const tasks = await getExistingDownloadTasks();
+        for (const task of tasks) {
+          if (this.records.has(task.id)) continue;
+          this.active.add(task.id);
+          const meta = (task.metadata ?? {}) as TaskMeta;
+          task
+            .done(() => {
+              // No content type on restored tasks — finalize's magic-byte
+              // sniffing decides the extension.
+              void this.finalize(task.id, undefined, meta).finally(() =>
+                completeHandler(task.id),
+              );
+            })
+            .error(({ error }) => {
+              this.fail(task.id, error || "Download failed");
+              void completeHandler(task.id);
+            });
+        }
+      } catch {
+        // Best effort — an unfinished task is simply re-downloaded later.
+      }
       if (mutated) await this.persist();
     } catch {
       // Best effort — a corrupt store just starts empty.
@@ -230,8 +275,10 @@ class DownloadStore {
 
   // ── mutations ───────────────────────────────────────────────────────────
   /**
-   * Download a single track (idempotent) and attach `owner`. If the track is
-   * already stored, the owner is simply registered. If a download is already in
+   * Enqueue a background download for a single track (idempotent) and attach
+   * `owner`. Resolves when the native task is ENQUEUED, not completed —
+   * completion is observed via store subscription (`phaseFor`). If the track
+   * is already stored, the owner is simply registered; if a download is in
    * flight, the owner is queued so it lands when the download settles.
    */
   async downloadTrack(track: TrackListItem, owner: DownloadOwner): Promise<void> {
@@ -254,40 +301,153 @@ class DownloadStore {
     this.emit();
 
     try {
-      const dir = this.ensureDir();
-      const { bytes, contentType } = await fetchStreamBytes(
-        downloadStreamUrl(track.id),
-      );
-      const ext = extensionForContentType(contentType) ?? DEFAULT_EXTENSION;
-      const filename = `${sanitizeId(track.id)}.${ext}`;
-      const file = new File(dir, filename);
-      file.create({ intermediates: true, overwrite: true });
-      file.write(bytes);
-      // Cover art is best-effort: a missing/failed cover must not fail the
-      // audio download, so this never throws.
-      const coverFilename = await this.downloadCover(track);
-
-      const owners = [...(this.pendingOwners.get(track.id) ?? new Set([owner]))];
-      this.records.set(track.id, {
-        trackId: track.id,
-        filename,
-        size: file.size || bytes.length,
-        downloadedAt: Date.now(),
-        owners,
-        coverFilename,
-      });
-      await this.persist();
+      await this.startTask(track);
     } catch (error) {
-      this.errors.set(
+      this.fail(
         track.id,
         error instanceof Error ? error.message : "Download failed",
       );
       throw error;
-    } finally {
-      this.active.delete(track.id);
-      this.pendingOwners.delete(track.id);
-      this.emit();
     }
+  }
+
+  /**
+   * Hand a track download to the OS as a native background task (survives
+   * app suspension and screen lock). Resolves on ENQUEUE; completion runs
+   * through `finalize`, failure through `fail`, whenever JS resumes.
+   */
+  private async startTask(track: TrackListItem): Promise<void> {
+    this.ensureDir();
+    const partName = `${sanitizeId(track.id)}.part`;
+    try {
+      const stale = new File(this.dir, partName);
+      if (stale.exists) stale.delete();
+    } catch {
+      // A stale temp file only risks a failed rename; finalize re-checks.
+    }
+
+    const headers = await sessionCookieHeader();
+    const meta: TaskMeta = {
+      // queueOwner ran before startTask, so pendingOwners holds the owner.
+      owners: [...(this.pendingOwners.get(track.id) ?? [])],
+      cover: {
+        id: track.id,
+        album_id: track.album_id,
+        cover_url: track.cover_url,
+        has_cover: track.has_cover,
+      },
+    };
+    let contentType: string | undefined;
+    const task = createDownloadTask({
+      // The track id makes the task re-attachable after a restart.
+      id: track.id,
+      url: downloadStreamUrl(track.id),
+      // The library expects a plain path (not a file:// URI); its documents
+      // dir is the same container as expo-file-system's Paths.document.
+      destination: `${directories.documents}/${DIR_NAME}/${partName}`,
+      headers,
+      metadata: meta,
+    })
+      .begin(({ headers: responseHeaders }) => {
+        contentType = headerValue(responseHeaders, "content-type");
+      })
+      // completeHandler MUST follow both done and error — iOS throttles
+      // future background time for apps that never report completion.
+      .done(() => {
+        void this.finalize(track.id, contentType, meta).finally(() =>
+          completeHandler(track.id),
+        );
+      })
+      .error(({ error }) => {
+        this.fail(track.id, error || "Download failed");
+        void completeHandler(track.id);
+      });
+    task.start();
+  }
+
+  /**
+   * Validate and persist a finished native download. NSURLSession does NOT
+   * error on HTTP 401/500 — the error body lands in the file — so sniffing
+   * the payload here is the only guard against storing an error page as
+   * audio (parity with the old `fetchStreamBytes` validation).
+   */
+  private async finalize(
+    trackId: string,
+    contentType: string | undefined,
+    meta: TaskMeta,
+  ): Promise<void> {
+    try {
+      const part = new File(this.dir, `${sanitizeId(trackId)}.part`);
+      if (!part.exists) {
+        this.fail(trackId, "Download finished but the file is missing");
+        return;
+      }
+
+      const handle = part.open();
+      const head = handle.readBytes(16);
+      handle.close();
+      if (
+        isRejectedStreamContentType(contentType) ||
+        !looksLikeMediaBytes(head, contentType)
+      ) {
+        try {
+          part.delete();
+        } catch {
+          // Overwritten by the next attempt.
+        }
+        this.fail(trackId, "Downloaded stream was not a valid audio file.");
+        return;
+      }
+
+      const ext =
+        extensionForContentType(contentType) ??
+        extensionForMediaBytes(head) ??
+        DEFAULT_EXTENSION;
+      const filename = `${sanitizeId(trackId)}.${ext}`;
+      const file = new File(this.dir, filename);
+      if (file.exists) file.delete();
+      part.move(file);
+
+      // Cover art is best-effort: a missing/failed cover must not fail the
+      // audio download, so this never throws.
+      const coverFilename = meta.cover
+        ? await this.downloadCover(meta.cover)
+        : undefined;
+
+      const owners = [
+        ...new Set([
+          ...(this.pendingOwners.get(trackId) ?? []),
+          ...(meta.owners ?? []),
+        ]),
+      ];
+      this.records.set(trackId, {
+        trackId,
+        filename,
+        size: file.size || 0,
+        downloadedAt: Date.now(),
+        owners: owners.length ? owners : ["track"],
+        coverFilename,
+      });
+      await this.persist();
+      this.active.delete(trackId);
+      this.pendingOwners.delete(trackId);
+      this.errors.delete(trackId);
+      this.emit();
+    } catch (error) {
+      this.fail(
+        trackId,
+        error instanceof Error ? error.message : "Download failed",
+      );
+    }
+  }
+
+  /** Record a per-track failure. Task callbacks have no awaiter to reject,
+   *  so errors surface through `phaseFor`/`errorFor` subscribers only. */
+  private fail(trackId: string, message: string): void {
+    this.errors.set(trackId, message);
+    this.active.delete(trackId);
+    this.pendingOwners.delete(trackId);
+    this.emit();
   }
 
   /** Remove an owner; deletes the file only when no owners remain. */
@@ -338,9 +498,11 @@ class DownloadStore {
 
   // ── playlist-level ─────────────────────────────────────────────────────────
   /**
-   * Download every track for a playlist under a `playlist:<id>` owner, with a
-   * small concurrency cap. Per-track failures are swallowed so one bad track
-   * never aborts the batch; the UI reflects the downloaded/total count.
+   * Enqueue background downloads for every track of a playlist under a
+   * `playlist:<id>` owner. Resolves when all tasks are ENQUEUED — completion
+   * is observed via store subscription; the native layers manage their own
+   * concurrency. Per-track failures are swallowed so one bad track never
+   * aborts the batch.
    */
   async downloadPlaylist(
     playlistId: string,
@@ -348,25 +510,13 @@ class DownloadStore {
   ): Promise<void> {
     await this.hydrate();
     const owner = playlistOwner(playlistId);
-    const queue = tracks.slice();
-
-    const worker = async (): Promise<void> => {
-      for (;;) {
-        const track = queue.shift();
-        if (!track) return;
-        try {
-          await this.downloadTrack(track, owner);
-        } catch {
-          // Already recorded as a per-track error; keep going.
-        }
+    for (const track of tracks) {
+      try {
+        await this.downloadTrack(track, owner);
+      } catch {
+        // Already recorded as a per-track error; keep enqueueing the rest.
       }
-    };
-
-    const workers = Array.from(
-      { length: Math.min(PLAYLIST_CONCURRENCY, queue.length) },
-      () => worker(),
-    );
-    await Promise.all(workers);
+    }
   }
 
   /** Drop a playlist's ownership from every track it downloaded. */
@@ -401,7 +551,7 @@ class DownloadStore {
    * same album reuse a single file.
    */
   private async downloadCover(
-    track: TrackListItem,
+    track: CoverInfo,
   ): Promise<string | undefined> {
     if (track.has_cover === false) return undefined;
     try {
@@ -429,6 +579,50 @@ class DownloadStore {
 
 function sanitizeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+/** Metadata attached to native download tasks; restored (best-effort) by
+ *  `getExistingDownloadTasks()` after a process death. */
+interface TaskMeta {
+  owners?: DownloadOwner[];
+  cover?: CoverInfo;
+}
+
+/** The track fields cover download needs — a `TrackListItem` subset small
+ *  enough to round-trip through native task metadata. */
+interface CoverInfo {
+  id: string;
+  album_id?: string;
+  cover_url?: string;
+  has_cover?: boolean;
+}
+
+/**
+ * All cookies for the API origin as one `Cookie` header. The native
+ * downloaders (notably Android's DownloadManager) don't share RN's cookie
+ * jar, so the session cookie must be attached explicitly for
+ * `/api/tracks/{id}/stream` to authenticate.
+ */
+async function sessionCookieHeader(): Promise<Record<string, string>> {
+  try {
+    const cookies = await CookieManager.get(getBaseUrl());
+    const pairs = Object.values(cookies).map((c) => `${c.name}=${c.value}`);
+    return pairs.length ? { Cookie: pairs.join("; ") } : {};
+  } catch {
+    return {}; // No cookie -> the server 401s -> finalize rejects the body.
+  }
+}
+
+/** Case-insensitive response-header lookup. */
+function headerValue(
+  headers: Record<string, string | null>,
+  name: string,
+): string | undefined {
+  const lower = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === lower && value != null) return value;
+  }
+  return undefined;
 }
 
 function extensionForImageContentType(contentType: string): string {

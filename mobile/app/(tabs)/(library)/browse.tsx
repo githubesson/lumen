@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Platform,
   Pressable,
   RefreshControl,
@@ -48,6 +49,7 @@ import {
 } from "../../../components/dock/dock-context";
 import { qk } from "../../../lib/query-keys";
 import { QUERY_STALE_TIME } from "../../../lib/query-policy";
+import { useIsOffline } from "../../../lib/offline-mode";
 import { useDebouncedValue } from "../../../lib/use-debounced-value";
 import { usePlayQueue } from "../../../lib/use-play-queue";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
@@ -109,6 +111,7 @@ export default function BrowseScreen() {
   );
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(params.focusSearch === "1");
+  const offline = useIsOffline();
   const searchInputRef = useRef<TextInput>(null);
   const debouncedSearch = useDebouncedValue(search.trim(), SEARCH_DEBOUNCE_MS);
   const deferredSearch = useDeferredValue(debouncedSearch);
@@ -235,8 +238,24 @@ export default function BrowseScreen() {
       closeSearch();
       return;
     }
+    // Searched lists are never persisted, so offline search could only hang
+    // on paused queries — refuse up front instead.
+    if (offline) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      Alert.alert(
+        "Search unavailable offline",
+        "Reconnect to search your library.",
+      );
+      return;
+    }
     setSearchOpen(true);
-  }, [closeSearch, searchOpen]);
+  }, [closeSearch, offline, searchOpen]);
+
+  // Connectivity dropping mid-search would strand a spinner on paused
+  // queries — close the search UI instead.
+  useEffect(() => {
+    if (offline && searchOpen) closeSearch();
+  }, [offline, searchOpen, closeSearch]);
 
   const onUploadPress = useCallback(() => {
     void Haptics.selectionAsync();

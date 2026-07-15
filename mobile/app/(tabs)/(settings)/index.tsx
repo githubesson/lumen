@@ -4,6 +4,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from "react-native";
@@ -23,6 +24,7 @@ import {
 } from "../../../components/dock/dock-context";
 import { Card, SectionLabel } from "../../../components/primitives";
 import { useTheme, useThemeMode, type ThemeMode, type ThemeTokens } from "../../../theme/theme";
+import { offlineStore, useOfflineForced } from "../../../lib/offline-mode";
 
 export default function SettingsScreen() {
   const theme = useTheme();
@@ -138,6 +140,10 @@ export default function SettingsScreen() {
 
       <Section title="Appearance" theme={theme}>
         <ModePicker mode={mode} setMode={setMode} theme={theme} />
+      </Section>
+
+      <Section title="Offline" theme={theme}>
+        <OfflineModeRow theme={theme} />
       </Section>
 
       <Section title="Library" theme={theme}>
@@ -284,6 +290,38 @@ function Section({
       <Card style={{ marginHorizontal: theme.space.lg, overflow: "hidden" }}>
         {children}
       </Card>
+    </View>
+  );
+}
+
+function OfflineModeRow({ theme }: { theme: ThemeTokens }) {
+  const forced = useOfflineForced();
+  return (
+    <View style={{ paddingHorizontal: theme.space.md, paddingVertical: 12 }}>
+      <View style={styles.row}>
+        <Text style={{ color: theme.color.fg, fontSize: 16 }}>
+          Offline mode
+        </Text>
+        <Switch
+          value={forced}
+          onValueChange={(value) => {
+            void Haptics.selectionAsync();
+            offlineStore.setForced(value);
+          }}
+          trackColor={{ true: theme.color.accent }}
+          accessibilityLabel="Offline mode"
+        />
+      </View>
+      <Text
+        style={{
+          color: theme.color.fgMuted,
+          fontSize: 13,
+          paddingTop: theme.space.sm,
+        }}
+      >
+        Only downloaded music plays. No network is used until you turn this
+        off.
+      </Text>
     </View>
   );
 }

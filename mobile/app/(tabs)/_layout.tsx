@@ -1,6 +1,7 @@
 import { Tabs } from "expo-router";
 import { DockProvider } from "../../components/dock/dock-context";
 import { BottomDock } from "../../components/dock/bottom-dock";
+import { OfflineBanner } from "../../components/offline-banner";
 
 /**
  * Four-tab root with a fully custom floating dock instead of the native tab
@@ -21,6 +22,7 @@ export default function TabsLayout() {
         <Tabs.Screen name="(favorites)" options={{ title: "Favorites" }} />
         <Tabs.Screen name="(settings)" options={{ title: "Settings" }} />
       </Tabs>
+      <OfflineBanner />
     </DockProvider>
   );
 }

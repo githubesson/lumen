@@ -65,7 +65,8 @@
       "expo-asset",
       "expo-font",
       "expo-image",
-      "expo-web-browser"
+      "expo-web-browser",
+      "@kesha-antonov/react-native-background-downloader"
     ],
     "extra": {
       "apiBaseUrl": "",

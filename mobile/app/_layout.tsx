@@ -10,7 +10,6 @@ import {
   onlineManager,
 } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
-import NetInfo from "@react-native-community/netinfo";
 import {
   ThemeProvider as NavThemeProvider,
   DarkTheme as NavDarkTheme,
@@ -32,6 +31,8 @@ import {
   shouldPersistQuery,
 } from "../lib/query-persister";
 import { QUERY_STALE_TIME } from "../lib/query-policy";
+import { offlineStore } from "../lib/offline-mode";
+import { asyncStorageAdapter } from "../adapters/async-storage-adapter";
 
 // Resolve the backend base URL. Prefer a build-time env var (EXPO_PUBLIC_...)
 // for flexibility across dev / staging / prod; fall back to app.json `extra`.
@@ -68,12 +69,13 @@ const queryClient = new QueryClient({
   },
 });
 
-// Wire React Query to NetInfo so queries pause cleanly while offline instead
-// of spamming retries.
+// Wire React Query to the offline store so queries pause cleanly while
+// offline instead of spamming retries. Forced offline must also pause React
+// Query, so onlineManager follows the offline store, not NetInfo directly.
+offlineStore.start();
 onlineManager.setEventListener((setOnline) => {
-  return NetInfo.addEventListener((state) => {
-    setOnline(!!state.isConnected);
-  });
+  setOnline(!offlineStore.isOffline());
+  return offlineStore.subscribe(() => setOnline(!offlineStore.isOffline()));
 });
 
 /**
@@ -115,7 +117,7 @@ export default function RootLayout() {
         <ThemeProvider>
           <ThemedNavigation>
             <DownloadsProvider>
-              <AuthProvider>
+              <AuthProvider sessionCache={asyncStorageAdapter}>
                 <AccountScopedProviders>
                   <AuthGate />
                   <ThemedStatusBar />
@@ -138,7 +140,7 @@ function ThemedNavigation({ children }: { children: ReactNode }) {
 }
 
 function AccountScopedProviders({ children }: { children: ReactNode }) {
-  const { status, me } = useAuth();
+  const { status, me, refresh } = useAuth();
   const accountKey = status === "authed" ? me?.id ?? "authed" : status;
   const previousAccountKey = useRef<string | null>(null);
 
@@ -156,6 +158,18 @@ function AccountScopedProviders({ children }: { children: ReactNode }) {
       previousAccountKey.current = accountKey;
     }
   }, [accountKey, status]);
+
+  // Revalidate the session on the offline → online edge: a cookie that
+  // expired while offline turns into a 401 here, which sends AuthGate to
+  // login and the account-switch purge above clears the caches.
+  useEffect(() => {
+    let wasOffline = offlineStore.isOffline();
+    return offlineStore.subscribe(() => {
+      const off = offlineStore.isOffline();
+      if (wasOffline && !off) void refresh();
+      wasOffline = off;
+    });
+  }, [refresh]);
 
   // The library event bus is the single signal that library content changed
   // (upload, delete, metadata edit, admin rescan). One subscriber here turns

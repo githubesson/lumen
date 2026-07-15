@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import type { TrackListItem } from "@music-library/core";
-import { downloadStore } from "./download-store";
+import { downloadStore, playlistOwner } from "./download-store";
 
 export {
   downloadStore,
@@ -67,4 +67,11 @@ export function usePlaylistDownload(
     // `version` is the external-store snapshot: recompute on every mutation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tracks, version]);
+}
+
+/** Whether a playlist currently owns at least one downloaded track. */
+export function usePlaylistDownloaded(playlistId: string): boolean {
+  return useSyncExternalStore(downloadStore.subscribe, () =>
+    downloadStore.hasOwner(playlistOwner(playlistId)),
+  );
 }

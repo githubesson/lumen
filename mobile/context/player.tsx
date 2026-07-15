@@ -13,7 +13,8 @@ import {
   type AudioLockScreenOptions,
   type AudioMetadata,
 } from "expo-audio";
-import { AppState, Platform } from "react-native";
+import { Alert, AppState, Platform } from "react-native";
+import * as Haptics from "expo-haptics";
 import {
   sendRemotePlaybackCommand,
   trackCoverUrl,
@@ -31,6 +32,7 @@ import {
 import { useExpoAudioAdapter } from "../adapters/expo-audio-adapter";
 import { asyncStorageAdapter } from "../adapters/async-storage-adapter";
 import { downloadStore } from "../lib/downloads";
+import { isTrackPlayableOffline } from "../lib/offline-mode";
 import {
   addLockScreenCommandListener,
   isLockScreenControlsAvailable,
@@ -132,6 +134,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     interpolateProgress: appState === "active",
     // Play the offline copy when a track has been downloaded; otherwise stream.
     resolveTrackUri: downloadStore.uriFor,
+    // Offline (or forced offline): only downloaded tracks may start, and
+    // next/prev/auto-advance skip over everything else.
+    isTrackPlayable: isTrackPlayableOffline,
   });
   usePlaybackActivityPublisher({
     state,
@@ -367,6 +372,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const routedPlay = useCallback<PlayerControls["play"]>(
     (track, queue) => {
       if (!targetDevice) {
+        // Remote playback targets another (online) device; only local
+        // playback is bound by the offline download gate.
+        if (!isTrackPlayableOffline(track.id)) {
+          void Haptics.notificationAsync(
+            Haptics.NotificationFeedbackType.Warning,
+          );
+          Alert.alert(
+            "Not available offline",
+            "Download it to play while offline.",
+          );
+          return;
+        }
         controls.play(track, queue);
         return;
       }

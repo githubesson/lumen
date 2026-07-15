@@ -31,6 +31,12 @@ export interface UsePlayerCoreOptions {
    * so it must be cheap (e.g. an in-memory lookup).
    */
   resolveTrackUri?: (trackId: string) => string | null | undefined;
+  /**
+   * Gate consulted when advancing through the queue: return false to skip a
+   * track (e.g. not downloaded while offline). Read synchronously on user
+   * action / track end, so it must be cheap. Absent → everything is playable.
+   */
+  isTrackPlayable?: (trackId: string) => boolean;
 }
 
 export interface UsePlayerCoreReturn {
@@ -50,6 +56,23 @@ function quantizeTime(seconds: number, duration: number): number {
   return Math.round(clamped / TIME_STATE_GRANULARITY_SEC) * TIME_STATE_GRANULARITY_SEC;
 }
 
+/** First index in [from..to] (inclusive, step ±1) whose track passes the
+ *  gate; -1 when none does. No gate → the first in-bounds index. */
+function firstPlayableIndex(
+  queue: TrackListItem[],
+  from: number,
+  to: number,
+  isPlayable?: (trackId: string) => boolean,
+): number {
+  const step = from <= to ? 1 : -1;
+  for (let i = from; step > 0 ? i <= to : i >= to; i += step) {
+    const track = queue[i];
+    if (!track) continue;
+    if (!isPlayable || isPlayable(track.id)) return i;
+  }
+  return -1;
+}
+
 /**
  * Platform-agnostic player state machine. Drives an `AudioAdapter` (HTML audio
  * on web, `expo-audio` on mobile), owns queue / shuffle / repeat / volume
@@ -66,6 +89,7 @@ export function usePlayerCore({
   storage,
   interpolateProgress = true,
   resolveTrackUri,
+  isTrackPlayable,
 }: UsePlayerCoreOptions): UsePlayerCoreReturn {
   const [current, setCurrent] = useState<TrackListItem | null>(null);
   // `queue` is the actual play order — when shuffle is on it's a Fisher-Yates
@@ -171,11 +195,14 @@ export function usePlayerCore({
 
   const next = useCallback<PlayerControls["next"]>(() => {
     if (!queue.length) return;
-    const ni = index + 1;
-    let nextTrack: TrackListItem | null = null;
-    let nextIndex = ni;
+    let nextIndex = firstPlayableIndex(
+      queue,
+      index + 1,
+      queue.length - 1,
+      isTrackPlayable,
+    );
     let nextQueue: TrackListItem[] | null = null;
-    if (ni >= queue.length) {
+    if (nextIndex === -1) {
       if (repeat !== "all") {
         clearPreparedNext();
         setIsPlaying(false);
@@ -184,16 +211,27 @@ export function usePlayerCore({
       // Wrap. If shuffle is on, reshuffle for a fresh pass so you don't
       // replay the same permutation.
       if (shuffle && sourceQueue.length > 1) {
-        nextQueue = fisherYatesWithAnchor(sourceQueue, null);
-        nextTrack = nextQueue[0] ?? null;
+        const reshuffled = fisherYatesWithAnchor(sourceQueue, null);
+        nextIndex = firstPlayableIndex(
+          reshuffled,
+          0,
+          reshuffled.length - 1,
+          isTrackPlayable,
+        );
+        if (nextIndex !== -1) nextQueue = reshuffled;
       } else {
-        nextTrack = queue[0] ?? null;
+        nextIndex = firstPlayableIndex(queue, 0, index, isTrackPlayable);
       }
-      nextIndex = 0;
-    } else {
-      nextTrack = queue[ni] ?? null;
+      if (nextIndex === -1) {
+        // Nothing playable anywhere in the queue — stop instead of looping
+        // into tracks that cannot start.
+        clearPreparedNext();
+        setIsPlaying(false);
+        return;
+      }
     }
 
+    const nextTrack = (nextQueue ?? queue)[nextIndex] ?? null;
     if (!nextTrack) {
       clearPreparedNext();
       setIsPlaying(false);
@@ -225,6 +263,7 @@ export function usePlayerCore({
     adapter,
     clearPreparedNext,
     index,
+    isTrackPlayable,
     queue,
     repeat,
     resolvePlayableUri,
@@ -241,24 +280,34 @@ export function usePlayerCore({
       setCurrentTime(0);
       return;
     }
-    const ni = Math.max(0, index - 1);
+    const ni = firstPlayableIndex(queue, index - 1, 0, isTrackPlayable);
+    if (ni === -1) {
+      // Nothing playable behind us — restart the current track instead of
+      // landing on an unplayable one.
+      adapter.seek(0);
+      setCurrentTime(0);
+      return;
+    }
     clearPreparedNext();
     setIndex(ni);
     setCurrent(queue[ni]);
     setIsPlaying(true);
     playbackReportedRef.current = null;
-  }, [adapter, clearPreparedNext, queue, index]);
+  }, [adapter, clearPreparedNext, queue, index, isTrackPlayable]);
 
   const jumpTo = useCallback<PlayerControls["jumpTo"]>(
     (i) => {
       if (i < 0 || i >= queue.length) return;
+      // Silently ignore taps on tracks the gate rejects (e.g. not downloaded
+      // while offline) — queue UIs dim them instead.
+      if (isTrackPlayable && queue[i] && !isTrackPlayable(queue[i].id)) return;
       clearPreparedNext();
       setIndex(i);
       setCurrent(queue[i]);
       setIsPlaying(true);
       playbackReportedRef.current = null;
     },
-    [clearPreparedNext, queue],
+    [clearPreparedNext, queue, isTrackPlayable],
   );
 
   const seek = useCallback<PlayerControls["seek"]>(
@@ -321,12 +370,21 @@ export function usePlayerCore({
 
   const nextTrackToPrepare = useMemo(() => {
     if (!current || repeat === "one" || !queue.length) return null;
-    if (index + 1 < queue.length) return queue[index + 1] ?? null;
+    const ni = firstPlayableIndex(
+      queue,
+      index + 1,
+      queue.length - 1,
+      isTrackPlayable,
+    );
+    if (ni !== -1) return queue[ni] ?? null;
     // A repeat-all shuffle creates a fresh permutation at the boundary, so
     // its next track is intentionally unknown until then.
-    if (repeat === "all" && !shuffle) return queue[0] ?? null;
+    if (repeat === "all" && !shuffle) {
+      const first = queue[0];
+      if (first && (!isTrackPlayable || isTrackPlayable(first.id))) return first;
+    }
     return null;
-  }, [current, index, queue, repeat, shuffle]);
+  }, [current, index, isTrackPlayable, queue, repeat, shuffle]);
 
   useEffect(() => {
     const prepared = preparedNextRef.current;

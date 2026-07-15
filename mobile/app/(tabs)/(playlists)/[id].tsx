@@ -52,6 +52,10 @@ import {
   usePlaylistDownload,
   type PlaylistDownloadStatus,
 } from "../../../lib/downloads";
+import {
+  useIsOffline,
+  useTrackUnavailableOffline,
+} from "../../../lib/offline-mode";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
 
 const TRACK_ART_SIZE = 40;
@@ -706,11 +710,19 @@ function PlaylistDownloadButton({
   tracks: TrackListItem[];
 }) {
   const { status, total, downloaded } = usePlaylistDownload(tracks);
+  const offline = useIsOffline();
   const isDownloaded = status === "downloaded";
   const isDownloading = status === "downloading";
 
   const onPress = useCallback(() => {
     if (isDownloading) return;
+    // Starting a download needs the network; removing one is local-only and
+    // must keep working offline.
+    if (offline && !isDownloaded) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      Alert.alert("You're offline", "Reconnect to download this playlist.");
+      return;
+    }
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (isDownloaded) {
       Alert.alert(
@@ -732,7 +744,7 @@ function PlaylistDownloadButton({
       return;
     }
     void downloadStore.downloadPlaylist(playlistId, tracks);
-  }, [isDownloaded, isDownloading, playlistId, tracks]);
+  }, [isDownloaded, isDownloading, offline, playlistId, tracks]);
 
   const label = isDownloading
     ? `${downloaded}/${total}`
@@ -829,6 +841,7 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
   onRemove: (position: number) => void;
 }) {
   const canReorder = canEdit && !!drag;
+  const unavailable = useTrackUnavailableOffline(track.id);
   const handlePress = useCallback(() => onPress(track), [onPress, track]);
   const handleRemove = useCallback(
     () => onRemove(entry.position),
@@ -852,6 +865,7 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
           backgroundColor:
             pressed || isActive ? theme.color.bgElev1 : "transparent",
         },
+        unavailable ? { opacity: 0.4 } : null,
       ]}
     >
       <CoverArt

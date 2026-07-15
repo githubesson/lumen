@@ -142,7 +142,7 @@ function sanitizeFilename(name: string) {
     .slice(0, 180);
 }
 
-function isRejectedStreamContentType(contentType?: string) {
+export function isRejectedStreamContentType(contentType?: string) {
   const type = contentType?.split(";")[0]?.toLowerCase().trim();
   return (
     !!type &&
@@ -153,7 +153,7 @@ function isRejectedStreamContentType(contentType?: string) {
   );
 }
 
-function looksLikeMediaBytes(bytes: Uint8Array, contentType?: string) {
+export function looksLikeMediaBytes(bytes: Uint8Array, contentType?: string) {
   if (bytes.length < 4) return false;
   const type = contentType?.split(";")[0]?.toLowerCase().trim();
   if (type?.startsWith("audio/") || type?.startsWith("video/")) return true;
@@ -175,4 +175,24 @@ function hasKnownMediaSignature(bytes: Uint8Array) {
     ascii(4, 4) === "ftyp" ||
     (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)
   );
+}
+
+/** Sniff the audio container from magic bytes (the first 16 are enough).
+ *  Mirrors {@link hasKnownMediaSignature}; used when the transport gives no
+ *  usable content type (e.g. background downloads finalized after restart). */
+export function extensionForMediaBytes(
+  bytes: Uint8Array,
+): "mp3" | "flac" | "ogg" | "wav" | "m4a" | undefined {
+  const ascii = (offset: number, length: number) =>
+    String.fromCharCode(...bytes.slice(offset, offset + length));
+
+  if (ascii(0, 3) === "ID3") return "mp3";
+  if (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) {
+    return "mp3";
+  }
+  if (ascii(0, 4) === "fLaC") return "flac";
+  if (ascii(0, 4) === "OggS") return "ogg";
+  if (ascii(0, 4) === "RIFF") return "wav";
+  if (ascii(4, 4) === "ftyp") return "m4a";
+  return undefined;
 }
