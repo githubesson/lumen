@@ -24,7 +24,7 @@ const CACHE_DIR = "query-cache";
 const CACHE_FILE = "react-query.json";
 const TEMP_CACHE_FILE = `${CACHE_FILE}.tmp`;
 const WRITE_DEBOUNCE_MS = 1000;
-const MAX_PERSISTED_QUERIES = 120;
+const MAX_PERSISTED_QUERIES = 200;
 const MAX_PERSISTED_INFINITE_PAGES = 5;
 
 const PERSISTED_USER_QUERY_TYPES = new Set([
@@ -77,6 +77,8 @@ export function shouldPersistQuery(query: Query): boolean {
   }
 
   if (root === "replay") return true;
+  // Lyrics are tiny and make downloaded tracks fully usable offline.
+  if (root === "lyrics") return true;
   return root === "home" && scope === "rediscover";
 }
 

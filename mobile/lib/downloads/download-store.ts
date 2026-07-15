@@ -60,6 +60,12 @@ export interface DownloadRecord {
   /** Basename of the stored cover image inside {@link COVER_DIR}, if any.
    *  Shared across tracks of the same album (keyed by album id). */
   coverFilename?: string;
+  /** Snapshot of the track's list metadata, taken when the download was
+   *  registered. Lets offline surfaces (e.g. a playlist screen with no
+   *  persisted query cache) render and play stored tracks without the
+   *  network. Records from before this field may lack it until a download
+   *  action touches them again. */
+  track?: TrackListItem;
 }
 
 export type DownloadPhase =
@@ -164,6 +170,18 @@ class DownloadStore {
     return false;
   }
 
+  /** Snapshots of `owner`'s downloaded tracks, in stored order. Only records
+   *  carrying a snapshot appear; returns a fresh array (memoize by version). */
+  tracksForOwner(owner: DownloadOwner): TrackListItem[] {
+    const tracks: TrackListItem[] = [];
+    for (const record of this.records.values()) {
+      if (record.track && record.owners.includes(owner)) {
+        tracks.push(record.track);
+      }
+    }
+    return tracks;
+  }
+
   isActive(trackId: string): boolean {
     return this.active.has(trackId);
   }
@@ -223,6 +241,8 @@ class DownloadStore {
               ? record.owners
               : ["track"],
           coverFilename,
+          track:
+            record.track?.id === record.trackId ? record.track : undefined,
         });
       }
 
@@ -286,6 +306,11 @@ class DownloadStore {
 
     const existing = this.records.get(track.id);
     if (existing) {
+      // Backfill the offline snapshot on records that predate it.
+      if (!existing.track) {
+        existing.track = track;
+        void this.persist();
+      }
       this.addOwner(existing, owner);
       return;
     }
@@ -330,12 +355,9 @@ class DownloadStore {
     const meta: TaskMeta = {
       // queueOwner ran before startTask, so pendingOwners holds the owner.
       owners: [...(this.pendingOwners.get(track.id) ?? [])],
-      cover: {
-        id: track.id,
-        album_id: track.album_id,
-        cover_url: track.cover_url,
-        has_cover: track.has_cover,
-      },
+      // Full snapshot: finalize stores it on the record so offline surfaces
+      // can render the track, and reads cover fields from it.
+      track,
     };
     let contentType: string | undefined;
     const task = createDownloadTask({
@@ -410,8 +432,8 @@ class DownloadStore {
 
       // Cover art is best-effort: a missing/failed cover must not fail the
       // audio download, so this never throws.
-      const coverFilename = meta.cover
-        ? await this.downloadCover(meta.cover)
+      const coverFilename = meta.track
+        ? await this.downloadCover(meta.track)
         : undefined;
 
       const owners = [
@@ -427,6 +449,7 @@ class DownloadStore {
         downloadedAt: Date.now(),
         owners: owners.length ? owners : ["track"],
         coverFilename,
+        track: meta.track,
       });
       await this.persist();
       this.active.delete(trackId);
@@ -538,6 +561,26 @@ class DownloadStore {
     this.emit();
   }
 
+  /**
+   * Backfill offline snapshots for already-downloaded tracks whose records
+   * predate the `track` field. Called by screens when fresh list data flows
+   * through them, so old downloads self-heal without a re-download press.
+   */
+  noteTracks(tracks: TrackListItem[]): void {
+    let mutated = false;
+    for (const track of tracks) {
+      const record = this.records.get(track.id);
+      if (record && !record.track) {
+        record.track = track;
+        mutated = true;
+      }
+    }
+    if (mutated) {
+      void this.persist();
+      this.emit();
+    }
+  }
+
   private queueOwner(trackId: string, owner: DownloadOwner): void {
     const owners = this.pendingOwners.get(trackId) ?? new Set<DownloadOwner>();
     owners.add(owner);
@@ -551,7 +594,7 @@ class DownloadStore {
    * same album reuse a single file.
    */
   private async downloadCover(
-    track: CoverInfo,
+    track: TrackListItem,
   ): Promise<string | undefined> {
     if (track.has_cover === false) return undefined;
     try {
@@ -585,16 +628,9 @@ function sanitizeId(id: string): string {
  *  `getExistingDownloadTasks()` after a process death. */
 interface TaskMeta {
   owners?: DownloadOwner[];
-  cover?: CoverInfo;
-}
-
-/** The track fields cover download needs — a `TrackListItem` subset small
- *  enough to round-trip through native task metadata. */
-interface CoverInfo {
-  id: string;
-  album_id?: string;
-  cover_url?: string;
-  has_cover?: boolean;
+  /** Snapshot persisted onto the record by `finalize`; also the source of
+   *  the cover fields. May be absent on tasks restored after a restart. */
+  track?: TrackListItem;
 }
 
 /**

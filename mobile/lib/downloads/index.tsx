@@ -75,3 +75,22 @@ export function usePlaylistDownloaded(playlistId: string): boolean {
     downloadStore.hasOwner(playlistOwner(playlistId)),
   );
 }
+
+/**
+ * Offline snapshots of a playlist's downloaded tracks, in stored order.
+ * Fallback data source for the playlist screen when the query cache has
+ * nothing to show — only stored tracks with snapshots appear.
+ */
+export function useDownloadedPlaylistTracks(playlistId: string): TrackListItem[] {
+  const version = useSyncExternalStore(
+    downloadStore.subscribe,
+    downloadStore.getVersion,
+    downloadStore.getVersion,
+  );
+  // `version` is the external-store snapshot: recompute on every mutation.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(
+    () => downloadStore.tracksForOwner(playlistOwner(playlistId)),
+    [playlistId, version],
+  );
+}

@@ -22,6 +22,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
   useAuth,
+  type Playlist,
   type PlaylistTrackEntry,
   type TrackListItem,
 } from "@music-library/core";
@@ -49,6 +50,7 @@ import { qk } from "../../../lib/query-keys";
 import { usePlayQueue } from "../../../lib/use-play-queue";
 import {
   downloadStore,
+  useDownloadedPlaylistTracks,
   usePlaylistDownload,
   type PlaylistDownloadStatus,
 } from "../../../lib/downloads";
@@ -150,6 +152,20 @@ export default function PlaylistDetailScreen() {
     enabled: !!userId && !!id,
   });
 
+  const offline = useIsOffline();
+  const downloadedTracks = useDownloadedPlaylistTracks(id ?? "");
+  // The playlists list is persisted and is where navigation comes from, so
+  // its cache almost always knows this playlist's name/visibility even when
+  // the detail query has never resolved (offline with no cached detail).
+  const playlistFromList = useMemo(
+    () =>
+      queryClient
+        .getQueryData<Playlist[]>(qk.playlists(userId))
+        ?.find((p) => p.id === id),
+    [queryClient, userId, id],
+  );
+  const playlist = playlistQuery.data ?? playlistFromList;
+
   // Local copy of tracks so drag-reorder updates feel instant; we commit the
   // order via `api.reorderPlaylist` and invalidate on success.
   const [localTracks, setLocalTracks] = useState<PlaylistTrackEntry[]>([]);
@@ -157,8 +173,20 @@ export default function PlaylistDetailScreen() {
   const [sortKey, setSortKey] = useState<SortKey>("custom");
   const [sortAsc, setSortAsc] = useState(true);
   useEffect(() => {
-    if (tracksQuery.data) setLocalTracks(tracksQuery.data.tracks);
-  }, [tracksQuery.data]);
+    if (tracksQuery.data) {
+      setLocalTracks(tracksQuery.data.tracks);
+      // Fresh server data is the cheapest moment to backfill offline
+      // snapshots onto download records that predate them.
+      downloadStore.noteTracks(tracksQuery.data.tracks.map(entryToTrack));
+      return;
+    }
+    // No cached track list (evicted or never fetched while online): fall
+    // back to the downloaded subset so stored tracks stay browsable and
+    // playable offline — a partially downloaded playlist shows its parts.
+    if (offline) {
+      setLocalTracks(downloadedTracks.map(trackToEntry));
+    }
+  }, [tracksQuery.data, offline, downloadedTracks]);
 
   const reorderMutation = useMutation({
     mutationFn: (trackIds: string[]) => api.reorderPlaylist(id!, trackIds),
@@ -184,9 +212,13 @@ export default function PlaylistDetailScreen() {
     },
   });
 
-  const role = playlistQuery.data?.effective_role;
-  const canEdit = !role || role === "owner" || role === "editor";
-  const canDelete = !role || role === "owner";
+  const role = playlist?.effective_role;
+  // Editing and deleting need the server's own data: reorder positions must
+  // match the backend's list, and the offline fallback is a downloaded
+  // subset in local order.
+  const canEdit =
+    (!role || role === "owner" || role === "editor") && !!tracksQuery.data;
+  const canDelete = (!role || role === "owner") && !!playlistQuery.data;
   const showReorderMode = canEdit && reorderMode;
 
   useEffect(() => {
@@ -262,7 +294,7 @@ export default function PlaylistDetailScreen() {
   };
 
   const header = useMemo(() => {
-    const p = playlistQuery.data;
+    const p = playlist;
     if (!p) return null;
     return (
       <View
@@ -424,7 +456,7 @@ export default function PlaylistDetailScreen() {
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    playlistQuery.data,
+    playlist,
     tracks,
     theme,
     deleteMutation.isPending,
@@ -472,7 +504,7 @@ export default function PlaylistDetailScreen() {
   if (playlistQuery.isLoading || tracksQuery.isLoading) {
     return <EmptyState fill loading />;
   }
-  if (playlistQuery.isError || !playlistQuery.data) {
+  if (playlistQuery.isError || !playlist) {
     return <EmptyState fill selectable message="Couldn't load playlist." />;
   }
 
@@ -480,7 +512,7 @@ export default function PlaylistDetailScreen() {
     <>
       <Stack.Screen
         options={{
-          title: playlistQuery.data.name,
+          title: playlist.name,
           headerLargeTitle: false,
           headerRight: canEdit
             ? () => (
@@ -490,7 +522,7 @@ export default function PlaylistDetailScreen() {
                     onPress={() =>
                       router.push({
                         pathname: "/(tabs)/(playlists)/edit/[id]",
-                        params: { id: playlistQuery.data!.id },
+                        params: { id: playlist.id },
                       })
                     }
                   />
@@ -959,6 +991,28 @@ function entryToTrack(e: PlaylistTrackEntry): TrackListItem {
     source: e.source,
     source_id: e.source_id,
     source_album_id: e.source_album_id,
+  };
+}
+
+/** Inverse of {@link entryToTrack} for offline fallback rows built from
+ *  download snapshots; `position` is just the render index. */
+function trackToEntry(t: TrackListItem, position: number): PlaylistTrackEntry {
+  return {
+    position,
+    track_id: t.id,
+    db_track_id: t.db_track_id,
+    source: t.source,
+    source_id: t.source_id,
+    source_album_id: t.source_album_id,
+    title: t.title,
+    album_id: t.album_id,
+    album_title: t.album_title,
+    track_no: t.track_no,
+    duration_ms: t.duration_ms,
+    artist: t.artist,
+    has_cover: t.has_cover,
+    cover_url: t.cover_url,
+    added_at: "",
   };
 }
 
