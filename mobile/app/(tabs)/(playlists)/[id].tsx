@@ -378,6 +378,7 @@ export default function PlaylistDetailScreen() {
             <PlaylistDownloadButton
               theme={theme}
               playlistId={p.id}
+              playlistName={p.name}
               tracks={tracks}
             />
           ) : null}
@@ -735,10 +736,12 @@ const DOWNLOAD_STATUS_COPY: Record<PlaylistDownloadStatus, string> = {
 function PlaylistDownloadButton({
   theme,
   playlistId,
+  playlistName,
   tracks,
 }: {
   theme: ThemeTokens;
   playlistId: string;
+  playlistName: string;
   tracks: TrackListItem[];
 }) {
   const { status, total, downloaded } = usePlaylistDownload(tracks);
@@ -775,8 +778,8 @@ function PlaylistDownloadButton({
       );
       return;
     }
-    void downloadStore.downloadPlaylist(playlistId, tracks);
-  }, [isDownloaded, isDownloading, offline, playlistId, tracks]);
+    void downloadStore.downloadPlaylist(playlistId, tracks, { playlistName });
+  }, [isDownloaded, isDownloading, offline, playlistId, playlistName, tracks]);
 
   const label = isDownloading
     ? `${downloaded}/${total}`

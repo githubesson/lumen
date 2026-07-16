@@ -71,6 +71,16 @@ const FIELDS = [
     },
   },
   {
+    key: "appleTeamId",
+    label:
+      "Apple Team ID (blank to skip — signs the Live Activity widget extension)",
+    get: () => expo.ios?.appleTeamId ?? "",
+    set: (v) => {
+      if (v) expo.ios = { ...expo.ios, appleTeamId: v };
+      else if (expo.ios) delete expo.ios.appleTeamId;
+    },
+  },
+  {
     key: "owner",
     label: "Expo account username (owner — blank to use your logged-in account)",
     get: () => expo.owner ?? "",
