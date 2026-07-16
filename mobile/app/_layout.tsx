@@ -14,7 +14,7 @@ import {
   ThemeProvider as NavThemeProvider,
   DarkTheme as NavDarkTheme,
   DefaultTheme as NavDefaultTheme,
-} from "@react-navigation/native";
+} from "expo-router/react-navigation";
 import {
   AuthProvider,
   libraryChanged,

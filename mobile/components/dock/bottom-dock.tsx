@@ -14,7 +14,7 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
-import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
+import type { BottomTabBarProps } from "expo-router/js-tabs";
 import { useCurrentTrack } from "../../context/player";
 import { FloatingTabBar } from "./floating-tab-bar";
 import { PhoneMiniPlayer, PadMiniPlayer } from "./dock-mini-player";

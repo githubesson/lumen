@@ -5,7 +5,8 @@ self-hosted music library.
 
 ## Stack
 
-- Expo SDK 55, React 19, React Native 0.83, file-based routes under `app/`
+- Expo SDK 57, React 19, React Native 0.86, file-based routes under `app/`
+  (minimum iOS 16.4 as of SDK 56)
 - `expo-audio` with background playback, lock-screen / now-playing controls
 - React Query for data fetching, FlashList for big lists
 - Shared logic from [`@music-library/core`](../core/) via a synced copy in

@@ -15,7 +15,7 @@ import ReorderableList, {
   type ReorderableListReorderEvent,
 } from "react-native-reorderable-list";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useHeaderHeight } from "@react-navigation/elements";
+import { useHeaderHeight } from "expo-router/react-navigation";
 import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";

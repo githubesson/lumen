@@ -428,7 +428,7 @@ class DownloadStore {
       const filename = `${sanitizeId(trackId)}.${ext}`;
       const file = new File(this.dir, filename);
       if (file.exists) file.delete();
-      part.move(file);
+      await part.move(file);
 
       // Cover art is best-effort: a missing/failed cover must not fail the
       // audio download, so this never throws.

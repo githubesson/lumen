@@ -7,6 +7,7 @@ import {
   Text,
   View,
   Share as NativeShare,
+  type TextStyle,
 } from "react-native";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import * as Clipboard from "expo-clipboard";
@@ -610,9 +611,11 @@ function isShareDismissal(error: unknown) {
 }
 
 const styles = StyleSheet.create({
+  // RN 0.86 moved `userSelect` to TextStyle; it still reaches the DOM on web,
+  // where it stops text selection from hijacking drags.
   noDragPage: {
     userSelect: "none",
-  },
+  } as TextStyle,
   center: {
     minHeight: 240,
     alignItems: "center",
