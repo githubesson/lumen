@@ -19,7 +19,10 @@ extraResources:
     filter:
       - version.dll
       - fh6-radio/config.toml
+mac:
+  icon: electron/assets/icon.icns
 win:
+  icon: electron/assets/icon.ico
   target:
     - target: portable
       arch:
