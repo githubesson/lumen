@@ -237,6 +237,7 @@ func NewRouter(d Deps) http.Handler {
 			ordinary.Get("/albums/{id}", browseH.GetAlbum)
 			ordinary.Get("/albums/{id}/tracks", browseH.ListAlbumTracks)
 			r.Get("/albums/{id}/cover", tracksH.AlbumCover)
+			r.Get("/covers/remote", tracksH.RemoteCoverProxy)
 			ordinary.Get("/covers/sign", tracksH.SignCover)
 			ordinary.Get("/artists", browseH.ListArtists)
 			ordinary.Get("/artists/{id}", browseH.GetArtist)

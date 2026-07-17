@@ -81,7 +81,7 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 					TrackNo:       it.TrackNo,
 					DurationMS:    it.DurationMS,
 					Artist:        strings.Join(it.Artists, ", "),
-					CoverURL:      it.CoverURL,
+					CoverURL:      proxyRemoteCoverURL(it.CoverURL),
 				})
 			}
 		}

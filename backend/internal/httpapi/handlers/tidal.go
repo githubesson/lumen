@@ -55,7 +55,7 @@ func makeTIDALAlbumResp(album tidal.Album) tidalAlbumResp {
 		ReleaseYear: album.ReleaseYear,
 		TrackCount:  album.TrackCount,
 		DurationMS:  album.DurationMS,
-		CoverURL:    album.CoverURL,
+		CoverURL:    proxyRemoteCoverURL(album.CoverURL),
 		Tracks:      make([]trackListItemResp, 0, len(album.Tracks)),
 	}
 	for _, it := range album.Tracks {
@@ -69,7 +69,7 @@ func makeTIDALAlbumResp(album tidal.Album) tidalAlbumResp {
 			TrackNo:       it.TrackNo,
 			DurationMS:    it.DurationMS,
 			Artist:        strings.Join(it.Artists, ", "),
-			CoverURL:      firstNonEmpty(it.CoverURL, album.CoverURL),
+			CoverURL:      proxyRemoteCoverURL(firstNonEmpty(it.CoverURL, album.CoverURL)),
 		})
 	}
 	return out

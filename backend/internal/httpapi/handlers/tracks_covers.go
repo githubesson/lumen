@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"image"
@@ -308,7 +309,7 @@ func (h *Tracks) serveStorageObject(w http.ResponseWriter, r *http.Request, key 
 		ct = contentTypeForExt(filepath.Ext(key))
 	}
 	if maxSize > 0 {
-		if ok := h.serveResizedImage(w, r, body, key, ct, maxSize); ok {
+		if ok := h.serveResizedImage(w, r, body, key, maxSize); ok {
 			return
 		}
 		if _, err := body.Seek(0, io.SeekStart); err != nil {
@@ -343,16 +344,76 @@ func tidalCoverSize(maxSize int) int {
 	}
 }
 
+// RemoteCoverProxy serves an allowed remote cover (TIDAL CDN artwork) from
+// the backend. Track payloads point clients here instead of at the CDN so the
+// image arrives same-origin: the CDN sends no CORS headers, which would taint
+// any canvas the cover is drawn on (ambient accent extraction). The host
+// allowlist in allowedRemoteCoverURL keeps this from being an open proxy.
+func (h *Tracks) RemoteCoverProxy(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireUser(w, r); !ok {
+		return
+	}
+	h.serveRemoteCover(w, r, r.URL.Query().Get("url"))
+}
+
+// proxyRemoteCoverURL swaps an absolute remote cover URL for the same-origin
+// proxy path and starts warming the RAM cache so the image is hot by the time
+// the client asks for it. Empty, relative, and disallowed-host URLs pass
+// through unchanged.
+func proxyRemoteCoverURL(raw string) string {
+	if raw == "" || !strings.HasPrefix(raw, "http") {
+		return raw
+	}
+	if _, err := allowedRemoteCoverURL(raw); err != nil {
+		return raw
+	}
+	coverCache.warm(raw)
+	return "/api/covers/remote?url=" + url.QueryEscape(raw)
+}
+
 func (h *Tracks) serveRemoteCover(w http.ResponseWriter, r *http.Request, rawURL string) {
 	u, err := allowedRemoteCoverURL(rawURL)
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u.String(), nil)
+	data, ct, err := coverCache.fetchCached(u)
 	if err != nil {
-		http.Error(w, "bad cover url", http.StatusBadGateway)
+		var statusErr *remoteCoverStatusError
+		if errors.As(err, &statusErr) {
+			h.log().Warn("remote cover fetch non-2xx", "host", u.Hostname(), "status", statusErr.status)
+			http.Redirect(w, r, u.String(), http.StatusFound)
+			return
+		}
+		h.log().Warn("remote cover fetch failed", "host", u.Hostname(), "err", err)
+		http.Error(w, "cover fetch failed", http.StatusBadGateway)
 		return
+	}
+	writeRemoteCover(w, data, ct)
+}
+
+func writeRemoteCover(w http.ResponseWriter, data []byte, ct string) {
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	// Public artwork; explicit CORS keeps canvas pixel reads clean even when
+	// a client loads the app from a different origin than the API.
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	_, _ = w.Write(data)
+}
+
+// remoteCoverStatusError reports a non-2xx upstream response so the serving
+// path can fall back to redirecting the client at the CDN directly.
+type remoteCoverStatusError struct{ status int }
+
+func (e *remoteCoverStatusError) Error() string {
+	return "remote cover fetch returned status " + strconv.Itoa(e.status)
+}
+
+func fetchRemoteCover(ctx context.Context, u *url.URL) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, "", err
 	}
 	req.Header.Set("User-Agent", httpx.BrowserUserAgent)
 	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
@@ -363,37 +424,30 @@ func (h *Tracks) serveRemoteCover(w http.ResponseWriter, r *http.Request, rawURL
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
 	resp, err := remoteCoverHTTPClient.Do(req)
 	if err != nil {
-		h.log().Warn("remote cover fetch failed", "host", u.Hostname(), "err", err)
-		http.Error(w, "cover fetch failed", http.StatusBadGateway)
-		return
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		h.log().Warn("remote cover fetch non-2xx", "host", u.Hostname(), "status", resp.StatusCode)
-		http.Redirect(w, r, u.String(), http.StatusFound)
-		return
+		return nil, "", &remoteCoverStatusError{status: resp.StatusCode}
 	}
 	if resp.ContentLength > maxRemoteCoverBytes {
-		http.Error(w, "cover too large", http.StatusBadGateway)
-		return
+		return nil, "", errors.New("remote cover exceeds size limit")
 	}
 	ct := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	if ct == "" {
 		ct = contentTypeForExt(filepath.Ext(u.Path))
 	}
 	if !strings.HasPrefix(strings.ToLower(ct), "image/") {
-		h.log().Warn("remote cover fetch returned non-image", "host", u.Hostname(), "content_type", ct)
-		http.Error(w, "cover fetch failed", http.StatusBadGateway)
-		return
+		return nil, "", errors.New("remote cover fetch returned non-image content type " + ct)
 	}
-	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Cache-Control", "private, max-age=86400")
-	if resp.ContentLength > 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxRemoteCoverBytes+1))
+	if err != nil {
+		return nil, "", err
 	}
-	if _, err := io.Copy(w, io.LimitReader(resp.Body, maxRemoteCoverBytes)); err != nil {
-		h.log().Warn("remote cover copy failed", "host", u.Hostname(), "err", err)
+	if int64(len(data)) > maxRemoteCoverBytes {
+		return nil, "", errors.New("remote cover exceeds size limit")
 	}
+	return data, ct, nil
 }
 
 func allowedRemoteCoverURL(rawURL string) (*url.URL, error) {
@@ -430,7 +484,6 @@ func (h *Tracks) serveResizedImage(
 	r *http.Request,
 	body io.ReadSeeker,
 	key string,
-	contentType string,
 	maxSize int,
 ) bool {
 	thumbKey, thumbType := thumbnailCacheKey(key, maxSize)

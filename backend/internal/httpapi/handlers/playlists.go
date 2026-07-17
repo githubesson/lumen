@@ -266,7 +266,7 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 			AddedByName:   t.AddedByName,
 			AddedAt:       t.AddedAt.Format("2006-01-02T15:04:05Z07:00"),
 			PlayCount:     t.PlayCount,
-			CoverURL:      t.CoverURL,
+			CoverURL:      proxyRemoteCoverURL(t.CoverURL),
 		}
 		if t.AlbumID != nil {
 			ti.AlbumID = t.AlbumID.String()
