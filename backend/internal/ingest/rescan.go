@@ -65,6 +65,10 @@ func (s *Service) Rescan(ctx context.Context, p *RescanProgress) error {
 
 func (s *Service) rescanRoot(ctx context.Context, root string, p *RescanProgress) error {
 	s.log().Info("rescan walking", "root", root)
+	// Fix non-UTF-8 names before enumerating: renaming a directory during the
+	// ingest walk would strand its already-listed children until the next
+	// rescan, while a pre-pass keeps everything ingestable in this one.
+	s.sanitizeTree(ctx, root)
 	var supportedFound int64
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {

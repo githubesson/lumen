@@ -91,6 +91,10 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		out.Skipped = true
 		return out
 	}
+	if fixed := s.fixInvalidUTF8Path(ctx, path); fixed != path {
+		path = fixed
+		out.Path = path
+	}
 	stat, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
