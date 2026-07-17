@@ -190,11 +190,11 @@ function activityToTrack(activity: PlaybackActivity): TrackListItem {
 }
 
 /**
- * Resolve the cover URL to ship with a Discord activity push. Remote sources
- * such as TIDAL already carry public HTTPS artwork URLs, so those can be
- * passed straight through. Local covers need the signed backend path because
- * Discord's media proxy fetches `large_image` server-side without user
- * cookies.
+ * Resolve the cover URL to ship with a Discord activity push. Discord's media
+ * proxy fetches `large_image` server-side without user cookies, so it can
+ * only use public URLs: remote (TIDAL) covers arrive as the backend's authed
+ * `/api/covers/remote?url=…` proxy path and must be unwrapped back to the
+ * public CDN URL, while local covers need the signed backend path.
  *
  * Returns undefined when the track has no usable cover or signing failed;
  * Electron then falls back to the uploaded "lumen" asset
@@ -204,7 +204,12 @@ async function resolveSignedCoverUrl(
   track: TrackListItem,
   cache: Map<string, SignedCoverCacheEntry>,
 ): Promise<string | undefined> {
-  if (track.cover_url) return toAbsolute(track.cover_url);
+  if (track.cover_url) {
+    const publicUrl = publicCoverUrl(track.cover_url);
+    if (publicUrl) return publicUrl;
+    // Same-origin authed path Discord can't fetch — fall through to the
+    // signed album cover, or the Discord-side asset fallback.
+  }
   if (!track.album_id) return undefined;
   const nowSec = Math.floor(Date.now() / 1000);
   const cached = cache.get(track.album_id);
@@ -217,6 +222,28 @@ async function resolveSignedCoverUrl(
     const res = await signAlbumCoverUrl(track.album_id);
     cache.set(track.album_id, { url: res.url, expiresAt: res.expires_at });
     return toAbsolute(res.url);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Extract a publicly fetchable URL from a track's cover_url, or undefined if
+ * there isn't one. The backend's `/api/covers/remote?url=…` proxy carries the
+ * original CDN URL in its query string; other cross-origin URLs (e.g. raw
+ * CDN links in activity rows written before the proxy existed) are already
+ * public. Anything else same-origin is auth-gated and useless to Discord.
+ */
+function publicCoverUrl(coverUrl: string): string | undefined {
+  const abs = toAbsolute(coverUrl);
+  if (!abs) return undefined;
+  try {
+    const u = new URL(abs);
+    if (u.pathname.endsWith("/api/covers/remote")) {
+      return u.searchParams.get("url") ?? undefined;
+    }
+    if (u.origin !== window.location.origin) return abs;
+    return undefined;
   } catch {
     return undefined;
   }
