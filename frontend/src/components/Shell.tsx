@@ -9,6 +9,7 @@ import {
 } from "react-router-dom";
 import {
   AdjustmentsHorizontalIcon,
+  ArrowDownTrayIcon,
   ArrowLeftEndOnRectangleIcon,
   ArrowUpTrayIcon,
   Bars3Icon,
@@ -36,6 +37,7 @@ import { useAuth } from "../context/Auth";
 import { useTheme } from "../context/Theme";
 import { useKey } from "../lib/keybindings";
 import { useDiscordPresence } from "../lib/discordPresence";
+import { startDesktopDownload } from "../lib/downloads";
 import { swatchFor } from "../lib/swatch";
 import { electron, getDesktopConfig, isElectron } from "../lib/platform";
 import { useLyricsPanel } from "../context/LyricsPanel";
@@ -328,6 +330,16 @@ export default function Shell() {
               {me?.role === "admin" ? "admin" : "local library"}
             </div>
           </div>
+          {!isElectron && (
+            <button
+              className="iconbtn"
+              title="Download desktop app"
+              aria-label="Download desktop app"
+              onClick={() => void startDesktopDownload()}
+            >
+              <ArrowDownTrayIcon className="size-4" />
+            </button>
+          )}
           <button
             className="iconbtn"
             title="Sign out"

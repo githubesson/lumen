@@ -1,0 +1,72 @@
+name: release
+
+# Build and publish desktop binaries for every version tag. electron-builder
+# creates (or appends assets to) the GitHub Release for the tag, which the
+# web app's "Download desktop app" button resolves via the releases API.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: --win
+          - os: macos-latest
+            args: --mac
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Optional: bakes Rich Presence support into the build (blank = off).
+      DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            core/package-lock.json
+
+      # The optional private radio add-on lives in untracked _local/; stub
+      # the path so electron-builder's extraResources block matches nothing
+      # and public builds ship without it.
+      - run: mkdir -p _local/fh6-spotify-mod/lumen-radio/dist
+
+      - run: npm ci
+        working-directory: core
+
+      - run: npm ci
+        working-directory: frontend
+
+      # The tag is the single source of truth for the app version; artifacts
+      # come out as Lumen-<version>-setup.exe / Lumen-<version>-universal.dmg.
+      - run: npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+        working-directory: frontend
+
+      - run: npm run build
+        working-directory: frontend
+
+      - run: npm run electron:compile
+        working-directory: frontend
+
+      - if: runner.os == 'macOS'
+        run: npm run dmg:background
+        working-directory: frontend
+
+      # Committed icon assets (icon.ico / icon.icns) are used as-is; `npm run
+      # icons` is skipped because its macOS Assets.car step needs Xcode 26,
+      # which hosted runners don't have.
+      - run: npx electron-builder ${{ matrix.args }} --publish always --config electron-builder.yml
+        working-directory: frontend
