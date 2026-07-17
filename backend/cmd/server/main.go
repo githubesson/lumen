@@ -145,15 +145,29 @@ func main() {
 	}
 
 	previewBuilder := &preview.Builder{CacheDir: cfg.PreviewCacheDir}
+	if cfg.APITrackerBaseURL != "" {
+		updated, skipped, err := apiTrackerStore.MigrateBaseURL(ctx, cfg.APITrackerBaseURL)
+		switch {
+		case err != nil:
+			// Non-fatal: the scanner's BaseURLOverride below still redirects
+			// every scan even when the stored URLs are stale.
+			logger.Warn("api tracker base url migration failed", "err", err)
+		case updated > 0 || skipped > 0:
+			logger.Info("api tracker pins migrated to API_TRACKER_BASE_URL",
+				"updated", updated, "skipped", skipped)
+		}
+	}
 	apiTrackerScanner := &apitracker.Scanner{
 		Store: apiTrackerStore,
-		// Blank API_TRACKER_BASE_URL falls back to apitracker.DefaultBaseURL.
-		Client:       apitracker.NewClient(cfg.APITrackerBaseURL),
-		Ingest:       ingestSvc,
-		Library:      libraryStore,
-		Logger:       logger,
-		PollInterval: cfg.APITrackerScanPollInterval,
-		FileTimeout:  cfg.APITrackerFileTimeout,
+		// Blank API_TRACKER_BASE_URL falls back to apitracker.DefaultBaseURL;
+		// when set it also overrides every pin's stored api_base_url.
+		Client:          apitracker.NewClient(cfg.APITrackerBaseURL),
+		BaseURLOverride: cfg.APITrackerBaseURL,
+		Ingest:          ingestSvc,
+		Library:         libraryStore,
+		Logger:          logger,
+		PollInterval:    cfg.APITrackerScanPollInterval,
+		FileTimeout:     cfg.APITrackerFileTimeout,
 	}
 	startWorker(func() { apiTrackerScanner.Run(ctx) })
 	artistGridScanner := &artistgrid.Scanner{

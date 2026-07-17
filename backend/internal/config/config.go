@@ -22,8 +22,9 @@ type Config struct {
 	CookieName     string
 	CookieSecure   bool
 	SessionTTL     time.Duration
-	// APITrackerBaseURL overrides the tracker-API instance the scanner's
-	// default client talks to. Blank means apitracker.DefaultBaseURL.
+	// APITrackerBaseURL overrides the tracker-API instance for all scans,
+	// including pins with their own stored api_base_url. Blank means each
+	// pin's stored URL, falling back to apitracker.DefaultBaseURL.
 	APITrackerBaseURL          string
 	APITrackerScanPollInterval time.Duration
 	APITrackerFileTimeout      time.Duration

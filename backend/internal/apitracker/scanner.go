@@ -37,13 +37,17 @@ var invalidNameChars = strings.NewReplacer(
 )
 
 type Scanner struct {
-	Store        *Store
-	Client       *Client
-	Ingest       *ingest.Service
-	Library      *library.Store
-	Logger       *slog.Logger
-	PollInterval time.Duration
-	FileTimeout  time.Duration
+	Store  *Store
+	Client *Client
+	// BaseURLOverride, when non-blank, takes precedence over every pin's
+	// stored api_base_url. Set from API_TRACKER_BASE_URL so the tracker-API
+	// instance can be swapped without rewriting pins in the database.
+	BaseURLOverride string
+	Ingest          *ingest.Service
+	Library         *library.Store
+	Logger          *slog.Logger
+	PollInterval    time.Duration
+	FileTimeout     time.Duration
 
 	downloadHTTP      *http.Client
 	downloadURLPolicy httpx.DownloadPolicy
@@ -151,7 +155,7 @@ func (s *Scanner) Wait() { s.jobs.Wait() }
 func (s *Scanner) ScanPin(ctx context.Context, pin Pin) (ScanSummary, error) {
 	summary := ScanSummary{PinID: pin.ID, TrackerID: pin.TrackerID}
 	if s.Client == nil {
-		s.Client = NewClient(pin.APIBaseURL)
+		s.Client = NewClient(s.baseURLFor(pin))
 	}
 	if s.FileTimeout <= 0 {
 		s.FileTimeout = 30 * time.Minute
@@ -373,14 +377,22 @@ func normalizeEraKey(raw string) string {
 	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(raw))), " ")
 }
 
+func (s *Scanner) baseURLFor(pin Pin) string {
+	if override := strings.TrimSpace(s.BaseURLOverride); override != "" {
+		return override
+	}
+	return pin.APIBaseURL
+}
+
 func (s *Scanner) clientFor(pin Pin) *Client {
+	base := s.baseURLFor(pin)
 	if s.Client == nil {
-		return NewClient(pin.APIBaseURL)
+		return NewClient(base)
 	}
 	copy := *s.Client
-	copy.BaseURL = NormalizeBaseURL(pin.APIBaseURL)
+	copy.BaseURL = NormalizeBaseURL(base)
 	if copy.HTTP == nil {
-		copy.HTTP = NewClient(pin.APIBaseURL).HTTP
+		copy.HTTP = NewClient(base).HTTP
 	}
 	return &copy
 }

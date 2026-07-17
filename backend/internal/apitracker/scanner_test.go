@@ -14,6 +14,26 @@ import (
 	"github.com/githubesson/lumen/internal/httpx"
 )
 
+func TestClientForBaseURLOverride(t *testing.T) {
+	pin := Pin{APIBaseURL: "https://pinned.example/api"}
+
+	s := &Scanner{Client: NewClient("")}
+	if got := s.clientFor(pin).BaseURL; got != "https://pinned.example/api" {
+		t.Fatalf("without override: BaseURL = %q, want pin URL", got)
+	}
+
+	s = &Scanner{
+		Client:          NewClient(""),
+		BaseURLOverride: "https://override.example/api",
+	}
+	if got := s.clientFor(pin).BaseURL; got != "https://override.example/api" {
+		t.Fatalf("with override: BaseURL = %q, want override URL", got)
+	}
+	if got := s.clientFor(Pin{}).BaseURL; got != "https://override.example/api" {
+		t.Fatalf("with override, blank pin: BaseURL = %q, want override URL", got)
+	}
+}
+
 func TestDownloadOneSkipsUnsupportedExtensionBeforeWriting(t *testing.T) {
 	var requested bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -253,6 +253,42 @@ func (s *Store) PatchPin(ctx context.Context, id uuid.UUID, in PatchPinInput) (P
 	return p, err
 }
 
+// MigrateBaseURL rewrites every pin's api_base_url to base (normalized), so
+// changing API_TRACKER_BASE_URL persists into the database on startup. Pins
+// that would collide with the unique source constraint — the same tracker
+// already pinned at the target base URL, or duplicates among the rewritten
+// rows — are left untouched and reported as skipped.
+func (s *Store) MigrateBaseURL(ctx context.Context, base string) (updated, skipped int64, err error) {
+	base = NormalizeBaseURL(base)
+	tag, err := s.db.Exec(ctx, `
+		WITH candidates AS (
+			SELECT DISTINCT ON (root_path, destination_subdir, tracker_id, tab) id
+			FROM api_tracker_pins p
+			WHERE api_base_url <> $1
+			  AND NOT EXISTS (
+			      SELECT 1 FROM api_tracker_pins q
+			      WHERE q.root_path = p.root_path
+			        AND q.destination_subdir = p.destination_subdir
+			        AND q.tracker_id = p.tracker_id
+			        AND q.tab = p.tab
+			        AND q.api_base_url = $1
+			  )
+			ORDER BY root_path, destination_subdir, tracker_id, tab, created_at, id
+		)
+		UPDATE api_tracker_pins
+		SET api_base_url = $1, updated_at = NOW()
+		FROM candidates
+		WHERE api_tracker_pins.id = candidates.id`, base)
+	if err != nil {
+		return 0, 0, err
+	}
+	updated = tag.RowsAffected()
+	err = s.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM api_tracker_pins WHERE api_base_url <> $1`, base,
+	).Scan(&skipped)
+	return updated, skipped, err
+}
+
 func (s *Store) DeletePin(ctx context.Context, id uuid.UUID) error {
 	tag, err := s.db.Exec(ctx, `DELETE FROM api_tracker_pins WHERE id = $1`, id)
 	if err != nil {

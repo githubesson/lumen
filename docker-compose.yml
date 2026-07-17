@@ -64,6 +64,9 @@ services:
       LASTFM_SHARED_SECRET: ${LASTFM_SHARED_SECRET:-}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       GENIUS_PROXY_URL: ${GENIUS_PROXY_URL:-}
+      # Overrides the tracker-API instance for all scans (including per-pin
+      # api_base_url values). Blank keeps each pin's stored URL.
+      API_TRACKER_BASE_URL: ${API_TRACKER_BASE_URL:-}
     # Bind to loopback only — the host-level nginx reverse proxy connects over
     # 127.0.0.1:${BACKEND_PORT}. Drop the "127.0.0.1:" prefix to make it
     # reachable on all interfaces (not recommended — nothing enforces auth at
