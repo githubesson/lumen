@@ -19,7 +19,13 @@ extraResources:
     filter:
       - version.dll
       - fh6-radio/config.toml
+# On macOS the hook bundles electron/assets/Assets.car (when present) so
+# macOS 26 renders the light/dark/tinted icon variants natively — generate it
+# with scripts/generate-mac-icon-assets.sh. No-op on Windows and while the
+# file doesn't exist.
+afterPack: scripts/mac-appearance-icon.cjs
 mac:
+  # Static fallback for macOS < 26; appearance variants come from Assets.car.
   icon: electron/assets/icon.icns
 win:
   icon: electron/assets/icon.ico
