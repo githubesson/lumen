@@ -1,4 +1,13 @@
-import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
+import type { ComponentProps } from "react";
+import type { Stack } from "expo-router";
+
+/** The object form of `Stack`'s `screenOptions` prop (excludes the callback
+ *  form). Derived from the component so it tracks expo-router's own stack
+ *  options now that the router no longer depends on react-navigation. */
+type StackNavigationOptions = Exclude<
+  NonNullable<ComponentProps<typeof Stack>["screenOptions"]>,
+  (...args: never) => unknown
+>;
 
 /**
  * Shared stack `screenOptions` preset — Apple-Music-style:
@@ -13,10 +22,10 @@ import type { NativeStackNavigationOptions } from "@react-navigation/native-stac
  *   - Minimal back button — no "Back" text next to the chevron.
  *
  * Apply via `<Stack screenOptions={stackScreenOptions}>` in each tab's
- * `_layout.tsx`. Header text color comes from `@react-navigation/native`'s
- * `ThemeProvider`.
+ * `_layout.tsx`. Header text color comes from the navigation `ThemeProvider`
+ * (`expo-router/react-navigation`).
  */
-export const stackScreenOptions: NativeStackNavigationOptions = {
+export const stackScreenOptions: StackNavigationOptions = {
   headerTransparent: true,
   headerShadowVisible: true,
   headerLargeTitleShadowVisible: true,

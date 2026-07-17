@@ -93,7 +93,7 @@ function GradientArt({ seed, rank }: { seed: string; rank: number }) {
     >
       <View
         style={{
-          ...StyleSheet.absoluteFillObject,
+          ...StyleSheet.absoluteFill,
           backgroundColor: `hsl(${(hue + 40) % 360}, 60%, 35%)`,
           opacity: 0.55,
         }}

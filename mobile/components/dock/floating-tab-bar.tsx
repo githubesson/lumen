@@ -11,7 +11,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
-import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
+import type { BottomTabBarProps } from "expo-router/js-tabs";
 import { DOCK, useDockColors, useDockControls } from "./dock-context";
 import { DockSurface } from "./dock-surface";
 
@@ -208,7 +208,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   capsuleHost: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: "center",
   },
   capsule: {

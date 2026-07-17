@@ -568,18 +568,18 @@ const styles = StyleSheet.create({
     height: DOCK.miniHeight,
   },
   phoneShadow: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: DOCK.miniHeight / 2,
     borderCurve: "continuous",
   },
   phonePill: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: DOCK.miniHeight / 2,
     borderCurve: "continuous",
     overflow: "hidden",
   },
   phoneBorder: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: DOCK.miniHeight / 2,
     borderCurve: "continuous",
     borderWidth: StyleSheet.hairlineWidth,

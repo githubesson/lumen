@@ -5,8 +5,13 @@ self-hosted music library.
 
 ## Stack
 
-- Expo SDK 55, React 19, React Native 0.83, file-based routes under `app/`
+- Expo SDK 57, React 19, React Native 0.86, file-based routes under `app/`
+  (minimum iOS 16.4 as of SDK 56)
 - `expo-audio` with background playback, lock-screen / now-playing controls
+- `expo-widgets` Live Activity (`widgets/`) showing playlist download
+  progress on the iOS Lock Screen / Dynamic Island (iOS 16.4+; set your
+  Apple Team ID via `npm run configure` or `app.local.json` so EAS can sign
+  the widget extension)
 - React Query for data fetching, FlashList for big lists
 - Shared logic from [`@music-library/core`](../core/) via a synced copy in
   `packages/music-library-core` (see below)

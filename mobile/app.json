@@ -51,6 +51,8 @@
       "expo-font",
       "expo-image",
       "expo-web-browser",
+      "expo-status-bar",
+      "expo-widgets",
       "@kesha-antonov/react-native-background-downloader"
     ],
     "extra": {

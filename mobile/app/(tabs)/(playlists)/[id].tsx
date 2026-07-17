@@ -15,7 +15,7 @@ import ReorderableList, {
   type ReorderableListReorderEvent,
 } from "react-native-reorderable-list";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useHeaderHeight } from "@react-navigation/elements";
+import { useHeaderHeight } from "expo-router/react-navigation";
 import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -402,6 +402,7 @@ export default function PlaylistDetailScreen() {
             <PlaylistDownloadButton
               theme={theme}
               playlistId={p.id}
+              playlistName={p.name}
               tracks={tracks}
             />
           ) : null}
@@ -759,10 +760,12 @@ const DOWNLOAD_STATUS_COPY: Record<PlaylistDownloadStatus, string> = {
 function PlaylistDownloadButton({
   theme,
   playlistId,
+  playlistName,
   tracks,
 }: {
   theme: ThemeTokens;
   playlistId: string;
+  playlistName: string;
   tracks: TrackListItem[];
 }) {
   const { status, total, downloaded } = usePlaylistDownload(tracks);
@@ -799,8 +802,8 @@ function PlaylistDownloadButton({
       );
       return;
     }
-    void downloadStore.downloadPlaylist(playlistId, tracks);
-  }, [isDownloaded, isDownloading, offline, playlistId, tracks]);
+    void downloadStore.downloadPlaylist(playlistId, tracks, { playlistName });
+  }, [isDownloaded, isDownloading, offline, playlistId, playlistName, tracks]);
 
   const label = isDownloading
     ? `${downloaded}/${total}`

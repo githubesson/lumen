@@ -19,6 +19,7 @@ import {
   isRejectedStreamContentType,
   looksLikeMediaBytes,
 } from "../track-download";
+import { downloadLiveActivity } from "./live-activity";
 
 /**
  * Device-local offline audio store, Spotify-style: files live in the app's
@@ -206,6 +207,10 @@ class DownloadStore {
   }
 
   private async doHydrate(): Promise<void> {
+    // A process kill orphans any Live Activity from the previous run; end it
+    // before re-attaching tasks (which finish without one — the session
+    // context needed to resume the card doesn't survive the kill).
+    downloadLiveActivity.clearOrphaned();
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
       const parsed = raw ? (JSON.parse(raw) as PersistShape) : null;
@@ -373,6 +378,12 @@ class DownloadStore {
       .begin(({ headers: responseHeaders }) => {
         contentType = headerValue(responseHeaders, "content-type");
       })
+      // Byte-level Live Activity progress. Foreground-only in practice: iOS
+      // doesn't deliver progress events to a suspended app (the count beats
+      // in finalize/fail cover background updates).
+      .progress(({ bytesDownloaded, bytesTotal }) => {
+        downloadLiveActivity.noteProgress(track.id, bytesDownloaded, bytesTotal);
+      })
       // completeHandler MUST follow both done and error — iOS throttles
       // future background time for apps that never report completion.
       .done(() => {
@@ -428,7 +439,7 @@ class DownloadStore {
       const filename = `${sanitizeId(trackId)}.${ext}`;
       const file = new File(this.dir, filename);
       if (file.exists) file.delete();
-      part.move(file);
+      await part.move(file);
 
       // Cover art is best-effort: a missing/failed cover must not fail the
       // audio download, so this never throws.
@@ -456,6 +467,9 @@ class DownloadStore {
       this.pendingOwners.delete(trackId);
       this.errors.delete(trackId);
       this.emit();
+      // Runs on background wakes too — this is the Live Activity's only
+      // update beat while the app is suspended.
+      downloadLiveActivity.noteDone(trackId);
     } catch (error) {
       this.fail(
         trackId,
@@ -471,6 +485,7 @@ class DownloadStore {
     this.active.delete(trackId);
     this.pendingOwners.delete(trackId);
     this.emit();
+    downloadLiveActivity.noteFailed(trackId);
   }
 
   /** Remove an owner; deletes the file only when no owners remain. */
@@ -530,8 +545,15 @@ class DownloadStore {
   async downloadPlaylist(
     playlistId: string,
     tracks: TrackListItem[],
+    options?: { playlistName?: string },
   ): Promise<void> {
     await this.hydrate();
+    // Only tracks that will actually transfer belong to the Live Activity
+    // session (an empty list means it never starts). Tracks already in
+    // flight from an earlier tap are included — the session dedupes them and
+    // their completion callbacks still land.
+    const pending = tracks.filter((track) => !this.records.has(track.id));
+    downloadLiveActivity.begin(options?.playlistName ?? "Playlist", pending);
     const owner = playlistOwner(playlistId);
     for (const track of tracks) {
       try {

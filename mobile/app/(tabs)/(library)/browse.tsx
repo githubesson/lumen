@@ -18,7 +18,7 @@ import {
   View,
 } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
-import { useHeaderHeight } from "@react-navigation/elements";
+import { useHeaderHeight } from "expo-router/react-navigation";
 import { useInfiniteQuery, type QueryKey } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -428,7 +428,7 @@ const styles = StyleSheet.create({
     position: "relative",
   },
   headerSearchClosed: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   headerSearchClosedButton: {
     width: "100%",
@@ -437,7 +437,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   headerSearchOpen: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: "center",
     paddingLeft: 14,
     paddingRight: 8,

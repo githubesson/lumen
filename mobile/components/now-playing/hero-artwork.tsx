@@ -60,7 +60,7 @@ const styles = StyleSheet.create({
     position: "relative",
   },
   layer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   shadow: {
     borderRadius: 12,

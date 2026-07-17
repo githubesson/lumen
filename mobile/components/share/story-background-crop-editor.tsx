@@ -6,6 +6,7 @@ import {
   Text,
   View,
   type StyleProp,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 import * as Haptics from "expo-haptics";
@@ -234,9 +235,11 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
   },
+  // RN 0.86 moved `userSelect` to TextStyle; it still reaches the DOM on web,
+  // where it stops text selection from hijacking drags.
   dragSurface: {
     userSelect: "none",
-  },
+  } as TextStyle,
   cropWindow: {
     position: "absolute",
     borderWidth: 2,
