@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -53,6 +54,9 @@ export function PlaybackDeviceButton({
       : null;
 
   const swiftUI = getOptionalSwiftUI();
+  // The published device name in context/player uses the same distinction.
+  const localDeviceLabel =
+    Platform.OS === "ios" && Platform.isPad ? "This iPad" : "This iPhone";
 
   if (swiftUI) {
     const { Button, Divider, Host, Menu, RNHostView, Section } = swiftUI;
@@ -86,7 +90,7 @@ export function PlaybackDeviceButton({
         >
           <Section title={connected ? "Playback Device" : "Reconnecting…"}>
             <Button
-              label="This iPhone"
+              label={localDeviceLabel}
               systemImage={targetDeviceId ? "iphone" : "checkmark"}
               onPress={() => {
                 void Haptics.selectionAsync();

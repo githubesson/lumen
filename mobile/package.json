@@ -5,13 +5,13 @@
   "scripts": {
     "start": "expo start",
     "configure": "node ./scripts/configure-app.mjs",
-    "reset-project": "node ./scripts/reset-project.js",
     "sync:core": "node ./scripts/sync-core-package.mjs",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "postinstall": "npm run sync:core && patch-package"
+    "postinstall": "npm run sync:core",
+    "test": "vitest run"
   },
   "dependencies": {
     "@expo/ui": "~55.0.12",
@@ -68,9 +68,9 @@
     "@types/react": "~19.2.10",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~55.0.0",
-    "patch-package": "^8.0.1",
     "postinstall-postinstall": "^2.1.0",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vitest": "^4.1.10"
   },
   "private": true
 }

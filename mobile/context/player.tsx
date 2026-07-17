@@ -16,6 +16,7 @@ import {
 import { Alert, AppState, Platform } from "react-native";
 import * as Haptics from "expo-haptics";
 import {
+  nextRepeatMode,
   sendRemotePlaybackCommand,
   trackCoverUrl,
   usePlaybackActivityPublisher,
@@ -142,7 +143,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     state,
     time,
     storage: asyncStorageAdapter,
-    deviceName: Platform.OS === "ios" ? "iPhone" : "Mobile",
+    deviceName: Platform.OS === "ios" ? (Platform.isPad ? "iPad" : "iPhone") : "Mobile",
     adapter,
     controls,
     controlEnabled: true,
@@ -472,7 +473,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       cycleRepeat: () => {
         if (targetDevice) {
           void sendCommand("set_repeat", {
-            repeat: nextRepeat(controlledState.repeat),
+            repeat: nextRepeatMode(controlledState.repeat),
           });
         } else controls.cycleRepeat();
       },
@@ -613,11 +614,7 @@ function activityTime(activity: PlaybackDevice["activity"]): TimeState {
     currentTime: Math.min(duration || Infinity, activity.position_sec + elapsed),
     duration,
   };
-}
-
-function nextRepeat(repeat: PlayerState["repeat"]): PlayerState["repeat"] {
-  return repeat === "off" ? "all" : repeat === "all" ? "one" : "off";
-}
+};
 
 function optimisticControlledState(
   state: {

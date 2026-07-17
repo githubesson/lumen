@@ -195,12 +195,14 @@ export function usePlayerCore({
 
   const next = useCallback<PlayerControls["next"]>(() => {
     if (!queue.length) return;
-    let nextIndex = firstPlayableIndex(
-      queue,
-      index + 1,
-      queue.length - 1,
-      isTrackPlayable,
-    );
+    // Guard the empty forward range explicitly: firstPlayableIndex infers
+    // scan direction from from/to ordering, so (index+1, length-1) at the
+    // last track would scan BACKWARD and return the current track instead
+    // of -1 — replaying it instead of stopping or wrapping.
+    let nextIndex =
+      index + 1 < queue.length
+        ? firstPlayableIndex(queue, index + 1, queue.length - 1, isTrackPlayable)
+        : -1;
     let nextQueue: TrackListItem[] | null = null;
     if (nextIndex === -1) {
       if (repeat !== "all") {
@@ -280,7 +282,10 @@ export function usePlayerCore({
       setCurrentTime(0);
       return;
     }
-    const ni = firstPlayableIndex(queue, index - 1, 0, isTrackPlayable);
+    const ni =
+      index > 0
+        ? firstPlayableIndex(queue, index - 1, 0, isTrackPlayable)
+        : -1;
     if (ni === -1) {
       // Nothing playable behind us — restart the current track instead of
       // landing on an unplayable one.
@@ -370,12 +375,12 @@ export function usePlayerCore({
 
   const nextTrackToPrepare = useMemo(() => {
     if (!current || repeat === "one" || !queue.length) return null;
-    const ni = firstPlayableIndex(
-      queue,
-      index + 1,
-      queue.length - 1,
-      isTrackPlayable,
-    );
+    // Same empty-range guard as next(): at the last track the unguarded
+    // scan returns the CURRENT track and we'd preload what's playing.
+    const ni =
+      index + 1 < queue.length
+        ? firstPlayableIndex(queue, index + 1, queue.length - 1, isTrackPlayable)
+        : -1;
     if (ni !== -1) return queue[ni] ?? null;
     // A repeat-all shuffle creates a fresh permutation at the boundary, so
     // its next track is intentionally unknown until then.

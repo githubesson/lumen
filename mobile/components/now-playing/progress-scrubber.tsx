@@ -124,7 +124,10 @@ function useEstimatedPlaybackTime(
     tick();
     const interval = setInterval(tick, PROGRESS_DISPLAY_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [appState, isPlaying, time.duration, time.currentTime]);
+    // `time.currentTime` is deliberately NOT a dependency: it updates at 4Hz
+    // while playing and would churn the interval. The rebase effect above
+    // already folds each core update into anchorRef, which tick() reads.
+  }, [appState, isPlaying, time.duration]);
 
   const beginSeek = useCallback(() => {
     seekingRef.current = true;

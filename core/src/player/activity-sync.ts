@@ -406,7 +406,11 @@ export function usePlaybackActivityPublisher({
     if (!sent) void api.upsertPlaybackActivity(payload).catch(() => {});
   }, [deviceId, deviceName, enabled]);
 
-  publishRef.current = publish;
+  // Keep the ref current from an effect: writing refs during render is
+  // illegal under concurrent React (and rejected by the React Compiler).
+  useEffect(() => {
+    publishRef.current = publish;
+  }, [publish]);
 
   useEffect(() => {
     if (!enabled || !deviceId) return;

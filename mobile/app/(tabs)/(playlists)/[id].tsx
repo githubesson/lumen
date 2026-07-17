@@ -261,9 +261,24 @@ export default function PlaylistDetailScreen() {
   const onReorder = useCallback(
     ({ from, to }: ReorderableListReorderEvent) => {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      const previous = localTracks;
       const next = reorderItems(localTracks, from, to);
       setLocalTracks(next);
-      reorderMutation.mutate(next.map((t) => t.track_id));
+      reorderMutation.mutate(
+        next.map((t) => t.track_id),
+        {
+          // Restore the pre-drag order on failure: the sync effect only
+          // re-runs when the query data changes, so without this a failed
+          // reorder would leave the UI diverged from the server order.
+          onError: (error) => {
+            setLocalTracks(previous);
+            Alert.alert(
+              "Couldn't reorder tracks",
+              error instanceof Error ? error.message : "Please try again.",
+            );
+          },
+        },
+      );
     },
     [localTracks, reorderMutation],
   );
@@ -272,10 +287,19 @@ export default function PlaylistDetailScreen() {
     (position: number) => {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       // Optimistic local remove; mutation invalidates on success.
+      const previous = localTracks;
       setLocalTracks((prev) => prev.filter((t) => t.position !== position));
-      removeMutation.mutate(position);
+      removeMutation.mutate(position, {
+        onError: (error) => {
+          setLocalTracks(previous);
+          Alert.alert(
+            "Couldn't remove track",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        },
+      });
     },
-    [removeMutation],
+    [localTracks, removeMutation],
   );
 
   const onDelete = () => {
