@@ -9,6 +9,11 @@ const coreSource = (path: string) =>
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
+    // Core is consumed as source via the aliases below, so bare `react`
+    // imports inside ../core/src would otherwise resolve to core's own
+    // react@19 devDependency — two React copies, null dispatcher, dead
+    // renderer. Force everything onto this package's copy.
+    dedupe: ["react", "react-dom"],
     alias: [
       {
         find: "@music-library/core/api",
