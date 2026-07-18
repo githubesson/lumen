@@ -135,7 +135,9 @@ export function useWindowedSlice(
   };
 }
 
-function findScrollParent(el: HTMLElement): HTMLElement | null {
+/** First scrollable ancestor of `el` (skipping horizontal-only scrollers),
+ *  or null when the element scrolls with the page. */
+export function findScrollParent(el: HTMLElement): HTMLElement | null {
   let p: HTMLElement | null = el.parentElement;
   while (p && p !== document.body) {
     if (p.hasAttribute("data-horizontal-scroll")) {
