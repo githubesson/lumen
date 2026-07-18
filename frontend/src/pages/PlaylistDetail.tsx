@@ -167,6 +167,30 @@ export default function PlaylistDetail() {
       setError(errorMessage(err, "Failed to remove track."));
     }
   };
+  // Drag-reorder commits the full visible order, like mobile's reorder mode.
+  // Optimistic: swap locally, PUT the new order, reload for fresh positions.
+  const onReorder = async (from: number, to: number) => {
+    if (!id || !tracks || from === to) return;
+    const previous = tracks;
+    const next = [...tracks];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setTracks(next);
+    try {
+      await api.reorderPlaylist(
+        id,
+        next.map((t) => t.track_id),
+      );
+      await load();
+    } catch (err) {
+      setTracks(previous);
+      setError(errorMessage(err, "Failed to reorder tracks."));
+    }
+  };
+
+  // Dragging only makes sense against the saved order with nothing filtered
+  // out — otherwise row indices wouldn't map to server positions.
+  const canReorder = canEdit && sortKey === "custom" && q.length === 0;
 
   const onDelete = async () => {
     if (
@@ -359,6 +383,7 @@ export default function PlaylistDetail() {
           queueById={queueById}
           canEdit={canEdit}
           onRemove={onRemove}
+          onReorder={canReorder ? onReorder : undefined}
           onPlay={(entry) => {
             const item = queueById.get(entry.track_id);
             if (item) play(item, queue);

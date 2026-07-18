@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { TrashIcon } from "@heroicons/react/16/solid";
 import {
   albumCoverUrl,
@@ -40,6 +40,7 @@ export default function PlaylistTracksPanel({
   queueById,
   canEdit,
   onRemove,
+  onReorder,
   onPlay,
   onToggleFav,
   isFav,
@@ -55,6 +56,7 @@ export default function PlaylistTracksPanel({
   queueById: Map<string, TrackListItem>;
   canEdit: boolean;
   onRemove: (position: number) => void;
+  onReorder?: (from: number, to: number) => void;
   onPlay: (t: PlaylistTrackEntry) => void;
   onToggleFav: (id: string) => void;
   isFav: (id: string) => boolean;
@@ -98,6 +100,7 @@ export default function PlaylistTracksPanel({
         queueById={queueById}
         canEdit={canEdit}
         onRemove={onRemove}
+        onReorder={onReorder}
         onPlay={onPlay}
         onToggleFav={onToggleFav}
         isFav={isFav}
@@ -115,6 +118,7 @@ function TracksTable({
   queueById,
   canEdit,
   onRemove,
+  onReorder,
   onPlay,
   onToggleFav,
   isFav,
@@ -127,6 +131,7 @@ function TracksTable({
   queueById: Map<string, TrackListItem>;
   canEdit: boolean;
   onRemove: (position: number) => void;
+  onReorder?: (from: number, to: number) => void;
   onPlay: (t: PlaylistTrackEntry) => void;
   onToggleFav: (id: string) => void;
   isFav: (id: string) => boolean;
@@ -210,6 +215,68 @@ function TracksTable({
     [],
   );
 
+  // Native HTML5 drag-reorder. `dropSlot` is the insertion gap (0..length);
+  // refs mirror the state so drop/end handlers stay referentially stable.
+  const reorderable = !!onReorder && !selectionMode;
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dropSlot, setDropSlot] = useState<number | null>(null);
+  const dragIndexRef = useRef<number | null>(null);
+  const onReorderProp = useRef(onReorder);
+  onReorderProp.current = onReorder;
+
+  const slotFromEvent = (index: number, e: React.DragEvent<HTMLTableRowElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return e.clientY < rect.top + rect.height / 2 ? index : index + 1;
+  };
+
+  const handleDragStartRow = useCallback(
+    (index: number, e: React.DragEvent<HTMLTableRowElement>) => {
+      e.dataTransfer.effectAllowed = "move";
+      // Firefox refuses to start a drag without payload data.
+      e.dataTransfer.setData("text/plain", String(index));
+      dragIndexRef.current = index;
+      setDragIndex(index);
+    },
+    [],
+  );
+  const handleDragOverRow = useCallback(
+    (index: number, e: React.DragEvent<HTMLTableRowElement>) => {
+      if (dragIndexRef.current === null) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setDropSlot(slotFromEvent(index, e));
+    },
+    [],
+  );
+  const handleDropRow = useCallback(
+    (index: number, e: React.DragEvent<HTMLTableRowElement>) => {
+      e.preventDefault();
+      const from = dragIndexRef.current;
+      const slot = slotFromEvent(index, e);
+      dragIndexRef.current = null;
+      setDragIndex(null);
+      setDropSlot(null);
+      if (from === null) return;
+      const to = slot > from ? slot - 1 : slot;
+      if (to !== from) onReorderProp.current?.(from, to);
+    },
+    [],
+  );
+  const handleDragEndRow = useCallback(() => {
+    dragIndexRef.current = null;
+    setDragIndex(null);
+    setDropSlot(null);
+  }, []);
+
+  const dropEdgeFor = (index: number): "above" | "below" | null => {
+    if (dragIndex === null || dropSlot === null) return null;
+    // Hide the line on no-op slots (right where the row already sits).
+    if (dropSlot === dragIndex || dropSlot === dragIndex + 1) return null;
+    if (dropSlot === index) return "above";
+    if (dropSlot === index + 1 && index === tracks.length - 1) return "below";
+    return null;
+  };
+
   const tableRef = useRef<HTMLTableElement>(null);
   const { start, end, topSpacerPx, bottomSpacerPx } = useWindowedSlice(
     tableRef,
@@ -291,6 +358,13 @@ function TracksTable({
                     onToggleFav={handleToggleFav}
                     onRemove={handleRemove}
                     onContextMenu={handleContextMenu}
+                    reorderable={reorderable}
+                    dragSource={dragIndex === index}
+                    dropEdge={dropEdgeFor(index)}
+                    onDragStartRow={handleDragStartRow}
+                    onDragOverRow={handleDragOverRow}
+                    onDropRow={handleDropRow}
+                    onDragEndRow={handleDragEndRow}
                   />
                 );
               })}
@@ -324,6 +398,13 @@ const PlaylistRow = memo(function PlaylistRow({
   onToggleFav,
   onRemove,
   onContextMenu,
+  reorderable,
+  dragSource,
+  dropEdge,
+  onDragStartRow,
+  onDragOverRow,
+  onDropRow,
+  onDragEndRow,
 }: {
   entry: PlaylistTrackEntry;
   index: number;
@@ -345,6 +426,13 @@ const PlaylistRow = memo(function PlaylistRow({
     entry: PlaylistTrackEntry,
     event: React.MouseEvent<HTMLTableRowElement>,
   ) => void;
+  reorderable: boolean;
+  dragSource: boolean;
+  dropEdge: "above" | "below" | null;
+  onDragStartRow: (index: number, e: React.DragEvent<HTMLTableRowElement>) => void;
+  onDragOverRow: (index: number, e: React.DragEvent<HTMLTableRowElement>) => void;
+  onDropRow: (index: number, e: React.DragEvent<HTMLTableRowElement>) => void;
+  onDragEndRow: () => void;
 }) {
   const added = entry.added_at
     ? new Date(entry.added_at).toLocaleDateString()
@@ -352,10 +440,18 @@ const PlaylistRow = memo(function PlaylistRow({
   return (
     <tr
       className={
-        `${isNow ? "playing" : ""}${selected ? " selected" : ""}`.trim() ||
-        undefined
+        `${isNow ? "playing" : ""}${selected ? " selected" : ""}${
+          dragSource ? " drag-source" : ""
+        }${
+          dropEdge ? (dropEdge === "above" ? " drop-above" : " drop-below") : ""
+        }`.trim() || undefined
       }
       aria-selected={selectionMode ? selected : undefined}
+      draggable={reorderable || undefined}
+      onDragStart={reorderable ? (e) => onDragStartRow(index, e) : undefined}
+      onDragOver={reorderable ? (e) => onDragOverRow(index, e) : undefined}
+      onDrop={reorderable ? (e) => onDropRow(index, e) : undefined}
+      onDragEnd={reorderable ? onDragEndRow : undefined}
       onClick={(e) => {
         if (selectionMode) onToggleSelect(entry, index, e.shiftKey);
       }}
