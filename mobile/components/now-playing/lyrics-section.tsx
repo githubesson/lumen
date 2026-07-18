@@ -257,13 +257,14 @@ function SyncedLyricLine({
       filter: [{ blur: blurAmount }],
     };
   });
+  const inactiveTextColor = withAlpha(theme.color.fgMuted, 0.75);
   const textStyle = useAnimatedStyle(() => ({
     color: line.section
       ? theme.color.accent
       : interpolateColor(
           active.value,
           [0, 1],
-          [withAlpha(theme.color.fgMuted, 0.75), theme.color.fg],
+          [inactiveTextColor, theme.color.fg],
         ),
   }));
 
