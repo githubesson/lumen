@@ -2,6 +2,13 @@
   "name": "music-library-mobile",
   "main": "expo-router/entry",
   "version": "1.0.0",
+  "expo": {
+    "autolinking": {
+      "ios": {
+        "buildFromSource": ["react-native-worklets"]
+      }
+    }
+  },
   "scripts": {
     "start": "expo start",
     "configure": "node ./scripts/configure-app.mjs",
