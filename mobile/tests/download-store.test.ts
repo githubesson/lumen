@@ -115,6 +115,12 @@ vi.mock("@kesha-antonov/react-native-background-downloader", () => ({
         this.cbs.begin = cb;
         return this;
       },
+      progress(
+        cb: (args: { bytesDownloaded: number; bytesTotal: number }) => void,
+      ) {
+        this.cbs.progress = cb;
+        return this;
+      },
       done(cb: () => void) {
         this.cbs.done = cb;
         return this;
@@ -140,6 +146,18 @@ vi.mock("@music-library/core", () => ({
   downloadStreamUrl: (id: string) => `https://api.test/stream/${id}`,
   getBaseUrl: () => "https://api.test",
   trackCoverUrl: () => "https://api.test/cover",
+}));
+
+// live-activity pulls in react-native + expo-widgets (Flow / native-only);
+// stub it out — Live Activity behavior is not under test here.
+vi.mock("../lib/downloads/live-activity", () => ({
+  downloadLiveActivity: {
+    begin: vi.fn(),
+    noteProgress: vi.fn(),
+    noteDone: vi.fn(),
+    noteFailed: vi.fn(),
+    clearOrphaned: vi.fn(),
+  },
 }));
 
 // fetch is only used for cover downloads.
