@@ -52,7 +52,7 @@
     "react-dom": "19.2.3",
     "react-native": "0.86.0",
     "react-native-gesture-handler": "~2.32.0",
-    "react-native-reanimated": "4.5.0",
+    "react-native-reanimated": "^4.6.0-nightly-20260717-55ef079be",
     "react-native-reorderable-list": "^0.18.0",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "4.25.2",
