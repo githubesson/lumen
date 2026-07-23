@@ -269,12 +269,33 @@ func (h *Tracks) PublicAlbumCover(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	key, err := h.Library.AlbumCoverPath(r.Context(), id)
+	if key, err := h.Library.AlbumCoverPath(r.Context(), id); err == nil && key != "" {
+		h.servePublicStorageObject(w, r, key, exp)
+		return
+	}
+	// Materialized streamed albums (TIDAL) have no stored cover — fall back
+	// to the remote CDN artwork referenced by their tracks' metadata.
+	cover, err := h.Library.RemoteAlbumCover(r.Context(), id)
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	h.servePublicStorageObject(w, r, key, exp)
+	u, err := allowedRemoteCoverURL(remoteCoverURLForSize(cover, maxServedCoverDimension))
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	data, ct, err := coverCache.fetchCached(u)
+	if err != nil {
+		h.log().Warn("public album cover: remote fetch failed", "album", id, "host", u.Hostname(), "err", err)
+		http.Error(w, "cover fetch failed", http.StatusBadGateway)
+		return
+	}
+	remaining := max(exp-time.Now().Unix(), 60)
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "public, max-age="+strconv.FormatInt(remaining, 10)+", immutable")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	_, _ = w.Write(data)
 }
 
 // servePublicStorageObject is the cookie-less variant of serveStorageObject.

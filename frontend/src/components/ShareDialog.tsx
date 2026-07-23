@@ -6,6 +6,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import type Hls from "hls.js";
 import {
   ArrowPathIcon,
   CheckIcon,
@@ -61,6 +62,46 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
   const [copyError, setCopyError] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
+
+  // Attach the preview source. Local tracks are a plain progressive stream;
+  // TIDAL tracks stream as HLS, which Chrome/Firefox only play through
+  // hls.js (lazy-imported, same as the main player adapter). Safari falls
+  // back to native HLS via a direct src assignment.
+  const previewUrl = track ? streamUrl(track.id) : null;
+  const previewIsHls = track?.source === "tidal";
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a || !previewUrl || !open) return;
+    let cancelled = false;
+    if (previewIsHls) {
+      void import("hls.js")
+        .then(({ default: HlsRuntime }) => {
+          if (cancelled) return;
+          if (HlsRuntime.isSupported()) {
+            const hls = new HlsRuntime();
+            hlsRef.current = hls;
+            hls.attachMedia(a);
+            hls.loadSource(previewUrl);
+          } else {
+            a.src = previewUrl;
+          }
+        })
+        .catch(() => {
+          if (!cancelled) a.src = previewUrl;
+        });
+    } else {
+      a.src = previewUrl;
+    }
+    return () => {
+      cancelled = true;
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
+      a.pause();
+      a.removeAttribute("src");
+      a.load();
+    };
+  }, [previewUrl, previewIsHls, open]);
 
   const durationSec = useMemo(
     () => (track ? Math.max(0, Math.floor(track.duration_ms / 1000)) : 0),
@@ -289,7 +330,6 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
           of transport controls. */}
       <audio
         ref={audioRef}
-        src={streamUrl(track.id)}
         preload="metadata"
         onTimeUpdate={onTimeUpdate}
         onEnded={() => setIsPlaying(false)}

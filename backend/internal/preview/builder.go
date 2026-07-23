@@ -98,6 +98,34 @@ func (b *Builder) EnsureBuilt(ctx context.Context, in Input) (string, error) {
 	return b.ensureBuilt(ctx, in, "preview", b.cachePath(in.TrackID, in.StartSec), b.run)
 }
 
+// CachedPreview returns the path of an already-built preview MP4 for
+// (trackID, startSec), or ok=false when a build would be required. Lets
+// callers skip materializing the audio source (expensive for streamed
+// tracks) when the output is already on disk.
+func (b *Builder) CachedPreview(trackID string, startSec int) (string, bool) {
+	return b.cachedOutput(b.cachePath(trackID, startSec))
+}
+
+// CachedStory is CachedPreview for the story variant.
+func (b *Builder) CachedStory(trackID string, startSec int) (string, bool) {
+	return b.cachedOutput(b.storyCachePath(trackID, startSec))
+}
+
+// CachedStoryBackground is CachedPreview for the background-only story variant.
+func (b *Builder) CachedStoryBackground(trackID string, startSec int) (string, bool) {
+	return b.cachedOutput(b.storyBackgroundCachePath(trackID, startSec))
+}
+
+func (b *Builder) cachedOutput(path string) (string, bool) {
+	if b == nil || b.CacheDir == "" {
+		return "", false
+	}
+	if st, err := os.Stat(path); err == nil && st.Size() > 0 {
+		return path, true
+	}
+	return "", false
+}
+
 // EnsureStoryBuilt builds the Instagram-story-shaped MP4 for `in` if it isn't
 // cached. The story variant is 1080x1920 with a textured color background,
 // artwork card, title/artist text, and the same 30s audio window.

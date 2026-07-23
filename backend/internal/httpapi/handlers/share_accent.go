@@ -1,18 +1,50 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"image"
 	"math"
 
 	xdraw "golang.org/x/image/draw"
+
+	"github.com/githubesson/lumen/internal/library"
 )
 
 type accentOKLCH struct {
 	l float64
 	c float64
 	h float64
+}
+
+// accentColorForTrack picks the accent from local cover storage when the
+// track has a stored cover, falling back to the remote CDN artwork for
+// materialized streamed (TIDAL) rows.
+func (h *Share) accentColorForTrack(ctx context.Context, t *library.TrackDetail) string {
+	if c := h.accentColorForCover(ctx, t.CoverArtPath); c != "" {
+		return c
+	}
+	if t.CoverURL == "" {
+		return ""
+	}
+	u, err := allowedRemoteCoverURL(t.CoverURL)
+	if err != nil {
+		return ""
+	}
+	data, _, err := coverCache.fetchCached(u)
+	if err != nil {
+		return ""
+	}
+	src, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return ""
+	}
+	raw, ok := extractAccentFromImage(src)
+	if !ok {
+		return ""
+	}
+	return oklchToHex(clampAccentDark(raw))
 }
 
 func (h *Share) accentColorForCover(ctx context.Context, coverKey string) string {

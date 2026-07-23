@@ -138,6 +138,7 @@ func NewRouter(d Deps) http.Handler {
 		Storage:      d.Storage,
 		Ingest:       d.Ingest,
 		Preview:      d.Preview,
+		TIDAL:        d.TIDAL,
 		ShareSignKey: d.CoverSignKey,
 	}
 

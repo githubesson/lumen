@@ -248,6 +248,37 @@ func (s *Store) RemoteAlbumCoverForViewer(ctx context.Context, albumID, viewerID
 	return c, nil
 }
 
+// RemoteAlbumCover is the viewer-less variant of RemoteAlbumCoverForViewer,
+// for signed public endpoints (share pages) where the HMAC signature on the
+// URL is the authorization instead of a session.
+func (s *Store) RemoteAlbumCover(ctx context.Context, albumID uuid.UUID) (RemoteCover, error) {
+	var c RemoteCover
+	err := s.db.QueryRow(ctx, `
+		SELECT
+			t.source,
+			COALESCE(t.external_meta->>'cover_id', ''),
+			COALESCE(t.external_meta->>'cover_url', '')
+		FROM tracks t
+		WHERE t.album_id = $1
+		  AND t.deleted_at IS NULL
+		  AND t.source <> 'local'
+		  AND (
+		    COALESCE(t.external_meta->>'cover_id', '') <> ''
+		    OR COALESCE(t.external_meta->>'cover_url', '') <> ''
+		  )
+		ORDER BY
+			(COALESCE(t.external_meta->>'cover_id', '') <> '') DESC,
+			t.created_at DESC
+		LIMIT 1`, albumID).Scan(&c.Source, &c.CoverID, &c.CoverURL)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RemoteCover{}, ErrNotFound
+		}
+		return RemoteCover{}, err
+	}
+	return c, nil
+}
+
 type TrackListItem struct {
 	ID         uuid.UUID
 	Title      string

@@ -26,6 +26,7 @@ import (
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/preview"
 	"github.com/githubesson/lumen/internal/storage"
+	"github.com/githubesson/lumen/internal/tidal"
 	"github.com/githubesson/lumen/internal/trackref"
 )
 
@@ -47,7 +48,15 @@ type Share struct {
 	Storage      storage.Storage
 	Ingest       *ingest.Service
 	Preview      *preview.Builder
+	TIDAL        *tidal.Client
 	ShareSignKey []byte
+}
+
+// isTIDALTrack reports whether the row is a materialized TIDAL track: audio
+// lives behind the TIDAL proxy (file_path is a virtual "tidal:<id>" ref), not
+// on the local filesystem.
+func isTIDALTrack(t *library.TrackDetail) bool {
+	return strings.EqualFold(t.Source, trackref.SourceTIDAL) && t.ExternalID != ""
 }
 
 type shareLinkResp struct {
@@ -90,11 +99,34 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ref, err := trackref.Parse(chi.URLParam(r, "id"))
-	if err != nil || ref.Source != trackref.SourceLocal {
+	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	id := ref.LocalID
+	var id uuid.UUID
+	switch ref.Source {
+	case trackref.SourceLocal:
+		id = ref.LocalID
+	case trackref.SourceTIDAL:
+		// Browse-only TIDAL tracks have no row yet. Materialize the hidden
+		// row (same mechanism playlist-add uses) so the signed public
+		// endpoints get the stable UUID they are keyed on — share links are
+		// long-lived, so the row must outlive this request.
+		id, err = materializeTIDALTrack(r.Context(), h.Library, h.TIDAL, ref.ID)
+		if err != nil {
+			if errors.Is(err, tidal.ErrNotConfigured) {
+				http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+				return
+			}
+			slog.Warn("share create: tidal track materialize failed",
+				"tidal_track", ref.ID, "user", u.ID, "err", err)
+			http.Error(w, "tidal track lookup failed", http.StatusBadGateway)
+			return
+		}
+	default:
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
 	startSec, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("t")))
 	if err != nil || startSec < 0 {
 		http.Error(w, "bad t", http.StatusBadRequest)
@@ -128,16 +160,15 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 	case h.Preview == nil:
 		slog.Warn("preview prewarm skipped: builder not configured",
 			"track_id", id.String())
-	case !pathWithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath):
+	case !isTIDALTrack(t) && !pathWithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath):
 		slog.Warn("preview prewarm skipped: file outside configured roots",
 			"track_id", id.String(), "file_path", t.FilePath)
 	default:
-		go prewarmPreview(h.Preview, h.Storage, t.CoverArtPath, preview.Input{
-			TrackID:   id.String(),
-			AudioPath: t.FilePath,
-			StartSec:  startSec,
-			Title:     t.Title,
-			Artist:    primaryArtistName(t),
+		go h.prewarmPreview(t, preview.Input{
+			TrackID:  id.String(),
+			StartSec: startSec,
+			Title:    t.Title,
+			Artist:   primaryArtistName(t),
 		})
 	}
 
@@ -146,11 +177,12 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(shareLinkResp{URL: url, StartSec: startSec})
 }
 
-// prewarmPreview materializes the cover (if any) and triggers a preview
-// build off-request. Uses a detached context with a generous deadline —
-// the request goroutine is gone by the time ffmpeg finishes, so binding
-// to r.Context() would kill the build as soon as we respond.
-func prewarmPreview(b *preview.Builder, s storage.Storage, coverKey string, in preview.Input) {
+// prewarmPreview materializes the audio (TIDAL tracks are assembled to a
+// temp file) and cover, then triggers a preview build off-request. Uses a
+// detached context with a generous deadline — the request goroutine is gone
+// by the time ffmpeg finishes, so binding to r.Context() would kill the
+// build as soon as we respond.
+func (h *Share) prewarmPreview(t *library.TrackDetail, in preview.Input) {
 	// Panics in a fire-and-forget goroutine would silently die without
 	// Chi's Recoverer (it only wraps request handlers). Catch any panic
 	// here so the next share attempt doesn't hit a dead builder.
@@ -161,40 +193,38 @@ func prewarmPreview(b *preview.Builder, s storage.Storage, coverKey string, in p
 		}
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// TIDAL tracks download the full file before ffmpeg can slice it, which
+	// can take well over the minute a local build needs.
+	timeout := 60 * time.Second
+	if isTIDALTrack(t) {
+		timeout = 4 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	slog.Info("preview prewarm starting",
 		"track_id", in.TrackID,
 		"start_sec", in.StartSec,
-		"audio_path", in.AudioPath,
-		"cover_key", coverKey)
+		"source", t.Source,
+		"cover_key", t.CoverArtPath)
 
-	if coverKey != "" {
-		if body, _, err := s.Get(ctx, coverKey); err == nil {
-			tmp, terr := os.CreateTemp("", "lumen-cover-*"+filepath.Ext(coverKey))
-			if terr == nil {
-				if _, cerr := io.Copy(tmp, body); cerr == nil {
-					_ = tmp.Close()
-					in.CoverPath = tmp.Name()
-					defer os.Remove(tmp.Name())
-				} else {
-					_ = tmp.Close()
-					_ = os.Remove(tmp.Name())
-					slog.Warn("preview cover copy failed",
-						"track_id", in.TrackID, "err", cerr)
-				}
-			} else {
-				slog.Warn("preview cover temp create failed",
-					"track_id", in.TrackID, "err", terr)
-			}
-			_ = body.Close()
-		} else {
-			slog.Warn("preview cover fetch failed",
-				"track_id", in.TrackID, "cover_key", coverKey, "err", err)
-		}
+	audioPath, cleanupAudio, err := h.audioPathForBuild(ctx, t)
+	if err != nil {
+		slog.Error("preview prewarm: audio materialize failed",
+			"track_id", in.TrackID, "source", t.Source, "err", err)
+		return
 	}
-	out, err := b.EnsureBuilt(ctx, in)
+	defer cleanupAudio()
+	in.AudioPath = audioPath
+
+	if coverPath, cleanupCover, cerr := h.coverToTemp(ctx, t); cerr == nil {
+		in.CoverPath = coverPath
+		defer cleanupCover()
+	} else if t.CoverArtPath != "" || t.CoverURL != "" {
+		slog.Warn("preview prewarm: cover materialize failed",
+			"track_id", in.TrackID, "cover_key", t.CoverArtPath, "err", cerr)
+	}
+	out, err := h.Preview.EnsureBuilt(ctx, in)
 	if err != nil {
 		slog.Error("preview prewarm failed",
 			"track_id", in.TrackID,
@@ -204,7 +234,7 @@ func prewarmPreview(b *preview.Builder, s storage.Storage, coverKey string, in p
 	}
 	slog.Info("preview prewarm built", "track_id", in.TrackID, "path", out)
 
-	storyOut, err := b.EnsureStoryBackgroundBuilt(ctx, in)
+	storyOut, err := h.Preview.EnsureStoryBackgroundBuilt(ctx, in)
 	if err != nil {
 		slog.Error("story background prewarm failed",
 			"track_id", in.TrackID,
@@ -266,7 +296,7 @@ func (h *Share) Page(w http.ResponseWriter, r *http.Request) {
 		cExp, cSig := auth.SignCoverURL(h.ShareSignKey, "album", t.AlbumID.String(), now)
 		coverURL = base + "/api/public/covers/album/" + t.AlbumID.String() +
 			"?exp=" + auth.FormatExp(cExp) + "&sig=" + cSig
-		accentColor = h.accentColorForCover(r.Context(), t.CoverArtPath)
+		accentColor = h.accentColorForTrack(r.Context(), t)
 	}
 
 	title := t.Title
@@ -363,7 +393,7 @@ func (h *Share) PublicInfo(w http.ResponseWriter, r *http.Request) {
 		cExp, cSig := auth.SignCoverURL(h.ShareSignKey, "album", albumID, now)
 		coverURL = base + "/api/public/covers/album/" + albumID +
 			"?exp=" + auth.FormatExp(cExp) + "&sig=" + cSig
-		accentColor = h.accentColorForCover(r.Context(), t.CoverArtPath)
+		accentColor = h.accentColorForTrack(r.Context(), t)
 	}
 
 	title := t.Title
@@ -453,7 +483,9 @@ func (h *Share) parseSignedMediaRequest(w http.ResponseWriter, r *http.Request, 
 
 // loadPublicTrack loads the track behind a verified signed-media request and
 // applies the same path-traversal guard the /stream handler uses. logLabel
-// names the endpoint in warn logs (e.g. "story serve").
+// names the endpoint in warn logs (e.g. "story serve"). TIDAL rows skip the
+// root guard: their file_path is a virtual "tidal:<id>" ref, not a
+// filesystem path.
 func (h *Share) loadPublicTrack(w http.ResponseWriter, r *http.Request, id uuid.UUID, logLabel string) (*library.TrackDetail, bool) {
 	t, err := h.Library.GetTrackPublic(r.Context(), id)
 	if err != nil {
@@ -462,7 +494,7 @@ func (h *Share) loadPublicTrack(w http.ResponseWriter, r *http.Request, id uuid.
 		http.Error(w, "not found", http.StatusNotFound)
 		return nil, false
 	}
-	if !pathWithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath) {
+	if !isTIDALTrack(t) && !pathWithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath) {
 		slog.Warn(logLabel+": file path outside configured roots",
 			"track_id", id.String(), "file_path", t.FilePath)
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -471,13 +503,57 @@ func (h *Share) loadPublicTrack(w http.ResponseWriter, r *http.Request, id uuid.
 	return t, true
 }
 
+// audioPathForBuild resolves a local audio path for a preview build. Local
+// tracks point straight at their file on disk; TIDAL tracks are assembled
+// (segment fetch + decrypt + concat) to a temp file first. That assembly is
+// the expensive path — callers should check the preview cache before asking
+// for it. The returned cleanup is always safe to call.
+func (h *Share) audioPathForBuild(ctx context.Context, t *library.TrackDetail) (string, func(), error) {
+	noop := func() {}
+	if !isTIDALTrack(t) {
+		return t.FilePath, noop, nil
+	}
+	if h.TIDAL == nil {
+		return "", noop, tidal.ErrNotConfigured
+	}
+	resp, err := h.TIDAL.FileResponse(ctx, t.ExternalID, nil)
+	if err != nil {
+		return "", noop, err
+	}
+	defer resp.Body.Close()
+	tmp, err := os.CreateTemp("", "lumen-tidal-audio-*")
+	if err != nil {
+		return "", noop, err
+	}
+	cleanup := func() { _ = os.Remove(tmp.Name()) }
+	if _, err := io.Copy(tmp, resp.Body); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return "", noop, err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return "", noop, err
+	}
+	return tmp.Name(), cleanup, nil
+}
+
+// writeAudioResolveError maps an audioPathForBuild failure to a response.
+func writeAudioResolveError(w http.ResponseWriter, err error) {
+	if errors.Is(err, tidal.ErrNotConfigured) {
+		http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	http.Error(w, "preview generation failed", http.StatusInternalServerError)
+}
+
 // coverPathWithFallback materializes the cover for ffmpeg, downgrading to a
 // coverless render on failure (non-fatal). failMsg is the endpoint-specific
 // warn message. The returned cleanup is always safe to call.
 func (h *Share) coverPathWithFallback(r *http.Request, t *library.TrackDetail, id uuid.UUID, failMsg string) (string, func()) {
-	coverFSPath, cleanupCover, err := h.localCoverPath(r, t)
+	coverFSPath, cleanupCover, err := h.coverToTemp(r.Context(), t)
 	if err != nil {
-		if t.CoverArtPath != "" {
+		if t.CoverArtPath != "" || t.CoverURL != "" {
 			slog.Warn(failMsg,
 				"track_id", id.String(), "cover_key", t.CoverArtPath, "err", err)
 		}
@@ -519,17 +595,31 @@ func (h *Share) PublicPreviewVideo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Already built → serve straight from disk without touching the DB or
+	// (for TIDAL tracks) re-downloading the audio.
+	if outPath, ok := h.Preview.CachedPreview(req.id.String(), req.startSec); ok {
+		serveMediaFile(w, r, outPath, "preview missing", "public, max-age=3600")
+		return
+	}
 	t, ok := h.loadPublicTrack(w, r, req.id, "preview video serve")
 	if !ok {
 		return
 	}
+	audioPath, cleanupAudio, err := h.audioPathForBuild(r.Context(), t)
+	if err != nil {
+		slog.Error("preview video serve: audio materialize failed",
+			"track_id", req.id.String(), "source", t.Source, "err", err)
+		writeAudioResolveError(w, err)
+		return
+	}
+	defer cleanupAudio()
 	coverFSPath, cleanupCover := h.coverPathWithFallback(r, t, req.id,
 		"preview video serve: cover materialize failed; falling back to audio-only")
 	defer cleanupCover()
 
 	outPath, err := h.Preview.EnsureBuilt(r.Context(), preview.Input{
 		TrackID:   req.id.String(),
-		AudioPath: t.FilePath,
+		AudioPath: audioPath,
 		CoverPath: coverFSPath,
 		StartSec:  req.startSec,
 	})
@@ -537,7 +627,7 @@ func (h *Share) PublicPreviewVideo(w http.ResponseWriter, r *http.Request) {
 		slog.Error("preview video serve: EnsureBuilt failed",
 			"track_id", req.id.String(),
 			"start_sec", req.startSec,
-			"audio_path", t.FilePath,
+			"audio_path", audioPath,
 			"cover_path", coverFSPath,
 			"err", err)
 		http.Error(w, "preview generation failed", http.StatusInternalServerError)
@@ -590,7 +680,7 @@ func (h *Share) Embed(w http.ResponseWriter, r *http.Request) {
 		cExp, cSig := auth.SignCoverURL(h.ShareSignKey, "album", t.AlbumID.String(), now)
 		coverURL = base + "/api/public/covers/album/" + t.AlbumID.String() +
 			"?exp=" + auth.FormatExp(cExp) + "&sig=" + cSig
-		accentColor = h.accentColorForCover(r.Context(), t.CoverArtPath)
+		accentColor = h.accentColorForTrack(r.Context(), t)
 	}
 
 	title := t.Title
@@ -635,10 +725,22 @@ func (h *Share) PublicPreview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if outPath, ok := h.Preview.CachedPreview(req.id.String(), req.startSec); ok {
+		serveMediaFile(w, r, outPath, "preview missing", immutableCacheControl(req.exp))
+		return
+	}
 	t, ok := h.loadPublicTrack(w, r, req.id, "preview serve")
 	if !ok {
 		return
 	}
+	audioPath, cleanupAudio, err := h.audioPathForBuild(r.Context(), t)
+	if err != nil {
+		slog.Error("preview serve: audio materialize failed",
+			"track_id", req.id.String(), "source", t.Source, "err", err)
+		writeAudioResolveError(w, err)
+		return
+	}
+	defer cleanupAudio()
 	// Non-fatal — builder will emit an audio-only (black frame) MP4.
 	coverFSPath, cleanupCover := h.coverPathWithFallback(r, t, req.id,
 		"preview serve: cover materialize failed; falling back to audio-only")
@@ -646,7 +748,7 @@ func (h *Share) PublicPreview(w http.ResponseWriter, r *http.Request) {
 
 	outPath, err := h.Preview.EnsureBuilt(r.Context(), preview.Input{
 		TrackID:   req.id.String(),
-		AudioPath: t.FilePath,
+		AudioPath: audioPath,
 		CoverPath: coverFSPath,
 		StartSec:  req.startSec,
 	})
@@ -654,7 +756,7 @@ func (h *Share) PublicPreview(w http.ResponseWriter, r *http.Request) {
 		slog.Error("preview serve: EnsureBuilt failed",
 			"track_id", req.id.String(),
 			"start_sec", req.startSec,
-			"audio_path", t.FilePath,
+			"audio_path", audioPath,
 			"cover_path", coverFSPath,
 			"err", err)
 		http.Error(w, "preview generation failed", http.StatusInternalServerError)
@@ -730,12 +832,20 @@ func (h *Share) CustomStoryBackground(w http.ResponseWriter, r *http.Request) {
 	if startSec > maxStart {
 		startSec = maxStart
 	}
-	if !pathWithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath) {
+	if !isTIDALTrack(t) && !pathWithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath) {
 		slog.Warn("custom story background: file path outside configured roots",
 			"track_id", id.String(), "user", u.ID, "file_path", t.FilePath)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
+	audioPath, cleanupAudio, err := h.audioPathForBuild(r.Context(), t)
+	if err != nil {
+		slog.Error("custom story background: audio materialize failed",
+			"track_id", id.String(), "user", u.ID, "source", t.Source, "err", err)
+		writeAudioResolveError(w, err)
+		return
+	}
+	defer cleanupAudio()
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
@@ -774,7 +884,7 @@ func (h *Share) CustomStoryBackground(w http.ResponseWriter, r *http.Request) {
 
 	err = h.Preview.BuildCustomStoryBackground(r.Context(), preview.Input{
 		TrackID:   id.String(),
-		AudioPath: t.FilePath,
+		AudioPath: audioPath,
 		StartSec:  startSec,
 	}, preview.CustomBackground{
 		ImagePath: bgPath,
@@ -803,10 +913,26 @@ func (h *Share) servePublicStory(w http.ResponseWriter, r *http.Request, backgro
 	if !ok {
 		return
 	}
+	cached := h.Preview.CachedStory
+	if backgroundOnly {
+		cached = h.Preview.CachedStoryBackground
+	}
+	if outPath, ok := cached(req.id.String(), req.startSec); ok {
+		serveMediaFile(w, r, outPath, "story missing", immutableCacheControl(req.exp))
+		return
+	}
 	t, ok := h.loadPublicTrack(w, r, req.id, "story serve")
 	if !ok {
 		return
 	}
+	audioPath, cleanupAudio, err := h.audioPathForBuild(r.Context(), t)
+	if err != nil {
+		slog.Error("story serve: audio materialize failed",
+			"track_id", req.id.String(), "source", t.Source, "err", err)
+		writeAudioResolveError(w, err)
+		return
+	}
+	defer cleanupAudio()
 	coverFSPath, cleanupCover := h.coverPathWithFallback(r, t, req.id,
 		"story serve: cover materialize failed; falling back to no-cover card")
 	defer cleanupCover()
@@ -817,14 +943,13 @@ func (h *Share) servePublicStory(w http.ResponseWriter, r *http.Request, backgro
 	}
 	input := preview.Input{
 		TrackID:   req.id.String(),
-		AudioPath: t.FilePath,
+		AudioPath: audioPath,
 		CoverPath: coverFSPath,
 		StartSec:  req.startSec,
 		Title:     title,
 		Artist:    primaryArtistName(t),
 	}
 	var outPath string
-	var err error
 	if backgroundOnly {
 		outPath, err = h.Preview.EnsureStoryBackgroundBuilt(r.Context(), input)
 	} else {
@@ -835,7 +960,7 @@ func (h *Share) servePublicStory(w http.ResponseWriter, r *http.Request, backgro
 			"track_id", req.id.String(),
 			"start_sec", req.startSec,
 			"background_only", backgroundOnly,
-			"audio_path", t.FilePath,
+			"audio_path", audioPath,
 			"cover_path", coverFSPath,
 			"err", err)
 		http.Error(w, "story generation failed", http.StatusInternalServerError)
@@ -844,19 +969,22 @@ func (h *Share) servePublicStory(w http.ResponseWriter, r *http.Request, backgro
 	serveMediaFile(w, r, outPath, "story missing", immutableCacheControl(req.exp))
 }
 
-// localCoverPath materializes the album cover to a readable local path so
-// ffmpeg can mux it as the static video frame. For the Local storage
-// backend this is effectively a free indirection (same file on disk); for
-// a future S3 backend it copies to a temp file and returns a cleanup.
+// coverToTemp materializes the cover art to a readable local path so ffmpeg
+// can mux it as the static video frame. Local covers come from storage;
+// materialized streamed tracks (no storage key) fall back to their remote
+// CDN artwork via the in-RAM cover cache.
 //
 // Returns (path, cleanup, err). cleanup is always safe to call even on
 // error or when no temp file was created.
-func (h *Share) localCoverPath(r *http.Request, t *library.TrackDetail) (string, func(), error) {
+func (h *Share) coverToTemp(ctx context.Context, t *library.TrackDetail) (string, func(), error) {
 	noop := func() {}
 	if t.CoverArtPath == "" {
+		if t.CoverURL != "" {
+			return remoteCoverToTemp(t.CoverURL)
+		}
 		return "", noop, errors.New("no cover")
 	}
-	body, _, err := h.Storage.Get(r.Context(), t.CoverArtPath)
+	body, _, err := h.Storage.Get(ctx, t.CoverArtPath)
 	if err != nil {
 		return "", noop, err
 	}
@@ -868,6 +996,36 @@ func (h *Share) localCoverPath(r *http.Request, t *library.TrackDetail) (string,
 	}
 	cleanup := func() { _ = os.Remove(tmp.Name()) }
 	if _, err := io.Copy(tmp, body); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return "", noop, err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return "", noop, err
+	}
+	return tmp.Name(), cleanup, nil
+}
+
+// remoteCoverToTemp fetches an allowed remote cover (TIDAL CDN artwork) into
+// a temp file. Goes through the shared in-RAM cover cache, so repeated
+// builds for the same album don't re-hit the CDN.
+func remoteCoverToTemp(rawURL string) (string, func(), error) {
+	noop := func() {}
+	u, err := allowedRemoteCoverURL(rawURL)
+	if err != nil {
+		return "", noop, err
+	}
+	data, _, err := coverCache.fetchCached(u)
+	if err != nil {
+		return "", noop, err
+	}
+	tmp, err := os.CreateTemp("", "lumen-cover-*"+filepath.Ext(u.Path))
+	if err != nil {
+		return "", noop, err
+	}
+	cleanup := func() { _ = os.Remove(tmp.Name()) }
+	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		cleanup()
 		return "", noop, err
