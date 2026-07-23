@@ -84,7 +84,11 @@ services:
     # identical path the backend sees — no host/container path translation.
     volumes:
       - ${MUSIC_HOST_PATH:-/mnt/music}:/mnt/music
-      - ./transcode-cache:/cache
+      # Named volume (not a bind mount): Docker initializes it with the
+      # image's ownership, so the non-root app user can write. A host bind
+      # mount here inherits host ownership and breaks preview/transcode
+      # writes with "permission denied".
+      - transcode-cache:/cache
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,3 +112,6 @@ services:
       - "127.0.0.1:${FRONTEND_PORT:-8081}:8080"
     depends_on:
       - backend
+
+volumes:
+  transcode-cache:

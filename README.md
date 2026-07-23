@@ -246,8 +246,10 @@ frontend/            web + Electron client (Dockerfile builds with repo root as 
 mobile/              Expo app
 ```
 
-Runtime data (`./pgdata`, `./transcode-cache`, `./tidal-hifi`) is created next
-to the compose file and gitignored.
+Runtime data (`./pgdata`, `./tidal-hifi`) is created next to the compose file
+and gitignored. The transcode/preview cache lives in the `transcode-cache`
+named Docker volume (a bind mount would inherit host ownership, which the
+container's non-root user can't write to).
 
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) tests the backend
 and frontend on every push/PR, and publishes Docker images to GHCR on pushes
