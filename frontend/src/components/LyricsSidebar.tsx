@@ -3,7 +3,6 @@ import { BookOpenIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { trackCoverUrl, type LyricsResult } from "../api";
 import { useLyricsPanel } from "../context/LyricsPanel";
 import { usePlayer, usePlayerTime } from "../context/Player";
-import { useAccentFromCover } from "../lib/accent";
 import { displayText } from "../lib/format";
 import {
   fetchLyricsCached,
@@ -91,7 +90,6 @@ export default function LyricsSidebar() {
 
   const coverSrc =
     current && current.has_cover !== false ? trackCoverUrl(current) : null;
-  useAccentFromCover(open ? coverSrc : null);
 
   return (
     <aside
