@@ -27,10 +27,17 @@ if (!hasSiblingCore && !hasBundledCore) {
 }
 
 const coreRoot = hasSiblingCore ? siblingCoreRoot : bundledCoreRoot;
+const appNodeModules = path.resolve(__dirname, "node_modules");
 
 if (hasSiblingCore) {
   config.watchFolders = [...(config.watchFolders ?? []), siblingCoreRoot];
 }
+
+// The sibling core package has its own devDependencies for browser tests.
+// Keep Metro from walking up from ../core/src into ../core/node_modules;
+// every app dependency (especially React) must come from the mobile project.
+config.resolver.disableHierarchicalLookup = true;
+config.resolver.nodeModulesPaths = [appNodeModules];
 
 // Mirror core/package.json "exports" — Metro's resolver does not read the
 // subpath map for a source-only package aliased outside the project root.
