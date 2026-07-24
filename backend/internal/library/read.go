@@ -418,6 +418,17 @@ func (s *Store) GetAlbum(ctx context.Context, albumID, viewerID uuid.UUID) (*Alb
 	return &a, nil
 }
 
+// Safety backstops on the result sets that take no paging parameters. Set far
+// above any real value — a 5000-track album or a 200k-favorite user does not
+// exist — so they never truncate a genuine response, but a pathological or
+// corrupted row set cannot be materialized into memory unbounded.
+const (
+	maxUnpagedTrackRows  = 5000
+	maxFavoriteIDRows    = 200000
+	maxReplayBuckets     = 4000
+	maxReplayYearBuckets = 200
+)
+
 // ListAlbumTracks returns every track on an album that the viewer can see,
 // sorted by disc/track number.
 func (s *Store) ListAlbumTracks(ctx context.Context, albumID, viewerID uuid.UUID) ([]TrackListItem, error) {
@@ -438,8 +449,9 @@ func (s *Store) ListAlbumTracks(ctx context.Context, albumID, viewerID uuid.UUID
 		  AND t.library_visible = TRUE
 		  AND `+trackVisibleP2+`
 		GROUP BY t.id, a.title
-		ORDER BY COALESCE(t.disc_no, 0) ASC, COALESCE(t.track_no, 0) ASC, t.title ASC`,
-		albumID, viewerID)
+		ORDER BY COALESCE(t.disc_no, 0) ASC, COALESCE(t.track_no, 0) ASC, t.title ASC
+		LIMIT $3`,
+		albumID, viewerID, maxUnpagedTrackRows)
 	if err != nil {
 		return nil, err
 	}
@@ -632,8 +644,9 @@ func (s *Store) ListArtistTracks(ctx context.Context, artistID, viewerID uuid.UU
 		  AND `+trackVisibleP2+`
 		GROUP BY t.id, a.title
 		ORDER BY (a.title IS NULL), a.title ASC,
-		         COALESCE(t.disc_no, 0) ASC, COALESCE(t.track_no, 0) ASC, t.title ASC`,
-		artistID, viewerID)
+		         COALESCE(t.disc_no, 0) ASC, COALESCE(t.track_no, 0) ASC, t.title ASC
+		LIMIT $3`,
+		artistID, viewerID, maxUnpagedTrackRows)
 	if err != nil {
 		return nil, err
 	}
@@ -797,7 +810,8 @@ func (s *Store) ListFavorites(ctx context.Context, userID uuid.UUID, limit, offs
 func (s *Store) FavoriteIDs(ctx context.Context, userID uuid.UUID) (map[uuid.UUID]struct{}, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT track_id FROM user_track_stats
-		WHERE user_id = $1 AND favorited = TRUE`, userID)
+		WHERE user_id = $1 AND favorited = TRUE
+		LIMIT $2`, userID, maxFavoriteIDRows)
 	if err != nil {
 		return nil, err
 	}

@@ -129,14 +129,16 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export function KeyBindingsProvider({ children }: { children: ReactNode }) {
   const bindings = useRef<Map<string, KeyBinding>>(new Map());
   const listeners = useRef<Set<() => void>>(new Set());
+  // Cache the snapshot array and only rebuild it on a real change, so
+  // useSyncExternalStore's stable-snapshot contract holds (returning a fresh
+  // Array.from() every call causes an infinite re-render loop). Held in a ref
+  // rather than a useMemo-local `let`, which the React Compiler rejects as a
+  // reassignment after render completes.
+  const snapshotCache = useRef<KeyBinding[]>([]);
 
   const registry = useMemo<Registry>(() => {
-    // Cache the snapshot array and only rebuild it on a real change, so
-    // useSyncExternalStore's stable-snapshot contract holds (returning a fresh
-    // Array.from() every call causes an infinite re-render loop).
-    let snapshotCache: KeyBinding[] = [];
     const notify = () => {
-      snapshotCache = Array.from(bindings.current.values());
+      snapshotCache.current = Array.from(bindings.current.values());
       for (const l of listeners.current) l();
     };
     return {
@@ -155,7 +157,7 @@ export function KeyBindingsProvider({ children }: { children: ReactNode }) {
         return () => listeners.current.delete(l);
       },
       snapshot() {
-        return snapshotCache;
+        return snapshotCache.current;
       },
     };
   }, []);

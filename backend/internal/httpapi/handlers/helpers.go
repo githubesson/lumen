@@ -84,6 +84,31 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	return true
 }
 
+// decodeOptionalJSON is decodeJSON for endpoints whose body may legitimately be
+// omitted: an empty body succeeds and leaves dst at its zero value. Everything
+// else — the 1 MiB cap, the string-length check, the trailing-value rejection —
+// is identical, so an optional body is never an unbounded read.
+func decodeOptionalJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(dst); err != nil {
+		if errors.Is(err, io.EOF) {
+			return true
+		}
+		writeJSONDecodeError(w, err)
+		return false
+	}
+	if err := validateJSONValue(reflect.ValueOf(dst)); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeJSONDecodeError(w, err)
+		return false
+	}
+	return true
+}
+
 func validateJSONValue(v reflect.Value) error {
 	if !v.IsValid() {
 		return nil
@@ -152,6 +177,11 @@ func writeStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, library.ErrNotFound), errors.Is(err, playlists.ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
+	case errors.Is(err, library.ErrInvalidInput):
+		// Only genuine caller mistakes get 400. A pgx reset or a context
+		// deadline must not be reported as a malformed request — the client
+		// would never retry and the edit would be silently lost.
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}

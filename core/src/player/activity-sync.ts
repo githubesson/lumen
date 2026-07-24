@@ -331,6 +331,13 @@ export function usePlaybackActivityPublisher({
   enabled = true,
 }: PlaybackActivityPublisherOptions): string | null {
   const [deviceId, setDeviceId] = useState<string | null>(null);
+  // Stable identity for the capability list, so the socket effect below can
+  // depend on the *contents* rather than the array reference.
+  const capabilitiesKey = capabilities.join(",");
+  const capabilitiesRef = useRef(capabilities);
+  useEffect(() => {
+    capabilitiesRef.current = capabilities;
+  }, [capabilities]);
   const stateRef = useRef(state);
   const timeRef = useRef(time);
   const socketRef = useRef<WebSocket | null>(null);
@@ -443,7 +450,7 @@ export function usePlaybackActivityPublisher({
             protocol: PLAYBACK_SYNC_PROTOCOL,
             revision: ++revisionRef.current,
             device_name: deviceName,
-            capabilities,
+            capabilities: capabilitiesRef.current,
             control_enabled: controlEnabled,
           });
         }
@@ -524,7 +531,10 @@ export function usePlaybackActivityPublisher({
         failPendingCommands("playback socket disconnected");
       }
     };
-  }, [capabilities, controlEnabled, deviceId, deviceName, enabled]);
+    // capabilitiesKey, not `capabilities`: a caller passing an inline array
+    // literal creates a new identity every render, which would tear down and
+    // re-open the WebSocket each time.
+  }, [capabilitiesKey, controlEnabled, deviceId, deviceName, enabled]);
 
   useEffect(() => {
     publish();
@@ -740,7 +750,10 @@ function isRemoteCommandStatus(
     value === "offline" ||
     value === "busy" ||
     value === "pending" ||
-    value === "timeout"
+    value === "timeout" ||
+    // Part of the RemotePlaybackCommandStatus union; omitting it here made a
+    // legitimate "disconnected" result fail validation.
+    value === "disconnected"
   );
 }
 

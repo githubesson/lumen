@@ -125,12 +125,15 @@ export default function MiniPlayer() {
   const coverSrc = displayCurrent ? trackCoverUrl(displayCurrent) : null;
   useAccentFromCover(coverSrc);
   const { bind: bindCtx, menu: trackCtxMenu } = useTrackContextMenu();
-  const queueBtnRef = useRef<HTMLButtonElement>(null);
-  const deviceBtnRef = useRef<HTMLButtonElement>(null);
+  // Popover anchors are held in state, not refs: the popovers read the element
+  // during render, and a ref's `.current` is not readable during render under
+  // concurrent React (nor would it re-render the popover when it lands).
+  const [queueBtn, setQueueBtn] = useState<HTMLButtonElement | null>(null);
+  const [deviceBtn, setDeviceBtn] = useState<HTMLButtonElement | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   const [deviceOpen, setDeviceOpen] = useState(false);
   const [miniPlayerMode, setMiniPlayerMode] = useState(false);
-  const canResizeWindow = canSetMiniPlayer;
+  const canResizeWindow = canSetMiniPlayer();
   const shownVolume = isRemoteMode ? controlledVolume : volume;
   const shownMuted = isRemoteMode ? controlledMuted : muted;
   const shownShuffle = isRemoteMode ? controlledShuffle : shuffle;
@@ -157,7 +160,7 @@ export default function MiniPlayer() {
   }, [miniPlayerMode, lyricsOpen, setLyricsOpen]);
 
   const toggleMiniPlayerMode = async () => {
-    if (!canSetMiniPlayer) return;
+    if (!canSetMiniPlayer()) return;
     const next = !miniPlayerMode;
     setMiniPlayerMode(next);
     const result = await setElectronMiniPlayer(next);
@@ -368,7 +371,7 @@ export default function MiniPlayer() {
 
       <div className="utility">
         <button
-          ref={deviceBtnRef}
+          ref={setDeviceBtn}
           type="button"
           className={
             "t-btn device-picker-btn" +
@@ -398,7 +401,7 @@ export default function MiniPlayer() {
         </button>
         <PlaybackDevicePopover
           open={deviceOpen}
-          anchor={deviceBtnRef.current}
+          anchor={deviceBtn}
           miniPlayerMode={miniPlayerMode}
           onClose={() => setDeviceOpen(false)}
         />
@@ -421,7 +424,7 @@ export default function MiniPlayer() {
           <BookOpenIcon className="size-3.5" />
         </button>
         <button
-          ref={queueBtnRef}
+          ref={setQueueBtn}
           type="button"
           className={"t-btn" + (queueOpen ? " active" : "")}
           title="Queue"
@@ -434,7 +437,7 @@ export default function MiniPlayer() {
         </button>
         <QueuePopover
           open={queueOpen}
-          anchor={queueBtnRef.current}
+          anchor={queueBtn}
           miniPlayerMode={miniPlayerMode}
           externalQueue={
             isFH6Mode

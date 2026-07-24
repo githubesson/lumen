@@ -59,6 +59,15 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (copiedTimerRef.current !== null) {
+        window.clearTimeout(copiedTimerRef.current);
+      }
+    },
+    [],
+  );
   const [copyError, setCopyError] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -209,8 +218,15 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
       if (!copiedOk) throw new Error("copy failed");
       setCopied(true);
       // Reset the "copied!" indicator after a moment so repeat copies
-      // still feel snappy.
-      window.setTimeout(() => setCopied(false), 1800);
+      // still feel snappy. Tracked so closing the dialog inside the window
+      // doesn't leave a setState firing after unmount.
+      if (copiedTimerRef.current !== null) {
+        window.clearTimeout(copiedTimerRef.current);
+      }
+      copiedTimerRef.current = window.setTimeout(() => {
+        copiedTimerRef.current = null;
+        setCopied(false);
+      }, 1800);
     } catch (err) {
       setCopyError(
         errorMessage(

@@ -25,6 +25,7 @@ import (
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/preview"
+	"github.com/githubesson/lumen/internal/safego"
 	"github.com/githubesson/lumen/internal/storage"
 	"github.com/githubesson/lumen/internal/tidal"
 	"github.com/githubesson/lumen/internal/trackref"
@@ -50,6 +51,10 @@ type Share struct {
 	Preview      *preview.Builder
 	TIDAL        *tidal.Client
 	ShareSignKey []byte
+	// StartJob registers a background job with the server's worker group so
+	// shutdown drains it. Without it an in-flight ffmpeg prewarm is killed at
+	// SIGTERM, leaving a partial file in the preview cache.
+	StartJob func(func())
 }
 
 // isTIDALTrack reports whether the row is a materialized TIDAL track: audio
@@ -85,6 +90,10 @@ type publicShareResp struct {
 }
 
 const maxStoryBackgroundUploadBytes int64 = 24 << 20
+
+// Upper bound on a TIDAL audio file assembled to a temp file for a preview
+// build. A 24-bit/192kHz FLAC of a 20-minute track lands well under this.
+const maxPreviewSourceBytes int64 = 1 << 30
 
 // Create mints a signed share URL for (track, start_sec). The URL is long-
 // lived — users paste it in chat and it needs to keep working. Requires
@@ -164,12 +173,18 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("preview prewarm skipped: file outside configured roots",
 			"track_id", id.String(), "file_path", t.FilePath)
 	default:
-		go h.prewarmPreview(t, preview.Input{
+		in := preview.Input{
 			TrackID:  id.String(),
 			StartSec: startSec,
 			Title:    t.Title,
 			Artist:   primaryArtistName(t),
-		})
+		}
+		job := func() { h.prewarmPreview(t, in) }
+		if h.StartJob != nil {
+			h.StartJob(job)
+		} else {
+			safego.Go("preview prewarm", job)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -526,7 +541,11 @@ func (h *Share) audioPathForBuild(ctx context.Context, t *library.TrackDetail) (
 		return "", noop, err
 	}
 	cleanup := func() { _ = os.Remove(tmp.Name()) }
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
+	// Bounded: three of the four callers are signature-only (no cookie), and
+	// the temp dir is commonly tmpfs — i.e. RAM. A misbehaving proxy that
+	// streams indefinitely, or a handful of concurrent preview builds for long
+	// lossless tracks, would otherwise fill it.
+	if _, err := copyFileLimited(tmp, resp.Body, maxPreviewSourceBytes); err != nil {
 		_ = tmp.Close()
 		cleanup()
 		return "", noop, err

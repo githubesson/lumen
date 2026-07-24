@@ -81,7 +81,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     state,
     time,
     storage: webStorage,
-    deviceName: isElectron ? "Desktop" : "Web",
+    deviceName: isElectron() ? "Desktop" : "Web",
     adapter,
     controls,
     controlEnabled: true,
@@ -191,7 +191,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   // Media Session API — surface in OS media controls / Bluetooth buttons.
   useEffect(() => {
-    if (!("mediaSession" in navigator) || !state.current) return;
+    if (!("mediaSession" in navigator)) return;
+    // Handlers registered for a previous track must not outlive it: an OS or
+    // Bluetooth media button pressed after the queue empties would otherwise
+    // fire a callback closed over stale `controls`.
+    const clear = () => {
+      navigator.mediaSession.metadata = null;
+      for (const action of [
+        "play",
+        "pause",
+        "previoustrack",
+        "nexttrack",
+        "seekto",
+      ] as const) {
+        navigator.mediaSession.setActionHandler(action, null);
+      }
+    };
+    if (!state.current) {
+      clear();
+      return;
+    }
     navigator.mediaSession.metadata = new MediaMetadata({
       title: state.current.title,
       artist: state.current.artist ?? "",
@@ -210,6 +229,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     navigator.mediaSession.setActionHandler("seekto", (e) => {
       if (typeof e.seekTime === "number") controls.seek(e.seekTime);
     });
+    return clear;
   }, [
     state.current,
     state.isPlaying,
@@ -389,9 +409,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       <PlayerCtx.Provider value={value}>
         <PlayerTimeCtx.Provider value={time}>
           <PlayerAdapterCtx.Provider value={adapter}>
+            {/* The adapter owns these ref objects and only ever reads them
+                from event handlers/effects; handing them to a child provider
+                and to `ref` props is not a render-time `.current` read, which
+                is what react-hooks/refs is guarding against. */}
+            {/* eslint-disable-next-line react-hooks/refs */}
             <AudioOutputProvider audioRefs={audioRefs}>
               {children}
               <audio ref={audioRefs[0]} preload="auto" />
+              {/* eslint-disable-next-line react-hooks/refs */}
               <audio ref={audioRefs[1]} preload="auto" />
             </AudioOutputProvider>
           </PlayerAdapterCtx.Provider>

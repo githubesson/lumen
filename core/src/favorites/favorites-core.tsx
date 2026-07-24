@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -26,13 +27,23 @@ const Ctx = createContext<FavoritesState | null>(null);
 export function FavoritesProvider({ children }: { children: ReactNode }) {
   const { status } = useAuth();
   const [ids, setIds] = useState<Set<string>>(new Set());
+  // Mirrors `ids` for the callbacks below, so they can stay referentially
+  // stable. Written from an effect (never during render) plus optimistically
+  // inside `toggle`.
+  const idsRef = useRef(ids);
+  useEffect(() => {
+    idsRef.current = ids;
+  }, [ids]);
 
   const refresh = useCallback(async () => {
     try {
       const rows = await api.listFavorites();
       setIds(new Set(rows.map((t) => t.id)));
-    } catch {
-      // silent; called again on interactions
+    } catch (err) {
+      // Non-fatal — the set is re-fetched on the next auth transition and every
+      // toggle reconciles against the server — but swallowing it silently made
+      // a persistently failing endpoint indistinguishable from "no favorites".
+      console.warn("favorites refresh failed", err);
     }
   }, []);
 
@@ -42,31 +53,31 @@ export function FavoritesProvider({ children }: { children: ReactNode }) {
 
   const isFavorite = useCallback((id: string) => ids.has(id), [ids]);
 
-  const toggle = useCallback(
-    async (id: string) => {
-      // Optimistic
-      const had = ids.has(id);
-      setIds((prev) => {
-        const next = new Set(prev);
-        if (had) next.delete(id);
-        else next.add(id);
-        return next;
-      });
-      try {
-        if (had) await api.unfavorite(id);
-        else await api.favorite(id);
-      } catch {
-        // Roll back on failure
-        setIds((prev) => {
-          const next = new Set(prev);
-          if (had) next.add(id);
-          else next.delete(id);
-          return next;
-        });
-      }
-    },
-    [ids],
-  );
+  const toggle = useCallback(async (id: string) => {
+    // Read through the ref, and write the optimistic result back to it
+    // immediately. Closing over `ids` meant (a) `toggle`'s identity changed on
+    // every favourite change, invalidating every memoized consumer, and (b) two
+    // rapid toggles dispatched before a re-render both saw the same pre-toggle
+    // value and issued the same request.
+    const had = idsRef.current.has(id);
+    const optimistic = new Set(idsRef.current);
+    if (had) optimistic.delete(id);
+    else optimistic.add(id);
+    idsRef.current = optimistic;
+    setIds(optimistic);
+    try {
+      if (had) await api.unfavorite(id);
+      else await api.favorite(id);
+    } catch {
+      // Roll back on failure, from whatever the current set is — another
+      // toggle may have landed in the meantime.
+      const rolledBack = new Set(idsRef.current);
+      if (had) rolledBack.add(id);
+      else rolledBack.delete(id);
+      idsRef.current = rolledBack;
+      setIds(rolledBack);
+    }
+  }, []);
 
   const value = useMemo<FavoritesState>(
     () => ({ ids, isFavorite, toggle, refresh }),

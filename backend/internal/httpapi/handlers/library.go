@@ -16,6 +16,7 @@ import (
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/models"
+	"github.com/githubesson/lumen/internal/safego"
 )
 
 type Library struct {
@@ -155,7 +156,19 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 
 		res := h.Ingest.IngestFileAs(r.Context(), dst, ownerID)
-		rr := result{File: fh.Filename, Inserted: res.Inserted, Dedup: !res.Inserted && res.Err == nil, TrackID: res.TrackID.String()}
+		// res.Skipped must be honoured: a file that vanished between write and
+		// stat comes back Inserted=false, Err=nil, and was reported as
+		// `dedup: true` — a success. The nil track id likewise has to stay out of
+		// the response; omitempty cannot suppress an all-zeroes UUID string.
+		rr := result{
+			File:     fh.Filename,
+			Inserted: res.Inserted,
+			Skipped:  res.Skipped,
+			Dedup:    !res.Inserted && !res.Skipped && res.Err == nil,
+		}
+		if res.TrackID != uuid.Nil {
+			rr.TrackID = res.TrackID.String()
+		}
 		if res.Err != nil {
 			h.log().Error("upload: ingest failed after the file was written to disk",
 				"user", u.ID, "file", fh.Filename, "dst", dst, "err", res.Err)
@@ -211,12 +224,16 @@ func (h *Library) Rescan(w http.ResponseWriter, r *http.Request) {
 		scanCtx = context.WithoutCancel(r.Context())
 	}
 	job := func() {
-		_ = h.Ingest.Rescan(scanCtx, p)
+		if err := h.Ingest.Rescan(scanCtx, p); err != nil {
+			msg := err.Error()
+			p.Failure.Store(&msg)
+			h.log().Error("library rescan failed", "err", err)
+		}
 	}
 	if h.StartJob != nil {
 		h.StartJob(job)
 	} else {
-		go job()
+		safego.Go("library rescan", job)
 	}
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -230,7 +247,7 @@ func (h *Library) RescanStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"running": false})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	status := map[string]any{
 		"running":   !p.Done.Load(),
 		"total":     p.Total.Load(),
 		"processed": p.Processed.Load(),
@@ -238,7 +255,11 @@ func (h *Library) RescanStatus(w http.ResponseWriter, r *http.Request) {
 		"dedup":     p.Dedup.Load(),
 		"errored":   p.Errored.Load(),
 		"pruned":    p.Pruned.Load(),
-	})
+	}
+	if msg := p.FailureMessage(); msg != "" {
+		status["error"] = msg
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 // Errors lists recent ingest failures.

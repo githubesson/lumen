@@ -144,6 +144,27 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		s.log().Debug("probe failed", "path", path, "err", perr)
 	}
 
+	// Catch-all: tracks that arrive with no artist metadata AND no album tag
+	// get filed under an "Others" album so they don't vanish from the albums
+	// view. Users can still re-tag them later via the track edit dialog.
+	if len(md.Artists) == 0 && md.Album == "" {
+		md.Album = "Others"
+	}
+
+	// Write the cover to storage *before* opening the transaction. A storage
+	// Put can be a network or S3 round-trip; doing it mid-transaction pinned a
+	// pool connection plus row locks for its duration, so a bulk upload of N
+	// files with covers serialized on the pool and could exhaust it.
+	var coverPath string
+	if md.Album != "" {
+		saved, cerr := s.saveCover(ctx, md, path)
+		if cerr != nil {
+			s.log().Warn("cover save failed", "path", path, "err", cerr)
+		} else {
+			coverPath = saved
+		}
+	}
+
 	tx, err := s.DB.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		out.Err = err
@@ -163,13 +184,6 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		}
 		artistIDs = append(artistIDs, id)
 		artistRoles = append(artistRoles, a.Role)
-	}
-
-	// Catch-all: tracks that arrive with no artist metadata AND no album tag
-	// get filed under an "Others" album so they don't vanish from the albums
-	// view. Users can still re-tag them later via the track edit dialog.
-	if len(md.Artists) == 0 && md.Album == "" {
-		md.Album = "Others"
 	}
 
 	var albumID *uuid.UUID
@@ -193,11 +207,6 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 			isCompilation = true
 		}
 
-		coverPath, err := s.saveCover(ctx, md, path)
-		if err != nil {
-			s.log().Warn("cover save failed", "path", path, "err", err)
-			coverPath = ""
-		}
 		aid, err := library.UpsertAlbum(ctx, tx, md.Album, albumArtistID, md.Year, isCompilation, coverPath)
 		if err != nil {
 			out.Err = fmt.Errorf("upsert album: %w", err)
@@ -286,7 +295,9 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	// errors list doesn't stay inflated after a fix (or a retry after a
 	// transient glitch).
 	if s.Library != nil {
-		s.Library.ClearIngestErrorsForPath(ctx, path)
+		if cerr := s.Library.ClearIngestErrorsForPath(ctx, path); cerr != nil {
+			s.log().Warn("clearing ingest errors failed", "path", path, "err", cerr)
+		}
 	}
 	if inserted {
 		s.log().Info("ingested", "path", path, "track", trackID, "title", md.Title)
@@ -461,7 +472,12 @@ func mimeExt(m string) string {
 
 func (s *Service) recordErr(ctx context.Context, path string, err error) {
 	if s.Library != nil {
-		s.Library.RecordIngestError(ctx, path, err.Error())
+		// These rows are the only durable record of why a file failed. A
+		// dropped write used to be invisible — the rescan counters reported
+		// N errored files while the errors list stayed empty.
+		if rerr := s.Library.RecordIngestError(ctx, path, err.Error()); rerr != nil {
+			s.log().Error("recording ingest error failed", "path", path, "ingest_err", err, "err", rerr)
+		}
 	}
 	s.log().Warn("ingest error", "path", path, "err", err)
 }

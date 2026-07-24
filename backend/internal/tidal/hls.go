@@ -79,6 +79,15 @@ func (c *Client) assembleHLSFile(ctx context.Context, rawURL string) (*http.Resp
 	contentType := hlsContentType(parsed, base)
 	pr, pw := io.Pipe()
 	go func() {
+		// Outside chi's Recoverer: a panic in segment parsing would otherwise
+		// take the process down, and would leave the reader blocked on a pipe
+		// nobody closes. Fail the pipe instead.
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("tidal hls segment writer panicked", "panic", p)
+				_ = pw.CloseWithError(fmt.Errorf("tidal hls segment writer panicked"))
+			}
+		}()
 		err := c.streamSegments(ctx, parsed, base, keys, pw)
 		if err != nil {
 			_ = pw.CloseWithError(err)

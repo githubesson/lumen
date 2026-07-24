@@ -9,6 +9,40 @@ import (
 	"github.com/google/uuid"
 )
 
+// allowedPublicHosts, when non-empty, restricts which hostnames may appear in
+// generated absolute URLs (share links, embeds, og:url). Set once at router
+// construction from PUBLIC_HOSTS.
+//
+// appmw.RealIP already strips forwarded headers from untrusted peers, so the
+// default posture is safe without this; the allowlist is the second line of
+// defence for a misconfigured TRUSTED_PROXIES or a reverse proxy that passes
+// client-supplied X-Forwarded-Host through.
+var allowedPublicHosts []string
+
+// SetAllowedPublicHosts installs the allowlist. Call before serving.
+func SetAllowedPublicHosts(hosts []string) {
+	normalized := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+			normalized = append(normalized, h)
+		}
+	}
+	allowedPublicHosts = normalized
+}
+
+func hostAllowed(host string) bool {
+	if len(allowedPublicHosts) == 0 {
+		return true
+	}
+	host = strings.ToLower(host)
+	for _, allowed := range allowedPublicHosts {
+		if host == allowed {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveBaseURL derives the public origin from the request itself —
 // X-Forwarded-Host + X-Forwarded-Proto when the reverse proxy forwards
 // them (Caddy/nginx both do by default in this repo's deploy configs),
@@ -27,6 +61,11 @@ func resolveBaseURL(r *http.Request) string {
 		host = fh
 	} else if fh, ok := validForwardedHost(forwardedHeaderValue(r.Header.Get("Forwarded"), "host")); ok {
 		host = fh
+	}
+	if !hostAllowed(host) {
+		// Fall back to the first configured public host rather than minting a
+		// link that points at an attacker-chosen origin.
+		host = allowedPublicHosts[0]
 	}
 	return scheme + "://" + host
 }

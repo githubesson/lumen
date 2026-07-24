@@ -102,8 +102,61 @@ function url(path: string): string {
   return `${baseUrl}${path}`;
 }
 
-function trackPathID(id: string): string {
-  return encodeURIComponent(id);
+/**
+ * Whether a URL points at the configured API origin.
+ *
+ * Server-supplied absolute URLs (notably `track.cover_url`, which can originate
+ * from upstream TIDAL metadata) reach `fetch`/`<Image>` verbatim. Cookies stay
+ * origin-scoped so there is no session leak, but callers that would otherwise
+ * pass `credentials: "include"` should use this to avoid turning a
+ * backend-controlled string into an arbitrary credentialed outbound request.
+ */
+export function isApiOrigin(rawUrl: string): boolean {
+  if (!/^https?:\/\//i.test(rawUrl)) return true;
+  if (!baseUrl) return false;
+  try {
+    return new URL(rawUrl).origin === new URL(baseUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Percent-encode a value destined for a URL *path* segment.
+ *
+ * Track ids went through this while album, playlist, invite, collaborator and
+ * position ids were raw-interpolated. `pathID` is the one helper; `trackPathID`
+ * remains as its original name.
+ */
+function pathID(value: string | number): string {
+  return encodeURIComponent(String(value));
+}
+
+const trackPathID = pathID;
+
+/**
+ * How long a request may run before `rawFetch` aborts it. Callers that pass
+ * their own `signal` keep full control of cancellation; this is the backstop
+ * that stops a hung backend from hanging a call forever.
+ *
+ * Matched to the server's own `ordinaryRequestTimeout` (30s). It deliberately
+ * does NOT apply to multipart bodies: an upload is bounded by the client's
+ * uplink, not by the server thinking, and a 512 MB batch takes minutes on a
+ * slow link. Those requests are only cancellable by the caller's own signal.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
+
+type UnauthorizedHandler = () => void;
+
+let onUnauthorized: UnauthorizedHandler | null = null;
+
+/**
+ * Register a single central 401 handler (clear the cached session, route to
+ * login). Without it, session expiry had to be recognised ad hoc at every one
+ * of ~100 call sites.
+ */
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  onUnauthorized = handler;
 }
 
 /**
@@ -133,16 +186,37 @@ async function rawFetch(
 ): Promise<Response> {
   const isForm =
     typeof FormData !== "undefined" && init.body instanceof FormData;
-  const res = await fetch(url(path), {
-    ...init,
-    credentials: "include",
-    headers: {
-      Accept: "application/json",
-      ...(isForm ? {} : { "Content-Type": "application/json" }),
-      ...(init.headers ?? {}),
-    },
-  });
+
+  // Compose the caller's signal (if any) with a deadline, so a hung backend
+  // eventually rejects instead of leaving the promise pending forever.
+  const timeout = new AbortController();
+  const timer = isForm
+    ? undefined
+    : setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
+  const callerSignal = init.signal ?? undefined;
+  const onCallerAbort = () => timeout.abort();
+  callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+  if (callerSignal?.aborted) timeout.abort();
+
+  let res: Response;
+  try {
+    res = await fetch(url(path), {
+      ...init,
+      signal: timeout.signal,
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        ...(isForm ? {} : { "Content-Type": "application/json" }),
+        ...(init.headers ?? {}),
+      },
+    });
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", onCallerAbort);
+  }
+
   if (!res.ok) {
+    if (res.status === 401) onUnauthorized?.();
     const text = await res.text().catch(() => "");
     throw new ApiError(res.status, text.trim() || res.statusText);
   }
@@ -239,25 +313,25 @@ async function waitForLastFMAuthorization(
   }
 }
 
-type RawArtistGridPin = Partial<ArtistGridPin> & {
-  ID?: string;
-  Id?: string;
-  Pin?: Partial<ArtistGridPin> & {
-    ID?: string;
-    Id?: string;
-  };
-};
+/**
+ * The wire shape of an ArtistGrid pin: the server's response type marks several
+ * fields `omitempty`, so they can be absent rather than empty.
+ *
+ * This used to also carry `ID` / `Id` / a nested `Pin` object, to paper over
+ * inconsistent server-side casing. The backend serializes every pin through one
+ * response struct with snake_case tags and no nesting, so those fallbacks were
+ * dead — and papering over a server bug on the client is the wrong place for
+ * the fix anyway.
+ */
+type RawArtistGridPin = Partial<ArtistGridPin>;
 
 function stringValue(value: unknown): string {
   if (value === null || value === undefined) return "";
   return String(value);
 }
 
-function normalizeArtistGridPin(pin: RawArtistGridPin): ArtistGridPin {
-  const nested = pin.Pin ?? {};
-  const merged = { ...nested, ...pin };
-  delete (merged as RawArtistGridPin).Pin;
-  const id = stringValue(merged.id || merged.ID || merged.Id);
+function normalizeArtistGridPin(merged: RawArtistGridPin): ArtistGridPin {
+  const id = stringValue(merged.id);
   const rootPath = stringValue(merged.root_path);
   const destinationSubdir = stringValue(merged.destination_subdir);
   return {
@@ -352,7 +426,7 @@ export const api = {
       body: JSON.stringify(input),
     }),
   revokeInvite: (id: string) =>
-    requestVoid(`/api/admin/invites/${id}`, { method: "DELETE" }),
+    requestVoid(`/api/admin/invites/${pathID(id)}`, { method: "DELETE" }),
 
   listMusicRoots: (options: RequestOptions = {}) =>
     request<MusicRoot[]>("/api/admin/library/roots", options),
@@ -362,14 +436,14 @@ export const api = {
       body: JSON.stringify(input),
     }),
   setMusicRootEnabled: (id: string, enabled: boolean) =>
-    request<MusicRoot>(`/api/admin/library/roots/${id}`, {
+    request<MusicRoot>(`/api/admin/library/roots/${pathID(id)}`, {
       method: "PATCH",
       body: JSON.stringify({ enabled }),
     }),
   deleteMusicRoot: (id: string, opts: { purge?: boolean } = {}) => {
     const qs = opts.purge === false ? "?purge=false" : "";
     return request<{ deleted_tracks: number }>(
-      `/api/admin/library/roots/${id}${qs}`,
+      `/api/admin/library/roots/${pathID(id)}${qs}`,
       { method: "DELETE" },
     );
   },
@@ -494,18 +568,18 @@ export const api = {
   listAlbumsPage: (params: PageParams = {}) =>
     fetchPage<Album>("/api/albums", params),
   getAlbum: (id: string, options: RequestOptions = {}) =>
-    request<Album>(`/api/albums/${id}`, options),
+    request<Album>(`/api/albums/${pathID(id)}`, options),
   listAlbumTracks: (id: string, options: RequestOptions = {}) =>
-    request<TrackListItem[]>(`/api/albums/${id}/tracks`, options),
+    request<TrackListItem[]>(`/api/albums/${pathID(id)}/tracks`, options),
   getTidalAlbum: (id: string, options: RequestOptions = {}) =>
     request<TidalAlbum>(`/api/tidal/albums/${encodeURIComponent(id)}`, options),
 
   listArtistsPage: (params: PageParams = {}) =>
     fetchPage<Artist>("/api/artists", params),
   getArtist: (id: string, options: RequestOptions = {}) =>
-    request<Artist>(`/api/artists/${id}`, options),
+    request<Artist>(`/api/artists/${pathID(id)}`, options),
   listArtistTracks: (id: string, options: RequestOptions = {}) =>
-    request<TrackListItem[]>(`/api/artists/${id}/tracks`, options),
+    request<TrackListItem[]>(`/api/artists/${pathID(id)}/tracks`, options),
   getTrack: (id: string, options: RequestOptions = {}) =>
     request<TrackDetail>(`/api/tracks/${trackPathID(id)}`, options),
   updateTrack: (id: string, patch: TrackPatch) =>
@@ -524,7 +598,7 @@ export const api = {
   deleteGlobalTrack: (id: string) =>
     requestVoid(`/api/admin/tracks/${trackPathID(id)}`, { method: "DELETE" }),
   updateAlbum: (id: string, patch: AlbumPatch) =>
-    request<Album>(`/api/albums/${id}`, {
+    request<Album>(`/api/albums/${pathID(id)}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
     }),
@@ -534,11 +608,11 @@ export const api = {
   setAlbumCover: (id: string, file: CoverUploadFile) => {
     const fd = new FormData();
     fd.append("file", file as unknown as Blob);
-    return request<Album>(`/api/albums/${id}/cover`, { method: "PUT", body: fd });
+    return request<Album>(`/api/albums/${pathID(id)}/cover`, { method: "PUT", body: fd });
   },
   // Clear an album's cover art, reverting it to the placeholder. Admin only.
   removeAlbumCover: (id: string) =>
-    request<Album>(`/api/albums/${id}/cover`, { method: "DELETE" }),
+    request<Album>(`/api/albums/${pathID(id)}/cover`, { method: "DELETE" }),
   recordPlay: (id: string, completion: number) =>
     requestVoid(`/api/tracks/${trackPathID(id)}/play`, {
       method: "POST",
@@ -637,7 +711,7 @@ export const api = {
   listPlaylists: (options: RequestOptions = {}) =>
     request<Playlist[]>(`/api/playlists`, options),
   getPlaylist: (id: string, options: RequestOptions = {}) =>
-    request<Playlist>(`/api/playlists/${id}`, options),
+    request<Playlist>(`/api/playlists/${pathID(id)}`, options),
   createPlaylist: (input: {
     name: string;
     description?: string;
@@ -651,44 +725,44 @@ export const api = {
     id: string,
     input: { name: string; description: string; visibility: "private" | "collaborative" },
   ) =>
-    requestVoid(`/api/playlists/${id}`, {
+    requestVoid(`/api/playlists/${pathID(id)}`, {
       method: "PATCH",
       body: JSON.stringify(input),
     }),
   deletePlaylist: (id: string) =>
-    requestVoid(`/api/playlists/${id}`, { method: "DELETE" }),
+    requestVoid(`/api/playlists/${pathID(id)}`, { method: "DELETE" }),
 
   listPlaylistTracks: (id: string, options: RequestOptions = {}) =>
-    request<PlaylistTracks>(`/api/playlists/${id}/tracks`, options),
+    request<PlaylistTracks>(`/api/playlists/${pathID(id)}/tracks`, options),
   addPlaylistTracks: (id: string, trackIds: string[]) =>
-    requestVoid(`/api/playlists/${id}/tracks`, {
+    requestVoid(`/api/playlists/${pathID(id)}/tracks`, {
       method: "POST",
       body: JSON.stringify({ track_ids: trackIds }),
     }),
   removePlaylistTrack: (id: string, position: number) =>
-    requestVoid(`/api/playlists/${id}/tracks/${position}`, { method: "DELETE" }),
+    requestVoid(`/api/playlists/${pathID(id)}/tracks/${pathID(position)}`, { method: "DELETE" }),
   reorderPlaylist: (id: string, trackIds: string[]) =>
-    requestVoid(`/api/playlists/${id}/order`, {
+    requestVoid(`/api/playlists/${pathID(id)}/order`, {
       method: "PUT",
       body: JSON.stringify({ track_ids: trackIds }),
     }),
 
   listCollaborators: (id: string, options: RequestOptions = {}) =>
-    request<Collaborator[]>(`/api/playlists/${id}/collaborators`, options),
+    request<Collaborator[]>(`/api/playlists/${pathID(id)}/collaborators`, options),
   inviteCollaborator: (
     id: string,
     input: { username: string; role: "viewer" | "editor" },
   ) =>
-    requestVoid(`/api/playlists/${id}/collaborators`, {
+    requestVoid(`/api/playlists/${pathID(id)}/collaborators`, {
       method: "POST",
       body: JSON.stringify(input),
     }),
   removeCollaborator: (id: string, userId: string) =>
-    requestVoid(`/api/playlists/${id}/collaborators/${userId}`, {
+    requestVoid(`/api/playlists/${pathID(id)}/collaborators/${pathID(userId)}`, {
       method: "DELETE",
     }),
   setCollaboratorRole: (id: string, userId: string, role: "viewer" | "editor") =>
-    requestVoid(`/api/playlists/${id}/collaborators/${userId}`, {
+    requestVoid(`/api/playlists/${pathID(id)}/collaborators/${pathID(userId)}`, {
       method: "PATCH",
       body: JSON.stringify({ role }),
     }),
@@ -696,9 +770,9 @@ export const api = {
   listPendingInvites: (options: RequestOptions = {}) =>
     request<PendingInvite[]>(`/api/playlists/invites`, options),
   acceptInvite: (id: string) =>
-    requestVoid(`/api/playlists/invites/${id}/accept`, { method: "POST" }),
+    requestVoid(`/api/playlists/invites/${pathID(id)}/accept`, { method: "POST" }),
   declineInvite: (id: string) =>
-    requestVoid(`/api/playlists/invites/${id}/decline`, { method: "POST" }),
+    requestVoid(`/api/playlists/invites/${pathID(id)}/decline`, { method: "POST" }),
 
   tidalStatus: (options: RequestOptions = {}) =>
     request<TidalStatus>("/api/admin/tidal/status", options),
@@ -1220,7 +1294,7 @@ export function coverUrl(id: string, size?: number): string {
 }
 
 export function albumCoverUrl(id: string, size?: number): string {
-  return withCoverSize(`/api/albums/${id}/cover`, size);
+  return withCoverSize(`/api/albums/${pathID(id)}/cover`, size);
 }
 
 /**

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/githubesson/lumen/internal/safego"
 )
 
 // Remote covers (TIDAL CDN artwork) are proxied through the backend so the
@@ -149,14 +151,18 @@ func (c *coverCacheStore) warm(rawURL string) {
 func (c *coverCacheStore) startWarmWorkers() {
 	for range coverWarmConcurrency {
 		go func() {
+			// Outside chi's Recoverer. Guard per key so one bad cover cannot
+			// kill the worker (let alone the process) and stall the queue.
 			for key := range c.warmQueue {
-				u, err := url.Parse(key)
-				if err != nil {
-					continue
-				}
-				if _, _, err := c.fetchCached(u); err != nil {
-					slog.Default().Debug("cover warm fetch failed", "host", u.Hostname(), "err", err)
-				}
+				safego.Run("cover warm worker", func() {
+					u, err := url.Parse(key)
+					if err != nil {
+						return
+					}
+					if _, _, err := c.fetchCached(u); err != nil {
+						slog.Default().Debug("cover warm fetch failed", "host", u.Hostname(), "err", err)
+					}
+				})
 			}
 		}()
 	}

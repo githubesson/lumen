@@ -77,19 +77,13 @@ export function useHtmlAudioAdapter(): {
     };
   }, []);
 
+  // Teardown goes through the adapter's own dispose(). The hand-rolled version
+  // that used to live here was a partial copy: it omitted the element reset and
+  // listenersRef.clear(), so listener sets survived a provider remount.
+  const disposeRef = useRef<(() => void) | null>(null);
   useEffect(
     () => () => {
-      loadGenerationRef.current += 1;
-      playIntentRef.current += 1;
-      pendingLoadRef.current = null;
-      hlsRef.current?.destroy();
-      hlsRef.current = null;
-      preparedGenerationRef.current += 1;
-      preparedPendingRef.current = null;
-      preparedHlsRef.current?.destroy();
-      preparedHlsRef.current = null;
-      preparedAudioRef.current = null;
-      preparedUrlRef.current = null;
+      disposeRef.current?.();
     },
     [],
   );
@@ -365,6 +359,10 @@ export function useHtmlAudioAdapter(): {
     }),
     [],
   );
+  useEffect(() => {
+    disposeRef.current = () => adapter.dispose?.();
+  }, [adapter]);
+
   const audioRefs = useMemo(
     () => [audioRef, preloadAudioRef] as const,
     [],

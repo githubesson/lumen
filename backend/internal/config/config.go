@@ -41,6 +41,12 @@ type Config struct {
 	LastFMSharedSecret         string
 	EnableTranscoding          bool
 	TrustedProxies             []string
+	// PublicHosts optionally allowlists the hostnames that may appear in
+	// generated share/embed/og:url absolute URLs. Set via PUBLIC_HOSTS
+	// (comma-separated). Empty means "trust whatever the reverse proxy
+	// forwarded", which is safe as long as TRUSTED_PROXIES is correct — this is
+	// the belt to that suspenders.
+	PublicHosts []string
 	// CoverSignKey is the HMAC secret used to mint/verify public signed
 	// cover-art URLs (for Discord Rich Presence, which fetches large_image
 	// server-side and has no cookies). Set via COVER_SIGN_KEY (hex-encoded);
@@ -125,6 +131,7 @@ func FromEnv() (*Config, error) {
 		LastFMSharedSecret:         getenv("LASTFM_SHARED_SECRET", ""),
 		EnableTranscoding:          enableTranscoding,
 		TrustedProxies:             trustedProxies,
+		PublicHosts:                splitenv("PUBLIC_HOSTS"),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")

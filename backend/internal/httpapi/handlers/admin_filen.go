@@ -88,6 +88,11 @@ func (h *AdminFilen) Add(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "share_url is required", http.StatusBadRequest)
 		return
 	}
+	shareURL, err = filen.ValidateShareURL(shareURL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled

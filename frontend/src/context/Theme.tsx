@@ -82,7 +82,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     el.setAttribute("data-layout", tweaks.layout);
     el.setAttribute("data-glow", tweaks.glow ? "on" : "off");
     localStorage.setItem(STORAGE_KEY, JSON.stringify(tweaks));
-    if (isElectron && electronLoadedRef.current) {
+    if (isElectron() && electronLoadedRef.current) {
       void saveTweaks({ tweaks });
     }
   }, [tweaks]);
@@ -91,7 +91,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // from the previous run is on a different origin. Load the canonical copy
   // from config.json once at startup and merge it on top of defaults.
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron()) return;
     let cancelled = false;
     getTweaks()
       .then(({ tweaks: electronTweaks }) => {
@@ -108,7 +108,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron()) return;
     const isDark = tweaks.theme === "dark";
     void setTitleBarTheme({
       color: isDark ? "#1a1a1e" : "#ffffff",

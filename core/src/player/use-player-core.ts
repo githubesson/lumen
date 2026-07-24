@@ -108,7 +108,11 @@ export function usePlayerCore({
   const [repeat, setRepeatState] = useState<RepeatMode>("off");
   const playbackReportedRef = useRef<string | null>(null);
   const lastFMScrobbledRef = useRef<string | null>(null);
-  const trackStartedAtRef = useRef(Math.floor(Date.now() / 1000));
+  // Lazily seeded (see the track-change effect below) rather than
+  // `useRef(Date.now())`: the initializer expression is evaluated on every
+  // render, and calling an impure function during render is a purity violation
+  // the React Compiler rejects.
+  const trackStartedAtRef = useRef(0);
   const listenedSecondsRef = useRef(0);
   const listeningTickRef = useRef<number | null>(null);
   const loadedTrackIdRef = useRef<string | null>(null);
@@ -410,19 +414,25 @@ export function usePlayerCore({
     }
   }, [adapter, current, isPlaying, resolvePlayableUri]);
 
+  const currentId = current?.id;
+
   useEffect(() => {
-    if (!current) return;
+    if (!currentId) return;
     trackStartedAtRef.current = Math.floor(Date.now() / 1000);
     lastFMScrobbledRef.current = null;
     listenedSecondsRef.current = 0;
     listeningTickRef.current = performance.now();
-  }, [current?.id]);
+  }, [currentId]);
 
+  // Keyed on the id, and the id is all the body reads. Previously the body
+  // dereferenced `current` while declaring only `[current?.id]`, so two
+  // different TrackListItem objects with the same id — the same track refetched
+  // with updated favourite state, say — left the effect holding the old object.
   useEffect(() => {
-    if (current && isPlaying) {
-      void api.updateNowPlaying(current.id).catch(() => {});
+    if (currentId && isPlaying) {
+      void api.updateNowPlaying(currentId).catch(() => {});
     }
-  }, [current?.id, isPlaying]);
+  }, [currentId, isPlaying]);
 
   // When isPlaying toggles without a track change, sync the adapter.
   useEffect(() => {
@@ -434,15 +444,41 @@ export function usePlayerCore({
     }
   }, [adapter, isPlaying, current]);
 
+  // Values the adapter event handlers read at fire time. Held in a ref so the
+  // subscription effect below can depend on `[adapter]` alone: it previously
+  // listed isPlaying/current/next/nextTrackToPrepare/repeat, so all six
+  // listeners were torn down and re-registered on essentially every playback
+  // state change — exactly the churn the ref pattern elsewhere in this file
+  // exists to avoid.
+  const eventStateRef = useRef({
+    isPlaying,
+    current,
+    next,
+    nextTrackToPrepare,
+    repeat,
+    resolvePlayableUri,
+  });
+  useEffect(() => {
+    eventStateRef.current = {
+      isPlaying,
+      current,
+      next,
+      nextTrackToPrepare,
+      repeat,
+      resolvePlayableUri,
+    };
+  }, [isPlaying, current, next, nextTrackToPrepare, repeat, resolvePlayableUri]);
+
   // Wire adapter events → hook state.
   useEffect(() => {
     const syncListenedTime = () => {
       const now = performance.now();
       const previous = listeningTickRef.current;
-      if (previous != null && isPlaying) {
+      const playing = eventStateRef.current.isPlaying;
+      if (previous != null && playing) {
         listenedSecondsRef.current += Math.max(0, (now - previous) / 1000);
       }
-      listeningTickRef.current = isPlaying ? now : null;
+      listeningTickRef.current = playing ? now : null;
     };
     const syncAnchor = () => {
       anchorRef.current = {
@@ -456,18 +492,20 @@ export function usePlayerCore({
       syncAnchor();
       syncListenedTime();
       // Fire a single /play ping once past 30s OR >=50% of duration.
-      const trackId = current?.id;
+      const { current: currentTrack, nextTrackToPrepare: toPrepare } =
+        eventStateRef.current;
+      const trackId = currentTrack?.id;
       const now = adapter.currentTime();
       const d = adapter.duration();
       if (
-        nextTrackToPrepare &&
+        toPrepare &&
         adapter.prepareNext &&
         d > 0 &&
         now / d >= NEXT_TRACK_PREPARE_RATIO &&
-        preparedNextRef.current?.trackId !== nextTrackToPrepare.id
+        preparedNextRef.current?.trackId !== toPrepare.id
       ) {
-        const uri = resolvePlayableUri(nextTrackToPrepare.id);
-        preparedNextRef.current = { trackId: nextTrackToPrepare.id, uri };
+        const uri = eventStateRef.current.resolvePlayableUri(toPrepare.id);
+        preparedNextRef.current = { trackId: toPrepare.id, uri };
         adapter.prepareNext(uri);
       }
       if (
@@ -502,7 +540,8 @@ export function usePlayerCore({
       setCurrentTime(quantizeTime(adapter.currentTime(), adapter.duration()));
     });
     const offEnd = adapter.on("ended", () => {
-      if (repeat === "one") {
+      const { repeat: repeatMode, current: currentTrack } = eventStateRef.current;
+      if (repeatMode === "one") {
         // Restart the same track. Re-arm play reporting so each loop counts
         // as a fresh play — otherwise playbackReportedRef stays pinned to this
         // trackId and the timeupdate guard never fires recordPlay again.
@@ -511,7 +550,7 @@ export function usePlayerCore({
         trackStartedAtRef.current = Math.floor(Date.now() / 1000);
         listenedSecondsRef.current = 0;
         listeningTickRef.current = performance.now();
-        if (current) void api.updateNowPlaying(current.id).catch(() => {});
+        if (currentTrack) void api.updateNowPlaying(currentTrack.id).catch(() => {});
         adapter.seek(0);
         // Mirror the other play() sites: if the platform refuses to restart
         // (e.g. audio-session activation failed mid-interruption), reflect the
@@ -519,7 +558,7 @@ export function usePlayerCore({
         void adapter.play().catch(() => setIsPlaying(false));
         return;
       }
-      next();
+      eventStateRef.current.next();
     });
     const offSeeked = adapter.on("seeked", () => {
       syncAnchor();
@@ -543,15 +582,7 @@ export function usePlayerCore({
       offPlay();
       offPause();
     };
-  }, [
-    adapter,
-    current,
-    isPlaying,
-    next,
-    nextTrackToPrepare,
-    repeat,
-    resolvePlayableUri,
-  ]);
+  }, [adapter]);
 
   useEffect(() => () => adapter.clearPrepared?.(), [adapter]);
 

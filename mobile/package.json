@@ -3,12 +3,12 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "scripts": {
-    "start": "expo start",
+    "start": "npm run sync:core && expo start",
     "configure": "node ./scripts/configure-app.mjs",
     "sync:core": "node ./scripts/sync-core-package.mjs",
-    "android": "expo run:android",
-    "ios": "expo run:ios",
-    "web": "expo start --web",
+    "android": "npm run sync:core && expo run:android",
+    "ios": "npm run sync:core && expo run:ios",
+    "web": "npm run sync:core && expo start --web",
     "lint": "expo lint",
     "postinstall": "npm run sync:core",
     "test": "vitest run"

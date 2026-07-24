@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // ReplayBucket is the granularity of the listening-activity time series.
@@ -197,10 +198,16 @@ func (s *Store) replaySummary(ctx context.Context, p ReplayStatsParams, out *Rep
 			LIMIT 1`,
 			p.ViewerID, p.From, p.To,
 		).Scan(&ha.ID, &ha.Name, &ha.Plays)
-		if err == nil {
+		switch {
+		case err == nil:
 			out.Summary.HeadlineArtist = &ha
+		case errors.Is(err, pgx.ErrNoRows):
+			// A user with no play history in the window simply has no headline
+			// artist. Everything else — a cancelled context, a saturated pool —
+			// is a real failure and must not render as a silently empty Replay.
+		default:
+			return err
 		}
-		// If err != nil we just leave HeadlineArtist nil — not a fatal error.
 	}
 	return nil
 }
@@ -350,8 +357,9 @@ func (s *Store) replayActivity(ctx context.Context, p ReplayStatsParams, bucket 
 		  AND ($2::timestamptz IS NULL OR ph.played_at >= $2)
 		  AND ($3::timestamptz IS NULL OR ph.played_at <  $3)
 		GROUP BY bucket_start
-		ORDER BY bucket_start ASC`,
-		p.ViewerID, p.From, p.To, string(bucket))
+		ORDER BY bucket_start ASC
+		LIMIT $5`,
+		p.ViewerID, p.From, p.To, string(bucket), maxReplayBuckets)
 	if err != nil {
 		return err
 	}
@@ -371,7 +379,8 @@ func (s *Store) replayAvailableYears(ctx context.Context, viewerID uuid.UUID, ou
 		SELECT DISTINCT EXTRACT(YEAR FROM ph.played_at)::int AS y
 		FROM play_history ph
 		WHERE ph.user_id = $1
-		ORDER BY y DESC`, viewerID)
+		ORDER BY y DESC
+		LIMIT $2`, viewerID, maxReplayYearBuckets)
 	if err != nil {
 		return err
 	}

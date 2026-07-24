@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -127,7 +126,14 @@ func (h *Browse) ListAlbumTracks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	favs, _ := h.Library.FavoriteIDs(r.Context(), u.ID)
+	// Not discarded: on error every `_, ok := favs[id]` is false, so every
+	// track would serialize favorited:false with a 200 and the user's next
+	// click would toggle against stale state, unfavoriting a real favorite.
+	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, trackListItems(items, favs))
 }
 
@@ -159,16 +165,12 @@ func (h *Browse) PatchAlbum(w http.ResponseWriter, r *http.Request) {
 		IsCompilation: req.IsCompilation,
 	})
 	if err != nil {
-		if errors.Is(err, library.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeStoreError(w, err)
 		return
 	}
 	a, err := h.Library.GetAlbum(r.Context(), id, u.ID)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, makeAlbumResp(a))
@@ -242,7 +244,14 @@ func (h *Browse) ListArtistTracks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	favs, _ := h.Library.FavoriteIDs(r.Context(), u.ID)
+	// Not discarded: on error every `_, ok := favs[id]` is false, so every
+	// track would serialize favorited:false with a 200 and the user's next
+	// click would toggle against stale state, unfavoriting a real favorite.
+	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, trackListItems(items, favs))
 }
 

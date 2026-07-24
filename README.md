@@ -251,6 +251,9 @@ and gitignored. The transcode/preview cache lives in the `transcode-cache`
 named Docker volume (a bind mount would inherit host ownership, which the
 container's non-root user can't write to).
 
-CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) tests the backend
-and frontend on every push/PR, and publishes Docker images to GHCR on pushes
-to `main` and version tags.
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on pull requests
+targeting `main` and on pushes to `main`: backend `gofmt`/`vet`/`build`/`test`,
+`core` lint + typecheck + vitest, `frontend` lint + typecheck + build, and
+`mobile` vitest plus a check that the vendored core copy matches `core/`.
+Docker images are published to GHCR only on pushes to `main` and on version
+tags.

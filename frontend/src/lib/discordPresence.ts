@@ -83,7 +83,7 @@ export function useDiscordPresence() {
   // from the underlying audio element, so there's no quantization or rAF
   // delay between the user action and the Discord update.
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron()) return;
 
     const push = (overrides?: { isPlaying?: boolean; elapsedSec?: number }) => {
       const track = currentRef.current;
@@ -129,7 +129,7 @@ export function useDiscordPresence() {
   // Track changes: push a fresh activity (with elapsedSec=0 since the new
   // track hasn't started yet) and clear presence when nothing is playing.
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron()) return;
     if (!current) {
       const remote = getLatestPlaybackActivity();
       if (remote) void pushRemoteActivity(remote);
@@ -161,7 +161,7 @@ export function useDiscordPresence() {
   // The player-owned WebSocket publishes live snapshots from other signed-in
   // devices. Keep Discord mirrored while this desktop player is idle.
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron()) return;
     return subscribePlaybackActivity((activity) => {
       void pushRemoteActivity(activity);
     });
@@ -170,7 +170,7 @@ export function useDiscordPresence() {
   // Clear presence when the tab/app closes so users don't end up "listening"
   // to a ghost track forever.
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron()) return;
     const onUnload = () => void clearDiscordActivity();
     window.addEventListener("beforeunload", onUnload);
     return () => window.removeEventListener("beforeunload", onUnload);

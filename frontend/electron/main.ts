@@ -7,6 +7,7 @@ import * as fsp from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pipeline } from "node:stream/promises";
+import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import type { OpenDialogOptions, Rectangle } from "electron";
@@ -104,13 +105,9 @@ const SETUP_PRELOAD = path.join(__dirname, "preload.js");
 const MAIN_PRELOAD = path.join(__dirname, "mainPreload.js");
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_TITLE_BAR_COLOR = "#1a1a1e";
-const DEFAULT_SYMBOL_COLOR = "#f2f2f2";
 const DEFAULT_FH6_BRIDGE_PORT = 8420;
 const NORMAL_MIN_SIZE = { width: 640, height: 480 };
 const MINI_PLAYER_SIZE = { width: 780, height: 184 };
-let titleBarColor = DEFAULT_TITLE_BAR_COLOR;
-let symbolColor = DEFAULT_SYMBOL_COLOR;
 
 let mainWindow: BrowserWindow | null = null;
 let setupWindow: BrowserWindow | null = null;
@@ -638,7 +635,75 @@ function writeRawResponseHead(socket: Duplex, response: IncomingMessage): void {
   socket.write(`${headers.join("\r\n")}\r\n\r\n`);
 }
 
+// Google Fonts serves the two webfont families the UI depends on
+// (--font-sans / --font-mono in src/index.css) via a stylesheet on
+// fonts.googleapis.com that pulls woff2 from fonts.gstatic.com.
+const FONT_CSS_ORIGIN = "https://fonts.googleapis.com";
+const FONT_FILE_ORIGIN = "https://fonts.gstatic.com";
+
+// index.html carries a pre-paint bootstrap that stamps the persisted theme /
+// density / layout attributes onto <html> before React mounts. Vite copies it
+// into dist/index.html inline and verbatim, so `script-src 'self'` would block
+// it and the app would flash the wrong theme on every launch.
+//
+// Rather than weakening the policy with 'unsafe-inline', hash whatever inline
+// scripts the built index.html actually contains and allow exactly those.
+// Computed once at startup, so editing index.html can never desync the policy.
+let inlineScriptHashes: string[] | null = null;
+
+async function inlineScriptCSPHashes(): Promise<string[]> {
+  if (inlineScriptHashes) return inlineScriptHashes;
+  const hashes: string[] = [];
+  try {
+    const html = await fsp.readFile(path.join(DIST_DIR, "index.html"), "utf8");
+    const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
+    for (const match of html.matchAll(re)) {
+      const body = match[1];
+      if (!body.trim()) continue;
+      const digest = createHash("sha256").update(body, "utf8").digest("base64");
+      hashes.push(`'sha256-${digest}'`);
+    }
+  } catch {
+    // No dist/index.html yet (dev). An empty list just means no inline script
+    // is allowed, which is the safe direction.
+  }
+  inlineScriptHashes = hashes;
+  return hashes;
+}
+
+// Second line of defence behind the navigation guards: even if something
+// manages to inject markup into the locally served app, it cannot pull in a
+// remote script or exfiltrate over fetch/WebSocket to another origin.
+//
+// 'unsafe-inline' for style-src is required by the runtime CSS-variable theming
+// (the Tweaks panel writes inline custom properties); scripts get per-hash
+// allowances instead, so injected markup still cannot execute.
+function securityHeaders(scriptHashes: string[]): Record<string, string> {
+  const self = `http://127.0.0.1:${proxyPort}`;
+  return {
+    "Content-Security-Policy": [
+      "default-src 'self'",
+      ["script-src 'self'", ...scriptHashes].join(" "),
+      `style-src 'self' 'unsafe-inline' ${FONT_CSS_ORIGIN}`,
+      // https: images are allowed because remote artwork can be rendered
+      // directly when the backend hands back an un-proxied cover_url. Scripts
+      // and connections are deliberately not given the same latitude.
+      "img-src 'self' https: data: blob:",
+      "media-src 'self' data: blob:",
+      `connect-src 'self' ${self} ws://127.0.0.1:${proxyPort} ${FONT_CSS_ORIGIN} ${FONT_FILE_ORIGIN}`,
+      `font-src 'self' data: ${FONT_FILE_ORIGIN}`,
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+    ].join("; "),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+  };
+}
+
 async function serveStatic(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const headers = securityHeaders(await inlineScriptCSPHashes());
   let filePath: string;
   try {
     const u = new URL(req.url ?? "/", "http://x");
@@ -652,6 +717,7 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse): Promise<v
     res.writeHead(200, {
       "Content-Type": mimeFor(filePath),
       "Cache-Control": "no-cache",
+      ...headers,
     });
     res.end(data);
   } catch {
@@ -660,6 +726,7 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse): Promise<v
       res.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-cache",
+        ...headers,
       });
       res.end(data);
     } catch (e) {
@@ -695,6 +762,47 @@ function startProxyServer(): Promise<number> {
   });
 }
 
+// The renderer only ever needs the local proxy origin (and, for the setup
+// window, a file:// page). Without these guards a compromised or injected
+// renderer could navigate the main window to any remote origin, and
+// `window.open` would create unrestricted child BrowserWindows. contextIsolation
+// + sandbox + nodeIntegration:false make that not-immediately-RCE, but this is
+// the standard Electron hardening baseline and the missing link that turns a
+// renderer compromise into a real chain.
+function isInternalURL(rawUrl: string): boolean {
+  try {
+    const u = new URL(rawUrl);
+    if (u.protocol === "file:") return true;
+    return (
+      u.protocol === "http:" &&
+      (u.hostname === "127.0.0.1" || u.hostname === "localhost") &&
+      u.port === String(proxyPort)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function hardenNavigation(win: BrowserWindow): void {
+  const block = (event: { preventDefault: () => void }, url: string) => {
+    if (isInternalURL(url)) return;
+    event.preventDefault();
+    console.warn("[electron] blocked navigation to", url);
+  };
+  win.webContents.on("will-navigate", (event, url) => block(event, url));
+  win.webContents.on("will-redirect", (event, url) => block(event, url));
+  // Never open a child BrowserWindow. External links go through the
+  // `external:open` IPC, which validates the protocol and hands off to the
+  // system browser.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  win.webContents.on("will-attach-webview", (event) => {
+    event.preventDefault();
+  });
+}
+
 async function openMain(): Promise<void> {
   if (mainWindow) {
     mainWindow.focus();
@@ -718,6 +826,7 @@ async function openMain(): Promise<void> {
       preload: MAIN_PRELOAD,
     },
   });
+  hardenNavigation(mainWindow);
   mainWindow.on("closed", () => {
     mainWindow = null;
     isMiniPlayer = false;
@@ -748,6 +857,7 @@ function openSetup(): void {
       preload: SETUP_PRELOAD,
     },
   });
+  hardenNavigation(setupWindow);
   setupWindow.setMenuBarVisibility(false);
   setupWindow.on("closed", () => {
     setupWindow = null;
@@ -1025,10 +1135,14 @@ async function appCookieHeader(): Promise<string> {
   return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
 }
 
+// Only relative /api/ paths are accepted. The absolute-URL passthrough that
+// used to live here handed the renderer a way to make the main process attach
+// the app's session cookie to a request for any host it liked — dead code for
+// the real UI (lib/download.ts only ever passes /api/tracks/<id>/stream), but
+// a live capability for anything else running in the renderer.
 function exportDownloadUrl(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) throw new Error("Missing download URL");
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
   if (!trimmed.startsWith("/api/")) {
     throw new Error("Export URL must be an API path");
   }
@@ -1036,9 +1150,21 @@ function exportDownloadUrl(input: string): string {
   return `http://127.0.0.1:${proxyPort}${trimmed}`;
 }
 
+// The session cookie is scoped to the local proxy origin and must not survive a
+// redirect off it. downloadToFile re-derives the header per hop from this.
+function isAppOrigin(target: URL): boolean {
+  return (
+    target.protocol === "http:" &&
+    (target.hostname === "127.0.0.1" || target.hostname === "localhost") &&
+    target.port === String(proxyPort)
+  );
+}
+
 function sanitizeExportFilename(name: string): string {
   const sanitized = path
     .basename(name)
+    // Control characters are exactly what we want to strip from a filename.
+    // eslint-disable-next-line no-control-regex
     .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
     .replace(/\s+/g, " ")
     .replace(/[. ]+$/g, "")
@@ -1066,6 +1192,9 @@ function downloadToFile(urlString: string, dest: string, cookieHeader: string): 
     const attempt = (currentUrl: string, redirects: number) => {
       const target = new URL(currentUrl);
       const lib = target.protocol === "https:" ? https : http;
+      // Re-evaluated per hop rather than captured once in the closure: a
+      // redirect to any other host used to receive the session cookie too.
+      const sendCookie = cookieHeader && isAppOrigin(target);
       const req = lib.get(
         {
           protocol: target.protocol,
@@ -1074,7 +1203,7 @@ function downloadToFile(urlString: string, dest: string, cookieHeader: string): 
           path: target.pathname + target.search,
           headers: {
             Accept: "application/octet-stream,*/*",
-            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+            ...(sendCookie ? { Cookie: cookieHeader } : {}),
           },
         },
         (res) => {
@@ -1260,7 +1389,9 @@ async function ensureDiscord(): Promise<DiscordClient | null> {
   if (discordConnecting) return null;
   discordConnecting = true;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // discord-rpc is CommonJS-only and optional at runtime; a static import
+    // would pull it into the bundle even when Discord integration is off.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const RPC = require("discord-rpc");
     const client = new RPC.Client({ transport: "ipc" });
     client.on("ready", () => {
@@ -1451,9 +1582,9 @@ ipcMain.handle("discord:clear", async () => {
 ipcMain.handle(
   "titlebar:theme",
   (_e, opts: { color?: string; symbolColor?: string } | undefined) => {
+    // The renderer's accent colours are applied by CSS; the main process only
+    // needs to re-assert a transparent backdrop so the frame repaints.
     if (!opts) return { ok: false };
-    if (opts.color) titleBarColor = opts.color;
-    if (opts.symbolColor) symbolColor = opts.symbolColor;
     if (!mainWindow) return { ok: true };
     if (process.platform !== "win32" && process.platform !== "linux") {
       return { ok: true };
@@ -1485,13 +1616,32 @@ if (!gotLock) {
     // Grant `media` so `navigator.mediaDevices.enumerateDevices()` returns
     // labelled `audiooutput` entries. Chromium hides labels until microphone
     // permission is granted; without this the device picker shows blanks.
+    // Chromium's `media` permission covers the *microphone*, so it is granted
+    // only to our own loopback origin — not to whatever content happens to be
+    // loaded in the default session.
+    const mediaAllowedFor = (origin: string | undefined): boolean => {
+      if (!origin) return false;
+      try {
+        const u = new URL(origin);
+        return (
+          u.protocol === "http:" &&
+          (u.hostname === "127.0.0.1" || u.hostname === "localhost") &&
+          u.port === String(proxyPort)
+        );
+      } catch {
+        return false;
+      }
+    };
     session.defaultSession.setPermissionRequestHandler(
-      (_wc, permission, callback) => {
-        callback(permission === "media");
+      (wc, permission, callback) => {
+        callback(
+          permission === "media" && mediaAllowedFor(wc?.getURL?.()),
+        );
       },
     );
     session.defaultSession.setPermissionCheckHandler(
-      (_wc, permission) => permission === "media",
+      (_wc, permission, requestingOrigin) =>
+        permission === "media" && mediaAllowedFor(requestingOrigin),
     );
     const cfg = await loadConfig();
     backendUrl = cfg.backendUrl ?? "";

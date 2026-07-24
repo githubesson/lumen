@@ -87,7 +87,7 @@ export async function exportTracksAsFiles(
     }
   }
 
-  if (canExportTrackFiles) {
+  if (canExportTrackFiles()) {
     const res = await exportTrackFiles(
       prepared.map(({ track, detail, ext }) => ({
         url: downloadStreamUrl(track.id),
@@ -153,11 +153,15 @@ export function downloadFilename(
 }
 
 export function sanitizeFilename(name: string) {
-  return name
-    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
-    .replace(/\s+/g, " ")
-    .replace(/[. ]+$/g, "")
-    .slice(0, 180);
+  return (
+    name
+      // Control characters are exactly what we want to strip from a filename.
+      // eslint-disable-next-line no-control-regex
+      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+      .replace(/\s+/g, " ")
+      .replace(/[. ]+$/g, "")
+      .slice(0, 180)
+  );
 }
 
 export async function extensionFromStream(trackId: string) {

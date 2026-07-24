@@ -55,9 +55,11 @@ type Deps struct {
 	RefreshScan    func()          // invoked after the root set changes (e.g. watcher reload)
 	CoverSignKey   []byte          // HMAC secret for public signed cover URLs (Discord RPC) + share/preview URLs
 	TrustedProxies []string        // CIDR or IP literals; only these peers may set X-Forwarded-For
+	PublicHosts    []string        // optional allowlist of hostnames permitted in generated absolute URLs
 }
 
 func NewRouter(d Deps) http.Handler {
+	handlers.SetAllowedPublicHosts(d.PublicHosts)
 	r := chi.NewRouter()
 	// Use our own RealIP instead of chimw.RealIP: we only honor proxy headers
 	// from peers in TrustedProxies, and strip them otherwise. Without this an
@@ -140,6 +142,7 @@ func NewRouter(d Deps) http.Handler {
 		Preview:      d.Preview,
 		TIDAL:        d.TIDAL,
 		ShareSignKey: d.CoverSignKey,
+		StartJob:     d.StartJob,
 	}
 
 	lyricsH := &handlers.Lyrics{
@@ -168,8 +171,12 @@ func NewRouter(d Deps) http.Handler {
 		ordinary.With(appmw.RateLimitByIP(5, 10*time.Minute)).Post("/auth/register", authH.Register)
 		ordinary.With(appmw.RateLimitByIP(30, time.Minute)).Get("/auth/invite", authH.CheckInvite)
 		// Signed, cookie-less cover URLs so Discord's media proxy can fetch
-		// album artwork. The HMAC signature + expiry *is* the auth.
-		r.Get("/public/covers/album/{id}", tracksH.PublicAlbumCover)
+		// album artwork. The HMAC signature + expiry *is* the auth. Timed and
+		// rate-limited like every sibling: a replayed signature is valid for
+		// ~2h, and albums whose art is a remote URL tie up a goroutine on an
+		// outbound fetch for the duration.
+		ordinary.With(appmw.RateLimitByIP(120, time.Minute)).
+			Get("/public/covers/album/{id}", tracksH.PublicAlbumCover)
 		// Signed public preview MP4 — the og:video referenced by share pages.
 		// Rate-limited because first-fetch invokes ffmpeg.
 		r.With(appmw.RateLimitByIP(60, time.Minute)).

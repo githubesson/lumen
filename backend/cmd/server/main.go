@@ -26,6 +26,7 @@ import (
 	"github.com/githubesson/lumen/internal/musicroots"
 	"github.com/githubesson/lumen/internal/playlists"
 	"github.com/githubesson/lumen/internal/preview"
+	"github.com/githubesson/lumen/internal/safego"
 	"github.com/githubesson/lumen/internal/storage"
 	"github.com/githubesson/lumen/internal/tidal"
 	"github.com/githubesson/lumen/internal/users"
@@ -54,10 +55,14 @@ func main() {
 	drainCtx, cancelDrain := context.WithCancel(context.Background())
 	defer cancelDrain()
 	var workers sync.WaitGroup
+	// Every background job goes through here, and every one of them is isolated:
+	// chi's Recoverer wraps only the request goroutine, so an unguarded panic in
+	// a scan, a rescan or a Last.fm submission would take the whole server down.
 	startWorker := func(run func()) {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
+			defer safego.Recover("background job")
 			run()
 		}()
 	}
@@ -218,6 +223,7 @@ func main() {
 		RefreshScan:    refresh,
 		CoverSignKey:   cfg.CoverSignKey,
 		TrustedProxies: cfg.TrustedProxies,
+		PublicHosts:    cfg.PublicHosts,
 	})
 
 	srv := &http.Server{

@@ -78,19 +78,34 @@ export function isTrackPlayableOffline(trackId: string): boolean {
   return !offlineStore.isOffline() || downloadStore.isDownloaded(trackId);
 }
 
+// The third argument is required: app.json sets web.output "static", so Expo
+// Router prerenders on the server and React throws "Missing getServerSnapshot"
+// for two-argument calls. `useIsOffline` backs the offline banner, so without
+// it `expo export --platform web` fails outright.
 export function useIsOffline(): boolean {
-  return useSyncExternalStore(offlineStore.subscribe, offlineStore.isOffline);
+  return useSyncExternalStore(
+    offlineStore.subscribe,
+    offlineStore.isOffline,
+    offlineStore.isOffline,
+  );
 }
 
 export function useOfflineForced(): boolean {
-  return useSyncExternalStore(offlineStore.subscribe, offlineStore.isForced);
+  return useSyncExternalStore(
+    offlineStore.subscribe,
+    offlineStore.isForced,
+    offlineStore.isForced,
+  );
 }
 
 /** offline AND not downloaded → row is dimmed/unplayable. */
 export function useTrackUnavailableOffline(trackId: string): boolean {
   const offline = useIsOffline();
-  const downloaded = useSyncExternalStore(downloadStore.subscribe, () =>
-    downloadStore.isDownloaded(trackId),
+  const isDownloaded = () => downloadStore.isDownloaded(trackId);
+  const downloaded = useSyncExternalStore(
+    downloadStore.subscribe,
+    isDownloaded,
+    isDownloaded,
   );
   return offline && !downloaded;
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -270,10 +271,24 @@ func (h *Activity) Socket(w http.ResponseWriter, r *http.Request) {
 
 	readDone := make(chan error, 1)
 	writerDone := make(chan error, 1)
+	// Both pumps are outside chi's Recoverer. A panic must still deliver on the
+	// channel below, or the handler would block forever holding the connection.
 	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("activity socket read pump panicked", "panic", p)
+				readDone <- errors.New("read pump panicked")
+			}
+		}()
 		readDone <- h.readPlaybackSocket(ctx, conn, subscription)
 	}()
 	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("activity socket write pump panicked", "panic", p)
+				writerDone <- errors.New("write pump panicked")
+			}
+		}()
 		writerDone <- h.writePlaybackSocket(ctx, conn, subscription, sessionToken)
 	}()
 

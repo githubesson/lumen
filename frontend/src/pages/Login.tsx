@@ -18,7 +18,7 @@ export default function Login() {
   const [serverHost, setServerHost] = useState("");
 
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron()) return;
     void getDesktopConfig()?.then((cfg) => {
       if (!cfg?.backendUrl) return;
       try {
@@ -82,7 +82,7 @@ export default function Login() {
           Accounts are invite-only.
         </p>
 
-        {isElectron && (
+        {isElectron() && (
           <p className="text-center text-sm/5 text-neutral-500 dark:text-neutral-400">
             {serverHost && (
               <>
@@ -92,7 +92,7 @@ export default function Login() {
             )}
             <button
               type="button"
-              onClick={() => void electron?.openSettings()}
+              onClick={() => void electron()?.openSettings()}
               className="underline underline-offset-2 hover:text-neutral-700 dark:hover:text-neutral-200"
             >
               Change server

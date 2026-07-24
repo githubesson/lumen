@@ -11,22 +11,32 @@
     "./api": "./src/api.ts",
     "./storage": "./src/storage.ts",
     "./events": "./src/events.ts",
+    "./format": "./src/format.ts",
     "./auth": "./src/auth/auth-core.tsx",
     "./favorites": "./src/favorites/favorites-core.tsx",
     "./player": "./src/player/index.ts",
     "./player/*": "./src/player/*.ts"
   },
+  "peerDependencies": {
+    "react": "^18.3.1 || ^19.0.0"
+  },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
     "@types/react": "~19.2.10",
     "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^16.5.0",
     "jsdom": "^29.1.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10"
   },
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
   }
 }

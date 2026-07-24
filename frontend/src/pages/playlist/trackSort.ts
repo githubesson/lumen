@@ -25,7 +25,10 @@ export const SORT_DEFAULT_ASC: Record<SortKey, boolean> = {
 // Emoji and pictographic symbols, mirroring the mobile app and the backend's
 // share-card stripping, so "🔥 Song" sorts under S rather than before every
 // letter.
+// The ZWJ and variation-selector ranges are intentional: the point is to strip
+// emoji sequences, not to match whole grapheme clusters.
 const EMOJI_RE =
+  // eslint-disable-next-line no-misleading-character-class
   /[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}]/gu;
 
 function sortTitleKey(title: string): string {

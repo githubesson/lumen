@@ -269,7 +269,15 @@ func (h *Tracks) PublicAlbumCover(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	if key, err := h.Library.AlbumCoverPath(r.Context(), id); err == nil && key != "" {
+	key, err := h.Library.AlbumCoverPath(r.Context(), id)
+	if err != nil && !errors.Is(err, library.ErrNotFound) {
+		// A DB failure is not "no stored cover": falling through to the remote
+		// fetch produced a 404 that Discord's media proxy then cached.
+		h.log().Error("public album cover: cover path lookup failed", "album", id, "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if key != "" {
 		h.servePublicStorageObject(w, r, key, exp)
 		return
 	}
@@ -485,6 +493,15 @@ func allowedRemoteCoverURL(rawURL string) (*url.URL, error) {
 	return u, nil
 }
 
+// coverThumbSizes is the fixed ladder every ?size=N request is rounded up to.
+//
+// The thumbnail cache key is built from the requested dimension, so accepting
+// arbitrary 1..1024 values meant an unbounded set of stored objects with no
+// eviction: mobile alone emits dozens of distinct sizes per install
+// (size * PixelRatio), and an authenticated client could loop 1..1024 to write
+// 1024 objects per album.
+var coverThumbSizes = [...]int{64, 128, 256, 384, 512, 768, maxServedCoverDimension}
+
 func parseCoverMaxSize(r *http.Request) int {
 	raw := strings.TrimSpace(r.URL.Query().Get("size"))
 	if raw == "" {
@@ -494,10 +511,12 @@ func parseCoverMaxSize(r *http.Request) int {
 	if err != nil || n <= 0 {
 		return maxServedCoverDimension
 	}
-	if n > maxServedCoverDimension {
-		return maxServedCoverDimension
+	for _, size := range coverThumbSizes {
+		if n <= size {
+			return size
+		}
 	}
-	return n
+	return maxServedCoverDimension
 }
 
 func (h *Tracks) serveResizedImage(
@@ -520,7 +539,17 @@ func (h *Tracks) serveResizedImage(
 		return false
 	}
 	bounds := src.Bounds()
-	dstW, dstH, _ := thumbnailDimensions(bounds.Dx(), bounds.Dy(), maxSize)
+	dstW, dstH, needsResize := thumbnailDimensions(bounds.Dx(), bounds.Dy(), maxSize)
+	if !needsResize {
+		// Hand back to the caller, which rewinds and serves the original.
+		// Re-encoding a cover already at or below maxSize costs a second lossy
+		// JPEG generation on top of the one ingest already applied — and for
+		// the raw-passthrough covers (PNG/WebP kept verbatim) it flattens alpha
+		// to black, because image.NewRGBA starts zeroed and jpeg.Encode drops
+		// the alpha channel. maxSize defaults to 1024, so this was the default
+		// path for every cover.
+		return false
+	}
 
 	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
 	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, bounds, xdraw.Over, nil)

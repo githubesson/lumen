@@ -11,6 +11,7 @@ import {
   downloadStreamUrl,
   getBaseUrl,
   trackCoverUrl,
+  isApiOrigin,
   type TrackListItem,
 } from "@music-library/core";
 import {
@@ -620,8 +621,12 @@ class DownloadStore {
   ): Promise<string | undefined> {
     if (track.has_cover === false) return undefined;
     try {
-      const response = await fetch(trackCoverUrl(track, COVER_SIZE), {
-        credentials: "include",
+      // `cover_url` can be a server- (or upstream-TIDAL-) supplied absolute URL,
+      // so credentials only go to our own origin. Off-origin artwork is still
+      // fetched, just anonymously.
+      const coverUrl = trackCoverUrl(track, COVER_SIZE);
+      const response = await fetch(coverUrl, {
+        credentials: isApiOrigin(coverUrl) ? "include" : "omit",
       });
       if (!response.ok) return undefined;
       const contentType = response.headers.get("content-type") ?? undefined;

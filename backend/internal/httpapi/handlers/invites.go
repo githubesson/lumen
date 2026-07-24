@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -37,9 +36,10 @@ func (h *Invites) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// The body is optional here, but it still has to be capped — this was the
+	// one JSON entry point in the codebase reading an unbounded body.
 	var req createInviteReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
-		http.Error(w, "bad request", http.StatusBadRequest)
+	if !decodeOptionalJSON(w, r, &req) {
 		return
 	}
 	role := models.Role(req.TargetRole)

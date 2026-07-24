@@ -38,9 +38,18 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 	sources := parseSources(q.Get("sources"))
-	favs, _ := h.Library.FavoriteIDs(r.Context(), u.ID)
+	// Not discarded: on error every `_, ok := favs[id]` is false, so every
+	// track would serialize favorited:false with a 200 and the user's next
+	// click would toggle against stale state, unfavoriting a real favorite.
+	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 
-	resp := searchResp{Sources: sources}
+	// Tracks is initialized, not left nil: the TS type declares TrackListItem[],
+	// so an empty result must serialize as [] rather than null.
+	resp := searchResp{Sources: sources, Tracks: []trackListItemResp{}}
 	if hasSource(sources, trackref.SourceLocal) {
 		items, err := h.Library.ListTracks(r.Context(), library.ListTracksParams{
 			ViewerID: u.ID,

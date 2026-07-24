@@ -49,7 +49,13 @@ export function usePaginatedList<T>(
   const loadingRef = useRef(false);
   const activeRequestRef = useRef<AbortController | null>(null);
   const fetcherRef = useRef(fetcher);
-  fetcherRef.current = fetcher;
+  // Keep the ref current from an effect: writing refs during render is illegal
+  // under concurrent React (a render that is thrown away still mutates it) and
+  // is rejected by the React Compiler. Declared before the loader effects so
+  // it commits first.
+  useEffect(() => {
+    fetcherRef.current = fetcher;
+  }, [fetcher]);
 
   const loadPage = useCallback(
     async (offset: number, reset: boolean) => {

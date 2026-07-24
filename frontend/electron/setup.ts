@@ -21,6 +21,9 @@ interface SetupApi {
   setupCancel(): Promise<{ ok: boolean }>;
 }
 
+// Global augmentation — this file is a script, not a module, so this merges
+// with lib.dom's Window. It has no local reference by design.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 interface Window {
   api: SetupApi;
 }

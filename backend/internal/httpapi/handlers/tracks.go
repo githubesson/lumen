@@ -18,6 +18,7 @@ import (
 	"github.com/githubesson/lumen/internal/lastfm"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/pathsafe"
+	"github.com/githubesson/lumen/internal/safego"
 	"github.com/githubesson/lumen/internal/storage"
 	"github.com/githubesson/lumen/internal/tidal"
 	"github.com/githubesson/lumen/internal/trackref"
@@ -158,7 +159,14 @@ func (h *Tracks) List(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	favs, _ := h.Library.FavoriteIDs(r.Context(), u.ID)
+	// Not discarded: on error every `_, ok := favs[id]` is false, so every
+	// track would serialize favorited:false with a 200 and the user's next
+	// click would toggle against stale state, unfavoriting a real favorite.
+	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	out := make([]trackListItemResp, 0, len(items))
 	for _, it := range items {
 		if _, ok := favs[it.ID]; ok {
@@ -248,7 +256,14 @@ func (h *Tracks) ListRecent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	favs, _ := h.Library.FavoriteIDs(r.Context(), u.ID)
+	// Not discarded: on error every `_, ok := favs[id]` is false, so every
+	// track would serialize favorited:false with a 200 and the user's next
+	// click would toggle against stale state, unfavoriting a real favorite.
+	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	out := make([]trackListItemResp, 0, len(items))
 	for _, it := range items {
 		favorited := false
@@ -279,7 +294,14 @@ func (h *Tracks) Get(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	favs, _ := h.Library.FavoriteIDs(r.Context(), u.ID)
+	// Not discarded: on error every `_, ok := favs[id]` is false, so every
+	// track would serialize favorited:false with a 200 and the user's next
+	// click would toggle against stale state, unfavoriting a real favorite.
+	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	_, isFav := favs[t.ID]
 	writeJSON(w, http.StatusOK, makeTrackDetailResp(t, isFav))
 }
@@ -390,11 +412,7 @@ func (h *Tracks) Patch(w http.ResponseWriter, r *http.Request) {
 		AlbumArtist: req.AlbumArtist,
 	})
 	if err != nil {
-		if errors.Is(err, library.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeStoreError(w, err)
 		return
 	}
 	// Fetch the fresh row for the response so the client doesn't have to GET again.
@@ -403,7 +421,14 @@ func (h *Tracks) Patch(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	favs, _ := h.Library.FavoriteIDs(r.Context(), u.ID)
+	// Not discarded: on error every `_, ok := favs[id]` is false, so every
+	// track would serialize favorited:false with a 200 and the user's next
+	// click would toggle against stale state, unfavoriting a real favorite.
+	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	_, isFav := favs[t.ID]
 	writeJSON(w, http.StatusOK, makeTrackDetailResp(t, isFav))
 }
@@ -619,7 +644,7 @@ func (h *Tracks) runLastFM(call func(context.Context) error) {
 		h.StartJob(run)
 		return
 	}
-	go run()
+	safego.Go("lastfm submission", run)
 }
 
 // pathWithin reports whether p lies inside dir (or equals it). Used to keep

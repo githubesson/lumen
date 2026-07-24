@@ -335,10 +335,7 @@ func (h *Hub) ResolveCommand(sub *Subscription, status, commandID, errorMessage 
 		Status:         status,
 		Error:          strings.TrimSpace(errorMessage),
 	}
-	h.completed[key] = completedCommand{
-		result:    result,
-		expiresAt: time.Now().Add(completedCommandTTL),
-	}
+	h.recordCompletedLocked(key, result)
 	return h.sendResultToSourceLocked(sub.UserID, result)
 }
 
@@ -360,10 +357,7 @@ func (h *Hub) timeoutCommand(userID uuid.UUID, commandID string, expected *pendi
 	}
 	delete(h.pending, key)
 	result := *immediateResult(pending.command, "timeout", "target did not acknowledge command")
-	h.completed[key] = completedCommand{
-		result:    result,
-		expiresAt: time.Now().Add(completedCommandTTL),
-	}
+	h.recordCompletedLocked(key, result)
 	h.sendResultToSourceLocked(userID, result)
 }
 
@@ -375,10 +369,7 @@ func (h *Hub) failPendingForTargetLocked(userID uuid.UUID, deviceID, status, mes
 		pending.timer.Stop()
 		delete(h.pending, key)
 		result := *immediateResult(pending.command, status, message)
-		h.completed[key] = completedCommand{
-			result:    result,
-			expiresAt: time.Now().Add(completedCommandTTL),
-		}
+		h.recordCompletedLocked(key, result)
 		h.sendResultToSourceLocked(userID, result)
 	}
 }
@@ -396,6 +387,20 @@ func (h *Hub) signalDevicesLocked(userID uuid.UUID) {
 		if connection.announced {
 			signal(connection.subscription.DeviceChanges)
 		}
+	}
+}
+
+// recordCompletedLocked stores a finished command's result and prunes expired
+// entries in the same step. Pruning used to happen only in RouteCommand, so a
+// device that resolved or timed out commands but never routed new ones — a
+// receiver-only client, or the state after the last controller disconnects —
+// left expired entries in the map indefinitely.
+func (h *Hub) recordCompletedLocked(key string, result CommandResult) {
+	now := time.Now()
+	h.pruneCompletedLocked(now)
+	h.completed[key] = completedCommand{
+		result:    result,
+		expiresAt: now.Add(completedCommandTTL),
 	}
 }
 

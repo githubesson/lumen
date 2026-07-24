@@ -168,7 +168,7 @@ func (h *Playlists) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Store.Update(r.Context(), pid, req.Name, req.Description, vis); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -193,7 +193,7 @@ func (h *Playlists) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Store.Delete(r.Context(), pid); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -541,7 +541,7 @@ func (h *Playlists) RemoveCollaborator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Store.RemoveCollaborator(r.Context(), pid, uid); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -583,7 +583,7 @@ func (h *Playlists) SetCollaboratorRole(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.Store.SetCollaboratorRole(r.Context(), pid, uid, role); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -654,7 +654,7 @@ func (h *Playlists) DeclineInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Store.RemoveCollaborator(r.Context(), pid, u.ID); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -20,6 +20,20 @@ type RescanProgress struct {
 	Errored   atomic.Int64
 	Pruned    atomic.Int64
 	Done      atomic.Bool
+	// Failure holds the error that aborted the scan, if any. Without it a scan
+	// that died immediately (unreadable music root, say) was indistinguishable
+	// from a completed empty one: status reported running:false with all-zero
+	// counters and nothing was logged.
+	Failure atomic.Pointer[string]
+}
+
+// FailureMessage returns the recorded abort reason, or "" if the scan did not
+// fail.
+func (p *RescanProgress) FailureMessage() string {
+	if msg := p.Failure.Load(); msg != nil {
+		return *msg
+	}
+	return ""
 }
 
 // Rescan walks every configured music root and ingests every supported audio

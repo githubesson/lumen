@@ -39,6 +39,44 @@ const DRAG_SCROLL_ZONE = 56;
 const DRAG_SCROLL_MAX_STEP = 16;
 
 /**
+ * One frame of drag auto-scroll, re-scheduling itself until the drag ends
+ * (`clientY` nulled by `stopAutoScroll`).
+ *
+ * Lives at module scope because it is self-recursive: a `useCallback` that
+ * references itself in its own initializer is rejected by the React Compiler.
+ */
+function autoScrollStep(
+  clientY: React.MutableRefObject<number | null>,
+  scrollerRef: React.MutableRefObject<HTMLElement | null>,
+  rafRef: React.MutableRefObject<number>,
+) {
+  const y = clientY.current;
+  if (y === null) {
+    rafRef.current = 0;
+    return;
+  }
+  const scroller = scrollerRef.current;
+  // Clamp the scroller's edges to the viewport so a page-tall container
+  // still gets usable zones at the visible top and bottom.
+  const rect = scroller?.getBoundingClientRect();
+  const top = Math.max(rect?.top ?? 0, 0);
+  const bottom = Math.min(rect?.bottom ?? window.innerHeight, window.innerHeight);
+  let delta = 0;
+  if (y < top + DRAG_SCROLL_ZONE) {
+    delta = -Math.ceil(((top + DRAG_SCROLL_ZONE - y) / DRAG_SCROLL_ZONE) * DRAG_SCROLL_MAX_STEP);
+  } else if (y > bottom - DRAG_SCROLL_ZONE) {
+    delta = Math.ceil(((y - (bottom - DRAG_SCROLL_ZONE)) / DRAG_SCROLL_ZONE) * DRAG_SCROLL_MAX_STEP);
+  }
+  if (delta !== 0) {
+    if (scroller) scroller.scrollTop += delta;
+    else window.scrollBy(0, delta);
+  }
+  rafRef.current = requestAnimationFrame(() =>
+    autoScrollStep(clientY, scrollerRef, rafRef),
+  );
+}
+
+/**
  * The Tracks tab of the playlist page: search-result count, selection
  * toolbar, and the tracks table with its playlist-specific columns
  * (Added date, added-by attribution, remove-from-playlist action).
@@ -190,13 +228,19 @@ function TracksTable({
   const onPlayRef = useRef(onPlay);
   const onToggleFavRef = useRef(onToggleFav);
   const toggleSelectionRef = useRef(toggleSelection);
-  queueRef.current = queue;
-  queueByIdRef.current = queueById;
-  bindRef.current = bind;
-  onRemoveRef.current = onRemove;
-  onPlayRef.current = onPlay;
-  onToggleFavRef.current = onToggleFav;
-  toggleSelectionRef.current = toggleSelection;
+  // Refresh from an effect, not during render: a render that React throws away
+  // must not mutate a ref (illegal under concurrent React, rejected by the
+  // React Compiler). Every reader below runs from an event handler, so
+  // committing one tick later is harmless.
+  useEffect(() => {
+    queueRef.current = queue;
+    queueByIdRef.current = queueById;
+    bindRef.current = bind;
+    onRemoveRef.current = onRemove;
+    onPlayRef.current = onPlay;
+    onToggleFavRef.current = onToggleFav;
+    toggleSelectionRef.current = toggleSelection;
+  }, [queue, queueById, bind, onRemove, onPlay, onToggleFav, toggleSelection]);
 
   const handlePlay = useCallback(
     (entry: PlaylistTrackEntry) => onPlayRef.current(entry),
@@ -234,7 +278,9 @@ function TracksTable({
   const [dropSlot, setDropSlot] = useState<number | null>(null);
   const dragIndexRef = useRef<number | null>(null);
   const onReorderProp = useRef(onReorder);
-  onReorderProp.current = onReorder;
+  useEffect(() => {
+    onReorderProp.current = onReorder;
+  }, [onReorder]);
 
   const slotFromEvent = (index: number, e: React.DragEvent<HTMLTableRowElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -259,29 +305,10 @@ function TracksTable({
   }, []);
   useEffect(() => stopAutoScroll, [stopAutoScroll]);
 
-  const autoScrollStep = useCallback(() => {
-    const y = dragClientYRef.current;
-    if (y === null) {
-      autoScrollRafRef.current = 0;
-      return;
-    }
-    const scroller = dragScrollerRef.current;
-    // Clamp the scroller's edges to the viewport so a page-tall container
-    // still gets usable zones at the visible top and bottom.
-    const rect = scroller?.getBoundingClientRect();
-    const top = Math.max(rect?.top ?? 0, 0);
-    const bottom = Math.min(rect?.bottom ?? window.innerHeight, window.innerHeight);
-    let delta = 0;
-    if (y < top + DRAG_SCROLL_ZONE) {
-      delta = -Math.ceil(((top + DRAG_SCROLL_ZONE - y) / DRAG_SCROLL_ZONE) * DRAG_SCROLL_MAX_STEP);
-    } else if (y > bottom - DRAG_SCROLL_ZONE) {
-      delta = Math.ceil(((y - (bottom - DRAG_SCROLL_ZONE)) / DRAG_SCROLL_ZONE) * DRAG_SCROLL_MAX_STEP);
-    }
-    if (delta !== 0) {
-      if (scroller) scroller.scrollTop += delta;
-      else window.scrollBy(0, delta);
-    }
-    autoScrollRafRef.current = requestAnimationFrame(autoScrollStep);
+  const startAutoScroll = useCallback(() => {
+    autoScrollRafRef.current = requestAnimationFrame(() =>
+      autoScrollStep(dragClientYRef, dragScrollerRef, autoScrollRafRef),
+    );
   }, []);
 
   const handleDragStartRow = useCallback(
@@ -295,9 +322,9 @@ function TracksTable({
         ? findScrollParent(tableRef.current)
         : null;
       dragClientYRef.current = e.clientY;
-      autoScrollRafRef.current = requestAnimationFrame(autoScrollStep);
+      startAutoScroll();
     },
-    [autoScrollStep],
+    [startAutoScroll],
   );
   const handleDragOverRow = useCallback(
     (index: number, e: React.DragEvent<HTMLTableRowElement>) => {

@@ -146,6 +146,7 @@ vi.mock("@music-library/core", () => ({
   downloadStreamUrl: (id: string) => `https://api.test/stream/${id}`,
   getBaseUrl: () => "https://api.test",
   trackCoverUrl: () => "https://api.test/cover",
+  isApiOrigin: (u: string) => u.startsWith("https://api.test"),
 }));
 
 // live-activity pulls in react-native + expo-widgets (Flow / native-only);

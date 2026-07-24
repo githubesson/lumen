@@ -1,6 +1,7 @@
 import {
   memo,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -91,7 +92,12 @@ export default function TrackList({
   // latest list without invalidating React.memo on every pagination page.
   const queue = queueSource ?? tracks;
   const queueRef = useRef(queue);
-  queueRef.current = queue;
+  // Refreshed from an effect rather than during render: a discarded render must
+  // not mutate a ref. Every reader is an event handler, so a tick of lag is
+  // harmless.
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
 
   // Stable action callbacks: each takes the track (or id) at event time,
   // instead of closing over a new function per row on every parent render.

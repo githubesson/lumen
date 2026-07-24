@@ -22,7 +22,11 @@ import (
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/pinscan"
+	"github.com/githubesson/lumen/internal/safego"
 )
+
+// Fallback per-file download deadline when *_FILE_TIMEOUT is unset or <= 0.
+const defaultFileTimeout = 30 * time.Minute
 
 type Scanner struct {
 	Store        *Store
@@ -88,6 +92,7 @@ func (s *Scanner) StartPinScan(ctx context.Context, id uuid.UUID) (bool, error) 
 	go func() {
 		defer s.jobs.Done()
 		defer s.end(id)
+		defer safego.Recover("artistgrid manual scan")
 		_, err := s.ScanPin(ctx, pin)
 		if err != nil && s.Logger != nil {
 			s.Logger.Warn("artistgrid manual scan failed", "pin", id, "err", err)
@@ -112,6 +117,7 @@ func (s *Scanner) scanDue(ctx context.Context) {
 		go func(pin Pin) {
 			defer s.jobs.Done()
 			defer s.end(pin.ID)
+			defer safego.Recover("artistgrid scheduled scan")
 			_, err := s.ScanPin(ctx, pin)
 			if err != nil && s.Logger != nil {
 				s.Logger.Warn("artistgrid scheduled scan failed", "pin", pin.ID, "tracker", pin.TrackerID, "err", err)
@@ -127,12 +133,6 @@ func (s *Scanner) Wait() { s.jobs.Wait() }
 func (s *Scanner) ScanPin(ctx context.Context, pin Pin) (ScanSummary, error) {
 	trackerID := s.trackerIDForPin(ctx, &pin)
 	summary := ScanSummary{PinID: pin.ID, TrackerID: trackerID}
-	if s.Client == nil {
-		s.Client = NewClient()
-	}
-	if s.FileTimeout <= 0 {
-		s.FileTimeout = 30 * time.Minute
-	}
 	if err := s.Store.MarkScanStarted(ctx, pin.ID); err != nil {
 		return summary, err
 	}
@@ -141,6 +141,25 @@ func (s *Scanner) ScanPin(ctx context.Context, pin Pin) (ScanSummary, error) {
 		scanErr = err
 	}
 	return summary, scanErr
+}
+
+// client and fileTimeout read the configured values, falling back to defaults
+// without writing them back. ScanPin runs concurrently (scanDue fans out one
+// goroutine per due pin while StartPinScan adds more from the admin handler),
+// so lazily initialising the shared fields was an unsynchronized write to
+// state other goroutines read.
+func (s *Scanner) client() *Client {
+	if s.Client != nil {
+		return s.Client
+	}
+	return NewClient()
+}
+
+func (s *Scanner) fileTimeout() time.Duration {
+	if s.FileTimeout > 0 {
+		return s.FileTimeout
+	}
+	return defaultFileTimeout
 }
 
 func (s *Scanner) trackerIDForPin(ctx context.Context, pin *Pin) string {
@@ -165,7 +184,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 	if err != nil {
 		return err
 	}
-	data, err := s.Client.Fetch(ctx, pin.TrackerID, pin.Tab)
+	data, err := s.client().Fetch(ctx, pin.TrackerID, pin.Tab)
 	if err != nil {
 		return err
 	}
@@ -295,7 +314,7 @@ func (s *Scanner) expandRecordURLs(ctx context.Context, urls []string) []string 
 		// Resolve lastshare links through the same SSRF-hardened client the
 		// download uses — the resolution fetch hits a host derived from an
 		// untrusted tracker URL and must get the same IP-level blocking.
-		expanded, err := s.Client.ExpandSourceURL(ctx, raw, s.downloadClient())
+		expanded, err := s.client().ExpandSourceURL(ctx, raw, s.downloadClient())
 		if err != nil {
 			if s.Logger != nil {
 				s.Logger.Warn("artistgrid source url expansion failed", "url", raw, "err", err)
@@ -352,14 +371,14 @@ func (s *Scanner) downloadOne(
 	sourceURL string,
 	trackCtx TrackContext,
 ) (status string, resolvedURL string, filePath string, trackID *uuid.UUID, ingestInserted bool, err error) {
-	resolvedURL, err = s.Client.ResolveDownloadURL(ctx, sourceURL)
+	resolvedURL, err = s.client().ResolveDownloadURL(ctx, sourceURL)
 	if err != nil {
 		return "", "", "", nil, false, err
 	}
 	if _, err := httpx.ValidateDownloadURL(resolvedURL, s.downloadURLPolicy); err != nil {
 		return "", resolvedURL, "", nil, false, skipDownloadError{reason: err.Error()}
 	}
-	fileCtx, cancel := context.WithTimeout(ctx, s.FileTimeout)
+	fileCtx, cancel := context.WithTimeout(ctx, s.fileTimeout())
 	defer cancel()
 	req, err := http.NewRequestWithContext(fileCtx, http.MethodGet, resolvedURL, nil)
 	if err != nil {

@@ -27,9 +27,13 @@ import (
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/pinscan"
+	"github.com/githubesson/lumen/internal/safego"
 )
 
 const skipHost = "music.froste.lol"
+
+// Fallback per-file download deadline when *_FILE_TIMEOUT is unset or <= 0.
+const defaultFileTimeout = 30 * time.Minute
 
 var invalidNameChars = strings.NewReplacer(
 	"<", "_", ">", "_", ":", "_", `"`, "_", "/", "_", `\`, "_",
@@ -116,6 +120,7 @@ func (s *Scanner) StartPinScan(ctx context.Context, id uuid.UUID) (bool, error) 
 	go func() {
 		defer s.jobs.Done()
 		defer s.end(id)
+		defer safego.Recover("api tracker manual scan")
 		_, err := s.ScanPin(ctx, pin)
 		if err != nil && s.Logger != nil {
 			s.Logger.Warn("api tracker manual scan failed", "pin", id, "err", err)
@@ -140,6 +145,7 @@ func (s *Scanner) scanDue(ctx context.Context) {
 		go func(pin Pin) {
 			defer s.jobs.Done()
 			defer s.end(pin.ID)
+			defer safego.Recover("api tracker scheduled scan")
 			_, err := s.ScanPin(ctx, pin)
 			if err != nil && s.Logger != nil {
 				s.Logger.Warn("api tracker scheduled scan failed", "pin", pin.ID, "tracker", pin.TrackerID, "err", err)
@@ -154,12 +160,6 @@ func (s *Scanner) Wait() { s.jobs.Wait() }
 
 func (s *Scanner) ScanPin(ctx context.Context, pin Pin) (ScanSummary, error) {
 	summary := ScanSummary{PinID: pin.ID, TrackerID: pin.TrackerID}
-	if s.Client == nil {
-		s.Client = NewClient(s.baseURLFor(pin))
-	}
-	if s.FileTimeout <= 0 {
-		s.FileTimeout = 30 * time.Minute
-	}
 	if err := s.Store.MarkScanStarted(ctx, pin.ID); err != nil {
 		return summary, err
 	}
@@ -377,6 +377,18 @@ func normalizeEraKey(raw string) string {
 	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(raw))), " ")
 }
 
+// fileTimeout reads the configured per-file deadline, falling back to the
+// default. ScanPin runs concurrently (scanDue fans out one goroutine per due
+// pin while StartPinScan adds more from the admin handler), so defaults must
+// never be written back into the shared Scanner — that was an unsynchronized
+// write to a field other goroutines read.
+func (s *Scanner) fileTimeout() time.Duration {
+	if s.FileTimeout > 0 {
+		return s.FileTimeout
+	}
+	return defaultFileTimeout
+}
+
 func (s *Scanner) baseURLFor(pin Pin) string {
 	if override := strings.TrimSpace(s.BaseURLOverride); override != "" {
 		return override
@@ -477,7 +489,7 @@ func (s *Scanner) downloadOne(
 	if _, err := httpx.ValidateDownloadURL(resolvedURL, s.downloadURLPolicy); err != nil {
 		return "", resolvedURL, "", nil, false, skipDownloadError{reason: err.Error()}
 	}
-	fileCtx, cancel := context.WithTimeout(ctx, s.FileTimeout)
+	fileCtx, cancel := context.WithTimeout(ctx, s.fileTimeout())
 	defer cancel()
 	req, err := http.NewRequestWithContext(fileCtx, http.MethodGet, resolvedURL, nil)
 	if err != nil {

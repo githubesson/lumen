@@ -71,9 +71,11 @@ export function usePlaylistDownload(
 
 /** Whether a playlist currently owns at least one downloaded track. */
 export function usePlaylistDownloaded(playlistId: string): boolean {
-  return useSyncExternalStore(downloadStore.subscribe, () =>
-    downloadStore.hasOwner(playlistOwner(playlistId)),
-  );
+  // The third argument is required: app.json sets web.output "static", so Expo
+  // Router prerenders on the server and React throws "Missing getServerSnapshot"
+  // for two-argument calls, failing `expo export --platform web`.
+  const snapshot = () => downloadStore.hasOwner(playlistOwner(playlistId));
+  return useSyncExternalStore(downloadStore.subscribe, snapshot, snapshot);
 }
 
 /**

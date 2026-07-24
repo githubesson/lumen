@@ -10,6 +10,7 @@
     "dmg:background": "node scripts/generate-dmg-background.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
+    "lint": "eslint .",
     "electron:compile": "node scripts/electron-buildenv.mjs && tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.setup.json",
     "electron:dev": "npm run build && npm run electron:compile && electron .",
     "electron:build": "npm run icons && npm run build && npm run electron:compile && electron-builder --win --publish never --config electron-builder.yml",
@@ -35,9 +36,13 @@
     "@vitejs/plugin-react": "^6.0.3",
     "electron": "^43.1.1",
     "electron-builder": "^26.15.3",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^16.5.0",
     "sharp": "^0.35.3",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.5.4",
+    "typescript-eslint": "^8.65.0",
     "vite": "^8.1.5"
   },
   "overrides": {

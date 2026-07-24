@@ -98,7 +98,7 @@ export default function Shell() {
   }, [me?.id, me?.must_reset_password]);
 
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron()) return;
     void getDesktopConfig()
       ?.then((cfg) => setFh6RadioEnabled(cfg.fh6RadioEnabled === true))
       .catch(() => setFh6RadioEnabled(false));
@@ -310,11 +310,11 @@ export default function Shell() {
             />
             <span className="nav-label">Tweaks</span>
           </button>
-          {isElectron && (
+          {isElectron() && (
             <button
               className="nav-item mobile-sidebar-action"
               type="button"
-              onClick={() => void electron?.openSettings()}
+              onClick={() => void electron()?.openSettings()}
             >
               <ServerStackIcon className="nav-icon" aria-hidden="true" />
               <span className="nav-label">Server settings</span>
@@ -330,7 +330,7 @@ export default function Shell() {
               {me?.role === "admin" ? "admin" : "local library"}
             </div>
           </div>
-          {!isElectron && (
+          {!isElectron() && (
             <button
               className="iconbtn"
               title="Download desktop app"
@@ -479,13 +479,13 @@ export default function Shell() {
             <AdjustmentsHorizontalIcon className="size-4" aria-hidden="true" />
           </button>
 
-          {isElectron && (
+          {isElectron() && (
             <button
               className="iconbtn topbar-secondary"
               type="button"
               title="Change server URL"
               aria-label="Change server URL"
-              onClick={() => void electron?.openSettings()}
+              onClick={() => void electron()?.openSettings()}
             >
               <ServerStackIcon className="size-4" aria-hidden="true" />
             </button>

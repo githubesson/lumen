@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────
-# Music Library — nginx site config (plain HTTP on :80)
+# Music Library — nginx site config
 #
 # Drop this into /etc/nginx/sites-available/music-library.conf, symlink
 # into sites-enabled, and reload nginx. Assumes the compose stack is
@@ -8,12 +8,26 @@
 #   backend  bound to 127.0.0.1:8080   (BACKEND_PORT in .env)
 #   frontend bound to 127.0.0.1:8081   (FRONTEND_PORT in .env)
 #
-# Replace music.example.com with your hostname — this server block only
-# matches requests for that name, so other nginx sites on :80 keep working.
+# Replace music.example.com with your hostname — the server blocks only
+# match requests for that name, so other nginx sites keep working.
 #
-# When serving over plain HTTP, set COOKIE_SECURE=false in .env — the
-# session cookie is marked Secure by default and the browser drops it
-# over non-TLS connections.
+# TLS: the :443 block below is the intended deployment. Terminate TLS here
+# (certbot writes the two cert paths) and the :80 block only redirects.
+# Session cookies are Secure by default, so COOKIE_SECURE=true is correct.
+#
+# X-Forwarded-Proto is set from $scheme rather than hardcoded. Hardcoding
+# "https" on a plaintext listener made the backend believe every request
+# arrived over TLS and mint https:// share, preview and cover URLs regardless.
+# Note it is $scheme and not $http_x_forwarded_proto: forwarding the client's
+# own header would let any caller choose the scheme of the links this server
+# generates.
+#
+# If you really must run plaintext to the origin (e.g. Cloudflare Flexible
+# SSL), understand that session cookies travel in the clear between the CDN
+# and this host. Prefer Full (strict) with a real certificate; if you accept
+# that trade-off anyway, delete the :443 block, drop the redirect from the :80
+# block, set COOKIE_SECURE=false, and replace $scheme with a literal https in
+# the two X-Forwarded-Proto headers below.
 # ──────────────────────────────────────────────────────────────────────
 
 upstream music_library_backend {
@@ -31,10 +45,41 @@ map $http_upgrade $connection_upgrade {
     ''      close;
 }
 
+
+# :80 exists only to send browsers to TLS.
 server {
     listen 80;
     listen [::]:80;
     server_name music.example.com;
+
+    # Leave this reachable so certbot's HTTP-01 challenge keeps working.
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 308 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name music.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/music.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/music.example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_stapling        on;
+    ssl_stapling_verify on;
+
+    # Only enable HSTS once you are certain every hostname served here will
+    # keep working over TLS — browsers cache it for the full max-age.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
     # Audio uploads can be chunky — default 1m rejects multipart uploads.
     client_max_body_size 512m;
@@ -44,10 +89,12 @@ server {
     proxy_set_header   X-Forwarded-Host  $host;
     proxy_set_header   X-Real-IP         $remote_addr;
     proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
-    # Cloudflare Flexible SSL connects to this origin over HTTP, so $scheme is
-    # "http" here even though the public browser URL is HTTPS. The backend uses
-    # this header when minting share/preview URLs.
-    proxy_set_header   X-Forwarded-Proto https;
+    # $scheme, never the client's own X-Forwarded-Proto and never a hardcoded
+    # literal: TLS terminates here, so $scheme is the authoritative answer, and
+    # the backend mints share/preview/cover URLs from this header. Passing the
+    # inbound header through would let any client choose the scheme in the
+    # links this server generates.
+    proxy_set_header   X-Forwarded-Proto $scheme;
     proxy_set_header   Connection        "";
     proxy_read_timeout 1h;   # long enough for a full album side in one request
     proxy_send_timeout 1h;
@@ -68,7 +115,7 @@ server {
         proxy_set_header X-Forwarded-Host  $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header Upgrade           $http_upgrade;
         proxy_set_header Connection        $connection_upgrade;
         proxy_read_timeout 1h;

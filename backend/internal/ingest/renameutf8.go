@@ -63,7 +63,9 @@ func (s *Service) renameInvalid(ctx context.Context, from, dir, name string) (st
 	s.log().Info("renamed non-UTF-8 path",
 		"from", dbtext.Clean(from), "to", to)
 	if s.Library != nil {
-		s.Library.ClearIngestErrorsForPath(ctx, from)
+		if cerr := s.Library.ClearIngestErrorsForPath(ctx, from); cerr != nil {
+			s.log().Warn("clearing ingest errors failed", "path", dbtext.Clean(from), "err", cerr)
+		}
 	}
 	return to, nil
 }

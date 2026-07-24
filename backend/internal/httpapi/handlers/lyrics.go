@@ -138,8 +138,21 @@ func (h *Lyrics) Handle(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	results := make(chan lyricsResponse, 2)
-	go func() { results <- h.fetchLRCLib(ctx, r.URL.Query()) }()
-	go func() { results <- h.fetchGenius(ctx, r.URL.Query()) }()
+	// Provider fetches run outside chi's Recoverer; a panic has to arrive as a
+	// result or the loop below waits for a value that never comes.
+	fetch := func(provider string, run func() lyricsResponse) {
+		go func() {
+			defer func() {
+				if p := recover(); p != nil {
+					slog.Error("lyrics provider panicked", "provider", provider, "panic", p)
+					results <- lyricsResponse{provider: provider, err: fmt.Errorf("%s provider panicked", provider)}
+				}
+			}()
+			results <- run()
+		}()
+	}
+	fetch("lrclib", func() lyricsResponse { return h.fetchLRCLib(ctx, r.URL.Query()) })
+	fetch("genius", func() lyricsResponse { return h.fetchGenius(ctx, r.URL.Query()) })
 
 	var failures []error
 	var geniusFallback *lyricsResponse

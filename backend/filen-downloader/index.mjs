@@ -6,16 +6,21 @@ import { constants as fsConstants } from "node:fs"
 import { randomUUID } from "node:crypto"
 
 function usage() {
-  console.error("Usage: node index.mjs [--json] [--password <pw> | --password-env <name>] <filen-share-url> <outDir>")
+  console.error("Usage: node index.mjs [--json] [--password <pw> | --password-env <name>] [--] <filen-share-url> <outDir>")
   process.exit(1)
 }
 
 function parseArgs(argv) {
   const args = { json: false, password: "", passwordEnv: "", url: "", outDir: "" }
   const rest = []
+  // Everything after a bare `--` is positional, so a share URL that happens to
+  // start with a dash can never be read as an option.
+  let positionalOnly = false
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === "--json") args.json = true
+    if (positionalOnly) rest.push(a)
+    else if (a === "--") positionalOnly = true
+    else if (a === "--json") args.json = true
     else if (a === "--password" || a === "-p") args.password = argv[++i] ?? ""
     else if (a === "--password-env") args.passwordEnv = argv[++i] ?? ""
     else if (a === "-h" || a === "--help") usage()

@@ -21,6 +21,7 @@ import (
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/pinscan"
+	"github.com/githubesson/lumen/internal/safego"
 )
 
 type ScanSummary struct {
@@ -34,6 +35,9 @@ type ScanSummary struct {
 	StartedAt  time.Time `json:"started_at"`
 	FinishedAt time.Time `json:"finished_at"`
 }
+
+// Fallback per-file download deadline when *_FILE_TIMEOUT is unset or <= 0.
+const defaultFileTimeout = 30 * time.Minute
 
 type Scanner struct {
 	Store        *Store
@@ -84,6 +88,7 @@ func (s *Scanner) StartPinScan(ctx context.Context, id uuid.UUID) (bool, error) 
 	go func() {
 		defer s.jobs.Done()
 		defer s.finish(id)
+		defer safego.Recover("filen manual scan")
 		if _, err := s.ScanPin(ctx, pin); err != nil && s.Logger != nil {
 			s.Logger.Warn("filen manual scan failed", "pin", id, "err", err)
 		}
@@ -108,6 +113,7 @@ func (s *Scanner) scanDue(ctx context.Context) {
 		go func() {
 			defer s.jobs.Done()
 			defer s.finish(pin.ID)
+			defer safego.Recover("filen scheduled scan")
 			if _, err := s.ScanPin(ctx, pin); err != nil && s.Logger != nil {
 				s.Logger.Warn("filen scheduled scan failed", "pin", pin.ID, "err", err)
 			}
@@ -121,9 +127,6 @@ func (s *Scanner) Wait() { s.jobs.Wait() }
 
 func (s *Scanner) ScanPin(ctx context.Context, pin Pin) (ScanSummary, error) {
 	summary := ScanSummary{PinID: pin.ID, StartedAt: time.Now().UTC()}
-	if s.FileTimeout <= 0 {
-		s.FileTimeout = 30 * time.Minute
-	}
 	if err := s.Store.MarkScanStarted(ctx, pin.ID); err != nil {
 		return summary, err
 	}
@@ -135,12 +138,23 @@ func (s *Scanner) ScanPin(ctx context.Context, pin Pin) (ScanSummary, error) {
 	return summary, scanErr
 }
 
+// fileTimeout reads the configured per-file deadline, falling back to the
+// default without writing it back: ScanPin runs concurrently (scanDue fans out
+// one goroutine per due pin while StartPinScan adds more from the admin
+// handler), so that was an unsynchronized write to shared state.
+func (s *Scanner) fileTimeout() time.Duration {
+	if s.FileTimeout > 0 {
+		return s.FileTimeout
+	}
+	return defaultFileTimeout
+}
+
 func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) error {
 	destBase, err := pinDestination(pin)
 	if err != nil {
 		return err
 	}
-	runCtx, cancel := context.WithTimeout(ctx, s.FileTimeout)
+	runCtx, cancel := context.WithTimeout(ctx, s.fileTimeout())
 	defer cancel()
 
 	node := strings.TrimSpace(s.NodePath)
@@ -152,7 +166,15 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(runCtx, node, script, "--json", "--password-env", "FILEN_SHARE_PASSWORD", pin.ShareURL, destBase)
+	// Re-validate here as well as at the API boundary: pins created before the
+	// check existed are still in the database, and `--` only stops the helper
+	// from reading a leading-dash URL as an option, not from being handed
+	// nonsense.
+	shareURL, err := ValidateShareURL(pin.ShareURL)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(runCtx, node, script, "--json", "--password-env", "FILEN_SHARE_PASSWORD", "--", shareURL, destBase)
 	cmd.Env = append(
 		os.Environ(),
 		"FILEN_SHARE_PASSWORD="+pin.Password,
@@ -178,7 +200,10 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 		close(stderrDone)
 	}()
 
-	readErr := s.readEvents(ctx, pin, destBase, stdout, summary)
+	// runCtx, not ctx: the helper process is bounded by runCtx, so ingesting
+	// its events under the wider context would outlive the process producing
+	// them.
+	readErr := s.readEvents(runCtx, pin, destBase, stdout, summary)
 	waitErr := cmd.Wait()
 	<-stderrDone
 	if readErr != nil {

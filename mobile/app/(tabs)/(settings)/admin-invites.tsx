@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -117,6 +117,13 @@ function InviteCard({
   onRevoke: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    },
+    [],
+  );
   const revoked = !!invite.revoked_at;
   const expired =
     invite.expires_at != null && new Date(invite.expires_at) < new Date();
@@ -139,7 +146,13 @@ function InviteCard({
       await Clipboard.setStringAsync(tokenString);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      // Tracked so navigating away inside the window doesn't setState after
+      // unmount — every other timer site in the app clears properly.
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => {
+        copiedTimerRef.current = null;
+        setCopied(false);
+      }, 1500);
     } catch {
       /* ignored */
     }

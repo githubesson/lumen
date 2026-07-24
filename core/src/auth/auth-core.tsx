@@ -4,10 +4,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-import { api, ApiError, type Me } from "../api";
+import { api, ApiError, setUnauthorizedHandler, type Me } from "../api";
 import type { Storage } from "../storage";
 
 export interface AuthState {
@@ -54,20 +55,40 @@ export function AuthProvider({
     [sessionCache],
   );
 
-  const refresh = useCallback(async () => {
+  // A refresh already in flight is shared rather than duplicated, and every
+  // result is checked against the latest token before it writes state — two
+  // concurrent refreshes used to race, and the loser could overwrite newer
+  // state with its own stale answer.
+  const inFlightRef = useRef<Promise<void> | null>(null);
+  const refreshTokenRef = useRef(0);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const runRefresh = useCallback(async () => {
+    const token = ++refreshTokenRef.current;
+    const isCurrent = () => mountedRef.current && token === refreshTokenRef.current;
     try {
       const m = await api.me();
+      if (!isCurrent()) return;
       setMeState(m);
       setStatus("authed");
       persistMe(m);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        // The server explicitly rejected the session — it is dead.
+        // The server explicitly rejected the session — it is dead. Clear the
+        // cache regardless of staleness: a dead session never becomes live.
         persistMe(null);
+        if (!isCurrent()) return;
         setMeState(null);
         setStatus("guest");
         return;
       }
+      if (!isCurrent()) return;
       // Network error, proxy 5xx, timeout: fall back to the cached session so
       // an offline cold launch stays signed in.
       let cached: Me | null = null;
@@ -80,6 +101,7 @@ export function AuthProvider({
       } catch {
         // Unreadable/corrupt cache — treat as no cached session.
       }
+      if (!isCurrent()) return;
       if (cached) {
         setMeState(cached);
         setStatus("authed");
@@ -90,9 +112,31 @@ export function AuthProvider({
     }
   }, [persistMe, sessionCache]);
 
+  const refresh = useCallback(async () => {
+    if (inFlightRef.current) return inFlightRef.current;
+    const pending = runRefresh().finally(() => {
+      if (inFlightRef.current === pending) inFlightRef.current = null;
+    });
+    inFlightRef.current = pending;
+    return pending;
+  }, [runRefresh]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Central 401 hook: any request anywhere that gets a 401 drops the cached
+  // session, instead of each of ~100 call sites handling expiry ad hoc.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      persistMe(null);
+      refreshTokenRef.current += 1;
+      if (!mountedRef.current) return;
+      setMeState(null);
+      setStatus("guest");
+    });
+    return () => setUnauthorizedHandler(null);
+  }, [persistMe]);
 
   const login = useCallback(
     async (username: string, password: string) => {

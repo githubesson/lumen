@@ -105,7 +105,7 @@ export default function FH6Radio() {
   useEffect(() => {
     let alive = true;
     void (async () => {
-      if (!isElectron) return;
+      if (!isElectron()) return;
       const [cfg, nextStatus] = await Promise.all([
         getDesktopConfig?.(),
         getFH6Status?.(),
@@ -251,7 +251,7 @@ export default function FH6Radio() {
     });
   }
 
-  if (!isElectron) {
+  if (!isElectron()) {
     return (
       <div className="view fh6-radio-view">
         <PageTitle />
@@ -272,7 +272,7 @@ export default function FH6Radio() {
           <Button
             variant="primary"
             leadingIcon={<PowerIcon className="size-4" />}
-            onClick={() => void electron?.openSettings()}
+            onClick={() => void electron()?.openSettings()}
           >
             Open settings
           </Button>
