@@ -513,7 +513,10 @@ export function usePlayerCore({
         listeningTickRef.current = performance.now();
         if (current) void api.updateNowPlaying(current.id).catch(() => {});
         adapter.seek(0);
-        void adapter.play().catch(() => {});
+        // Mirror the other play() sites: if the platform refuses to restart
+        // (e.g. audio-session activation failed mid-interruption), reflect the
+        // pause in state instead of showing a playing UI over silence.
+        void adapter.play().catch(() => setIsPlaying(false));
         return;
       }
       next();

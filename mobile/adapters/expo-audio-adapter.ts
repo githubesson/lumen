@@ -58,6 +58,12 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
   const pendingPreparedPlaybackRef = useRef<{ shouldPlay: boolean } | null>(
     null,
   );
+  // In-flight seekTo(). expo-audio's seekTo is an async native function while
+  // play() is sync, so an unawaited seek(0)+play() pair reaches the native
+  // player in reverse order. At a natural track end (repeat-one restart) the
+  // reversed play() is consumed by the still-ended item and iOS re-pauses,
+  // leaving the track stopped at 0:00. play() awaits this to restore ordering.
+  const pendingSeekRef = useRef<Promise<void> | null>(null);
   const prevStatusRef = useRef<{
     isLoaded: boolean;
     playing: boolean;
@@ -129,6 +135,8 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
     () => ({
       load(url) {
         pendingPreparedPlaybackRef.current = null;
+        // Seeks against the outgoing item must not delay the new track.
+        pendingSeekRef.current = null;
         const prepared = preparedRef.current;
         if (prepared) {
           preparedRef.current = null;
@@ -176,6 +184,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
           pendingPreparedPlaybackRef.current = {
             shouldPlay: true,
           };
+          pendingSeekRef.current = null;
           player.replace({ uri: url });
           prevStatusRef.current.isLoaded = false;
           prevStatusRef.current.duration = 0;
@@ -206,6 +215,13 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
           startPreparedPlaybackIfReady(player.currentStatus);
           return;
         }
+        const pendingSeek = pendingSeekRef.current;
+        if (pendingSeek) {
+          await pendingSeek;
+          // A load()/activatePrepared() while the seek settled owns playback
+          // ordering itself; don't also start the (replaced) item.
+          if (pendingPreparedPlaybackRef.current) return;
+        }
         player.play();
       },
       pause() {
@@ -214,7 +230,13 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         player.pause();
       },
       seek(seconds) {
-        void player.seekTo(seconds);
+        const seekPromise = player.seekTo(seconds).catch(() => {});
+        pendingSeekRef.current = seekPromise;
+        void seekPromise.then(() => {
+          if (pendingSeekRef.current === seekPromise) {
+            pendingSeekRef.current = null;
+          }
+        });
         dispatch("seeked");
       },
       setVolume(v) {
