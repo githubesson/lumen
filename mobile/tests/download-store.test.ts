@@ -208,7 +208,12 @@ async function finishTask(
   h.dirs.add(`${h.DOC}/offline-audio`);
   h.files.set(partUri(id), bytes);
   task.cbs.begin?.({ headers: { "content-type": contentType } });
-  const { promise, resolve } = Promise.withResolvers<void>();
+  // Hand-rolled deferred rather than Promise.withResolvers, which needs
+  // Node 22 — CI and both Docker images run Node 20.
+  let resolve!: () => void;
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
   const unsubscribe = store.subscribe(() => {
     unsubscribe();
     resolve();
