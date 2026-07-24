@@ -31,6 +31,12 @@
       "./plugins/withExpoModulesCoreSwiftWorkaround",
       "./plugins/withInstagramStorySharing",
       [
+        "./plugins/withCarPlay",
+        {
+          "audioEntitlement": true
+        }
+      ],
+      [
         "expo-audio",
         {
           "enableBackgroundPlayback": true

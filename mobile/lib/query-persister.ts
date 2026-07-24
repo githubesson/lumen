@@ -35,6 +35,9 @@ const PERSISTED_USER_QUERY_TYPES = new Set([
   "recent",
   "album",
   "album-tracks",
+  // The car can connect on a cold launch with no network; its browse lists
+  // have to come from disk in that case.
+  "carplay-albums",
   "tidal-album",
   "artist",
   "artist-tracks",

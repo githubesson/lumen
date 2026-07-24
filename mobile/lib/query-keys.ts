@@ -42,6 +42,15 @@ export const qk = {
   favorites: (userId: UserId) => ["user", userId, "favorites"] as const,
   recent: (userId: UserId) => ["user", userId, "recent"] as const,
 
+  /** Flat first page of albums for the CarPlay browse list. Separate from
+   *  {@link qk.albumsList}, which the phone reads as an infinite query — the
+   *  same key would mean two cache shapes clobbering each other. */
+  carPlayAlbums: (userId: UserId) => ["user", userId, "carplay-albums"] as const,
+  /** Flat first page of artists for the CarPlay browse list; separate from
+   *  {@link qk.artistsList} for the same reason as {@link qk.carPlayAlbums}. */
+  carPlayArtists: (userId: UserId) =>
+    ["user", userId, "carplay-artists"] as const,
+
   album: (userId: UserId, id: Id) => ["user", userId, "album", id] as const,
   albumTracks: (userId: UserId, id: Id) =>
     ["user", userId, "album-tracks", id] as const,

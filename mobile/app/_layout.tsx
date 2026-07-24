@@ -26,6 +26,7 @@ import { ThemeProvider, useTheme } from "../theme/theme";
 import { invalidateLibrary } from "../lib/query-keys";
 import { DownloadsProvider } from "../lib/downloads";
 import { RemoteControlIndicator } from "../components/remote-control-indicator";
+import { CarPlayBridge } from "../components/carplay-bridge";
 import {
   fileSystemPersister,
   shouldPersistQuery,
@@ -183,6 +184,9 @@ function AccountScopedProviders({ children }: { children: ReactNode }) {
     <PlayerProvider key={`player:${accountKey}`}>
       {children}
       <RemoteControlIndicator />
+      {/* Renders nothing on the phone; drives the car's templates from the
+          same query cache and player these providers already own. */}
+      <CarPlayBridge />
     </PlayerProvider>
   );
 }
