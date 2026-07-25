@@ -1,0 +1,106 @@
+diff --git a/node_modules/react-native-macos/ReactCommon/react/renderer/core/ShadowNode.cpp b/node_modules/react-native-macos/ReactCommon/react/renderer/core/ShadowNode.cpp
+index a3af28d..85ccd35 100644
+--- a/node_modules/react-native-macos/ReactCommon/react/renderer/core/ShadowNode.cpp
++++ b/node_modules/react-native-macos/ReactCommon/react/renderer/core/ShadowNode.cpp
+@@ -140,6 +140,11 @@ std::shared_ptr<ShadowNode> ShadowNode::clone(
+     const ShadowNodeFragment& fragment) const {
+   const auto& family = *family_;
+   const auto& componentDescriptor = family.componentDescriptor_;
++  // [Lumen patch] Copying `nativeProps_DEPRECATED` races its replacement from
++  // `UIManager::setNativeProps_DEPRECATED` on the JS thread; see
++  // `ShadowNodeFamily::nativePropsMutex_DEPRECATED`.
++  std::unique_lock<std::recursive_mutex> nativePropsLock(
++      ShadowNodeFamily::nativePropsMutex_DEPRECATED());
+   if (family.nativeProps_DEPRECATED != nullptr) {
+     auto propsParserContext = PropsParserContext{family_->getSurfaceId(), {}};
+     if (fragment.props == ShadowNodeFragment::propsPlaceholder()) {
+diff --git a/node_modules/react-native-macos/ReactCommon/react/renderer/core/ShadowNodeFamily.h b/node_modules/react-native-macos/ReactCommon/react/renderer/core/ShadowNodeFamily.h
+index 8385608..b20fbbe 100644
+--- a/node_modules/react-native-macos/ReactCommon/react/renderer/core/ShadowNodeFamily.h
++++ b/node_modules/react-native-macos/ReactCommon/react/renderer/core/ShadowNodeFamily.h
+@@ -8,6 +8,7 @@
+ #pragma once
+ 
+ #include <memory>
++#include <mutex>
+ #include <shared_mutex>
+ 
+ #include <react/renderer/core/EventEmitter.h>
+@@ -117,6 +118,22 @@ class ShadowNodeFamily final : public jsi::NativeState {
+    */
+   mutable std::unique_ptr<folly::dynamic> nativeProps_DEPRECATED;
+ 
++  /*
++   * [Lumen patch] Serializes access to `nativeProps_DEPRECATED`. The member is
++   * replaced from the JS thread on every `setNativeProps` call (each frame of
++   * a JS-driven animation) while `ShadowNode::clone` reads it from the main
++   * thread during surface-constraint commits — an unsynchronized data race
++   * that destroyed the `folly::dynamic` mid-copy and crashed (SIGSEGV in
++   * `folly::dynamic::hash`). One process-wide mutex is plenty: contention is
++   * a handful of nanoseconds per clone.
++   */
++  static std::recursive_mutex& nativePropsMutex_DEPRECATED() {
++    // Recursive: cloning can re-enter `ShadowNode::clone` while adopting yoga
++    // children, and a plain mutex would self-deadlock there.
++    static std::recursive_mutex mutex;
++    return mutex;
++  }
++
+   /**
+    * @return tag for the ShadowNodeFamily.
+    */
+diff --git a/node_modules/react-native-macos/ReactCommon/react/renderer/uimanager/UIManager.cpp b/node_modules/react-native-macos/ReactCommon/react/renderer/uimanager/UIManager.cpp
+index edee8ac..3d389d9 100644
+--- a/node_modules/react-native-macos/ReactCommon/react/renderer/uimanager/UIManager.cpp
++++ b/node_modules/react-native-macos/ReactCommon/react/renderer/uimanager/UIManager.cpp
+@@ -118,6 +118,9 @@ std::shared_ptr<ShadowNode> UIManager::cloneNode(
+   auto props = ShadowNodeFragment::propsPlaceholder();
+ 
+   if (!rawProps.isEmpty()) {
++    // [Lumen patch] See `ShadowNodeFamily::nativePropsMutex_DEPRECATED`.
++    std::unique_lock<std::recursive_mutex> nativePropsLock(
++        ShadowNodeFamily::nativePropsMutex_DEPRECATED());
+     if (family.nativeProps_DEPRECATED != nullptr) {
+       // 1. update the nativeProps_DEPRECATED props.
+       //
+@@ -426,19 +429,27 @@ void UIManager::setNativeProps_DEPRECATED(
+     const std::shared_ptr<const ShadowNode>& shadowNode,
+     RawProps rawProps) const {
+   auto& family = shadowNode->getFamily();
+-  if (family.nativeProps_DEPRECATED) {
+-    // Values in `rawProps` patch (take precedence over)
+-    // `nativeProps_DEPRECATED`. For example, if both `nativeProps_DEPRECATED`
+-    // and `rawProps` contain key 'A'. Value from `rawProps` overrides what was
+-    // previously in `nativeProps_DEPRECATED`.
+-    family.nativeProps_DEPRECATED =
+-        std::make_unique<folly::dynamic>(mergeDynamicProps(
+-            *family.nativeProps_DEPRECATED,
+-            (folly::dynamic)rawProps,
+-            NullValueStrategy::Override));
+-  } else {
+-    family.nativeProps_DEPRECATED =
+-        std::make_unique<folly::dynamic>((folly::dynamic)rawProps);
++  {
++    // [Lumen patch] Replacing the dynamic destroys the previous value, which
++    // `ShadowNode::clone` may be copying concurrently on the main thread
++    // during a surface-constraint commit; see
++    // `ShadowNodeFamily::nativePropsMutex_DEPRECATED`.
++    std::unique_lock<std::recursive_mutex> nativePropsLock(
++        ShadowNodeFamily::nativePropsMutex_DEPRECATED());
++    if (family.nativeProps_DEPRECATED) {
++      // Values in `rawProps` patch (take precedence over)
++      // `nativeProps_DEPRECATED`. For example, if both
++      // `nativeProps_DEPRECATED` and `rawProps` contain key 'A'. Value from
++      // `rawProps` overrides what was previously in `nativeProps_DEPRECATED`.
++      family.nativeProps_DEPRECATED =
++          std::make_unique<folly::dynamic>(mergeDynamicProps(
++              *family.nativeProps_DEPRECATED,
++              (folly::dynamic)rawProps,
++              NullValueStrategy::Override));
++    } else {
++      family.nativeProps_DEPRECATED =
++          std::make_unique<folly::dynamic>((folly::dynamic)rawProps);
++    }
+   }
+ 
+   shadowTreeRegistry_.visit(

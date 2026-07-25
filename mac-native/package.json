@@ -1,0 +1,43 @@
+{
+  "name": "lumen-mac",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "sync:core": "node ./scripts/sync-core-package.mjs",
+    "start": "npm run sync:core && react-native start",
+    "macos": "npm run sync:core && react-native run-macos",
+    "pods": "pod install --project-directory=macos",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "postinstall": "patch-package && npm run sync:core"
+  },
+  "dependencies": {
+    "@music-library/core": "file:./packages/music-library-core",
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "@tanstack/query-async-storage-persister": "^5.90.2",
+    "@tanstack/react-query": "^5.90.2",
+    "@tanstack/react-query-persist-client": "^5.90.2",
+    "react": "19.1.4",
+    "react-native": "0.81.6",
+    "react-native-macos": "^0.81.9"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@babel/preset-env": "^7.25.3",
+    "@babel/runtime": "^7.25.0",
+    "@react-native-community/cli": "20.0.0",
+    "@react-native/babel-preset": "0.81.6",
+    "@react-native/metro-config": "0.81.6",
+    "@react-native/typescript-config": "0.81.6",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.1.4",
+    "jsdom": "^29.1.1",
+    "patch-package": "^8.0.1",
+    "react-dom": "^19.1.4",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -154,6 +154,21 @@ export function usePlayerCore({
     void storage.setItem(VOLUME_STORAGE_KEY, String(volume));
   }, [storage, volume, volumeHydrated]);
 
+  // Zero the visible clock the moment a different track is chosen. Without
+  // this the wall-clock interpolation keeps advancing from the previous
+  // track's anchor, so the scrubber shows the old track's position against
+  // the old duration until the new one's `loadedmetadata` lands — and then
+  // snaps. `next()` has always reset these; jumps, prev and fresh plays get
+  // the same treatment here. No-op when the track is already loaded (e.g.
+  // re-clicking the playing track), where no `loadedmetadata` would follow
+  // to restore the duration.
+  const resetClockForTrackChange = useCallback((trackId: string) => {
+    if (loadedTrackIdRef.current === trackId) return;
+    setCurrentTime(0);
+    setDuration(0);
+    anchorRef.current = { audioTime: 0, wallTime: performance.now() };
+  }, []);
+
   const play = useCallback<PlayerControls["play"]>(
     (track, q) => {
       const base = q && q.length ? q : [track];
@@ -169,9 +184,10 @@ export function usePlayerCore({
       }
       setCurrent(track);
       setIsPlaying(true);
+      resetClockForTrackChange(track.id);
       playbackReportedRef.current = null;
     },
-    [shuffle],
+    [resetClockForTrackChange, shuffle],
   );
 
   const toggle = useCallback<PlayerControls["toggle"]>(() => {
@@ -301,8 +317,9 @@ export function usePlayerCore({
     setIndex(ni);
     setCurrent(queue[ni]);
     setIsPlaying(true);
+    resetClockForTrackChange(queue[ni].id);
     playbackReportedRef.current = null;
-  }, [adapter, clearPreparedNext, queue, index, isTrackPlayable]);
+  }, [adapter, clearPreparedNext, queue, index, isTrackPlayable, resetClockForTrackChange]);
 
   const jumpTo = useCallback<PlayerControls["jumpTo"]>(
     (i) => {
@@ -314,9 +331,10 @@ export function usePlayerCore({
       setIndex(i);
       setCurrent(queue[i]);
       setIsPlaying(true);
+      resetClockForTrackChange(queue[i].id);
       playbackReportedRef.current = null;
     },
-    [clearPreparedNext, queue, isTrackPlayable],
+    [clearPreparedNext, queue, isTrackPlayable, resetClockForTrackChange],
   );
 
   const seek = useCallback<PlayerControls["seek"]>(
