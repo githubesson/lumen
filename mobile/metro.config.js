@@ -6,11 +6,11 @@ const config = getDefaultConfig(__dirname);
 
 // The canonical core package is the sibling ../core. `npm run sync:core`
 // vendors a copy into packages/music-library-core so that `file:` resolution
-// and EAS uploads (which only ship the mobile project) keep working.
+// keeps working; postinstall refreshes it from the sibling.
 //
-// When the sibling is present — i.e. any checkout of the monorepo — resolve
-// straight to it and watch it, so editing core/src/** hot-reloads instead of
-// silently bundling a stale vendored copy.
+// In a working checkout, resolve straight to the sibling and watch it, so
+// editing core/src/** hot-reloads instead of silently bundling a stale
+// vendored copy.
 const siblingCoreRoot = path.resolve(__dirname, "..", "core");
 const bundledCoreRoot = path.resolve(__dirname, "packages", "music-library-core");
 
@@ -26,10 +26,19 @@ if (!hasSiblingCore && !hasBundledCore) {
   );
 }
 
-const coreRoot = hasSiblingCore ? siblingCoreRoot : bundledCoreRoot;
+// A cloud build gets the whole monorepo (see the repository's .easignore), so
+// the sibling is present there too — but Metro can only hash files its crawler
+// reached, and pulling core/src in from outside the project root fails the
+// bundle with "Failed to get the SHA-1". Builds therefore use the vendored
+// copy, which postinstall has just refreshed from that same sibling, so it is
+// the identical source either way.
+const isCloudBuild = !!process.env.EAS_BUILD || !!process.env.CI;
+const useSiblingCore = hasSiblingCore && !(isCloudBuild && hasBundledCore);
+
+const coreRoot = useSiblingCore ? siblingCoreRoot : bundledCoreRoot;
 const appNodeModules = path.resolve(__dirname, "node_modules");
 
-if (hasSiblingCore) {
+if (useSiblingCore) {
   config.watchFolders = [...(config.watchFolders ?? []), siblingCoreRoot];
 }
 
