@@ -181,6 +181,15 @@ public class CarPlayModule: Module {
 
   private var nowPlayingObserver: CarPlayNowPlayingObserver?
 
+  /// Whether iOS is currently letting the app read its own protected files.
+  ///
+  /// Mirrored rather than read from `UIApplication` on demand, because the
+  /// getter is main-actor isolated and this is answered on the JS thread.
+  /// Optimistic until `OnCreate` reads the real value: a car that never sees a
+  /// locked phone must not be told to wait.
+  private var protectedDataAvailable = true
+  private var protectedDataObservers: [NSObjectProtocol] = []
+
   public func definition() -> ModuleDefinition {
     Name("CarPlay")
 
@@ -190,7 +199,8 @@ public class CarPlayModule: Module {
       "onSelect",
       "onNowPlayingButton",
       "onNowPlayingUpNext",
-      "onNowPlayingAlbumArtist"
+      "onNowPlayingAlbumArtist",
+      "onProtectedDataAvailable"
     )
 
     /// CarPlay silently renders only the first `maximumItemCount` items (across
@@ -222,6 +232,7 @@ public class CarPlayModule: Module {
       }
 
       self.installNowPlayingObserver()
+      self.observeProtectedData()
     }
 
     OnDestroy {
@@ -229,6 +240,7 @@ public class CarPlayModule: Module {
       CarPlaySceneManager.shared.onConnect = nil
       CarPlaySceneManager.shared.onDisconnect = nil
       self.removeNowPlayingObserver()
+      self.removeProtectedDataObservers()
       self.reset()
     }
 
@@ -238,6 +250,14 @@ public class CarPlayModule: Module {
       let value = CarPlaySceneManager.shared.isConnected
       NSLog("LUMENCP: js isConnected -> \(value)")
       return value
+    }
+
+    /// False between a cold boot and the phone's first unlock, when the app's
+    /// cached session, its downloads and its persisted library are all
+    /// unreadable. CarPlay is used against a locked phone as a matter of
+    /// course, so this state is normal rather than exceptional.
+    Function("isProtectedDataAvailable") { () -> Bool in
+      self.protectedDataAvailable
     }
 
     AsyncFunction("setRootList") { (spec: ListTemplateSpec) in
@@ -359,6 +379,49 @@ public class CarPlayModule: Module {
       }
       CPNowPlayingTemplate.shared.add(observer)
       self.nowPlayingObserver = observer
+    }
+  }
+
+  /// Tracks the file-protection state, and tells JS the moment the app's own
+  /// files become readable.
+  ///
+  /// A car connecting before the phone's first unlock leaves the app unable to
+  /// read its cached session — indistinguishable, from JS, from being signed
+  /// out. Without this notification nothing would re-check once the driver
+  /// unlocks, and the car would sit on the wrong screen for the whole drive.
+  private func observeProtectedData() {
+    carPlayOnMain {
+      self.protectedDataAvailable = UIApplication.shared.isProtectedDataAvailable
+
+      let center = NotificationCenter.default
+      self.protectedDataObservers = [
+        center.addObserver(
+          forName: UIApplication.protectedDataDidBecomeAvailableNotification,
+          object: nil,
+          queue: .main
+        ) { [weak self] _ in
+          self?.protectedDataAvailable = true
+          self?.sendEvent("onProtectedDataAvailable", [:])
+        },
+        center.addObserver(
+          forName: UIApplication.protectedDataWillBecomeUnavailableNotification,
+          object: nil,
+          queue: .main
+        ) { [weak self] _ in
+          self?.protectedDataAvailable = false
+        },
+      ]
+    }
+  }
+
+  private func removeProtectedDataObservers() {
+    let observers = protectedDataObservers
+    protectedDataObservers = []
+    guard !observers.isEmpty else { return }
+    carPlayOnMain {
+      for observer in observers {
+        NotificationCenter.default.removeObserver(observer)
+      }
     }
   }
 

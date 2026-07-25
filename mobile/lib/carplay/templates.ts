@@ -2,7 +2,6 @@ import {
   albumCoverUrl,
   trackCoverUrl,
   type Album,
-  type Artist,
   type Playlist,
   type TrackListItem,
 } from "@music-library/core";
@@ -60,8 +59,6 @@ const SYMBOL = {
   smartPlaylist: "sparkles",
   albums: "square.stack",
   album: "square.stack",
-  artists: "music.mic",
-  artist: "music.mic",
   play: "play.fill",
   shuffle: "shuffle",
 } as const;
@@ -77,14 +74,12 @@ export type CarPlayDestination =
   | { kind: "favorites" }
   | { kind: "playlists" }
   | { kind: "albums" }
-  | { kind: "artists" }
   | { kind: "queue" }
   /** Acts on the list the row sits in: `onSelect` carries the template id. */
   | { kind: "play-list" }
   | { kind: "shuffle-list" }
   | { kind: "playlist"; id: string }
   | { kind: "album"; id: string }
-  | { kind: "artist"; id: string }
   | { kind: "track"; id: string }
   /** A position in the live queue, not a track id: a queue can hold the same
    *  track twice, and Up Next rows jump rather than restart. */
@@ -95,7 +90,6 @@ type DestinationKind = CarPlayDestination["kind"];
 const KEYED_KINDS = new Set<DestinationKind>([
   "playlist",
   "album",
-  "artist",
   "track",
   "queued",
 ]);
@@ -105,7 +99,6 @@ const BARE_KINDS = new Set<DestinationKind>([
   "favorites",
   "playlists",
   "albums",
-  "artists",
   "queue",
   "play-list",
   "shuffle-list",
@@ -210,7 +203,6 @@ const PLURALS: Record<string, string> = {
   song: "songs",
   album: "albums",
   playlist: "playlists",
-  artist: "artists",
 };
 
 function countLabel(shown: number, total: number, noun: string): string {
@@ -544,7 +536,7 @@ export function buildHomeTab({
         ? { emptyText: "Loading…", loading: true }
         : {
             emptyTitle: "Nothing here yet",
-            emptyText: "Add music on your iPhone and it shows up here.",
+            emptyText: "Music added to your library shows up here.",
           }),
     },
     limits,
@@ -623,11 +615,7 @@ export function buildPlaylistsTemplate({
   );
 }
 
-/**
- * The Albums tab, with the way into artists sitting above it: five tabs is the
- * system limit, and artists is the browse axis that loses least by being one
- * tap deeper.
- */
+/** The Albums tab. */
 export function buildAlbumsTemplate({
   limits,
   albums,
@@ -638,7 +626,7 @@ export function buildAlbumsTemplate({
   albums: Album[] | undefined;
   navButton?: CarPlayNavButton;
 } & LoadState): CarPlayListTemplate {
-  const shown = take(albums ?? [], limits.maximumItemCount - 1);
+  const shown = take(albums ?? [], limits.maximumItemCount);
 
   return listTemplate(
     {
@@ -648,13 +636,6 @@ export function buildAlbumsTemplate({
       tabSymbol: SYMBOL.albums,
       navButton,
       sections: [
-        {
-          items: [
-            browseRow({ kind: "artists" }, "Artists", {
-              symbol: SYMBOL.artists,
-            }),
-          ],
-        },
         {
           header: albums?.length
             ? countLabel(shown.length, albums.length, "album")
@@ -675,82 +656,6 @@ export function buildAlbumsTemplate({
     },
     limits,
   );
-}
-
-/**
- * Artists, grouped into A–Z sections so the head unit can draw its index strip
- * — but only while the letters fit under the section cap, since a dropped
- * section is dropped artists.
- */
-export function buildArtistsTemplate({
-  limits,
-  artists,
-  loading,
-  navButton,
-}: {
-  limits: Limits;
-  artists: Artist[] | undefined;
-  navButton?: CarPlayNavButton;
-} & LoadState): CarPlayListTemplate {
-  const shown = take(artists ?? [], limits.maximumItemCount);
-  const rows = shown.map((artist) =>
-    browseRow({ kind: "artist", id: artist.id }, artist.name, {
-      detailText: countLabel(artist.track_count, artist.track_count, "song"),
-      symbol: SYMBOL.artist,
-    }),
-  );
-
-  // A trimmed list says so in its header instead, since a letter header has
-  // nowhere to put "and 200 more".
-  const complete = shown.length === (artists?.length ?? 0);
-
-  return listTemplate(
-    {
-      id: pushedTemplateId({ kind: "artists" }),
-      title: "Artists",
-      navButton,
-      sections: (complete && alphabetize(shown, rows, limits)) || [
-        {
-          header: artists?.length
-            ? countLabel(shown.length, artists.length, "artist")
-            : undefined,
-          items: rows,
-        },
-      ],
-      ...emptyState(artists !== undefined, {
-        loading,
-        emptyText: "No artists yet.",
-      }),
-    },
-    limits,
-  );
-}
-
-/** One section per initial, or `null` when that wouldn't fit. */
-function alphabetize(
-  artists: Artist[],
-  rows: CarPlayListItem[],
-  limits: Limits,
-): CarPlayListSection[] | null {
-  if (!artists.length) return null;
-
-  const sections: CarPlayListSection[] = [];
-  artists.forEach((artist, position) => {
-    const initial = indexTitleFor(artist.name);
-    const current = sections[sections.length - 1];
-    if (current?.indexTitle === initial) {
-      current.items.push(rows[position]);
-      return;
-    }
-    sections.push({ header: initial, indexTitle: initial, items: [rows[position]] });
-  });
-
-  return sections.length <= limits.maximumSectionCount ? sections : null;
-}
-
-function indexTitleFor(name: string): string {
-  const initial = name.trim().charAt(0).toUpperCase();
-  return /[A-Z]/.test(initial) ? initial : "#";
 }
 
 /**
@@ -813,13 +718,36 @@ export function buildLibraryTabs(options: {
   ].slice(0, limits.maximumTabCount);
 }
 
-/** Before sign-in the car shows a prompt instead of an empty library. */
+/**
+ * Before sign-in the car states the condition and stops there. CarPlay apps
+ * may report that a login is needed, but must not tell the driver to go and
+ * do it on their phone.
+ */
 export function buildSignedOutTemplate(): CarPlayListTemplate {
   return {
     id: CARPLAY_ROOT_ID,
     title: "Lumen",
     sections: [],
     emptyTitle: "Not signed in",
-    emptyText: "Sign in on your iPhone to browse your library here.",
+    emptyText: "Sign in to browse your library here.",
+  };
+}
+
+/**
+ * Shown while iOS is still withholding the app's own files.
+ *
+ * A car that connects before the phone has been unlocked once since boot gets
+ * an app that can read neither its cached session nor its downloads. That is
+ * not the same state as being signed out, and saying so would be wrong — and
+ * would fix itself into a whole drive spent looking at the wrong screen.
+ */
+export function buildLockedTemplate(): CarPlayListTemplate {
+  return {
+    id: CARPLAY_ROOT_ID,
+    title: "Lumen",
+    sections: [],
+    emptyTitle: "Lumen",
+    emptyText: "Your library will be ready in a moment.",
+    loading: true,
   };
 }

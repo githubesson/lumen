@@ -83,6 +83,20 @@ export function isCarPlayConnected() {
   return nativeModule?.isConnected() ?? false;
 }
 
+/**
+ * Whether the app can read its own files right now.
+ *
+ * A car frequently connects to a locked phone, and one that has not been
+ * unlocked since it booted keeps the cached session, the downloads and the
+ * persisted library out of reach — which reads as "signed out" to everything
+ * above it. True on a binary too old to answer, which is how it behaved
+ * before this existed.
+ */
+export function isCarPlayProtectedDataAvailable() {
+  if (!supports("isProtectedDataAvailable")) return true;
+  return nativeModule?.isProtectedDataAvailable() ?? true;
+}
+
 export function setCarPlayRootList(template: CarPlayListTemplate) {
   return nativeModule?.setRootList(template) ?? Promise.resolve();
 }
@@ -167,4 +181,10 @@ export function addCarPlayUpNextListener(listener: () => void) {
 /** The system album/artist button: push the container the track came from. */
 export function addCarPlayAlbumArtistListener(listener: () => void) {
   return addOptionalListener("onNowPlayingAlbumArtist", listener);
+}
+
+/** Fires when the phone is unlocked for the first time since it booted, which
+ *  is when everything the car reads from disk becomes readable. */
+export function addCarPlayProtectedDataListener(listener: () => void) {
+  return addOptionalListener("onProtectedDataAvailable", listener);
 }

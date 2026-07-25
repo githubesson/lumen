@@ -4,13 +4,13 @@
  * item cap can be checked without a car (or a simulator) attached.
  */
 import { describe, expect, it } from "vitest";
-import type { Album, Artist, Playlist, TrackListItem } from "@music-library/core";
+import type { Album, Playlist, TrackListItem } from "@music-library/core";
 
 import {
   buildAlbumsTemplate,
-  buildArtistsTemplate,
   buildHomeTab,
   buildLibraryTabs,
+  buildLockedTemplate,
   buildPlaylistsTemplate,
   buildQueueTemplate,
   buildSignedOutTemplate,
@@ -81,13 +81,11 @@ describe("destination encoding", () => {
     { kind: "favorites" },
     { kind: "playlists" },
     { kind: "albums" },
-    { kind: "artists" },
     { kind: "queue" },
     { kind: "play-list" },
     { kind: "shuffle-list" },
     { kind: "playlist", id: "p1" },
     { kind: "album", id: "a1" },
-    { kind: "artist", id: "ar1" },
     { kind: "track", id: "t1" },
     { kind: "queued", id: "3" },
   ];
@@ -127,6 +125,29 @@ describe("root", () => {
     const root = buildSignedOutTemplate();
     expect(allItems(root)).toHaveLength(0);
     expect(root.emptyText).toMatch(/sign in/i);
+  });
+
+  it("never sends the driver to their phone", () => {
+    // A CarPlay app may report a condition such as a required login, but must
+    // not ask people to pick up their iPhone and act on it.
+    const wording = [
+      buildSignedOutTemplate(),
+      buildLockedTemplate(),
+      buildHomeTab({ limits: LIMITS, ...emptyHome }),
+      ...buildLibraryTabs({ limits: LIMITS, ...emptyLists }),
+    ].flatMap((template) => [template.emptyTitle, template.emptyText]);
+
+    for (const text of wording) {
+      expect(text ?? "").not.toMatch(/phone|device/i);
+    }
+  });
+
+  it("waits rather than calling an unreadable session a signed-out one", () => {
+    // Nothing is readable until the phone's first unlock since it booted, so
+    // "not signed in" would be a guess — and the wrong one for most drives.
+    const root = buildLockedTemplate();
+    expect(root.loading).toBe(true);
+    expect(root.emptyText).not.toMatch(/sign in/i);
   });
 
   it("lays out the browse tabs in reach order, each with an icon", () => {
@@ -488,10 +509,6 @@ describe("browse templates", () => {
     },
   ];
 
-  function artist(id: string, name: string): Artist {
-    return { id, name, track_count: 4, album_count: 1 };
-  }
-
   it("builds playlist rows that push their tracks", () => {
     const template = buildPlaylistsTemplate({ limits: LIMITS, playlists });
 
@@ -516,55 +533,15 @@ describe("browse templates", () => {
     const template = buildAlbumsTemplate({ limits: LIMITS, albums });
     const rows = allItems(template);
 
-    // Artists lead the tab: five tabs is the system limit, so the browse axis
-    // that loses least by being one tap deeper lives here.
     expect(rows[0]).toMatchObject({
-      id: "artists",
-      text: "Artists",
-      showsDisclosureIndicator: true,
-    });
-    expect(rows[1]).toMatchObject({
       id: "album:a1",
       text: "An Album",
       detailText: "Someone",
     });
-    expect(rows[1].imageUrl).toContain("/api/albums/a1/cover");
+    expect(rows[0].imageUrl).toContain("/api/albums/a1/cover");
     // Nothing to show is better than a broken image request.
-    expect(rows[2].imageUrl).toBeUndefined();
-  });
-
-  it("groups artists under an A–Z index the car can scroll by", () => {
-    const template = buildArtistsTemplate({
-      limits: LIMITS,
-      artists: [
-        artist("1", "ABBA"),
-        artist("2", "Arca"),
-        artist("3", "Björk"),
-        artist("4", "1975"),
-      ],
-    });
-
-    expect(
-      template.sections.map((section) => [
-        section.indexTitle,
-        section.items.length,
-      ]),
-    ).toEqual([
-      ["A", 2],
-      ["B", 1],
-      ["#", 1],
-    ]);
-  });
-
-  it("falls back to one flat section when the letters wouldn't fit", () => {
-    const template = buildArtistsTemplate({
-      limits: { ...LIMITS, maximumSectionCount: 2 },
-      artists: [artist("1", "Air"), artist("2", "Boards"), artist("3", "Caribou")],
-    });
-
-    expect(template.sections).toHaveLength(1);
-    expect(template.sections[0].header).toBe("3 artists");
-    expect(ids(template)).toEqual(["artist:1", "artist:2", "artist:3"]);
+    expect(rows[1].imageUrl).toBeUndefined();
+    expect(template.sections[0].header).toBe("2 albums");
   });
 
   it("reports an unloadable browse list as offline", () => {
@@ -574,9 +551,6 @@ describe("browse templates", () => {
     ).toMatch(/offline/i);
     expect(
       buildAlbumsTemplate({ limits: LIMITS, albums: undefined }).emptyTitle,
-    ).toMatch(/offline/i);
-    expect(
-      buildArtistsTemplate({ limits: LIMITS, artists: undefined }).emptyTitle,
     ).toMatch(/offline/i);
   });
 });

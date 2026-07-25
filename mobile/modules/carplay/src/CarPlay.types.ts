@@ -107,6 +107,9 @@ export type CarPlayListLimits = {
 
 export type CarPlayNativeModule = CarPlayListLimits & {
   isConnected(): boolean;
+  /** False between a cold boot and the phone's first unlock, while the app's
+   *  cached session, downloads and persisted library are all unreadable. */
+  isProtectedDataAvailable(): boolean;
   setRootList(template: CarPlayListTemplate): Promise<void>;
   setRootTabs(templates: CarPlayListTemplate[]): Promise<void>;
   selectTab(templateId: string): Promise<void>;
@@ -130,7 +133,10 @@ export type CarPlayNativeModule = CarPlayListLimits & {
     listener: (event: CarPlayNowPlayingButtonEvent) => void,
   ): EventSubscription;
   addListener(
-    eventName: "onNowPlayingUpNext" | "onNowPlayingAlbumArtist",
+    eventName:
+      | "onNowPlayingUpNext"
+      | "onNowPlayingAlbumArtist"
+      | "onProtectedDataAvailable",
     listener: () => void,
   ): EventSubscription;
 };

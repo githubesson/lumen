@@ -3,6 +3,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   useSyncExternalStore,
 } from "react";
 import {
@@ -17,7 +18,6 @@ import {
   toQueueItem,
   useAuth,
   type Album,
-  type Artist,
   type Playlist,
   type PlaylistTracks,
   type TrackListItem,
@@ -31,8 +31,8 @@ import {
   usePlayerQueue,
 } from "../context/player";
 import {
-  buildArtistsTemplate,
   buildLibraryTabs,
+  buildLockedTemplate,
   buildQueueTemplate,
   buildSignedOutTemplate,
   buildTrackListTemplate,
@@ -57,6 +57,7 @@ import {
   addCarPlayConnectListener,
   addCarPlayDisconnectListener,
   addCarPlayNowPlayingButtonListener,
+  addCarPlayProtectedDataListener,
   addCarPlaySelectListener,
   addCarPlayUpNextListener,
   carPlayListLimits,
@@ -64,6 +65,7 @@ import {
   finishCarPlaySelection,
   isCarPlayAvailable,
   isCarPlayConnected,
+  isCarPlayProtectedDataAvailable,
   isCarPlayTabsSupported,
   pushCarPlayList,
   pushCarPlayNowPlaying,
@@ -77,9 +79,8 @@ import {
 
 /** Matches the phone's Recent list so both share one cache entry. */
 const RECENT_LIMIT = 100;
-/** Fetched in one page each; the head unit truncates well below these. */
+/** Fetched in one page; the head unit truncates well below this. */
 const ALBUM_PAGE_LIMIT = 300;
-const ARTIST_PAGE_LIMIT = 300;
 /**
  * Track lists kept for in-place refresh. CarPlay owns the pushed stack and
  * gives us no pop callback, so entries are trimmed by age instead — a few more
@@ -97,6 +98,30 @@ function subscribeToCarPlayConnection(onChange: () => void) {
     connect.remove();
     disconnect.remove();
   };
+}
+
+function subscribeToProtectedData(onChange: () => void) {
+  const subscription = addCarPlayProtectedDataListener(onChange);
+  return () => {
+    subscription.remove();
+  };
+}
+
+/**
+ * Whether the app can read its own files. False between a cold boot and the
+ * phone's first unlock — a state a car reaches often, since CarPlay is used
+ * against a locked phone as a matter of course.
+ *
+ * Read as an external store for the same reason as the connection: the car can
+ * be attached before this runtime exists, so the current value matters more
+ * than the event that produced it.
+ */
+function useProtectedDataAvailable(): boolean {
+  return useSyncExternalStore(
+    subscribeToProtectedData,
+    isCarPlayProtectedDataAvailable,
+    isCarPlayProtectedDataAvailable,
+  );
 }
 
 /**
@@ -135,12 +160,13 @@ function useCarPlayConnected(): boolean {
  */
 export function CarPlayBridge() {
   const queryClient = useQueryClient();
-  const { status, me } = useAuth();
+  const { status, me, refresh } = useAuth();
   const controls = usePlayerControls();
   const currentTrack = useCurrentTrack();
   const { queue, index } = usePlayerQueue();
   const { shuffle, repeat } = usePlayerPlayback();
   const connected = useCarPlayConnected();
+  const protectedData = useProtectedDataAvailable();
   // Empty id disables the query: with no car attached this component must not
   // pull the favorites list into the phone's cache on its own.
   const favorited = useFavorite(connected ? (currentTrack?.id ?? "") : "");
@@ -275,9 +301,32 @@ export function CarPlayBridge() {
     });
   }, [favoriteTracks, recentTracks]);
 
+  // A session cached before the phone last booted can't be read until the
+  // driver unlocks it, and `useAuth` can only report that as `guest`. Ask again
+  // the moment the files come back — nothing else would, so the car would
+  // otherwise spend the whole drive claiming the driver is signed out. Held
+  // from the first render rather than set in the effect, so the wrong root is
+  // never installed for the frame in between.
+  const [recheckingSession, setRecheckingSession] = useState(
+    () => !isCarPlayProtectedDataAvailable(),
+  );
+
+  useEffect(() => {
+    if (!protectedData || !recheckingSession) return;
+    // Concurrent calls share one request, so a re-run can't stack them up.
+    void refresh().finally(() => setRecheckingSession(false));
+  }, [protectedData, recheckingSession, refresh]);
+
+  /** No readable session yet — not the same as no session, and the car must
+   *  not say otherwise while the answer is still out of reach. */
+  const sessionLocked = !signedIn && (!protectedData || recheckingSession);
+
   // `installKey` changes only when the whole hierarchy must be rebuilt: a fresh
-  // connection, or a different account whose lists must not leak across.
-  const installKey = connected ? `${userId ?? ""}:${signedIn}` : null;
+  // connection, a different account whose lists must not leak across, or the
+  // moment an unreadable session becomes readable.
+  const installKey = connected
+    ? `${userId ?? ""}:${signedIn}:${sessionLocked}`
+    : null;
   const installedKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -289,13 +338,13 @@ export function CarPlayBridge() {
     if (installedKeyRef.current !== installKey) {
       installedKeyRef.current = installKey;
       pushedRef.current.clear();
-      void installRoot(signedIn, tabs);
+      void installRoot(signedIn, sessionLocked, tabs);
       return;
     }
 
     if (!signedIn) return;
     for (const tab of tabs) void updateCarPlayList(tab);
-  }, [installKey, signedIn, tabs]);
+  }, [installKey, sessionLocked, signedIn, tabs]);
 
   // Move the playing indicator on lists the user already pushed, and re-dim
   // rows when connectivity changes, without disturbing the navigation stack.
@@ -376,12 +425,6 @@ export function CarPlayBridge() {
     ): Promise<CarPlayListTemplate | null> => {
       const id = pushedTemplateId(destination);
       switch (destination.kind) {
-        case "artists":
-          return buildArtistsTemplate({
-            limits,
-            navButton,
-            artists: await loadArtists(queryClient, userId),
-          });
         case "playlist": {
           const tracks = await load<PlaylistTracks>(
             queryClient,
@@ -404,21 +447,11 @@ export function CarPlayBridge() {
               ({ signal }) => api.listAlbumTracks(destination.id, { signal }),
             ),
           );
-        case "artist":
-          return trackList(
-            id,
-            artistName(queryClient, userId, destination.id),
-            await load(
-              queryClient,
-              qk.artistTracks(userId, destination.id),
-              ({ signal }) => api.listArtistTracks(destination.id, { signal }),
-            ),
-          );
         default:
           return null;
       }
     },
-    [limits, navButton, queryClient, trackList, userId],
+    [queryClient, trackList, userId],
   );
 
   const listFor = useCallback(
@@ -555,11 +588,17 @@ export function CarPlayBridge() {
 }
 
 /**
- * Installs whichever root the running binary can show. Tabs need native code
- * newer than some installed builds; an older one still gets the Playing
- * screen, rather than sitting on the launch placeholder forever.
+ * Installs whichever root the running binary can show, and whichever the
+ * current state warrants. Tabs need native code newer than some installed
+ * builds; an older one still gets the Playing screen, rather than sitting on
+ * the launch placeholder forever.
  */
-function installRoot(signedIn: boolean, tabs: CarPlayListTemplate[]) {
+function installRoot(
+  signedIn: boolean,
+  sessionLocked: boolean,
+  tabs: CarPlayListTemplate[],
+) {
+  if (sessionLocked) return setCarPlayRootList(buildLockedTemplate());
   if (!signedIn) return setCarPlayRootList(buildSignedOutTemplate());
   if (!isCarPlayTabsSupported()) return setCarPlayRootList(tabs[0]);
   return setCarPlayRootTabs(tabs);
@@ -602,15 +641,6 @@ async function load<T>(
   }
 }
 
-function loadArtists(queryClient: QueryClient, userId: string | undefined) {
-  return load(
-    queryClient,
-    qk.carPlayArtists(userId),
-    async ({ signal }) =>
-      (await api.listArtistsPage({ limit: ARTIST_PAGE_LIMIT, signal })).items,
-  );
-}
-
 /** Names come from the list the user navigated through, which is always cached
  *  by the time its rows can be tapped. */
 function playlistName(
@@ -629,13 +659,4 @@ function albumTitle(
 ): string {
   const albums = queryClient.getQueryData<Album[]>(qk.carPlayAlbums(userId));
   return albums?.find((album) => album.id === id)?.title ?? "Album";
-}
-
-function artistName(
-  queryClient: QueryClient,
-  userId: string | undefined,
-  id: string,
-): string {
-  const artists = queryClient.getQueryData<Artist[]>(qk.carPlayArtists(userId));
-  return artists?.find((artist) => artist.id === id)?.name ?? "Artist";
 }
