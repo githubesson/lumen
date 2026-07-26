@@ -38,8 +38,11 @@
 
   --fg: oklch(0.985 0 0);
   --fg-muted: oklch(0.72 0.005 270);
-  --fg-subtle: oklch(0.56 0.005 270);
-  --fg-faint: oklch(0.42 0.005 270);
+  /* --fg-subtle is the faintest tier still allowed on text: 4.58:1 on
+     --bg-elev-3, the lowest-contrast surface it renders against. --fg-faint
+     clears 3:1 there but not 4.5:1, so it is for icons and decoration only. */
+  --fg-subtle: oklch(0.62 0.005 270);
+  --fg-faint: oklch(0.52 0.005 270);
 
   --border: oklch(0.28 0.005 270 / 0.7);
   --border-strong: oklch(0.36 0.005 270);
@@ -51,8 +54,15 @@
   --accent: oklch(0.72 0.17 40);
   --accent-fg: oklch(0.99 0 0);
   --accent-soft: oklch(0.72 0.17 40 / 0.12);
+  /* Accent used as a text color rather than a fill. Dark mode's accent already
+     clears 4.5:1 on every surface, so it aliases --accent here; light mode
+     needs a darker step. Keeping the two separate lets the brand fill stay put
+     while text meets contrast. */
+  --accent-text: var(--accent);
 
-  --ring: oklch(0.72 0.17 40 / 0.55);
+  /* Alpha must keep the composited ring >=3:1 against the surface behind it
+     (WCAG 2.2 focus appearance); 0.65 gives 3.54:1 on --bg-elev-2. */
+  --ring: oklch(0.72 0.17 40 / 0.65);
 
   --danger: oklch(0.6 0.2 25);
   --danger-fg: oklch(0.7 0.2 25);
@@ -73,8 +83,10 @@
 
   --fg: oklch(0.18 0.005 270);
   --fg-muted: oklch(0.42 0.005 270);
-  --fg-subtle: oklch(0.56 0.005 270);
-  --fg-faint: oklch(0.72 0.005 270);
+  /* See the dark-theme note: --fg-subtle is text-safe (5.11:1 on --bg-elev-3),
+     --fg-faint is icon/decoration only (3.36:1). */
+  --fg-subtle: oklch(0.50 0.005 270);
+  --fg-faint: oklch(0.60 0.005 270);
 
   --border: oklch(0.90 0.004 270);
   --border-strong: oklch(0.82 0.005 270);
@@ -86,14 +98,20 @@
   --accent: oklch(0.62 0.18 40);
   --accent-fg: oklch(0.99 0 0);
   --accent-soft: oklch(0.62 0.18 40 / 0.12);
+  /* Light mode's accent is only 3.35:1 as text, so accent-coloured labels get
+     this darker step (5.08:1) while fills keep --accent. */
+  --accent-text: oklch(0.52 0.18 40);
 
-  --ring: oklch(0.62 0.18 40 / 0.4);
+  /* Light mode cannot reach 3:1 by raising alpha alone -- even a solid --accent
+     is 3.55:1 here -- so the ring uses the darker accent step. 4.27:1. */
+  --ring: oklch(0.52 0.18 40 / 0.85);
 
   --danger: oklch(0.55 0.22 25);
   --danger-fg: oklch(0.5 0.22 25);
   --danger-soft: color-mix(in oklch, var(--danger) 10%, transparent);
   --danger-border: color-mix(in oklch, var(--danger) 38%, var(--border));
-  --warning-fg: oklch(0.55 0.16 60);
+  /* 0.55 fell to 4.31:1 on --bg-elev-3; 0.52 clears 4.5:1 on every surface. */
+  --warning-fg: oklch(0.52 0.16 60);
   --scrim: oklch(0.2 0.01 270 / 0.4);
 
   color-scheme: light;
@@ -221,6 +239,15 @@ textarea { font: inherit; color: inherit; }
     background 400ms ease,
     grid-template-columns 280ms cubic-bezier(0.22, 1, 0.36, 1);
 }
+/* The sidebar/lyrics-panel width transition reflows the whole grid, which is
+   the kind of large-area motion reduced-motion is meant to suppress. Widths
+   still change -- only the tweening is dropped, so layout stays correct. */
+@media (prefers-reduced-motion: reduce) {
+  .app {
+    transition: none;
+  }
+}
+
 [data-layout="compact"] .app { --sidebar-w: 64px; }
 [data-layout="wide"] .app { --sidebar-w: 296px; }
 
@@ -1081,7 +1108,7 @@ textarea { font: inherit; color: inherit; }
   background: color-mix(in oklch, var(--accent) 16%, var(--bg-elev-2));
 }
 .table tbody tr.playing td { color: var(--fg); }
-.table tbody tr.playing td:first-child { color: var(--accent); }
+.table tbody tr.playing td:first-child { color: var(--accent-text); }
 .table tbody td {
   height: var(--row-h);
   padding: 0 10px;
@@ -1193,7 +1220,7 @@ textarea { font: inherit; color: inherit; }
   background: var(--bg-elev-3);
   color: var(--fg);
 }
-.row-actions button.active { color: var(--accent); opacity: 1; }
+.row-actions button.active { color: var(--accent-text); opacity: 1; }
 
 .play-cell {
   display: inline-grid;
@@ -1227,6 +1254,16 @@ textarea { font: inherit; color: inherit; }
 @keyframes barDance {
   0%, 100% { height: 30%; }
   50% { height: 90%; }
+}
+
+/* barDance is the only infinite animation in the app, so it needs an explicit
+   opt-out. The per-child heights above stay visible with the animation off,
+   leaving a static staggered glyph -- the now-playing indicator must not
+   disappear, since it is what distinguishes the playing row. */
+@media (prefers-reduced-motion: reduce) {
+  .playing-bars span {
+    animation: none;
+  }
 }
 
 /* ============================================================
@@ -1811,7 +1848,7 @@ html[data-mini-player] .app {
   color: var(--fg);
   background: var(--bg-elev-2);
 }
-.t-btn.active { color: var(--accent); }
+.t-btn.active { color: var(--accent-text); }
 .t-btn:disabled {
   opacity: 0.4;
   cursor: default;
@@ -1842,7 +1879,6 @@ html[data-mini-player] .app {
   color: var(--fg-subtle);
 }
 .progress-time {
-  tabular-nums: on;
   font-variant-numeric: tabular-nums;
   min-width: 32px;
   text-align: center;
@@ -2082,7 +2118,7 @@ html[data-mini-player] .transport-row .t-btn:hover {
 }
 
 html[data-mini-player] .transport-row .t-btn.active {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 html[data-mini-player] .transport-row .t-btn svg {
@@ -2174,7 +2210,7 @@ html[data-mini-player] .utility > .t-btn:hover {
 }
 
 html[data-mini-player] .utility > .t-btn.active {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 html[data-mini-player] .utility > .t-btn svg {
@@ -2611,7 +2647,7 @@ html[data-mini-player] .np-text {
 .text-muted { color: var(--fg-muted); }
 .text-subtle { color: var(--fg-subtle); }
 .text-faint { color: var(--fg-faint); }
-.text-accent { color: var(--accent); }
+.text-accent { color: var(--accent-text); }
 .mono { font-family: var(--font-mono); }
 .h-full-view { height: 100%; }
 
@@ -2844,6 +2880,13 @@ html[data-mini-player] .np-text {
 @keyframes cmdk-fade {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [cmdk-overlay],
+  [cmdk-dialog] {
+    animation: none;
+  }
 }
 
 .cmdk-input-row {
@@ -3430,6 +3473,16 @@ html[data-mini-player] .np-text {
   from { opacity: 0; transform: translateY(6px) scale(0.97); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
+
+/* .device-pop shares this animation and is opted out above, next to its own
+   rules. This block has to sit after .queue-pop's declaration rather than
+   joining that one: the selectors have equal specificity, so the later
+   `animation` would otherwise win and the opt-out would silently do nothing. */
+@media (prefers-reduced-motion: reduce) {
+  .queue-pop {
+    animation: none;
+  }
+}
 .queue-pop-head {
   display: flex;
   align-items: center;
@@ -3508,7 +3561,7 @@ html[data-mini-player] .np-text {
   background: var(--accent);
   box-shadow: 0 0 8px color-mix(in oklch, var(--accent) 60%, transparent);
 }
-.queue-pop-row.active .queue-pop-title { color: var(--accent); }
+.queue-pop-row.active .queue-pop-title { color: var(--accent-text); }
 .queue-pop-hint {
   padding: 10px 12px 14px;
   font-size: 11px;
@@ -3584,6 +3637,12 @@ html[data-mini-player] .np-text {
   from { opacity: 0; transform: translateY(-2px) scale(0.98); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .ctx-menu {
+    animation: none;
+  }
+}
 .ctx-item {
   width: 100%;
   display: flex;
@@ -3607,7 +3666,7 @@ html[data-mini-player] .np-text {
   opacity: 0.55;
   cursor: default;
 }
-.ctx-item-active { color: var(--accent); }
+.ctx-item-active { color: var(--accent-text); }
 .ctx-sep {
   height: 1px;
   margin: 4px 2px;
