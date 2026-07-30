@@ -43,6 +43,7 @@ import { TopTrackList } from "../../../components/replay/top-track-list";
 import { qk } from "../../../lib/query-keys";
 import { QUERY_STALE_TIME } from "../../../lib/query-policy";
 import { usePlayQueue } from "../../../lib/use-play-queue";
+import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme } from "../../../theme/theme";
 
 export default function ReplayScreen() {
@@ -60,6 +61,7 @@ export default function ReplayScreen() {
     queryFn: ({ signal }) => api.getReplay(range, { signal }),
     staleTime: QUERY_STALE_TIME.replay,
   });
+  const { refreshing, onRefresh } = usePullToRefresh(replayQuery.refetch);
 
   const data = replayQuery.data;
   const periodOptions = useMemo(
@@ -155,8 +157,8 @@ export default function ReplayScreen() {
       }}
       refreshControl={
         <RefreshControl
-          refreshing={replayQuery.isRefetching}
-          onRefresh={() => void replayQuery.refetch()}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
           tintColor={theme.color.fgMuted}
         />
       }

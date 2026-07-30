@@ -27,6 +27,7 @@ import { usePlayTrack } from "../../../context/player";
 import { qk } from "../../../lib/query-keys";
 import { QUERY_STALE_TIME } from "../../../lib/query-policy";
 import { usePlayQueue } from "../../../lib/use-play-queue";
+import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme } from "../../../theme/theme";
 
 const REDISCOVER_COUNT = 10;
@@ -224,21 +225,26 @@ export default function HomeScreen() {
     router.push("/(tabs)/(library)/upload");
   }, [router]);
 
-  const onRefresh = useCallback(() => {
-    void recentQuery.refetch();
-    void favoritesQuery.refetch();
-    void replayQuery.refetch();
-    void rediscoverQuery.refetch();
-  }, [recentQuery, favoritesQuery, replayQuery, rediscoverQuery]);
+  const { refetch: refetchRecent } = recentQuery;
+  const { refetch: refetchFavorites } = favoritesQuery;
+  const { refetch: refetchReplay } = replayQuery;
+  const { refetch: refetchRediscover } = rediscoverQuery;
+  const refetchAll = useCallback(
+    () =>
+      Promise.allSettled([
+        refetchRecent(),
+        refetchFavorites(),
+        refetchReplay(),
+        refetchRediscover(),
+      ]),
+    [refetchRecent, refetchFavorites, refetchReplay, refetchRediscover],
+  );
+  const { refreshing, onRefresh } = usePullToRefresh(refetchAll);
 
   const isInitialLoading =
     (recentQuery.isLoading || !userId) &&
     replayQuery.isLoading &&
     rediscoverQuery.isLoading;
-  const refreshing =
-    recentQuery.isRefetching ||
-    favoritesQuery.isRefetching ||
-    replayQuery.isRefetching;
 
   // A brand-new account has nothing personal to show yet: no plays, no
   // favorites. Welcome them in instead of rendering a page of empty shelves.

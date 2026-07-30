@@ -52,6 +52,7 @@ import { QUERY_STALE_TIME } from "../../../lib/query-policy";
 import { useIsOffline } from "../../../lib/offline-mode";
 import { useDebouncedValue } from "../../../lib/use-debounced-value";
 import { usePlayQueue } from "../../../lib/use-play-queue";
+import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
 
 type Mode = "tracks" | "albums" | "artists";
@@ -182,6 +183,7 @@ export default function BrowseScreen() {
   const activeHasNextPage = activeQuery.hasNextPage;
   const activeIsFetchingNextPage = activeQuery.isFetchingNextPage;
   const activeFetchNextPage = activeQuery.fetchNextPage;
+  const { refreshing, onRefresh } = usePullToRefresh(activeQuery.refetch);
 
   const onTrackPress = usePlayQueue(tracks);
 
@@ -299,13 +301,6 @@ export default function BrowseScreen() {
           <ActivityIndicator color={theme.color.fgMuted} />
         </View>
       ) : null,
-      refreshControl: (
-        <RefreshControl
-          refreshing={q.isRefetching && !q.isFetchingNextPage}
-          onRefresh={() => void q.refetch()}
-          tintColor={theme.color.fgMuted}
-        />
-      ),
     }),
     [theme.color.fgMuted],
   );
@@ -324,6 +319,13 @@ export default function BrowseScreen() {
       Platform.OS === "ios" ? { x: 0, y: -headerHeight } : undefined,
     contentContainerStyle: { paddingBottom: dockInset + 24 },
     style: { backgroundColor: theme.color.bg },
+    refreshControl: (
+      <RefreshControl
+        refreshing={refreshing}
+        onRefresh={onRefresh}
+        tintColor={theme.color.fgMuted}
+      />
+    ),
     onEndReached,
     onEndReachedThreshold: 0.6,
   };

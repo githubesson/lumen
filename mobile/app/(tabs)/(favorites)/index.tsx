@@ -14,6 +14,7 @@ import {
 import { useFavoritesQuery } from "../../../context/favorites";
 import { qk } from "../../../lib/query-keys";
 import { usePlayQueue } from "../../../lib/use-play-queue";
+import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme } from "../../../theme/theme";
 
 type Mode = "favorites" | "recent";
@@ -33,6 +34,7 @@ export default function FavoritesScreen() {
     enabled: mode === "recent" && !!userId,
   });
   const query = mode === "favorites" ? favoritesQuery : recentQuery;
+  const { refreshing, onRefresh } = usePullToRefresh(query.refetch);
 
   const tracks = useMemo<TrackListItem[]>(
     () => query.data ?? [],
@@ -85,8 +87,8 @@ export default function FavoritesScreen() {
       contentContainerStyle={{ paddingBottom: dockInset + 24 }}
       refreshControl={
         <RefreshControl
-          refreshing={query.isRefetching}
-          onRefresh={() => void query.refetch()}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
           tintColor={theme.color.fgMuted}
         />
       }
