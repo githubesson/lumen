@@ -39,11 +39,6 @@ jobs:
             frontend/package-lock.json
             core/package-lock.json
 
-      # The optional private radio add-on lives in untracked _local/; stub
-      # the path so electron-builder's extraResources block matches nothing
-      # and public builds ship without it.
-      - run: mkdir -p _local/fh6-spotify-mod/lumen-radio/dist
-
       - run: npm ci
         working-directory: core
 
@@ -61,12 +56,10 @@ jobs:
       - run: npm run electron:compile
         working-directory: frontend
 
-      - if: runner.os == 'macOS'
-        run: npm run dmg:background
-        working-directory: frontend
-
-      # Committed icon assets (icon.ico / icon.icns) are used as-is; `npm run
-      # icons` is skipped because its macOS Assets.car step needs Xcode 26,
-      # which hosted runners don't have.
-      - run: npx electron-builder ${{ matrix.args }} --publish always --config electron-builder.yml
+      # Committed assets (icon.ico / icon.icns / dmg-background*.png) are used
+      # as-is; `npm run icons` is skipped because its macOS Assets.car step
+      # needs Xcode 26, which hosted runners don't have. The optional radio
+      # add-on is skipped automatically (no _local/ in CI); see
+      # electron-builder.cjs.
+      - run: npx electron-builder ${{ matrix.args }} --publish always --config electron-builder.cjs
         working-directory: frontend

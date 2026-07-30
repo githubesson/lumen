@@ -65,15 +65,27 @@ npm run build      # emits dist/
 ## Electron (desktop)
 
 ```sh
-npm run electron:compile   # compile main/preload
-npm run electron:dev       # build web + run Electron locally
-npm run electron:build     # package Windows portable + NSIS installer
+npm run electron:compile             # compile main/preload
+npm run electron:dev                 # build web + run Electron locally
+npm run electron:build               # package Windows portable + NSIS installer
+npm run electron:build:mac           # package a DMG for this Mac's architecture
+npm run electron:build:mac:universal # package the universal DMG (release artifact)
 ```
 
-Packaging config is [electron-builder.yml](./electron-builder.yml). Note its
-`extraResources` block pulls an optional FH6-radio bridge (a game-mod DLL)
-from an untracked `_local/` folder — it is not part of this repo. Remove that
-block if you don't have it.
+Packaging config is [electron-builder.cjs](./electron-builder.cjs). It
+bundles an optional FH6-radio bridge (a game-mod DLL) from an untracked
+`_local/` folder when that folder exists, and skips it otherwise — no config
+edits needed either way.
+
+Icon files (`icon.ico`/`icon.icns`/`Assets.car`) and the DMG background are
+committed, so packaging never regenerates them. After changing the app icon
+run `npm run icons` (needs Xcode 26 on macOS for the appearance variants);
+after changing the DMG layout run `npm run dmg:background`.
+
+On macOS, if `CSC_NAME` and `APPLE_KEYCHAIN_PROFILE` are set the build also
+signs, notarizes, and staples the DMG container automatically (see
+[AGENTS.md](./AGENTS.md) for the one-time credential setup). Without them you
+get an unsigned dev build.
 
 ## Docker
 

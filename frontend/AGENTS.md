@@ -106,18 +106,22 @@ exports.
 From `frontend/`:
 
 ```sh
-npm run electron:build:mac
+npm run electron:build:mac             # DMG for this Mac's architecture
+npm run electron:build:mac:universal   # universal DMG (the release artifact)
 ```
 
-The script performs the web build, compiles the Electron sources, regenerates
-the DMG background, and invokes electron-builder. With `CSC_NAME` and
-`APPLE_KEYCHAIN_PROFILE` available, electron-builder will:
+The script performs the web build, compiles the Electron sources, and invokes
+electron-builder (config: `electron-builder.cjs`). With `CSC_NAME` and
+`APPLE_KEYCHAIN_PROFILE` available, the build will:
 
 1. Package the app.
 2. Sign the app and all nested helpers/frameworks with Developer ID.
 3. Submit the app to Apple's notary service and wait for acceptance.
 4. Staple the app ticket.
-5. Create the ZIP and DMG.
+5. Create the DMG.
+6. Sign, notarize, and staple the DMG container itself (the
+   `afterAllArtifactBuild` hook in `electron-builder.cjs`); the build fails
+   if the DMG submission is not `Accepted`.
 
 The expected log includes:
 
@@ -130,11 +134,13 @@ If the log says `skipped macOS notarization`, do not treat the build as
 notarized. Confirm `APPLE_KEYCHAIN_PROFILE` is present and the Keychain profile
 validates.
 
-### Sign and notarize the final DMG
+### Sign and notarize the final DMG (manual fallback)
 
-electron-builder currently leaves the generated DMG itself unsigned. The app
-inside it is notarized, but the final container must also be signed and
-notarized before distribution.
+The `afterAllArtifactBuild` hook in `electron-builder.cjs` performs this
+automatically whenever `CSC_NAME` and `APPLE_KEYCHAIN_PROFILE` are set, so
+normally there is nothing to do here — skip to the final verification below.
+The manual steps remain for recovering a build whose DMG step failed partway
+(for example a notarization submission that timed out).
 
 Set `APP` and `DMG` to the artifacts produced by the build:
 
