@@ -13,9 +13,9 @@ SRC_DIR="../resources"           # contains icon.icon
 ICON_NAME="icon"                 # basename of the .icon bundle = CFBundleIconName
 OUT="$(mktemp -d)"
 
-# If your actool rejects a directory input, pass "$SRC_DIR/$ICON_NAME.icon"
-# directly instead.
-actool "$SRC_DIR" \
+# Pass the .icon document directly: given the containing directory, actool
+# finds no app icon and emits an empty partial plist with no Assets.car.
+actool "$SRC_DIR/$ICON_NAME.icon" \
   --compile "$OUT" \
   --app-icon "$ICON_NAME" \
   --include-all-app-icons \
