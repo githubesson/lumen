@@ -35,8 +35,17 @@ jobs:
             version="${GITHUB_REF_NAME#v}"
             prerelease=false
           else
-            base_version="$(node -p "require('./frontend/package.json').version.split('-')[0]")"
-            version="${base_version}-dev.${GITHUB_RUN_NUMBER}"
+            package_version="$(node -p "require('./frontend/package.json').version.split('-')[0]")"
+            latest_tag="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
+            stable_version="${latest_tag#v}"
+            if [[ ! "$stable_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              stable_version="$package_version"
+            fi
+            next_patch="$(node -e '
+              const [major, minor, patch] = process.argv[1].split(".").map(Number);
+              console.log(`${major}.${minor}.${patch + 1}`);
+            ' "$stable_version")"
+            version="${next_patch}-dev.${GITHUB_RUN_NUMBER}"
             prerelease=true
             tag="v${version}"
 
@@ -83,6 +92,9 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Optional: bakes Rich Presence support into the build (blank = off).
       DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
+      # Optional repository variable; the project repository is the baked-in
+      # default when this is unset.
+      UPDATE_REPO_URL: ${{ vars.UPDATE_REPO_URL || 'https://github.com/githubesson/lumen' }}
       # Releases are intentionally unsigned on Windows and macOS. This also
       # prevents a hosted runner from accidentally discovering an identity.
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
