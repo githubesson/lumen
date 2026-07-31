@@ -1,6 +1,13 @@
 {
   "name": "music-library-frontend",
   "version": "0.1.0",
+  "description": "Self-hosted music library web and desktop client",
+  "author": {
+    "name": "esson",
+    "email": "55195336+githubesson@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/githubesson/lumen",
+  "desktopName": "Lumen",
   "private": true,
   "type": "module",
   "main": "electron/build/main.js",
@@ -14,6 +21,7 @@
     "electron:compile": "node scripts/electron-buildenv.mjs && tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.setup.json",
     "electron:dev": "npm run build && npm run electron:compile && electron .",
     "electron:build": "npm run build && npm run electron:compile && electron-builder --win --publish never --config electron-builder.cjs",
+    "electron:build:linux": "npm run build && npm run electron:compile && electron-builder --linux --publish never --config electron-builder.cjs",
     "electron:build:mac": "npm run build && npm run electron:compile && electron-builder --mac dmg --publish never --config electron-builder.cjs",
     "electron:build:mac:universal": "npm run build && npm run electron:compile && electron-builder --mac --universal --publish never --config electron-builder.cjs",
     "icons": "node scripts/generate-icons.mjs"

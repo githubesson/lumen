@@ -1,18 +1,20 @@
 // Resolve desktop-app download links from the project's GitHub Releases.
-// The release workflow publishes a Windows installer + portable exe and a
-// universal macOS DMG for every version tag; the latest-release API is
-// public and CORS-enabled, so the browser can query it directly.
+// The release workflow publishes Windows installer/portable executables, a
+// universal macOS DMG, and Linux AppImage/deb packages for every version tag.
+// The latest-release API is public and CORS-enabled, so the browser can query
+// it directly.
 
 const RELEASES_LATEST_API =
   "https://api.github.com/repos/githubesson/lumen/releases/latest";
 const RELEASES_PAGE = "https://github.com/githubesson/lumen/releases/latest";
 
-export type DesktopPlatform = "windows" | "mac" | "other";
+export type DesktopPlatform = "windows" | "mac" | "linux" | "other";
 
 export function detectDesktopPlatform(): DesktopPlatform {
   const ua = navigator.userAgent;
   if (/windows/i.test(ua)) return "windows";
   if (/macintosh|mac os x/i.test(ua)) return "mac";
+  if (/linux/i.test(ua) && !/android/i.test(ua)) return "linux";
   return "other";
 }
 
@@ -36,7 +38,7 @@ async function latestReleaseAssets(): Promise<ReleaseAsset[]> {
 
 /**
  * Direct download URL for the visitor's platform, or the releases page when
- * the platform has no packaged build (Linux) or the lookup fails.
+ * the platform is unknown or the lookup fails.
  */
 export async function desktopDownloadUrl(): Promise<string> {
   const platform = detectDesktopPlatform();
@@ -46,7 +48,9 @@ export async function desktopDownloadUrl(): Promise<string> {
     const match =
       platform === "windows"
         ? assets.find((a) => a.name.endsWith("-setup.exe"))
-        : assets.find((a) => a.name.endsWith(".dmg"));
+        : platform === "mac"
+          ? assets.find((a) => a.name.endsWith(".dmg"))
+          : assets.find((a) => a.name.endsWith(".AppImage"));
     return match?.browser_download_url ?? RELEASES_PAGE;
   } catch {
     return RELEASES_PAGE;

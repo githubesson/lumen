@@ -1,7 +1,7 @@
 # frontend
 
-React + Vite + TypeScript web client for Lumen, also packaged as a Windows
-desktop app via Electron.
+React + Vite + TypeScript web client for Lumen, also packaged as a Windows,
+macOS, and Linux desktop app via Electron.
 
 ## Features
 
@@ -68,6 +68,7 @@ npm run build      # emits dist/
 npm run electron:compile             # compile main/preload
 npm run electron:dev                 # build web + run Electron locally
 npm run electron:build               # package Windows portable + NSIS installer
+npm run electron:build:linux         # package Linux AppImage + deb
 npm run electron:build:mac           # package a DMG for this Mac's architecture
 npm run electron:build:mac:universal # package the universal DMG (release artifact)
 ```
@@ -77,15 +78,21 @@ bundles an optional FH6-radio bridge (a game-mod DLL) from an untracked
 `_local/` folder when that folder exists, and skips it otherwise — no config
 edits needed either way.
 
-Icon files (`icon.ico`/`icon.icns`/`Assets.car`) and the DMG background are
-committed, so packaging never regenerates them. After changing the app icon
-run `npm run icons` (needs Xcode 26 on macOS for the appearance variants);
-after changing the DMG layout run `npm run dmg:background`.
+Icon files (`icon.ico`/`icon.icns`/`icon.png`/`Assets.car`) and the DMG
+background are committed, so packaging never regenerates them. After changing
+the app icon run `npm run icons` (needs Xcode 26 on macOS for the appearance
+variants); after changing the DMG layout run `npm run dmg:background`.
 
 On macOS, if `CSC_NAME` and `APPLE_KEYCHAIN_PROFILE` are set the build also
 signs, notarizes, and staples the DMG container automatically (see
 [AGENTS.md](./AGENTS.md) for the one-time credential setup). Without them you
 get an unsigned dev build.
+
+GitHub releases intentionally build unsigned binaries for all three desktop
+platforms. Stable `v*` tags run automatically. Branch builds run only when the
+release workflow is manually dispatched and are published as uniquely versioned
+prereleases. Windows may show an unknown-publisher warning and macOS may require
+the user to explicitly approve the app in Gatekeeper.
 
 ## Docker
 

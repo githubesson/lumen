@@ -8,7 +8,8 @@
 //   2. Crop part of the macOS grid margin (icons on Windows are full-bleed,
 //      so an uncropped macOS icon looks undersized next to native ones) and
 //      downscale to every size Windows uses.
-//   3. Pack electron/assets/icon.ico — PNG-compressed 256px layer plus
+//   3. Write a full-resolution Linux PNG and pack electron/assets/icon.ico —
+//      PNG-compressed 256px layer plus
 //      classic 32-bit BMP layers with AND masks for maximum shell compat.
 //   4. On macOS only: compile resources/icon.icon into Assets.car via
 //      scripts/generate-mac-icon-assets.sh (needs Xcode 26) so macOS 26
@@ -22,6 +23,7 @@ import sharp from "sharp";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ICNS = path.join(ROOT, "electron", "assets", "icon.icns");
 const ICO = path.join(ROOT, "electron", "assets", "icon.ico");
+const LINUX_PNG = path.join(ROOT, "electron", "assets", "icon.png");
 const SIZES = [256, 64, 48, 32, 24, 16];
 // macOS icon grid leaves ~10% margin per side; trim it to ~3% for Windows.
 const CROP_PER_SIDE = 72 / 1024;
@@ -98,6 +100,15 @@ const cropped = master.extract({
   width: width - margin * 2,
   height: width - margin * 2,
 });
+
+await cropped
+  .clone()
+  .resize(512, 512, { kernel: "lanczos3" })
+  .png()
+  .toFile(LINUX_PNG);
+console.log(
+  `icons: wrote ${path.relative(ROOT, LINUX_PNG)} (512px, from ${width}px master)`,
+);
 
 const entries = [];
 for (const size of SIZES) {

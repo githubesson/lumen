@@ -48,9 +48,10 @@ surface for invites and library management.
 
 - Pull new files into the library from external sources on a poll interval: Filen share links, ArtistGrid, Lastshare, and tracker-API pins with per-pin destination folders
 
-### Desktop app (Electron, Windows)
+### Desktop app (Electron, Windows / macOS / Linux)
 
-- Portable build + NSIS installer
+- Windows portable build + NSIS installer, universal macOS DMG, and Linux
+  AppImage + Debian package
 - Discord Rich Presence ("Listening to Lumen" with cover art)
 - First-run server-setup window, always-on-top toggle, custom window controls
 - Optional Forza Horizon 6 in-game radio bridge
@@ -71,7 +72,7 @@ surface for invites and library management.
 | Directory | What it is |
 | --- | --- |
 | [`backend/`](backend/) | Go HTTP API — auth, invites, library scanning/ingest, streaming, playlists, sharing, previews, optional ffmpeg transcoding. Postgres-backed. |
-| [`frontend/`](frontend/) | React + Vite + TypeScript web app, also packaged as a Windows desktop app via Electron. |
+| [`frontend/`](frontend/) | React + Vite + TypeScript web app, also packaged for Windows, macOS, and Linux via Electron. |
 | [`mobile/`](mobile/) | Expo Router / React Native app for iOS and Android. |
 | [`core/`](core/) | Shared TypeScript package (`@music-library/core`) — API client, player state, auth, favorites — consumed by the web and mobile clients. |
 

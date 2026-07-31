@@ -2,6 +2,15 @@
 
 These instructions apply to all work under `frontend/`.
 
+## Unsigned CI releases
+
+The GitHub Actions release workflow intentionally builds unsigned Windows and
+macOS artifacts and sets `CSC_IDENTITY_AUTO_DISCOVERY=false`. Stable `v*` tags
+run automatically; branch builds run only through `workflow_dispatch` and are
+published as prereleases. Do not call these artifacts signed, notarized, or
+distribution-ready. The signing workflow below remains available for explicitly
+configured local or future CI releases.
+
 ## macOS release signing and notarization
 
 Do not describe a macOS artifact as distribution-ready until both the app and

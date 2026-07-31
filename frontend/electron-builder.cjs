@@ -121,6 +121,16 @@ const config = {
       { target: "nsis", arch: ["x64"] },
     ],
   },
+  linux: {
+    icon: "electron/assets/icon.png",
+    category: "AudioVideo",
+    syncDesktopName: true,
+    target: [
+      { target: "AppImage", arch: ["x64"] },
+      { target: "deb", arch: ["x64"] },
+    ],
+    artifactName: "${productName}-${version}-${arch}.${ext}",
+  },
   dmg: {
     background: "electron/assets/dmg-background.png",
     window: {
@@ -148,7 +158,8 @@ const config = {
 
 if (fs.existsSync(RADIO_DIST)) {
   console.log("packaging: bundling FH6 radio add-on from _local/");
-  config.extraResources = [
+  // This bridge is a Windows DLL and must not leak into macOS/Linux packages.
+  config.win.extraResources = [
     {
       from: "../_local/fh6-spotify-mod/lumen-radio/dist",
       to: "lumen-radio",
