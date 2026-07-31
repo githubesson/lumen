@@ -16,16 +16,21 @@ import {
 import { Alert, AppState, Platform } from "react-native";
 import * as Haptics from "expo-haptics";
 import {
+  activityTrack,
+  buildRemoteQueue,
+  compactRemoteTrack,
+  controlledStateForDevice,
+  filterRemoteDevices,
   nextRepeatMode,
-  sendRemotePlaybackCommand,
+  remoteActivityTime,
   trackCoverUrl,
+  useRemotePlaybackCommands,
   usePlaybackActivityPublisher,
   usePlaybackRemoteSession,
   usePlayerCore,
   type PlaybackDevice,
   type PlayerControls,
   type PlayerState,
-  type RemotePlaybackCommandAction,
   type RemotePlaybackCommandResult,
   type TrackListItem,
   type TimeState,
@@ -152,24 +157,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [targetDeviceId, setTargetDeviceId] = useState<string | null>(null);
   const [targetDeviceSnapshot, setTargetDeviceSnapshot] =
     useState<PlaybackDevice | null>(null);
-  const [pendingCommandCount, setPendingCommandCount] = useState(0);
-  const [lastCommandResult, setLastCommandResult] =
-    useState<RemotePlaybackCommandResult | null>(null);
-  const [controlledState, setControlledState] = useState(() => ({
-    volume: state.volume,
-    muted: state.muted,
-    shuffle: state.shuffle,
-    repeat: state.repeat,
-  }));
   const [controlledQueue, setControlledQueue] = useState<TrackListItem[]>([]);
   const remoteDevices = useMemo(
-    () =>
-      remoteSession.devices.filter(
-        (device) =>
-          device.deviceId !== remoteSession.deviceId &&
-          device.online &&
-          device.controlEnabled,
-      ),
+    () => filterRemoteDevices(remoteSession.devices, remoteSession.deviceId),
     [remoteSession.deviceId, remoteSession.devices],
   );
   const liveTargetDevice = useMemo(
@@ -178,15 +168,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       null,
     [remoteDevices, targetDeviceId],
   );
+  // Fall back to the last known snapshot: a device that briefly drops out of
+  // the presence list should not eject the user from the cast session.
   const targetDevice =
     liveTargetDevice ??
     (targetDeviceSnapshot?.deviceId === targetDeviceId
       ? targetDeviceSnapshot
       : null);
   const remoteCurrent = useMemo(
-    () => activityTrack(targetDevice?.activity ?? null),
+    () => activityTrack(targetDevice?.activity),
     [targetDevice?.activity],
   );
+  const {
+    controlled,
+    commandPending,
+    lastCommandResult,
+    sendCommand,
+    seedControlled,
+  } = useRemotePlaybackCommands({
+    targetDeviceId,
+    sourceDeviceId: remoteSession.deviceId,
+    targetActivity: targetDevice?.activity,
+    initialState: {
+      volume: state.volume,
+      muted: state.muted,
+      shuffle: state.shuffle,
+      repeat: state.repeat,
+    },
+  });
 
   useEffect(() => {
     if (liveTargetDevice) setTargetDeviceSnapshot(liveTargetDevice);
@@ -205,92 +214,41 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     );
   }, [remoteCurrent, targetDevice]);
 
-  useEffect(() => {
-    const activity = targetDevice?.activity;
-    if (!activity) return;
-    setControlledState((current) => ({
-      ...current,
-      volume:
-        typeof activity.volume === "number"
-          ? Math.max(0, Math.min(1, activity.volume))
-          : current.volume,
-      muted:
-        typeof activity.muted === "boolean" ? activity.muted : current.muted,
-    }));
-  }, [targetDevice?.activity?.muted, targetDevice?.activity?.volume]);
-
+  // Destructured so this callback's identity tracks only the fields it reads.
+  // Depending on `state` wholesale would also rebuild it on every queue change,
+  // and it is handed to consumers through the remote-playback context.
+  const { isPlaying, muted, repeat, shuffle, volume } = state;
   const selectTarget = useCallback(
     (nextDeviceId: string | null) => {
-      if (nextDeviceId && state.isPlaying) controls.pause();
+      if (nextDeviceId && isPlaying) controls.pause();
       const nextDevice =
         remoteDevices.find((device) => device.deviceId === nextDeviceId) ??
         null;
-      const nextActivity = nextDevice?.activity;
-      const nextTrack = activityTrack(nextActivity ?? null);
+      const nextTrack = activityTrack(nextDevice?.activity);
       setTargetDeviceId(nextDeviceId);
       setTargetDeviceSnapshot(nextDevice);
-      setLastCommandResult(null);
-      setControlledState({
-        volume:
-          typeof nextActivity?.volume === "number"
-            ? Math.max(0, Math.min(1, nextActivity.volume))
-            : state.volume,
-        muted:
-          typeof nextActivity?.muted === "boolean"
-            ? nextActivity.muted
-            : state.muted,
-        shuffle: state.shuffle,
-        repeat: state.repeat,
-      });
+      seedControlled(
+        controlledStateForDevice(nextDevice, {
+          volume,
+          muted,
+          shuffle,
+          repeat,
+        }),
+      );
       setControlledQueue(nextTrack ? [nextTrack] : []);
     },
     [
       controls,
+      isPlaying,
+      muted,
       remoteDevices,
-      state.isPlaying,
-      state.muted,
-      state.repeat,
-      state.shuffle,
-      state.volume,
+      repeat,
+      seedControlled,
+      shuffle,
+      volume,
     ],
   );
 
-  const sendCommand = useCallback(
-    async (
-      action: RemotePlaybackCommandAction,
-      args: Record<string, unknown> = {},
-    ): Promise<RemotePlaybackCommandResult> => {
-      if (!targetDeviceId) {
-        const result: RemotePlaybackCommandResult = {
-          commandId: "",
-          sourceDeviceId: remoteSession.deviceId ?? "",
-          targetDeviceId: "",
-          status: "disconnected",
-          error: "no remote playback device selected",
-        };
-        setLastCommandResult(result);
-        return result;
-      }
-      setPendingCommandCount((count) => count + 1);
-      try {
-        const result = await sendRemotePlaybackCommand(
-          targetDeviceId,
-          action,
-          args,
-        );
-        if (result.status === "applied") {
-          setControlledState((current) =>
-            optimisticControlledState(current, action, args),
-          );
-        }
-        setLastCommandResult(result);
-        return result;
-      } finally {
-        setPendingCommandCount((count) => Math.max(0, count - 1));
-      }
-    },
-    [remoteSession.deviceId, targetDeviceId],
-  );
   const lockScreenActiveRef = useRef(false);
   const nowPlayingMetadata = useMemo(
     () => buildNowPlayingMetadata(state.current),
@@ -452,7 +410,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       },
       toggleMute: () => {
         if (targetDevice) {
-          void sendCommand("set_muted", { muted: !controlledState.muted });
+          void sendCommand("set_muted", { muted: !controlled.muted });
         } else controls.toggleMute();
       },
       setShuffle: (shuffle) => {
@@ -462,7 +420,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       toggleShuffle: () => {
         if (targetDevice) {
           void sendCommand("set_shuffle", {
-            shuffle: !controlledState.shuffle,
+            shuffle: !controlled.shuffle,
           });
         } else controls.toggleShuffle();
       },
@@ -473,16 +431,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       cycleRepeat: () => {
         if (targetDevice) {
           void sendCommand("set_repeat", {
-            repeat: nextRepeatMode(controlledState.repeat),
+            repeat: nextRepeatMode(controlled.repeat),
           });
         } else controls.cycleRepeat();
       },
     }),
     [
       controlledQueue,
-      controlledState.muted,
-      controlledState.repeat,
-      controlledState.shuffle,
+      controlled.muted,
+      controlled.repeat,
+      controlled.shuffle,
       controls,
       routedPlay,
       sendCommand,
@@ -497,16 +455,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             queue: controlledQueue,
             index: controlledIndex,
             isPlaying: !!targetDevice.activity?.is_playing,
-            volume: controlledState.volume,
-            muted: controlledState.muted,
-            shuffle: controlledState.shuffle,
-            repeat: controlledState.repeat,
+            volume: controlled.volume,
+            muted: controlled.muted,
+            shuffle: controlled.shuffle,
+            repeat: controlled.repeat,
           }
         : state,
     [
       controlledIndex,
       controlledQueue,
-      controlledState,
+      controlled,
       remoteCurrent,
       state,
       targetDevice,
@@ -515,7 +473,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const displayedTime = useMemo<TimeState>(
     () =>
       targetDevice
-        ? activityTime(targetDevice.activity)
+        ? remoteActivityTime(targetDevice.activity)
         : time,
     [targetDevice, time],
   );
@@ -546,13 +504,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       remoteDevices,
       targetDeviceId,
       targetDevice,
-      commandPending: pendingCommandCount > 0,
+      commandPending,
       lastCommandResult,
       selectTarget,
     }),
     [
       lastCommandResult,
-      pendingCommandCount,
+      commandPending,
       remoteDevices,
       remoteSession.connected,
       remoteSession.deviceId,
@@ -587,110 +545,3 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   );
 }
 
-function activityTrack(
-  activity: PlaybackDevice["activity"],
-): TrackListItem | null {
-  if (!activity) return null;
-  return {
-    id: activity.track_id,
-    title: activity.title,
-    artist: activity.artist,
-    album_id: activity.album_id,
-    album_title: activity.album,
-    cover_url: activity.cover_url,
-    duration_ms: (activity.duration_sec ?? 0) * 1000,
-  };
-}
-
-function activityTime(activity: PlaybackDevice["activity"]): TimeState {
-  if (!activity) return { currentTime: 0, duration: 0 };
-  const duration = activity.duration_sec ?? 0;
-  const updatedAt = Date.parse(activity.updated_at);
-  const elapsed =
-    activity.is_playing && Number.isFinite(updatedAt)
-      ? Math.max(0, (Date.now() - updatedAt) / 1000)
-      : 0;
-  return {
-    currentTime: Math.min(duration || Infinity, activity.position_sec + elapsed),
-    duration,
-  };
-};
-
-function optimisticControlledState(
-  state: {
-    volume: number;
-    muted: boolean;
-    shuffle: boolean;
-    repeat: PlayerState["repeat"];
-  },
-  action: RemotePlaybackCommandAction,
-  args: Record<string, unknown>,
-): {
-  volume: number;
-  muted: boolean;
-  shuffle: boolean;
-  repeat: PlayerState["repeat"];
-} {
-  switch (action) {
-    case "set_volume":
-      return typeof args.volume === "number"
-        ? {
-            ...state,
-            volume: Math.max(0, Math.min(1, args.volume)),
-            muted: args.volume > 0 ? false : state.muted,
-          }
-        : state;
-    case "set_muted":
-      return typeof args.muted === "boolean"
-        ? { ...state, muted: args.muted }
-        : state;
-    case "set_shuffle":
-      return typeof args.shuffle === "boolean"
-        ? { ...state, shuffle: args.shuffle }
-        : state;
-    case "set_repeat":
-      return args.repeat === "off" || args.repeat === "all" || args.repeat === "one"
-        ? { ...state, repeat: args.repeat as PlayerState["repeat"] }
-        : state;
-    default:
-      return state;
-  }
-}
-
-function buildRemoteQueue(
-  track: TrackListItem,
-  queue?: TrackListItem[],
-): TrackListItem[] {
-  const source = queue?.length ? queue : [track];
-  const selectedIndex = Math.max(
-    0,
-    source.findIndex((item) => item.id === track.id),
-  );
-  const start = Math.max(
-    0,
-    Math.min(selectedIndex - 24, source.length - 50),
-  );
-  const window = source.slice(start, start + 50);
-  return window.some((item) => item.id === track.id) ? window : [track];
-}
-
-function compactRemoteTrack(track: TrackListItem): TrackListItem {
-  return {
-    id: track.id,
-    db_track_id: track.db_track_id,
-    source: track.source,
-    source_id: track.source_id,
-    source_album_id: track.source_album_id,
-    title: track.title,
-    album_id: track.album_id,
-    album_title: track.album_title,
-    track_no: track.track_no,
-    duration_ms: track.duration_ms,
-    artist: track.artist,
-    aka: track.aka,
-    favorited: track.favorited,
-    has_cover: track.has_cover,
-    cover_url: track.cover_url,
-    owned: track.owned,
-  };
-}

@@ -22,7 +22,7 @@ import {
   useDockScrollHandler,
 } from "../../../components/dock/dock-context";
 import { ActivityChart } from "../../../components/replay/activity-chart";
-import { playsLabel } from "../../../components/replay/format";
+import { pluralize } from "../../../components/replay/format";
 import { GenreList } from "../../../components/replay/genre-list";
 import { HorizontalShelf } from "../../../components/horizontal-shelf";
 import { Section } from "../../../components/section";
@@ -203,7 +203,7 @@ export default function ReplayScreen() {
                     key={a.id}
                     rank={i + 1}
                     title={a.name}
-                    subtitle={playsLabel(a.plays)}
+                    subtitle={pluralize(a.plays, "play")}
                     subtitleTabular
                     accessibilityLabel={`View artist ${a.name}`}
                     art={{ kind: "gradient", seed: a.id }}
@@ -230,7 +230,7 @@ export default function ReplayScreen() {
                     key={a.id}
                     rank={i + 1}
                     title={a.title}
-                    subtitle={`${a.artist ? `${a.artist} · ` : ""}${playsLabel(a.plays)}`}
+                    subtitle={`${a.artist ? `${a.artist} · ` : ""}${pluralize(a.plays, "play")}`}
                     accessibilityLabel={`View album ${a.title}`}
                     art={{ kind: "album", albumId: a.id }}
                     onPress={() =>

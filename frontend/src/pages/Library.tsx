@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { PlayIcon } from "@heroicons/react/16/solid";
 import {
@@ -10,6 +10,7 @@ import {
   type Page,
   type TrackListItem,
 } from "../api";
+import { useDebouncedValue } from "@music-library/core/use-debounced-value";
 import { displayText, pluralize } from "../lib/format";
 import TrackList from "../components/TrackList";
 import CoverArt from "../components/CoverArt";
@@ -433,13 +434,3 @@ function LibraryEmptyState() {
   );
 }
 
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value);
-
-  useEffect(() => {
-    const timeout = window.setTimeout(() => setDebounced(value), delayMs);
-    return () => window.clearTimeout(timeout);
-  }, [value, delayMs]);
-
-  return debounced;
-}

@@ -7,9 +7,20 @@ import {
 import {
   api,
   useAuth,
+  withFavorite,
   type TrackListItem,
 } from "@music-library/core";
 import { qk } from "../lib/query-keys";
+
+/**
+ * Favorites, backed by the React Query cache rather than core's context
+ * provider. The cache is what lets {@link useFavorite} subscribe a single row
+ * to its own boolean, so toggling one favorite does not re-render the list.
+ *
+ * The optimistic transition itself is core's {@link withFavorite}, shared with
+ * the web provider — the two had independently written rollback logic, which
+ * is precisely the part that must not differ.
+ */
 
 const pendingToggles = new Set<string>();
 
@@ -75,11 +86,7 @@ export function useFavoriteActions() {
       const wasFavorite = current.some((item) => item.id === track.id);
 
       queryClient.setQueryData<TrackListItem[]>(queryKey, (rows = []) =>
-        wasFavorite
-          ? rows.filter((item) => item.id !== track.id)
-          : rows.some((item) => item.id === track.id)
-            ? rows
-            : [track, ...rows],
+        withFavorite(rows, track, !wasFavorite),
       );
 
       try {
@@ -89,11 +96,7 @@ export function useFavoriteActions() {
         // Roll back only this track so concurrent toggles for other tracks are
         // preserved instead of restoring an entire stale array snapshot.
         queryClient.setQueryData<TrackListItem[]>(queryKey, (rows = []) =>
-          wasFavorite
-            ? rows.some((item) => item.id === track.id)
-              ? rows
-              : [track, ...rows]
-            : rows.filter((item) => item.id !== track.id),
+          withFavorite(rows, track, wasFavorite),
         );
       } finally {
         pendingToggles.delete(pendingKey);

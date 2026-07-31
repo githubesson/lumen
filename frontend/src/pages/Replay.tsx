@@ -12,7 +12,6 @@ import {
   errorMessage,
   trackCoverUrl,
   type ReplayData,
-  type ReplayBucket,
   type TrackListItem,
 } from "../api";
 import TrackList from "../components/TrackList";
@@ -26,146 +25,47 @@ import MediaCard from "../components/MediaCard";
 import ListPageHeader from "../components/ListPageHeader";
 import Section from "../components/Section";
 import { Button } from "../components/Button";
+import {
+  buildPeriodOptions,
+  formatListeningTime as formatListeningTimeCore,
+  periodKey,
+  periodLabel,
+  periodRange,
+  periodTitle,
+  type Period,
+} from "@music-library/core/replay/period";
 import { displayText, pluralize } from "../lib/format";
 import { usePlayer } from "../context/Player";
 
-type PeriodKey =
-  | { kind: "all" }
-  | { kind: "this-year" }
-  | { kind: "year"; year: number }
-  | { kind: "this-month" }
-  | { kind: "last-30" };
+/** The web has room for the fuller wording ("45 min", not the phone's "45m"). */
+function formatListeningTime(ms: number): string {
+  return formatListeningTimeCore(ms, "verbose");
+}
+
+// The period model (type, cache key, labels, date ranges, picker options) and
+// the listening-time formatter live in `core/src/replay/period.ts`; the mobile
+// Replay screen had an identical copy of the date arithmetic. `PeriodOption`
+// stays here because this page renders pills rather than the phone's chips.
 
 interface PeriodOption {
   key: string;
   label: string;
-  period: PeriodKey;
-}
-
-function periodToKey(p: PeriodKey): string {
-  switch (p.kind) {
-    case "all":
-      return "all";
-    case "this-year":
-      return "this-year";
-    case "year":
-      return `year:${p.year}`;
-    case "this-month":
-      return "this-month";
-    case "last-30":
-      return "last-30";
-  }
-}
-
-function periodTitle(p: PeriodKey): string {
-  switch (p.kind) {
-    case "all":
-      return "All time";
-    case "this-year":
-      return `This year (${new Date().getFullYear()})`;
-    case "year":
-      return String(p.year);
-    case "this-month":
-      return new Date().toLocaleDateString(undefined, {
-        month: "long",
-        year: "numeric",
-      });
-    case "last-30":
-      return "Last 30 days";
-  }
-}
-
-function periodRange(p: PeriodKey): {
-  from?: string;
-  to?: string;
-  bucket?: ReplayBucket;
-} {
-  const now = new Date();
-  switch (p.kind) {
-    case "all":
-      return { bucket: "month" };
-    case "this-year": {
-      const from = new Date(Date.UTC(now.getFullYear(), 0, 1));
-      const to = new Date(Date.UTC(now.getFullYear() + 1, 0, 1));
-      return {
-        from: from.toISOString(),
-        to: to.toISOString(),
-        bucket: "month",
-      };
-    }
-    case "year": {
-      const from = new Date(Date.UTC(p.year, 0, 1));
-      const to = new Date(Date.UTC(p.year + 1, 0, 1));
-      return {
-        from: from.toISOString(),
-        to: to.toISOString(),
-        bucket: "month",
-      };
-    }
-    case "this-month": {
-      const from = new Date(
-        Date.UTC(now.getFullYear(), now.getMonth(), 1),
-      );
-      const to = new Date(
-        Date.UTC(now.getFullYear(), now.getMonth() + 1, 1),
-      );
-      return { from: from.toISOString(), to: to.toISOString(), bucket: "day" };
-    }
-    case "last-30": {
-      const to = new Date();
-      const from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
-      return { from: from.toISOString(), to: to.toISOString(), bucket: "day" };
-    }
-  }
+  period: Period;
 }
 
 function buildOptions(availableYears: number[]): PeriodOption[] {
-  const currentYear = new Date().getFullYear();
-  const opts: PeriodOption[] = [
-    { key: "all", label: "All time", period: { kind: "all" } },
-    {
-      key: "this-year",
-      label: "This year",
-      period: { kind: "this-year" },
-    },
-  ];
-  for (const y of availableYears) {
-    if (y === currentYear) continue;
-    opts.push({
-      key: `year:${y}`,
-      label: String(y),
-      period: { kind: "year", year: y },
-    });
-  }
-  opts.push(
-    { key: "this-month", label: "This month", period: { kind: "this-month" } },
-    { key: "last-30", label: "Last 30 days", period: { kind: "last-30" } },
-  );
-  return opts;
-}
-
-function formatListeningTime(ms: number): string {
-  if (ms <= 0) return "0 min";
-  const totalMinutes = Math.floor(ms / 60_000);
-  const days = Math.floor(totalMinutes / (60 * 24));
-  const hours = Math.floor((totalMinutes - days * 60 * 24) / 60);
-  const minutes = totalMinutes - days * 60 * 24 - hours * 60;
-  if (days >= 1) {
-    return hours > 0
-      ? `${days}d ${hours}h`
-      : `${days} ${days === 1 ? "day" : "days"}`;
-  }
-  if (hours >= 1) {
-    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
-  }
-  return `${minutes} min`;
+  return buildPeriodOptions(availableYears).map((period) => ({
+    key: periodKey(period),
+    label: periodLabel(period),
+    period,
+  }));
 }
 
 export default function Replay() {
   const navigate = useNavigate();
   const { play } = usePlayer();
 
-  const [period, setPeriod] = useState<PeriodKey>({ kind: "this-year" });
+  const [period, setPeriod] = useState<Period>({ kind: "this-year" });
   const [data, setData] = useState<ReplayData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -177,7 +77,7 @@ export default function Replay() {
   // Memoize the request range on the selected period so the fetch effect can
   // depend on a stable value. `period` only changes identity when the user
   // picks a new pill, so depending on it directly is both correct and
-  // exhaustive-deps clean (the old code keyed on a fresh periodToKey string).
+  // exhaustive-deps clean (the old code keyed on a fresh periodKey string).
   const range = useMemo(() => periodRange(period), [period]);
 
   useEffect(() => {
@@ -250,7 +150,7 @@ export default function Replay() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `replay-${periodToKey(period).replace(/[^a-z0-9-]/gi, "-")}.png`;
+      a.download = `replay-${periodKey(period).replace(/[^a-z0-9-]/gi, "-")}.png`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -357,7 +257,7 @@ export default function Replay() {
 
       <div className="period-pills" role="tablist" aria-label="Replay period">
         {options.map((opt) => {
-          const active = periodToKey(opt.period) === periodToKey(period);
+          const active = periodKey(opt.period) === periodKey(period);
           return (
             <button
               key={opt.key}

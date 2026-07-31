@@ -9,6 +9,19 @@ export {
   type UsePlayerCoreReturn,
 } from "./use-player-core";
 export {
+  activityTrack,
+  buildRemoteQueue,
+  compactRemoteTrack,
+  controlledStateForDevice,
+  filterRemoteDevices,
+  optimisticControlledState,
+  remoteActivityTime,
+  useRemotePlaybackCommands,
+  type ControlledPlaybackState,
+  type UseRemotePlaybackCommandsOptions,
+  type UseRemotePlaybackCommandsReturn,
+} from "./remote-control";
+export {
   ACTIVITY_DEVICE_ID_STORAGE_KEY,
   getPlaybackRemoteSession,
   getLatestPlaybackActivity,

@@ -3,9 +3,13 @@
 // `exports` map in package.json.
 
 export * from "./api";
+export * from "./audio-format";
 export * from "./events";
 export * from "./format";
 export * from "./storage";
+export * from "./track";
+export * from "./track-sort";
+export { useDebouncedValue } from "./use-debounced-value";
 export { AuthProvider, useAuth, type AuthState } from "./auth/auth-core";
 export {
   FavoritesProvider,
@@ -14,8 +18,30 @@ export {
   useFavorites,
   type FavoritesState,
 } from "./favorites/favorites-core";
+export { withFavorite, withFavoriteId } from "./favorites/favorite-toggle";
+export {
+  buildPeriodOptions,
+  formatListeningTime,
+  periodKey,
+  periodLabel,
+  periodRange,
+  periodTitle,
+  type ListeningTimeStyle,
+  type Period,
+} from "./replay/period";
 export {
   usePlayerCore,
+  activityTrack,
+  buildRemoteQueue,
+  compactRemoteTrack,
+  controlledStateForDevice,
+  filterRemoteDevices,
+  optimisticControlledState,
+  remoteActivityTime,
+  useRemotePlaybackCommands,
+  type ControlledPlaybackState,
+  type UseRemotePlaybackCommandsOptions,
+  type UseRemotePlaybackCommandsReturn,
   fisherYatesWithAnchor,
   shouldReportPlay,
   nextRepeatMode,

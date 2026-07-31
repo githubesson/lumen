@@ -1,9 +1,18 @@
 import { File } from "expo-file-system";
-import {
-  downloadStreamUrl,
-  type TrackDetail,
-  type TrackListItem,
-} from "@music-library/core";
+
+// The filename and audio-format helpers this module used to define now live in
+// `core/src/audio-format.ts` — they were identical to
+// `frontend/src/lib/download.ts` character-for-character. They are re-exported
+// here because the download store and the "save to Files" export import them
+// from this module. What stays is the byte-level validation, which only the
+// mobile client does: it persists streams to disk, so it must never write an
+// error page out as a .mp3.
+export {
+  downloadFilename,
+  extensionForContentType,
+  extensionForFormat,
+  extensionFromStream,
+} from "@music-library/core/audio-format";
 
 /**
  * Fetch a track stream and return its validated bytes plus the server's
@@ -43,103 +52,6 @@ export async function downloadStreamToFile(url: string, destination: File) {
   destination.create({ intermediates: true, overwrite: true });
   destination.write(bytes);
   return destination;
-}
-
-export function downloadFilename(
-  track: TrackListItem,
-  detail: TrackDetail | null,
-  ext?: string,
-) {
-  const artists = detail?.artists?.map((artist) => artist.name).filter(Boolean);
-  const artist = artists?.length ? artists.join(", ") : track.artist;
-  const base = [artist, detail?.title || track.title].filter(Boolean).join(" - ");
-  const name = sanitizeFilename(base || "track");
-  return ext && !name.toLowerCase().endsWith(`.${ext}`) ? `${name}.${ext}` : name;
-}
-
-export function extensionForFormat(format?: string) {
-  const normalized = format
-    ?.toLowerCase()
-    .replace(/^\.+/, "")
-    .replace(/[_-]+/g, " ")
-    .trim();
-  if (!normalized) return undefined;
-  if (["mp3", "id3", "id3v1", "id3v2", "mpeg", "mpeg audio"].includes(normalized)) {
-    return "mp3";
-  }
-  if (normalized.includes("flac")) return "flac";
-  if (["m4a", "mp4", "mp4a", "aac", "alac"].includes(normalized)) return "m4a";
-  if (normalized.includes("ogg")) return "ogg";
-  if (normalized.includes("opus")) return "opus";
-  if (normalized.includes("wav") || normalized.includes("wave")) return "wav";
-  if (normalized.includes("webm")) return "webm";
-  if (normalized.includes("quicktime") || normalized === "mov") return "mov";
-  return undefined;
-}
-
-export async function extensionFromStream(trackId: string) {
-  const url = downloadStreamUrl(trackId);
-  try {
-    const res = await fetch(url, {
-      method: "HEAD",
-      credentials: "include",
-    });
-    if (res.ok) {
-      return extensionForContentType(res.headers.get("content-type") ?? undefined);
-    }
-  } catch {
-    // Some servers/routes do not support HEAD; fall through to a tiny range probe.
-  }
-
-  try {
-    const res = await fetch(url, {
-      credentials: "include",
-      headers: { Range: "bytes=0-0" },
-    });
-    if (!res.ok) return undefined;
-    return extensionForContentType(res.headers.get("content-type") ?? undefined);
-  } catch {
-    return undefined;
-  }
-}
-
-export function extensionForContentType(contentType?: string) {
-  const type = contentType?.split(";")[0]?.toLowerCase().trim();
-  switch (type) {
-    case "audio/mpeg":
-    case "audio/mp3":
-      return "mp3";
-    case "audio/flac":
-    case "audio/x-flac":
-      return "flac";
-    case "audio/mp4":
-    case "audio/aac":
-    case "audio/x-m4a":
-      return "m4a";
-    case "audio/ogg":
-    case "application/ogg":
-      return "ogg";
-    case "audio/opus":
-      return "opus";
-    case "audio/wav":
-    case "audio/wave":
-    case "audio/x-wav":
-      return "wav";
-    case "audio/webm":
-      return "webm";
-    case "video/quicktime":
-      return "mov";
-    default:
-      return undefined;
-  }
-}
-
-function sanitizeFilename(name: string) {
-  return name
-    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
-    .replace(/\s+/g, " ")
-    .replace(/[. ]+$/g, "")
-    .slice(0, 180);
 }
 
 export function isRejectedStreamContentType(contentType?: string) {

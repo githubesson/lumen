@@ -20,10 +20,13 @@ import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  SORT_DEFAULT_ASC,
   api,
+  compareSortableTracks,
   useAuth,
   type Playlist,
   type PlaylistTrackEntry,
+  type SortKey,
   type TrackListItem,
 } from "@music-library/core";
 import { CoverArt } from "../../../components/cover-art";
@@ -71,8 +74,11 @@ type PlaylistTrackRowModel = {
 
 // ── Local sorting ────────────────────────────────────────────────────────────
 // Display-only: never touches the saved playlist order on the server.
-
-type SortKey = "custom" | "title" | "duration" | "plays";
+//
+// The comparator, the emoji-stripped collation key and the default directions
+// live in `core/src/track-sort.ts` — the web playlist screen had an identical
+// copy. Only the option list stays here: it is menu-shaped and worded for a
+// phone context menu ("Custom" rather than the desktop's "Custom order").
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: "custom", label: "Custom" },
@@ -81,47 +87,12 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: "plays", label: "Plays" },
 ];
 
-// Ascending feels natural for names and lengths; play counts read best
-// biggest-first.
-const SORT_DEFAULT_ASC: Record<SortKey, boolean> = {
-  custom: true,
-  title: true,
-  duration: true,
-  plays: false,
-};
-
-// Emoji and pictographic symbols, mirroring the backend's share-card
-// stripping, so "🔥 Song" sorts under S rather than before every letter.
-const EMOJI_RE =
-  /[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}]/gu;
-
-function sortTitleKey(title: string): string {
-  const stripped = title.replace(EMOJI_RE, "").replace(/\s+/g, " ").trim();
-  return stripped || title;
-}
-
-const titleCollator = new Intl.Collator(undefined, {
-  sensitivity: "base",
-  numeric: true,
-});
-
 function compareModels(
   a: PlaylistTrackRowModel,
   b: PlaylistTrackRowModel,
   key: SortKey,
 ): number {
-  const byTitle = () =>
-    titleCollator.compare(sortTitleKey(a.entry.title), sortTitleKey(b.entry.title));
-  switch (key) {
-    case "title":
-      return byTitle();
-    case "duration":
-      return a.entry.duration_ms - b.entry.duration_ms || byTitle();
-    case "plays":
-      return (a.entry.play_count ?? 0) - (b.entry.play_count ?? 0) || byTitle();
-    case "custom":
-      return 0;
-  }
+  return compareSortableTracks(a.entry, b.entry, key);
 }
 
 export default function PlaylistDetailScreen() {

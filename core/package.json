@@ -9,11 +9,17 @@
   "exports": {
     ".": "./src/index.ts",
     "./api": "./src/api.ts",
+    "./audio-format": "./src/audio-format.ts",
     "./storage": "./src/storage.ts",
     "./events": "./src/events.ts",
     "./format": "./src/format.ts",
+    "./track": "./src/track.ts",
+    "./track-sort": "./src/track-sort.ts",
+    "./use-debounced-value": "./src/use-debounced-value.ts",
     "./auth": "./src/auth/auth-core.tsx",
     "./favorites": "./src/favorites/favorites-core.tsx",
+    "./favorites/toggle": "./src/favorites/favorite-toggle.ts",
+    "./replay/period": "./src/replay/period.ts",
     "./player": "./src/player/index.ts",
     "./player/*": "./src/player/*.ts"
   },

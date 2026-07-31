@@ -10,6 +10,7 @@ import {
 } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth/auth-core";
+import { withFavoriteId } from "./favorite-toggle";
 
 export interface FavoritesState {
   ids: Set<string>;
@@ -21,8 +22,14 @@ export interface FavoritesState {
 const Ctx = createContext<FavoritesState | null>(null);
 
 /**
- * Platform-agnostic favorites provider. Mirrors the server's favorite set in
+ * Context-backed favorites provider. Mirrors the server's favorite set in
  * memory and applies optimistic toggles with rollback on API failure.
+ *
+ * This is the web client's provider. The mobile app deliberately does not use
+ * it: it keeps favorites in the React Query cache instead, which lets a single
+ * row subscribe to its own boolean rather than re-rendering every row on any
+ * toggle. Both share {@link withFavoriteId}/`withFavorite` so the transition
+ * and rollback rules stay identical across the two storage strategies.
  */
 export function FavoritesProvider({ children }: { children: ReactNode }) {
   const { status } = useAuth();
@@ -60,9 +67,7 @@ export function FavoritesProvider({ children }: { children: ReactNode }) {
     // rapid toggles dispatched before a re-render both saw the same pre-toggle
     // value and issued the same request.
     const had = idsRef.current.has(id);
-    const optimistic = new Set(idsRef.current);
-    if (had) optimistic.delete(id);
-    else optimistic.add(id);
+    const optimistic = withFavoriteId(idsRef.current, id, !had);
     idsRef.current = optimistic;
     setIds(optimistic);
     try {
@@ -71,9 +76,7 @@ export function FavoritesProvider({ children }: { children: ReactNode }) {
     } catch {
       // Roll back on failure, from whatever the current set is — another
       // toggle may have landed in the meantime.
-      const rolledBack = new Set(idsRef.current);
-      if (had) rolledBack.add(id);
-      else rolledBack.delete(id);
+      const rolledBack = withFavoriteId(idsRef.current, id, had);
       idsRef.current = rolledBack;
       setIds(rolledBack);
     }

@@ -6,6 +6,7 @@ import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
 import {
   api,
+  isTidalTrack,
   libraryChanged,
   downloadStreamUrl,
   useAuth,
@@ -302,18 +303,19 @@ export function useTrackActionModel(track: TrackListItem) {
     void (async () => {
       try {
         let localAlbumId = track.album_id;
-        let tidalAlbumId =
-          track.source === "tidal" ? track.source_album_id : undefined;
+        let tidalAlbumId = isTidalTrack(track)
+          ? track.source_album_id
+          : undefined;
 
-        if (!localAlbumId || (track.source === "tidal" && !tidalAlbumId)) {
+        if (!localAlbumId || (isTidalTrack(track) && !tidalAlbumId)) {
           const detail = await api.getTrack(track.id);
           localAlbumId = localAlbumId || detail.album_id;
-          if (detail.source === "tidal") {
+          if (isTidalTrack(detail)) {
             tidalAlbumId = tidalAlbumId || detail.source_album_id;
           }
         }
 
-        if (track.source === "tidal" && tidalAlbumId) {
+        if (isTidalTrack(track) && tidalAlbumId) {
           router.push({
             pathname: "/(tabs)/(library)/tidal-albums/[id]" as never,
             params: { id: tidalAlbumId },
@@ -453,8 +455,10 @@ export function useTrackActionModel(track: TrackListItem) {
     download,
     downloading,
     favorite,
-    hasAlbum: Boolean(track.album_id || track.album_title || track.source === "tidal"),
-    hasEditableAlbum: Boolean(track.album_id && track.source !== "tidal"),
+    hasAlbum: Boolean(
+      track.album_id || track.album_title || isTidalTrack(track),
+    ),
+    hasEditableAlbum: Boolean(track.album_id && !isTidalTrack(track)),
     isAdmin,
     openAlbum,
     openEditAlbum,
