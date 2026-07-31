@@ -16,6 +16,7 @@ import {
   filterRemoteDevices,
   nextRepeatMode,
   remoteActivityTime,
+  useRemoteActivityClock,
   useRemotePlaybackCommands,
   usePlaybackActivityPublisher,
   usePlaybackRemoteSession,
@@ -104,6 +105,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       null,
     [remoteDevices, targetDeviceId],
   );
+  // While controlling another device, `usePlayerTime` consumers (lyrics, most
+  // visibly) need the target's clock, not the paused local one — and ticking,
+  // since heartbeats only arrive every ~10s.
+  const remoteTime = useRemoteActivityClock(targetDevice?.activity);
+  const displayedTime = targetDevice ? remoteTime : time;
   const {
     controlled,
     commandPending,
@@ -373,7 +379,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   return (
     <RemotePlaybackCtx.Provider value={remoteValue}>
       <PlayerCtx.Provider value={value}>
-        <PlayerTimeCtx.Provider value={time}>
+        <PlayerTimeCtx.Provider value={displayedTime}>
           <PlayerAdapterCtx.Provider value={adapter}>
             {/* The adapter owns these ref objects and only ever reads them
                 from event handlers/effects; handing them to a child provider

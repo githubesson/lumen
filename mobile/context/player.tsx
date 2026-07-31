@@ -22,8 +22,8 @@ import {
   controlledStateForDevice,
   filterRemoteDevices,
   nextRepeatMode,
-  remoteActivityTime,
   trackCoverUrl,
+  useRemoteActivityClock,
   useRemotePlaybackCommands,
   usePlaybackActivityPublisher,
   usePlaybackRemoteSession,
@@ -470,13 +470,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       targetDevice,
     ],
   );
-  const displayedTime = useMemo<TimeState>(
-    () =>
-      targetDevice
-        ? remoteActivityTime(targetDevice.activity)
-        : time,
-    [targetDevice, time],
+  // Ticking, not memoized from the heartbeat: snapshots arrive every ~10s,
+  // and a memo keyed on them made cast-mode lyrics/scrubber time advance in
+  // ten-second leaps. Foreground-gated like `interpolateProgress` above.
+  const remoteTime = useRemoteActivityClock(
+    targetDevice?.activity,
+    appState === "active",
   );
+  const displayedTime = targetDevice ? remoteTime : time;
   const value = useMemo<Ctx>(
     () => ({ ...displayedState, ...routedControls }),
     [displayedState, routedControls],

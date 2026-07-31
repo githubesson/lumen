@@ -16,6 +16,7 @@ export {
   filterRemoteDevices,
   optimisticControlledState,
   remoteActivityTime,
+  useRemoteActivityClock,
   useRemotePlaybackCommands,
   type ControlledPlaybackState,
   type UseRemotePlaybackCommandsOptions,

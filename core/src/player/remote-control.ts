@@ -168,6 +168,57 @@ export function remoteActivityTime(
   };
 }
 
+/** Cadence for re-extrapolating a remote target's position between heartbeats. */
+const REMOTE_CLOCK_TICK_MS = 250;
+
+/**
+ * {@link remoteActivityTime}, kept ticking. Heartbeats arrive every ~10s and
+ * the extrapolation is only as fresh as its last call, so reading it from a
+ * memo keyed on the heartbeat makes the position — and everything derived from
+ * it, like synced lyrics — advance in ten-second leaps. This re-evaluates on a
+ * timer while the target reports playing, matching the 250ms cadence local
+ * playback gets from the rAF interpolation loop.
+ *
+ * `enabled` lets a platform stop the ticking when nothing is watching (the
+ * phone passes its foreground state). A paused or absent target does not tick
+ * either; its position is re-read only when the next heartbeat arrives.
+ */
+export function useRemoteActivityClock(
+  activity: PlaybackActivity | null | undefined,
+  enabled = true,
+): TimeState {
+  // Seeded from an effect rather than the initializer: `remoteActivityTime`
+  // reads the wall clock, which render-phase code must not.
+  const [time, setTime] = useState<TimeState>({ currentTime: 0, duration: 0 });
+  const playing = !!activity?.is_playing;
+  useEffect(() => {
+    // Keep the previous state object when the values are unchanged. This is
+    // what stops re-render feedback for callers whose `activity` is a fresh
+    // object every render: without the bailout, effect → set → render → new
+    // activity → effect never reaches a fixed point.
+    const sync = () => {
+      const raw = remoteActivityTime(activity);
+      // Same 250ms quantization local playback applies to its time state:
+      // consumers re-render on the tick grid, not on every wall-clock read.
+      const step = REMOTE_CLOCK_TICK_MS / 1000;
+      const next = {
+        currentTime: Math.round(raw.currentTime / step) * step,
+        duration: raw.duration,
+      };
+      setTime((prev) =>
+        prev.currentTime === next.currentTime && prev.duration === next.duration
+          ? prev
+          : next,
+      );
+    };
+    sync();
+    if (!enabled || !playing) return;
+    const interval = setInterval(sync, REMOTE_CLOCK_TICK_MS);
+    return () => clearInterval(interval);
+  }, [activity, enabled, playing]);
+  return time;
+}
+
 /**
  * The remote device's current track as a `TrackListItem`, so the same now-playing
  * UI can render local and remote playback without branching.
