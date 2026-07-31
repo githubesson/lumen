@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from "electron";
-import electronUpdater, {
+import {
+  autoUpdater,
   type AppUpdater,
   type ProgressInfo,
   type UpdateInfo,
@@ -149,19 +150,35 @@ export class DesktopUpdateManager {
       return this.getStatus();
     }
 
-    const updater = this.ensureUpdater();
-    const channel = branch === "dev" ? "dev" : "latest";
-    updater.allowPrerelease = branch === "dev";
-    updater.channel = channel;
-    // Channel changes are an explicit user choice. This permits returning from
-    // a newer dev build to the latest stable release as well as opting into dev.
-    updater.allowDowngrade = true;
-    updater.setFeedURL({
-      provider: "github",
-      owner: repo.owner,
-      repo: repo.repo,
-      channel,
-    });
+    try {
+      const updater = this.ensureUpdater();
+      const channel = branch === "dev" ? "dev" : "latest";
+      updater.allowPrerelease = branch === "dev";
+      updater.channel = channel;
+      // Channel changes are an explicit user choice. This permits returning
+      // from a newer dev build to the latest stable release as well as opting
+      // into dev.
+      updater.allowDowngrade = true;
+      updater.setFeedURL({
+        provider: "github",
+        owner: repo.owner,
+        repo: repo.repo,
+        channel,
+      });
+    } catch (error) {
+      console.error("[updater] initialization failed", error);
+      this.setStatus({
+        state: "error",
+        branch,
+        repoUrl: repo.url,
+        message: `Auto-update is unavailable: ${errorMessage(error)}`,
+        canCheck: false,
+        canInstall: false,
+        targetVersion: undefined,
+        progress: undefined,
+      });
+      return this.getStatus();
+    }
 
     this.setStatus({
       state: "idle",
@@ -237,9 +254,6 @@ export class DesktopUpdateManager {
 
   private ensureUpdater(): AppUpdater {
     if (this.updater) return this.updater;
-    // electron-updater is CommonJS; destructuring the default import is the
-    // compatibility path recommended by its TypeScript documentation.
-    const { autoUpdater } = electronUpdater;
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.logger = console;
