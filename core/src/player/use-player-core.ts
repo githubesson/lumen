@@ -585,12 +585,22 @@ export function usePlayerCore({
     const offPlay = adapter.on("play", () => {
       listeningTickRef.current = performance.now();
       syncAnchor();
+      // Playback can start outside our controls (lock-screen play command,
+      // an interruption ending with auto-resume) — adopt the platform state.
+      setIsPlaying(true);
     });
     const offPause = adapter.on("pause", () => {
       syncListenedTime();
       listeningTickRef.current = null;
       syncAnchor();
       setCurrentTime(quantizeTime(adapter.currentTime(), adapter.duration()));
+      // System-originated pauses (headphones disconnecting, an audio
+      // interruption, lock-screen pause) surface only as this event; without
+      // mirroring it the UI keeps showing a playing state over silence.
+      // Adapters must only emit `pause` for genuine pauses — buffering
+      // stalls, source swaps and natural track end are not pauses in the
+      // web event model this contract follows.
+      setIsPlaying(false);
     });
     return () => {
       offTime();

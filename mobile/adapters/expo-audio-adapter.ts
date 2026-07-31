@@ -40,7 +40,11 @@ export interface ExpoAudioAdapter extends AudioAdapter {
  * status snapshots is diffed into the web-style events the shared
  * `usePlayerCore` hook expects (loadedmetadata, play, pause, timeupdate,
  * ended). `seeked` is synthesized from the adapter's own `seek()` call since
- * `expo-audio` doesn't emit a discrete event for it.
+ * `expo-audio` doesn't emit a discrete event for it. `pause` is dispatched
+ * only for genuine pauses (user or system — e.g. headphones disconnecting or
+ * an audio interruption): buffering stalls, source swaps and natural track
+ * end all pass through `playing: false` natively but fire no `pause` in the
+ * web event model, and the core mirrors `pause` straight into `isPlaying`.
  */
 export function useExpoAudioAdapter(): ExpoAudioAdapter {
   // We only need coarse native ticks because the UI smooths progress locally.
@@ -106,9 +110,19 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
     const subscription = player.addListener("playbackStatusUpdate", (status) => {
       const prev = prevStatusRef.current;
       const isLoaded = status.isLoaded;
-      const playing = status.playing;
       const didJustFinish = status.didJustFinish;
       const duration = status.duration;
+      // iOS reports `playing: false` while the player is merely rebuffering
+      // (timeControlStatus "waitingToPlayAtSpecifiedRate"), but a stall is
+      // not a pause — the web event model this adapter translates to fires
+      // `waiting` there, never `pause`, and the core mirrors `pause` into
+      // isPlaying. Fold stalls back into "playing" the way Android's native
+      // side already does. `noItemToPlay` is excluded: a queue waiting on a
+      // source is not playback.
+      const playing =
+        status.playing ||
+        (status.timeControlStatus === "waitingToPlayAtSpecifiedRate" &&
+          status.reasonForWaitingToPlay !== "noItemToPlay");
 
       startPreparedPlaybackIfReady(status);
 
@@ -119,7 +133,11 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       }
 
       if (!prev.playing && playing) dispatch("play");
-      if (prev.playing && !playing) dispatch("pause");
+      // Natural track end also passes through playing=false, but the web
+      // contract fires only `ended` there; dispatching `pause` too would
+      // flip the core's isPlaying off while its own `ended` handler is
+      // advancing to the next track.
+      if (prev.playing && !playing && !didJustFinish) dispatch("pause");
       if (isLoaded) dispatch("timeupdate");
       if (!prev.didJustFinish && didJustFinish) dispatch("ended");
 
@@ -148,6 +166,10 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         prevStatusRef.current.isLoaded = false;
         prevStatusRef.current.duration = 0;
         prevStatusRef.current.didJustFinish = false;
+        // The outgoing track may have been playing; the incoming item's
+        // paused statuses during the swap are a transition, not a pause the
+        // core should mirror into isPlaying.
+        prevStatusRef.current.playing = false;
       },
       prepareNext(url) {
         if (preparedRef.current?.url === url) return;
@@ -189,6 +211,8 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
           prevStatusRef.current.isLoaded = false;
           prevStatusRef.current.duration = 0;
           prevStatusRef.current.didJustFinish = false;
+          // Same as load(): the swap's paused statuses are not a real pause.
+          prevStatusRef.current.playing = false;
           startPreparedPlaybackIfReady(player.currentStatus);
           // replace() has consumed the native preload; Android/web retain the
           // cache entry until explicitly cleared, while iOS treats this as a

@@ -264,6 +264,30 @@ describe("usePlayerCore", () => {
     expect(adapter.prepareNext).not.toHaveBeenCalled();
   });
 
+  it("mirrors an adapter pause event into isPlaying (system pause)", async () => {
+    const { result, emit } = await setup();
+    act(() => result.current.controls.play(t("a"), queue4()));
+    expect(result.current.state.isPlaying).toBe(true);
+
+    // e.g. iOS pauses the player itself when headphones disconnect or an
+    // interruption begins; the only signal is the adapter's pause event.
+    act(() => emit("pause"));
+    expect(result.current.state.isPlaying).toBe(false);
+  });
+
+  it("mirrors an adapter play event into isPlaying (system resume)", async () => {
+    const { result, emit } = await setup();
+    act(() => result.current.controls.play(t("a"), queue4()));
+    act(() => result.current.controls.pause());
+    expect(result.current.state.isPlaying).toBe(false);
+
+    // e.g. lock-screen play command handled natively, or an interruption
+    // ending with auto-resume.
+    act(() => emit("play"));
+    await act(async () => {});
+    expect(result.current.state.isPlaying).toBe(true);
+  });
+
   it("reports a play exactly once past the 30s threshold", async () => {
     const { result, state, emit } = await setup();
     act(() => result.current.controls.play(t("a"), [t("a")]));

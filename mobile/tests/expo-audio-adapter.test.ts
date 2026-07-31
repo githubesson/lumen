@@ -14,9 +14,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => {
   const calls: string[] = [];
   let resolveSeek: (() => void) | null = null;
+  let statusListener: ((status: unknown) => void) | null = null;
   const fakePlayer = {
     currentStatus: { isLoaded: true, playing: false, didJustFinish: false, duration: 0 },
-    addListener: () => ({ remove: () => {} }),
+    addListener: (_event: string, cb: (status: unknown) => void) => {
+      statusListener = cb;
+      return { remove: () => {} };
+    },
     play: () => {
       calls.push("play");
     },
@@ -39,6 +43,7 @@ const h = vi.hoisted(() => {
     calls,
     fakePlayer,
     finishSeek: () => resolveSeek?.(),
+    emitStatus: (status: unknown) => statusListener?.(status),
   };
 });
 
@@ -46,7 +51,12 @@ vi.mock("react", () => ({
   useCallback: (fn: unknown) => fn,
   useMemo: (fn: () => unknown) => fn(),
   useRef: (initial: unknown) => ({ current: initial }),
-  useEffect: () => {},
+  // Run effects immediately so the status-subscription effect registers its
+  // listener on the fake player; cleanups are dropped (each test calls the
+  // hook once and never re-renders).
+  useEffect: (fn: () => unknown) => {
+    fn();
+  },
 }));
 
 vi.mock("expo-audio", () => ({
@@ -115,5 +125,91 @@ describe("useExpoAudioAdapter seek/play ordering", () => {
     await flushMicrotasks();
     await adapter.play();
     expect(h.calls).toEqual(["seekTo", "play"]);
+  });
+});
+
+/**
+ * Status → event translation. The shared core mirrors `pause` events straight
+ * into `isPlaying`, so the adapter must dispatch `pause` only for genuine
+ * pauses (user or system) — never for buffering stalls, natural track end, or
+ * the paused statuses a source swap passes through.
+ */
+describe("useExpoAudioAdapter status → event translation", () => {
+  const status = (over: Record<string, unknown>) => ({
+    isLoaded: true,
+    playing: false,
+    didJustFinish: false,
+    duration: 100,
+    timeControlStatus: "paused",
+    reasonForWaitingToPlay: "unknown",
+    ...over,
+  });
+  const playingStatus = () =>
+    status({ playing: true, timeControlStatus: "playing" });
+
+  function setup() {
+    const adapter = useExpoAudioAdapter();
+    const events: string[] = [];
+    adapter.on("play", () => events.push("play"));
+    adapter.on("pause", () => events.push("pause"));
+    adapter.on("ended", () => events.push("ended"));
+    return { adapter, events };
+  }
+
+  it("dispatches pause when the system pauses playback (route loss, interruption)", () => {
+    const { events } = setup();
+
+    h.emitStatus(playingStatus());
+    h.emitStatus(status({ playing: false, timeControlStatus: "paused" }));
+    expect(events).toEqual(["play", "pause"]);
+  });
+
+  it("does not dispatch pause for a rebuffering stall", () => {
+    const { events } = setup();
+
+    h.emitStatus(playingStatus());
+    h.emitStatus(
+      status({
+        playing: false,
+        timeControlStatus: "waitingToPlayAtSpecifiedRate",
+        reasonForWaitingToPlay: "toMinimizeStalls",
+      }),
+    );
+    h.emitStatus(playingStatus());
+    expect(events).toEqual(["play"]);
+  });
+
+  it("dispatches pause when the user pauses during a stall", () => {
+    const { events } = setup();
+
+    h.emitStatus(playingStatus());
+    h.emitStatus(
+      status({
+        playing: false,
+        timeControlStatus: "waitingToPlayAtSpecifiedRate",
+        reasonForWaitingToPlay: "toMinimizeStalls",
+      }),
+    );
+    h.emitStatus(status({ playing: false, timeControlStatus: "paused" }));
+    expect(events).toEqual(["play", "pause"]);
+  });
+
+  it("dispatches ended but not pause at natural track end", () => {
+    const { events } = setup();
+
+    h.emitStatus(playingStatus());
+    h.emitStatus(status({ playing: false, didJustFinish: true }));
+    expect(events).toEqual(["play", "ended"]);
+  });
+
+  it("does not dispatch pause for the source swap in load()", () => {
+    const { adapter, events } = setup();
+
+    h.emitStatus(playingStatus());
+    adapter.load("https://example.test/next.mp3");
+    // The incoming item reports paused/not-loaded until it starts.
+    h.emitStatus(status({ playing: false, isLoaded: false, duration: 0 }));
+    h.emitStatus(playingStatus());
+    expect(events).toEqual(["play", "play"]);
   });
 });
