@@ -2485,6 +2485,8 @@ html[data-mini-player] .np-text {
   box-shadow: var(--shadow-lg);
   padding: 14px;
   z-index: 100;
+  max-height: calc(100vh - 112px);
+  overflow-y: auto;
 }
 .tweaks-title {
   font-family: var(--font-mono);
@@ -2539,6 +2541,37 @@ html[data-mini-player] .np-text {
   background: color-mix(in oklch, var(--accent) 16%, var(--bg-elev-2));
   color: var(--fg);
   border-color: color-mix(in oklch, var(--accent) 40%, var(--border));
+}
+.tweak-seg button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.tweak-input {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  outline: none;
+}
+.tweak-input:focus {
+  border-color: color-mix(in oklch, var(--accent) 40%, var(--border));
+}
+.tweak-input:disabled {
+  opacity: 0.6;
+}
+.tweak-status {
+  color: var(--fg-subtle);
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.tweak-status[data-error] {
+  color: var(--danger);
 }
 .tweak-slider {
   width: 100%;

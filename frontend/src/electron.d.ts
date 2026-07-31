@@ -58,6 +58,29 @@ export interface Tweaks {
   glow: boolean;
 }
 
+export type UpdateBranch = "main" | "dev";
+
+export interface UpdateStatus {
+  state:
+    | "idle"
+    | "checking"
+    | "available"
+    | "downloading"
+    | "downloaded"
+    | "up-to-date"
+    | "error"
+    | "unsupported";
+  branch: UpdateBranch;
+  repoUrl: string;
+  defaultRepoUrl: string;
+  currentVersion: string;
+  targetVersion?: string;
+  progress?: number;
+  message: string;
+  canCheck: boolean;
+  canInstall: boolean;
+}
+
 declare global {
   interface Window {
     electron?: {
@@ -118,6 +141,14 @@ declare global {
         tweaks?: Partial<Tweaks>;
         audioSinkId?: string;
       }) => Promise<{ ok: boolean }>;
+      getUpdateStatus?: () => Promise<UpdateStatus>;
+      saveUpdateConfig?: (payload: {
+        branch: UpdateBranch;
+        repoUrl: string;
+      }) => Promise<{ ok: boolean; status?: UpdateStatus; error?: string }>;
+      checkForUpdates?: () => Promise<UpdateStatus>;
+      installUpdate?: () => Promise<UpdateStatus>;
+      onUpdateStatus?: (listener: (status: UpdateStatus) => void) => () => void;
     };
   }
 }

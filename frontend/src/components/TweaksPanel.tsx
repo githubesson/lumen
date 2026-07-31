@@ -4,6 +4,7 @@ import { useTheme, type Density, type Layout, type Theme } from "../context/Them
 import { useAudioOutput } from "../lib/audioOutput";
 import { openExternal } from "../lib/platform";
 import { useDismiss } from "../lib/useDismiss";
+import DesktopUpdates from "./DesktopUpdates";
 
 interface Props {
   open: boolean;
@@ -334,6 +335,8 @@ export default function TweaksPanel({ open, onClose }: Props) {
           </div>
         )}
       </div>
+
+      <DesktopUpdates />
     </div>
   );
 }

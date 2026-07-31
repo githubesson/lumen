@@ -11,6 +11,12 @@ import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import type { OpenDialogOptions, Rectangle } from "electron";
+import {
+  DesktopUpdateManager,
+  normalizeUpdateBranch,
+  parseGitHubRepoUrl,
+  type UpdateBranch,
+} from "./updater";
 
 export type Theme = "light" | "dark";
 export type Density = "airy" | "balanced" | "dense";
@@ -46,6 +52,13 @@ interface Config {
   tweaks?: Partial<Tweaks>;
   /** Persisted audio output sink id. Empty string means system default. */
   audioSinkId?: string;
+  /**
+   * Desktop release stream. Only the stable main and prerelease dev streams
+   * are accepted; arbitrary Git branches are never queried.
+   */
+  updateBranch?: UpdateBranch;
+  /** Optional user override for the baked public GitHub repository URL. */
+  updateRepoUrl?: string;
 }
 
 interface SavePatch {
@@ -106,8 +119,21 @@ const MAIN_PRELOAD = path.join(__dirname, "mainPreload.js");
 const execFileAsync = promisify(execFile);
 
 const DEFAULT_FH6_BRIDGE_PORT = 8420;
+const FALLBACK_UPDATE_REPO_URL = "https://github.com/githubesson/lumen";
 const NORMAL_MIN_SIZE = { width: 640, height: 480 };
 const MINI_PLAYER_SIZE = { width: 780, height: 184 };
+const BUILD_ENV = readBakedBuildEnv();
+const DEFAULT_DISCORD_CLIENT_ID = (BUILD_ENV.discordClientId ?? "").trim();
+const DEFAULT_UPDATE_REPO_URL =
+  parseGitHubRepoUrl(BUILD_ENV.updateRepoUrl)?.url ?? FALLBACK_UPDATE_REPO_URL;
+const DEFAULT_UPDATE_BRANCH: UpdateBranch = /-dev(?:\.|$)/.test(app.getVersion())
+  ? "dev"
+  : "main";
+const updateManager = new DesktopUpdateManager(
+  DEFAULT_UPDATE_REPO_URL,
+  DEFAULT_UPDATE_BRANCH,
+  BUILD_ENV.macUpdateSigned === true,
+);
 
 let mainWindow: BrowserWindow | null = null;
 let setupWindow: BrowserWindow | null = null;
@@ -892,6 +918,32 @@ ipcMain.handle("tweaks:save", async (_e, payload: { tweaks?: Partial<Tweaks>; au
   return { ok: true };
 });
 
+ipcMain.handle("updates:get", () => updateManager.getStatus());
+
+ipcMain.handle(
+  "updates:save",
+  async (_e, payload: { branch?: unknown; repoUrl?: unknown } | undefined) => {
+    const branch = normalizeUpdateBranch(payload?.branch);
+    if (!branch) {
+      return { ok: false, error: "Update branch must be main or dev." };
+    }
+    const repo = parseGitHubRepoUrl(payload?.repoUrl);
+    if (!repo) {
+      return {
+        ok: false,
+        error: "Repository must be an https://github.com/owner/repo URL.",
+      };
+    }
+    await saveConfigPatch({ updateBranch: branch, updateRepoUrl: repo.url });
+    const status = updateManager.configure({ branch, repoUrl: repo.url });
+    updateManager.startAutomaticChecks();
+    return { ok: true, status };
+  },
+);
+
+ipcMain.handle("updates:check", async () => updateManager.check());
+ipcMain.handle("updates:install", () => updateManager.install());
+
 ipcMain.handle("config:save", async (_e, patch: SavePatch) => {
   const raw = typeof patch?.backendUrl === "string" ? patch.backendUrl.trim() : "";
   if (!raw) return { ok: false, error: "Server URL is required" };
@@ -1357,21 +1409,18 @@ function boundsAroundCenter(
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DiscordClient = any;
 
-// No application ID is shipped in code — create your own at
-// https://discord.com/developers/applications and put it in `.env` (see
-// .env.example). The `electron:compile` build step bakes it into
-// buildenv.json next to this file; the user's config.json `discordClientId`
-// still overrides it. While it's blank, Rich Presence silently stays off.
-const DEFAULT_DISCORD_CLIENT_ID = readBakedDiscordClientId();
+interface BuildEnvironment {
+  discordClientId?: string;
+  updateRepoUrl?: string;
+  macUpdateSigned?: boolean;
+}
 
-function readBakedDiscordClientId(): string {
+function readBakedBuildEnv(): BuildEnvironment {
   try {
     const raw = fs.readFileSync(path.join(__dirname, "buildenv.json"), "utf8");
-    const parsed = JSON.parse(raw) as { discordClientId?: string };
-    return (parsed.discordClientId ?? "").trim();
+    return JSON.parse(raw) as BuildEnvironment;
   } catch {
-    // buildenv.json missing (build step skipped) — presence stays off.
-    return "";
+    return {};
   }
 }
 
@@ -1649,6 +1698,12 @@ if (!gotLock) {
     if (configured) discordClientId = configured;
     discordEnabled = cfg.discordEnabled ?? true;
     alwaysOnTop = cfg.alwaysOnTop ?? false;
+    const updateBranch =
+      normalizeUpdateBranch(cfg.updateBranch) ?? DEFAULT_UPDATE_BRANCH;
+    const updateRepoUrl =
+      parseGitHubRepoUrl(cfg.updateRepoUrl)?.url ?? DEFAULT_UPDATE_REPO_URL;
+    updateManager.configure({ branch: updateBranch, repoUrl: updateRepoUrl });
+    updateManager.startAutomaticChecks();
     await startProxyServer();
     if (!backendUrl) openSetup();
     else await openMain();

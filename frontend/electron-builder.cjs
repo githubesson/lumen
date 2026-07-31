@@ -5,6 +5,7 @@
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
+const IS_PRERELEASE = /^(1|true)$/i.test(process.env.EP_PRE_RELEASE ?? "");
 
 // Optional private add-on: the FH6 radio bridge DLL + config live in a local,
 // untracked folder. Bundled when present, silently skipped when not.
@@ -24,8 +25,8 @@ const RADIO_DIST = path.join(
  *
  * Runs only when both CSC_NAME and APPLE_KEYCHAIN_PROFILE are set (the same
  * env that turns on app signing/notarization) — dev builds skip it. Note the
- * .blockmap is generated before this re-sign, so it goes stale; the app has
- * no auto-updater, so nothing consumes it.
+ * .blockmap is generated before this re-sign, so it goes stale. macOS updates
+ * consume the separately generated ZIP and its metadata, not the DMG blockmap.
  */
 async function signAndNotarizeDmg(result) {
   const dmgs = result.artifactPaths.filter((p) => p.endsWith(".dmg"));
@@ -82,6 +83,9 @@ const config = {
     owner: "githubesson",
     repo: "lumen",
     releaseType: "release",
+    // GitHub does not infer update channels from prerelease versions. Stable
+    // releases publish latest*.yml; explicit dev builds publish dev*.yml.
+    channel: IS_PRERELEASE ? "dev" : "latest",
   },
   directories: {
     output: "release",
@@ -110,6 +114,12 @@ const config = {
     target: [
       {
         target: "dmg",
+        arch: ["universal"],
+      },
+      // electron-updater uses the ZIP and latest-mac/dev-mac metadata. The DMG
+      // remains the artifact people download manually.
+      {
+        target: "zip",
         arch: ["universal"],
       },
     ],

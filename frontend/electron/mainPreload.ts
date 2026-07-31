@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { UpdateBranch, UpdateStatus } from "./updater";
 
 export interface Tweaks {
   theme: "light" | "dark";
@@ -100,6 +101,14 @@ export interface ElectronApi {
     tweaks?: Partial<Tweaks>;
     audioSinkId?: string;
   }): Promise<{ ok: boolean }>;
+  getUpdateStatus(): Promise<UpdateStatus>;
+  saveUpdateConfig(payload: {
+    branch: UpdateBranch;
+    repoUrl: string;
+  }): Promise<{ ok: boolean; status?: UpdateStatus; error?: string }>;
+  checkForUpdates(): Promise<UpdateStatus>;
+  installUpdate(): Promise<UpdateStatus>;
+  onUpdateStatus(listener: (status: UpdateStatus) => void): () => void;
 }
 
 const api: ElectronApi = {
@@ -125,6 +134,16 @@ const api: ElectronApi = {
   exportTrackFiles: (items) => ipcRenderer.invoke("tracks:export-files", items),
   getTweaks: () => ipcRenderer.invoke("tweaks:get"),
   saveTweaks: (payload) => ipcRenderer.invoke("tweaks:save", payload),
+  getUpdateStatus: () => ipcRenderer.invoke("updates:get"),
+  saveUpdateConfig: (payload) => ipcRenderer.invoke("updates:save", payload),
+  checkForUpdates: () => ipcRenderer.invoke("updates:check"),
+  installUpdate: () => ipcRenderer.invoke("updates:install"),
+  onUpdateStatus: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: UpdateStatus) =>
+      listener(status);
+    ipcRenderer.on("updates:status", handler);
+    return () => ipcRenderer.removeListener("updates:status", handler);
+  },
 };
 
 contextBridge.exposeInMainWorld("electron", api);

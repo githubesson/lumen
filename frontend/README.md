@@ -18,7 +18,7 @@ macOS, and Linux desktop app via Electron.
   [discord.com/developers](https://discord.com/developers/applications) and
   put its ID in `.env`, copied from [.env.example](./.env.example); the
   build step bakes it into the packaged app, and the app's `config.json`
-  can override it at runtime), FH6 radio page
+  can override it at runtime), automatic desktop updates, FH6 radio page
 
 Styling is Tailwind CSS v4 (via the Vite plugin). Shared logic (API client,
 player state, auth, favorites) comes from
@@ -93,6 +93,29 @@ platforms. Stable `v*` tags run automatically. Branch builds run only when the
 release workflow is manually dispatched and are published as uniquely versioned
 prereleases. Windows may show an unknown-publisher warning and macOS may require
 the user to explicitly approve the app in Gatekeeper.
+
+### Desktop updates
+
+Packaged desktop builds check for updates shortly after launch and every six
+hours, download an available update, and install it on quit (or immediately
+when the user chooses **restart & install**). The Updates section in the tweaks
+panel lets users choose one of two strictly whitelisted release streams:
+
+- `main` follows stable GitHub Releases and reads `latest*.yml` metadata.
+- `dev` follows explicitly requested prereleases and reads `dev*.yml` metadata.
+
+Dev builds default to `dev`; stable builds default to `main`. Users may switch
+between them and may override the public GitHub repository URL, which must be
+an `https://github.com/owner/repo` URL. `UPDATE_REPO_URL` is baked into the app
+by `electron:compile` just like `DISCORD_CLIENT_ID`; it defaults to this
+repository and can be set in `.env` locally or as a GitHub Actions repository
+variable.
+
+Auto-update works for installed Windows NSIS builds and supported Linux
+packages. It is unavailable in the Windows portable build. macOS auto-update
+requires a signed app and ZIP update artifact; the ZIP is produced by the
+release workflow, but the intentionally unsigned CI builds cannot auto-update
+until signing is configured.
 
 ## Docker
 

@@ -9,7 +9,9 @@ macOS artifacts and sets `CSC_IDENTITY_AUTO_DISCOVERY=false`. Stable `v*` tags
 run automatically; branch builds run only through `workflow_dispatch` and are
 published as prereleases. Do not call these artifacts signed, notarized, or
 distribution-ready. The signing workflow below remains available for explicitly
-configured local or future CI releases.
+configured local or future CI releases. Electron's macOS updater also requires
+a signed app, so these unsigned CI builds must report auto-update as unsupported
+on macOS; Windows NSIS and Linux builds may still update without signing.
 
 ## macOS release signing and notarization
 
