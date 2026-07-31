@@ -1,17 +1,70 @@
 name: release
 
-# Build and publish desktop binaries for every version tag. electron-builder
-# creates (or appends assets to) the GitHub Release for the tag, which the
-# web app's "Download desktop app" button resolves via the releases API.
+# Build and publish desktop binaries for stable version tags or an explicitly
+# requested branch build. Manual builds receive a unique semver prerelease tag;
+# GitHub's latest-release API ignores them, so downloads still resolve to stable.
 on:
+  workflow_dispatch:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*"
+      - "!v*-dev.*"
 
 permissions:
   contents: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - id: release
+        name: Resolve release version and tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            prerelease=false
+          else
+            base_version="$(node -p "require('./frontend/package.json').version.split('-')[0]")"
+            version="${base_version}-dev.${GITHUB_RUN_NUMBER}"
+            prerelease=true
+            tag="v${version}"
+
+            # A GitHub Release must point at a tag. Create an immutable tag for
+            # this exact dev commit before the parallel builders publish assets.
+            if git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null; then
+              test "$(git rev-list -n 1 "$tag")" = "$GITHUB_SHA"
+            else
+              git tag "$tag" "$GITHUB_SHA"
+              git push origin "$tag"
+            fi
+
+            # Create the prerelease once so the three platform jobs only append
+            # assets and cannot race while creating the GitHub Release itself.
+            if ! gh release view "$tag" >/dev/null 2>&1; then
+              gh release create "$tag" \
+                --verify-tag \
+                --prerelease \
+                --title "Lumen ${version}" \
+                --notes "Unsigned desktop build from ${GITHUB_REF_NAME} at ${GITHUB_SHA}."
+            fi
+          fi
+
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'prerelease=%s\n' "$prerelease" >> "$GITHUB_OUTPUT"
+
   desktop:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -20,6 +73,8 @@ jobs:
             args: --win
           - os: macos-latest
             args: --mac
+          - os: ubuntu-latest
+            args: --linux
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -28,6 +83,11 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Optional: bakes Rich Presence support into the build (blank = off).
       DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
+      # Releases are intentionally unsigned on Windows and macOS. This also
+      # prevents a hosted runner from accidentally discovering an identity.
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # Overrides electron-builder's stable releaseType for dev branch builds.
+      EP_PRE_RELEASE: ${{ needs.prepare.outputs.prerelease }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -45,9 +105,9 @@ jobs:
       - run: npm ci
         working-directory: frontend
 
-      # The tag is the single source of truth for the app version; artifacts
-      # come out as Lumen-<version>-setup.exe / Lumen-<version>-universal.dmg.
-      - run: npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+      # Stable builds use the pushed version tag; dev builds use the unique
+      # prerelease version prepared above. All platform jobs get the same value.
+      - run: npm version --no-git-tag-version "${{ needs.prepare.outputs.version }}"
         working-directory: frontend
 
       - run: npm run build
@@ -56,7 +116,7 @@ jobs:
       - run: npm run electron:compile
         working-directory: frontend
 
-      # Committed assets (icon.ico / icon.icns / dmg-background*.png) are used
+      # Committed assets (icon.ico / icon.icns / icon.png / DMG backgrounds) are used
       # as-is; `npm run icons` is skipped because its macOS Assets.car step
       # needs Xcode 26, which hosted runners don't have. The optional radio
       # add-on is skipped automatically (no _local/ in CI); see
