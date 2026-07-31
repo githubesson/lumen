@@ -29,6 +29,7 @@
     "plugins": [
       "expo-router",
       "./plugins/withExpoModulesCoreSwiftWorkaround",
+      "./plugins/withMMKVCoreAnnexKWorkaround",
       "./plugins/withInstagramStorySharing",
       [
         "./plugins/withCarPlay",
