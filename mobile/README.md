@@ -85,3 +85,51 @@ Builds go through [EAS](https://docs.expo.dev/eas/). `eas.json` is not
 tracked (it carries personal project/app IDs) — `npm run configure` creates
 it with the standard development / preview / production profiles, plus an
 `eas submit` block if you provide an App Store Connect app ID.
+
+## OTA Updates
+
+The app supports over-the-air updates via `expo-updates`, letting you push JavaScript and asset changes without going through app store review.
+
+### Setup
+
+1. Get your Expo project ID:
+   ```sh
+   eas project:info
+   ```
+
+2. Add the updates config to `app.local.json`:
+   ```json
+   {
+     "expo": {
+       "owner": "your-expo-username",
+       "updates": {
+         "url": "https://u.expo.dev/YOUR_PROJECT_ID"
+       },
+       "runtimeVersion": {
+         "policy": "appVersion"
+       }
+     }
+   }
+   ```
+
+3. Rebuild your app (OTA only works after users have a build with `expo-updates` configured):
+   ```sh
+   eas build --platform ios --profile production
+   eas build --platform android --profile production
+   ```
+
+### Publishing Updates
+
+Once users have the new build:
+
+```sh
+# Publish to production channel
+eas update --branch production --message "Bug fixes"
+
+# Publish to preview channel
+eas update --branch preview --message "Testing new feature"
+```
+
+Each build profile points to its own update channel (development, preview, production). Updates are tied to app version via the `appVersion` runtime policy — a 1.0.0 update only goes to 1.0.0 builds.
+
+OTA can update JavaScript and assets, but native changes (new plugins, permissions, native modules) require a new build. The app checks for updates on launch automatically.

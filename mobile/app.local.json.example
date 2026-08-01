@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "owner": "your-expo-username",
+    "slug": "music-library-mobile",
+    "ios": {
+      "bundleIdentifier": "com.yourcompany.lumen"
+    },
+    "android": {
+      "package": "com.yourcompany.lumen"
+    },
+    "extra": {
+      "apiBaseUrl": "https://your-api.example.com",
+      "instagramAppId": "your-instagram-app-id"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/YOUR_PROJECT_ID"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    }
+  }
+}
