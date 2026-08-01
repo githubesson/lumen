@@ -92,44 +92,54 @@ The app supports over-the-air updates via `expo-updates`, letting you push JavaS
 
 ### Setup
 
-1. Get your Expo project ID:
-   ```sh
-   eas project:info
-   ```
+`npm run configure` sets `updates.url` from the EAS project ID you give it.
+To wire it up by hand instead, get the ID with `eas project:info` and add the
+endpoint to `app.local.json` (or `app.json`):
 
-2. Add the updates config to `app.local.json`:
-   ```json
-   {
-     "expo": {
-       "owner": "your-expo-username",
-       "updates": {
-         "url": "https://u.expo.dev/YOUR_PROJECT_ID"
-       },
-       "runtimeVersion": {
-         "policy": "appVersion"
-       }
-     }
-   }
-   ```
-
-3. Rebuild your app (OTA only works after users have a build with `expo-updates` configured):
-   ```sh
-   eas build --platform ios --profile production
-   eas build --platform android --profile production
-   ```
-
-### Publishing Updates
-
-Once users have the new build:
-
-```sh
-# Publish to production channel
-eas update --branch production --message "Bug fixes"
-
-# Publish to preview channel
-eas update --branch preview --message "Testing new feature"
+```json
+{
+  "updates": {
+    "url": "https://u.expo.dev/YOUR_PROJECT_ID"
+  }
+}
 ```
 
-Each build profile points to its own update channel (development, preview, production). Updates are tied to app version via the `appVersion` runtime policy — a 1.0.0 update only goes to 1.0.0 builds.
+`runtimeVersion` (`fingerprint` policy) lives in `app.json` and the update
+channels live in `eas.json` — both are already set, nothing to add there.
 
-OTA can update JavaScript and assets, but native changes (new plugins, permissions, native modules) require a new build. The app checks for updates on launch automatically.
+Then rebuild — OTA only reaches users who have a build with `expo-updates`
+configured:
+
+```sh
+eas build --platform ios --profile production
+```
+
+### Publishing updates
+
+```sh
+eas update --branch production --message "Bug fixes"
+eas update --branch preview     --message "Testing new feature"
+```
+
+Each build profile carries a matching channel (`development` / `preview` /
+`production`), and each channel is mapped to the branch of the same name — so
+a build installs the updates published to its own branch. `eas channel:list`
+shows the mapping; `eas channel:create <name>` recreates one if it's missing.
+
+### Runtime versions
+
+The `fingerprint` policy hashes the native project — deps, config plugins,
+`patches/`, `modules/`. Any native change produces a new runtime version, so
+an update can never land on a build that lacks the native code it needs.
+Check what a commit hashes to with `npx expo-updates fingerprint:generate`;
+if it differs from the installed build's fingerprint, that build needs a
+rebuild, not an update.
+
+The tradeoff is that a bare JS fix must be published from a tree whose native
+inputs match the build. Switching `app.json` to
+`"runtimeVersion": { "policy": "appVersion" }` relaxes that to "any build with
+the same `version`", at the risk of shipping JS to a build without the native
+side it expects.
+
+The app checks for an update on launch and applies it on the next launch —
+that's the `expo-updates` default; no code in `app/` drives it.

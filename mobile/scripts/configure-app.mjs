@@ -35,12 +35,15 @@ const EAS_TEMPLATE = {
     development: {
       developmentClient: true,
       distribution: "internal",
+      channel: "development",
     },
     preview: {
       distribution: "internal",
+      channel: "preview",
     },
     production: {
       autoIncrement: true,
+      channel: "production",
     },
   },
 };
@@ -93,9 +96,16 @@ const FIELDS = [
     key: "easProjectId",
     label: "EAS project ID (blank to skip — `eas init` can create one later)",
     get: () => expo.extra?.eas?.projectId ?? "",
+    // Also points expo-updates at this project's OTA endpoint; without it the
+    // build ships with updates disabled.
     set: (v) => {
-      if (v) expo.extra = { ...expo.extra, eas: { projectId: v } };
-      else if (expo.extra?.eas) delete expo.extra.eas;
+      if (v) {
+        expo.extra = { ...expo.extra, eas: { projectId: v } };
+        expo.updates = { ...expo.updates, url: `https://u.expo.dev/${v}` };
+      } else {
+        if (expo.extra?.eas) delete expo.extra.eas;
+        delete expo.updates;
+      }
     },
   },
   {

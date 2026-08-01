@@ -22,6 +22,7 @@ import {
   useBottomDockInset,
   useDockScrollHandler,
 } from "../../../components/dock/dock-context";
+import { OtaUpdateRows } from "../../../components/ota-updates";
 import { Card, SectionLabel } from "../../../components/primitives";
 import { useTheme, useThemeMode, type ThemeMode, type ThemeTokens } from "../../../theme/theme";
 import { offlineStore, useOfflineForced } from "../../../lib/offline-mode";
@@ -238,6 +239,10 @@ export default function SettingsScreen() {
           />
         </Section>
       ) : null}
+
+      <Section title="Updates" theme={theme}>
+        <OtaUpdateRows />
+      </Section>
 
       <View style={{ paddingHorizontal: theme.space.lg }}>
         <Pressable

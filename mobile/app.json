@@ -7,6 +7,9 @@
     "icon": "./assets/images/icon.png",
     "scheme": "musiclibrarymobile",
     "userInterfaceStyle": "automatic",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
     "ios": {
       "icon": "./assets/icon.icon",
       "supportsTablet": true,
