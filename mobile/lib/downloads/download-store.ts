@@ -20,6 +20,13 @@ import {
   isRejectedStreamContentType,
   looksLikeMediaBytes,
 } from "../track-download";
+import {
+  asciiSnippet,
+  diagnosticsLog,
+  trackLabel,
+  BODY_PROBE_BYTES,
+  type LogEntry,
+} from "../diagnostics/log";
 import { downloadLiveActivity } from "./live-activity";
 
 /**
@@ -269,17 +276,35 @@ class DownloadStore {
                 completeHandler(task.id),
               );
             })
-            .error(({ error }) => {
-              this.fail(task.id, error || "Download failed");
+            .error(({ error, errorCode }) => {
+              this.fail(task.id, error || "Download failed", {
+                event: "task-error-restored",
+                errorCode,
+                title: trackLabel(meta.track),
+                source: meta.track?.source,
+              });
               void completeHandler(task.id);
             });
         }
-      } catch {
+      } catch (error) {
         // Best effort — an unfinished task is simply re-downloaded later.
+        diagnosticsLog.append({
+          scope: "store",
+          level: "warn",
+          event: "reattach-failed",
+          message: `Could not re-attach native download tasks: ${describe(error)}`,
+        });
       }
       if (mutated) await this.persist();
-    } catch {
-      // Best effort — a corrupt store just starts empty.
+    } catch (error) {
+      // Best effort — a corrupt store just starts empty, but silently losing
+      // the whole index looks identical to "nothing was ever downloaded".
+      diagnosticsLog.append({
+        scope: "store",
+        level: "error",
+        event: "hydrate-failed",
+        message: `Could not read the download index: ${describe(error)}`,
+      });
     } finally {
       this.hydrated = true;
       this.hydrating = null;
@@ -294,8 +319,16 @@ class DownloadStore {
         STORAGE_KEY,
         JSON.stringify({ records } satisfies PersistShape),
       );
-    } catch {
-      // Non-fatal: the in-memory map still drives this session.
+    } catch (error) {
+      // Non-fatal for this session, but it means downloads won't survive a
+      // restart — worth a line, since the symptom (re-downloading everything
+      // on launch) looks nothing like the cause.
+      diagnosticsLog.append({
+        scope: "store",
+        level: "warn",
+        event: "persist-failed",
+        message: `Could not persist the download index: ${describe(error)}`,
+      });
     }
   }
 
@@ -334,10 +367,12 @@ class DownloadStore {
     try {
       await this.startTask(track);
     } catch (error) {
-      this.fail(
-        track.id,
-        error instanceof Error ? error.message : "Download failed",
-      );
+      this.fail(track.id, describe(error, "Download failed"), {
+        event: "enqueue-failed",
+        title: trackLabel(track),
+        source: track.source,
+        owner,
+      });
       throw error;
     }
   }
@@ -358,6 +393,19 @@ class DownloadStore {
     }
 
     const headers = await sessionCookieHeader();
+    if (!headers.Cookie) {
+      // Without the session cookie the stream endpoint 401s and the error page
+      // lands in the file — the single most common cause of "not a valid audio
+      // file" below.
+      diagnosticsLog.append({
+        scope: "download",
+        level: "warn",
+        event: "no-session-cookie",
+        message: "Starting a download with no session cookie — expect a 401.",
+        trackId: track.id,
+        title: trackLabel(track),
+      });
+    }
     const meta: TaskMeta = {
       // queueOwner ran before startTask, so pendingOwners holds the owner.
       owners: [...(this.pendingOwners.get(track.id) ?? [])],
@@ -366,18 +414,21 @@ class DownloadStore {
       track,
     };
     let contentType: string | undefined;
+    let expectedBytes: number | undefined;
+    const url = downloadStreamUrl(track.id);
     const task = createDownloadTask({
       // The track id makes the task re-attachable after a restart.
       id: track.id,
-      url: downloadStreamUrl(track.id),
+      url,
       // The library expects a plain path (not a file:// URI); its documents
       // dir is the same container as expo-file-system's Paths.document.
       destination: `${directories.documents}/${DIR_NAME}/${partName}`,
       headers,
       metadata: meta,
     })
-      .begin(({ headers: responseHeaders }) => {
+      .begin(({ headers: responseHeaders, expectedBytes: total }) => {
         contentType = headerValue(responseHeaders, "content-type");
+        expectedBytes = total;
       })
       // Byte-level Live Activity progress. Foreground-only in practice: iOS
       // doesn't deliver progress events to a suspended app (the count beats
@@ -388,12 +439,23 @@ class DownloadStore {
       // completeHandler MUST follow both done and error — iOS throttles
       // future background time for apps that never report completion.
       .done(() => {
-        void this.finalize(track.id, contentType, meta).finally(() =>
+        void this.finalize(track.id, contentType, meta, url).finally(() =>
           completeHandler(track.id),
         );
       })
-      .error(({ error }) => {
-        this.fail(track.id, error || "Download failed");
+      // `errorCode` is the native transport's own reason (NSURLError on iOS,
+      // DownloadManager reason on Android) and is often the only thing that
+      // distinguishes "no network" from "server hung up".
+      .error(({ error, errorCode }) => {
+        this.fail(track.id, error || "Download failed", {
+          event: "task-error",
+          errorCode,
+          title: trackLabel(track),
+          source: track.source,
+          url,
+          contentType,
+          bytes: expectedBytes,
+        });
         void completeHandler(track.id);
       });
     task.start();
@@ -409,16 +471,46 @@ class DownloadStore {
     trackId: string,
     contentType: string | undefined,
     meta: TaskMeta,
+    url?: string,
   ): Promise<void> {
+    const context = {
+      title: trackLabel(meta.track),
+      source: meta.track?.source,
+      url,
+      contentType,
+    };
     try {
       const part = new File(this.dir, `${sanitizeId(trackId)}.part`);
       if (!part.exists) {
-        this.fail(trackId, "Download finished but the file is missing");
+        this.fail(trackId, "Download finished but the file is missing", {
+          event: "part-missing",
+          ...context,
+        });
         return;
       }
 
+      const size = part.size;
+      if (size <= 0) {
+        try {
+          part.delete();
+        } catch {
+          // Overwritten by the next attempt.
+        }
+        this.fail(trackId, "Download finished but the file is empty", {
+          event: "part-empty",
+          bytes: 0,
+          ...context,
+        });
+        return;
+      }
+
+      // Read past the magic bytes: when this turns out not to be audio, the
+      // same buffer is the server's error body ("not found", "forbidden",
+      // "file missing on disk"), which is what actually identifies the cause.
+      // NSURLSession does not fail the task on a 4xx/5xx, so this is the only
+      // place that text is ever visible.
       const handle = part.open();
-      const head = handle.readBytes(16);
+      const head = handle.readBytes(Math.min(size, BODY_PROBE_BYTES));
       handle.close();
       if (
         isRejectedStreamContentType(contentType) ||
@@ -429,7 +521,12 @@ class DownloadStore {
         } catch {
           // Overwritten by the next attempt.
         }
-        this.fail(trackId, "Downloaded stream was not a valid audio file.");
+        this.fail(trackId, "Downloaded stream was not a valid audio file.", {
+          event: "not-audio",
+          bytes: size,
+          body: asciiSnippet(head),
+          ...context,
+        });
         return;
       }
 
@@ -468,24 +565,47 @@ class DownloadStore {
       this.pendingOwners.delete(trackId);
       this.errors.delete(trackId);
       this.emit();
+      // A success line per track is the baseline a failure is read against —
+      // it happens once per track, not once per sync, so it stays cheap.
+      diagnosticsLog.append({
+        scope: "download",
+        level: "info",
+        event: "downloaded",
+        message: `Stored ${filename} (${file.size || 0} bytes)`,
+        trackId,
+        bytes: file.size || 0,
+        ...context,
+      });
       // Runs on background wakes too — this is the Live Activity's only
       // update beat while the app is suspended.
       downloadLiveActivity.noteDone(trackId);
     } catch (error) {
-      this.fail(
-        trackId,
-        error instanceof Error ? error.message : "Download failed",
-      );
+      this.fail(trackId, describe(error, "Download failed"), {
+        event: "finalize-failed",
+        ...context,
+      });
     }
   }
 
-  /** Record a per-track failure. Task callbacks have no awaiter to reject,
-   *  so errors surface through `phaseFor`/`errorFor` subscribers only. */
-  private fail(trackId: string, message: string): void {
+  /**
+   * Record a per-track failure. Task callbacks have no awaiter to reject, so
+   * this is the only funnel every failure passes through — and the in-memory
+   * `errors` map dies with the process, which is why each one is also written
+   * to the on-disk diagnostics log.
+   */
+  private fail(trackId: string, message: string, details?: FailDetails): void {
     this.errors.set(trackId, message);
     this.active.delete(trackId);
     this.pendingOwners.delete(trackId);
     this.emit();
+    diagnosticsLog.append({
+      ...details,
+      scope: "download",
+      level: "error",
+      event: details?.event ?? "download-failed",
+      message,
+      trackId,
+    });
     downloadLiveActivity.noteFailed(trackId);
   }
 
@@ -556,6 +676,17 @@ class DownloadStore {
     const pending = tracks.filter((track) => !this.records.has(track.id));
     downloadLiveActivity.begin(options?.playlistName ?? "Playlist", pending);
     const owner = playlistOwner(playlistId);
+    // One line per sweep instead of one per track: with auto-download
+    // re-enqueueing on every foreground, per-track enqueue lines would bury
+    // everything else.
+    diagnosticsLog.append({
+      scope: "download",
+      level: "info",
+      event: "playlist-enqueue",
+      message: `${options?.playlistName ?? "Playlist"}: ${pending.length} of ${tracks.length} track(s) to fetch`,
+      playlistId,
+      owner,
+    });
     for (const track of tracks) {
       try {
         await this.downloadTrack(track, owner);
@@ -628,9 +759,34 @@ class DownloadStore {
       const response = await fetch(coverUrl, {
         credentials: isApiOrigin(coverUrl) ? "include" : "omit",
       });
-      if (!response.ok) return undefined;
+      if (!response.ok) {
+        diagnosticsLog.append({
+          scope: "cover",
+          level: "warn",
+          event: "cover-http-error",
+          message: `Cover fetch returned ${response.status}`,
+          trackId: track.id,
+          title: trackLabel(track),
+          url: coverUrl,
+          status: response.status,
+        });
+        return undefined;
+      }
       const contentType = response.headers.get("content-type") ?? undefined;
-      if (!contentType?.toLowerCase().startsWith("image/")) return undefined;
+      if (!contentType?.toLowerCase().startsWith("image/")) {
+        diagnosticsLog.append({
+          scope: "cover",
+          level: "warn",
+          event: "cover-not-image",
+          message: `Cover response was ${contentType ?? "an unknown type"}`,
+          trackId: track.id,
+          title: trackLabel(track),
+          url: coverUrl,
+          status: response.status,
+          contentType,
+        });
+        return undefined;
+      }
       const coverKey = track.album_id || track.id;
       const filename = `cover_${sanitizeId(coverKey)}.${extensionForImageContentType(contentType)}`;
       const file = new File(this.ensureCoverDir(), filename);
@@ -641,10 +797,44 @@ class DownloadStore {
         file.write(bytes);
       }
       return filename;
-    } catch {
+    } catch (error) {
+      diagnosticsLog.append({
+        scope: "cover",
+        level: "warn",
+        event: "cover-failed",
+        message: `Cover download failed: ${describe(error)}`,
+        trackId: track.id,
+        title: trackLabel(track),
+      });
       return undefined;
     }
   }
+}
+
+/** Extra context attached to a failure line. `trackId`, `scope` and `level`
+ *  are supplied by {@link DownloadStore.fail} itself. */
+type FailDetails = Partial<
+  Pick<
+    LogEntry,
+    | "event"
+    | "title"
+    | "source"
+    | "owner"
+    | "playlistId"
+    | "url"
+    | "status"
+    | "contentType"
+    | "bytes"
+    | "errorCode"
+    | "body"
+  >
+>;
+
+/** Readable one-liner for an unknown thrown value. */
+function describe(error: unknown, fallback = "unknown error"): string {
+  if (error instanceof Error) return error.message || error.name;
+  if (typeof error === "string" && error) return error;
+  return fallback;
 }
 
 function sanitizeId(id: string): string {
@@ -672,8 +862,16 @@ export async function sessionCookieHeader(): Promise<Record<string, string>> {
     const cookies = await CookieManager.get(getBaseUrl());
     const pairs = Object.values(cookies).map((c) => `${c.name}=${c.value}`);
     return pairs.length ? { Cookie: pairs.join("; ") } : {};
-  } catch {
-    return {}; // No cookie -> the server 401s -> finalize rejects the body.
+  } catch (error) {
+    // No cookie -> the server 401s -> finalize rejects the body. Silently
+    // returning {} here used to make that look like a corrupt audio file.
+    diagnosticsLog.append({
+      scope: "download",
+      level: "warn",
+      event: "cookie-read-failed",
+      message: `Could not read the session cookie: ${describe(error)}`,
+    });
+    return {};
   }
 }
 

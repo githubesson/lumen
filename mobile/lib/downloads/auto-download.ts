@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSyncExternalStore } from "react";
 import { api, playlistEntryToTrack, type TrackListItem } from "@music-library/core";
 import { downloadStore } from "./download-store";
+import { diagnosticsLog } from "../diagnostics/log";
 import { offlineStore } from "../offline-mode";
 
 /**
@@ -69,8 +70,17 @@ class AutoDownloadStore {
           if (typeof id === "string" && id) this.enabled.add(id);
         }
       }
-    } catch {
-      // An unreadable flag set just means nothing is opted in.
+    } catch (error) {
+      // An unreadable flag set just means nothing is opted in — which silently
+      // disables auto-download entirely, so it gets a line.
+      diagnosticsLog.append({
+        scope: "auto-sync",
+        level: "error",
+        event: "flags-unreadable",
+        message: `Could not read auto-download settings: ${
+          error instanceof Error ? error.message || error.name : "unknown error"
+        }`,
+      });
     }
     this.hydrated = true;
     this.emit();
@@ -101,6 +111,13 @@ class AutoDownloadStore {
     else this.enabled.delete(playlistId);
     this.persist();
     this.emit();
+    diagnosticsLog.append({
+      scope: "auto-sync",
+      level: "info",
+      event: value ? "auto-enabled" : "auto-disabled",
+      message: `Auto-download ${value ? "enabled" : "disabled"} for ${options?.playlistName ?? playlistId}`,
+      playlistId,
+    });
     if (!value) return;
     if (options?.tracks?.length) {
       await downloadStore.downloadPlaylist(playlistId, options.tracks, {
@@ -122,7 +139,18 @@ class AutoDownloadStore {
   ): Promise<void> {
     await this.hydrate();
     if (!this.enabled.has(playlistId)) return;
-    if (offlineStore.isOffline()) return;
+    if (offlineStore.isOffline()) {
+      // Worth a line: "auto-download did nothing" and "auto-download thinks
+      // it's offline" are indistinguishable from the outside.
+      diagnosticsLog.append({
+        scope: "auto-sync",
+        level: "info",
+        event: "sync-skipped-offline",
+        message: `Skipped ${options?.playlistName ?? playlistId} — offline`,
+        playlistId,
+      });
+      return;
+    }
     await downloadStore.hydrate();
     const missing = tracks.filter((track) => !downloadStore.isDownloaded(track.id));
     if (missing.length === 0) return;
@@ -150,9 +178,19 @@ class AutoDownloadStore {
       const tracks = (response.tracks ?? []).map(playlistEntryToTrack);
       if (tracks.length === 0) return;
       await this.syncWithTracks(playlistId, tracks, options);
-    } catch {
+    } catch (error) {
       // Offline or server-side failure: leave existing downloads untouched and
-      // retry on the next foreground / reconnect.
+      // retry on the next foreground / reconnect. This is the one failure that
+      // used to leave no trace at all — the playlist simply never updated.
+      diagnosticsLog.append({
+        scope: "auto-sync",
+        level: "error",
+        event: "sync-failed",
+        message: `Could not list tracks for ${options?.playlistName ?? playlistId}: ${
+          error instanceof Error ? error.message || error.name : "unknown error"
+        }`,
+        playlistId,
+      });
     } finally {
       this.syncing.delete(playlistId);
     }

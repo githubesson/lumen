@@ -10,6 +10,10 @@ export default function SettingsStackLayout() {
         options={{ headerLargeTitle: false, title: "Replay" }}
       />
       <Stack.Screen
+        name="download-log"
+        options={{ headerLargeTitle: false, title: "Download log" }}
+      />
+      <Stack.Screen
         name="albums/[id]"
         options={{ headerLargeTitle: false, title: "" }}
       />

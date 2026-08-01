@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -9,7 +9,7 @@ import {
   View,
 } from "react-native";
 import { SymbolView } from "expo-symbols";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import * as WebBrowser from "expo-web-browser";
 import {
@@ -25,6 +25,7 @@ import {
 import { OtaUpdateRows } from "../../../components/ota-updates";
 import { Card, SectionLabel } from "../../../components/primitives";
 import { useTheme, useThemeMode, type ThemeMode, type ThemeTokens } from "../../../theme/theme";
+import { diagnosticsLog } from "../../../lib/diagnostics/log";
 import { offlineStore, useOfflineForced } from "../../../lib/offline-mode";
 
 export default function SettingsScreen() {
@@ -38,6 +39,19 @@ export default function SettingsScreen() {
   const [lastFM, setLastFM] = useState<LastFMStatus | null>(null);
   const [lastFMBusy, setLastFMBusy] = useState(false);
   const [lastFMError, setLastFMError] = useState<string | null>(null);
+  const [logProblems, setLogProblems] = useState(0);
+
+  // Counting scans the log file, so it happens after paint rather than during
+  // render. Re-counted on focus so the badge reflects a sync that just ran.
+  useFocusEffect(
+    useCallback(() => {
+      const timer = setTimeout(
+        () => setLogProblems(diagnosticsLog.problemCount()),
+        0,
+      );
+      return () => clearTimeout(timer);
+    }, []),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -145,6 +159,18 @@ export default function SettingsScreen() {
 
       <Section title="Offline" theme={theme}>
         <OfflineModeRow theme={theme} />
+        <LinkRow
+          label="Download log"
+          icon="doc.text.magnifyingglass"
+          theme={theme}
+          firstBorder
+          value={logProblems > 0 ? `${logProblems}` : undefined}
+          valueTone={logProblems > 0 ? "danger" : undefined}
+          onPress={() => {
+            void Haptics.selectionAsync();
+            router.push("/(tabs)/(settings)/download-log");
+          }}
+        />
       </Section>
 
       <Section title="Library" theme={theme}>
@@ -359,12 +385,17 @@ function LinkRow({
   onPress,
   theme,
   firstBorder,
+  value,
+  valueTone,
 }: {
   label: string;
   icon: Parameters<typeof SymbolView>[0]["name"];
   onPress: () => void;
   theme: ThemeTokens;
   firstBorder?: boolean;
+  /** Optional trailing detail shown before the chevron (a count, a status). */
+  value?: string;
+  valueTone?: "danger";
 }) {
   return (
     <Pressable
@@ -384,11 +415,26 @@ function LinkRow({
         <SymbolView name={icon} size={18} tintColor={theme.color.fg} />
         <Text style={{ color: theme.color.fg, fontSize: 16 }}>{label}</Text>
       </View>
-      <SymbolView
-        name="chevron.right"
-        size={14}
-        tintColor={theme.color.fgMuted}
-      />
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        {value ? (
+          <Text
+            style={{
+              color:
+                valueTone === "danger"
+                  ? theme.color.danger
+                  : theme.color.fgMuted,
+              fontSize: 16,
+            }}
+          >
+            {value}
+          </Text>
+        ) : null}
+        <SymbolView
+          name="chevron.right"
+          size={14}
+          tintColor={theme.color.fgMuted}
+        />
+      </View>
     </Pressable>
   );
 }

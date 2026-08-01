@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
-import { AppState } from "react-native";
+import { AppState, Platform } from "react-native";
+import Constants from "expo-constants";
+import * as Updates from "expo-updates";
 import type { TrackListItem } from "@music-library/core";
 import { downloadStore, playlistOwner } from "./download-store";
 import { autoDownloadStore } from "./auto-download";
+import { diagnosticsLog } from "../diagnostics/log";
 import { offlineStore } from "../offline-mode";
 
 export {
@@ -24,6 +27,16 @@ export { autoDownloadStore, useAutoDownload } from "./auto-download";
  */
 export function DownloadsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
+    // The log deliberately depends on nothing but the filesystem, so the app
+    // hands it the ambient context here. `appState` is what identifies a
+    // failure that happened during an unattended background sync.
+    diagnosticsLog.configure({
+      context: () => ({
+        net: offlineStore.isOffline() ? "offline" : "online",
+        appState: AppState.currentState,
+      }),
+      describeBuild,
+    });
     void downloadStore.hydrate();
     void autoDownloadStore.syncAll();
 
@@ -47,6 +60,20 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
     };
   }, []);
   return <>{children}</>;
+}
+
+/**
+ * One-line build identity for the head of each log session, so a log copied
+ * out of the app says which binary and which OTA update produced it.
+ * `expo-updates` is inert in a dev client, where these read as null.
+ */
+function describeBuild(): string {
+  const version = Constants.expoConfig?.version ?? "?";
+  const update = Updates.isEmbeddedLaunch
+    ? "embedded"
+    : (Updates.updateId ?? "none");
+  const channel = Updates.channel ? ` · ${Updates.channel}` : "";
+  return `${version} · ${Platform.OS} ${Platform.Version} · update ${update}${channel}`;
 }
 
 export type PlaylistDownloadStatus =
