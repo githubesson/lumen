@@ -65,7 +65,6 @@ function QueueRowImpl({
             size={44}
             transitionMs={0}
             priority="low"
-            recyclingKey={`${track.album_id ?? track.id}:${track.id}`}
           />
         ) : (
           <View

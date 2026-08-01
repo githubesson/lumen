@@ -664,9 +664,10 @@ interface TaskMeta {
  * All cookies for the API origin as one `Cookie` header. The native
  * downloaders (notably Android's DownloadManager) don't share RN's cookie
  * jar, so the session cookie must be attached explicitly for
- * `/api/tracks/{id}/stream` to authenticate.
+ * `/api/tracks/{id}/stream` to authenticate. expo-image's `prefetch` has the
+ * same problem against the cover endpoints, so it shares this helper.
  */
-async function sessionCookieHeader(): Promise<Record<string, string>> {
+export async function sessionCookieHeader(): Promise<Record<string, string>> {
   try {
     const cookies = await CookieManager.get(getBaseUrl());
     const pairs = Object.values(cookies).map((c) => `${c.name}=${c.value}`);

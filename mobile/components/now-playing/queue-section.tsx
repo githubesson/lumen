@@ -25,6 +25,7 @@ import {
 } from "react-native-reanimated";
 import { trackCoverUrl, type TrackListItem } from "@music-library/core";
 import { useTheme } from "../../theme/theme";
+import { sessionCookieHeader } from "../../lib/downloads";
 import { ModePill } from "./mode-pill";
 import { QUEUE_ROW_HEIGHT, QueueRow } from "./queue-row";
 
@@ -226,8 +227,28 @@ export const QueueSection = memo(function QueueSection({
       ),
     ).filter((url) => !prefetchedArtworkRef.current.has(url));
     if (urls.length === 0) return;
-    for (const url of urls) prefetchedArtworkRef.current.add(url);
-    void Image.prefetch(urls, "memory-disk");
+    let cancelled = false;
+    // Cover endpoints sit behind RequireUser, and expo-image's prefetch runs on
+    // a native HTTP stack that does not share RN's cookie jar — so an
+    // unauthenticated prefetch 401s and expo-image caches that failure against
+    // the URL. The rows then render nothing, because the <Image> they mount
+    // asks for the very URL now marked as failed. Attach the session cookie
+    // (same reason the downloader does) and only mark a URL as prefetched once
+    // it actually succeeded, so a transient failure can be retried.
+    void (async () => {
+      const headers = await sessionCookieHeader();
+      if (cancelled) return;
+      const ok = await Image.prefetch(urls, {
+        cachePolicy: "memory-disk",
+        headers,
+      }).catch(() => false);
+      if (ok && !cancelled) {
+        for (const url of urls) prefetchedArtworkRef.current.add(url);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [queue, queueOpen, startIndex, upcomingLength]);
 
   const isAdvancingQueue = displayedQueue.startIndex !== startIndex;

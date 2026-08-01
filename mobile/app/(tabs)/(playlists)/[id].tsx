@@ -23,6 +23,7 @@ import {
   SORT_DEFAULT_ASC,
   api,
   compareSortableTracks,
+  playlistEntryToTrack as entryToTrack,
   useAuth,
   type Playlist,
   type PlaylistTrackEntry,
@@ -52,7 +53,9 @@ import { TrackActionsContextMenu } from "../../../components/track-actions-menu"
 import { qk } from "../../../lib/query-keys";
 import { usePlayQueue } from "../../../lib/use-play-queue";
 import {
+  autoDownloadStore,
   downloadStore,
+  useAutoDownload,
   useDownloadedPlaylistTracks,
   usePlaylistDownload,
   type PlaylistDownloadStatus,
@@ -217,6 +220,16 @@ export default function PlaylistDetailScreen() {
   );
   const onTrackPress = usePlayQueue(tracks);
 
+  // Fresh query data is the earliest signal that entries were added, so catch
+  // up here too rather than waiting for the next foreground or reconnect.
+  // No-ops unless this playlist is opted in and something is actually missing.
+  useEffect(() => {
+    if (!id || tracks.length === 0) return;
+    void autoDownloadStore.syncWithTracks(id, tracks, {
+      playlistName: playlist?.name,
+    });
+  }, [id, tracks, playlist?.name]);
+
   const onSelectSort = useCallback((key: SortKey) => {
     void Haptics.selectionAsync();
     setSortKey((prevKey) => {
@@ -371,6 +384,14 @@ export default function PlaylistDetailScreen() {
           ) : null}
           {tracks.length > 0 ? (
             <PlaylistDownloadButton
+              theme={theme}
+              playlistId={p.id}
+              playlistName={p.name}
+              tracks={tracks}
+            />
+          ) : null}
+          {tracks.length > 0 ? (
+            <PlaylistAutoDownloadButton
               theme={theme}
               playlistId={p.id}
               playlistName={p.name}
@@ -818,6 +839,81 @@ function PlaylistDownloadButton({
 }
 
 /**
+ * Toggles "keep this playlist downloaded". Enabling downloads the current
+ * tracks straight away and arms the background sync; disabling stops future
+ * syncs but keeps files already on the device.
+ */
+function PlaylistAutoDownloadButton({
+  theme,
+  playlistId,
+  playlistName,
+  tracks,
+}: {
+  theme: ThemeTokens;
+  playlistId: string;
+  playlistName: string;
+  tracks: TrackListItem[];
+}) {
+  const enabled = useAutoDownload(playlistId);
+  const offline = useIsOffline();
+
+  const onPress = useCallback(() => {
+    // Turning it on needs the network for the initial catch-up sync; turning it
+    // off is a local flag change and stays available offline.
+    if (offline && !enabled) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      Alert.alert(
+        "You're offline",
+        "Reconnect to keep this playlist downloaded automatically.",
+      );
+      return;
+    }
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    void autoDownloadStore.setEnabled(playlistId, !enabled, {
+      tracks,
+      playlistName,
+    });
+  }, [enabled, offline, playlistId, playlistName, tracks]);
+
+  const tint = enabled ? theme.color.accent : theme.color.fg;
+
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityState={{ checked: enabled }}
+      accessibilityLabel="Automatically download new tracks"
+      accessibilityHint={
+        enabled
+          ? "New tracks added to this playlist download automatically"
+          : "Turn on to download new tracks added to this playlist"
+      }
+      onPress={onPress}
+      style={({ pressed }) => ({
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 7,
+        backgroundColor: theme.color.bgElev1,
+        borderRadius: theme.radius.md,
+        paddingHorizontal: 14,
+        paddingVertical: 9,
+        opacity: pressed ? 0.8 : 1,
+        borderCurve: "continuous",
+      })}
+    >
+      <SymbolView
+        name={enabled ? "arrow.clockwise.circle.fill" : "arrow.clockwise.circle"}
+        size={15}
+        tintColor={tint}
+      />
+      <Text style={{ color: tint, fontWeight: "500", fontSize: 14 }}>
+        {enabled ? "Auto" : "Auto off"}
+      </Text>
+    </Pressable>
+  );
+}
+
+/**
  * Reorder-mode cell. `useReorderableDrag`/`useIsActive` read the cell context
  * that ReorderableList provides per item, so they have to live in a component
  * rendered by `renderItem` rather than in the screen.
@@ -973,23 +1069,6 @@ function PlaylistEmptyState() {
       style={{ paddingVertical: 48 }}
     />
   );
-}
-
-function entryToTrack(e: PlaylistTrackEntry): TrackListItem {
-  return {
-    id: e.track_id,
-    title: e.title,
-    album_id: e.album_id,
-    album_title: e.album_title,
-    track_no: e.track_no,
-    duration_ms: e.duration_ms,
-    artist: e.artist,
-    has_cover: e.has_cover,
-    cover_url: e.cover_url,
-    source: e.source,
-    source_id: e.source_id,
-    source_album_id: e.source_album_id,
-  };
 }
 
 /** Inverse of {@link entryToTrack} for offline fallback rows built from

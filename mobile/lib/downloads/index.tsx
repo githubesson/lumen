@@ -1,21 +1,50 @@
 import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { AppState } from "react-native";
 import type { TrackListItem } from "@music-library/core";
 import { downloadStore, playlistOwner } from "./download-store";
+import { autoDownloadStore } from "./auto-download";
+import { offlineStore } from "../offline-mode";
 
 export {
   downloadStore,
   playlistOwner,
+  sessionCookieHeader,
   type DownloadRecord,
   type DownloadPhase,
 } from "./download-store";
 
+export { autoDownloadStore, useAutoDownload } from "./auto-download";
+
 /**
  * Hydrates the offline store once for the app. Mount high in the tree so the
  * in-memory record map is populated before the player resolves any track URI.
+ *
+ * Also drives auto-download syncs for opted-in playlists: once at startup, on
+ * return to foreground, and whenever connectivity comes back.
  */
 export function DownloadsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void downloadStore.hydrate();
+    void autoDownloadStore.syncAll();
+
+    const appStateSub = AppState.addEventListener("change", (state) => {
+      if (state === "active") void autoDownloadStore.syncAll();
+    });
+
+    // The offline store already owns the NetInfo subscription and the user's
+    // forced-offline switch; fire only on transitions back to online so we
+    // don't retry against a connection we know is down.
+    let wasOffline = offlineStore.isOffline();
+    const unsubscribeOffline = offlineStore.subscribe(() => {
+      const offline = offlineStore.isOffline();
+      if (wasOffline && !offline) void autoDownloadStore.syncAll();
+      wasOffline = offline;
+    });
+
+    return () => {
+      appStateSub.remove();
+      unsubscribeOffline();
+    };
   }, []);
   return <>{children}</>;
 }
