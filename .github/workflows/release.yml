@@ -90,8 +90,8 @@ jobs:
         shell: bash
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # Optional: bakes Rich Presence support into the build (blank = off).
-      DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
+      # Optional repository variable: bakes Rich Presence support into the build (blank = off).
+      DISCORD_CLIENT_ID: ${{ vars.DISCORD_CLIENT_ID }}
       # Optional repository variable; the project repository is the baked-in
       # default when this is unset.
       UPDATE_REPO_URL: ${{ vars.UPDATE_REPO_URL || 'https://github.com/githubesson/lumen' }}
