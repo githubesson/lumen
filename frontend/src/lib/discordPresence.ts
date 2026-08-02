@@ -30,26 +30,52 @@ interface SignedCoverCacheEntry {
  * React-state round-trip and the 250 ms quantization in `usePlayerTime`.
  */
 export function useDiscordPresence() {
-  const { current } = usePlayer();
+  const { current, isPlaying } = usePlayer();
   const adapter = usePlayerAdapter();
   const currentRef = useRef<TrackListItem | null>(null);
+  const isPlayingRef = useRef(false);
   const coverUrlCacheRef = useRef<Map<string, SignedCoverCacheEntry>>(new Map());
   const remoteActivityPushedRef = useRef(false);
+  const remoteActivityPendingRef = useRef(false);
   const remotePushGenerationRef = useRef(0);
+  const pushLocalActivityRef = useRef<
+    (overrides?: { isPlaying?: boolean; elapsedSec?: number }) => void
+  >(() => {});
 
   useEffect(() => {
     currentRef.current = current;
   }, [current]);
 
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
   const pushRemoteActivity = useCallback(
     async (activity: PlaybackActivity | null) => {
-      const generation = ++remotePushGenerationRef.current;
-      if (currentRef.current) return;
-      if (!activity) {
-        if (remoteActivityPushedRef.current) {
-          remoteActivityPushedRef.current = false;
-          await clearDiscordActivity();
+      const localTrack = currentRef.current;
+      // A playing local player stays authoritative. A paused local player only
+      // yields to a remote device that is actually playing; paused remote
+      // heartbeats must not replace (or leave behind) its local status.
+      if (
+        localTrack &&
+        (isPlayingRef.current || !activity?.is_playing)
+      ) {
+        if (
+          remoteActivityPushedRef.current ||
+          remoteActivityPendingRef.current
+        ) {
+          pushLocalActivityRef.current({
+            isPlaying: isPlayingRef.current,
+          });
         }
+        return;
+      }
+
+      const generation = ++remotePushGenerationRef.current;
+      remoteActivityPendingRef.current = !!activity;
+      if (!activity) {
+        remoteActivityPushedRef.current = false;
+        await clearDiscordActivity();
         return;
       }
 
@@ -60,10 +86,15 @@ export function useDiscordPresence() {
       );
       if (
         generation !== remotePushGenerationRef.current ||
-        currentRef.current
+        (currentRef.current !== null &&
+          (isPlayingRef.current || !activity.is_playing))
       ) {
+        if (generation === remotePushGenerationRef.current) {
+          remoteActivityPendingRef.current = false;
+        }
         return;
       }
+      remoteActivityPendingRef.current = false;
       remoteActivityPushedRef.current = true;
       await pushDiscordActivity({
         trackId: activity.track_id,
@@ -85,9 +116,15 @@ export function useDiscordPresence() {
   useEffect(() => {
     if (!isElectron()) return;
 
-    const push = (overrides?: { isPlaying?: boolean; elapsedSec?: number }) => {
+    const pushLocal = (overrides?: {
+      isPlaying?: boolean;
+      elapsedSec?: number;
+    }) => {
       const track = currentRef.current;
       if (!track) return;
+      const generation = ++remotePushGenerationRef.current;
+      remoteActivityPendingRef.current = false;
+      remoteActivityPushedRef.current = false;
       const cover = coverUrlCacheRef.current;
       const trackId = track.id;
       const duration = adapter.duration() || 0;
@@ -96,7 +133,12 @@ export function useDiscordPresence() {
       const isPlaying = overrides?.isPlaying ?? true;
       void (async () => {
         const coverUrl = await resolveSignedCoverUrl(track, cover);
-        if (currentRef.current?.id !== trackId) return;
+        if (
+          generation !== remotePushGenerationRef.current ||
+          currentRef.current?.id !== trackId
+        ) {
+          return;
+        }
         await pushDiscordActivity({
           trackId,
           title: track.title,
@@ -110,56 +152,64 @@ export function useDiscordPresence() {
       })();
     };
 
-    const offPlay = adapter.on("play", () => push({ isPlaying: true }));
-    const offPause = adapter.on("pause", () => push({ isPlaying: false }));
+    pushLocalActivityRef.current = pushLocal;
+    const pushPreferred = (overrides: {
+      isPlaying: boolean;
+      elapsedSec?: number;
+    }) => {
+      isPlayingRef.current = overrides.isPlaying;
+      const remote = getLatestPlaybackActivity();
+      if (!overrides.isPlaying && remote?.is_playing) {
+        void pushRemoteActivity(remote);
+      } else {
+        pushLocal(overrides);
+      }
+    };
+
+    const offPlay = adapter.on("play", () =>
+      pushPreferred({ isPlaying: true }),
+    );
+    const offPause = adapter.on("pause", () =>
+      pushPreferred({ isPlaying: false }),
+    );
     // `repeat:one` is handled by the core (ended → seek(0) → play), so the
     // loop reset reaches us via `seeked`. Non-loop track ends arrive as a
     // `current` change, which the track-change effect below handles.
-    const offSeeked = adapter.on("seeked", () => push());
-    const offMeta = adapter.on("loadedmetadata", () => push());
+    const offSeeked = adapter.on("seeked", () =>
+      pushPreferred({ isPlaying: isPlayingRef.current }),
+    );
+    const offMeta = adapter.on("loadedmetadata", () =>
+      pushPreferred({ isPlaying: isPlayingRef.current }),
+    );
 
     return () => {
+      pushLocalActivityRef.current = () => {};
       offPlay();
       offPause();
       offSeeked();
       offMeta();
     };
-  }, [adapter]);
+  }, [adapter, pushRemoteActivity]);
 
-  // Track changes: push a fresh activity (with elapsedSec=0 since the new
-  // track hasn't started yet) and clear presence when nothing is playing.
+  // Track and local play-state changes re-evaluate which device owns presence.
+  // A new local track starts at elapsedSec=0 until the adapter reports more.
   useEffect(() => {
     if (!isElectron()) return;
     if (!current) {
-      const remote = getLatestPlaybackActivity();
-      if (remote) void pushRemoteActivity(remote);
-      else if (!remoteActivityPushedRef.current) void clearDiscordActivity();
+      void pushRemoteActivity(getLatestPlaybackActivity());
       return;
     }
-    remotePushGenerationRef.current++;
-    remoteActivityPushedRef.current = false;
-    const trackId = current.id;
-    void (async () => {
-      const coverUrl = await resolveSignedCoverUrl(
-        current,
-        coverUrlCacheRef.current,
-      );
-      if (currentRef.current?.id !== trackId) return;
-      await pushDiscordActivity({
-        trackId,
-        title: current.title,
-        artist: current.artist ?? undefined,
-        album: current.album_title ?? undefined,
-        coverUrl,
-        durationSec: undefined,
-        elapsedSec: 0,
-        isPlaying: true,
-      });
-    })();
-  }, [current, pushRemoteActivity]);
+    const remote = getLatestPlaybackActivity();
+    if (!isPlaying && remote?.is_playing) {
+      void pushRemoteActivity(remote);
+    } else {
+      pushLocalActivityRef.current({ isPlaying, elapsedSec: 0 });
+    }
+  }, [current, isPlaying, pushRemoteActivity]);
 
   // The player-owned WebSocket publishes live snapshots from other signed-in
-  // devices. Keep Discord mirrored while this desktop player is idle.
+  // devices. Keep Discord mirrored while this desktop player is not actively
+  // playing, including when it still has a paused track loaded.
   useEffect(() => {
     if (!isElectron()) return;
     return subscribePlaybackActivity((activity) => {
