@@ -2,11 +2,18 @@ import CarPlay
 import ExpoModulesCore
 import UIKit
 
-/// Attaches the window Expo creates in `AppDelegate` to UIKit's phone scene.
-///
-/// Adding the CarPlay scene role opts the whole app into scene lifecycle. Expo
-/// still starts React Native in its app-delegate window, so that same window
-/// must be adopted here instead of creating a second React root.
+/// App-target contract used by both scene delegates. This must be public
+/// because the generated AppDelegate and this static framework are compiled as
+/// separate Swift modules; it is intentionally not part of the JavaScript API.
+public protocol LumenReactRuntimeHosting: AnyObject {
+  func ensureReactRuntimeStarted()
+  func connectPhoneScene(_ windowScene: UIWindowScene) -> UIWindow
+  func disconnectPhoneScene(_ windowScene: UIWindowScene)
+}
+
+/// Creates a scene-native phone window and attaches the already-retained React
+/// controller to it. A CarPlay-first launch therefore never needs to open a
+/// phone window just to initialize JavaScript.
 @objc(LumenPhoneSceneDelegate)
 public final class LumenPhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
   public var window: UIWindow?
@@ -16,17 +23,21 @@ public final class LumenPhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
     willConnectTo session: UISceneSession,
     options connectionOptions: UIScene.ConnectionOptions
   ) {
-    guard
-      let windowScene = scene as? UIWindowScene,
-      let appDelegate = UIApplication.shared.delegate,
-      let appWindow = appDelegate.window ?? nil
-    else {
+    guard let windowScene = scene as? UIWindowScene else { return }
+    guard let runtimeHost = UIApplication.shared.delegate as? LumenReactRuntimeHosting else {
+      assertionFailure("AppDelegate does not conform to LumenReactRuntimeHosting")
       return
     }
 
-    appWindow.windowScene = windowScene
-    window = appWindow
-    appWindow.makeKeyAndVisible()
+    runtimeHost.ensureReactRuntimeStarted()
+    window = runtimeHost.connectPhoneScene(windowScene)
+  }
+
+  public func sceneDidDisconnect(_ scene: UIScene) {
+    guard let windowScene = scene as? UIWindowScene else { return }
+    (UIApplication.shared.delegate as? LumenReactRuntimeHosting)?
+      .disconnectPhoneScene(windowScene)
+    window = nil
   }
 
   /// Scene-based apps receive custom-scheme links here instead of through

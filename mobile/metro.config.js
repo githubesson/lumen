@@ -12,10 +12,18 @@ const config = getDefaultConfig(__dirname);
 // editing core/src/** hot-reloads instead of silently bundling a stale
 // vendored copy.
 const siblingCoreRoot = path.resolve(__dirname, "..", "core");
-const bundledCoreRoot = path.resolve(__dirname, "packages", "music-library-core");
+const bundledCoreRoot = path.resolve(
+  __dirname,
+  "packages",
+  "music-library-core",
+);
 
-const hasSiblingCore = fs.existsSync(path.join(siblingCoreRoot, "src", "index.ts"));
-const hasBundledCore = fs.existsSync(path.join(bundledCoreRoot, "src", "index.ts"));
+const hasSiblingCore = fs.existsSync(
+  path.join(siblingCoreRoot, "src", "index.ts"),
+);
+const hasBundledCore = fs.existsSync(
+  path.join(bundledCoreRoot, "src", "index.ts"),
+);
 
 if (!hasSiblingCore && !hasBundledCore) {
   throw new Error(
@@ -32,8 +40,13 @@ if (!hasSiblingCore && !hasBundledCore) {
 // bundle with "Failed to get the SHA-1". Builds therefore use the vendored
 // copy, which postinstall has just refreshed from that same sibling, so it is
 // the identical source either way.
-const isCloudBuild = !!process.env.EAS_BUILD || !!process.env.CI;
-const useSiblingCore = hasSiblingCore && !(isCloudBuild && hasBundledCore);
+const isBundleBuild =
+  !!process.env.EAS_BUILD ||
+  !!process.env.CI ||
+  process.env.CONFIGURATION === "Release" ||
+  process.env.NODE_ENV === "production" ||
+  process.env.BUNDLE_COMMAND === "export:embed";
+const useSiblingCore = hasSiblingCore && !(isBundleBuild && hasBundledCore);
 
 const coreRoot = useSiblingCore ? siblingCoreRoot : bundledCoreRoot;
 const appNodeModules = path.resolve(__dirname, "node_modules");
@@ -61,14 +74,24 @@ const coreSubpathAliases = {
   "@music-library/core/storage": path.join(coreRoot, "src", "storage.ts"),
   "@music-library/core/events": path.join(coreRoot, "src", "events.ts"),
   "@music-library/core/format": path.join(coreRoot, "src", "format.ts"),
-  "@music-library/core/auth": path.join(coreRoot, "src", "auth", "auth-core.tsx"),
+  "@music-library/core/auth": path.join(
+    coreRoot,
+    "src",
+    "auth",
+    "auth-core.tsx",
+  ),
   "@music-library/core/favorites": path.join(
     coreRoot,
     "src",
     "favorites",
     "favorites-core.tsx",
   ),
-  "@music-library/core/player": path.join(coreRoot, "src", "player", "index.ts"),
+  "@music-library/core/player": path.join(
+    coreRoot,
+    "src",
+    "player",
+    "index.ts",
+  ),
 };
 
 const defaultResolveRequest = config.resolver.resolveRequest;

@@ -12,6 +12,10 @@ import UIKit
 final class CarPlaySceneManager {
   static let shared = CarPlaySceneManager()
 
+  /// Long enough for an OTA or development manifest request, but bounded so a
+  /// missing bundle never leaves the car's spinner up for the whole drive.
+  private let bootstrapTimeout: TimeInterval = 20
+
   private(set) var interfaceController: CPInterfaceController?
 
   /// Set by `CarPlayModule` while a JS runtime is alive, cleared on teardown so
@@ -30,19 +34,19 @@ final class CarPlaySceneManager {
     interfaceController?.carTraitCollection.displayScale ?? 2
   }
 
-  /// Shown while JS is still booting. Kept as state so a failed bundle load can
-  /// be surfaced in the car rather than hanging on "Loading" forever.
-  private var placeholderText = "Loading your library…"
+  private var bootstrapDeadline: DispatchWorkItem?
 
   func connect(interfaceController: CPInterfaceController) {
     NSLog("LUMENCP: connect, hasOnConnect=\(onConnect != nil)")
     self.interfaceController = interfaceController
     showPlaceholder()
+    beginBootstrapDeadline()
     onConnect?()
   }
 
   func disconnect() {
     NSLog("LUMENCP: disconnect")
+    cancelBootstrapDeadline()
     interfaceController = nil
     // Artwork was rendered for this car's screen scale, and the next one may
     // differ; holding decoded covers past the drive buys nothing either.
@@ -52,7 +56,15 @@ final class CarPlaySceneManager {
 
   func setRootTemplate(_ template: CPTemplate, animated: Bool) {
     NSLog("LUMENCP: setRootTemplate, hasController=\(interfaceController != nil)")
+    // Only JS calls this method. Reaching it is the native proof that the
+    // runtime, module, and first real root template all initialized.
+    cancelBootstrapDeadline()
     interfaceController?.setRootTemplate(template, animated: animated, completion: nil)
+  }
+
+  func showRuntimeHostError(_ detail: String) {
+    cancelBootstrapDeadline()
+    showError(subtitle: detail)
   }
 
   /// An empty list with a spinner, rather than a row saying "Loading…": the
@@ -61,9 +73,46 @@ final class CarPlaySceneManager {
   private func showPlaceholder() {
     let template = CPListTemplate(title: "Lumen", sections: [])
     template.emptyViewTitleVariants = ["Lumen"]
-    template.emptyViewSubtitleVariants = [placeholderText]
+    template.emptyViewSubtitleVariants = ["Loading your library…"]
     if #available(iOS 18.4, *) {
       template.showsSpinnerWhileEmpty = true
+    }
+    interfaceController?.setRootTemplate(template, animated: false, completion: nil)
+  }
+
+  private func beginBootstrapDeadline() {
+    cancelBootstrapDeadline()
+    let deadline = DispatchWorkItem { [weak self] in
+      guard let self, self.interfaceController != nil else { return }
+#if DEBUG
+      self.showError(
+        subtitle: "Start Metro and open this project in the development client, or configure LUMEN_DEV_LAUNCH_URL, then reconnect CarPlay."
+      )
+#else
+      self.showError(
+        subtitle: "Lumen could not finish loading. Disconnect and reconnect CarPlay. If the problem continues, relaunch Lumen."
+      )
+#endif
+    }
+    bootstrapDeadline = deadline
+    DispatchQueue.main.asyncAfter(
+      deadline: .now() + bootstrapTimeout,
+      execute: deadline
+    )
+  }
+
+  private func cancelBootstrapDeadline() {
+    bootstrapDeadline?.cancel()
+    bootstrapDeadline = nil
+  }
+
+  private func showError(subtitle: String) {
+    NSLog("LUMENCP: React bootstrap failed")
+    let template = CPListTemplate(title: "Lumen", sections: [])
+    template.emptyViewTitleVariants = ["Unable to start Lumen"]
+    template.emptyViewSubtitleVariants = [subtitle]
+    if #available(iOS 18.4, *) {
+      template.showsSpinnerWhileEmpty = false
     }
     interfaceController?.setRootTemplate(template, animated: false, completion: nil)
   }
