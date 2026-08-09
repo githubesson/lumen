@@ -13,6 +13,8 @@ type Invites struct {
 	Store *invites.Store
 }
 
+const maxInviteUses = 1<<31 - 1
+
 type createInviteReq struct {
 	TargetRole string `json:"target_role,omitempty"`
 	MaxUses    int    `json:"max_uses,omitempty"`
@@ -50,9 +52,10 @@ func (h *Invites) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid target_role", http.StatusBadRequest)
 		return
 	}
-	maxUses := req.MaxUses
-	if maxUses <= 0 {
-		maxUses = 1
+	maxUses, ok := normalizeInviteMaxUses(req.MaxUses)
+	if !ok {
+		http.Error(w, "invalid max_uses", http.StatusBadRequest)
+		return
 	}
 	var expiresAt *time.Time
 	if req.ExpiresAt != "" {
@@ -83,6 +86,16 @@ func (h *Invites) Create(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:  created.Invite.ExpiresAt,
 		CreatedAt:  created.Invite.CreatedAt,
 	})
+}
+
+func normalizeInviteMaxUses(requested int) (int, bool) {
+	if requested <= 0 {
+		return 1, true
+	}
+	if requested > maxInviteUses {
+		return 0, false
+	}
+	return requested, true
 }
 
 func (h *Invites) List(w http.ResponseWriter, r *http.Request) {

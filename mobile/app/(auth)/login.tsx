@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
+import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { ApiError, useAuth } from "@music-library/core";
 import { PrimaryButton } from "../../components/buttons";
@@ -9,6 +10,7 @@ import { useTheme } from "../../theme/theme";
 
 export default function LoginScreen() {
   const theme = useTheme();
+  const router = useRouter();
   const { login } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -89,6 +91,24 @@ export default function LoginScreen() {
         loading={pending}
         disabled={!username || !password}
       />
+
+      <Pressable
+        onPress={() => {
+          void Haptics.selectionAsync();
+          router.push("/(auth)/register");
+        }}
+        accessibilityRole="button"
+        accessibilityLabel="Create an account with an invite"
+        style={({ pressed }) => ({
+          alignItems: "center",
+          paddingVertical: 8,
+          opacity: pressed ? 0.6 : 1,
+        })}
+      >
+        <Text style={{ color: theme.color.accent, fontSize: 15 }}>
+          Have an invite? Create an account
+        </Text>
+      </Pressable>
     </FormScreen>
   );
 }

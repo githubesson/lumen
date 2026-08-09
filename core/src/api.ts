@@ -84,6 +84,10 @@ export function getBaseUrl(): string {
 
 type RequestOptions = Pick<RequestInit, "signal">;
 
+type RequestBehavior = {
+  notifyUnauthorized?: boolean;
+};
+
 type PageParams = {
   limit?: number;
   offset?: number;
@@ -183,6 +187,7 @@ function buildQuery(
 async function rawFetch(
   path: string,
   init: RequestInit = {},
+  behavior: RequestBehavior = {},
 ): Promise<Response> {
   const isForm =
     typeof FormData !== "undefined" && init.body instanceof FormData;
@@ -216,7 +221,9 @@ async function rawFetch(
   }
 
   if (!res.ok) {
-    if (res.status === 401) onUnauthorized?.();
+    if (res.status === 401 && behavior.notifyUnauthorized !== false) {
+      onUnauthorized?.();
+    }
     const text = await res.text().catch(() => "");
     throw new ApiError(res.status, text.trim() || res.statusText);
   }
@@ -243,8 +250,12 @@ async function fetchPage<T>(
  * casting `undefined` to T (which would defer failure to a downstream
  * null-deref). Use `requestVoid` for endpoints that legitimately return no body.
  */
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await rawFetch(path, init);
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  behavior: RequestBehavior = {},
+): Promise<T> {
+  const res = await rawFetch(path, init, behavior);
   const ct = res.headers.get("content-type") ?? "";
   if (res.status === 204 || !ct.includes("application/json")) {
     throw new ApiError(
@@ -397,7 +408,10 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   logout: () => requestVoid("/api/auth/logout", { method: "POST" }),
-  me: () => request<Me>("/api/auth/me"),
+  // AuthProvider applies its refresh generation check before treating /me's 401
+  // as a logout. An older pre-registration request must not clear a new session.
+  me: () =>
+    request<Me>("/api/auth/me", {}, { notifyUnauthorized: false }),
   register: (token: string, username: string, password: string) =>
     request<Me>("/api/auth/register", {
       method: "POST",

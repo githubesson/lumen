@@ -10,6 +10,7 @@ interface Props<T extends string> {
   options: Option<T>[];
   value: T;
   onChange: (v: T) => void;
+  disabled?: boolean;
 }
 
 /**
@@ -22,6 +23,7 @@ export function SegmentedControl<T extends string>({
   options,
   value,
   onChange,
+  disabled = false,
 }: Props<T>) {
   const values = options.map((o) => o.label);
   const selectedIndex = Math.max(
@@ -41,6 +43,7 @@ export function SegmentedControl<T extends string>({
       values={values}
       selectedIndex={selectedIndex}
       onChange={handleChange}
+      enabled={!disabled}
     />
   );
 }

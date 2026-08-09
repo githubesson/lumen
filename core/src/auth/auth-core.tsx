@@ -80,10 +80,11 @@ export function AuthProvider({
       persistMe(m);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        // The server explicitly rejected the session — it is dead. Clear the
-        // cache regardless of staleness: a dead session never becomes live.
-        persistMe(null);
+        // Ignore a response from a refresh that started before login or
+        // registration established a newer session. Only the current refresh
+        // can prove that the current session is dead.
         if (!isCurrent()) return;
+        persistMe(null);
         setMeState(null);
         setStatus("guest");
         return;
@@ -159,10 +160,17 @@ export function AuthProvider({
     }
   }, [persistMe]);
 
-  // Same signature as the raw state setter, but keeps the cache in sync.
+  // Adopt a user returned by a request that also established the session (for
+  // example registration). Keep identity, status, and the offline cache atomic
+  // so callers do not need a second /me request just to become authenticated.
   const setMe = useCallback(
     (m: Me | null) => {
+      // A pre-session refresh may still be in flight while registration returns.
+      // Invalidate it so its older /me result cannot overwrite this new session.
+      refreshTokenRef.current += 1;
+      inFlightRef.current = null;
       setMeState(m);
+      setStatus(m ? "authed" : "guest");
       persistMe(m);
     },
     [persistMe],
