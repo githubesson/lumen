@@ -5,13 +5,11 @@ import {
   useMemo,
   useRef,
   useState,
-  type RefObject,
 } from "react";
 import {
   ActivityIndicator,
   Alert,
   Platform,
-  Pressable,
   RefreshControl,
   TextInput,
   StyleSheet,
@@ -22,23 +20,15 @@ import { useHeaderHeight } from "expo-router/react-navigation";
 import { useInfiniteQuery, type QueryKey } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { SymbolView, type SymbolViewProps } from "expo-symbols";
-import Animated, {
-  Extrapolation,
-  interpolate,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from "react-native-reanimated";
 import {
   api,
   type Album,
   type Artist,
   type TrackListItem,
 } from "@music-library/core";
-import { AdaptiveGlass } from "../../../components/adaptive-glass";
 import { EmptyState } from "../../../components/empty-state";
 import { GlassSegmentedControl } from "../../../components/glass-segmented-control";
+import { HeaderCapsule } from "../../../components/library/header-capsule";
 import { TRACK_FLASH_LIST_PERFORMANCE_PROPS } from "../../../components/list-performance";
 import { TrackRow } from "../../../components/track-row";
 import { AlbumRow } from "../../../components/album-row";
@@ -53,14 +43,10 @@ import { useIsOffline } from "../../../lib/offline-mode";
 import { useDebouncedValue } from "../../../lib/use-debounced-value";
 import { usePlayQueue } from "../../../lib/use-play-queue";
 import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
-import { useTheme, type ThemeTokens } from "../../../theme/theme";
+import { useTheme } from "../../../theme/theme";
 
 type Mode = "tracks" | "albums" | "artists";
 const PAGE_SIZE = 50;
-const HEADER_CAPSULE_HEIGHT = 44;
-const HEADER_CAPSULE_CLOSED_WIDTH = 118;
-const HEADER_CAPSULE_OPEN_WIDTH = 246;
-const HEADER_ACTION_WIDTH = 54;
 const SEARCH_DEBOUNCE_MS = 250;
 
 /**
@@ -334,21 +320,22 @@ export default function BrowseScreen() {
     <Stack.Screen
       options={{
         headerRight: () => (
-          <BrowseHeaderCapsule
-            inputRef={searchInputRef}
-            search={search}
-            searchOpen={searchOpen}
-            onSearchPress={onSearchPress}
-            onSearchChangeText={setSearch}
-            onSearchClear={() => {
-              if ((search?.length ?? 0) > 0) {
-                setSearch("");
-                return;
-              }
-              closeSearch();
+          <HeaderCapsule
+            search={{
+              open: searchOpen,
+              value: search,
+              inputRef: searchInputRef,
+              onChangeText: setSearch,
+              onClear: () => {
+                if ((search?.length ?? 0) > 0) {
+                  setSearch("");
+                  return;
+                }
+                closeSearch();
+              },
             }}
+            onSearchPress={onSearchPress}
             onUploadPress={onUploadPress}
-            theme={theme}
           />
         ),
       }}
@@ -402,236 +389,4 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
     alignItems: "center",
   },
-  headerCapsuleWrap: {
-    height: HEADER_CAPSULE_HEIGHT,
-    overflow: "hidden",
-    transform: [{ translateX: 8 }],
-  },
-  headerCapsule: {
-    height: HEADER_CAPSULE_HEIGHT,
-    borderRadius: HEADER_CAPSULE_HEIGHT / 2,
-    borderCurve: "continuous",
-    overflow: "hidden",
-  },
-  headerCapsuleRow: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  headerCapsuleButton: {
-    width: HEADER_ACTION_WIDTH,
-    height: HEADER_CAPSULE_HEIGHT,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerSearchSlot: {
-    flex: 1,
-    height: HEADER_CAPSULE_HEIGHT,
-    position: "relative",
-  },
-  headerSearchClosed: {
-    ...StyleSheet.absoluteFill,
-  },
-  headerSearchClosedButton: {
-    width: "100%",
-    height: "100%",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerSearchOpen: {
-    ...StyleSheet.absoluteFill,
-    justifyContent: "center",
-    paddingLeft: 14,
-    paddingRight: 8,
-  },
-  headerSearchOpenRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  headerSearchInputWrap: {
-    flex: 1,
-  },
-  headerSearchInput: {
-    fontSize: 15,
-    paddingVertical: 0,
-  },
-  headerSearchClearButton: {
-    width: 28,
-    height: 28,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerCapsuleDivider: {
-    width: StyleSheet.hairlineWidth,
-    height: 18,
-    opacity: 0.7,
-    transform: [{ translateX: -4 }],
-  },
 });
-
-function BrowseHeaderCapsule({
-  inputRef,
-  search = "",
-  searchOpen,
-  onSearchPress,
-  onSearchChangeText,
-  onSearchClear,
-  onUploadPress,
-  theme,
-}: {
-  inputRef: RefObject<TextInput | null>;
-  search: string;
-  searchOpen: boolean;
-  onSearchPress: () => void;
-  onSearchChangeText: (value: string) => void;
-  onSearchClear: () => void;
-  onUploadPress: () => void;
-  theme: ThemeTokens;
-}) {
-  const progress = useSharedValue(searchOpen ? 1 : 0);
-
-  useEffect(() => {
-    progress.value = withTiming(searchOpen ? 1 : 0, {
-      duration: 140,
-    });
-  }, [progress, searchOpen]);
-
-  const query = search ?? "";
-  const dividerColor =
-    theme.scheme === "dark"
-      ? "rgba(255,255,255,0.16)"
-      : "rgba(0,0,0,0.14)";
-  const shellStyle = useAnimatedStyle(() => ({
-    width: interpolate(
-      progress.value,
-      [0, 1],
-      [HEADER_CAPSULE_CLOSED_WIDTH, HEADER_CAPSULE_OPEN_WIDTH],
-      Extrapolation.CLAMP,
-    ),
-  }));
-  const closedSearchStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(progress.value, [0, 1], [1, 0], Extrapolation.CLAMP),
-    transform: [
-      {
-        scale: interpolate(progress.value, [0, 1], [1, 0.92], Extrapolation.CLAMP),
-      },
-    ],
-  }));
-  const openSearchStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(progress.value, [0, 1], [0, 1], Extrapolation.CLAMP),
-    transform: [
-      {
-        translateX: interpolate(progress.value, [0, 1], [10, 0], Extrapolation.CLAMP),
-      },
-    ],
-  }));
-  const dividerStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(progress.value, [0, 1], [0.7, 0.38], Extrapolation.CLAMP),
-  }));
-  const clearIcon: SymbolViewProps["name"] =
-    query.length > 0 ? "xmark.circle.fill" : "xmark";
-
-  return (
-    <Animated.View style={[styles.headerCapsuleWrap, shellStyle]}>
-      <AdaptiveGlass style={styles.headerCapsule}>
-        <View style={styles.headerCapsuleRow}>
-          <View style={styles.headerSearchSlot}>
-            <Animated.View
-              pointerEvents={searchOpen ? "none" : "auto"}
-              style={[styles.headerSearchClosed, closedSearchStyle]}
-            >
-              <Pressable
-                onPress={onSearchPress}
-                accessibilityRole="button"
-                accessibilityLabel="Open search"
-                style={({ pressed }) => [
-                  styles.headerSearchClosedButton,
-                  pressed ? { opacity: 0.6 } : null,
-                ]}
-              >
-                <SymbolView
-                  name="magnifyingglass"
-                  size={21}
-                  weight="semibold"
-                  tintColor={theme.color.fg}
-                />
-              </Pressable>
-            </Animated.View>
-            <Animated.View
-              pointerEvents={searchOpen ? "auto" : "none"}
-              style={[styles.headerSearchOpen, openSearchStyle]}
-            >
-              <View style={styles.headerSearchOpenRow}>
-                <SymbolView
-                  name="magnifyingglass"
-                  size={18}
-                  weight="semibold"
-                  tintColor={theme.color.fgMuted}
-                />
-                <View style={styles.headerSearchInputWrap}>
-                  <TextInput
-                    ref={inputRef}
-                    value={query}
-                    onChangeText={onSearchChangeText}
-                    placeholder="Search"
-                    placeholderTextColor={theme.color.fgMuted}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    returnKeyType="search"
-                    selectionColor={theme.color.accent}
-                    keyboardAppearance={theme.scheme}
-                    style={[
-                      styles.headerSearchInput,
-                      { color: theme.color.fg },
-                    ]}
-                  />
-                </View>
-                <Pressable
-                  onPress={onSearchClear}
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    query.length > 0 ? "Clear search" : "Close search"
-                  }
-                  style={({ pressed }) => [
-                    styles.headerSearchClearButton,
-                    pressed ? { opacity: 0.6 } : null,
-                  ]}
-                >
-                  <SymbolView
-                    name={clearIcon}
-                    size={query.length > 0 ? 18 : 15}
-                    weight="semibold"
-                    tintColor={theme.color.fgMuted}
-                  />
-                </Pressable>
-              </View>
-            </Animated.View>
-          </View>
-          <Animated.View
-            style={[
-              styles.headerCapsuleDivider,
-              dividerStyle,
-              { backgroundColor: dividerColor },
-            ]}
-          />
-          <Pressable
-            onPress={onUploadPress}
-            accessibilityRole="button"
-            accessibilityLabel="Upload music"
-            style={({ pressed }) => [
-              styles.headerCapsuleButton,
-              pressed ? { opacity: 0.6 } : null,
-            ]}
-          >
-            <SymbolView
-              name="plus"
-              size={24}
-              tintColor={theme.color.fg}
-            />
-          </Pressable>
-        </View>
-      </AdaptiveGlass>
-    </Animated.View>
-  );
-}

@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, {
-  Easing,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
-import { useDockColors } from "./dock/dock-context";
+import { DOCK_CAPSULE_TIMING, useDockColors } from "./dock/dock-context";
 import { DockSurface } from "./dock/dock-surface";
 
 interface Option<T extends string> {
@@ -24,12 +23,6 @@ interface Props<T extends string> {
 
 const HEIGHT = 44;
 const CAPSULE_INSET = 4;
-
-// Same one-way slide as the dock's active-tab capsule.
-const CAPSULE_TIMING = {
-  duration: 180,
-  easing: Easing.out(Easing.cubic),
-} as const;
 
 /**
  * Segmented switcher dressed like the floating dock: the same DockSurface
@@ -53,7 +46,7 @@ export function GlassSegmentedControl<T extends string>({
   useEffect(() => {
     capsuleIndex.value = reducedMotion
       ? index
-      : withTiming(index, CAPSULE_TIMING);
+      : withTiming(index, DOCK_CAPSULE_TIMING);
   }, [capsuleIndex, index, reducedMotion]);
 
   const slot =

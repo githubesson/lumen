@@ -114,6 +114,13 @@ export const DOCK_COLLAPSE_SPRING = {
   mass: 1,
 } as const;
 
+// One-way slide for selection capsules (active tab, segmented control,
+// header search, replay period): fast ease-out, no overshoot.
+export const DOCK_CAPSULE_TIMING = {
+  duration: 180,
+  easing: Easing.out(Easing.cubic),
+} as const;
+
 const TABLET_BREAKPOINT = 600;
 
 export function isTabletLayout(width: number, height: number): boolean {

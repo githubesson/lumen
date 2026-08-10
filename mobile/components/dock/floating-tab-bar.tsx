@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import Animated, {
-  Easing,
   Extrapolation,
   interpolate,
   useAnimatedStyle,
@@ -12,7 +11,12 @@ import Animated, {
 import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
 import type { BottomTabBarProps } from "expo-router/js-tabs";
-import { DOCK, useDockColors, useDockControls } from "./dock-context";
+import {
+  DOCK,
+  DOCK_CAPSULE_TIMING,
+  useDockColors,
+  useDockControls,
+} from "./dock-context";
 import { DockSurface } from "./dock-surface";
 
 type SymbolName = Parameters<typeof SymbolView>[0]["name"];
@@ -23,12 +27,6 @@ const TAB_ICONS: Record<string, SymbolName> = {
   "(favorites)": "heart.fill",
   "(settings)": "gearshape",
 };
-
-// One-way slide for the active-tab capsule: fast ease-out, no overshoot.
-const CAPSULE_TIMING = {
-  duration: 180,
-  easing: Easing.out(Easing.cubic),
-} as const;
 
 const TAB_COUNT = Object.keys(TAB_ICONS).length;
 
@@ -52,7 +50,7 @@ export function FloatingTabBar({
   useEffect(() => {
     capsuleIndex.value = reducedMotion
       ? state.index
-      : withTiming(state.index, CAPSULE_TIMING);
+      : withTiming(state.index, DOCK_CAPSULE_TIMING);
   }, [capsuleIndex, reducedMotion, state.index]);
 
   const pillStyle = useAnimatedStyle(() => {

@@ -15,7 +15,7 @@ import {
   useDockScrollHandler,
 } from "../../../components/dock/dock-context";
 import { BrowseLinksCard } from "../../../components/library/browse-links-card";
-import { HomeHeaderCapsule } from "../../../components/library/home-header-capsule";
+import { HeaderCapsule } from "../../../components/library/header-capsule";
 import { HorizontalShelf } from "../../../components/horizontal-shelf";
 import { Section } from "../../../components/section";
 import { RankedTrackRow } from "../../../components/library/ranked-track-row";
@@ -262,7 +262,7 @@ export default function HomeScreen() {
         options={{
           title: greeting,
           headerRight: () => (
-            <HomeHeaderCapsule
+            <HeaderCapsule
               onSearchPress={onSearchPress}
               onUploadPress={onUploadPress}
             />
