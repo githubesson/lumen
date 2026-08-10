@@ -1,10 +1,11 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Alert,
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
@@ -32,12 +33,12 @@ import {
 } from "@music-library/core";
 import { CoverArt } from "../../../components/cover-art";
 import { EmptyState } from "../../../components/empty-state";
-import { HeaderTextButton } from "../../../components/header-buttons";
 import {
   getOptionalSwiftUI,
   swiftAccessibilityLabel,
   swiftButtonStyle,
   swiftControlSize,
+  swiftDisabled,
 } from "../../../components/optional-swift-ui";
 import {
   TRACK_FLASH_LIST_PERFORMANCE_PROPS,
@@ -58,7 +59,6 @@ import {
   useAutoDownload,
   useDownloadedPlaylistTracks,
   usePlaylistDownload,
-  type PlaylistDownloadStatus,
 } from "../../../lib/downloads";
 import {
   useIsOffline,
@@ -242,6 +242,30 @@ export default function PlaylistDetailScreen() {
     setSortAsc((asc) => !asc);
   }, []);
 
+  // Shuffle is queue-level: reorder a copy of the visible tracks and start
+  // from the new head, leaving the saved playlist order untouched.
+  const onShuffle = useCallback(() => {
+    if (tracks.length === 0) return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const shuffled = [...tracks];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    play(shuffled[0], shuffled);
+  }, [tracks, play]);
+
+  const onToggleReorder = useCallback(() => {
+    void Haptics.selectionAsync();
+    // The drag list isn't wired to the dock, so pin it to the predictable
+    // expanded state while reordering.
+    expandDock();
+    // Drag indices map to the saved order, so a local sort can't stay active
+    // while reordering.
+    setSortKey("custom");
+    setReorderMode((value) => !value);
+  }, [expandDock]);
+
   const onReorder = useCallback(
     ({ from, to }: ReorderableListReorderEvent) => {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -308,11 +332,13 @@ export default function PlaylistDetailScreen() {
       <View
         style={{
           paddingHorizontal: theme.space.lg,
-          paddingVertical: theme.space.md,
-          gap: theme.space.sm,
+          paddingTop: theme.space.sm,
+          paddingBottom: theme.space.lg,
+          gap: theme.space.md,
         }}
       >
-        <View style={{ gap: 4 }}>
+        <PlaylistHero theme={theme} tracks={tracks} />
+        <View style={{ gap: 4, alignItems: "center" }}>
           <Text
             selectable
             style={{
@@ -320,6 +346,7 @@ export default function PlaylistDetailScreen() {
               fontSize: 24,
               fontWeight: "700",
               letterSpacing: -0.2,
+              textAlign: "center",
             }}
           >
             {p.name}
@@ -327,24 +354,61 @@ export default function PlaylistDetailScreen() {
           {p.description ? (
             <Text
               selectable
-              style={{ color: theme.color.fgMuted, fontSize: 15 }}
+              style={{
+                color: theme.color.fgMuted,
+                fontSize: 15,
+                textAlign: "center",
+              }}
             >
               {p.description}
             </Text>
           ) : null}
-          <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>
-            {tracks.length} {tracks.length === 1 ? "track" : "tracks"}
-            {p.visibility === "collaborative" ? " · Collaborative" : ""}
-          </Text>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+            }}
+          >
+            <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>
+              {tracks.length} {tracks.length === 1 ? "track" : "tracks"}
+              {p.visibility === "collaborative" ? " · Collaborative" : ""}
+            </Text>
+            <PlaylistStatusGlyphs
+              theme={theme}
+              playlistId={p.id}
+              tracks={tracks}
+            />
+          </View>
         </View>
         <View
           style={{
             flexDirection: "row",
-            flexWrap: "wrap",
             alignItems: "center",
-            gap: 8,
+            justifyContent: "center",
+            gap: 12,
           }}
         >
+          {tracks.length > 1 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Shuffle play"
+              onPress={onShuffle}
+              style={({ pressed }) => ({
+                height: CONTROL_SIZE,
+                width: CONTROL_SIZE,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: theme.color.bgElev1,
+                borderRadius: CONTROL_SIZE / 2,
+                opacity: pressed ? 0.8 : 1,
+                borderCurve: "continuous",
+              })}
+            >
+              <SymbolView name="shuffle" size={16} tintColor={theme.color.fg} />
+            </Pressable>
+          ) : null}
           {tracks.length > 0 ? (
             <Pressable
               accessibilityRole="button"
@@ -354,86 +418,31 @@ export default function PlaylistDetailScreen() {
                 play(tracks[0], tracks);
               }}
               style={({ pressed }) => ({
+                flex: 1,
                 flexDirection: "row",
                 alignItems: "center",
                 justifyContent: "center",
-                gap: 7,
+                gap: 8,
+                height: CONTROL_SIZE,
                 backgroundColor: theme.color.accent,
-                borderRadius: theme.radius.md,
-                paddingHorizontal: 14,
-                paddingVertical: 9,
+                borderRadius: CONTROL_SIZE / 2,
                 opacity: pressed ? 0.85 : 1,
                 borderCurve: "continuous",
               })}
             >
               <SymbolView
                 name="play.fill"
-                size={13}
+                size={15}
                 tintColor={theme.color.onAccent}
               />
               <Text
                 style={{
                   color: theme.color.onAccent,
                   fontWeight: "600",
-                  fontSize: 14,
+                  fontSize: 16,
                 }}
               >
                 Play
-              </Text>
-            </Pressable>
-          ) : null}
-          {tracks.length > 0 ? (
-            <PlaylistDownloadButton
-              theme={theme}
-              playlistId={p.id}
-              playlistName={p.name}
-              tracks={tracks}
-            />
-          ) : null}
-          {tracks.length > 0 ? (
-            <PlaylistAutoDownloadButton
-              theme={theme}
-              playlistId={p.id}
-              playlistName={p.name}
-              tracks={tracks}
-            />
-          ) : null}
-          {p.visibility === "collaborative" ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Open collaborators"
-              onPress={() =>
-                router.push({
-                  pathname: "/(tabs)/(playlists)/collaborators/[id]",
-                  params: { id: p.id },
-                })
-              }
-              style={({ pressed }) => ({
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 7,
-                backgroundColor: theme.color.bgElev1,
-                borderRadius: theme.radius.md,
-                paddingHorizontal: 14,
-                paddingVertical: 9,
-                opacity: pressed ? 0.8 : 1,
-                borderCurve: "continuous",
-              })}
-            >
-              <SymbolView
-                name="person.2.fill"
-                size={13}
-                tintColor={theme.color.fg}
-              />
-              <Text
-                style={{
-                  color: theme.color.fg,
-                  fontWeight: "500",
-                  fontSize: 14,
-                }}
-              >
-                Collaborators
               </Text>
             </Pressable>
           ) : null}
@@ -447,28 +456,6 @@ export default function PlaylistDetailScreen() {
             />
           ) : null}
         </View>
-        {canDelete ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Delete playlist"
-            onPress={onDelete}
-            disabled={deleteMutation.isPending}
-            style={({ pressed }) => ({
-              alignSelf: "flex-start",
-              borderRadius: theme.radius.md,
-              alignItems: "center",
-              backgroundColor: theme.color.bgElev1,
-              paddingHorizontal: 14,
-              paddingVertical: 8,
-              opacity: pressed || deleteMutation.isPending ? 0.7 : 1,
-              borderCurve: "continuous",
-            })}
-          >
-            <Text style={{ color: theme.color.danger, fontSize: 14 }}>
-              Delete Playlist
-            </Text>
-          </Pressable>
-        ) : null}
       </View>
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -531,34 +518,43 @@ export default function PlaylistDetailScreen() {
         options={{
           title: playlist.name,
           headerLargeTitle: false,
-          headerRight: canEdit
-            ? () => (
-                <View style={styles.headerActions}>
-                  <HeaderTextButton
-                    label="Edit"
-                    onPress={() =>
-                      router.push({
-                        pathname: "/(tabs)/(playlists)/edit/[id]",
-                        params: { id: playlist.id },
-                      })
-                    }
-                  />
-                  <HeaderTextButton
-                    label={showReorderMode ? "Done" : "Reorder"}
-                    onPress={() => {
-                      void Haptics.selectionAsync();
-                      // The drag list isn't wired to the dock, so pin it to
-                      // the predictable expanded state while reordering.
-                      expandDock();
-                      // Drag indices map to the saved order, so a local sort
-                      // can't stay active while reordering.
-                      setSortKey("custom");
-                      setReorderMode((value) => !value);
-                    }}
+          headerRight: () => (
+            <PlaylistMoreMenu
+              theme={theme}
+              playlistId={playlist.id}
+              playlistName={playlist.name}
+              tracks={tracks}
+              collaborative={playlist.visibility === "collaborative"}
+              canEdit={canEdit}
+              reorderActive={showReorderMode}
+              onEdit={() =>
+                router.push({
+                  pathname: "/(tabs)/(playlists)/edit/[id]",
+                  params: { id: playlist.id },
+                })
+              }
+              onToggleReorder={onToggleReorder}
+              canDelete={canDelete}
+              deletePending={deleteMutation.isPending}
+              onOpenCollaborators={() =>
+                router.push({
+                  pathname: "/(tabs)/(playlists)/collaborators/[id]",
+                  params: { id: playlist.id },
+                })
+              }
+              onDelete={onDelete}
+              trigger={
+                <View style={{ padding: 4 }}>
+                  <SymbolView
+                    name="ellipsis"
+                    size={17}
+                    weight="semibold"
+                    tintColor={theme.color.fg}
                   />
                 </View>
-              )
-            : undefined,
+              }
+            />
+          ),
         }}
       />
       {showReorderMode ? (
@@ -606,7 +602,106 @@ const SORT_MENU_SYMBOLS: Record<SortKey, string> = {
   plays: "play.circle",
 };
 
-const SORT_PILL_HEIGHT = 37;
+/** Diameter of the header's circular controls and the Play capsule height. */
+const CONTROL_SIZE = 50;
+
+/**
+ * Large centered artwork for the playlist hero: a 2×2 collage of the first
+ * distinct album covers (Apple Music style), a single cover when only one
+ * album is represented, or a placeholder glyph for coverless/empty lists.
+ */
+function PlaylistHero({
+  theme,
+  tracks,
+}: {
+  theme: ThemeTokens;
+  tracks: TrackListItem[];
+}) {
+  const { width } = useWindowDimensions();
+  const size = Math.min(Math.round(width * 0.62), 300);
+  const covers = useMemo(() => {
+    const seen = new Set<string>();
+    const unique: TrackListItem[] = [];
+    for (const track of tracks) {
+      if (track.has_cover === false) continue;
+      const key = track.album_id ?? track.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(track);
+      if (unique.length === 4) break;
+    }
+    return unique;
+  }, [tracks]);
+
+  const cells = useMemo(() => {
+    if (covers.length <= 1) return covers;
+    const filled = [...covers];
+    while (filled.length < 4) filled.push(covers[filled.length % covers.length]);
+    return filled;
+  }, [covers]);
+
+  return (
+    <View
+      style={{
+        alignSelf: "center",
+        borderRadius: theme.radius.lg,
+        shadowColor: "#000",
+        shadowOpacity: 0.35,
+        shadowRadius: 18,
+        shadowOffset: { width: 0, height: 10 },
+      }}
+    >
+      <View
+        style={{
+          width: size,
+          height: size,
+          borderRadius: theme.radius.lg,
+          overflow: "hidden",
+          backgroundColor: theme.color.bgElev1,
+          borderCurve: "continuous",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {cells.length === 0 ? (
+          <SymbolView
+            name="music.note"
+            size={Math.round(size * 0.28)}
+            tintColor={theme.color.fgMuted}
+          />
+        ) : cells.length === 1 ? (
+          <CoverArt
+            track={cells[0]}
+            size={size}
+            radius={theme.radius.lg}
+            transitionMs={0}
+            priority="high"
+          />
+        ) : (
+          <View
+            style={{
+              flexDirection: "row",
+              flexWrap: "wrap",
+              width: size,
+              height: size,
+            }}
+          >
+            {cells.map((track, index) => (
+              <CoverArt
+                key={`${track.id}:${index}`}
+                track={track}
+                size={size / 2}
+                radius={0}
+                transitionMs={0}
+                priority="high"
+              />
+            ))}
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
 
 /**
  * Dropdown for the local sort plus a standalone direction toggle. The menu is
@@ -627,39 +722,30 @@ function SortMenuButton({
   onToggleDirection: () => void;
 }) {
   const swiftUI = getOptionalSwiftUI();
-  const active = SORT_OPTIONS.find((o) => o.key === sortKey) ?? SORT_OPTIONS[0];
 
   const label = (
     <View
       style={{
-        flexDirection: "row",
+        height: CONTROL_SIZE,
+        width: CONTROL_SIZE,
         alignItems: "center",
         justifyContent: "center",
-        gap: 6,
-        height: SORT_PILL_HEIGHT,
         backgroundColor: theme.color.bgElev1,
-        borderRadius: theme.radius.md,
+        borderRadius: CONTROL_SIZE / 2,
         borderCurve: "continuous",
-        paddingHorizontal: 14,
       }}
     >
       <SymbolView
         name="arrow.up.arrow.down"
-        size={12}
+        size={15}
         weight="semibold"
-        tintColor={theme.color.fg}
+        tintColor={sortKey === "custom" ? theme.color.fg : theme.color.accent}
       />
-      <Text style={{ color: theme.color.fg, fontWeight: "500", fontSize: 14 }}>
-        {sortKey === "custom" ? "Sort" : active.label}
-      </Text>
     </View>
   );
 
   const trigger = swiftUI ? (
-    // Keyed by the active option: the host measures its RN content when it
-    // mounts, so remounting on label change keeps the pill width hugging the
-    // text instead of clipping or stretching.
-    <swiftUI.Host key={sortKey} matchContents colorScheme={theme.scheme}>
+    <swiftUI.Host matchContents colorScheme={theme.scheme}>
       <swiftUI.Menu
         label={<swiftUI.RNHostView matchContents>{label}</swiftUI.RNHostView>}
         modifiers={[
@@ -715,12 +801,12 @@ function SortMenuButton({
             onToggleDirection();
           }}
           style={({ pressed }) => ({
-            height: SORT_PILL_HEIGHT,
-            width: SORT_PILL_HEIGHT,
+            height: CONTROL_SIZE,
+            width: CONTROL_SIZE,
             alignItems: "center",
             justifyContent: "center",
             backgroundColor: theme.color.bgElev1,
-            borderRadius: theme.radius.md,
+            borderRadius: CONTROL_SIZE / 2,
             borderCurve: "continuous",
             opacity: pressed ? 0.7 : 1,
           })}
@@ -737,35 +823,118 @@ function SortMenuButton({
   );
 }
 
-const DOWNLOAD_STATUS_COPY: Record<PlaylistDownloadStatus, string> = {
-  idle: "Download",
-  partial: "Download",
-  downloading: "Downloading",
-  downloaded: "Downloaded",
-};
+/**
+ * Offline state folded into the header meta line: a live progress readout
+ * while a batch download runs, a check once every track is stored, and a
+ * marker while the playlist is armed for auto-download. Pure status — the
+ * actions behind it live in {@link PlaylistMoreMenu}.
+ */
+function PlaylistStatusGlyphs({
+  theme,
+  playlistId,
+  tracks,
+}: {
+  theme: ThemeTokens;
+  playlistId: string;
+  tracks: TrackListItem[];
+}) {
+  const { status, downloaded, total } = usePlaylistDownload(tracks);
+  const auto = useAutoDownload(playlistId);
+
+  if (status !== "downloading" && status !== "downloaded" && !auto) {
+    return null;
+  }
+
+  const a11y = [
+    status === "downloaded"
+      ? "Downloaded"
+      : status === "downloading"
+        ? `Downloading ${downloaded} of ${total}`
+        : null,
+    auto ? "Auto-download on" : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  return (
+    <View
+      accessible
+      accessibilityLabel={a11y}
+      style={{ flexDirection: "row", alignItems: "center", gap: 5 }}
+    >
+      {status === "downloading" ? (
+        <>
+          <ActivityIndicator size="small" color={theme.color.fgMuted} />
+          <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>
+            {downloaded}/{total}
+          </Text>
+        </>
+      ) : status === "downloaded" ? (
+        <SymbolView
+          name="checkmark.circle.fill"
+          size={12}
+          tintColor={theme.color.accent}
+        />
+      ) : null}
+      {auto ? (
+        <SymbolView
+          name="arrow.clockwise"
+          size={11}
+          weight="semibold"
+          tintColor={theme.color.accent}
+        />
+      ) : null}
+    </View>
+  );
+}
 
 /**
- * Playlist offline-download toggle. Mirrors the header pill buttons: tap to
- * store every track for offline playback, tap again once downloaded to remove
- * the local copies. Reflects live progress while a batch is in flight.
+ * Overflow menu for the secondary playlist actions (offline download,
+ * auto-download, collaborators, delete) so the header can stay at
+ * Play + Sort + ⋯. Uses the native SwiftUI menu when the ExpoUI binary is
+ * present (matching the sort menu), a stacked alert picker otherwise.
  */
-function PlaylistDownloadButton({
+function PlaylistMoreMenu({
   theme,
   playlistId,
   playlistName,
   tracks,
+  collaborative,
+  canEdit,
+  reorderActive,
+  onEdit,
+  onToggleReorder,
+  canDelete,
+  deletePending,
+  onOpenCollaborators,
+  onDelete,
+  trigger,
 }: {
   theme: ThemeTokens;
   playlistId: string;
   playlistName: string;
   tracks: TrackListItem[];
+  collaborative: boolean;
+  canEdit: boolean;
+  reorderActive: boolean;
+  onEdit: () => void;
+  onToggleReorder: () => void;
+  canDelete: boolean;
+  deletePending: boolean;
+  onOpenCollaborators: () => void;
+  onDelete: () => void;
+  /** Menu affordance rendered inside the trigger (nav-bar icon or pill). */
+  trigger: ReactNode;
 }) {
+  const swiftUI = getOptionalSwiftUI();
   const { status, total, downloaded } = usePlaylistDownload(tracks);
+  const autoEnabled = useAutoDownload(playlistId);
   const offline = useIsOffline();
+  const hasTracks = tracks.length > 0;
   const isDownloaded = status === "downloaded";
   const isDownloading = status === "downloading";
 
-  const onPress = useCallback(() => {
+  const onDownloadPress = useCallback(() => {
     if (isDownloading) return;
     // Starting a download needs the network; removing one is local-only and
     // must keep working offline.
@@ -797,70 +966,10 @@ function PlaylistDownloadButton({
     void downloadStore.downloadPlaylist(playlistId, tracks, { playlistName });
   }, [isDownloaded, isDownloading, offline, playlistId, playlistName, tracks]);
 
-  const label = isDownloading
-    ? `${downloaded}/${total}`
-    : DOWNLOAD_STATUS_COPY[status];
-  const tint = isDownloaded ? theme.color.accent : theme.color.fg;
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={
-        isDownloaded ? "Remove playlist download" : "Download playlist"
-      }
-      onPress={onPress}
-      style={({ pressed }) => ({
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 7,
-        backgroundColor: theme.color.bgElev1,
-        borderRadius: theme.radius.md,
-        paddingHorizontal: 14,
-        paddingVertical: 9,
-        opacity: pressed ? 0.8 : 1,
-        borderCurve: "continuous",
-      })}
-    >
-      {isDownloading ? (
-        <ActivityIndicator size="small" color={theme.color.fg} />
-      ) : (
-        <SymbolView
-          name={isDownloaded ? "checkmark.circle.fill" : "arrow.down.circle"}
-          size={15}
-          tintColor={tint}
-        />
-      )}
-      <Text style={{ color: tint, fontWeight: "500", fontSize: 14 }}>
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-/**
- * Toggles "keep this playlist downloaded". Enabling downloads the current
- * tracks straight away and arms the background sync; disabling stops future
- * syncs but keeps files already on the device.
- */
-function PlaylistAutoDownloadButton({
-  theme,
-  playlistId,
-  playlistName,
-  tracks,
-}: {
-  theme: ThemeTokens;
-  playlistId: string;
-  playlistName: string;
-  tracks: TrackListItem[];
-}) {
-  const enabled = useAutoDownload(playlistId);
-  const offline = useIsOffline();
-
-  const onPress = useCallback(() => {
-    // Turning it on needs the network for the initial catch-up sync; turning it
-    // off is a local flag change and stays available offline.
-    if (offline && !enabled) {
+  const onAutoPress = useCallback(() => {
+    // Turning it on needs the network for the initial catch-up sync; turning
+    // it off is a local flag change and stays available offline.
+    if (offline && !autoEnabled) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       Alert.alert(
         "You're offline",
@@ -869,47 +978,134 @@ function PlaylistAutoDownloadButton({
       return;
     }
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    void autoDownloadStore.setEnabled(playlistId, !enabled, {
+    void autoDownloadStore.setEnabled(playlistId, !autoEnabled, {
       tracks,
       playlistName,
     });
-  }, [enabled, offline, playlistId, playlistName, tracks]);
+  }, [autoEnabled, offline, playlistId, playlistName, tracks]);
 
-  const tint = enabled ? theme.color.accent : theme.color.fg;
+  const downloadLabel = isDownloading
+    ? `Downloading ${downloaded}/${total}…`
+    : isDownloaded
+      ? "Remove Download…"
+      : "Download Playlist";
+  // Menu form of the download toggle's disabled states.
+  const downloadDisabled =
+    !hasTracks || isDownloading || (offline && !isDownloaded);
+  const autoDisabled = !hasTracks || (offline && !autoEnabled);
+
+  if (!swiftUI) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="More playlist actions"
+        hitSlop={10}
+        onPress={() =>
+          Alert.alert(playlistName, undefined, [
+            ...(canEdit
+              ? [
+                  { text: "Edit Playlist", onPress: onEdit },
+                  {
+                    text: reorderActive ? "Done Reordering" : "Reorder Tracks",
+                    onPress: onToggleReorder,
+                  },
+                ]
+              : []),
+            ...(hasTracks
+              ? [{ text: downloadLabel, onPress: onDownloadPress }]
+              : []),
+            ...(hasTracks
+              ? [
+                  {
+                    text: autoEnabled
+                      ? "Turn Off Auto-Download"
+                      : "Auto-Download New Tracks",
+                    onPress: onAutoPress,
+                  },
+                ]
+              : []),
+            ...(collaborative
+              ? [{ text: "Collaborators", onPress: onOpenCollaborators }]
+              : []),
+            ...(canDelete
+              ? [
+                  {
+                    text: "Delete Playlist",
+                    style: "destructive" as const,
+                    onPress: onDelete,
+                  },
+                ]
+              : []),
+            { text: "Cancel", style: "cancel" as const },
+          ])
+        }
+        style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
+      >
+        {trigger}
+      </Pressable>
+    );
+  }
 
   return (
-    <Pressable
-      accessibilityRole="switch"
-      accessibilityState={{ checked: enabled }}
-      accessibilityLabel="Automatically download new tracks"
-      accessibilityHint={
-        enabled
-          ? "New tracks added to this playlist download automatically"
-          : "Turn on to download new tracks added to this playlist"
-      }
-      onPress={onPress}
-      style={({ pressed }) => ({
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 7,
-        backgroundColor: theme.color.bgElev1,
-        borderRadius: theme.radius.md,
-        paddingHorizontal: 14,
-        paddingVertical: 9,
-        opacity: pressed ? 0.8 : 1,
-        borderCurve: "continuous",
-      })}
-    >
-      <SymbolView
-        name={enabled ? "arrow.clockwise.circle.fill" : "arrow.clockwise.circle"}
-        size={15}
-        tintColor={tint}
-      />
-      <Text style={{ color: tint, fontWeight: "500", fontSize: 14 }}>
-        {enabled ? "Auto" : "Auto off"}
-      </Text>
-    </Pressable>
+    <swiftUI.Host matchContents colorScheme={theme.scheme}>
+      <swiftUI.Menu
+        label={<swiftUI.RNHostView matchContents>{trigger}</swiftUI.RNHostView>}
+        modifiers={[
+          swiftAccessibilityLabel("More playlist actions"),
+          swiftButtonStyle("plain"),
+          swiftControlSize("regular"),
+        ]}
+      >
+        {canEdit ? (
+          <>
+            <swiftUI.Button
+              label="Edit Playlist"
+              systemImage="pencil"
+              onPress={onEdit}
+            />
+            <swiftUI.Button
+              label={reorderActive ? "Done Reordering" : "Reorder Tracks"}
+              systemImage={reorderActive ? "checkmark" : "line.3.horizontal"}
+              onPress={onToggleReorder}
+            />
+            <swiftUI.Divider />
+          </>
+        ) : null}
+        <swiftUI.Button
+          label={downloadLabel}
+          systemImage={
+            isDownloaded ? "minus.circle" : "arrow.down.circle"
+          }
+          modifiers={[swiftDisabled(downloadDisabled)]}
+          onPress={onDownloadPress}
+        />
+        <swiftUI.Button
+          label="Auto-Download New Tracks"
+          systemImage={autoEnabled ? "checkmark" : "arrow.clockwise"}
+          modifiers={[swiftDisabled(autoDisabled)]}
+          onPress={onAutoPress}
+        />
+        {collaborative ? (
+          <swiftUI.Button
+            label="Collaborators"
+            systemImage="person.2"
+            onPress={onOpenCollaborators}
+          />
+        ) : null}
+        {canDelete ? (
+          <>
+            <swiftUI.Divider />
+            <swiftUI.Button
+              label="Delete Playlist"
+              systemImage="trash"
+              role="destructive"
+              modifiers={[swiftDisabled(deletePending)]}
+              onPress={onDelete}
+            />
+          </>
+        ) : null}
+      </swiftUI.Menu>
+    </swiftUI.Host>
   );
 }
 
@@ -1106,10 +1302,5 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
-  },
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
   },
 });
