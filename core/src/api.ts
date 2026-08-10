@@ -1312,6 +1312,17 @@ export function albumCoverUrl(id: string, size?: number): string {
 }
 
 /**
+ * Resolve a server-supplied cover URL against the configured API origin.
+ *
+ * The backend can return a relative, authenticated proxy path for remote
+ * artwork. Browsers resolve that path against the current origin, but native
+ * image components need the absolute URL explicitly.
+ */
+export function resolveCoverUrl(coverURL: string): string {
+  return url(coverURL);
+}
+
+/**
  * Prefer the album cover URL when a track belongs to one. Every track in an
  * album shares the same artwork, so a single URL per album means the browser
  * HTTP cache can serve every subsequent track image without a round-trip.
@@ -1322,7 +1333,7 @@ export function trackCoverUrl(track: {
   album_id?: string | null;
   cover_url?: string | null;
 }, size?: number): string {
-  if (track.cover_url) return url(track.cover_url);
+  if (track.cover_url) return resolveCoverUrl(track.cover_url);
   return track.album_id ? albumCoverUrl(track.album_id, size) : coverUrl(track.id, size);
 }
 

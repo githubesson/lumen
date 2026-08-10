@@ -15,6 +15,7 @@ import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
 import {
   api,
+  resolveCoverUrl,
   useAuth,
   type TrackListItem,
 } from "@music-library/core";
@@ -66,7 +67,7 @@ export default function TidalAlbumDetailScreen() {
       1,
       Math.round(ALBUM_ART_SIZE * PixelRatio.get()),
     );
-    const coverUri = album.cover_url || null;
+    const coverUri = album.cover_url ? resolveCoverUrl(album.cover_url) : null;
     return (
       <View
         style={{
