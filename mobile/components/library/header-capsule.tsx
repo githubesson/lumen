@@ -40,7 +40,10 @@ interface SearchSlot {
  * separated by a hairline divider. With `search` set, the capsule expands
  * in place into a search field (browse); without it the search button is a
  * plain action (home). The wrapper nudges the capsule toward the screen
- * edge so it sits flush with the large title's margin.
+ * edge so it sits flush with the large title's margin — via margin, never
+ * a transform: the interactive Liquid Glass view computes its frame
+ * without ancestor transforms, so a transformed wrapper leaves the glass
+ * offset from the scrim/border layers (a "double capsule" ghost).
  *
  * Action haptics fire at the call sites (they own the navigation side
  * effects); the capsule owns only the clear/close button's haptic.
@@ -253,7 +256,7 @@ export function HeaderCapsule({
 const styles = StyleSheet.create({
   wrap: {
     height: CAPSULE_HEIGHT,
-    transform: [{ translateX: 8 }],
+    marginRight: -8,
   },
   capsule: {
     height: CAPSULE_HEIGHT,
