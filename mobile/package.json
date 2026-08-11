@@ -17,7 +17,7 @@
   "dependencies": {
     "@expo/ui": "~57.0.7",
     "@expo/vector-icons": "^15.0.3",
-    "@kesha-antonov/react-native-background-downloader": "^4.5.8",
+    "@kesha-antonov/react-native-background-downloader": "^4.6.1",
     "@music-library/core": "file:./packages/music-library-core",
     "@preeternal/react-native-cookie-manager": "^6.3.3",
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -47,7 +47,7 @@
     "expo-status-bar": "~57.0.1",
     "expo-symbols": "~57.0.1",
     "expo-system-ui": "~57.0.1",
-    "expo-updates": "~57.0.11",
+    "expo-updates": "~57.0.13",
     "expo-web-browser": "~57.0.2",
     "expo-widgets": "~57.0.5",
     "react": "19.2.3",
