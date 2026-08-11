@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   ScrollView,
@@ -33,6 +41,98 @@ interface PlainLine {
   section: boolean;
 }
 
+interface LyricsTranslation extends LyricsTranslationState {
+  trackId: TrackListItem["id"];
+  lines: Record<number, string>;
+}
+
+export interface LyricsTranslationRequest {
+  sourceLanguage: string | null;
+  targetLanguage: string;
+}
+
+export interface LyricsTranslationState extends LyricsTranslationRequest {
+  visible: boolean;
+}
+
+export type LyricsTranslationResult =
+  | { success: true; detectedSourceLanguage: string | null }
+  | { success: false; message: string };
+
+export interface LyricsSectionHandle {
+  translate: (
+    request: LyricsTranslationRequest,
+  ) => Promise<LyricsTranslationResult>;
+  setTranslationVisible: (visible: boolean) => void;
+}
+
+interface LyricsSectionProps {
+  track: TrackListItem;
+  onAvailabilityChange?: (
+    trackId: TrackListItem["id"],
+    available: boolean,
+  ) => void;
+  onTranslationChange?: (
+    trackId: TrackListItem["id"],
+    translation: LyricsTranslationState | null,
+  ) => void;
+}
+
+const MAX_CACHED_TRANSLATIONS = 24;
+const translationCache = new Map<string, LyricsTranslation>();
+const latestTranslationKeyByTrack = new Map<TrackListItem["id"], string>();
+
+function translationCacheKey(
+  trackId: TrackListItem["id"],
+  sourceLanguage: string | null,
+  targetLanguage: string,
+): string {
+  return JSON.stringify([trackId, sourceLanguage, targetLanguage]);
+}
+
+function cachedTranslation(
+  trackId: TrackListItem["id"],
+  sourceLanguage: string | null,
+  targetLanguage: string,
+): LyricsTranslation | null {
+  return (
+    translationCache.get(
+      translationCacheKey(trackId, sourceLanguage, targetLanguage),
+    ) ?? null
+  );
+}
+
+function latestCachedTranslation(
+  trackId: TrackListItem["id"],
+): LyricsTranslation | null {
+  const key = latestTranslationKeyByTrack.get(trackId);
+  return key ? (translationCache.get(key) ?? null) : null;
+}
+
+function cacheTranslation(translation: LyricsTranslation): void {
+  const key = translationCacheKey(
+    translation.trackId,
+    translation.sourceLanguage,
+    translation.targetLanguage,
+  );
+  translationCache.delete(key);
+  translationCache.set(key, translation);
+  latestTranslationKeyByTrack.set(translation.trackId, key);
+
+  while (translationCache.size > MAX_CACHED_TRANSLATIONS) {
+    const oldestKey = translationCache.keys().next().value;
+    if (typeof oldestKey !== "string") break;
+    const oldest = translationCache.get(oldestKey);
+    translationCache.delete(oldestKey);
+    if (
+      oldest &&
+      latestTranslationKeyByTrack.get(oldest.trackId) === oldestKey
+    ) {
+      latestTranslationKeyByTrack.delete(oldest.trackId);
+    }
+  }
+}
+
 /** Mirrors frontend `.player-lyrics-scroll-line` / `.player-lyric-word` timings. */
 const LINE_TRANSITION = {
   duration: 320,
@@ -48,13 +148,25 @@ const WORD_TRANSITION = {
 const WORD_GLOW_RADIUS = 20;
 const WORD_GLOW_ALPHA = 0.16;
 
-export function LyricsSection({ track }: { track: TrackListItem }) {
+export const LyricsSection = forwardRef<
+  LyricsSectionHandle,
+  LyricsSectionProps
+>(function LyricsSection(
+  { track, onAvailabilityChange, onTranslationChange },
+  ref,
+) {
   const theme = useTheme();
   const time = usePlayerTime();
   const scrollRef = useRef<ScrollView>(null);
   const lineOffsets = useRef(new Map<number, number>());
   const lineHeights = useRef(new Map<number, number>());
   const [viewportHeight, setViewportHeight] = useState(0);
+  const [translation, setTranslation] = useState<LyricsTranslation | null>(() =>
+    latestCachedTranslation(track.id),
+  );
+  const [translatingTrackId, setTranslatingTrackId] = useState<
+    TrackListItem["id"] | null
+  >(null);
   const lyricsQuery = useQuery({
     queryKey: qk.lyrics(track.id, track.title, track.artist, track.album_title),
     queryFn: () =>
@@ -81,18 +193,159 @@ export function LyricsSection({ track }: { track: TrackListItem }) {
     () => activeLineIndex(syncedLines, time.currentTime),
     [syncedLines, time.currentTime],
   );
+  const displayedLines = useMemo(
+    () => (syncedLines.length ? syncedLines : plainLines),
+    [plainLines, syncedLines],
+  );
+  const lyricsAvailable =
+    lyricsQuery.isSuccess &&
+    !lyricsQuery.data.instrumental &&
+    displayedLines.length > 0;
+  const activeTranslation =
+    translation?.trackId === track.id ? translation : null;
+  const translationVisible = activeTranslation?.visible ?? false;
+  const translationBusy = translatingTrackId !== null;
+
+  useEffect(() => {
+    onAvailabilityChange?.(track.id, lyricsAvailable);
+    return () => onAvailabilityChange?.(track.id, false);
+  }, [lyricsAvailable, onAvailabilityChange, track.id]);
+
+  useEffect(() => {
+    onTranslationChange?.(
+      track.id,
+      activeTranslation
+        ? {
+            sourceLanguage: activeTranslation.sourceLanguage,
+            targetLanguage: activeTranslation.targetLanguage,
+            visible: activeTranslation.visible,
+          }
+        : null,
+    );
+  }, [activeTranslation, onTranslationChange, track.id]);
+
+  const translate = useCallback(
+    async ({
+      sourceLanguage,
+      targetLanguage,
+    }: LyricsTranslationRequest): Promise<LyricsTranslationResult> => {
+      if (translationBusy) {
+        return {
+          success: false,
+          message: "Translation is already in progress.",
+        };
+      }
+      if (!lyricsAvailable) {
+        return {
+          success: false,
+          message: "Lyrics aren’t available to translate.",
+        };
+      }
+
+      const cached = cachedTranslation(
+        track.id,
+        sourceLanguage,
+        targetLanguage,
+      );
+      if (cached) {
+        const restored = cached.visible ? cached : { ...cached, visible: true };
+        cacheTranslation(restored);
+        setTranslation(restored);
+        return { success: true, detectedSourceLanguage: sourceLanguage };
+      }
+
+      const translatableLines = displayedLines
+        .map((line, index) => ({ index, line }))
+        .filter(({ line }) => !line.section && line.text.trim().length > 0);
+      if (!translatableLines.length) {
+        return {
+          success: false,
+          message: "Lyrics aren’t available to translate.",
+        };
+      }
+
+      const requestedTrackId = track.id;
+      setTranslatingTrackId(requestedTrackId);
+      try {
+        const { onTranslateTask } = await import("expo-translate-text");
+        const result = await onTranslateTask({
+          input: translatableLines.map(({ line }) => line.text),
+          sourceLangCode: sourceLanguage ?? undefined,
+          targetLangCode: targetLanguage,
+        });
+        const translatedTexts = result.translatedTexts;
+        if (!Array.isArray(translatedTexts)) {
+          throw new Error("Apple returned an unexpected translation response.");
+        }
+
+        const translatedLines: Record<number, string> = {};
+        translatableLines.forEach(({ index }, translatedIndex) => {
+          const translatedText = translatedTexts[translatedIndex];
+          if (typeof translatedText === "string" && translatedText.trim()) {
+            translatedLines[index] = translatedText.trim();
+          }
+        });
+        if (!Object.keys(translatedLines).length) {
+          throw new Error("Apple returned no translated lyrics.");
+        }
+
+        const completedTranslation: LyricsTranslation = {
+          trackId: requestedTrackId,
+          lines: translatedLines,
+          sourceLanguage,
+          targetLanguage,
+          visible: true,
+        };
+        cacheTranslation(completedTranslation);
+        setTranslation(completedTranslation);
+        return {
+          success: true,
+          detectedSourceLanguage: result.sourceLanguage,
+        };
+      } catch (error) {
+        if (__DEV__) console.warn("Unable to translate lyrics", error);
+        return {
+          success: false,
+          message:
+            "Translation isn’t available for these lyrics or this language pair.",
+        };
+      } finally {
+        setTranslatingTrackId(null);
+      }
+    },
+    [displayedLines, lyricsAvailable, track.id, translationBusy],
+  );
+
+  const setTranslationVisible = useCallback(
+    (visible: boolean) => {
+      if (!activeTranslation || activeTranslation.visible === visible) return;
+      const updated = { ...activeTranslation, visible };
+      cacheTranslation(updated);
+      setTranslation(updated);
+    },
+    [activeTranslation],
+  );
+
+  useImperativeHandle(ref, () => ({ translate, setTranslationVisible }), [
+    setTranslationVisible,
+    translate,
+  ]);
 
   useEffect(() => {
     if (activeIndex < 0) return;
-    const offset = lineOffsets.current.get(activeIndex);
-    if (offset === undefined) return;
-    const lineHeight = lineHeights.current.get(activeIndex) ?? 0;
-    // Match frontend: center the active line in the viewport.
-    scrollRef.current?.scrollTo({
-      y: Math.max(0, offset - viewportHeight / 2 + lineHeight / 2),
-      animated: true,
+    const frame = requestAnimationFrame(() => {
+      const offset = lineOffsets.current.get(activeIndex);
+      if (offset === undefined) return;
+      const lineHeight = lineHeights.current.get(activeIndex) ?? 0;
+      // Match frontend: center the active line in the viewport. Waiting one
+      // frame also lets translated rows report their new layout first.
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, offset - viewportHeight / 2 + lineHeight / 2),
+        animated: true,
+      });
     });
-  }, [activeIndex, viewportHeight]);
+    return () => cancelAnimationFrame(frame);
+  }, [activeIndex, translationVisible, viewportHeight]);
 
   useEffect(() => {
     lineOffsets.current.clear();
@@ -137,79 +390,105 @@ export function LyricsSection({ track }: { track: TrackListItem }) {
   }
 
   return (
-    <ScrollView
-      ref={scrollRef}
-      contentInsetAdjustmentBehavior="automatic"
-      showsVerticalScrollIndicator={false}
-      onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
-      contentContainerStyle={{
-        // Frontend `.player-lyrics-scroll-line` uses margin-bottom: 18px.
-        gap: syncedLines.length ? 18 : 10,
-        paddingTop: syncedLines.length ? 48 : 10,
-        paddingHorizontal: 4,
-        paddingBottom: syncedLines.length ? 96 : 40,
-      }}
-    >
-      {syncedLines.length
-        ? syncedLines.map((line, index) => (
-            <SyncedLyricLine
-              key={`${line.time}-${index}`}
-              line={line}
-              state={
-                index === activeIndex
-                  ? "active"
-                  : index < activeIndex
-                    ? "past"
-                    : "upcoming"
-              }
-              activeWordIndex={
-                index === activeIndex && !line.section
-                  ? wordIndexForLine(
-                      line,
-                      syncedLines[index + 1],
-                      time.currentTime,
-                      Math.max(1, time.duration),
-                    )
-                  : null
-              }
-              onLayout={(event) => {
-                lineOffsets.current.set(index, event.nativeEvent.layout.y);
-                lineHeights.current.set(index, event.nativeEvent.layout.height);
-              }}
-            />
-          ))
-        : plainLines.map((line, index) => (
-            <Animated.View
-              key={`${index}-${line.text}`}
-              entering={FadeIn.duration(180)}
-              exiting={FadeOut.duration(120)}
-            >
-              <Text
-                selectable
-                style={
-                  line.section
-                    ? {
-                        color: theme.color.accent,
-                        fontSize: 12,
-                        fontWeight: "700",
-                        letterSpacing: 0.66,
-                        lineHeight: 17,
-                        textTransform: "uppercase",
-                      }
-                    : {
-                        color: theme.color.fgSubtle,
-                        fontSize: 17,
-                        lineHeight: 25,
-                      }
+    <View style={{ flex: 1 }}>
+      <ScrollView
+        ref={scrollRef}
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
+        contentContainerStyle={{
+          // Frontend `.player-lyrics-scroll-line` uses margin-bottom: 18px.
+          gap: syncedLines.length ? 18 : 10,
+          paddingTop: syncedLines.length ? 48 : 10,
+          paddingHorizontal: 4,
+          paddingBottom: syncedLines.length ? 96 : 40,
+        }}
+      >
+        {syncedLines.length
+          ? syncedLines.map((line, index) => (
+              <SyncedLyricLine
+                key={`${line.time}-${index}`}
+                line={line}
+                translatedText={
+                  activeTranslation?.visible
+                    ? activeTranslation.lines[index]
+                    : undefined
                 }
+                state={
+                  index === activeIndex
+                    ? "active"
+                    : index < activeIndex
+                      ? "past"
+                      : "upcoming"
+                }
+                activeWordIndex={
+                  index === activeIndex && !line.section
+                    ? wordIndexForLine(
+                        line,
+                        syncedLines[index + 1],
+                        time.currentTime,
+                        Math.max(1, time.duration),
+                      )
+                    : null
+                }
+                onLayout={(event) => {
+                  lineOffsets.current.set(index, event.nativeEvent.layout.y);
+                  lineHeights.current.set(
+                    index,
+                    event.nativeEvent.layout.height,
+                  );
+                }}
+              />
+            ))
+          : plainLines.map((line, index) => (
+              <Animated.View
+                key={`${index}-${line.text}`}
+                entering={FadeIn.duration(180)}
+                exiting={FadeOut.duration(120)}
               >
-                {line.text}
-              </Text>
-            </Animated.View>
-          ))}
-    </ScrollView>
+                <Text
+                  selectable
+                  style={
+                    line.section
+                      ? {
+                          color: theme.color.accent,
+                          fontSize: 12,
+                          fontWeight: "700",
+                          letterSpacing: 0.66,
+                          lineHeight: 17,
+                          textTransform: "uppercase",
+                        }
+                      : {
+                          color: theme.color.fgSubtle,
+                          fontSize: 17,
+                          lineHeight: 25,
+                        }
+                  }
+                >
+                  {line.text}
+                </Text>
+                {activeTranslation?.visible &&
+                activeTranslation.lines[index] ? (
+                  <Animated.Text
+                    selectable
+                    entering={FadeIn.duration(160)}
+                    exiting={FadeOut.duration(120)}
+                    style={{
+                      color: theme.color.fgMuted,
+                      fontSize: 14,
+                      lineHeight: 20,
+                      paddingTop: 3,
+                    }}
+                  >
+                    {activeTranslation.lines[index]}
+                  </Animated.Text>
+                ) : null}
+              </Animated.View>
+            ))}
+      </ScrollView>
+    </View>
   );
-}
+});
 
 function LyricsMessage({ text }: { text: string }) {
   const theme = useTheme();
@@ -224,11 +503,13 @@ function LyricsMessage({ text }: { text: string }) {
 
 function SyncedLyricLine({
   line,
+  translatedText,
   state,
   activeWordIndex,
   onLayout,
 }: {
   line: SyncedLine;
+  translatedText?: string;
   state: "active" | "past" | "upcoming";
   activeWordIndex: number | null;
   onLayout: (event: LayoutChangeEvent) => void;
@@ -310,6 +591,23 @@ function SyncedLyricLine({
           {line.text}
         </Animated.Text>
       )}
+      {translatedText ? (
+        <Animated.Text
+          selectable
+          entering={FadeIn.duration(160)}
+          exiting={FadeOut.duration(120)}
+          style={{
+            color: theme.color.fgMuted,
+            fontSize: 14,
+            fontWeight: "400",
+            letterSpacing: -0.08,
+            lineHeight: 20,
+            paddingTop: 3,
+          }}
+        >
+          {translatedText}
+        </Animated.Text>
+      ) : null}
     </Animated.View>
   );
 }

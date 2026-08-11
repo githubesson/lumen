@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import {
+  Platform,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from "react-native";
 import Animated, {
   Easing,
   Extrapolation,
@@ -20,7 +26,13 @@ import {
 import { GlassIconButton } from "../components/now-playing/glass-icon-button";
 import { HeroArtwork } from "../components/now-playing/hero-artwork";
 import { HeroMeta } from "../components/now-playing/hero-meta";
-import { LyricsSection } from "../components/now-playing/lyrics-section";
+import { LyricsLanguageSelector } from "../components/now-playing/lyrics-language-selector";
+import {
+  LyricsSection,
+  type LyricsSectionHandle,
+  type LyricsTranslationRequest,
+  type LyricsTranslationState,
+} from "../components/now-playing/lyrics-section";
 import { QueueSection } from "../components/now-playing/queue-section";
 import { SheetGrabber } from "../components/now-playing/sheet-grabber";
 import { useFavorite, useFavoriteActions } from "../context/favorites";
@@ -55,6 +67,18 @@ export default function NowPlayingScreen() {
   const [lyricsOpen, setLyricsOpen] = useState(false);
   const [bodyHeight, setBodyHeight] = useState(0);
   const [bottomControlsHeight, setBottomControlsHeight] = useState(0);
+  const lyricsSectionRef = useRef<LyricsSectionHandle>(null);
+  const [lyricsAvailableTrackId, setLyricsAvailableTrackId] = useState<
+    string | null
+  >(null);
+  const [translationSelectorOpen, setTranslationSelectorOpen] = useState(false);
+  const [sourceLanguage, setSourceLanguage] = useState<string | null>(null);
+  const [targetLanguage, setTargetLanguage] = useState<string | null>(null);
+  const [translationBusy, setTranslationBusy] = useState(false);
+  const [translationError, setTranslationError] = useState<string | null>(null);
+  const [completedTranslation, setCompletedTranslation] = useState<
+    (LyricsTranslationRequest & { trackId: string; visible: boolean }) | null
+  >(null);
   const transition = useSharedValue(0);
   const isTabletLayout = Math.min(width, height) >= TABLET_BREAKPOINT;
   const panelOpen = queueOpen || lyricsOpen;
@@ -69,6 +93,7 @@ export default function NowPlayingScreen() {
     if (queueParam === "1") {
       setQueueOpen(true);
       setLyricsOpen(false);
+      setTranslationSelectorOpen(false);
     }
   }, [queueParam]);
 
@@ -88,6 +113,26 @@ export default function NowPlayingScreen() {
   );
   const trackId = track?.id ?? null;
   const favorite = useFavorite(trackId ?? "");
+  const supportsInlineTranslation =
+    process.env.EXPO_OS === "ios" &&
+    Number.parseFloat(String(Platform.Version)) >= 18;
+  const translationControlVisible =
+    lyricsOpen &&
+    trackId !== null &&
+    lyricsAvailableTrackId === trackId &&
+    supportsInlineTranslation;
+  const headerActionCount = translationControlVisible ? 3 : 2;
+  const headerActionsWidth =
+    ACTION_SIZE * headerActionCount + 10 * (headerActionCount - 1);
+  const selectedPairMatches =
+    completedTranslation?.trackId === trackId &&
+    completedTranslation.sourceLanguage === sourceLanguage &&
+    completedTranslation.targetLanguage === targetLanguage;
+  const translationActionLabel = selectedPairMatches
+    ? completedTranslation.visible
+      ? "Hide Translation"
+      : "Show Translation"
+    : "Translate Lyrics";
   const previousTrackIdRef = useRef<string | null>(null);
   const previousTrackIndexRef = useRef(index);
   const trackTransitionDirection =
@@ -136,9 +181,13 @@ export default function NowPlayingScreen() {
   const metaEndTop = 6;
   const metaStartLeft = 0;
   const metaEndLeft = COMPACT_COVER_SIZE + 6;
-  const actionsLeft = Math.max(0, bodyWidth - ACTION_SIZE * 2 - 10);
-  const metaStartWidth = Math.max(120, actionsLeft - 12);
-  const metaEndWidth = Math.max(120, actionsLeft - metaEndLeft - 10);
+  const actionsLeft = Math.max(0, bodyWidth - headerActionsWidth);
+  const minimumMetaWidth = translationControlVisible ? 64 : 120;
+  const metaStartWidth = Math.max(minimumMetaWidth, actionsLeft - 12);
+  const metaEndWidth = Math.max(
+    minimumMetaWidth,
+    actionsLeft - metaEndLeft - 10,
+  );
   const heroExpandedHeight = metaStartTop + 50;
   const heroCompactHeight = COMPACT_COVER_SIZE + 2;
   const queueBottomInset = measuredBottomControls + 18;
@@ -210,7 +259,12 @@ export default function NowPlayingScreen() {
     ),
     transform: [
       {
-        scale: interpolate(transition.value, [0, 1], [1, 0.8], Extrapolation.CLAMP),
+        scale: interpolate(
+          transition.value,
+          [0, 1],
+          [1, 0.8],
+          Extrapolation.CLAMP,
+        ),
       },
     ],
   }));
@@ -272,6 +326,80 @@ export default function NowPlayingScreen() {
     void Haptics.selectionAsync();
     cycleRepeat();
   }, [cycleRepeat]);
+
+  const handleLyricsAvailabilityChange = useCallback(
+    (availableTrackId: string, available: boolean) => {
+      if (available) {
+        setLyricsAvailableTrackId(availableTrackId);
+        return;
+      }
+      setLyricsAvailableTrackId((current) =>
+        current === availableTrackId ? null : current,
+      );
+      setTranslationSelectorOpen(false);
+      setTranslationError(null);
+      setCompletedTranslation((current) =>
+        current?.trackId === availableTrackId ? null : current,
+      );
+    },
+    [],
+  );
+
+  const handleLyricsTranslationChange = useCallback(
+    (translatedTrackId: string, translation: LyricsTranslationState | null) => {
+      if (!translation) {
+        setCompletedTranslation((current) =>
+          current?.trackId === translatedTrackId ? null : current,
+        );
+        return;
+      }
+      setCompletedTranslation({ trackId: translatedTrackId, ...translation });
+      setSourceLanguage(translation.sourceLanguage);
+      setTargetLanguage(translation.targetLanguage);
+    },
+    [],
+  );
+
+  const handleTranslationAction = useCallback(async () => {
+    if (!trackId || !targetLanguage || translationBusy) return;
+
+    if (selectedPairMatches && completedTranslation) {
+      const visible = !completedTranslation.visible;
+      lyricsSectionRef.current?.setTranslationVisible(visible);
+      setCompletedTranslation({ ...completedTranslation, visible });
+      setTranslationError(null);
+      setTranslationSelectorOpen(false);
+      return;
+    }
+
+    const section = lyricsSectionRef.current;
+    if (!section) return;
+    setTranslationBusy(true);
+    setTranslationError(null);
+    const result = await section.translate({
+      sourceLanguage,
+      targetLanguage,
+    });
+    if (result.success) {
+      setCompletedTranslation({
+        trackId,
+        sourceLanguage,
+        targetLanguage,
+        visible: true,
+      });
+      setTranslationSelectorOpen(false);
+    } else {
+      setTranslationError(result.message);
+    }
+    setTranslationBusy(false);
+  }, [
+    completedTranslation,
+    selectedPairMatches,
+    sourceLanguage,
+    targetLanguage,
+    trackId,
+    translationBusy,
+  ]);
 
   useEffect(() => {
     previousTrackIdRef.current = trackId;
@@ -338,10 +466,29 @@ export default function NowPlayingScreen() {
           <Animated.View
             style={[
               styles.heroActions,
-              { left: actionsLeft, width: ACTION_SIZE * 2 + 10 },
+              { left: actionsLeft, width: headerActionsWidth },
               actionsStyle,
             ]}
           >
+            {translationControlVisible ? (
+              <GlassIconButton
+                icon="translate"
+                iconSize={15}
+                weight="semibold"
+                tintColor={
+                  translationSelectorOpen ||
+                  (selectedPairMatches && completedTranslation?.visible)
+                    ? theme.color.accent
+                    : theme.color.fg
+                }
+                accessibilityLabel="Lyrics translation languages"
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  setTranslationError(null);
+                  setTranslationSelectorOpen((open) => !open);
+                }}
+              />
+            ) : null}
             <GlassIconButton
               icon={favorite ? "star.fill" : "star"}
               iconSize={14}
@@ -361,6 +508,36 @@ export default function NowPlayingScreen() {
             />
           </Animated.View>
         </Animated.View>
+
+        {translationControlVisible && translationSelectorOpen ? (
+          <View
+            style={[
+              styles.translationSelector,
+              {
+                top: heroCompactHeight + 8,
+                right: pad,
+                width: Math.min(320, bodyWidth),
+              },
+            ]}
+          >
+            <LyricsLanguageSelector
+              sourceLanguage={sourceLanguage}
+              targetLanguage={targetLanguage}
+              busy={translationBusy}
+              error={translationError}
+              actionLabel={translationActionLabel}
+              onSourceChange={(language) => {
+                setSourceLanguage(language);
+                setTranslationError(null);
+              }}
+              onTargetChange={(language) => {
+                setTargetLanguage(language);
+                setTranslationError(null);
+              }}
+              onAction={() => void handleTranslationAction()}
+            />
+          </View>
+        ) : null}
 
         {queueOpen ? (
           <Animated.View
@@ -392,7 +569,13 @@ export default function NowPlayingScreen() {
               queueSectionStyle,
             ]}
           >
-            <LyricsSection track={track} />
+            <LyricsSection
+              key={track.id}
+              ref={lyricsSectionRef}
+              track={track}
+              onAvailabilityChange={handleLyricsAvailabilityChange}
+              onTranslationChange={handleLyricsTranslationChange}
+            />
           </Animated.View>
         ) : null}
 
@@ -408,11 +591,13 @@ export default function NowPlayingScreen() {
             lyricsOpen={lyricsOpen}
             onToggleQueueOpen={() => {
               setLyricsOpen(false);
+              setTranslationSelectorOpen(false);
               setQueueOpen((value) => !value);
             }}
             onToggleLyricsOpen={() => {
               setQueueOpen(false);
-              setLyricsOpen((value) => !value);
+              if (lyricsOpen) setTranslationSelectorOpen(false);
+              setLyricsOpen(!lyricsOpen);
             }}
           />
         </View>
@@ -440,12 +625,18 @@ const styles = StyleSheet.create({
     position: "absolute",
     flexDirection: "row",
     gap: 10,
+    zIndex: 40,
+  },
+  translationSelector: {
+    position: "absolute",
+    zIndex: 30,
   },
   queueSection: {
     position: "absolute",
     left: 0,
     right: 0,
     overflow: "hidden",
+    zIndex: 1,
   },
   bottomControls: {
     position: "absolute",
