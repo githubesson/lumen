@@ -32,7 +32,11 @@ services:
     # pin is what makes that acceptable — never relax it to a branch name.
     build:
       context: https://github.com/binimum/hifi-api.git#e52d1091407c2014958116a6875d9ac37e265c03
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${HIFI_API_PORT:-8000}", "--no-access-log"]
+    # The thin Lumen ASGI extension adds device login and account removal to
+    # the otherwise unchanged, commit-pinned proxy. It is only reachable on
+    # this private Compose network; authenticated admin routes in the backend
+    # are the public boundary.
+    command: ["uvicorn", "lumen_hifi:app", "--host", "0.0.0.0", "--port", "${HIFI_API_PORT:-8000}", "--no-access-log"]
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -51,6 +55,7 @@ services:
       DEV_MODE: ${TIDAL_HIFI_DEV_MODE:-False}
     volumes:
       - ./tidal-hifi:/app/data
+      - ./hifi-api/lumen_hifi.py:/app/lumen_hifi.py:ro
     expose:
       - "${HIFI_API_PORT:-8000}"
     # Without this the backend starts as soon as the container exists and 5xx's

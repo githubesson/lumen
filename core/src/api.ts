@@ -275,7 +275,7 @@ async function requestVoid(
 }
 
 function abortError(): Error {
-  const error = new Error("Last.fm authorization polling was cancelled.");
+  const error = new Error("Authorization polling was cancelled.");
   error.name = "AbortError";
   return error;
 }
@@ -318,6 +318,33 @@ async function waitForLastFMAuthorization(
       throw new ApiError(
         408,
         "Timed out waiting for Last.fm authorization. You can try again.",
+      );
+    }
+    await abortableDelay(Math.min(intervalMs, remainingMs), options.signal);
+  }
+}
+
+async function waitForTidalAuthorization(
+  flowId: string,
+  options: TidalAuthorizationPollOptions = {},
+): Promise<TidalAuthPoll> {
+  const intervalMs = Math.max(500, options.intervalMs ?? 2500);
+  const timeoutMs = Math.max(intervalMs, options.timeoutMs ?? 10 * 60_000);
+  const deadline = Date.now() + timeoutMs;
+
+  while (true) {
+    if (options.signal?.aborted) throw abortError();
+    const result = await request<TidalAuthPoll>(
+      `/api/admin/tidal/auth/${pathID(flowId)}`,
+      { signal: options.signal },
+    );
+    if (result.state !== "pending") return result;
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new ApiError(
+        408,
+        "Timed out waiting for TIDAL authorization. You can try again.",
       );
     }
     await abortableDelay(Math.min(intervalMs, remainingMs), options.signal);
@@ -790,6 +817,22 @@ export const api = {
 
   tidalStatus: (options: RequestOptions = {}) =>
     request<TidalStatus>("/api/admin/tidal/status", options),
+  startTidalAuth: (options: RequestOptions = {}) =>
+    request<TidalAuthStart>("/api/admin/tidal/auth", {
+      method: "POST",
+      signal: options.signal,
+    }),
+  pollTidalAuth: (flowId: string, options: RequestOptions = {}) =>
+    request<TidalAuthPoll>(
+      `/api/admin/tidal/auth/${pathID(flowId)}`,
+      options,
+    ),
+  waitForTidalAuthorization,
+  removeTidalAccount: (accountId: string, options: RequestOptions = {}) =>
+    requestVoid(`/api/admin/tidal/accounts/${pathID(accountId)}`, {
+      method: "DELETE",
+      signal: options.signal,
+    }),
 
   // Lyrics API (fastest valid result from the configured providers)
   searchLyrics: (query: string, options: RequestOptions = {}) =>
@@ -957,6 +1000,34 @@ export interface TidalStatus {
   version?: string;
   repo?: string;
   error?: string;
+  management_supported: boolean;
+  management_error?: string;
+  accounts: TidalAccount[];
+}
+
+export interface TidalAccount {
+  id: string;
+  user_id: string;
+  removable: boolean;
+}
+
+export interface TidalAuthStart {
+  flow_id: string;
+  verification_url: string;
+  user_code?: string;
+  expires_at: string;
+}
+
+export interface TidalAuthPoll {
+  state: "pending" | "linked" | "denied" | "expired";
+  message?: string;
+  account?: TidalAccount;
+}
+
+export interface TidalAuthorizationPollOptions {
+  signal?: AbortSignal;
+  intervalMs?: number;
+  timeoutMs?: number;
 }
 
 export interface TidalAlbum {

@@ -263,6 +263,16 @@ export default function SettingsScreen() {
               router.push("/(tabs)/(settings)/admin-library");
             }}
           />
+          <LinkRow
+            label="TIDAL"
+            icon="waveform"
+            theme={theme}
+            firstBorder
+            onPress={() => {
+              void Haptics.selectionAsync();
+              router.push("/(tabs)/(settings)/admin-tidal");
+            }}
+          />
         </Section>
       ) : null}
 

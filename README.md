@@ -126,11 +126,11 @@ This is intentionally a passthrough setup:
 - Playlists can contain both local tracks and TIDAL tracks.
 - TIDAL playlist entries store track metadata plus the remote TIDAL id, not an
   audio file.
-- One subscribed TIDAL account powers playback for all invite-only users.
+- One or more subscribed TIDAL accounts power playback for all invite-only users.
 
 No TIDAL developer app, OAuth client id, client secret, redirect URL, or scopes
-are required for this path. The only TIDAL auth state is the device token that
-`hifi-api` writes to `./tidal-hifi/token.json`.
+are required for this path. The only TIDAL auth state is the device-token set
+that `hifi-api` writes to `./tidal-hifi/token.json`.
 
 Configure the TIDAL values in the root `.env`. Use the country for the
 subscribed account, for example `PL`:
@@ -151,25 +151,28 @@ the host; Compose uses it for the private `hifi-api` service and derives the
 backend URL as `http://hifi-api:${HIFI_API_PORT}` internally. Do not set
 `TIDAL_HIFI_API_URL` in `.env` for the Docker setup.
 
-After the image has built, generate the token once:
-
-```sh
-docker compose run --rm hifi-api python tidal_auth/tidal_auth.py
-```
-
-Follow the device-login instructions and sign in with the subscribed TIDAL
-account. The command writes `./tidal-hifi/token.json`; that directory is local
-runtime state and is gitignored.
-
-Then restart the stack:
+Start (or recreate) the stack:
 
 ```sh
 docker compose up -d --build
 ```
 
-In the admin UI, the TIDAL panel should show the proxy as connected. From there,
-normal search and playback use the same UI as local tracks. If playback fails,
-check both logs:
+Then link a subscribed account from **Admin → Library → TIDAL accounts** in the
+web/desktop client, or **Settings → Admin → TIDAL** in the mobile client. Lumen
+opens TIDAL's device sign-in page and updates the panel as soon as approval
+finishes. Accounts can be added, replaced, or unlinked there without restarting
+the stack. Tokens remain in `./tidal-hifi/token.json`; that directory is local
+runtime state and is gitignored.
+
+The original command-line device flow remains available as a recovery path:
+
+```sh
+docker compose run --rm hifi-api python tidal_auth/tidal_auth.py
+docker compose restart hifi-api
+```
+
+Once an account is linked, normal search and playback use the same UI as local
+tracks. If playback fails, check both logs:
 
 ```sh
 docker compose logs backend hifi-api
@@ -182,8 +185,9 @@ Common checks:
   resolves to `http://hifi-api:8000` or your chosen `HIFI_API_PORT`.
 - Preview-only or low-quality playback usually means the token was generated
   with an account or country that TIDAL is not granting full playback for.
-- Changing account, country, or subscription state is easiest by deleting
-  `./tidal-hifi/token.json`, running the auth command again, and restarting.
+- Relink an account from either admin client when its authorization or
+  subscription changes. `TIDAL_COUNTRY_CODE` still requires recreating the
+  containers because it is server configuration rather than account state.
 
 ## Putting it on the internet
 

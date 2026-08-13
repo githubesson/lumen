@@ -31,6 +31,8 @@ coverage/
 .vite/
 .turbo/
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
 
 # Electron and packaged app artifacts
 release/

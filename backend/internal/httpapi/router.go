@@ -313,6 +313,9 @@ func NewRouter(d Deps) http.Handler {
 			ordinary.Get("/admin/library/filen/pins/{id}/downloads", adminFilenH.Downloads)
 
 			ordinary.Get("/admin/tidal/status", adminTIDALH.Status)
+			ordinary.Post("/admin/tidal/auth", adminTIDALH.StartAuth)
+			ordinary.Get("/admin/tidal/auth/{flowID}", adminTIDALH.PollAuth)
+			ordinary.Delete("/admin/tidal/accounts/{accountID}", adminTIDALH.RemoveAccount)
 
 			ordinary.Get("/admin/users", adminUsersH.List)
 			ordinary.Get("/admin/users/{id}/departure-preview", adminUsersH.DeparturePreview)

@@ -30,6 +30,10 @@ export default function SettingsStackLayout() {
         options={{ headerLargeTitle: false, title: "Library" }}
       />
       <Stack.Screen
+        name="admin-tidal"
+        options={{ headerLargeTitle: false, title: "TIDAL" }}
+      />
+      <Stack.Screen
         name="admin-new-invite"
         options={{
           headerLargeTitle: false,
