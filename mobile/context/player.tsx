@@ -37,6 +37,7 @@ import {
 } from "@music-library/core";
 import { useExpoAudioAdapter } from "../adapters/expo-audio-adapter";
 import { asyncStorageAdapter } from "../adapters/async-storage-adapter";
+import { shouldExposeNowPlayingSession } from "./now-playing-session";
 import { downloadStore } from "../lib/downloads";
 import { isTrackPlayableOffline } from "../lib/offline-mode";
 import {
@@ -299,10 +300,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (Platform.OS !== "ios") return;
 
-    const shouldExposeLockScreen =
-      !targetDevice &&
-      !!nowPlayingMetadata &&
-      (state.isPlaying || appState === "active");
+    // Keep the session while a local track is loaded, including pause.
+    // Gating on isPlaying || appState === "active" deleted MPNowPlayingInfo
+    // the moment the user paused from Control Center / the lock screen, or
+    // iOS paused for a route loss (AirPod pulled). The OS then had nothing
+    // to resume.
+    const shouldExposeLockScreen = shouldExposeNowPlayingSession({
+      hasTrack: !!nowPlayingMetadata,
+      isCasting: !!targetDevice,
+    });
 
     if (!shouldExposeLockScreen) {
       setLockScreenTrackControlsEnabled(false);
@@ -326,7 +332,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
     setLockScreenTrackControlsEnabled(true);
     adapter.updateLockScreenMetadata(nowPlayingMetadata);
-  }, [adapter, appState, nowPlayingMetadata, state.isPlaying, targetDevice]);
+    // isPlaying stays in the deps so pause/resume refresh playbackRate.
+  }, [adapter, nowPlayingMetadata, state.isPlaying, targetDevice]);
 
   const routedPlay = useCallback<PlayerControls["play"]>(
     (track, queue) => {
