@@ -14,7 +14,11 @@ import {
 } from "../../api";
 import { Button } from "../../components/Button";
 import ErrorBanner from "../../components/ErrorBanner";
-import { openExternal } from "../../lib/platform";
+import {
+  closeExternalWindow,
+  openExternal,
+  reserveExternalWindow,
+} from "../../lib/platform";
 import { AdminSectionIntro, AdminSectionTitle } from "./AdminSectionTitle";
 
 function normalizeTidalVerificationURL(rawURL: string): string {
@@ -102,8 +106,11 @@ export function TidalSection() {
   const connected = Boolean(status?.connected);
   const accounts = status?.accounts ?? [];
 
-  const openVerification = async (url: string) => {
-    const opened = await openExternal(normalizeTidalVerificationURL(url));
+  const openVerification = async (url: string, reservedWindow?: Window | null) => {
+    const opened = await openExternal(
+      normalizeTidalVerificationURL(url),
+      reservedWindow,
+    );
     if (!opened.ok) {
       setError(opened.error || "Could not open the TIDAL sign-in page.");
       return;
@@ -112,15 +119,19 @@ export function TidalSection() {
   };
 
   const startAuth = async () => {
+    // Browser popup eligibility only lasts for the synchronous click handler.
+    // Reserve the tab now, then navigate it when the API returns the TIDAL URL.
+    const reservedWindow = reserveExternalWindow();
     setBusy("link");
     setError(null);
     setNotice(null);
     try {
       const started = await api.startTidalAuth();
       setFlow(started);
-      await openVerification(started.verification_url);
+      await openVerification(started.verification_url, reservedWindow);
     } catch (err) {
       setError(errorMessage(err, "Could not start TIDAL sign-in."));
+      closeExternalWindow(reservedWindow);
     } finally {
       setBusy(null);
     }

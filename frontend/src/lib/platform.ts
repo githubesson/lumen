@@ -56,13 +56,47 @@ export function getDesktopConfig() {
   return electron()?.getConfig?.();
 }
 
-export async function openExternal(url: string) {
+export function reserveExternalWindow(): Window | null {
+  if (electron()) return null;
+  const opened = window.open("", "_blank");
+  if (opened) opened.opener = null;
+  return opened;
+}
+
+export function closeExternalWindow(opened: Window | null): void {
+  if (opened && !opened.closed) opened.close();
+}
+
+export async function openExternal(url: string, reservedWindow?: Window | null) {
   const bridge = electron();
   if (bridge?.openExternal) return bridge.openExternal(url);
-  const opened = window.open(url, "_blank", "noopener,noreferrer");
-  return opened
-    ? { ok: true }
-    : { ok: false, error: "The browser blocked the authorization window." };
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    closeExternalWindow(reservedWindow ?? null);
+    return { ok: false, error: "Invalid URL." };
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    closeExternalWindow(reservedWindow ?? null);
+    return { ok: false, error: "Only HTTP and HTTPS links can be opened." };
+  }
+
+  const opened =
+    reservedWindow && !reservedWindow.closed
+      ? reservedWindow
+      : reserveExternalWindow();
+  if (!opened) {
+    return { ok: false, error: "The browser blocked the authorization window." };
+  }
+  try {
+    opened.location.replace(parsed.href);
+  } catch {
+    closeExternalWindow(opened);
+    return { ok: false, error: "Could not open the authorization window." };
+  }
+  return { ok: true };
 }
 
 export function getFH6Status() {

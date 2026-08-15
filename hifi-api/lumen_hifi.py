@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import HTTPException
@@ -195,6 +196,20 @@ async def _cleanup_flows(now: float) -> None:
         _flows.pop(flow_id, None)
 
 
+def _normalize_verification_url(value: Any) -> str:
+    raw_url = str(value or "").strip()
+    if not raw_url:
+        return ""
+    candidate = raw_url if "://" in raw_url else f"https://{raw_url.lstrip('/')}"
+    parsed = urlsplit(candidate)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not (
+        hostname == "tidal.com" or hostname.endswith(".tidal.com")
+    ):
+        return ""
+    return candidate
+
+
 @app.get("/lumen/accounts")
 async def list_lumen_accounts() -> dict[str, Any]:
     try:
@@ -231,7 +246,7 @@ async def start_lumen_device_auth() -> dict[str, Any]:
         raise HTTPException(status_code=502, detail="TIDAL did not start device authorization") from exc
 
     device_code = str(payload.get("deviceCode") or "")
-    verification_url = str(
+    verification_url = _normalize_verification_url(
         payload.get("verificationUriComplete") or payload.get("verificationUri") or ""
     )
     user_code = str(payload.get("userCode") or "")
