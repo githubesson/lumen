@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import secrets
 import tempfile
@@ -30,6 +31,7 @@ from tidal_auth import tidal_auth
 
 
 app = hifi.app
+logger = logging.getLogger("uvicorn.error")
 
 _SCOPE = "r_usr+w_usr+w_sub"
 _DEVICE_AUTH_URL = "https://auth.tidal.com/v1/oauth2/device_authorization"
@@ -50,6 +52,11 @@ class DeviceFlow:
 
 
 _flows: dict[str, DeviceFlow] = {}
+
+
+def _flow_ref(flow_id: str) -> str:
+    """Return a short correlation id without logging the live flow token."""
+    return hashlib.sha256(flow_id.encode("utf-8")).hexdigest()[:10]
 
 
 def _token_path() -> Path:
@@ -215,6 +222,10 @@ async def list_lumen_accounts() -> dict[str, Any]:
     try:
         entries = _read_token_entries()
     except (OSError, ValueError, json.JSONDecodeError) as exc:
+        logger.exception(
+            "Lumen TIDAL account list failed token_file=%s",
+            _token_path(),
+        )
         raise HTTPException(status_code=500, detail="Could not read the TIDAL token file") from exc
     removable_ids = _file_account_ids(entries)
     return {
@@ -233,8 +244,8 @@ async def start_lumen_device_auth() -> dict[str, Any]:
         if len(_flows) >= _MAX_PENDING_FLOWS:
             raise HTTPException(status_code=429, detail="Too many pending TIDAL sign-ins")
 
-    client = await _tidal_client()
     try:
+        client = await _tidal_client()
         response = await client.post(
             _DEVICE_AUTH_URL,
             data={"client_id": tidal_auth.AUTH_CLIENT_ID, "scope": _SCOPE},
@@ -243,6 +254,7 @@ async def start_lumen_device_auth() -> dict[str, Any]:
         response.raise_for_status()
         payload = response.json()
     except (httpx.HTTPError, ValueError) as exc:
+        logger.exception("Lumen TIDAL device authorization request failed")
         raise HTTPException(status_code=502, detail="TIDAL did not start device authorization") from exc
 
     device_code = str(payload.get("deviceCode") or "")
@@ -251,6 +263,11 @@ async def start_lumen_device_auth() -> dict[str, Any]:
     )
     user_code = str(payload.get("userCode") or "")
     if not device_code or not verification_url:
+        logger.error(
+            "Lumen TIDAL device authorization response incomplete device_code=%s verification_url=%s",
+            bool(device_code),
+            bool(verification_url),
+        )
         raise HTTPException(status_code=502, detail="TIDAL returned an incomplete authorization response")
 
     try:
@@ -272,6 +289,13 @@ async def start_lumen_device_auth() -> dict[str, Any]:
             raise HTTPException(status_code=429, detail="Too many pending TIDAL sign-ins")
         _flows[flow_id] = flow
 
+    logger.info(
+        "Lumen TIDAL device authorization started flow=%s expires_in=%ds interval=%ds",
+        _flow_ref(flow_id),
+        int(expires_in),
+        int(interval),
+    )
+
     return {
         "flow_id": flow_id,
         "verification_url": verification_url,
@@ -286,16 +310,24 @@ async def poll_lumen_device_auth(flow_id: str) -> dict[str, Any]:
     async with _flows_lock:
         flow = _flows.get(flow_id)
         if not flow:
+            logger.warning(
+                "Lumen TIDAL authorization poll missing flow=%s",
+                _flow_ref(flow_id),
+            )
             raise HTTPException(status_code=404, detail="TIDAL sign-in was not found")
         if flow.expires_at <= now:
             _flows.pop(flow_id, None)
+            logger.info(
+                "Lumen TIDAL authorization expired flow=%s",
+                _flow_ref(flow_id),
+            )
             return {"state": "expired", "message": "The TIDAL sign-in expired"}
         if flow.next_poll_at > now:
             return {"state": "pending"}
         flow.next_poll_at = now + flow.interval
 
-    client = await _tidal_client()
     try:
+        client = await _tidal_client()
         response = await client.post(
             _TOKEN_URL,
             data={
@@ -309,6 +341,10 @@ async def poll_lumen_device_auth(flow_id: str) -> dict[str, Any]:
         )
         payload = response.json()
     except (httpx.HTTPError, ValueError) as exc:
+        logger.exception(
+            "Lumen TIDAL token poll request failed flow=%s",
+            _flow_ref(flow_id),
+        )
         raise HTTPException(status_code=502, detail="TIDAL sign-in could not be checked") from exc
 
     if response.status_code != 200:
@@ -316,6 +352,10 @@ async def poll_lumen_device_auth(flow_id: str) -> dict[str, Any]:
         if error == "authorization_pending":
             return {"state": "pending"}
         if error == "slow_down":
+            logger.warning(
+                "Lumen TIDAL requested slower polling flow=%s",
+                _flow_ref(flow_id),
+            )
             async with _flows_lock:
                 current = _flows.get(flow_id)
                 if current:
@@ -324,11 +364,27 @@ async def poll_lumen_device_auth(flow_id: str) -> dict[str, Any]:
         if error in {"access_denied", "authorization_declined"}:
             async with _flows_lock:
                 _flows.pop(flow_id, None)
+            logger.info(
+                "Lumen TIDAL authorization denied flow=%s error=%s",
+                _flow_ref(flow_id),
+                error,
+            )
             return {"state": "denied", "message": "TIDAL sign-in was declined"}
         if error in {"expired_token", "invalid_grant"}:
             async with _flows_lock:
                 _flows.pop(flow_id, None)
+            logger.info(
+                "Lumen TIDAL authorization expired flow=%s error=%s",
+                _flow_ref(flow_id),
+                error,
+            )
             return {"state": "expired", "message": "The TIDAL sign-in expired"}
+        logger.error(
+            "Lumen TIDAL token poll rejected flow=%s status=%d error=%s",
+            _flow_ref(flow_id),
+            response.status_code,
+            error or "unknown",
+        )
         raise HTTPException(status_code=502, detail="TIDAL rejected the sign-in check")
 
     refresh_token = str(payload.get("refresh_token") or "")
@@ -336,7 +392,19 @@ async def poll_lumen_device_auth(flow_id: str) -> dict[str, Any]:
     user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
     user_id = str(user.get("userId") or payload.get("user_id") or "")
     if not refresh_token or not user_id:
+        logger.error(
+            "Lumen TIDAL token response incomplete flow=%s refresh_token=%s user_id=%s",
+            _flow_ref(flow_id),
+            bool(refresh_token),
+            bool(user_id),
+        )
         raise HTTPException(status_code=502, detail="TIDAL returned incomplete account credentials")
+
+    logger.info(
+        "Lumen TIDAL authorization approved flow=%s user_id=%s; saving credentials",
+        _flow_ref(flow_id),
+        user_id,
+    )
 
     entry = {
         "access_token": access_token,
@@ -354,13 +422,26 @@ async def poll_lumen_device_auth(flow_id: str) -> dict[str, Any]:
             entries.append(entry)
             _write_token_entries(entries)
             _reload_runtime_credentials(entries)
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
+        except Exception as exc:
+            logger.exception(
+                "Lumen TIDAL credential save failed flow=%s user_id=%s token_file=%s",
+                _flow_ref(flow_id),
+                user_id,
+                _token_path(),
+            )
             raise HTTPException(status_code=500, detail="Could not save the TIDAL account") from exc
 
     credential = _credential_from_entry(entry)
     async with _flows_lock:
         _flows.pop(flow_id, None)
-    return {"state": "linked", "account": _account(credential, True)}
+    account = _account(credential, True)
+    logger.info(
+        "Lumen TIDAL account linked flow=%s user_id=%s account_id=%s",
+        _flow_ref(flow_id),
+        user_id,
+        account["id"],
+    )
+    return {"state": "linked", "account": account}
 
 
 @app.delete("/lumen/accounts/{account_id}")
@@ -388,5 +469,11 @@ async def remove_lumen_account(account_id: str) -> dict[str, Any]:
         except HTTPException:
             raise
         except (OSError, ValueError, json.JSONDecodeError) as exc:
+            logger.exception(
+                "Lumen TIDAL account removal failed account_id=%s token_file=%s",
+                account_id,
+                _token_path(),
+            )
             raise HTTPException(status_code=500, detail="Could not update the TIDAL token file") from exc
+    logger.info("Lumen TIDAL account removed account_id=%s", account_id)
     return {"removed": True}

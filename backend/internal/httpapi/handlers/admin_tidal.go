@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/githubesson/lumen/internal/tidal"
@@ -71,9 +72,10 @@ func (h *AdminTIDAL) StartAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	flow, err := h.TIDAL.StartDeviceAuth(r.Context())
 	if err != nil {
-		writeTIDALManagementError(w, err)
+		writeTIDALManagementError(w, "start_auth", err)
 		return
 	}
+	slog.Info("tidal account authorization started")
 	writeJSON(w, http.StatusCreated, flow)
 }
 
@@ -85,8 +87,18 @@ func (h *AdminTIDAL) PollAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.TIDAL.PollDeviceAuth(r.Context(), chi.URLParam(r, "flowID"))
 	if err != nil {
-		writeTIDALManagementError(w, err)
+		writeTIDALManagementError(w, "poll_auth", err)
 		return
+	}
+	if result.State != "pending" {
+		userID := ""
+		if result.Account != nil {
+			userID = result.Account.UserID
+		}
+		slog.Info("tidal account authorization completed",
+			"state", result.State,
+			"user_id", userID,
+		)
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -98,13 +110,18 @@ func (h *AdminTIDAL) RemoveAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.TIDAL.RemoveAccount(r.Context(), chi.URLParam(r, "accountID")); err != nil {
-		writeTIDALManagementError(w, err)
+		writeTIDALManagementError(w, "remove_account", err)
 		return
 	}
+	slog.Info("tidal account removed")
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func writeTIDALManagementError(w http.ResponseWriter, err error) {
+func writeTIDALManagementError(w http.ResponseWriter, operation string, err error) {
+	slog.Warn("tidal account management failed",
+		"operation", operation,
+		"err", err,
+	)
 	switch {
 	case errors.Is(err, tidal.ErrNotConfigured):
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
