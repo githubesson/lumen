@@ -17,6 +17,21 @@ import ErrorBanner from "../../components/ErrorBanner";
 import { openExternal } from "../../lib/platform";
 import { AdminSectionIntro, AdminSectionTitle } from "./AdminSectionTitle";
 
+function normalizeTidalVerificationURL(rawURL: string): string {
+  const trimmed = rawURL.trim();
+  if (!trimmed || /^[a-z][a-z\d+.-]*:/i.test(trimmed)) return trimmed;
+
+  try {
+    const url = new URL(`https://${trimmed.replace(/^\/{2}/, "")}`);
+    if (url.hostname === "tidal.com" || url.hostname.endsWith(".tidal.com")) {
+      return url.href;
+    }
+  } catch {
+    // Let the platform URL validation return the user-facing error.
+  }
+  return trimmed;
+}
+
 export function TidalSection() {
   const [status, setStatus] = useState<TidalStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -88,10 +103,12 @@ export function TidalSection() {
   const accounts = status?.accounts ?? [];
 
   const openVerification = async (url: string) => {
-    const opened = await openExternal(url);
+    const opened = await openExternal(normalizeTidalVerificationURL(url));
     if (!opened.ok) {
       setError(opened.error || "Could not open the TIDAL sign-in page.");
+      return;
     }
+    setError(null);
   };
 
   const startAuth = async () => {
