@@ -137,6 +137,8 @@ subscribed account, for example `PL`:
 
 ```env
 HIFI_API_PORT=8000
+HIFI_API_UID=1000
+HIFI_API_GID=1000
 TIDAL_COUNTRY_CODE=PL
 TIDAL_QUALITY=LOSSLESS
 TIDAL_HIFI_USE_PROXIES=False
@@ -150,6 +152,19 @@ TIDAL_HIFI_DEV_MODE=False
 the host; Compose uses it for the private `hifi-api` service and derives the
 backend URL as `http://hifi-api:${HIFI_API_PORT}` internally. Do not set
 `TIDAL_HIFI_API_URL` in `.env` for the Docker setup.
+
+`HIFI_API_UID` and `HIFI_API_GID` must match the owner of `./tidal-hifi` on the
+host. The `1000:1000` defaults match a typical first Linux user. Prepare the
+directory before starting the stack:
+
+```sh
+mkdir -p tidal-hifi
+chown -R 1000:1000 tidal-hifi
+chmod 700 tidal-hifi
+```
+
+If your deployment user has different IDs, use the values printed by `id -u`
+and `id -g` in both `.env` and the `chown` command.
 
 Start (or recreate) the stack:
 

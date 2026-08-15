@@ -42,6 +42,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Match the owner of the host bind mount below. With every capability
+    # dropped, container root cannot bypass host directory permissions when
+    # atomically replacing token.json.
+    user: "${HIFI_API_UID:-1000}:${HIFI_API_GID:-1000}"
     mem_limit: ${HIFI_API_MEM_LIMIT:-1g}
     pids_limit: 256
     environment:
