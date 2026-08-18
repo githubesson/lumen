@@ -7,6 +7,7 @@ import {
   api,
   useAuth,
   type ReplayData,
+  type ReplayAlbum,
   type TrackListItem,
 } from "@music-library/core";
 import { EmptyState } from "../../../components/empty-state";
@@ -26,6 +27,7 @@ import { useFavoritesQuery } from "../../../context/favorites";
 import { usePlayTrack } from "../../../context/player";
 import { qk } from "../../../lib/query-keys";
 import { QUERY_STALE_TIME } from "../../../lib/query-policy";
+import { replayAlbumTarget } from "../../../lib/replay-album-target";
 import { usePlayQueue } from "../../../lib/use-play-queue";
 import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme } from "../../../theme/theme";
@@ -201,6 +203,25 @@ export default function HomeScreen() {
     [router],
   );
 
+  const onReplayAlbumPress = useCallback(
+    (album: ReplayAlbum) => {
+      void Haptics.selectionAsync();
+      const target = replayAlbumTarget(album);
+      if (target.kind === "tidal") {
+        router.push({
+          pathname: "/(tabs)/(library)/tidal-albums/[id]" as never,
+          params: { id: target.id },
+        });
+        return;
+      }
+      router.push({
+        pathname: "/(tabs)/(library)/albums/[id]",
+        params: { id: target.id },
+      });
+    },
+    [router],
+  );
+
   const goBrowse = useCallback(
     (mode: "tracks" | "albums" | "artists") => {
       void Haptics.selectionAsync();
@@ -349,7 +370,7 @@ export default function HomeScreen() {
                       id={a.id}
                       title={a.title}
                       subtitle={a.artist}
-                      onPress={onAlbumPress}
+                      onPress={() => onReplayAlbumPress(a)}
                     />
                   ))}
                 </HorizontalShelf>

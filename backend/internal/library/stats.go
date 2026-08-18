@@ -53,10 +53,12 @@ type ReplayArtist struct {
 }
 
 type ReplayAlbum struct {
-	ID     uuid.UUID
-	Title  string
-	Artist string
-	Plays  int
+	ID            uuid.UUID
+	Title         string
+	Artist        string
+	Source        string
+	SourceAlbumID string
+	Plays         int
 }
 
 type ReplayGenreSlice struct {
@@ -292,7 +294,19 @@ func (s *Store) replayTopArtists(ctx context.Context, p ReplayStatsParams, out *
 
 func (s *Store) replayTopAlbums(ctx context.Context, p ReplayStatsParams, out *ReplayData) error {
 	rows, err := s.db.Query(ctx, `
-		SELECT al.id, al.title, COALESCE(aa.name, ''), COUNT(*)::int AS plays
+		SELECT
+			al.id,
+			al.title,
+			COALESCE(aa.name, ''),
+			CASE WHEN BOOL_AND(t.source = 'tidal') THEN 'tidal' ELSE 'local' END AS source,
+			CASE
+				WHEN BOOL_AND(t.source = 'tidal') THEN COALESCE(
+					MAX(NULLIF(t.external_meta->>'album_id', '')),
+					''
+				)
+				ELSE ''
+			END AS source_album_id,
+			COUNT(*)::int AS plays
 		FROM play_history ph
 		JOIN tracks t ON t.id = ph.track_id AND t.deleted_at IS NULL
 		    AND `+trackVisibleP1+`
@@ -311,7 +325,14 @@ func (s *Store) replayTopAlbums(ctx context.Context, p ReplayStatsParams, out *R
 	defer rows.Close()
 	for rows.Next() {
 		var a ReplayAlbum
-		if err := rows.Scan(&a.ID, &a.Title, &a.Artist, &a.Plays); err != nil {
+		if err := rows.Scan(
+			&a.ID,
+			&a.Title,
+			&a.Artist,
+			&a.Source,
+			&a.SourceAlbumID,
+			&a.Plays,
+		); err != nil {
 			return err
 		}
 		out.TopAlbums = append(out.TopAlbums, a)

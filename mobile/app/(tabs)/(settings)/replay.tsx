@@ -13,6 +13,7 @@ import * as Haptics from "expo-haptics";
 import {
   ApiError,
   api,
+  type ReplayAlbum,
   type ReplayData,
   type TrackListItem,
 } from "@music-library/core";
@@ -42,6 +43,7 @@ import { SummaryGrid } from "../../../components/replay/summary-grid";
 import { TopTrackList } from "../../../components/replay/top-track-list";
 import { qk } from "../../../lib/query-keys";
 import { QUERY_STALE_TIME } from "../../../lib/query-policy";
+import { replayAlbumTarget } from "../../../lib/replay-album-target";
 import { usePlayQueue } from "../../../lib/use-play-queue";
 import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme } from "../../../theme/theme";
@@ -79,6 +81,24 @@ export default function ReplayScreen() {
     return m;
   }, [data?.top_tracks]);
   const onTrackPress = usePlayQueue(topTracks);
+
+  const onAlbumPress = useCallback(
+    (album: ReplayAlbum) => {
+      const target = replayAlbumTarget(album);
+      if (target.kind === "tidal") {
+        router.push({
+          pathname: "/(tabs)/(library)/tidal-albums/[id]" as never,
+          params: { id: target.id },
+        });
+        return;
+      }
+      router.push({
+        pathname: "/(tabs)/(settings)/albums/[id]",
+        params: { id: target.id },
+      });
+    },
+    [router],
+  );
 
   const onGenerate = useCallback(async () => {
     if (!data || data.summary.total_plays === 0) return;
@@ -233,12 +253,7 @@ export default function ReplayScreen() {
                     subtitle={`${a.artist ? `${a.artist} · ` : ""}${pluralize(a.plays, "play")}`}
                     accessibilityLabel={`View album ${a.title}`}
                     art={{ kind: "album", albumId: a.id }}
-                    onPress={() =>
-                      router.push({
-                        pathname: "/(tabs)/(settings)/albums/[id]",
-                        params: { id: a.id },
-                      })
-                    }
+                    onPress={() => onAlbumPress(a)}
                   />
                 ))}
               </HorizontalShelf>

@@ -1519,6 +1519,8 @@ export interface ReplayAlbum {
   id: string;
   title: string;
   artist?: string;
+  source?: TrackSource;
+  source_album_id?: string;
   plays: number;
 }
 

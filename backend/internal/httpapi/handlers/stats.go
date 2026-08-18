@@ -45,10 +45,12 @@ type replayArtistResp struct {
 }
 
 type replayAlbumResp struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	Artist string `json:"artist,omitempty"`
-	Plays  int    `json:"plays"`
+	ID            string `json:"id"`
+	Title         string `json:"title"`
+	Artist        string `json:"artist,omitempty"`
+	Source        string `json:"source,omitempty"`
+	SourceAlbumID string `json:"source_album_id,omitempty"`
+	Plays         int    `json:"plays"`
 }
 
 type replayGenreResp struct {
@@ -247,7 +249,12 @@ func toReplayResp(d *library.ReplayData) replayResp {
 	}
 	for _, a := range d.TopAlbums {
 		out.TopAlbums = append(out.TopAlbums, replayAlbumResp{
-			ID: a.ID.String(), Title: a.Title, Artist: a.Artist, Plays: a.Plays,
+			ID:            a.ID.String(),
+			Title:         a.Title,
+			Artist:        a.Artist,
+			Source:        a.Source,
+			SourceAlbumID: a.SourceAlbumID,
+			Plays:         a.Plays,
 		})
 	}
 	for _, g := range d.TopGenres {
