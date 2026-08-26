@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type Hls from "hls.js";
@@ -136,11 +137,6 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
   const displayPreviewSec = durationSec > 0
     ? Math.min(effectivePreviewSec, durationSec)
     : effectivePreviewSec;
-  const displayMinPreviewSec = Math.min(minPreviewDurationSec, displayPreviewSec);
-  const displayMaxPreviewSec = durationSec > 0
-    ? Math.min(maxPreviewDurationSec, durationSec)
-    : maxPreviewDurationSec;
-
   // Reset picker state on open / track changes so reopening on a different row
   // starts clean. Track metadata itself is loaded by useTrackDetail, which
   // guards against stale slow responses from a previous track.
@@ -213,25 +209,21 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     }
   };
 
-  const onStartChange = (value: number) => {
-    const clamped = Math.max(0, Math.min(maxStartSec, Math.floor(value)));
-    setStartSec(clamped);
+  const onWindowChange = (nextStartSec: number, nextDurationSec: number) => {
+    const nextDuration = Math.max(
+      minPreviewDurationSec,
+      Math.min(maxPreviewDurationSec, Math.round(nextDurationSec)),
+    );
+    const nextMaxStart = Math.max(0, Math.floor(durationSec - nextDuration));
+    const nextStart = Math.max(
+      0,
+      Math.min(nextMaxStart, Math.round(nextStartSec)),
+    );
+    setSelectedDurationSec(nextDuration);
+    setStartSec(nextStart);
     setPicked(true);
     // Invalidate any previously-generated share URL — it's tied to the
     // old window. User needs to confirm the new selection.
-    setShareUrl(null);
-    setCopied(false);
-  };
-
-  const onDurationChange = (value: number) => {
-    const nextDuration = Math.max(
-      minPreviewDurationSec,
-      Math.min(maxPreviewDurationSec, Math.floor(value)),
-    );
-    const nextMaxStart = Math.max(0, Math.floor(durationSec - nextDuration));
-    setSelectedDurationSec(nextDuration);
-    setStartSec((current) => Math.min(current, nextMaxStart));
-    setPicked(true);
     setShareUrl(null);
     setCopied(false);
   };
@@ -285,65 +277,49 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     <div style={{ padding: 16, display: "grid", gap: 14, fontSize: 12.5 }}>
       <HeaderBlock track={track} />
 
-      <div style={{ display: "grid", gap: 6 }}>
-        <label
-          htmlFor="share-snippet-duration"
-          style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+      <div style={{ display: "grid", gap: 7 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
         >
-          <span style={{ color: "var(--fg-muted)" }}>Clip length</span>
-          <span className="mono" style={{ fontVariantNumeric: "tabular-nums" }}>
+          <span style={{ color: "var(--fg-muted)" }}>Clip window</span>
+          <span
+            className="mono"
+            style={{ fontVariantNumeric: "tabular-nums" }}
+          >
             {fmtDurationSec(displayPreviewSec)}
           </span>
-        </label>
-        <input
-          id="share-snippet-duration"
-          type="range"
-          min={minPreviewDurationSec}
-          max={maxPreviewDurationSec}
-          step={1}
-          value={effectivePreviewSec}
-          disabled={maxPreviewDurationSec <= minPreviewDurationSec}
-          aria-label="Share clip length in seconds"
-          onChange={(event) => onDurationChange(Number(event.target.value))}
-          style={{ width: "100%", accentColor: "var(--accent)" }}
+        </div>
+        <PreviewStrip
+          durationSec={durationSec}
+          startSec={startSec}
+          endSec={endSec}
+          currentSec={isPlaying ? currentSec : startSec}
+          minPreviewDurationSec={minPreviewDurationSec}
+          maxPreviewDurationSec={maxPreviewDurationSec}
+          maxStartSec={maxStartSec}
+          onWindowChange={onWindowChange}
         />
         <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 12,
+            color: "var(--fg-subtle)",
+            fontSize: 10.5,
+          }}
           className="mono"
-          style={{ display: "flex", justifyContent: "space-between", color: "var(--fg-subtle)", fontSize: 10.5 }}
         >
-          <span>
-            {fmtDurationSec(displayMinPreviewSec)}
-          </span>
-          <span>
-            {fmtDurationSec(displayMaxPreviewSec)}
+          <span>Drag edges to resize · drag middle to move</span>
+          <span style={{ whiteSpace: "nowrap" }}>
+            {fmtDurationSec(startSec)} – {fmtDurationSec(endSec)}
+            {durationSec > 0 && ` · of ${fmtDurationSec(durationSec)}`}
           </span>
         </div>
-      </div>
-
-      <PreviewStrip
-        durationSec={durationSec}
-        startSec={startSec}
-        endSec={endSec}
-        currentSec={isPlaying ? currentSec : startSec}
-        maxStartSec={maxStartSec}
-        onStartChange={onStartChange}
-      />
-
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          color: "var(--fg-subtle)",
-          fontSize: 11,
-        }}
-        className="mono"
-      >
-        <span>Preview window</span>
-        <span>
-          {fmtDurationSec(startSec)} – {fmtDurationSec(endSec)}
-          {durationSec > 0 && ` · of ${fmtDurationSec(durationSec)}`}
-        </span>
       </div>
 
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -367,7 +343,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
         >
           {picked
             ? "Happy with the window? Copy the link."
-            : "Choose a length or drag the window into place."}
+            : "Trim the edges or drag the window into place."}
         </span>
       </div>
 
@@ -513,64 +489,200 @@ function HeaderBlock({ track }: { track: TrackDetail }) {
 }
 
 /**
- * PreviewStrip renders the scrubber: a horizontal track with the selected
- * window highlighted and a grabbable handle at its start. Dragging the
- * window (or clicking anywhere on the strip) sets the new start time.
- * Pointer Events are captured on the strip so the drag stays live even if
- * the user's cursor leaves the element.
+ * PreviewStrip renders the scrubber: drag either edge of the highlighted
+ * window to trim the clip, or drag its middle to move the selection without
+ * changing its duration. Pointer Events are captured on the strip so the drag
+ * stays live even if the user's cursor leaves the element.
  */
 function PreviewStrip({
   durationSec,
   startSec,
   endSec,
   currentSec,
+  minPreviewDurationSec,
+  maxPreviewDurationSec,
   maxStartSec,
-  onStartChange,
+  onWindowChange,
 }: {
   durationSec: number;
   startSec: number;
   endSec: number;
   currentSec: number;
+  minPreviewDurationSec: number;
+  maxPreviewDurationSec: number;
   maxStartSec: number;
-  onStartChange: (s: number) => void;
+  onWindowChange: (startSec: number, durationSec: number) => void;
 }) {
   const stripRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    kind: "start" | "end" | "window";
+    grabOffsetSec: number;
+  } | null>(null);
+  const selectableEndSec = durationSec < minPreviewDurationSec
+    ? durationSec
+    : Math.floor(durationSec);
+
+  const pointerSec = useCallback(
+    (clientX: number) => {
+      const el = stripRef.current;
+      if (!el || durationSec <= 0) return 0;
+      const rect = el.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      return ratio * durationSec;
+    },
+    [durationSec],
+  );
 
   const setFromPointer = useCallback(
     (clientX: number) => {
-      const el = stripRef.current;
-      if (!el || durationSec <= 0) return;
-      const rect = el.getBoundingClientRect();
-      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      // Center the selected window on the click point, then clamp so it never
-      // extends past the track. This makes click-to-place feel natural:
-      // wherever you click, that moment is roughly the middle of the
-      // preview, not the start.
-      const centerSec = ratio * durationSec;
-      const windowHalf = (endSec - startSec) / 2;
-      const next = Math.round(centerSec - windowHalf);
-      onStartChange(Math.max(0, Math.min(maxStartSec, next)));
+      const drag = dragRef.current;
+      if (!drag || durationSec <= 0) return;
+
+      const atSec = pointerSec(clientX) - drag.grabOffsetSec;
+      if (drag.kind === "start") {
+        const minStart = Math.max(0, endSec - maxPreviewDurationSec);
+        const maxStart = Math.max(minStart, endSec - minPreviewDurationSec);
+        const nextStart = Math.max(
+          minStart,
+          Math.min(maxStart, Math.round(atSec)),
+        );
+        onWindowChange(nextStart, endSec - nextStart);
+        return;
+      }
+
+      if (drag.kind === "end") {
+        const minEnd = Math.min(
+          selectableEndSec,
+          startSec + minPreviewDurationSec,
+        );
+        const maxEnd = Math.min(
+          selectableEndSec,
+          startSec + maxPreviewDurationSec,
+        );
+        const nextEnd = Math.max(
+          minEnd,
+          Math.min(maxEnd, Math.round(atSec)),
+        );
+        onWindowChange(startSec, nextEnd - startSec);
+        return;
+      }
+
+      const windowDuration = endSec - startSec;
+      const nextStart = Math.max(
+        0,
+        Math.min(maxStartSec, Math.round(atSec)),
+      );
+      onWindowChange(nextStart, windowDuration);
     },
-    [durationSec, startSec, endSec, maxStartSec, onStartChange],
+    [
+      durationSec,
+      endSec,
+      maxPreviewDurationSec,
+      maxStartSec,
+      minPreviewDurationSec,
+      onWindowChange,
+      pointerSec,
+      selectableEndSec,
+      startSec,
+    ],
   );
 
-  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (durationSec <= 0) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setFromPointer(e.clientX);
+  const beginDrag = (
+    kind: "start" | "end" | "window",
+    event: ReactPointerEvent<HTMLDivElement>,
+    grabOffsetSec = 0,
+  ) => {
+    if (
+      durationSec <= 0 ||
+      (event.pointerType === "mouse" && event.button !== 0)
+    ) {
+      return;
+    }
+    event.stopPropagation();
+    dragRef.current = { kind, grabOffsetSec };
+    stripRef.current?.setPointerCapture(event.pointerId);
+    setFromPointer(event.clientX);
   };
-  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (e.buttons === 0) return;
-    setFromPointer(e.clientX);
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const el = stripRef.current;
+    if (!el || durationSec <= 0) return;
+    const atSec = pointerSec(event.clientX);
+    const edgeHitSec = (14 / el.getBoundingClientRect().width) * durationSec;
+    const startDistance = Math.abs(atSec - startSec);
+    const endDistance = Math.abs(atSec - endSec);
+
+    if (Math.min(startDistance, endDistance) <= edgeHitSec) {
+      if (startDistance <= endDistance) {
+        beginDrag("start", event, atSec - startSec);
+      } else {
+        beginDrag("end", event, atSec - endSec);
+      }
+      return;
+    }
+
+    if (atSec >= startSec && atSec <= endSec) {
+      beginDrag("window", event, atSec - startSec);
+      return;
+    }
+
+    beginDrag("window", event, (endSec - startSec) / 2);
   };
-  const onPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    setFromPointer(event.clientX);
+  };
+  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    dragRef.current = null;
+    const el = stripRef.current;
+    if (el?.hasPointerCapture(event.pointerId)) {
+      el.releasePointerCapture(event.pointerId);
     }
   };
 
+  const resizeFromKeyboard = (
+    edge: "start" | "end",
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ) => {
+    const step = event.shiftKey ? 5 : 1;
+    if (edge === "start") {
+      const minStart = Math.max(0, endSec - maxPreviewDurationSec);
+      const maxStart = Math.max(minStart, endSec - minPreviewDurationSec);
+      let nextStart: number | null = null;
+      if (event.key === "ArrowLeft") nextStart = startSec - step;
+      if (event.key === "ArrowRight") nextStart = startSec + step;
+      if (event.key === "Home") nextStart = minStart;
+      if (event.key === "End") nextStart = maxStart;
+      if (nextStart === null) return;
+      event.preventDefault();
+      nextStart = Math.max(minStart, Math.min(maxStart, nextStart));
+      onWindowChange(nextStart, endSec - nextStart);
+      return;
+    }
+
+    const minEnd = Math.min(
+      selectableEndSec,
+      startSec + minPreviewDurationSec,
+    );
+    const maxEnd = Math.min(
+      selectableEndSec,
+      startSec + maxPreviewDurationSec,
+    );
+    let nextEnd: number | null = null;
+    if (event.key === "ArrowLeft") nextEnd = endSec - step;
+    if (event.key === "ArrowRight") nextEnd = endSec + step;
+    if (event.key === "Home") nextEnd = minEnd;
+    if (event.key === "End") nextEnd = maxEnd;
+    if (nextEnd === null) return;
+    event.preventDefault();
+    nextEnd = Math.max(minEnd, Math.min(maxEnd, nextEnd));
+    onWindowChange(startSec, nextEnd - startSec);
+  };
+
   const pct = (sec: number) =>
-    durationSec > 0 ? (Math.max(0, Math.min(durationSec, sec)) / durationSec) * 100 : 0;
+    durationSec > 0
+      ? (Math.max(0, Math.min(durationSec, sec)) / durationSec) * 100
+      : 0;
   const startPct = pct(startSec);
   const endPct = pct(endSec);
   const playheadPct = pct(currentSec);
@@ -578,31 +690,12 @@ function PreviewStrip({
   return (
     <div
       ref={stripRef}
-      role="slider"
-      aria-label="Preview window start"
-      aria-valuemin={0}
-      aria-valuemax={Math.max(0, maxStartSec)}
-      aria-valuenow={startSec}
-      tabIndex={0}
-      onKeyDown={(e) => {
-        const step = e.shiftKey ? 5 : 1;
-        if (e.key === "ArrowLeft") {
-          e.preventDefault();
-          onStartChange(startSec - step);
-        } else if (e.key === "ArrowRight") {
-          e.preventDefault();
-          onStartChange(startSec + step);
-        } else if (e.key === "Home") {
-          e.preventDefault();
-          onStartChange(0);
-        } else if (e.key === "End") {
-          e.preventDefault();
-          onStartChange(maxStartSec);
-        }
-      }}
+      role="group"
+      aria-label="Clip window"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
       style={{
         position: "relative",
         height: 44,
@@ -616,17 +709,59 @@ function PreviewStrip({
     >
       {/* Highlighted share window */}
       <div
+        role="slider"
+        aria-label="Move clip window"
+        aria-valuemin={0}
+        aria-valuemax={Math.max(0, maxStartSec)}
+        aria-valuenow={startSec}
+        aria-valuetext={`${fmtDurationSec(startSec)} to ${fmtDurationSec(endSec)}`}
+        tabIndex={0}
+        onKeyDown={(event) => {
+          const step = event.shiftKey ? 5 : 1;
+          let nextStart: number | null = null;
+          if (event.key === "ArrowLeft") nextStart = startSec - step;
+          if (event.key === "ArrowRight") nextStart = startSec + step;
+          if (event.key === "Home") nextStart = 0;
+          if (event.key === "End") nextStart = maxStartSec;
+          if (nextStart === null) return;
+          event.preventDefault();
+          onWindowChange(nextStart, endSec - startSec);
+        }}
         style={{
           position: "absolute",
           top: 0,
           bottom: 0,
           left: `${startPct}%`,
-          width: `${Math.max(2, endPct - startPct)}%`,
+          width: `${Math.max(0, endPct - startPct)}%`,
           background: "color-mix(in oklch, var(--accent) 30%, transparent)",
-          borderLeft: "2px solid var(--accent)",
-          borderRight: "2px solid var(--accent)",
-          pointerEvents: "none",
+          borderTop:
+            "1px solid color-mix(in oklch, var(--accent) 65%, transparent)",
+          borderBottom:
+            "1px solid color-mix(in oklch, var(--accent) 65%, transparent)",
+          cursor: "grab",
         }}
+      />
+      <TrimHandle
+        edge="start"
+        positionPct={startPct}
+        valueSec={startSec}
+        minSec={Math.max(0, endSec - maxPreviewDurationSec)}
+        maxSec={Math.max(0, endSec - minPreviewDurationSec)}
+        onKeyDown={(event) => resizeFromKeyboard("start", event)}
+      />
+      <TrimHandle
+        edge="end"
+        positionPct={endPct}
+        valueSec={endSec}
+        minSec={Math.min(
+          selectableEndSec,
+          startSec + minPreviewDurationSec,
+        )}
+        maxSec={Math.min(
+          selectableEndSec,
+          startSec + maxPreviewDurationSec,
+        )}
+        onKeyDown={(event) => resizeFromKeyboard("end", event)}
       />
       {/* Playhead while previewing */}
       <div
@@ -638,6 +773,64 @@ function PreviewStrip({
           width: 2,
           background: "var(--fg)",
           opacity: 0.7,
+          pointerEvents: "none",
+        }}
+      />
+    </div>
+  );
+}
+
+function TrimHandle({
+  edge,
+  positionPct,
+  valueSec,
+  minSec,
+  maxSec,
+  onKeyDown,
+}: {
+  edge: "start" | "end";
+  positionPct: number;
+  valueSec: number;
+  minSec: number;
+  maxSec: number;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div
+      role="slider"
+      aria-label={`Clip ${edge}`}
+      aria-valuemin={Math.round(minSec)}
+      aria-valuemax={Math.round(maxSec)}
+      aria-valuenow={Math.round(valueSec)}
+      aria-valuetext={fmtDurationSec(valueSec)}
+      tabIndex={0}
+      onKeyDown={onKeyDown}
+      style={{
+        position: "absolute",
+        zIndex: 2,
+        top: 0,
+        bottom: 0,
+        left: `${positionPct}%`,
+        width: 8,
+        transform: edge === "start" ? "translateX(0)" : "translateX(-100%)",
+        display: "grid",
+        placeItems: "center",
+        background:
+          "color-mix(in oklch, var(--accent) 22%, var(--bg-elev-1))",
+        borderLeft: "2px solid var(--accent)",
+        borderRight: "2px solid var(--accent)",
+        cursor: "ew-resize",
+        touchAction: "none",
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: 2,
+          height: 14,
+          borderRadius: 999,
+          background: "color-mix(in oklch, var(--accent) 70%, var(--fg))",
+          opacity: 0.8,
           pointerEvents: "none",
         }}
       />
