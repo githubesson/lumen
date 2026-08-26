@@ -35,13 +35,13 @@ import (
 // Discord and get a Spotify/Apple-Music-style inline video preview. Three
 // endpoints are involved:
 //
-//   - POST /api/tracks/{id}/share?t=N     — authenticated: mints a signed share URL
-//   - GET  /share/track/{id}?t=N&sig=X    — public: HTML page with OG tags (what Discord scrapes)
-//   - GET  /api/public/previews/{id}.mp4  — public: the 30s MP4 referenced by og:video
+//   - POST /api/tracks/{id}/share?t=N&d=N — authenticated: mints a signed share URL
+//   - GET  /share/track/{id}?t=N&d=N&sig=X — public: HTML with scraper OG tags
+//   - GET  /api/public/previews/{id}.mp4   — public: the selected MP4 referenced by og:video
 //
 // The signature on the share URL proves an authenticated user generated it,
-// which bounds how many distinct (track, start_sec) previews the ffmpeg
-// builder can be asked to produce. The signature on the MP4 URL is shorter-
+// which bounds how many distinct (track, start_sec, duration_sec) previews the
+// ffmpeg builder can be asked to produce. The signature on the MP4 URL is shorter-
 // lived and rotates hourly so Discord's CDN keeps the cached video across
 // a listening session without the URL ever leaking past ~2 hours.
 type Share struct {
@@ -65,9 +65,10 @@ func isTIDALTrack(t *library.TrackDetail) bool {
 }
 
 type shareLinkResp struct {
-	URL       string `json:"url"`
-	StartSec  int    `json:"start_sec"`
-	ExpiresAt int64  `json:"expires_at,omitempty"` // 0 = never
+	URL         string `json:"url"`
+	StartSec    int    `json:"start_sec"`
+	DurationSec int    `json:"duration_sec"`
+	ExpiresAt   int64  `json:"expires_at,omitempty"` // 0 = never
 }
 
 type publicShareResp struct {
@@ -95,8 +96,103 @@ const maxStoryBackgroundUploadBytes int64 = 24 << 20
 // build. A 24-bit/192kHz FLAC of a 20-minute track lands well under this.
 const maxPreviewSourceBytes int64 = 1 << 30
 
-// Create mints a signed share URL for (track, start_sec). The URL is long-
-// lived — users paste it in chat and it needs to keep working. Requires
+type signedShareRequest struct {
+	startSec       int
+	durationSec    int
+	hasDurationSec bool
+}
+
+func (req signedShareRequest) urlDurationSec() int {
+	if req.hasDurationSec {
+		return req.durationSec
+	}
+	return 0
+}
+
+func parseSignedPreviewDuration(raw string) (durationSec int, hasDuration bool, err error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return int(preview.DefaultPreviewDuration / time.Second), false, nil
+	}
+	durationSec, err = strconv.Atoi(raw)
+	if err != nil || durationSec <= 0 || durationSec > int(preview.MaximumPreviewDuration/time.Second) {
+		return 0, true, errors.New("bad duration")
+	}
+	return durationSec, true, nil
+}
+
+func requestedPreviewDuration(raw string, trackDurationMS int) (durationSec int, hasDuration bool, err error) {
+	durationSec, hasDuration, err = parseSignedPreviewDuration(raw)
+	if err != nil || !hasDuration {
+		return durationSec, hasDuration, err
+	}
+	maxDuration := maximumPreviewDurationSec(trackDurationMS)
+	minDuration := int(preview.MinimumPreviewDuration / time.Second)
+	if maxDuration > 0 {
+		minDuration = min(minDuration, maxDuration)
+	}
+	if durationSec < minDuration {
+		return 0, true, errors.New("duration below minimum")
+	}
+	if maxDuration > 0 {
+		durationSec = min(durationSec, maxDuration)
+	}
+	return durationSec, true, nil
+}
+
+func maximumPreviewDurationSec(trackDurationMS int) int {
+	maximum := int(preview.MaximumPreviewDuration / time.Second)
+	if trackDurationMS <= 0 {
+		return maximum
+	}
+	trackSeconds := int(math.Ceil(float64(trackDurationMS) / 1000))
+	return min(maximum, max(1, trackSeconds))
+}
+
+func effectivePreviewDurationSec(durationSec, trackDurationMS int) int {
+	if trackDurationMS <= 0 {
+		return durationSec
+	}
+	return min(durationSec, maximumPreviewDurationSec(trackDurationMS))
+}
+
+func maximumPreviewStartSec(trackDurationMS, durationSec int) int {
+	remainingMS := int64(trackDurationMS) - int64(durationSec)*1000
+	if remainingMS <= 0 {
+		return 0
+	}
+	return int(remainingMS / 1000)
+}
+
+func (h *Share) parseSignedShareRequest(w http.ResponseWriter, r *http.Request, id uuid.UUID) (signedShareRequest, bool) {
+	var req signedShareRequest
+	var err error
+	q := r.URL.Query()
+	req.startSec, err = strconv.Atoi(q.Get("t"))
+	if err != nil || req.startSec < 0 {
+		http.Error(w, "bad t", http.StatusBadRequest)
+		return req, false
+	}
+	req.durationSec, req.hasDurationSec, err = parseSignedPreviewDuration(q.Get("d"))
+	if err != nil {
+		http.Error(w, "bad d", http.StatusBadRequest)
+		return req, false
+	}
+	sig := q.Get("sig")
+	if req.hasDurationSec {
+		err = auth.VerifyShareURLWithDuration(h.ShareSignKey, id.String(), req.startSec, req.durationSec, sig)
+	} else {
+		err = auth.VerifyShareURL(h.ShareSignKey, id.String(), req.startSec, sig)
+	}
+	if err != nil {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return req, false
+	}
+	return req, true
+}
+
+// Create mints a signed share URL for (track, start_sec, duration_sec). The URL
+// is long-lived — users paste it in chat and it needs to keep working. Requires
 // auth because it indirectly permits preview-MP4 generation.
 func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 	u, ok := requireUser(w, r)
@@ -149,18 +245,31 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	// Clamp start so the 30s window stays within the track.
-	maxStart := 0
-	if dur := t.DurationMS / 1000; dur > int(preview.PreviewDuration/time.Second) {
-		maxStart = dur - int(preview.PreviewDuration/time.Second)
+	durationSec, hasDurationSec, err := requestedPreviewDuration(r.URL.Query().Get("d"), t.DurationMS)
+	if err != nil {
+		http.Error(w, "bad d", http.StatusBadRequest)
+		return
 	}
+	// Clamp start so the selected window stays within the track.
+	maxStart := maximumPreviewStartSec(t.DurationMS, durationSec)
 	if startSec > maxStart {
 		startSec = maxStart
 	}
 
-	sig := auth.SignShareURL(h.ShareSignKey, id.String(), startSec)
+	var sig string
+	if hasDurationSec {
+		sig = auth.SignShareURLWithDuration(h.ShareSignKey, id.String(), startSec, durationSec)
+	} else {
+		// Requests from pre-duration clients keep the original signature and URL
+		// shape, which makes a rolling client/server upgrade safe.
+		sig = auth.SignShareURL(h.ShareSignKey, id.String(), startSec)
+	}
 	base := resolveBaseURL(r)
-	url := base + "/share/track/" + id.String() + "?t=" + strconv.Itoa(startSec) + "&sig=" + sig
+	urlDurationSec := 0
+	if hasDurationSec {
+		urlDurationSec = durationSec
+	}
+	url := sharePageURL(base, id, startSec, urlDurationSec, sig)
 
 	// Pre-warm the MP4 so the first Discord scrape doesn't have to wait on
 	// ffmpeg. Fire-and-forget with a detached context — the request context
@@ -174,10 +283,11 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 			"track_id", id.String(), "file_path", t.FilePath)
 	default:
 		in := preview.Input{
-			TrackID:  id.String(),
-			StartSec: startSec,
-			Title:    t.Title,
-			Artist:   primaryArtistName(t),
+			TrackID:     id.String(),
+			StartSec:    startSec,
+			DurationSec: durationSec,
+			Title:       t.Title,
+			Artist:      primaryArtistName(t),
 		}
 		job := func() { h.prewarmPreview(t, in) }
 		if h.StartJob != nil {
@@ -189,7 +299,11 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, no-store")
-	_ = json.NewEncoder(w).Encode(shareLinkResp{URL: url, StartSec: startSec})
+	_ = json.NewEncoder(w).Encode(shareLinkResp{
+		URL:         url,
+		StartSec:    startSec,
+		DurationSec: effectivePreviewDurationSec(durationSec, t.DurationMS),
+	})
 }
 
 // prewarmPreview materializes the audio (TIDAL tracks are assembled to a
@@ -208,11 +322,12 @@ func (h *Share) prewarmPreview(t *library.TrackDetail, in preview.Input) {
 		}
 	}()
 
-	// TIDAL tracks download the full file before ffmpeg can slice it, which
-	// can take well over the minute a local build needs.
-	timeout := 60 * time.Second
+	// A 120-second story render can take several times longer than the original
+	// 30-second job. TIDAL tracks also download the full file before ffmpeg can
+	// slice it.
+	timeout := 4 * time.Minute
 	if isTIDALTrack(t) {
-		timeout = 4 * time.Minute
+		timeout = 7 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -220,6 +335,7 @@ func (h *Share) prewarmPreview(t *library.TrackDetail, in preview.Input) {
 	slog.Info("preview prewarm starting",
 		"track_id", in.TrackID,
 		"start_sec", in.StartSec,
+		"duration_sec", in.DurationSec,
 		"source", t.Source,
 		"cover_key", t.CoverArtPath)
 
@@ -264,7 +380,8 @@ func (h *Share) prewarmPreview(t *library.TrackDetail, in preview.Input) {
 // unfurls. Real humans get a tiny landing page + meta refresh to the app.
 //
 // Deliberately public — the signature on the URL *is* the auth. An attacker
-// who guesses a (track_id, start_sec) pair without a valid sig gets nothing.
+// who guesses a (track_id, start_sec, duration_sec) tuple without a valid sig
+// gets nothing.
 func (h *Share) Page(w http.ResponseWriter, r *http.Request) {
 	if len(h.ShareSignKey) == 0 {
 		http.Error(w, "signing not configured", http.StatusServiceUnavailable)
@@ -274,17 +391,11 @@ func (h *Share) Page(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q := r.URL.Query()
-	startSec, err := strconv.Atoi(q.Get("t"))
-	if err != nil || startSec < 0 {
-		http.Error(w, "bad t", http.StatusBadRequest)
+	req, ok := h.parseSignedShareRequest(w, r, id)
+	if !ok {
 		return
 	}
-	sig := q.Get("sig")
-	if err := auth.VerifyShareURL(h.ShareSignKey, id.String(), startSec, sig); err != nil {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
+	sig := r.URL.Query().Get("sig")
 
 	t, err := h.Library.GetTrackPublic(r.Context(), id)
 	if err != nil {
@@ -299,7 +410,7 @@ func (h *Share) Page(w http.ResponseWriter, r *http.Request) {
 	base := resolveBaseURL(r)
 	// FxEmbed-style direct video: scrapers see a stable, video-looking URL on
 	// our domain, and that URL serves the generated MP4 directly.
-	videoURL := sharePreviewVideoURL(base, id, startSec, sig)
+	videoURL := sharePreviewVideoURL(base, id, req.startSec, req.urlDurationSec(), sig)
 
 	// Cover URL — reuse the existing cover-sign logic. If the track has no
 	// album/cover, omit og:image; Discord falls back to the first frame of
@@ -328,12 +439,12 @@ func (h *Share) Page(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	canonical := base + r.URL.Path + "?t=" + strconv.Itoa(startSec) + "&sig=" + sig
+	canonical := sharePageURL(base, id, req.startSec, req.urlDurationSec(), sig)
 	// Human-readable landing URL. Chat scrapers read this backend page for
 	// OG tags, while browsers land on the React preview UI.
 	// The canonical share URL remains the copied chat URL.
 	// Clicking through opens the preview player.
-	landing := shareFrontendURL(base, id, startSec, sig)
+	landing := shareFrontendURL(base, id, req.startSec, req.urlDurationSec(), sig)
 
 	html := renderSharePage(shareMeta{
 		Title:       title,
@@ -345,6 +456,7 @@ func (h *Share) Page(w http.ResponseWriter, r *http.Request) {
 		VideoURL:    videoURL,
 		ThemeColor:  accentColor,
 		Landing:     landing,
+		DurationSec: effectivePreviewDurationSec(req.durationSec, t.DurationMS),
 	})
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -366,17 +478,11 @@ func (h *Share) PublicInfo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q := r.URL.Query()
-	startSec, err := strconv.Atoi(q.Get("t"))
-	if err != nil || startSec < 0 {
-		http.Error(w, "bad t", http.StatusBadRequest)
+	req, ok := h.parseSignedShareRequest(w, r, id)
+	if !ok {
 		return
 	}
-	sig := q.Get("sig")
-	if err := auth.VerifyShareURL(h.ShareSignKey, id.String(), startSec, sig); err != nil {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
+	sig := r.URL.Query().Get("sig")
 
 	t, err := h.Library.GetTrackPublic(r.Context(), id)
 	if err != nil {
@@ -386,19 +492,19 @@ func (h *Share) PublicInfo(w http.ResponseWriter, r *http.Request) {
 
 	base := resolveBaseURL(r)
 	now := time.Now()
-	mp4Exp, mp4Sig := auth.SignPreviewURL(h.ShareSignKey, id.String(), startSec, now)
-	previewURL := base + "/api/public/previews/" + id.String() + ".mp4" +
-		"?t=" + strconv.Itoa(startSec) +
-		"&exp=" + auth.FormatExp(mp4Exp) +
-		"&sig=" + mp4Sig
-	storyURL := base + "/api/public/stories/" + id.String() + ".mp4" +
-		"?t=" + strconv.Itoa(startSec) +
-		"&exp=" + auth.FormatExp(mp4Exp) +
-		"&sig=" + mp4Sig
-	storyBackgroundURL := base + "/api/public/story-backgrounds/" + id.String() + ".mp4" +
-		"?t=" + strconv.Itoa(startSec) +
-		"&exp=" + auth.FormatExp(mp4Exp) +
-		"&sig=" + mp4Sig
+	var mp4Exp int64
+	var mp4Sig string
+	if req.hasDurationSec {
+		mp4Exp, mp4Sig = auth.SignPreviewURLWithDuration(
+			h.ShareSignKey, id.String(), req.startSec, req.durationSec, now,
+		)
+	} else {
+		mp4Exp, mp4Sig = auth.SignPreviewURL(h.ShareSignKey, id.String(), req.startSec, now)
+	}
+	urlDurationSec := req.urlDurationSec()
+	previewURL := signedPreviewMediaURL(base, "/api/public/previews/", id, req.startSec, urlDurationSec, mp4Exp, mp4Sig)
+	storyURL := signedPreviewMediaURL(base, "/api/public/stories/", id, req.startSec, urlDurationSec, mp4Exp, mp4Sig)
+	storyBackgroundURL := signedPreviewMediaURL(base, "/api/public/story-backgrounds/", id, req.startSec, urlDurationSec, mp4Exp, mp4Sig)
 
 	var coverURL string
 	var accentColor string
@@ -415,17 +521,17 @@ func (h *Share) PublicInfo(w http.ResponseWriter, r *http.Request) {
 	if title == "" {
 		title = "Untitled track"
 	}
-	canonical := base + "/share/track/" + id.String() + "?t=" + strconv.Itoa(startSec) + "&sig=" + sig
-	embedURL := shareEmbedURL(base, id, startSec, sig)
+	canonical := sharePageURL(base, id, req.startSec, urlDurationSec, sig)
+	embedURL := shareEmbedURL(base, id, req.startSec, urlDurationSec, sig)
 	resp := publicShareResp{
 		TrackID:            id.String(),
 		Title:              title,
 		Artist:             primaryArtistName(t),
 		Album:              t.AlbumTitle,
 		AlbumID:            albumID,
-		StartSec:           startSec,
+		StartSec:           req.startSec,
 		DurationMS:         t.DurationMS,
-		PreviewDurationSec: int(preview.PreviewDuration / time.Second),
+		PreviewDurationSec: effectivePreviewDurationSec(req.durationSec, t.DurationMS),
 		PreviewURL:         previewURL,
 		StoryURL:           storyURL,
 		StoryBackgroundURL: storyBackgroundURL,
@@ -447,9 +553,11 @@ func (h *Share) PublicInfo(w http.ResponseWriter, r *http.Request) {
 // signedMediaRequest is the parsed+verified form of a public signed media URL
 // (/api/public/previews|preview-videos|stories|story-backgrounds/{id}.mp4).
 type signedMediaRequest struct {
-	id       uuid.UUID
-	startSec int
-	exp      int64 // 0 when the route uses the no-expiry share signature
+	id             uuid.UUID
+	startSec       int
+	durationSec    int
+	hasDurationSec bool
+	exp            int64 // 0 when the route uses the no-expiry share signature
 }
 
 // parseSignedMediaRequest implements the shared front half of every public
@@ -476,6 +584,11 @@ func (h *Share) parseSignedMediaRequest(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "bad t", http.StatusBadRequest)
 		return req, false
 	}
+	req.durationSec, req.hasDurationSec, err = parseSignedPreviewDuration(q.Get("d"))
+	if err != nil {
+		http.Error(w, "bad d", http.StatusBadRequest)
+		return req, false
+	}
 	sig := q.Get("sig")
 	if withExpiry {
 		req.exp, err = strconv.ParseInt(q.Get("exp"), 10, 64)
@@ -483,13 +596,25 @@ func (h *Share) parseSignedMediaRequest(w http.ResponseWriter, r *http.Request, 
 			http.Error(w, "bad exp", http.StatusBadRequest)
 			return req, false
 		}
-		if err := auth.VerifyPreviewURL(h.ShareSignKey, id.String(), req.startSec, sig, req.exp, time.Now()); err != nil {
+		if req.hasDurationSec {
+			err = auth.VerifyPreviewURLWithDuration(
+				h.ShareSignKey, id.String(), req.startSec, req.durationSec, sig, req.exp, time.Now(),
+			)
+		} else {
+			err = auth.VerifyPreviewURL(h.ShareSignKey, id.String(), req.startSec, sig, req.exp, time.Now())
+		}
+		if err != nil {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return req, false
 		}
 		return req, true
 	}
-	if err := auth.VerifyShareURL(h.ShareSignKey, id.String(), req.startSec, sig); err != nil {
+	if req.hasDurationSec {
+		err = auth.VerifyShareURLWithDuration(h.ShareSignKey, id.String(), req.startSec, req.durationSec, sig)
+	} else {
+		err = auth.VerifyShareURL(h.ShareSignKey, id.String(), req.startSec, sig)
+	}
+	if err != nil {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return req, false
 	}
@@ -616,7 +741,7 @@ func (h *Share) PublicPreviewVideo(w http.ResponseWriter, r *http.Request) {
 	}
 	// Already built → serve straight from disk without touching the DB or
 	// (for TIDAL tracks) re-downloading the audio.
-	if outPath, ok := h.Preview.CachedPreview(req.id.String(), req.startSec); ok {
+	if outPath, ok := h.Preview.CachedPreview(req.id.String(), req.startSec, req.durationSec); ok {
 		serveMediaFile(w, r, outPath, "preview missing", "public, max-age=3600")
 		return
 	}
@@ -637,10 +762,11 @@ func (h *Share) PublicPreviewVideo(w http.ResponseWriter, r *http.Request) {
 	defer cleanupCover()
 
 	outPath, err := h.Preview.EnsureBuilt(r.Context(), preview.Input{
-		TrackID:   req.id.String(),
-		AudioPath: audioPath,
-		CoverPath: coverFSPath,
-		StartSec:  req.startSec,
+		TrackID:     req.id.String(),
+		AudioPath:   audioPath,
+		CoverPath:   coverFSPath,
+		StartSec:    req.startSec,
+		DurationSec: req.durationSec,
 	})
 	if err != nil {
 		slog.Error("preview video serve: EnsureBuilt failed",
@@ -667,17 +793,11 @@ func (h *Share) Embed(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q := r.URL.Query()
-	startSec, err := strconv.Atoi(q.Get("t"))
-	if err != nil || startSec < 0 {
-		http.Error(w, "bad t", http.StatusBadRequest)
+	req, ok := h.parseSignedShareRequest(w, r, id)
+	if !ok {
 		return
 	}
-	sig := q.Get("sig")
-	if err := auth.VerifyShareURL(h.ShareSignKey, id.String(), startSec, sig); err != nil {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
+	sig := r.URL.Query().Get("sig")
 
 	t, err := h.Library.GetTrackPublic(r.Context(), id)
 	if err != nil {
@@ -687,11 +807,18 @@ func (h *Share) Embed(w http.ResponseWriter, r *http.Request) {
 
 	base := resolveBaseURL(r)
 	now := time.Now()
-	mp4Exp, mp4Sig := auth.SignPreviewURL(h.ShareSignKey, id.String(), startSec, now)
-	videoURL := base + "/api/public/previews/" + id.String() + ".mp4" +
-		"?t=" + strconv.Itoa(startSec) +
-		"&exp=" + auth.FormatExp(mp4Exp) +
-		"&sig=" + mp4Sig
+	var mp4Exp int64
+	var mp4Sig string
+	if req.hasDurationSec {
+		mp4Exp, mp4Sig = auth.SignPreviewURLWithDuration(
+			h.ShareSignKey, id.String(), req.startSec, req.durationSec, now,
+		)
+	} else {
+		mp4Exp, mp4Sig = auth.SignPreviewURL(h.ShareSignKey, id.String(), req.startSec, now)
+	}
+	videoURL := signedPreviewMediaURL(
+		base, "/api/public/previews/", id, req.startSec, req.urlDurationSec(), mp4Exp, mp4Sig,
+	)
 
 	var coverURL string
 	var accentColor string
@@ -715,8 +842,8 @@ func (h *Share) Embed(w http.ResponseWriter, r *http.Request) {
 			description = t.AlbumTitle
 		}
 	}
-	canonical := base + "/share/track/" + id.String() + "?t=" + strconv.Itoa(startSec) + "&sig=" + sig
-	landing := shareFrontendURL(base, id, startSec, sig)
+	canonical := sharePageURL(base, id, req.startSec, req.urlDurationSec(), sig)
+	landing := shareFrontendURL(base, id, req.startSec, req.urlDurationSec(), sig)
 
 	html := renderShareEmbedPage(shareMeta{
 		Title:       title,
@@ -735,16 +862,16 @@ func (h *Share) Embed(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, html)
 }
 
-// PublicPreview serves the 30s MP4. First-hit generates it via ffmpeg (a
+// PublicPreview serves the selected MP4. First-hit generates it via ffmpeg (a
 // handful of seconds); subsequent hits stream straight from disk. Discord's
 // media proxy also caches aggressively, so the ffmpeg path only runs once
-// per (track, start_sec) per cache-rotation window.
+// per (track, start_sec, duration_sec) per cache-rotation window.
 func (h *Share) PublicPreview(w http.ResponseWriter, r *http.Request) {
 	req, ok := h.parseSignedMediaRequest(w, r, true)
 	if !ok {
 		return
 	}
-	if outPath, ok := h.Preview.CachedPreview(req.id.String(), req.startSec); ok {
+	if outPath, ok := h.Preview.CachedPreview(req.id.String(), req.startSec, req.durationSec); ok {
 		serveMediaFile(w, r, outPath, "preview missing", immutableCacheControl(req.exp))
 		return
 	}
@@ -766,10 +893,11 @@ func (h *Share) PublicPreview(w http.ResponseWriter, r *http.Request) {
 	defer cleanupCover()
 
 	outPath, err := h.Preview.EnsureBuilt(r.Context(), preview.Input{
-		TrackID:   req.id.String(),
-		AudioPath: audioPath,
-		CoverPath: coverFSPath,
-		StartSec:  req.startSec,
+		TrackID:     req.id.String(),
+		AudioPath:   audioPath,
+		CoverPath:   coverFSPath,
+		StartSec:    req.startSec,
+		DurationSec: req.durationSec,
 	})
 	if err != nil {
 		slog.Error("preview serve: EnsureBuilt failed",
@@ -844,10 +972,12 @@ func (h *Share) CustomStoryBackground(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	maxStart := 0
-	if dur := t.DurationMS / 1000; dur > int(preview.PreviewDuration/time.Second) {
-		maxStart = dur - int(preview.PreviewDuration/time.Second)
+	durationSec, _, err := requestedPreviewDuration(r.FormValue("duration_sec"), t.DurationMS)
+	if err != nil {
+		http.Error(w, "bad duration_sec", http.StatusBadRequest)
+		return
 	}
+	maxStart := maximumPreviewStartSec(t.DurationMS, durationSec)
 	if startSec > maxStart {
 		startSec = maxStart
 	}
@@ -896,15 +1026,16 @@ func (h *Share) CustomStoryBackground(w http.ResponseWriter, r *http.Request) {
 
 	outPath := filepath.Join(
 		h.Preview.CacheDir,
-		id.String()+"-"+strconv.Itoa(startSec)+"-"+uuid.NewString()+"-custom-story-bg.mp4",
+		id.String()+"-"+strconv.Itoa(startSec)+"-"+strconv.Itoa(durationSec)+"s-"+uuid.NewString()+"-custom-story-bg.mp4",
 	)
 	defer os.Remove(outPath)
 	defer os.Remove(outPath + ".part")
 
 	err = h.Preview.BuildCustomStoryBackground(r.Context(), preview.Input{
-		TrackID:   id.String(),
-		AudioPath: audioPath,
-		StartSec:  startSec,
+		TrackID:     id.String(),
+		AudioPath:   audioPath,
+		StartSec:    startSec,
+		DurationSec: durationSec,
 	}, preview.CustomBackground{
 		ImagePath: bgPath,
 		Crop: preview.Crop{
@@ -919,6 +1050,7 @@ func (h *Share) CustomStoryBackground(w http.ResponseWriter, r *http.Request) {
 			"track_id", id.String(),
 			"user", u.ID,
 			"start_sec", startSec,
+			"duration_sec", durationSec,
 			"err", err)
 		http.Error(w, "story generation failed", http.StatusInternalServerError)
 		return
@@ -936,7 +1068,7 @@ func (h *Share) servePublicStory(w http.ResponseWriter, r *http.Request, backgro
 	if backgroundOnly {
 		cached = h.Preview.CachedStoryBackground
 	}
-	if outPath, ok := cached(req.id.String(), req.startSec); ok {
+	if outPath, ok := cached(req.id.String(), req.startSec, req.durationSec); ok {
 		serveMediaFile(w, r, outPath, "story missing", immutableCacheControl(req.exp))
 		return
 	}
@@ -961,12 +1093,13 @@ func (h *Share) servePublicStory(w http.ResponseWriter, r *http.Request, backgro
 		title = "Untitled track"
 	}
 	input := preview.Input{
-		TrackID:   req.id.String(),
-		AudioPath: audioPath,
-		CoverPath: coverFSPath,
-		StartSec:  req.startSec,
-		Title:     title,
-		Artist:    primaryArtistName(t),
+		TrackID:     req.id.String(),
+		AudioPath:   audioPath,
+		CoverPath:   coverFSPath,
+		StartSec:    req.startSec,
+		DurationSec: req.durationSec,
+		Title:       title,
+		Artist:      primaryArtistName(t),
 	}
 	var outPath string
 	if backgroundOnly {
@@ -978,6 +1111,7 @@ func (h *Share) servePublicStory(w http.ResponseWriter, r *http.Request, backgro
 		slog.Error("story serve: EnsureStoryBuilt failed",
 			"track_id", req.id.String(),
 			"start_sec", req.startSec,
+			"duration_sec", req.durationSec,
 			"background_only", backgroundOnly,
 			"audio_path", audioPath,
 			"cover_path", coverFSPath,

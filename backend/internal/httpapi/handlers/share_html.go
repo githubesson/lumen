@@ -36,6 +36,7 @@ type shareMeta struct {
 	VideoURL    string
 	ThemeColor  string
 	Landing     string
+	DurationSec int
 }
 
 // renderSharePage writes the scraper-facing HTML. Minimal on purpose: the
@@ -70,7 +71,11 @@ func renderSharePage(m shareMeta) string {
 	writeMetaProp(&b, "og:video:type", "video/mp4")
 	writeMetaProp(&b, "og:video:width", "720")
 	writeMetaProp(&b, "og:video:height", "720")
-	writeMetaProp(&b, "og:video:duration", strconv.Itoa(int(preview.PreviewDuration/time.Second)))
+	durationSec := m.DurationSec
+	if durationSec <= 0 {
+		durationSec = int(preview.DefaultPreviewDuration / time.Second)
+	}
+	writeMetaProp(&b, "og:video:duration", strconv.Itoa(durationSec))
 	if m.Artist != "" {
 		writeMetaProp(&b, "music:musician", m.Artist)
 	}

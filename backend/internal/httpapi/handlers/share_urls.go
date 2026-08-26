@@ -134,23 +134,42 @@ func forwardedHeaderValue(raw string, key string) string {
 	return ""
 }
 
-func shareFrontendURL(base string, id uuid.UUID, startSec int, sig string) string {
-	q := url.Values{}
-	q.Set("t", strconv.Itoa(startSec))
-	q.Set("sig", sig)
-	return base + "/shared/track/" + id.String() + "?" + q.Encode()
+func sharePageURL(base string, id uuid.UUID, startSec, durationSec int, sig string) string {
+	return signedShareURL(base+"/share/track/"+id.String(), startSec, durationSec, sig)
 }
 
-func sharePreviewVideoURL(base string, id uuid.UUID, startSec int, sig string) string {
-	q := url.Values{}
-	q.Set("t", strconv.Itoa(startSec))
-	q.Set("sig", sig)
-	return base + "/api/public/preview-videos/" + id.String() + ".mp4?" + q.Encode()
+func shareFrontendURL(base string, id uuid.UUID, startSec, durationSec int, sig string) string {
+	return signedShareURL(base+"/shared/track/"+id.String(), startSec, durationSec, sig)
 }
 
-func shareEmbedURL(base string, id uuid.UUID, startSec int, sig string) string {
+func sharePreviewVideoURL(base string, id uuid.UUID, startSec, durationSec int, sig string) string {
+	return signedShareURL(base+"/api/public/preview-videos/"+id.String()+".mp4", startSec, durationSec, sig)
+}
+
+func shareEmbedURL(base string, id uuid.UUID, startSec, durationSec int, sig string) string {
+	return signedShareURL(base+"/embed/track/"+id.String(), startSec, durationSec, sig)
+}
+
+// durationSec == 0 intentionally emits the original URL shape. It is used
+// while resolving already-issued 30-second links whose signatures predate the
+// duration field.
+func signedShareURL(base string, startSec, durationSec int, sig string) string {
 	q := url.Values{}
 	q.Set("t", strconv.Itoa(startSec))
+	if durationSec > 0 {
+		q.Set("d", strconv.Itoa(durationSec))
+	}
 	q.Set("sig", sig)
-	return base + "/embed/track/" + id.String() + "?" + q.Encode()
+	return base + "?" + q.Encode()
+}
+
+func signedPreviewMediaURL(base, route string, id uuid.UUID, startSec, durationSec int, exp int64, sig string) string {
+	q := url.Values{}
+	q.Set("t", strconv.Itoa(startSec))
+	if durationSec > 0 {
+		q.Set("d", strconv.Itoa(durationSec))
+	}
+	q.Set("exp", strconv.FormatInt(exp, 10))
+	q.Set("sig", sig)
+	return base + route + id.String() + ".mp4?" + q.Encode()
 }

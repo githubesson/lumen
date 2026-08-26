@@ -1,10 +1,57 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   api,
+  createTrackShareLink,
+  getPublicTrackShare,
   resolveCoverUrl,
   setBaseUrl,
   setUnauthorizedHandler,
 } from "../src/api";
+
+describe("share snippet requests", () => {
+  afterEach(() => {
+    setBaseUrl("");
+    vi.unstubAllGlobals();
+  });
+
+  it("sends the selected duration when creating a link", async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      url: "https://lumen.test/share/track/1?t=12&d=75&sig=x",
+      start_sec: 12,
+      duration_sec: 75,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createTrackShareLink("track/id", 12.9, 75.9);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/tracks/track%2Fid/share?t=12&d=75",
+      expect.objectContaining({ method: "POST", credentials: "include" }),
+    );
+  });
+
+  it("preserves legacy public links that have no duration field", async () => {
+    const fetchMock = vi.fn(async () => Response.json({}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getPublicTrackShare("track-1", 12, "legacy-signature");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/public/share/track/track-1?t=12&sig=legacy-signature",
+      expect.any(Object),
+    );
+  });
+
+  it("sends duration when resolving a new public link", async () => {
+    const fetchMock = vi.fn(async () => Response.json({}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getPublicTrackShare("track-1", 12, "signature", 75);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/public/share/track/track-1?t=12&sig=signature&d=75",
+      expect.any(Object),
+    );
+  });
+});
 
 describe("API unauthorized handling", () => {
   afterEach(() => {

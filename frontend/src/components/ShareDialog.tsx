@@ -15,6 +15,9 @@ import {
   PlayIcon,
 } from "@heroicons/react/16/solid";
 import {
+  DEFAULT_SHARE_SNIPPET_DURATION_SEC,
+  MAX_SHARE_SNIPPET_DURATION_SEC,
+  MIN_SHARE_SNIPPET_DURATION_SEC,
   createTrackShareLink,
   errorMessage,
   streamUrl,
@@ -36,22 +39,23 @@ interface Props {
 }
 
 /**
- * Share dialog: pick a 30-second window of a track and copy a link that
+ * Share dialog: pick a variable-length window of a track and copy a link that
  * unfurls into a Discord/chat video embed (cover + audio snippet).
  *
  * The picker is a scrubber over the track's full timeline with a
- * highlighted 30s window the user can drag. Play/pause previews just that
+ * highlighted window the user can drag. Play/pause previews just that
  * window end-to-end, so the user hears exactly what friends will hear in
- * the embed. Copy is disabled until the window has been positioned at
- * least once, per the "no auto-snippet, decline it" decision in #4.
+ * the embed. Copy is disabled until the user adjusts either the length or
+ * position at least once, so the default is never shared accidentally.
  */
-
-const PREVIEW_DURATION_SEC = 30;
 
 export function ShareDialog({ open, trackId, onClose }: Props) {
   const { track, error: loadError } = useTrackDetail(open, trackId);
 
   const [startSec, setStartSec] = useState(0);
+  const [selectedDurationSec, setSelectedDurationSec] = useState(
+    DEFAULT_SHARE_SNIPPET_DURATION_SEC,
+  );
   const [picked, setPicked] = useState(false); // user has moved the window
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentSec, setCurrentSec] = useState(0);
@@ -113,14 +117,29 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
   }, [previewUrl, previewIsHls, open]);
 
   const durationSec = useMemo(
-    () => (track ? Math.max(0, Math.floor(track.duration_ms / 1000)) : 0),
+    () => (track ? Math.max(0, track.duration_ms / 1000) : 0),
     [track],
   );
-  // If the track is shorter than PREVIEW_DURATION_SEC we just preview the
-  // whole thing; the window collapses to [0, duration].
-  const effectivePreviewSec = Math.min(PREVIEW_DURATION_SEC, durationSec || PREVIEW_DURATION_SEC);
-  const maxStartSec = Math.max(0, durationSec - effectivePreviewSec);
+  const maxPreviewDurationSec = durationSec > 0
+    ? Math.min(MAX_SHARE_SNIPPET_DURATION_SEC, Math.max(1, Math.ceil(durationSec)))
+    : DEFAULT_SHARE_SNIPPET_DURATION_SEC;
+  const minPreviewDurationSec = Math.min(
+    MIN_SHARE_SNIPPET_DURATION_SEC,
+    maxPreviewDurationSec,
+  );
+  const effectivePreviewSec = Math.min(
+    Math.max(minPreviewDurationSec, selectedDurationSec),
+    maxPreviewDurationSec,
+  );
+  const maxStartSec = Math.max(0, Math.floor(durationSec - effectivePreviewSec));
   const endSec = Math.min(durationSec, startSec + effectivePreviewSec);
+  const displayPreviewSec = durationSec > 0
+    ? Math.min(effectivePreviewSec, durationSec)
+    : effectivePreviewSec;
+  const displayMinPreviewSec = Math.min(minPreviewDurationSec, displayPreviewSec);
+  const displayMaxPreviewSec = durationSec > 0
+    ? Math.min(maxPreviewDurationSec, durationSec)
+    : maxPreviewDurationSec;
 
   // Reset picker state on open / track changes so reopening on a different row
   // starts clean. Track metadata itself is loaded by useTrackDetail, which
@@ -128,6 +147,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
   useEffect(() => {
     if (!open || !trackId) return;
     setStartSec(0);
+    setSelectedDurationSec(DEFAULT_SHARE_SNIPPET_DURATION_SEC);
     setPicked(false);
     setIsPlaying(false);
     setCurrentSec(0);
@@ -150,7 +170,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     }
   }, [open]);
 
-  // When the 30s window moves while the preview is playing, snap playback
+  // When the selected window moves while the preview is playing, snap playback
   // to the new start. Without this the preview would keep running through
   // audio the user has already excluded from the window.
   useEffect(() => {
@@ -203,6 +223,19 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     setCopied(false);
   };
 
+  const onDurationChange = (value: number) => {
+    const nextDuration = Math.max(
+      minPreviewDurationSec,
+      Math.min(maxPreviewDurationSec, Math.floor(value)),
+    );
+    const nextMaxStart = Math.max(0, Math.floor(durationSec - nextDuration));
+    setSelectedDurationSec(nextDuration);
+    setStartSec((current) => Math.min(current, nextMaxStart));
+    setPicked(true);
+    setShareUrl(null);
+    setCopied(false);
+  };
+
   const onCopy = async () => {
     if (!trackId || !picked) return;
     setBusy(true);
@@ -210,7 +243,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     try {
       let url = shareUrl;
       if (!url) {
-        const res = await createTrackShareLink(trackId, startSec);
+        const res = await createTrackShareLink(trackId, startSec, effectivePreviewSec);
         url = res.url;
         setShareUrl(url);
       }
@@ -251,6 +284,41 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
   ) : (
     <div style={{ padding: 16, display: "grid", gap: 14, fontSize: 12.5 }}>
       <HeaderBlock track={track} />
+
+      <div style={{ display: "grid", gap: 6 }}>
+        <label
+          htmlFor="share-snippet-duration"
+          style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+        >
+          <span style={{ color: "var(--fg-muted)" }}>Clip length</span>
+          <span className="mono" style={{ fontVariantNumeric: "tabular-nums" }}>
+            {fmtDurationSec(displayPreviewSec)}
+          </span>
+        </label>
+        <input
+          id="share-snippet-duration"
+          type="range"
+          min={minPreviewDurationSec}
+          max={maxPreviewDurationSec}
+          step={1}
+          value={effectivePreviewSec}
+          disabled={maxPreviewDurationSec <= minPreviewDurationSec}
+          aria-label="Share clip length in seconds"
+          onChange={(event) => onDurationChange(Number(event.target.value))}
+          style={{ width: "100%", accentColor: "var(--accent)" }}
+        />
+        <div
+          className="mono"
+          style={{ display: "flex", justifyContent: "space-between", color: "var(--fg-subtle)", fontSize: 10.5 }}
+        >
+          <span>
+            {fmtDurationSec(displayMinPreviewSec)}
+          </span>
+          <span>
+            {fmtDurationSec(displayMaxPreviewSec)}
+          </span>
+        </div>
+      </div>
 
       <PreviewStrip
         durationSec={durationSec}
@@ -299,7 +367,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
         >
           {picked
             ? "Happy with the window? Copy the link."
-            : "Drag the handle to pick a 30-second window."}
+            : "Choose a length or drag the window into place."}
         </span>
       </div>
 
@@ -445,7 +513,7 @@ function HeaderBlock({ track }: { track: TrackDetail }) {
 }
 
 /**
- * PreviewStrip renders the scrubber: a horizontal track with the 30s
+ * PreviewStrip renders the scrubber: a horizontal track with the selected
  * window highlighted and a grabbable handle at its start. Dragging the
  * window (or clicking anywhere on the strip) sets the new start time.
  * Pointer Events are captured on the strip so the drag stays live even if
@@ -474,7 +542,7 @@ function PreviewStrip({
       if (!el || durationSec <= 0) return;
       const rect = el.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      // Center the 30s window on the click point, then clamp so it never
+      // Center the selected window on the click point, then clamp so it never
       // extends past the track. This makes click-to-place feel natural:
       // wherever you click, that moment is roughly the middle of the
       // preview, not the start.
@@ -546,7 +614,7 @@ function PreviewStrip({
         userSelect: "none",
       }}
     >
-      {/* Highlighted 30s window */}
+      {/* Highlighted share window */}
       <div
         style={{
           position: "absolute",

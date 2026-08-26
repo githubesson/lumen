@@ -1426,7 +1426,12 @@ export function signAlbumCoverUrl(albumId: string): Promise<SignedCoverUrl> {
 export interface ShareLink {
   url: string;
   start_sec: number;
+  duration_sec: number;
 }
+
+export const MIN_SHARE_SNIPPET_DURATION_SEC = 5;
+export const DEFAULT_SHARE_SNIPPET_DURATION_SEC = 30;
+export const MAX_SHARE_SNIPPET_DURATION_SEC = 120;
 
 export interface PublicTrackShare {
   track_id: string;
@@ -1448,16 +1453,26 @@ export interface PublicTrackShare {
 }
 
 /**
- * Mint a signed share URL for a track, starting at `startSec` for 30s.
+ * Mint a signed share URL for a track with a selectable duration.
  * The returned URL unfurls into a video embed in Discord (cover + audio
  * snippet). Long-lived: safe to paste in chat and expect it to keep
- * working. Backend clamps start_sec so the 30s window stays in-bounds.
+ * working. Backend clamps the duration to the track and start_sec so the
+ * selected window stays in-bounds.
  */
 export function createTrackShareLink(
   trackId: string,
   startSec: number,
+  durationSec = DEFAULT_SHARE_SNIPPET_DURATION_SEC,
 ): Promise<ShareLink> {
-  const qs = new URLSearchParams({ t: String(Math.max(0, Math.floor(startSec))) });
+  const qs = new URLSearchParams({
+    t: String(Math.max(0, Math.floor(startSec))),
+    d: String(
+      Math.max(
+        1,
+        Math.min(MAX_SHARE_SNIPPET_DURATION_SEC, Math.floor(durationSec)),
+      ),
+    ),
+  });
   return request<ShareLink>(`/api/tracks/${trackPathID(trackId)}/share?${qs.toString()}`, {
     method: "POST",
   });
@@ -1475,9 +1490,19 @@ export function createTrackStoryBackgroundVideo(
   startSec: number,
   file: StoryBackgroundUploadFile,
   crop: StoryBackgroundCrop,
+  durationSec = DEFAULT_SHARE_SNIPPET_DURATION_SEC,
 ): Promise<Response> {
   const fd = new FormData();
   fd.append("start_sec", String(Math.max(0, Math.floor(startSec))));
+  fd.append(
+    "duration_sec",
+    String(
+      Math.max(
+        1,
+        Math.min(MAX_SHARE_SNIPPET_DURATION_SEC, Math.floor(durationSec)),
+      ),
+    ),
+  );
   fd.append("crop_x", String(crop.x));
   fd.append("crop_y", String(crop.y));
   fd.append("crop_width", String(crop.width));
@@ -1587,11 +1612,23 @@ export function getPublicTrackShare(
   trackId: string,
   startSec: number,
   sig: string,
+  durationSec?: number,
 ): Promise<PublicTrackShare> {
   const qs = new URLSearchParams({
     t: String(Math.max(0, Math.floor(startSec))),
     sig,
   });
+  if (durationSec !== undefined) {
+    qs.set(
+      "d",
+      String(
+        Math.max(
+          1,
+          Math.min(MAX_SHARE_SNIPPET_DURATION_SEC, Math.floor(durationSec)),
+        ),
+      ),
+    );
+  }
   return request<PublicTrackShare>(
     `/api/public/share/track/${encodeURIComponent(trackId)}?${qs.toString()}`,
   );

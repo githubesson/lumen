@@ -21,6 +21,9 @@ import RNShare, { Social } from "react-native-share";
 import { captureRef } from "react-native-view-shot";
 import {
   ApiError,
+  DEFAULT_SHARE_SNIPPET_DURATION_SEC,
+  MAX_SHARE_SNIPPET_DURATION_SEC,
+  MIN_SHARE_SNIPPET_DURATION_SEC,
   api,
   createTrackShareLink,
   createTrackStoryBackgroundVideo,
@@ -48,7 +51,6 @@ import { TrackHeader } from "../components/share/track-header";
 import { qk } from "../lib/query-keys";
 import { useTheme } from "../theme/theme";
 
-const PREVIEW_DURATION_SEC = 30;
 /** How long to wait for the offscreen sticker (cover image) before capturing anyway. */
 const STORY_RENDER_TIMEOUT_MS = 1800;
 
@@ -69,6 +71,9 @@ export default function ShareTrackScreen() {
     trackTitle?: string;
   }>();
   const [startSec, setStartSec] = useState(0);
+  const [selectedDurationSec, setSelectedDurationSec] = useState(
+    DEFAULT_SHARE_SNIPPET_DURATION_SEC,
+  );
   const [picked, setPicked] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [storyBusy, setStoryBusy] = useState(false);
@@ -124,15 +129,22 @@ export default function ShareTrackScreen() {
   const durationSec = useMemo(
     () =>
       trackQuery.data
-        ? Math.max(0, Math.floor(trackQuery.data.duration_ms / 1000))
+        ? Math.max(0, trackQuery.data.duration_ms / 1000)
         : 0,
     [trackQuery.data],
   );
-  const effectivePreviewSec = Math.min(
-    PREVIEW_DURATION_SEC,
-    durationSec || PREVIEW_DURATION_SEC,
+  const maxSnippetDurationSec = durationSec > 0
+    ? Math.min(MAX_SHARE_SNIPPET_DURATION_SEC, Math.max(1, Math.ceil(durationSec)))
+    : DEFAULT_SHARE_SNIPPET_DURATION_SEC;
+  const minSnippetDurationSec = Math.min(
+    MIN_SHARE_SNIPPET_DURATION_SEC,
+    maxSnippetDurationSec,
   );
-  const maxStartSec = Math.max(0, durationSec - effectivePreviewSec);
+  const effectivePreviewSec = Math.min(
+    Math.max(minSnippetDurationSec, selectedDurationSec),
+    maxSnippetDurationSec,
+  );
+  const maxStartSec = Math.max(0, Math.floor(durationSec - effectivePreviewSec));
   const endSec = Math.min(durationSec, startSec + effectivePreviewSec);
   const currentSec = playerStatus.playing ? playerStatus.currentTime : startSec;
 
@@ -169,7 +181,7 @@ export default function ShareTrackScreen() {
   const generateMutation = useMutation({
     mutationFn: async () => {
       if (!trackId) throw new Error("Missing track id.");
-      const res = await createTrackShareLink(trackId, startSec);
+      const res = await createTrackShareLink(trackId, startSec, effectivePreviewSec);
       return res.url;
     },
     onSuccess: (url) => {
@@ -196,6 +208,32 @@ export default function ShareTrackScreen() {
       }
     },
     [maxStartSec, playerStatus.playing, seekPreview],
+  );
+
+  const onDurationChange = useCallback(
+    (value: number) => {
+      const nextDuration = Math.max(
+        minSnippetDurationSec,
+        Math.min(maxSnippetDurationSec, Math.floor(value)),
+      );
+      const nextMaxStart = Math.max(0, Math.floor(durationSec - nextDuration));
+      const nextStart = Math.min(startSec, nextMaxStart);
+      setSelectedDurationSec(nextDuration);
+      setStartSec(nextStart);
+      setPicked(true);
+      setShareUrl(null);
+      if (playerStatus.playing) {
+        void seekPreview(nextStart);
+      }
+    },
+    [
+      durationSec,
+      maxSnippetDurationSec,
+      minSnippetDurationSec,
+      playerStatus.playing,
+      seekPreview,
+      startSec,
+    ],
   );
 
   const togglePreview = useCallback(async () => {
@@ -321,6 +359,7 @@ export default function ShareTrackScreen() {
       shareRef.trackId,
       shareRef.startSec,
       shareRef.sig,
+      shareRef.durationSec,
     );
 
     const hasSplitStory = Boolean(publicShare.story_background_url);
@@ -347,12 +386,13 @@ export default function ShareTrackScreen() {
           type: customBackground.type,
         },
         customCrop,
+        publicShare.preview_duration_sec,
       );
       videoFile = await responseToFile(
         response,
         new File(
           mediaDir,
-          `${publicShare.track_id}-${publicShare.start_sec}-custom-story.mp4`,
+          `${publicShare.track_id}-${publicShare.start_sec}-${publicShare.preview_duration_sec}s-custom-story.mp4`,
         ),
       );
     } else {
@@ -360,7 +400,7 @@ export default function ShareTrackScreen() {
         storyUrl,
         new File(
           mediaDir,
-          `${publicShare.track_id}-${publicShare.start_sec}-story.mp4`,
+          `${publicShare.track_id}-${publicShare.start_sec}-${publicShare.preview_duration_sec}s-story.mp4`,
         ),
       );
     }
@@ -404,7 +444,7 @@ export default function ShareTrackScreen() {
         Alert.alert("Couldn't share link", "Please try again.");
       }
     }
-  }, [generateMutation.isError, getShareUrl, picked, trackQuery.data?.title]);
+  }, [generateMutation.isError, getShareUrl, picked, trackQuery.data]);
 
   const shareInstagramStory = useCallback(async (mode: StoryBackgroundMode) => {
     if (!picked || storyBusy) return;
@@ -489,9 +529,13 @@ export default function ShareTrackScreen() {
               endSec={endSec}
               currentSec={currentSec}
               maxStartSec={maxStartSec}
+              snippetDurationSec={effectivePreviewSec}
+              minSnippetDurationSec={minSnippetDurationSec}
+              maxSnippetDurationSec={maxSnippetDurationSec}
               picked={picked}
               playing={playerStatus.playing}
               onStartChange={onStartChange}
+              onDurationChange={onDurationChange}
               onTogglePreview={() => void togglePreview()}
             />
 
@@ -569,10 +613,24 @@ function parseShareUrl(raw: string) {
     const trackId = trackIndex >= 0 ? parts[trackIndex + 1] : "";
     const sig = parsed.searchParams.get("sig") ?? "";
     const startSec = Number.parseInt(parsed.searchParams.get("t") ?? "0", 10);
-    if (!trackId || !sig || !Number.isFinite(startSec) || startSec < 0) {
+    const rawDurationSec = parsed.searchParams.get("d");
+    const durationSec = rawDurationSec === null
+      ? undefined
+      : Number(rawDurationSec);
+    if (
+      !trackId ||
+      !sig ||
+      !Number.isFinite(startSec) ||
+      startSec < 0 ||
+      (durationSec !== undefined && (
+        !Number.isInteger(durationSec) ||
+        durationSec <= 0 ||
+        durationSec > MAX_SHARE_SNIPPET_DURATION_SEC
+      ))
+    ) {
       return null;
     }
-    return { trackId, sig, startSec };
+    return { trackId, sig, startSec, durationSec };
   } catch {
     return null;
   }

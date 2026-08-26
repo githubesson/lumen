@@ -306,11 +306,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // iOS paused for a route loss (AirPod pulled). The OS then had nothing
     // to resume.
     const shouldExposeLockScreen = shouldExposeNowPlayingSession({
-      hasTrack: !!nowPlayingMetadata,
+      hasTrack: nowPlayingMetadata !== null,
       isCasting: !!targetDevice,
     });
 
-    if (!shouldExposeLockScreen) {
+    if (!shouldExposeLockScreen || nowPlayingMetadata === null) {
       setLockScreenTrackControlsEnabled(false);
       if (lockScreenActiveRef.current) {
         adapter.clearLockScreenControls();
@@ -552,4 +552,3 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     </RemotePlaybackCtx.Provider>
   );
 }
-

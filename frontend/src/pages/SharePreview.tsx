@@ -7,6 +7,7 @@ import {
   PlayIcon,
 } from "@heroicons/react/16/solid";
 import {
+  MAX_SHARE_SNIPPET_DURATION_SEC,
   errorMessage,
   getPublicTrackShare,
   type PublicTrackShare,
@@ -22,6 +23,10 @@ export default function SharePreview() {
   const { id = "" } = useParams();
   const [params] = useSearchParams();
   const startSec = Number.parseInt(params.get("t") ?? "0", 10);
+  const rawDurationSec = params.get("d");
+  const durationSec = rawDurationSec === null
+    ? undefined
+    : Number(rawDurationSec);
   const sig = params.get("sig") ?? "";
 
   const [share, setShare] = useState<PublicTrackShare | null>(null);
@@ -45,13 +50,23 @@ export default function SharePreview() {
     setCurrentTime(0);
     setMediaDuration(0);
 
-    if (!id || !sig || !Number.isFinite(startSec) || startSec < 0) {
+    if (
+      !id ||
+      !sig ||
+      !Number.isFinite(startSec) ||
+      startSec < 0 ||
+      (durationSec !== undefined && (
+        !Number.isInteger(durationSec) ||
+        durationSec <= 0 ||
+        durationSec > MAX_SHARE_SNIPPET_DURATION_SEC
+      ))
+    ) {
       setLoading(false);
       setError("Share link unavailable.");
       return;
     }
 
-    getPublicTrackShare(id, startSec, sig)
+    getPublicTrackShare(id, startSec, sig, durationSec)
       .then((res) => {
         if (cancelled) return;
         setShare(res);
@@ -67,7 +82,7 @@ export default function SharePreview() {
     return () => {
       cancelled = true;
     };
-  }, [id, sig, startSec]);
+  }, [durationSec, id, sig, startSec]);
 
   const duration = useMemo(() => {
     if (mediaDuration > 0) return mediaDuration;

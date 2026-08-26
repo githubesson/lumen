@@ -23,7 +23,7 @@ interface ShareCtxValue {
 const ShareContext = createContext<ShareCtxValue | null>(null);
 
 /**
- * ShareProvider owns the single app-wide "Share track" dialog (pick a 30s
+ * ShareProvider owns the single app-wide "Share track" dialog (pick a timed
  * window → copy Discord-embeddable link). Mirrors TrackInfoProvider so
  * the context menu, command palette, etc. can pop it open without each
  * surface owning its own copy.

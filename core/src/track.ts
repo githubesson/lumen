@@ -41,7 +41,7 @@ export function isLocalTrack(track: Pick<TrackListItem, "source">): boolean {
 /**
  * Snippet share links work for local tracks and TIDAL tracks. For TIDAL the
  * backend materializes a hidden track row on share, so the signed public
- * preview endpoints have a stable id to build the 30s MP4 from.
+ * preview endpoints have a stable id from which to build the selected MP4.
  */
 export function canShareTrack(track: Pick<TrackListItem, "source">): boolean {
   return isLocalTrack(track) || track.source === "tidal";
