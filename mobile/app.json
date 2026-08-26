@@ -40,6 +40,7 @@
           "audioEntitlement": true
         }
       ],
+      "./plugins/withSiriMedia",
       [
         "expo-audio",
         {

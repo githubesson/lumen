@@ -1,0 +1,19 @@
+diff --git a/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesReactDelegateHandler.swift b/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesReactDelegateHandler.swift
+index 9445715..635039a 100644
+--- a/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesReactDelegateHandler.swift
++++ b/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesReactDelegateHandler.swift
+@@ -103,10 +103,12 @@ public final class ExpoUpdatesReactDelegateHandler: ExpoReactDelegateHandler, Ap
+     // In brownfield setups, the deferred root view is embedded within the host app's
+     // view hierarchy (e.g. inside a NavigationController). Replacing the window's root
+     // view controller would break the host app's navigation. Instead, find the view
+-    // controller that owns the deferred view and replace its view in-place.
++    // controller that owns the deferred view and replace its view in-place. Check the
++    // deferred view's own window rather than requiring a global window: scene-based
++    // hosts can retain this controller before UIKit connects any UIWindowScene.
+     if let deferredRootView = self.deferredRootView,
+       let owningViewController = findViewController(for: deferredRootView),
+-      owningViewController != getWindow().rootViewController {
++      owningViewController != deferredRootView.window?.rootViewController {
+       owningViewController.view = rootView
+     } else {
+       let window = getWindow()

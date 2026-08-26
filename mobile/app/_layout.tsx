@@ -27,6 +27,7 @@ import { invalidateLibrary } from "../lib/query-keys";
 import { DownloadsProvider } from "../lib/downloads";
 import { RemoteControlIndicator } from "../components/remote-control-indicator";
 import { CarPlayBridge } from "../components/carplay-bridge";
+import { SiriMediaBridge } from "../components/siri-media-bridge";
 import {
   fileSystemPersister,
   shouldPersistQuery,
@@ -187,6 +188,8 @@ function AccountScopedProviders({ children }: { children: ReactNode }) {
       {/* Renders nothing on the phone; drives the car's templates from the
           same query cache and player these providers already own. */}
       <CarPlayBridge />
+      {/* Handles Siri media searches and playback without presenting UI. */}
+      <SiriMediaBridge />
     </PlayerProvider>
   );
 }

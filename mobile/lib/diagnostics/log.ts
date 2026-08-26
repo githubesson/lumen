@@ -41,7 +41,13 @@ const SUPPRESS_PRUNE_AT = 400;
 export const BODY_PROBE_BYTES = 512;
 const ENTRY_VERSION = 1;
 
-export type LogScope = "download" | "auto-sync" | "cover" | "store" | "session";
+export type LogScope =
+  | "download"
+  | "auto-sync"
+  | "cover"
+  | "store"
+  | "session"
+  | "siri";
 export type LogLevel = "info" | "warn" | "error";
 
 export interface LogEntry {
