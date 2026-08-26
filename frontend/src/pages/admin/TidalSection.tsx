@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ArrowPathIcon,
   ArrowTopRightOnSquareIcon,
@@ -19,7 +19,6 @@ import {
   openExternal,
   reserveExternalWindow,
 } from "../../lib/platform";
-import { AdminSectionIntro, AdminSectionTitle } from "./AdminSectionTitle";
 
 function normalizeTidalVerificationURL(rawURL: string): string {
   const trimmed = rawURL.trim();
@@ -35,6 +34,27 @@ function normalizeTidalVerificationURL(rawURL: string): string {
   }
   return trimmed;
 }
+
+const cardStyle = {
+  padding: "16px 18px",
+  display: "flex",
+  flexDirection: "column",
+  gap: 14,
+} as const;
+
+const cardHeadStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 10,
+} as const;
+
+const cardTitleStyle = {
+  fontSize: 14,
+  fontWeight: 600,
+  letterSpacing: "-0.01em",
+  margin: 0,
+} as const;
 
 export function TidalSection() {
   const [status, setStatus] = useState<TidalStatus | null>(null);
@@ -93,15 +113,12 @@ export function TidalSection() {
     return () => controller.abort();
   }, [flow, load]);
 
-  const details = useMemo(
-    () => [
-      ["Proxy", status?.proxy_url || "not configured"],
-      ["Country", status?.country_code || "US"],
-      ["Quality", status?.quality || "LOSSLESS"],
-      ["Version", status?.version || "unknown"],
-    ],
-    [status],
-  );
+  const details: Array<[string, string, boolean]> = [
+    ["Proxy", status?.proxy_url || "not configured", true],
+    ["Country", status?.country_code || "US", false],
+    ["Quality", status?.quality || "LOSSLESS", false],
+    ["Version", status?.version || "unknown", false],
+  ];
 
   const connected = Boolean(status?.connected);
   const accounts = status?.accounts ?? [];
@@ -154,26 +171,7 @@ export function TidalSection() {
   };
 
   return (
-    <section aria-labelledby="tidal-account" className="surface" style={{ padding: 20 }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "start",
-          justifyContent: "space-between",
-          gap: 16,
-          marginBottom: 16,
-        }}
-      >
-        <AdminSectionIntro
-          id="tidal-account"
-          title="TIDAL accounts"
-          description="Link the subscribed accounts used for live TIDAL search and streaming. Credentials stay inside the private hifi-api service."
-        />
-        <span className={"badge" + (connected ? " badge-accent" : "")}>
-          {loading ? "checking" : connected ? "proxy online" : "proxy offline"}
-        </span>
-      </div>
-
+    <section aria-labelledby="tidal-account">
       {error && <ErrorBanner message={error} />}
       {status?.error && <ErrorBanner message={status.error} />}
       {status?.management_error && <ErrorBanner message={status.management_error} />}
@@ -201,147 +199,170 @@ export function TidalSection() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-          gap: 12,
-          marginBottom: 18,
+          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+          gap: 14,
+          alignItems: "start",
         }}
       >
-        {details.map(([label, value]) => (
-          <div key={label}>
-            <AdminSectionTitle as="div" style={{ marginBottom: 4 }}>
-              {label}
-            </AdminSectionTitle>
-            <div style={{ color: "var(--fg)", fontSize: 13, overflowWrap: "anywhere" }}>
-              {value}
-            </div>
+        <div className="surface" style={cardStyle}>
+          <div style={cardHeadStyle}>
+            <h2 id="tidal-account" style={cardTitleStyle}>
+              Connection
+            </h2>
+            <span className={"badge" + (connected ? " badge-accent" : "")}>
+              {loading ? "checking" : connected ? "proxy online" : "proxy offline"}
+            </span>
           </div>
-        ))}
-      </div>
 
-      <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-          }}
-        >
-          <AdminSectionTitle as="div">
-            Linked accounts ({accounts.length})
-          </AdminSectionTitle>
-          <Button
-            size="sm"
-            variant="primary"
-            leadingIcon={<LinkIcon className="size-3.5" />}
-            onClick={() => void startAuth()}
-            disabled={busy !== null || !!flow || !connected || !status?.management_supported}
-          >
-            {busy === "link" ? "Starting..." : "Link account"}
-          </Button>
-        </div>
-
-        {!status?.management_supported && !loading ? (
-          <div style={{ color: "var(--fg-muted)", fontSize: 12.5 }}>
-            Account controls require the Lumen hifi-api extension. Recreate the
-            hifi-api container after updating the server.
-          </div>
-        ) : accounts.length === 0 ? (
-          <div
-            style={{
-              border: "1px dashed var(--border-strong)",
-              borderRadius: 8,
-              padding: 14,
-              color: "var(--fg-muted)",
-              fontSize: 13,
-            }}
-          >
-            No TIDAL account is linked. Link a subscribed account to enable full playback.
-          </div>
-        ) : (
-          accounts.map((account) => (
-            <div
-              key={account.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-                border: "1px solid var(--border)",
-                background: "var(--bg-elev-2)",
-                borderRadius: 8,
-                padding: "10px 12px",
-              }}
-            >
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>
-                  Account {account.user_id || "unknown"}
-                </div>
-                <div className="mono" style={{ color: "var(--fg-muted)", fontSize: 11 }}>
-                  {account.removable ? "Managed by Lumen" : "Configured by environment"}
-                </div>
-              </div>
-              {account.removable && (
-                <Button
-                  size="sm"
-                  variant="danger"
-                  leadingIcon={<TrashIcon className="size-3.5" />}
-                  disabled={busy !== null}
-                  onClick={() => void removeAccount(account.id, account.user_id)}
+          <div>
+            {details.map(([label, value, mono], i) => (
+              <div
+                key={label}
+                style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  padding: "9px 0",
+                  borderBottom:
+                    i < details.length - 1 ? "1px solid var(--border-soft)" : "none",
+                }}
+              >
+                <span style={{ color: "var(--fg-muted)", fontSize: 12.5 }}>{label}</span>
+                <span
+                  className={mono ? "mono" : undefined}
+                  style={{ fontSize: 13, textAlign: "right", overflowWrap: "anywhere" }}
                 >
-                  {busy === account.id ? "Unlinking..." : "Unlink"}
-                </Button>
-              )}
-            </div>
-          ))
-        )}
-      </div>
-
-      {flow && (
-        <div
-          style={{
-            display: "grid",
-            gap: 10,
-            border: "1px solid var(--border-strong)",
-            background: "var(--accent-soft)",
-            borderRadius: 8,
-            padding: 14,
-            marginBottom: 16,
-          }}
-        >
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>Finish signing in to TIDAL</div>
-            <div style={{ color: "var(--fg-muted)", fontSize: 12, marginTop: 3 }}>
-              This page will update automatically after TIDAL approves the account.
-            </div>
+                  {value}
+                </span>
+              </div>
+            ))}
           </div>
-          {flow.user_code && (
-            <div>
-              <AdminSectionTitle as="div" style={{ marginBottom: 4 }}>
-                Code
-              </AdminSectionTitle>
-              <code style={{ fontSize: 18, letterSpacing: 1 }}>{flow.user_code}</code>
-            </div>
-          )}
-          <div>
+
+          <div style={{ marginTop: "auto", display: "flex", justifyContent: "flex-end" }}>
             <Button
               size="sm"
-              leadingIcon={<ArrowTopRightOnSquareIcon className="size-3.5" />}
-              onClick={() => void openVerification(flow.verification_url)}
+              onClick={() => void load()}
+              disabled={loading}
+              leadingIcon={<ArrowPathIcon className="size-3.5" />}
             >
-              Open TIDAL
+              Refresh
             </Button>
           </div>
         </div>
-      )}
 
-      <Button
-        onClick={() => void load()}
-        disabled={loading}
-        leadingIcon={<ArrowPathIcon className="size-4" />}
-      >
-        Refresh
-      </Button>
+        <div className="surface" style={cardStyle}>
+          <div style={cardHeadStyle}>
+            <h2 style={cardTitleStyle}>Linked accounts ({accounts.length})</h2>
+            <Button
+              size="sm"
+              variant="primary"
+              leadingIcon={<LinkIcon className="size-3.5" />}
+              onClick={() => void startAuth()}
+              disabled={busy !== null || !!flow || !connected || !status?.management_supported}
+            >
+              {busy === "link" ? "Starting..." : "Link account"}
+            </Button>
+          </div>
+
+          <p style={{ color: "var(--fg-muted)", fontSize: 12.5, margin: 0 }}>
+            Subscribed accounts used for live TIDAL search and streaming.
+            Credentials stay inside the private hifi-api service.
+          </p>
+
+          {!status?.management_supported && !loading ? (
+            <div style={{ color: "var(--fg-muted)", fontSize: 12.5 }}>
+              Account controls require the Lumen hifi-api extension. Recreate the
+              hifi-api container after updating the server.
+            </div>
+          ) : accounts.length === 0 ? (
+            <div
+              style={{
+                border: "1px dashed var(--border-strong)",
+                borderRadius: 8,
+                padding: 14,
+                color: "var(--fg-muted)",
+                fontSize: 13,
+              }}
+            >
+              No TIDAL account is linked. Link a subscribed account to enable full playback.
+            </div>
+          ) : (
+            accounts.map((account) => (
+              <div
+                key={account.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  border: "1px solid var(--border)",
+                  background: "var(--bg-elev-3)",
+                  borderRadius: 8,
+                  padding: "10px 12px",
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>
+                    Account {account.user_id || "unknown"}
+                  </div>
+                  <div className="mono" style={{ color: "var(--fg-muted)", fontSize: 11 }}>
+                    {account.removable ? "Managed by Lumen" : "Configured by environment"}
+                  </div>
+                </div>
+                {account.removable && (
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    leadingIcon={<TrashIcon className="size-3.5" />}
+                    disabled={busy !== null}
+                    onClick={() => void removeAccount(account.id, account.user_id)}
+                  >
+                    {busy === account.id ? "Unlinking..." : "Unlink"}
+                  </Button>
+                )}
+              </div>
+            ))
+          )}
+
+          {flow && (
+            <div
+              style={{
+                display: "grid",
+                gap: 10,
+                border: "1px solid var(--border-strong)",
+                background: "var(--accent-soft)",
+                borderRadius: 8,
+                padding: 14,
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>Finish signing in to TIDAL</div>
+                <div style={{ color: "var(--fg-muted)", fontSize: 12, marginTop: 3 }}>
+                  This page will update automatically after TIDAL approves the account.
+                </div>
+              </div>
+              {flow.user_code && (
+                <div>
+                  <div style={{ color: "var(--fg-muted)", fontSize: 12, marginBottom: 4 }}>
+                    Code
+                  </div>
+                  <code style={{ fontSize: 18, letterSpacing: 1 }}>{flow.user_code}</code>
+                </div>
+              )}
+              <div>
+                <Button
+                  size="sm"
+                  leadingIcon={<ArrowTopRightOnSquareIcon className="size-3.5" />}
+                  onClick={() => void openVerification(flow.verification_url)}
+                >
+                  Open TIDAL
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </section>
   );
 }
