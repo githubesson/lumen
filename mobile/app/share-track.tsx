@@ -197,27 +197,17 @@ export default function ShareTrackScreen() {
     },
   });
 
-  const onStartChange = useCallback(
-    (value: number) => {
-      const next = Math.max(0, Math.min(maxStartSec, Math.floor(value)));
-      setStartSec(next);
-      setPicked(true);
-      setShareUrl(null);
-      if (playerStatus.playing) {
-        void seekPreview(next);
-      }
-    },
-    [maxStartSec, playerStatus.playing, seekPreview],
-  );
-
-  const onDurationChange = useCallback(
-    (value: number) => {
+  const onWindowChange = useCallback(
+    (nextStartSec: number, nextDurationSec: number) => {
       const nextDuration = Math.max(
         minSnippetDurationSec,
-        Math.min(maxSnippetDurationSec, Math.floor(value)),
+        Math.min(maxSnippetDurationSec, Math.round(nextDurationSec)),
       );
       const nextMaxStart = Math.max(0, Math.floor(durationSec - nextDuration));
-      const nextStart = Math.min(startSec, nextMaxStart);
+      const nextStart = Math.max(
+        0,
+        Math.min(nextMaxStart, Math.round(nextStartSec)),
+      );
       setSelectedDurationSec(nextDuration);
       setStartSec(nextStart);
       setPicked(true);
@@ -232,7 +222,6 @@ export default function ShareTrackScreen() {
       minSnippetDurationSec,
       playerStatus.playing,
       seekPreview,
-      startSec,
     ],
   );
 
@@ -534,8 +523,7 @@ export default function ShareTrackScreen() {
               maxSnippetDurationSec={maxSnippetDurationSec}
               picked={picked}
               playing={playerStatus.playing}
-              onStartChange={onStartChange}
-              onDurationChange={onDurationChange}
+              onWindowChange={onWindowChange}
               onTogglePreview={() => void togglePreview()}
             />
 

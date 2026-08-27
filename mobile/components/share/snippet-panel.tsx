@@ -6,7 +6,6 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import Slider from "@react-native-community/slider";
 import { SymbolView } from "expo-symbols";
 import { formatDurationSec } from "../../lib/format";
 import { useTheme } from "../../theme/theme";
@@ -30,8 +29,7 @@ export function SnippetPanel({
   maxSnippetDurationSec,
   picked,
   playing,
-  onStartChange,
-  onDurationChange,
+  onWindowChange,
   onTogglePreview,
   style,
 }: {
@@ -45,8 +43,7 @@ export function SnippetPanel({
   maxSnippetDurationSec: number;
   picked: boolean;
   playing: boolean;
-  onStartChange: (seconds: number) => void;
-  onDurationChange: (seconds: number) => void;
+  onWindowChange: (startSec: number, durationSec: number) => void;
   onTogglePreview: () => void;
   style?: StyleProp<ViewStyle>;
 }) {
@@ -54,13 +51,6 @@ export function SnippetPanel({
   const displaySnippetDurationSec = durationSec > 0
     ? Math.min(snippetDurationSec, durationSec)
     : snippetDurationSec;
-  const displayMinDurationSec = Math.min(
-    minSnippetDurationSec,
-    displaySnippetDurationSec,
-  );
-  const displayMaxDurationSec = durationSec > 0
-    ? Math.min(maxSnippetDurationSec, durationSec)
-    : maxSnippetDurationSec;
 
   return (
     <SharePanel
@@ -91,26 +81,6 @@ export function SnippetPanel({
           {formatDurationSec(displaySnippetDurationSec)}
         </Text>
       </View>
-      <Slider
-        value={snippetDurationSec}
-        minimumValue={minSnippetDurationSec}
-        maximumValue={maxSnippetDurationSec}
-        step={1}
-        disabled={maxSnippetDurationSec <= minSnippetDurationSec}
-        accessibilityLabel="Share clip length in seconds"
-        onValueChange={onDurationChange}
-        minimumTrackTintColor={theme.color.accent}
-        maximumTrackTintColor={theme.color.bgElev2}
-        thumbTintColor={theme.color.accent}
-      />
-      <View style={styles.timeRow}>
-        <Text style={{ color: theme.color.fgMuted, fontSize: 12 }}>
-          {formatDurationSec(displayMinDurationSec)}
-        </Text>
-        <Text style={{ color: theme.color.fgMuted, fontSize: 12 }}>
-          {formatDurationSec(displayMaxDurationSec)}
-        </Text>
-      </View>
 
       <WaveformRegionSelector
         durationSec={durationSec}
@@ -118,7 +88,9 @@ export function SnippetPanel({
         endSec={endSec}
         currentSec={currentSec}
         maxStartSec={maxStartSec}
-        onStartChange={onStartChange}
+        minSnippetDurationSec={minSnippetDurationSec}
+        maxSnippetDurationSec={maxSnippetDurationSec}
+        onWindowChange={onWindowChange}
       />
 
       <View style={styles.timeRow}>
@@ -158,8 +130,8 @@ export function SnippetPanel({
 
       <Text style={{ color: theme.color.fgMuted }}>
         {picked
-          ? "Drag the highlighted region to tune the share clip."
-          : "Choose a length or drag the clip to the moment friends will hear."}
+          ? "Drag the edges to resize, or the middle to move the clip."
+          : "Trim the edges or drag the window to the moment friends will hear."}
       </Text>
     </SharePanel>
   );
