@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { swatchFor } from "../lib/swatch";
 
 export { swatchFor };
@@ -37,13 +37,10 @@ export default function CoverArt({
   children,
 }: Props) {
   const shouldTry = !forcePlaceholder && !!src;
-  const [failed, setFailed] = useState(false);
-
-  // Reset the failure flag when the source changes so a new id gets a fresh
-  // try instead of being permanently pinned to placeholder.
-  useEffect(() => {
-    setFailed(false);
-  }, [src]);
+  // Remember which source failed rather than resetting state from an effect.
+  // A different source naturally gets a fresh attempt.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const failed = failedSrc === src;
 
   const placeholder = !shouldTry || failed;
 
@@ -80,7 +77,7 @@ export default function CoverArt({
         alt=""
         loading="lazy"
         decoding="async"
-        onError={() => setFailed(true)}
+        onError={() => setFailedSrc(src ?? null)}
       />
       {children}
     </div>

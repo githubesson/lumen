@@ -14,15 +14,31 @@ interface FieldProps {
   label: string;
   hint?: ReactNode;
   error?: string;
-  children: ReactElement<{ id?: string }>;
+  children: ReactElement<{
+    id?: string;
+    "aria-describedby"?: string;
+    "aria-invalid"?: boolean | "true" | "false";
+  }>;
 }
 
 export function Field({ label, hint, error, children }: FieldProps) {
   const autoId = useId();
   const childId = isValidElement(children) ? children.props.id : undefined;
   const id = childId ?? autoId;
+  const hintId = `${id}-hint`;
+  const errorId = `${id}-error`;
+  const describedBy = error
+    ? errorId
+    : hint
+      ? hintId
+      : undefined;
+
   const control = isValidElement(children)
-    ? cloneElement(children, { id })
+    ? cloneElement(children, {
+        id,
+        "aria-describedby": children.props["aria-describedby"] ?? describedBy,
+        "aria-invalid": error ? true : children.props["aria-invalid"],
+      })
     : children;
 
   return (
@@ -32,10 +48,11 @@ export function Field({ label, hint, error, children }: FieldProps) {
       </label>
       {control}
       {hint && !error && (
-        <p style={{ fontSize: 11, color: "var(--fg-subtle)", margin: 0 }}>{hint}</p>
+        <p id={hintId} style={{ fontSize: 11, color: "var(--fg-subtle)", margin: 0 }}>{hint}</p>
       )}
       {error && (
         <p
+          id={errorId}
           role="alert"
           style={{ fontSize: 11, color: "var(--danger-fg)", margin: 0 }}
         >

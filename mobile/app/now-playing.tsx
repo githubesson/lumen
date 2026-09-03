@@ -91,6 +91,8 @@ export default function NowPlayingScreen() {
 
   useEffect(() => {
     if (queueParam === "1") {
+      // The router parameter is an external navigation request to open queue.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setQueueOpen(true);
       setLyricsOpen(false);
       setTranslationSelectorOpen(false);
@@ -135,12 +137,16 @@ export default function NowPlayingScreen() {
     : "Translate Lyrics";
   const previousTrackIdRef = useRef<string | null>(null);
   const previousTrackIndexRef = useRef(index);
+  // These refs hold the last committed track solely to choose the direction of
+  // the next artwork transition. Reading them does not affect rendered data.
+  /* eslint-disable react-hooks/refs */
   const trackTransitionDirection =
     previousTrackIdRef.current != null &&
     previousTrackIdRef.current !== trackId &&
     index < previousTrackIndexRef.current
       ? -1
       : 1;
+  /* eslint-enable react-hooks/refs */
   const artworkTransitionKey = track?.album_id ?? trackId ?? "hero-cover";
   const coverStartTop = isTabletLayout
     ? Math.max(72, Math.round(availableBodyHeight * 0.11))

@@ -125,6 +125,9 @@ export default function FH6Radio() {
     void refreshPlaylists();
     const timer = window.setInterval(() => void refreshBridge(false), 2500);
     return () => window.clearInterval(timer);
+    // refreshBridge is recreated from bridgeUrl, which is already the scalar
+    // dependency that should restart this polling lifecycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, bridgeUrl]);
 
   async function refreshPlaylists() {

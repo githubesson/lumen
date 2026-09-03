@@ -76,6 +76,8 @@ export default function AlbumEditScreen() {
   // refetch of the same album doesn't clobber in-progress edits.
   useEffect(() => {
     if (!album) return;
+    // The edit draft intentionally snapshots the queried album.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTitle(album.title);
     setAlbumArtist(album.artist_name ?? "");
     setYear(album.release_year ? String(album.release_year) : "");

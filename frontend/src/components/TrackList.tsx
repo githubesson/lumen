@@ -330,6 +330,12 @@ export const TrackRow = memo(function TrackRow({
       onDoubleClick={() => {
         if (!selectionMode) onPlay(track);
       }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !selectionMode) {
+          e.preventDefault();
+          onPlay(track);
+        }
+      }}
       onContextMenu={(e) => onContextMenu(track, e)}
     >
       {selectionMode && (
@@ -339,7 +345,7 @@ export const TrackRow = memo(function TrackRow({
           onToggle={(range) => onToggleSelect(track, index, range)}
         />
       )}
-      <TrackIndexCell index={index} isPlaying={isNow && isPlaying} />
+      <TrackIndexCell index={index} isPlaying={isNow && isPlaying} onPlay={() => onPlay(track)} playLabel={`Play ${track.title}`} />
       {showCover && (
         <td className="col-art">
           <CoverArt

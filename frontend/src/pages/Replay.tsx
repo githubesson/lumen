@@ -82,6 +82,8 @@ export default function Replay() {
 
   useEffect(() => {
     const ac = new AbortController();
+    // Changing the replay period starts a new API request lifecycle.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
     api
@@ -407,4 +409,3 @@ export default function Replay() {
     </div>
   );
 }
-

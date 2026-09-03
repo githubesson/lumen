@@ -22,8 +22,9 @@ export default function AnimatedNumber({
 
   useEffect(() => {
     if (prefersReducedMotion()) {
-      setDisplay(value);
-      return;
+      startedFromRef.current = value;
+      const raf = requestAnimationFrame(() => setDisplay(value));
+      return () => cancelAnimationFrame(raf);
     }
     const from = startedFromRef.current;
     const to = value;

@@ -81,6 +81,8 @@ export default function CommandPalette({
   // Reset query whenever the dialog opens so the user starts fresh.
   useEffect(() => {
     if (open) {
+      // Opening the external dialog state starts a fresh search session.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setQuery("");
       setTracks([]);
       setAlbums([]);
@@ -95,6 +97,8 @@ export default function CommandPalette({
   useEffect(() => {
     const q = query.trim();
     if (!open || q.length < 2) {
+      // A non-searchable query intentionally clears the previous result set.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTracks([]);
       setAlbums([]);
       setArtists([]);

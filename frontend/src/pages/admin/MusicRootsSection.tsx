@@ -63,6 +63,8 @@ export function MusicRootsSection({
   }, []);
 
   useEffect(() => {
+    // Initial load synchronizes this section with the rescan API.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadStatus();
   }, [loadStatus]);
 
@@ -90,6 +92,9 @@ export function MusicRootsSection({
     if (rescan && rescan.running === false && (rescan.processed ?? 0) > 0) {
       libraryChanged.emit();
     }
+    // The complete object is intentionally excluded: only a transition in the
+    // two scalar completion fields should emit a library change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rescan?.running, rescan?.processed]);
 
   const add = async (e: FormEvent) => {

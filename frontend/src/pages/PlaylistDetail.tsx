@@ -101,6 +101,8 @@ export default function PlaylistDetail() {
   }, [id]);
 
   useEffect(() => {
+    // The route id selects an external playlist resource to load.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 

@@ -43,6 +43,8 @@ export function EditTrackDialog({
   // Seed the form once the track loads.
   useEffect(() => {
     if (!track) return;
+    // The form draft intentionally snapshots the selected track.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setError(null);
     setTitle(track.title);
     setArtists(displayArtists(track));

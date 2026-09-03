@@ -199,8 +199,8 @@ export default function MiniPlayer() {
           forcePlaceholder={!displayCurrent}
         />
         <div className="np-text">
-          <div className="np-title">{displayTitle}</div>
-          <div className="np-artist">{displayArtist}</div>
+          <div className="np-title" title={displayTitle}>{displayTitle}</div>
+          <div className="np-artist" title={displayArtist}>{displayArtist}</div>
         </div>
       </div>
 

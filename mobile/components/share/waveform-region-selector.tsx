@@ -156,6 +156,9 @@ export function WaveformRegionSelector({
 
   const panResponder = useMemo(
     () =>
+      // The responder callbacks run on later gestures; no ref is read while
+      // this memo is evaluated.
+      // eslint-disable-next-line react-hooks/refs
       PanResponder.create({
         onStartShouldSetPanResponder: () => durationSec > 0,
         onMoveShouldSetPanResponder: () => durationSec > 0,

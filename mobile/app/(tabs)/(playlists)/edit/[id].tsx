@@ -43,6 +43,8 @@ export default function EditPlaylistScreen() {
 
   useEffect(() => {
     if (!hydrated && playlistQuery.data) {
+      // Hydrate the edit draft exactly once from the queried playlist.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setName(playlistQuery.data.name);
       setDescription(playlistQuery.data.description ?? "");
       setVisibility(playlistQuery.data.visibility);

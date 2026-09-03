@@ -22,6 +22,9 @@ export default function LyricsSidebar() {
 
   useEffect(() => {
     if (!open || !current) {
+      // Closing the panel or clearing the external player track resets its
+      // resource state before the next open.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLyrics(null);
       setError(null);
       setLoading(false);
@@ -72,14 +75,7 @@ export default function LyricsSidebar() {
     return () => {
       cancelled = true;
     };
-  }, [
-    open,
-    current?.id,
-    current?.title,
-    current?.artist,
-    current?.album_title,
-    current?.duration_ms,
-  ]);
+  }, [open, current]);
 
   const trackDurationSeconds =
     current?.duration_ms != null

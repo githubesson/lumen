@@ -55,6 +55,9 @@ export function FavoritesProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // Auth is an external session source. Refresh intentionally reconciles the
+    // local cache when it transitions to authenticated.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (status === "authed") void refresh();
   }, [status, refresh]);
 

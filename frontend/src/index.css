@@ -1229,9 +1229,31 @@ textarea { font: inherit; color: inherit; }
   height: 18px;
   color: inherit;
 }
+.idx-play {
+  all: unset;
+  display: none;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg);
+  border-radius: var(--r-xs);
+}
+.idx-play:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.table tbody tr .idx-play { display: none; }
+.table tbody tr:hover .idx-play,
+.table tbody tr:focus-within .idx-play { display: inline-flex; }
+.table tbody tr:hover .idx-num,
+.table tbody tr:focus-within .idx-num { display: none; }
 .table tbody tr.playing .idx-num { display: none; }
 .table tbody tr .idx-bars { display: none; }
 .table tbody tr.playing .idx-bars { display: inline-flex; }
+.table tbody tr.playing:hover .idx-play,
+.table tbody tr.playing:focus-within .idx-play { display: inline-flex; }
+.table tbody tr.playing:hover .idx-bars,
+.table tbody tr.playing:focus-within .idx-bars { display: none; }
 
 /* Bar visualizer for playing track */
 .playing-bars {
@@ -1893,6 +1915,11 @@ html[data-mini-player] .app {
   cursor: pointer;
   outline: none;
 }
+.bar::before {
+  content: "";
+  position: absolute;
+  inset: -10px 0;
+}
 .bar:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 3px;
@@ -1949,6 +1976,12 @@ html[data-mini-player] .app {
 }
 .device-picker-btn.pending svg {
   animation: device-command-pulse 900ms ease-in-out infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .device-picker-btn.pending svg {
+    animation: none;
+    opacity: 0.75;
+  }
 }
 .device-picker-btn.error {
   color: var(--danger-fg);
@@ -2582,6 +2615,10 @@ html[data-mini-player] .np-text {
   background: var(--bg-inset);
   box-shadow: var(--shadow-inset);
   outline: none;
+}
+.tweak-slider:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 .tweak-select {
   width: 100%;

@@ -22,10 +22,14 @@ interface SearchInputProps
  */
 const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(
   function SearchInput({ className, style, onClear, onKeyDown, ...rest }, ref) {
+    const accessibleLabel =
+      rest["aria-label"] ??
+      (typeof rest.placeholder === "string" ? rest.placeholder : "Search");
     return (
       <div className={`search ${className ?? ""}`.trim()} style={style}>
-        <MagnifyingGlassIcon className="size-3.5" />
+        <MagnifyingGlassIcon className="size-3.5" aria-hidden="true" />
         <input
+          aria-label={accessibleLabel}
           ref={ref}
           type="search"
           onKeyDown={

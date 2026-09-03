@@ -78,12 +78,12 @@ export default function Login() {
           {busy ? "Signing in…" : "Sign in"}
         </Button>
 
-        <p className="text-center text-sm/5 text-neutral-500 dark:text-neutral-400">
+        <p className="text-center text-sm/5 text-[var(--fg-subtle)]">
           Accounts are invite-only.
         </p>
 
         {isElectron() && (
-          <p className="text-center text-sm/5 text-neutral-500 dark:text-neutral-400">
+          <p className="text-center text-sm/5 text-[var(--fg-subtle)]">
             {serverHost && (
               <>
                 Server: <span className="font-medium">{serverHost}</span>
@@ -93,7 +93,7 @@ export default function Login() {
             <button
               type="button"
               onClick={() => void electron()?.openSettings()}
-              className="underline underline-offset-2 hover:text-neutral-700 dark:hover:text-neutral-200"
+              className="underline underline-offset-2 hover:text-[var(--fg)]"
             >
               Change server
             </button>

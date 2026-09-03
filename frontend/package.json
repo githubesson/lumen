@@ -17,7 +17,7 @@
     "dmg:background": "node scripts/generate-dmg-background.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings=0",
     "electron:compile": "node scripts/electron-buildenv.mjs && tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.setup.json",
     "electron:dev": "npm run build && npm run electron:compile && electron .",
     "electron:build": "npm run build && npm run electron:compile && electron-builder --win --publish never --config electron-builder.cjs",

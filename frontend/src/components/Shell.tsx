@@ -95,7 +95,7 @@ export default function Shell() {
     // must_reset_password is a dep: ForceReset lives inside this persistent
     // Shell, so the false→true→false flip with the same user id must re-run
     // this, otherwise the sidebar stays empty after a forced reset.
-  }, [me?.id, me?.must_reset_password]);
+  }, [me?.id, me?.must_reset_password, me]);
 
   useEffect(() => {
     if (!isElectron()) return;
@@ -105,6 +105,7 @@ export default function Shell() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMobileNavOpen(false);
   }, [location.pathname]);
 
@@ -128,6 +129,18 @@ export default function Shell() {
   }, [layout]);
   const toggleSidebar = () =>
     setLayout(layout === "compact" ? lastExpandedRef.current : "compact");
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMobileNavOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [mobileNavOpen]);
 
   useKey(
     "mod+k",

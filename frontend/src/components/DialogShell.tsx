@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useId, type ReactNode } from "react";
 import { XMarkIcon } from "@heroicons/react/16/solid";
 import { useTransitionMount } from "../lib/useTransitionMount";
 
@@ -25,6 +25,7 @@ export function DialogShell({
   /** Override the default max width (defaults to max-w-lg). */
   maxWidth?: number | string;
 }) {
+  const titleId = useId();
   const { mounted, visible } = useTransitionMount(open, 200);
   useEffect(() => {
     if (!mounted) return;
@@ -46,6 +47,7 @@ export function DialogShell({
     <div
       role="dialog"
       aria-modal="true"
+      aria-labelledby={title ? titleId : undefined}
       data-closed={!visible || undefined}
       className="dialog-layer group fixed inset-0 grid place-items-center p-4"
       onPointerDown={(e) => {
@@ -72,7 +74,7 @@ export function DialogShell({
           className="flex items-center justify-between px-4 py-3"
           style={{ borderBottom: "1px solid var(--border-soft)" }}
         >
-          <h2 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>{title}</h2>
+          <h2 id={titleId} style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>{title}</h2>
           <button
             type="button"
             aria-label="Close"

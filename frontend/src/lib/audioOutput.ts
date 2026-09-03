@@ -198,6 +198,8 @@ export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
   // Keep the device list fresh when hardware is plugged/unplugged.
   useEffect(() => {
     if (!supported) return;
+    // Device enumeration synchronizes React with the browser media-device API.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
     const onChange = () => {
       void refresh();

@@ -242,6 +242,9 @@ export default function BrowseScreen() {
   // Connectivity dropping mid-search would strand a spinner on paused
   // queries — close the search UI instead.
   useEffect(() => {
+    // Connectivity is an external subscription; offline mode closes the
+    // server-backed search surface.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (offline && searchOpen) closeSearch();
   }, [offline, searchOpen, closeSearch]);
 

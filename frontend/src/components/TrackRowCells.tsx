@@ -43,7 +43,7 @@ export function TrackIndexCell({
           <PlayingBars className="idx-bars" />
         ) : (
           <>
-            <span className="idx-num">{String(index + 1).padStart(2, "0")}</span>
+            <span className="idx-num tabular-nums">{String(index + 1).padStart(2, "0")}</span>
             {onPlay && (
               <button
                 type="button"

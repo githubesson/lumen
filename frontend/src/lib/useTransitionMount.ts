@@ -6,9 +6,9 @@ export function useTransitionMount(open: boolean, durationMs = 200) {
 
   useEffect(() => {
     if (open) {
-      setMounted(true);
       let raf2 = 0;
       const raf1 = requestAnimationFrame(() => {
+        setMounted(true);
         raf2 = requestAnimationFrame(() => setVisible(true));
       });
       return () => {
@@ -16,9 +16,12 @@ export function useTransitionMount(open: boolean, durationMs = 200) {
         if (raf2) cancelAnimationFrame(raf2);
       };
     }
-    setVisible(false);
+    const raf = requestAnimationFrame(() => setVisible(false));
     const t = window.setTimeout(() => setMounted(false), durationMs);
-    return () => window.clearTimeout(t);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t);
+    };
   }, [open, durationMs]);
 
   return { mounted, visible };

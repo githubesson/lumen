@@ -88,6 +88,8 @@ export function useApiResource<T>(
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
+    // A changed resource key begins a new request lifecycle.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
     fetcherRef

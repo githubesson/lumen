@@ -48,6 +48,8 @@ export default function PlaylistPickerScreen() {
   useEffect(() => {
     let cancelled = false;
     if (!userId) {
+      // Losing the authenticated user invalidates the persisted recent list.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRecentIds([]);
       return;
     }

@@ -293,6 +293,9 @@ export function useRemotePlaybackCommands({
   // wherever the last accepted command left them.
   useEffect(() => {
     if (!targetActivity) return;
+    // Playback activity is an external device snapshot; controlled state must
+    // reconcile when its reported volume or mute value changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setControlled((current) => ({
       ...current,
       volume:

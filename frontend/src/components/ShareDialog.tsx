@@ -142,6 +142,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
   // guards against stale slow responses from a previous track.
   useEffect(() => {
     if (!open || !trackId) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setStartSec(0);
     setSelectedDurationSec(DEFAULT_SHARE_SNIPPET_DURATION_SEC);
     setPicked(false);
@@ -162,6 +163,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
         a.pause();
         a.currentTime = 0;
       }
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsPlaying(false);
     }
   }, [open]);
@@ -417,7 +419,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
           )
         }
       >
-        {busy ? "Generating…" : copied ? "Copied!" : "Copy share link"}
+        {busy ? "Generating share link…" : copied ? "Link copied" : "Copy share link"}
       </Button>
     </DialogFooter>
   );

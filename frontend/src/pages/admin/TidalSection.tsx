@@ -77,6 +77,8 @@ export function TidalSection() {
   }, []);
 
   useEffect(() => {
+    // Initial load synchronizes this section with the TIDAL sidecar status.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 

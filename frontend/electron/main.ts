@@ -4,12 +4,7 @@ import * as http from "node:http";
 import * as https from "node:https";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { pipeline } from "node:stream/promises";
-import { createHash } from "node:crypto";
-import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Duplex } from "node:stream";
 import type { OpenDialogOptions, Rectangle } from "electron";
 import {
   DesktopUpdateManager,
@@ -17,94 +12,34 @@ import {
   parseGitHubRepoUrl,
   type UpdateBranch,
 } from "./updater";
+import {
+  loadConfig,
+  saveConfigPatch,
+  type Config,
+  type SavePatch,
+  type Tweaks,
+} from "./config";
+import {
+  DEFAULT_FH6_BRIDGE_PORT,
+  fh6BridgeUrl,
+  fh6Status,
+  installFH6Radio,
+  normalizeGameDir,
+  type FH6InstallRequest,
+} from "./fh6-radio";
+import {
+  clearDiscordActivity,
+  configureDiscordPresence,
+  pushDiscordActivity,
+  teardownDiscordPresence,
+  type DiscordActivityPayload,
+} from "./discord-presence";
+import { createLocalProxy } from "./local-proxy";
 
-export type Theme = "light" | "dark";
-export type Density = "airy" | "balanced" | "dense";
-export type Layout = "compact" | "sidebar" | "wide";
-
-export interface Tweaks {
-  theme: Theme;
-  depth: number;
-  radius: number;
-  density: Density;
-  layout: Layout;
-  glow: boolean;
-}
-
-interface Config {
-  backendUrl?: string;
-  /** Discord application (client) ID from https://discord.com/developers/applications.
-   *  Leave blank to disable presence entirely. */
-  discordClientId?: string;
-  /** Master toggle for Discord Rich Presence. Defaults to true; set false to
-   *  skip the RPC integration entirely even when a client ID is present. */
-  discordEnabled?: boolean;
-  /** Keep the main window pinned above other apps. Defaults to false. */
-  alwaysOnTop?: boolean;
-  /** Opt-in gate for the FH6/Lumen Radio integration. */
-  fh6RadioEnabled?: boolean;
-  /** Forza Horizon 6 content directory where forzahorizon6.exe lives. */
-  fh6GameDir?: string;
-  /** Local bridge port exposed by the injected FH6 DLL. */
-  fh6BridgePort?: number;
-  /** UI tweaks from the live Tweaks panel. Stored here in Electron so they
-   *  survive app restarts even though the local proxy port changes. */
-  tweaks?: Partial<Tweaks>;
-  /** Persisted audio output sink id. Empty string means system default. */
-  audioSinkId?: string;
-  /**
-   * Desktop release stream. Only the stable main and prerelease dev streams
-   * are accepted; arbitrary Git branches are never queried.
-   */
-  updateBranch?: UpdateBranch;
-  /** Optional user override for the baked public GitHub repository URL. */
-  updateRepoUrl?: string;
-}
-
-interface SavePatch {
-  backendUrl?: string;
-  discordClientId?: string;
-  discordEnabled?: boolean;
-  alwaysOnTop?: boolean;
-  fh6RadioEnabled?: boolean;
-  fh6GameDir?: string;
-  fh6BridgePort?: number;
-}
-
-interface DiscordActivityPayload {
-  /** Stable track id — used as the primary key for sameness across pushes.
-   *  Title/artist/album are unreliable (duplicate metadata, re-uploads). */
-  trackId?: string;
-  title: string;
-  artist?: string;
-  album?: string;
-  coverUrl?: string;
-  durationSec?: number;
-  elapsedSec?: number;
-  isPlaying: boolean;
-}
+export type { Density, Layout, Theme, Tweaks } from "./config";
 
 interface SetupDoneOpts {
   clearSession?: boolean;
-}
-
-interface FH6InstallRequest {
-  gameDir?: string;
-  mediaSource?: string;
-  skipMedia?: boolean;
-}
-
-interface FH6Status {
-  enabled: boolean;
-  gameDir: string;
-  bridgeUrl: string;
-  gameDirExists: boolean;
-  exeFound: boolean;
-  bridgeInstalled: boolean;
-  configInstalled: boolean;
-  mediaInstalled: boolean;
-  packagedModAvailable: boolean;
-  candidates: string[];
 }
 
 interface ExportTrackFileItem {
@@ -116,9 +51,6 @@ const DIST_DIR = path.join(__dirname, "..", "..", "dist");
 const SETUP_FILE = path.join(__dirname, "..", "setup.html");
 const SETUP_PRELOAD = path.join(__dirname, "preload.js");
 const MAIN_PRELOAD = path.join(__dirname, "mainPreload.js");
-const execFileAsync = promisify(execFile);
-
-const DEFAULT_FH6_BRIDGE_PORT = 8420;
 const FALLBACK_UPDATE_REPO_URL = "https://github.com/githubesson/lumen";
 const NORMAL_MIN_SIZE = { width: 640, height: 480 };
 const MINI_PLAYER_SIZE = { width: 780, height: 184 };
@@ -137,32 +69,14 @@ const updateManager = new DesktopUpdateManager(
 
 let mainWindow: BrowserWindow | null = null;
 let setupWindow: BrowserWindow | null = null;
-let proxyServer: http.Server | null = null;
-let proxyPort = 0;
 let backendUrl = "";
 let isMiniPlayer = false;
 let normalBounds: Rectangle | null = null;
 let alwaysOnTop = false;
-
-function configPath(): string {
-  return path.join(app.getPath("userData"), "config.json");
-}
-
-async function loadConfig(): Promise<Config> {
-  try {
-    return JSON.parse(await fsp.readFile(configPath(), "utf8")) as Config;
-  } catch {
-    return {};
-  }
-}
-
-async function saveConfigPatch(patch: Config): Promise<Config> {
-  const cur = await loadConfig();
-  const next: Config = { ...cur, ...patch };
-  await fsp.mkdir(path.dirname(configPath()), { recursive: true });
-  await fsp.writeFile(configPath(), JSON.stringify(next, null, 2));
-  return next;
-}
+const localProxy = createLocalProxy({
+  distDir: DIST_DIR,
+  getBackendUrl: () => backendUrl,
+});
 
 async function exists(p: string): Promise<boolean> {
   try {
@@ -171,621 +85,6 @@ async function exists(p: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-async function isDirectory(p: string): Promise<boolean> {
-  try {
-    return (await fsp.stat(p)).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-async function isFile(p: string): Promise<boolean> {
-  try {
-    return (await fsp.stat(p)).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function fh6BridgeUrl(port = DEFAULT_FH6_BRIDGE_PORT): string {
-  return `http://127.0.0.1:${port}`;
-}
-
-function lumenRadioDistDir(): string {
-  const packaged = path.join(process.resourcesPath, "lumen-radio");
-  if (fs.existsSync(path.join(packaged, "version.dll"))) return packaged;
-  return path.resolve(
-    __dirname,
-    "..",
-    "..",
-    "..",
-    "fh6-spotify-mod",
-    "lumen-radio",
-    "dist",
-  );
-}
-
-function normalizeGameDir(p: string): string {
-  return path.normalize(p.trim().replace(/^"|"$/g, ""));
-}
-
-async function findForzaExe(gameDir: string): Promise<string | null> {
-  const direct = path.join(gameDir, "forzahorizon6.exe");
-  if (await isFile(direct)) return direct;
-  try {
-    const entries = await fsp.readdir(gameDir, { withFileTypes: true });
-    const hit = entries.find(
-      (e) =>
-        e.isFile() &&
-        /\.exe$/i.test(e.name) &&
-        /forza/i.test(e.name) &&
-        /horizon/i.test(e.name) &&
-        /6/.test(e.name),
-    );
-    return hit ? path.join(gameDir, hit.name) : null;
-  } catch {
-    return null;
-  }
-}
-
-async function discoverFH6Candidates(): Promise<string[]> {
-  const cfg = await loadConfig();
-  const out = new Set<string>();
-  if (cfg.fh6GameDir) out.add(normalizeGameDir(cfg.fh6GameDir));
-
-  const roots = new Set<string>();
-  for (const letter of "CDEFGHIJKLMNOPQRSTUVWXYZ") {
-    roots.add(`${letter}:\\XboxGames`);
-    roots.add(`${letter}:\\SteamLibrary\\steamapps\\common`);
-    roots.add(`${letter}:\\Program Files (x86)\\Steam\\steamapps\\common`);
-  }
-  roots.add(path.join(process.env.ProgramFiles ?? "C:\\Program Files", "WindowsApps"));
-
-  for (const root of roots) {
-    if (!(await isDirectory(root))) continue;
-    let entries: fs.Dirent[];
-    try {
-      entries = await fsp.readdir(root, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      if (!/forza.*horizon.*6|fh6/i.test(entry.name)) continue;
-      const base = path.join(root, entry.name);
-      const content = path.join(base, "Content");
-      if (await findForzaExe(content)) out.add(content);
-      if (await findForzaExe(base)) out.add(base);
-    }
-  }
-
-  try {
-    const { stdout } = await execFileAsync("reg", [
-      "query",
-      "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
-      "/s",
-      "/f",
-      "Forza Horizon 6",
-      "/d",
-    ]);
-    for (const line of stdout.split(/\r?\n/)) {
-      const m = line.match(/InstallLocation\s+REG_\w+\s+(.+)$/i);
-      if (!m) continue;
-      const install = normalizeGameDir(m[1]);
-      const content = path.join(install, "Content");
-      if (await findForzaExe(content)) out.add(content);
-      if (await findForzaExe(install)) out.add(install);
-    }
-  } catch {
-    // Registry coverage varies between Store, Steam, and portable installs.
-  }
-
-  return Array.from(out);
-}
-
-async function hasRadioMedia(gameDir: string): Promise<boolean> {
-  return !!(await findFile(path.join(gameDir, "media"), /^RadioInfo_EN\.xml$/i, 4));
-}
-
-/** Breadth-first search for the first directory entry of `kind` whose name
- *  matches `pattern`: each level is scanned fully before recursing. */
-async function findEntry(
-  root: string,
-  pattern: RegExp,
-  maxDepth: number,
-  kind: "file" | "directory",
-): Promise<string | null> {
-  if (maxDepth < 0 || !(await isDirectory(root))) return null;
-  let entries: fs.Dirent[];
-  try {
-    entries = await fsp.readdir(root, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-  for (const entry of entries) {
-    const isMatchKind = kind === "file" ? entry.isFile() : entry.isDirectory();
-    if (isMatchKind && pattern.test(entry.name)) return path.join(root, entry.name);
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const hit = await findEntry(path.join(root, entry.name), pattern, maxDepth - 1, kind);
-    if (hit) return hit;
-  }
-  return null;
-}
-
-function findFile(root: string, pattern: RegExp, maxDepth: number) {
-  return findEntry(root, pattern, maxDepth, "file");
-}
-
-function findDirectory(root: string, pattern: RegExp, maxDepth: number) {
-  return findEntry(root, pattern, maxDepth, "directory");
-}
-
-async function fh6Status(): Promise<FH6Status> {
-  const cfg = await loadConfig();
-  const candidates = await discoverFH6Candidates();
-  const gameDir = normalizeGameDir(cfg.fh6GameDir || candidates[0] || "");
-  const dist = lumenRadioDistDir();
-  const gameDirExists = !!gameDir && (await isDirectory(gameDir));
-  return {
-    enabled: cfg.fh6RadioEnabled === true,
-    gameDir,
-    bridgeUrl: fh6BridgeUrl(cfg.fh6BridgePort ?? DEFAULT_FH6_BRIDGE_PORT),
-    gameDirExists,
-    exeFound: gameDirExists && !!(await findForzaExe(gameDir)),
-    bridgeInstalled: gameDirExists && (await isFile(path.join(gameDir, "version.dll"))),
-    configInstalled:
-      gameDirExists && (await isFile(path.join(gameDir, "fh6-radio", "config.toml"))),
-    mediaInstalled: gameDirExists && (await hasRadioMedia(gameDir)),
-    packagedModAvailable: await isFile(path.join(dist, "version.dll")),
-    candidates,
-  };
-}
-
-async function backupAndCopy(src: string, dst: string): Promise<void> {
-  await fsp.mkdir(path.dirname(dst), { recursive: true });
-  if (await isFile(dst)) await fsp.copyFile(dst, `${dst}.bak`);
-  await fsp.copyFile(src, dst);
-}
-
-async function copyTreeWithBackup(srcRoot: string, dstRoot: string): Promise<number> {
-  let count = 0;
-  async function walk(src: string): Promise<void> {
-    const entries = await fsp.readdir(src, { withFileTypes: true });
-    for (const entry of entries) {
-      const s = path.join(src, entry.name);
-      const rel = path.relative(srcRoot, s);
-      const d = path.join(dstRoot, rel);
-      if (entry.isDirectory()) {
-        await walk(s);
-      } else if (entry.isFile()) {
-        await backupAndCopy(s, d);
-        count += 1;
-      }
-    }
-  }
-  await walk(srcRoot);
-  return count;
-}
-
-async function extractZip(zipPath: string): Promise<string> {
-  const tmp = path.join(app.getPath("temp"), `lumen-radio-media-${Date.now()}`);
-  await fsp.mkdir(tmp, { recursive: true });
-  await execFileAsync("powershell.exe", [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-Command",
-    "Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force",
-    zipPath,
-    tmp,
-  ]);
-  return tmp;
-}
-
-async function mediaRootFromSource(source: string): Promise<string> {
-  const clean = normalizeGameDir(source);
-  const root = /\.zip$/i.test(clean) ? await extractZip(clean) : clean;
-  if (!(await isDirectory(root))) throw new Error("Media source is not a folder or ZIP");
-
-  const mediaDir = await findDirectory(root, /^media$/i, 5);
-  if (mediaDir) return mediaDir;
-
-  const radioInfo = await findFile(root, /^RadioInfo_EN\.xml$/i, 6);
-  if (!radioInfo) throw new Error("No RadioInfo_EN.xml found in media source");
-  return path.dirname(path.dirname(radioInfo));
-}
-
-async function brandInstalledMedia(mediaDir: string): Promise<number> {
-  const replacements: Array<[RegExp, string]> = [
-    [/FH6 Universal Radio/gi, "Lumen Radio"],
-    [/Universal Radio/gi, "Lumen Radio"],
-    [/Spotify Radio/gi, "Lumen Radio"],
-    [/Spotify/gi, "Lumen"],
-    [/Jellyfin/gi, "Lumen"],
-    [/YouTube Music/gi, "Lumen"],
-    [/Local Files/gi, "Lumen"],
-  ];
-  let changed = 0;
-  async function walk(dir: string): Promise<void> {
-    if (!(await isDirectory(dir))) return;
-    const entries = await fsp.readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const p = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(p);
-        continue;
-      }
-      if (!entry.isFile() || !/\.(xml|json|ini|txt)$/i.test(entry.name)) continue;
-      const before = await fsp.readFile(p, "utf8");
-      let after = before;
-      for (const [pattern, value] of replacements) after = after.replace(pattern, value);
-      if (/RadioInfo_[A-Z]+\.xml$/i.test(entry.name)) after = normalizeLumenRadioInfo(after);
-      if (after !== before) {
-        await fsp.writeFile(p, after, "utf8");
-        changed += 1;
-      }
-    }
-  }
-  await walk(mediaDir);
-  return changed;
-}
-
-function normalizeLumenRadioInfo(xml: string): string {
-  const carrier = "HZ6_R9_PeterBroderick_EyesClosedandTraveling";
-  return xml.replace(
-    /(<RadioStation\b[^>]*Name="Streamer Mode"[^>]*>)([\s\S]*?)(<\/RadioStation>)/g,
-    (_match, open: string, body: string, close: string) => {
-      const normalized = body.replace(
-        /<PlayList\b([^>]*)>[\s\S]*?<\/PlayList>/g,
-        (_playlist, attrs: string) => {
-          if (/Type="ShortStinger"/i.test(attrs)) return `<PlayList${attrs} />`;
-          return `<PlayList${attrs}>\n        <Entry Name="${carrier}" />\n      </PlayList>`;
-        },
-      );
-      return `${open}${normalized}${close}`;
-    },
-  ).replace(
-    /(<RadioStation\b(?![^>]*Name="Streamer Mode")[^>]*>)([\s\S]*?)(<\/RadioStation>)/g,
-    (_match, open: string, body: string, close: string) => {
-      const withoutCarrier = body.replace(
-        new RegExp(`\\s*<Entry\\s+Name="${carrier}"\\s*/>`, "g"),
-        "",
-      );
-      return `${open}${withoutCarrier}${close}`;
-    },
-  );
-}
-
-async function patchLumenRadioConfig(configPath: string): Promise<void> {
-  let raw = "";
-  try {
-    raw = await fsp.readFile(configPath, "utf8");
-  } catch {
-    return;
-  }
-
-  const stereoLine = "force_stereo_audio   = false       # auto: stereo for FMOD 2D channels, mono if FMOD reports 3D";
-  const guardLine = "spatial_guard_enabled = false      # off by default; enable only while testing FH6 tonal-route issues";
-  const headroomLine = "spatial_guard_headroom = 1.0       # lower = safer but flatter; 1.0 leaves levels unchanged";
-  let next = raw;
-  if (/^\s*force_stereo_audio\s*=/m.test(next)) {
-    next = next.replace(/^\s*force_stereo_audio\s*=.*$/m, stereoLine);
-  } else if (/^\s*\[playback\]\s*$/m.test(next)) {
-    next = next.replace(/^\s*\[playback\]\s*$/m, `[playback]\n${stereoLine}`);
-  } else {
-    next = `${next.trimEnd()}\n\n[playback]\n${stereoLine}\n`;
-  }
-  if (/^\s*spatial_guard_enabled\s*=/m.test(next)) {
-    next = next.replace(/^\s*spatial_guard_enabled\s*=.*$/m, guardLine);
-  } else {
-    next = next.replace(/^\s*force_stereo_audio\s*=.*$/m, `${guardLine}\n${headroomLine}\n$&`);
-  }
-  if (/^\s*spatial_guard_headroom\s*=/m.test(next)) {
-    next = next.replace(/^\s*spatial_guard_headroom\s*=.*$/m, headroomLine);
-  } else {
-    next = next.replace(/^\s*spatial_guard_enabled\s*=.*$/m, `$&\n${headroomLine}`);
-  }
-  if (next !== raw) await fsp.writeFile(configPath, next, "utf8");
-}
-
-async function installFH6Radio(req: FH6InstallRequest): Promise<{
-  ok: boolean;
-  status: FH6Status;
-  copiedFiles: number;
-  brandedFiles: number;
-}> {
-  const current = await loadConfig();
-  const gameDir = normalizeGameDir(req.gameDir || current.fh6GameDir || "");
-  if (!gameDir) throw new Error("Choose the FH6 install folder first");
-  if (!(await isDirectory(gameDir))) throw new Error("Game folder does not exist");
-  if (!(await findForzaExe(gameDir))) {
-    throw new Error("That folder does not contain forzahorizon6.exe");
-  }
-
-  const dist = lumenRadioDistDir();
-  if (!(await isFile(path.join(dist, "version.dll")))) {
-    throw new Error("Bundled Lumen Radio build is missing version.dll");
-  }
-
-  await backupAndCopy(path.join(dist, "version.dll"), path.join(gameDir, "version.dll"));
-  const configDst = path.join(gameDir, "fh6-radio", "config.toml");
-  if (!(await isFile(configDst))) {
-    await backupAndCopy(path.join(dist, "fh6-radio", "config.toml"), configDst);
-  }
-  await patchLumenRadioConfig(configDst);
-
-  let copiedFiles = 1;
-  let brandedFiles = 0;
-  const mediaDst = path.join(gameDir, "media");
-  if (!req.skipMedia) {
-    if (!req.mediaSource) throw new Error("Choose a radio media ZIP or folder");
-    const mediaRoot = await mediaRootFromSource(req.mediaSource);
-    copiedFiles += await copyTreeWithBackup(mediaRoot, mediaDst);
-  }
-  brandedFiles = await brandInstalledMedia(mediaDst);
-
-  await saveConfigPatch({ fh6GameDir: gameDir, fh6RadioEnabled: true });
-  return { ok: true, status: await fh6Status(), copiedFiles, brandedFiles };
-}
-
-const MIME: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".ico": "image/x-icon",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".ttf": "font/ttf",
-  ".map": "application/json; charset=utf-8",
-  ".txt": "text/plain; charset=utf-8",
-};
-
-function mimeFor(p: string): string {
-  return MIME[path.extname(p).toLowerCase()] ?? "application/octet-stream";
-}
-
-function proxyApi(req: IncomingMessage, res: ServerResponse): void {
-  if (!backendUrl) {
-    res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("Backend not configured");
-    return;
-  }
-  let target: URL;
-  try {
-    target = new URL(req.url ?? "/", backendUrl);
-  } catch (e) {
-    res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end(`Invalid backend URL: ${(e as Error).message}`);
-    return;
-  }
-  const lib = target.protocol === "https:" ? https : http;
-  const headers = { ...req.headers };
-  headers.host = target.host;
-  delete headers["content-length"];
-  const upstream = lib.request(
-    {
-      protocol: target.protocol,
-      hostname: target.hostname,
-      port: target.port || (target.protocol === "https:" ? 443 : 80),
-      path: target.pathname + target.search,
-      method: req.method,
-      headers,
-    },
-    (ur) => {
-      res.writeHead(ur.statusCode ?? 502, ur.headers);
-      ur.pipe(res);
-    },
-  );
-  upstream.on("error", (e) => {
-    if (!res.headersSent) {
-      res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
-    }
-    res.end(`Bad gateway: ${e.message}`);
-  });
-  req.pipe(upstream);
-}
-
-// Node's normal request proxy does not carry HTTP Upgrade tunnels. Forward
-// the renderer's WebSocket handshake and then splice both sockets together so
-// the packaged Electron app uses the same /api/activity/ws endpoint as web.
-function proxyWebSocket(
-  req: IncomingMessage,
-  socket: Duplex,
-  head: Buffer,
-): void {
-  if (!backendUrl) {
-    socket.destroy();
-    return;
-  }
-  let target: URL;
-  try {
-    target = new URL(req.url ?? "/", backendUrl);
-  } catch {
-    socket.destroy();
-    return;
-  }
-
-  const lib = target.protocol === "https:" ? https : http;
-  const headers = {
-    ...req.headers,
-    host: target.host,
-    // The renderer talks to a loopback origin while the upstream sees the
-    // configured backend host. Rewrite Origin so the backend's same-origin
-    // WebSocket check remains strict instead of being disabled globally.
-    origin: target.origin,
-  };
-  const upstream = lib.request({
-    protocol: target.protocol,
-    hostname: target.hostname,
-    port: target.port || (target.protocol === "https:" ? 443 : 80),
-    path: target.pathname + target.search,
-    method: req.method,
-    headers,
-  });
-
-  upstream.on("upgrade", (response, upstreamSocket, upstreamHead) => {
-    writeRawResponseHead(socket, response);
-    upstreamSocket.on("error", () => socket.destroy());
-    if (upstreamHead.length > 0) socket.write(upstreamHead);
-    if (head.length > 0) upstreamSocket.write(head);
-    upstreamSocket.pipe(socket);
-    socket.pipe(upstreamSocket);
-  });
-  upstream.on("response", (response) => {
-    writeRawResponseHead(socket, response);
-    response.pipe(socket);
-  });
-  upstream.on("error", () => socket.destroy());
-  socket.on("error", () => upstream.destroy());
-  upstream.end();
-}
-
-function writeRawResponseHead(socket: Duplex, response: IncomingMessage): void {
-  const statusLine = `HTTP/${response.httpVersion} ${response.statusCode ?? 502} ${response.statusMessage ?? "Bad Gateway"}`;
-  const headers: string[] = [statusLine];
-  for (let i = 0; i < response.rawHeaders.length; i += 2) {
-    headers.push(`${response.rawHeaders[i]}: ${response.rawHeaders[i + 1]}`);
-  }
-  socket.write(`${headers.join("\r\n")}\r\n\r\n`);
-}
-
-// Google Fonts serves the two webfont families the UI depends on
-// (--font-sans / --font-mono in src/index.css) via a stylesheet on
-// fonts.googleapis.com that pulls woff2 from fonts.gstatic.com.
-const FONT_CSS_ORIGIN = "https://fonts.googleapis.com";
-const FONT_FILE_ORIGIN = "https://fonts.gstatic.com";
-
-// index.html carries a pre-paint bootstrap that stamps the persisted theme /
-// density / layout attributes onto <html> before React mounts. Vite copies it
-// into dist/index.html inline and verbatim, so `script-src 'self'` would block
-// it and the app would flash the wrong theme on every launch.
-//
-// Rather than weakening the policy with 'unsafe-inline', hash whatever inline
-// scripts the built index.html actually contains and allow exactly those.
-// Computed once at startup, so editing index.html can never desync the policy.
-let inlineScriptHashes: string[] | null = null;
-
-async function inlineScriptCSPHashes(): Promise<string[]> {
-  if (inlineScriptHashes) return inlineScriptHashes;
-  const hashes: string[] = [];
-  try {
-    const html = await fsp.readFile(path.join(DIST_DIR, "index.html"), "utf8");
-    const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
-    for (const match of html.matchAll(re)) {
-      const body = match[1];
-      if (!body.trim()) continue;
-      const digest = createHash("sha256").update(body, "utf8").digest("base64");
-      hashes.push(`'sha256-${digest}'`);
-    }
-  } catch {
-    // No dist/index.html yet (dev). An empty list just means no inline script
-    // is allowed, which is the safe direction.
-  }
-  inlineScriptHashes = hashes;
-  return hashes;
-}
-
-// Second line of defence behind the navigation guards: even if something
-// manages to inject markup into the locally served app, it cannot pull in a
-// remote script or exfiltrate over fetch/WebSocket to another origin.
-//
-// 'unsafe-inline' for style-src is required by the runtime CSS-variable theming
-// (the Tweaks panel writes inline custom properties); scripts get per-hash
-// allowances instead, so injected markup still cannot execute.
-function securityHeaders(scriptHashes: string[]): Record<string, string> {
-  const self = `http://127.0.0.1:${proxyPort}`;
-  return {
-    "Content-Security-Policy": [
-      "default-src 'self'",
-      ["script-src 'self'", ...scriptHashes].join(" "),
-      `style-src 'self' 'unsafe-inline' ${FONT_CSS_ORIGIN}`,
-      // https: images are allowed because remote artwork can be rendered
-      // directly when the backend hands back an un-proxied cover_url. Scripts
-      // and connections are deliberately not given the same latitude.
-      "img-src 'self' https: data: blob:",
-      "media-src 'self' data: blob:",
-      `connect-src 'self' ${self} ws://127.0.0.1:${proxyPort} ${FONT_CSS_ORIGIN} ${FONT_FILE_ORIGIN}`,
-      `font-src 'self' data: ${FONT_FILE_ORIGIN}`,
-      "object-src 'none'",
-      "frame-ancestors 'none'",
-      "base-uri 'none'",
-      "form-action 'none'",
-    ].join("; "),
-    "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",
-  };
-}
-
-async function serveStatic(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const headers = securityHeaders(await inlineScriptCSPHashes());
-  let filePath: string;
-  try {
-    const u = new URL(req.url ?? "/", "http://x");
-    const rel = decodeURIComponent(u.pathname).replace(/^\/+/, "");
-    const normalized = path.posix.normalize("/" + rel).replace(/^\/+/, "");
-    filePath = path.join(DIST_DIR, normalized);
-    if (!filePath.startsWith(DIST_DIR)) throw new Error("path escape");
-    const stat = await fsp.stat(filePath);
-    if (stat.isDirectory()) filePath = path.join(filePath, "index.html");
-    const data = await fsp.readFile(filePath);
-    res.writeHead(200, {
-      "Content-Type": mimeFor(filePath),
-      "Cache-Control": "no-cache",
-      ...headers,
-    });
-    res.end(data);
-  } catch {
-    try {
-      const data = await fsp.readFile(path.join(DIST_DIR, "index.html"));
-      res.writeHead(200, {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "no-cache",
-        ...headers,
-      });
-      res.end(data);
-    } catch (e) {
-      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end(`Error: ${(e as Error).message}`);
-    }
-  }
-}
-
-function startProxyServer(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
-      if (req.url && req.url.startsWith("/api/")) {
-        proxyApi(req, res);
-      } else {
-        void serveStatic(req, res);
-      }
-    });
-    server.on("upgrade", (req, socket, head) => {
-      if (req.url?.startsWith("/api/")) {
-        proxyWebSocket(req, socket, head);
-      } else {
-        socket.destroy();
-      }
-    });
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const addr = server.address();
-      proxyPort = addr && typeof addr === "object" ? addr.port : 0;
-      proxyServer = server;
-      resolve(proxyPort);
-    });
-  });
 }
 
 // The renderer only ever needs the local proxy origin (and, for the setup
@@ -802,7 +101,7 @@ function isInternalURL(rawUrl: string): boolean {
     return (
       u.protocol === "http:" &&
       (u.hostname === "127.0.0.1" || u.hostname === "localhost") &&
-      u.port === String(proxyPort)
+      u.port === String(localProxy.port)
     );
   } catch {
     return false;
@@ -858,7 +157,7 @@ async function openMain(): Promise<void> {
     isMiniPlayer = false;
     normalBounds = null;
   });
-  await mainWindow.loadURL(`http://127.0.0.1:${proxyPort}/`);
+  await mainWindow.loadURL(`http://127.0.0.1:${localProxy.port}/`);
 }
 
 function openSetup(): void {
@@ -961,13 +260,7 @@ ipcMain.handle("config:save", async (_e, patch: SavePatch) => {
   const writePatch: SavePatch = { backendUrl: normalized };
   if (typeof patch?.discordEnabled === "boolean") {
     writePatch.discordEnabled = patch.discordEnabled;
-    const wasEnabled = discordEnabled;
-    discordEnabled = patch.discordEnabled;
-    if (wasEnabled && !discordEnabled) {
-      // User just turned the integration off — drop the live connection so
-      // the Discord card disappears right away.
-      void teardownDiscord();
-    }
+    configureDiscordPresence({ enabled: patch.discordEnabled });
   }
   if (typeof patch?.alwaysOnTop === "boolean") {
     writePatch.alwaysOnTop = patch.alwaysOnTop;
@@ -985,6 +278,7 @@ ipcMain.handle("config:save", async (_e, patch: SavePatch) => {
   }
   await saveConfigPatch(writePatch);
   backendUrl = normalized;
+  configureDiscordPresence({ backendUrl: normalized });
   return { ok: true, changed: prev !== "" && prev !== normalized };
 });
 
@@ -1164,7 +458,7 @@ ipcMain.handle("fh6:sync-session", async () => {
       return { ok: false, error: "Lumen Radio is disabled in settings" };
     }
     if (!backendUrl) return { ok: false, error: "Backend URL is not configured" };
-    if (!proxyPort) return { ok: false, error: "Local app proxy is not ready" };
+    if (!localProxy.port) return { ok: false, error: "Local app proxy is not ready" };
 
     const cookieHeader = await appCookieHeader();
     if (!cookieHeader) return { ok: false, error: "Log in to Lumen first" };
@@ -1182,7 +476,7 @@ ipcMain.handle("fh6:sync-session", async () => {
 
 async function appCookieHeader(): Promise<string> {
   const cookies = await session.defaultSession.cookies.get({
-    url: `http://127.0.0.1:${proxyPort}`,
+    url: `http://127.0.0.1:${localProxy.port}`,
   });
   return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
 }
@@ -1198,8 +492,8 @@ function exportDownloadUrl(input: string): string {
   if (!trimmed.startsWith("/api/")) {
     throw new Error("Export URL must be an API path");
   }
-  if (!proxyPort) throw new Error("Local app proxy is not ready");
-  return `http://127.0.0.1:${proxyPort}${trimmed}`;
+  if (!localProxy.port) throw new Error("Local app proxy is not ready");
+  return `http://127.0.0.1:${localProxy.port}${trimmed}`;
 }
 
 // The session cookie is scoped to the local proxy origin and must not survive a
@@ -1208,7 +502,7 @@ function isAppOrigin(target: URL): boolean {
   return (
     target.protocol === "http:" &&
     (target.hostname === "127.0.0.1" || target.hostname === "localhost") &&
-    target.port === String(proxyPort)
+    target.port === String(localProxy.port)
   );
 }
 
@@ -1406,9 +700,6 @@ function boundsAroundCenter(
 // "Listening to Lumen" above the card (instead of "Playing").
 // ────────────────────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DiscordClient = any;
-
 interface BuildEnvironment {
   discordClientId?: string;
   updateRepoUrl?: string;
@@ -1421,198 +712,6 @@ function readBakedBuildEnv(): BuildEnvironment {
     return JSON.parse(raw) as BuildEnvironment;
   } catch {
     return {};
-  }
-}
-
-let discordClient: DiscordClient | null = null;
-let discordConnecting = false;
-let discordClientId = DEFAULT_DISCORD_CLIENT_ID;
-let discordEnabled = true;
-let lastActivity: DiscordActivityPayload | null = null;
-let lastStartMs = 0;
-
-async function ensureDiscord(): Promise<DiscordClient | null> {
-  if (!discordEnabled) return null;
-  if (!discordClientId) return null;
-  if (discordClient) return discordClient;
-  if (discordConnecting) return null;
-  discordConnecting = true;
-  try {
-    // discord-rpc is CommonJS-only and optional at runtime; a static import
-    // would pull it into the bundle even when Discord integration is off.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const RPC = require("discord-rpc");
-    const client = new RPC.Client({ transport: "ipc" });
-    client.on("ready", () => {
-      console.log("[discord] connected as client", discordClientId);
-    });
-    client.on("disconnected", () => {
-      console.log("[discord] disconnected");
-      discordClient = null;
-    });
-    await client.login({ clientId: discordClientId });
-    discordClient = client;
-    return client;
-  } catch (e) {
-    const msg = (e as Error).message || String(e);
-    // Very common on first run: user hasn't run `npm install` yet.
-    if (msg.includes("Cannot find module") && msg.includes("discord-rpc")) {
-      console.warn(
-        "[discord] `discord-rpc` package not installed — run `npm install`",
-      );
-    } else {
-      console.warn("[discord] connect failed:", msg);
-    }
-    return null;
-  } finally {
-    discordConnecting = false;
-  }
-}
-
-function clampForDiscord(s: string | undefined, max = 128): string | undefined {
-  if (!s) return undefined;
-  const t = s.trim();
-  if (!t) return undefined;
-  // Discord's Rich Presence text fields need ≥2 characters.
-  return t.length < 2 ? `${t} ` : t.slice(0, max);
-}
-
-/**
- * Turn a renderer-side cover URL into something Discord can actually fetch.
- * The renderer sees `http://127.0.0.1:<proxyPort>/api/…`; swap the host for
- * the user's configured `backendUrl` so Discord's media proxy can reach it.
- * If the backend isn't publicly reachable over HTTPS, use the static asset
- * key instead — Discord won't fetch HTTP or LAN URLs.
- */
-function discordCoverImage(coverUrl: string | undefined): string {
-  const fallback = "lumen";
-  if (!coverUrl) return fallback;
-  if (!backendUrl) {
-    return /^https:/i.test(coverUrl) ? coverUrl : fallback;
-  }
-  try {
-    const src = new URL(coverUrl);
-    const isLoopback =
-      src.hostname === "127.0.0.1" ||
-      src.hostname === "localhost" ||
-      src.hostname === "[::1]";
-    const rewritten = isLoopback
-      ? new URL(src.pathname + src.search, backendUrl).toString()
-      : src.toString();
-    // Discord silently ignores non-HTTPS large_image URLs; keep the asset
-    // key fallback in that case.
-    return /^https:/i.test(rewritten) ? rewritten : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-async function pushDiscordActivity(payload: DiscordActivityPayload): Promise<{
-  ok: boolean;
-  error?: string;
-}> {
-  const client = await ensureDiscord();
-  if (!client) return { ok: false, error: "discord client unavailable" };
-  try {
-    // Timestamps only make sense while playing. Discord renders the bar from
-    // `start` to `end`; pass both so the correct position shows up.
-    const now = Date.now();
-    const elapsedMs = Math.max(0, Math.floor((payload.elapsedSec ?? 0) * 1000));
-    const startTs = now - elapsedMs;
-    // Preserve the start across updates for the *same track* so the progress
-    // bar doesn't jitter on each throttled re-push (~every 15 s). Identity is
-    // by trackId — title/artist/album match falsely across re-uploads, and
-    // also across the brief stale-metadata window right after a track switch
-    // where the renderer would otherwise lock in the outgoing track's start.
-    const sameTrack =
-      lastActivity &&
-      payload.trackId !== undefined &&
-      lastActivity.trackId === payload.trackId &&
-      lastActivity.isPlaying;
-    // During continuous playback `startTs` stays roughly constant across
-    // re-pushes (now and elapsed advance together). A large drift means the
-    // renderer reported a fresh elapsed — repeat-one looping back to 0 or a
-    // user seek. Don't preserve the old start in that case, or Discord's
-    // progress bar stays frozen at the end of the previous play.
-    const seekedOrLooped =
-      sameTrack && Math.abs(startTs - lastStartMs) > 2500;
-    const start =
-      sameTrack && payload.isPlaying && lastStartMs > 0 && !seekedOrLooped
-        ? lastStartMs
-        : startTs;
-    const end =
-      payload.isPlaying && payload.durationSec && payload.durationSec > 0
-        ? start + Math.floor(payload.durationSec * 1000)
-        : undefined;
-
-    // Use the raw request directly — `client.setActivity()` in discord-rpc 4.x
-    // drops the `type` field, which would leave us stuck on "Playing".
-    // Sending via `request("SET_ACTIVITY", …)` preserves `type: 2` (LISTENING)
-    // so Discord renders "Listening to Lumen" at the top of the card.
-    //
-    // Cover URL: the renderer only sees the local proxy host, but Discord
-    // can't fetch that. Swap the host for the real `backendUrl` so Discord's
-    // CDN reaches the publicly-deployed server. Non-public backends (plain
-    // http, LAN IPs) fall back to the uploaded asset key.
-    const largeImage = discordCoverImage(payload.coverUrl);
-    await client.request("SET_ACTIVITY", {
-      pid: process.pid,
-      activity: {
-        type: 2,
-        details: clampForDiscord(payload.title) ?? "Music",
-        state: clampForDiscord(payload.artist ?? payload.album),
-        timestamps: payload.isPlaying
-          ? {
-              start: Math.floor(start / 1000),
-              ...(end ? { end: Math.floor(end / 1000) } : {}),
-            }
-          : undefined,
-        assets: {
-          large_image: largeImage,
-          large_text: clampForDiscord(payload.album) ?? undefined,
-          small_image: payload.isPlaying ? "play" : "pause",
-          small_text: payload.isPlaying ? "Playing" : "Paused",
-        },
-        instance: false,
-      },
-    });
-    lastActivity = payload;
-    lastStartMs = start;
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: (e as Error).message };
-  }
-}
-
-async function clearDiscordActivity(): Promise<void> {
-  const client = discordClient;
-  if (!client) return;
-  try {
-    await client.clearActivity();
-  } catch {
-    // no-op
-  }
-  lastActivity = null;
-  lastStartMs = 0;
-}
-
-/** Fully drop the Discord IPC connection. Used when the user disables the
- *  integration so the "Listening to Lumen" card goes away immediately. */
-async function teardownDiscord(): Promise<void> {
-  const client = discordClient;
-  discordClient = null;
-  lastActivity = null;
-  lastStartMs = 0;
-  if (!client) return;
-  try {
-    await client.clearActivity();
-  } catch {
-    // no-op
-  }
-  try {
-    await client.destroy();
-  } catch {
-    // no-op
   }
 }
 
@@ -1675,7 +774,7 @@ if (!gotLock) {
         return (
           u.protocol === "http:" &&
           (u.hostname === "127.0.0.1" || u.hostname === "localhost") &&
-          u.port === String(proxyPort)
+          u.port === String(localProxy.port)
         );
       } catch {
         return false;
@@ -1694,9 +793,11 @@ if (!gotLock) {
     );
     const cfg = await loadConfig();
     backendUrl = cfg.backendUrl ?? "";
-    const configured = (cfg.discordClientId ?? "").trim();
-    if (configured) discordClientId = configured;
-    discordEnabled = cfg.discordEnabled ?? true;
+    configureDiscordPresence({
+      clientId: (cfg.discordClientId ?? "").trim() || DEFAULT_DISCORD_CLIENT_ID,
+      enabled: cfg.discordEnabled ?? true,
+      backendUrl,
+    });
     alwaysOnTop = cfg.alwaysOnTop ?? false;
     const updateBranch =
       normalizeUpdateBranch(cfg.updateBranch) ?? DEFAULT_UPDATE_BRANCH;
@@ -1704,7 +805,7 @@ if (!gotLock) {
       parseGitHubRepoUrl(cfg.updateRepoUrl)?.url ?? DEFAULT_UPDATE_REPO_URL;
     updateManager.configure({ branch: updateBranch, repoUrl: updateRepoUrl });
     updateManager.startAutomaticChecks();
-    await startProxyServer();
+    await localProxy.start();
     if (!backendUrl) openSetup();
     else await openMain();
   });
@@ -1721,14 +822,7 @@ if (!gotLock) {
   });
 
   app.on("before-quit", () => {
-    proxyServer?.close();
-    if (discordClient) {
-      try {
-        void discordClient.destroy();
-      } catch {
-        // no-op
-      }
-      discordClient = null;
-    }
+    localProxy.close();
+    void teardownDiscordPresence();
   });
 }

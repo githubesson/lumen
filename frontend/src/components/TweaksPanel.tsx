@@ -58,6 +58,8 @@ export default function TweaksPanel({ open, onClose }: Props) {
       return;
     }
     const controller = new AbortController();
+    // A new external authorization poll owns a fresh error state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLastFMError(null);
     void api
       .waitForLastFMAuthorization({ signal: controller.signal })

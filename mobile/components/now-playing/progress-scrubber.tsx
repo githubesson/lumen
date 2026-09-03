@@ -85,7 +85,9 @@ function useEstimatedPlaybackTime(
   const trackKeyRef = useRef(trackKey);
   const anchorRef = useRef({
     baseTime: time.currentTime,
-    wallTime: performance.now(),
+    // The synchronization effect installs the real wall-clock anchor before
+    // any interval or gesture handler consumes it.
+    wallTime: 0,
   });
 
   useEffect(() => {

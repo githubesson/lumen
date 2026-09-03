@@ -40,6 +40,8 @@ export function EditAlbumDialog({
 
   useEffect(() => {
     if (!open || !album) return;
+    // The form draft intentionally snapshots the selected album on open.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setError(null);
     setTitle(album.title);
     setAlbumArtist(album.artist_name ?? "");

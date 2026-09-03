@@ -91,6 +91,9 @@ export function StoryBackgroundCropEditor({
 
   const panResponder = useMemo(
     () =>
+      // The responder callbacks run on later gestures; no ref is read while
+      // this memo is evaluated.
+      // eslint-disable-next-line react-hooks/refs
       PanResponder.create({
         onStartShouldSetPanResponder: () => !disabled,
         onMoveShouldSetPanResponder: () => !disabled,

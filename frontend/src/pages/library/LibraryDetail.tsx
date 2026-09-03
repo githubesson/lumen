@@ -171,6 +171,8 @@ export function TidalAlbumDetailView({
 
   useEffect(() => {
     const ac = new AbortController();
+    // A changed TIDAL album id invalidates the previous remote snapshot.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAlbum(null);
     setError(null);
     api

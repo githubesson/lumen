@@ -120,7 +120,7 @@ export default function PlaylistTracksPanel({
         title="No tracks yet."
         hint={
           canEdit
-            ? 'Click "Add tracks" above to pull some in from your library.'
+            ? 'Choose "Add tracks" to pull songs in from your library.'
             : undefined
         }
       />
@@ -547,6 +547,12 @@ const PlaylistRow = memo(function PlaylistRow({
       }}
       onDoubleClick={() => {
         if (!selectionMode) onPlay(entry);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !selectionMode) {
+          e.preventDefault();
+          onPlay(entry);
+        }
       }}
       onContextMenu={(event) => onContextMenu(entry, event)}
     >

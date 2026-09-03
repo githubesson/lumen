@@ -43,6 +43,7 @@ export function MoveToAlbumDialog({
   // the last open, for a different track, would be confusing.
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setQuery("");
       setError(null);
       setMovingId(null);
@@ -54,6 +55,7 @@ export function MoveToAlbumDialog({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAlbums(null);
     const handle = setTimeout(
       () => {
@@ -112,6 +114,7 @@ export function MoveToAlbumDialog({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search albums"
+          aria-label="Search albums"
           autoFocus
         />
         <div

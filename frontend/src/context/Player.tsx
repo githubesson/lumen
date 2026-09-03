@@ -130,6 +130,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (targetDeviceId && remoteSession.connected && !targetDevice) {
+      // The remote device list is an external subscription; clear a selected
+      // target when that source confirms it disappeared.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTargetDeviceId(null);
     }
   }, [remoteSession.connected, targetDevice, targetDeviceId]);
@@ -161,6 +164,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     ],
   );
 
+  // Destructure the media-session inputs so the effect tracks exactly what it
+  // reads without depending on the larger state/control objects.
+  const mediaTrack = state.current;
+  const mediaPlaying = state.isPlaying;
+  const mediaToggle = controls.toggle;
+  const mediaPrevious = controls.prev;
+  const mediaNext = controls.next;
+  const mediaSeek = controls.seek;
+
   // Media Session API — surface in OS media controls / Bluetooth buttons.
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -179,36 +191,36 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         navigator.mediaSession.setActionHandler(action, null);
       }
     };
-    if (!state.current) {
+    if (!mediaTrack) {
       clear();
       return;
     }
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: state.current.title,
-      artist: state.current.artist ?? "",
-      album: state.current.album_title ?? "",
+      title: mediaTrack.title,
+      artist: mediaTrack.artist ?? "",
+      album: mediaTrack.album_title ?? "",
     });
     // Discrete play/pause (previously both fired the same toggle, so the OS
     // "play" button could pause an already-playing track and vice versa).
     navigator.mediaSession.setActionHandler("play", () => {
-      if (!state.isPlaying) controls.toggle();
+      if (!mediaPlaying) mediaToggle();
     });
     navigator.mediaSession.setActionHandler("pause", () => {
-      if (state.isPlaying) controls.toggle();
+      if (mediaPlaying) mediaToggle();
     });
-    navigator.mediaSession.setActionHandler("previoustrack", controls.prev);
-    navigator.mediaSession.setActionHandler("nexttrack", controls.next);
+    navigator.mediaSession.setActionHandler("previoustrack", mediaPrevious);
+    navigator.mediaSession.setActionHandler("nexttrack", mediaNext);
     navigator.mediaSession.setActionHandler("seekto", (e) => {
-      if (typeof e.seekTime === "number") controls.seek(e.seekTime);
+      if (typeof e.seekTime === "number") mediaSeek(e.seekTime);
     });
     return clear;
   }, [
-    state.current,
-    state.isPlaying,
-    controls.toggle,
-    controls.prev,
-    controls.next,
-    controls.seek,
+    mediaTrack,
+    mediaPlaying,
+    mediaToggle,
+    mediaPrevious,
+    mediaNext,
+    mediaSeek,
   ]);
 
   // Keyboard shortcuts (spec §5) — routed through the central registry.
@@ -422,4 +434,3 @@ export function usePlayerAdapter() {
   if (!ctx) throw new Error("usePlayerAdapter requires PlayerProvider");
   return ctx;
 }
-

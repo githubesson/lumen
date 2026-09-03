@@ -551,12 +551,13 @@ export function usePlaybackActivityPublisher({
     return adapter.on("seeked", publish);
   }, [adapter, publish]);
 
+  const hasCurrentTrack = state.current != null;
   useEffect(() => {
-    if (!enabled || !deviceId || !state.current) return;
+    if (!enabled || !deviceId || !hasCurrentTrack) return;
     const delay = state.isPlaying ? PLAYING_HEARTBEAT_MS : PAUSED_HEARTBEAT_MS;
     const interval = setInterval(publish, delay);
     return () => clearInterval(interval);
-  }, [deviceId, enabled, publish, state.current, state.isPlaying]);
+  }, [deviceId, enabled, hasCurrentTrack, publish, state.isPlaying]);
 
   useEffect(() => {
     return () => {

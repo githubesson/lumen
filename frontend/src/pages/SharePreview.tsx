@@ -43,6 +43,8 @@ export default function SharePreview() {
 
   useEffect(() => {
     let cancelled = false;
+    // The route share id starts a new public-resource request lifecycle.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
     setShare(null);

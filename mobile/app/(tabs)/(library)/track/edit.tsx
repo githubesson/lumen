@@ -63,6 +63,8 @@ export default function TrackEditScreen() {
   // doesn't clobber in-progress edits.
   useEffect(() => {
     if (!track) return;
+    // The edit draft intentionally snapshots the queried track.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTitle(track.title);
     setArtists(
       track.artists

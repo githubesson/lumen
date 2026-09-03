@@ -136,6 +136,7 @@ function VolumeBar({
 
   useEffect(() => {
     if (active.value === 0) {
+      // Reanimated shared values are mutable UI-thread cells by design.
       progress.value = withTiming(Math.max(0, Math.min(1, value)), {
         duration: 120,
       });
@@ -146,10 +147,13 @@ function VolumeBar({
     .minDistance(0)
     .onBegin((event) => {
       "worklet";
+      // Reanimated gesture worklets intentionally mutate shared UI-thread state.
+      // eslint-disable-next-line react-hooks/immutability
       active.value = withSpring(1, { damping: 18, stiffness: 260 });
       const availableWidth = width.value;
       if (availableWidth > 0) {
         const next = Math.max(0, Math.min(1, event.x / availableWidth));
+        // eslint-disable-next-line react-hooks/immutability -- Reanimated shared value.
         progress.value = next;
         runOnJS(onChange)(next);
       }
@@ -159,12 +163,14 @@ function VolumeBar({
       const availableWidth = width.value;
       if (availableWidth > 0) {
         const next = Math.max(0, Math.min(1, event.x / availableWidth));
+        // eslint-disable-next-line react-hooks/immutability -- Reanimated shared value.
         progress.value = next;
         runOnJS(onChange)(next);
       }
     })
     .onFinalize(() => {
       "worklet";
+      // eslint-disable-next-line react-hooks/immutability -- Reanimated shared value.
       active.value = withSpring(0, { damping: 20, stiffness: 240 });
       runOnJS(onChangeEnd)(progress.value);
     });

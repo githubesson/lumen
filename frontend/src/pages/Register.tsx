@@ -21,6 +21,7 @@ export default function Register() {
 
   useEffect(() => {
     if (!token) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCheck({ valid: false });
       setChecking(false);
       return;
@@ -50,7 +51,7 @@ export default function Register() {
   if (checking) {
     return (
       <CenteredCard title="Checking invite">
-        <p className="text-center text-sm/5 text-neutral-500 dark:text-neutral-400">
+        <p className="text-center text-sm/5 text-[var(--fg-subtle)]">
           One moment…
         </p>
       </CenteredCard>
@@ -63,7 +64,7 @@ export default function Register() {
         title="Invite unavailable"
         intro="This link is missing, expired, or already used."
       >
-        <p className="text-center text-sm/5 text-neutral-500 dark:text-neutral-400">
+        <p className="text-center text-sm/5 text-[var(--fg-subtle)]">
           Ask an admin for a fresh invite.
         </p>
       </CenteredCard>

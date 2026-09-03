@@ -167,6 +167,8 @@ export function DockProvider({ children }: { children: ReactNode }) {
       setCollapsedState(next);
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       const target = next ? 1 : 0;
+      // Reanimated shared values are mutable UI-thread cells by design.
+      // eslint-disable-next-line react-hooks/immutability
       collapseProgress.value = reducedMotion
         ? target
         : withSpring(target, DOCK_COLLAPSE_SPRING);

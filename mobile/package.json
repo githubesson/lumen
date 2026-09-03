@@ -9,7 +9,7 @@
     "android": "npm run sync:core && expo run:android",
     "ios": "npm run sync:core && expo run:ios",
     "web": "npm run sync:core && expo start --web",
-    "lint": "expo lint",
+    "lint": "expo lint --max-warnings=0",
     "update:ota": "node ./scripts/publish-update.mjs",
     "postinstall": "npm run sync:core && patch-package",
     "test": "vitest run"

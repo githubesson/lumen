@@ -101,6 +101,8 @@ export function usePaginatedList<T>(
 
   // Initial + query-change reload.
   useEffect(() => {
+    // Query inputs define a new paginated resource and reset accumulated pages.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setItems(null);
     setTotal(null);
     void loadPage(0, true);

@@ -84,6 +84,13 @@ export default function BrowseToolbar({
         style={{ width: 260 }}
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
+        aria-label={
+          view === "albums"
+            ? "Search albums"
+            : view === "artists"
+              ? "Search artists"
+              : "Search tracks"
+        }
         placeholder={
           view === "albums"
             ? "Search albums"

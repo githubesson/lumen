@@ -71,6 +71,8 @@ export function useTrackSelection<T>({
 
   // Drop selections that no longer exist in the current item list.
   useEffect(() => {
+    // Selection is a local mirror constrained by the externally supplied rows.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedIds((prev) => {
       let changed = false;
       const next = new Set<string>();

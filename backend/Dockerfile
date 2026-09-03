@@ -13,6 +13,7 @@ WORKDIR /app
 COPY --from=build /out/server /app/server
 COPY fonts /app/fonts
 COPY filen-downloader/package.json filen-downloader/package-lock.json /app/filen-downloader/
+COPY filen-downloader/vendor /app/filen-downloader/vendor
 # `npm ci`, not `npm install`: the helper had no lockfile at all, so @filen/sdk
 # and its whole transitive tree resolved fresh on every image build.
 RUN cd /app/filen-downloader && npm ci --omit=dev --no-audit --no-fund
