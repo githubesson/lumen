@@ -40,8 +40,8 @@ import { downloadLiveActivity } from "./live-activity";
  * durable mirror.
  */
 
-const STORAGE_KEY = "offline-downloads.v1";
-const DIR_NAME = "offline-audio";
+const STORAGE_KEY = "offline-downloads.v2";
+const DIR_NAME = "offline-audio-v2";
 const DEFAULT_EXTENSION = "mp3";
 /** Subdirectory (inside the offline dir) holding downloaded cover artwork. */
 const COVER_DIR = "covers";
@@ -89,7 +89,32 @@ interface PersistShape {
   records?: DownloadRecord[];
 }
 
-class DownloadStore {
+export class DownloadStore {
+  private enabled: boolean;
+  readonly accountKey: string;
+  private readonly directoryName: string;
+  private tasks = new Set<ReturnType<typeof createDownloadTask>>();
+
+  constructor(accountId: string | null) {
+    this.enabled = accountId !== null;
+    this.accountKey = JSON.stringify([getBaseUrl(), accountId]);
+    this.directoryName = `${DIR_NAME}/${scopePathSegment(getBaseUrl()) || "local"}/${scopePathSegment(accountId ?? "guest")}`;
+  }
+
+  retire(): void {
+    this.enabled = false;
+    for (const task of this.tasks) void task.stop().catch(() => {});
+    this.tasks.clear();
+    this.records.clear();
+    this.active.clear();
+    this.pendingOwners.clear();
+    this.errors.clear();
+    downloadLiveActivity.clearOrphaned();
+    this.emit();
+  }
+
+  private get storageKey(): string { return `${STORAGE_KEY}:${this.accountKey}`; }
+
   private records = new Map<string, DownloadRecord>();
   /** Track ids with an in-flight download. */
   private active = new Set<string>();
@@ -123,7 +148,7 @@ class DownloadStore {
 
   // ── paths ─────────────────────────────────────────────────────────────────
   private get dir(): Directory {
-    return new Directory(Paths.document, DIR_NAME);
+    return new Directory(Paths.document, this.directoryName);
   }
 
   private fileFor(filename: string): File {
@@ -208,7 +233,7 @@ class DownloadStore {
 
   // ── hydration ─────────────────────────────────────────────────────────────
   hydrate(): Promise<void> {
-    if (this.hydrated) return Promise.resolve();
+    if (!this.enabled || this.hydrated) return Promise.resolve();
     if (this.hydrating) return this.hydrating;
     this.hydrating = this.doHydrate();
     return this.hydrating;
@@ -220,7 +245,8 @@ class DownloadStore {
     // context needed to resume the card doesn't survive the kill).
     downloadLiveActivity.clearOrphaned();
     try {
-      const raw = await AsyncStorage.getItem(STORAGE_KEY);
+      const raw = await AsyncStorage.getItem(this.storageKey);
+      if (!this.enabled) return;
       const parsed = raw ? (JSON.parse(raw) as PersistShape) : null;
       const dir = this.dir;
       let mutated = false;
@@ -264,20 +290,30 @@ class DownloadStore {
       // must not break hydration.
       try {
         const tasks = await getExistingDownloadTasks();
+        if (!this.enabled) return;
         for (const task of tasks) {
-          if (this.records.has(task.id)) continue;
-          this.active.add(task.id);
           const meta = (task.metadata ?? {}) as TaskMeta;
+          // Legacy/unowned transfers cannot safely be attributed to this account.
+          if (meta.accountKey !== this.accountKey || !meta.track?.id) {
+            void task.stop().catch(() => {});
+            continue;
+          }
+          const trackId = meta.track.id;
+          if (this.records.has(trackId)) continue;
+          this.tasks.add(task);
+          this.active.add(trackId);
           task
             .done(() => {
+              this.tasks.delete(task);
               // No content type on restored tasks — finalize's magic-byte
               // sniffing decides the extension.
-              void this.finalize(task.id, undefined, meta).finally(() =>
+              void this.finalize(trackId, undefined, meta).finally(() =>
                 completeHandler(task.id),
               );
             })
             .error(({ error, errorCode }) => {
-              this.fail(task.id, error || "Download failed", {
+              this.tasks.delete(task);
+              this.fail(trackId, error || "Download failed", {
                 event: "task-error-restored",
                 errorCode,
                 title: trackLabel(meta.track),
@@ -313,10 +349,11 @@ class DownloadStore {
   }
 
   private async persist(): Promise<void> {
+    if (!this.enabled) return;
     try {
       const records = [...this.records.values()];
       await AsyncStorage.setItem(
-        STORAGE_KEY,
+        this.storageKey,
         JSON.stringify({ records } satisfies PersistShape),
       );
     } catch (error) {
@@ -342,6 +379,7 @@ class DownloadStore {
    */
   async downloadTrack(track: TrackListItem, owner: DownloadOwner): Promise<void> {
     await this.hydrate();
+    if (!this.enabled) return;
 
     const existing = this.records.get(track.id);
     if (existing) {
@@ -393,6 +431,7 @@ class DownloadStore {
     }
 
     const headers = await sessionCookieHeader();
+    if (!this.enabled) return;
     if (!headers.Cookie) {
       // Without the session cookie the stream endpoint 401s and the error page
       // lands in the file — the single most common cause of "not a valid audio
@@ -407,6 +446,7 @@ class DownloadStore {
       });
     }
     const meta: TaskMeta = {
+      accountKey: this.accountKey,
       // queueOwner ran before startTask, so pendingOwners holds the owner.
       owners: [...(this.pendingOwners.get(track.id) ?? [])],
       // Full snapshot: finalize stores it on the record so offline surfaces
@@ -416,13 +456,14 @@ class DownloadStore {
     let contentType: string | undefined;
     let expectedBytes: number | undefined;
     const url = downloadStreamUrl(track.id);
+    const taskId = `${this.accountKey}:${track.id}`;
     const task = createDownloadTask({
       // The track id makes the task re-attachable after a restart.
-      id: track.id,
+      id: taskId,
       url,
       // The library expects a plain path (not a file:// URI); its documents
       // dir is the same container as expo-file-system's Paths.document.
-      destination: `${directories.documents}/${DIR_NAME}/${partName}`,
+      destination: `${directories.documents}/${this.directoryName}/${partName}`,
       headers,
       metadata: meta,
     })
@@ -434,19 +475,22 @@ class DownloadStore {
       // doesn't deliver progress events to a suspended app (the count beats
       // in finalize/fail cover background updates).
       .progress(({ bytesDownloaded, bytesTotal }) => {
+        if (!this.enabled) return;
         downloadLiveActivity.noteProgress(track.id, bytesDownloaded, bytesTotal);
       })
       // completeHandler MUST follow both done and error — iOS throttles
       // future background time for apps that never report completion.
       .done(() => {
+        this.tasks.delete(task);
         void this.finalize(track.id, contentType, meta, url).finally(() =>
-          completeHandler(track.id),
+          completeHandler(taskId),
         );
       })
       // `errorCode` is the native transport's own reason (NSURLError on iOS,
       // DownloadManager reason on Android) and is often the only thing that
       // distinguishes "no network" from "server hung up".
       .error(({ error, errorCode }) => {
+        this.tasks.delete(task);
         this.fail(track.id, error || "Download failed", {
           event: "task-error",
           errorCode,
@@ -456,8 +500,9 @@ class DownloadStore {
           contentType,
           bytes: expectedBytes,
         });
-        void completeHandler(track.id);
+        void completeHandler(taskId);
       });
+    this.tasks.add(task);
     task.start();
   }
 
@@ -473,6 +518,7 @@ class DownloadStore {
     meta: TaskMeta,
     url?: string,
   ): Promise<void> {
+    if (!this.enabled || meta.accountKey !== this.accountKey) return;
     const context = {
       title: trackLabel(meta.track),
       source: meta.track?.source,
@@ -545,6 +591,7 @@ class DownloadStore {
         ? await this.downloadCover(meta.track)
         : undefined;
 
+      if (!this.enabled) return;
       const owners = [
         ...new Set([
           ...(this.pendingOwners.get(trackId) ?? []),
@@ -594,6 +641,7 @@ class DownloadStore {
    * to the on-disk diagnostics log.
    */
   private fail(trackId: string, message: string, details?: FailDetails): void {
+    if (!this.enabled) return;
     this.errors.set(trackId, message);
     this.active.delete(trackId);
     this.pendingOwners.delete(trackId);
@@ -669,6 +717,7 @@ class DownloadStore {
     options?: { playlistName?: string },
   ): Promise<void> {
     await this.hydrate();
+    if (!this.enabled) return;
     // Only tracks that will actually transfer belong to the Live Activity
     // session (an empty list means it never starts). Tracks already in
     // flight from an earlier tap are included — the session dedupes them and
@@ -702,6 +751,7 @@ class DownloadStore {
     trackIds: string[],
   ): Promise<void> {
     await this.hydrate();
+    if (!this.enabled) return;
     const owner = playlistOwner(playlistId);
     for (const trackId of trackIds) {
       await this.removeOwner(trackId, owner);
@@ -750,7 +800,7 @@ class DownloadStore {
   private async downloadCover(
     track: TrackListItem,
   ): Promise<string | undefined> {
-    if (track.has_cover === false) return undefined;
+    if (!this.enabled || track.has_cover === false) return undefined;
     try {
       // `cover_url` can be a server- (or upstream-TIDAL-) supplied absolute URL,
       // so credentials only go to our own origin. Off-origin artwork is still
@@ -759,6 +809,7 @@ class DownloadStore {
       const response = await fetch(coverUrl, {
         credentials: isApiOrigin(coverUrl) ? "include" : "omit",
       });
+      if (!this.enabled) return undefined;
       if (!response.ok) {
         diagnosticsLog.append({
           scope: "cover",
@@ -792,7 +843,7 @@ class DownloadStore {
       const file = new File(this.ensureCoverDir(), filename);
       if (!file.exists) {
         const bytes = new Uint8Array(await response.arrayBuffer());
-        if (bytes.length < 4) return undefined;
+        if (!this.enabled || bytes.length < 4) return undefined;
         file.create({ intermediates: true, overwrite: true });
         file.write(bytes);
       }
@@ -844,6 +895,7 @@ function sanitizeId(id: string): string {
 /** Metadata attached to native download tasks; restored (best-effort) by
  *  `getExistingDownloadTasks()` after a process death. */
 interface TaskMeta {
+  accountKey?: string;
   owners?: DownloadOwner[];
   /** Snapshot persisted onto the record by `finalize`; also the source of
    *  the cover fields. May be absent on tasks restored after a restart. */
@@ -908,4 +960,16 @@ function extensionForImageContentType(contentType: string): string {
   }
 }
 
-export const downloadStore = new DownloadStore();
+// Avoid percent escapes in actual filenames: URI-based Expo paths and native
+// downloader destinations must refer to the same directory on both platforms.
+function scopePathSegment(value: string): string {
+  return encodeURIComponent(value).replace(/_/g, "%5F").replace(/%/g, "_");
+}
+
+export let downloadStore = new DownloadStore(null);
+
+export function setDownloadAccount(accountId: string | null): DownloadStore {
+  downloadStore.retire();
+  downloadStore = new DownloadStore(accountId);
+  return downloadStore;
+}

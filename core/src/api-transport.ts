@@ -14,6 +14,8 @@ export type PageParams = {
   limit?: number;
   offset?: number;
   q?: string;
+  sort?: "recent" | "title" | "artist" | "album" | "duration";
+  searchOffsets?: Partial<Record<"local" | "tidal", number>>;
   signal?: AbortSignal;
 };
 
@@ -51,6 +53,9 @@ const REQUEST_TIMEOUT_MS = 30_000;
 
 type UnauthorizedHandler = () => void;
 
+let authGeneration = 0;
+export function advanceAuthGeneration(): void { authGeneration += 1; }
+
 let onUnauthorized: UnauthorizedHandler | null = null;
 
 /** Register the central handler invoked when an authenticated request is rejected. */
@@ -80,6 +85,7 @@ export async function rawFetch(
   init: RequestInit = {},
   behavior: RequestBehavior = {},
 ): Promise<Response> {
+  const generation = authGeneration;
   const isForm =
     typeof FormData !== "undefined" && init.body instanceof FormData;
   const timeout = new AbortController();
@@ -109,7 +115,7 @@ export async function rawFetch(
   }
 
   if (!response.ok) {
-    if (response.status === 401 && behavior.notifyUnauthorized !== false) {
+    if (response.status === 401 && generation === authGeneration && behavior.notifyUnauthorized !== false) {
       onUnauthorized?.();
     }
     const text = await response.text().catch(() => "");
@@ -126,7 +132,7 @@ export async function fetchPage<T>(
   params: PageParams = {},
 ): Promise<{ items: T[]; total: number }> {
   const response = await rawFetch(
-    `${path}${buildQuery({ limit: params.limit, offset: params.offset, q: params.q })}`,
+    `${path}${buildQuery({ limit: params.limit, offset: params.offset, q: params.q, sort: params.sort })}`,
     { signal: params.signal },
   );
   const items = ((await response.json()) ?? []) as T[];
@@ -156,6 +162,7 @@ export async function request<T>(
 export async function requestVoid(
   path: string,
   init: RequestInit = {},
+  behavior: RequestBehavior = {},
 ): Promise<void> {
-  await rawFetch(path, init);
+  await rawFetch(path, init, behavior);
 }

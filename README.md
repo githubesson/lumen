@@ -17,7 +17,6 @@ surface for invites and library management.
 - Multiple music roots, scanned and indexed with a filesystem watcher; manual rescan from the admin UI
 - Metadata and cover-art extraction, album/artist/track browsing, search (with a command palette on web)
 - Range-request audio streaming — instant scrubbing, no full-file buffering
-- Optional ffmpeg transcoding behind a flag
 - Persistent player with queue, mini player, and now-playing view
 - Play history (recently played) and per-user play stats
 - Optional per-user Last.fm now-playing and scrobble integration
@@ -71,7 +70,7 @@ surface for invites and library management.
 
 | Directory | What it is |
 | --- | --- |
-| [`backend/`](backend/) | Go HTTP API — auth, invites, library scanning/ingest, streaming, playlists, sharing, previews, optional ffmpeg transcoding. Postgres-backed. |
+| [`backend/`](backend/) | Go HTTP API — auth, invites, library scanning/ingest, streaming, playlists, sharing, previews. Postgres-backed. |
 | [`frontend/`](frontend/) | React + Vite + TypeScript web app, also packaged for Windows, macOS, and Linux via Electron. |
 | [`mobile/`](mobile/) | Expo Router / React Native app for iOS and Android. |
 | [`core/`](core/) | Shared TypeScript package (`@music-library/core`) — API client, player state, auth, favorites — consumed by the web and mobile clients. |
@@ -96,8 +95,9 @@ That starts:
 - **frontend** — SPA behind nginx on `127.0.0.1:${FRONTEND_PORT}` (default 8081)
 
 Your music lives wherever `MUSIC_HOST_PATH` points (default `/mnt/music`).
-It's bind-mounted into the backend at the **same path** as on the host, so
-music roots added in the admin UI resolve identically inside the container.
+It's bind-mounted at **`/mnt/music` inside the backend container**. Add music
+roots using container paths: for `MUSIC_HOST_PATH=/srv/music`, the host folder
+`/srv/music/artist` is `/mnt/music/artist` in the admin UI.
 
 On first run the backend seeds an `admin` user; if you didn't set
 `ADMIN_PASSWORD` in `.env`, grab the generated one from:

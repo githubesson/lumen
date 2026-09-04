@@ -1,3 +1,4 @@
+import { advanceAuthGeneration } from "../src/api-transport";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   api,
@@ -188,5 +189,53 @@ describe("TIDAL account management", () => {
       account: { user_id: "42" },
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("search continuation and library sort", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+  it("continues only the nonexhausted source using its own offset", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ tracks: [{ id: "local-1" }, { id: "tidal:1" }], next_offsets: { tidal: 50 } }))
+      .mockResolvedValueOnce(Response.json({ tracks: [{ id: "tidal:2" }], next_offsets: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+    const first = await api.searchTracksPage({ q: "song", limit: 50 });
+    const second = await api.searchTracksPage({ q: "song", limit: 50, offset: first.items.length, searchOffsets: first.nextOffsets });
+    const url = new URL(fetchMock.mock.calls[1][0], "https://test.invalid");
+    expect(url.searchParams.get("sources")).toBe("tidal");
+    expect(url.searchParams.get("tidal_offset")).toBe("50");
+    expect(url.searchParams.has("local_offset")).toBe(false);
+    expect(second.nextOffsets).toEqual({});
+    expect(second.total).toBe(3);
+  });
+  it("sends the sort choice with every page request", async () => {
+    const fetchMock = vi.fn(async () => Response.json([], { headers: { "X-Total-Count": "101" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await api.listTracksPage({ limit: 100, offset: 100, sort: "title" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/tracks?limit=100&offset=100&sort=title", expect.any(Object));
+  });
+});
+
+
+describe("stale unauthorized responses", () => {
+  afterEach(() => { setUnauthorizedHandler(null); vi.unstubAllGlobals(); });
+  it("does not expire a newer session when an old request returns 401", async () => {
+    let resolve!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(r => { resolve = r; })));
+    const expired = vi.fn();
+    setUnauthorizedHandler(expired);
+    const request = api.listInvites();
+    advanceAuthGeneration();
+    resolve(new Response("unauthorized", { status: 401 }));
+    await expect(request).rejects.toMatchObject({ status: 401 });
+    expect(expired).not.toHaveBeenCalled();
+  });
+  it("leaves login/logout rejection handling to their own auth transition", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("unauthorized", { status: 401 })));
+    const expired = vi.fn();
+    setUnauthorizedHandler(expired);
+    await expect(api.login("user", "wrong")).rejects.toMatchObject({ status: 401 });
+    await expect(api.logout()).rejects.toMatchObject({ status: 401 });
+    expect(expired).not.toHaveBeenCalled();
   });
 });

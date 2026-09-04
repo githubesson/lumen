@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSyncExternalStore } from "react";
 import { api, playlistEntryToTrack, type TrackListItem } from "@music-library/core";
-import { downloadStore } from "./download-store";
+import { downloadStore, type DownloadStore } from "./download-store";
 import { diagnosticsLog } from "../diagnostics/log";
 import { offlineStore } from "../offline-mode";
 
@@ -25,6 +25,11 @@ const STORAGE_KEY = "auto-download.playlists.v1";
 type Listener = () => void;
 
 class AutoDownloadStore {
+  private retired = false;
+  constructor(private downloads: DownloadStore) {}
+  retire(): void { this.retired = true; }
+  private get storageKey(): string { return `${STORAGE_KEY}:v2:${this.downloads.accountKey}`; }
+
   private enabled = new Set<string>();
   private hydrated = false;
   private hydrating: Promise<void> | null = null;
@@ -63,7 +68,8 @@ class AutoDownloadStore {
 
   private async doHydrate(): Promise<void> {
     try {
-      const raw = await AsyncStorage.getItem(STORAGE_KEY);
+      const raw = await AsyncStorage.getItem(this.storageKey);
+      if (this.retired) return;
       const parsed = raw ? (JSON.parse(raw) as unknown) : null;
       if (Array.isArray(parsed)) {
         for (const id of parsed) {
@@ -87,7 +93,7 @@ class AutoDownloadStore {
   }
 
   private persist(): void {
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify([...this.enabled])).catch(
+    AsyncStorage.setItem(this.storageKey, JSON.stringify([...this.enabled])).catch(
       () => {
         // Best effort; the in-memory set drives this session.
       },
@@ -106,6 +112,7 @@ class AutoDownloadStore {
     options?: { tracks?: TrackListItem[]; playlistName?: string },
   ): Promise<void> {
     await this.hydrate();
+    if (this.retired) return;
     if (value === this.enabled.has(playlistId)) return;
     if (value) this.enabled.add(playlistId);
     else this.enabled.delete(playlistId);
@@ -120,7 +127,7 @@ class AutoDownloadStore {
     });
     if (!value) return;
     if (options?.tracks?.length) {
-      await downloadStore.downloadPlaylist(playlistId, options.tracks, {
+      await this.downloads.downloadPlaylist(playlistId, options.tracks, {
         playlistName: options.playlistName,
       });
     }
@@ -138,6 +145,7 @@ class AutoDownloadStore {
     options?: { playlistName?: string },
   ): Promise<void> {
     await this.hydrate();
+    if (this.retired) return;
     if (!this.enabled.has(playlistId)) return;
     if (offlineStore.isOffline()) {
       // Worth a line: "auto-download did nothing" and "auto-download thinks
@@ -151,10 +159,10 @@ class AutoDownloadStore {
       });
       return;
     }
-    await downloadStore.hydrate();
-    const missing = tracks.filter((track) => !downloadStore.isDownloaded(track.id));
+    await this.downloads.hydrate();
+    const missing = tracks.filter((track) => !this.downloads.isDownloaded(track.id));
     if (missing.length === 0) return;
-    await downloadStore.downloadPlaylist(playlistId, missing, {
+    await this.downloads.downloadPlaylist(playlistId, missing, {
       playlistName: options?.playlistName,
     });
   }
@@ -169,6 +177,7 @@ class AutoDownloadStore {
     options?: { playlistName?: string },
   ): Promise<void> {
     await this.hydrate();
+    if (this.retired) return;
     if (!this.enabled.has(playlistId)) return;
     if (offlineStore.isOffline()) return;
     if (this.syncing.has(playlistId)) return;
@@ -199,6 +208,7 @@ class AutoDownloadStore {
   /** Sync every opted-in playlist. Sequential to avoid a burst of requests. */
   async syncAll(): Promise<void> {
     await this.hydrate();
+    if (this.retired) return;
     if (offlineStore.isOffline()) return;
     for (const playlistId of this.enabledIds()) {
       await this.sync(playlistId);
@@ -206,7 +216,12 @@ class AutoDownloadStore {
   }
 }
 
-export const autoDownloadStore = new AutoDownloadStore();
+export let autoDownloadStore = new AutoDownloadStore(downloadStore);
+export function setAutoDownloadAccount(downloads: DownloadStore) {
+  autoDownloadStore.retire();
+  autoDownloadStore = new AutoDownloadStore(downloads);
+  return autoDownloadStore;
+}
 
 /** Whether a playlist is set to auto-download new entries. */
 export function useAutoDownload(playlistId: string): boolean {

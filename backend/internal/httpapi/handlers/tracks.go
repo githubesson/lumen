@@ -144,8 +144,14 @@ func (h *Tracks) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, offset := pageParams(q)
 	query := strings.TrimSpace(q.Get("q"))
+	sort := q.Get("sort")
+	if !library.ValidTrackSort(sort) {
+		http.Error(w, "invalid sort", http.StatusBadRequest)
+		return
+	}
 	items, err := h.Library.ListTracks(r.Context(), library.ListTracksParams{
 		ViewerID: u.ID,
+		Sort:     sort,
 		Limit:    limit,
 		Offset:   offset,
 		Query:    query,

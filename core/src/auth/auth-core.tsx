@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { api, ApiError, setUnauthorizedHandler, type Me } from "../api";
+import { advanceAuthGeneration } from "../api-transport";
 import type { Storage } from "../storage";
 
 export interface AuthState {
@@ -24,6 +25,7 @@ const AuthCtx = createContext<AuthState | null>(null);
 
 /** Where the last-known session is cached for offline launches. */
 const ME_CACHE_KEY = "auth.me.v1";
+const SIGNED_OUT_KEY = "auth.signed-out.v1";
 
 /**
  * Platform-agnostic auth provider. Drives the session-cookie auth dance:
@@ -39,21 +41,29 @@ const ME_CACHE_KEY = "auth.me.v1";
 export function AuthProvider({
   children,
   sessionCache,
+  intentStorage = sessionCache,
+  clearSession,
 }: {
   children: ReactNode;
   sessionCache?: Storage;
+  intentStorage?: Storage;
+  clearSession?: () => Promise<unknown>;
 }) {
   const [me, setMeState] = useState<Me | null>(null);
   const [status, setStatus] = useState<AuthState["status"]>("loading");
 
-  const persistMe = useCallback(
-    (m: Me | null) => {
-      // Best-effort: an unwritable cache only degrades offline launches.
-      if (m) void sessionCache?.setItem(ME_CACHE_KEY, JSON.stringify(m)).catch(() => {});
-      else void sessionCache?.removeItem(ME_CACHE_KEY).catch(() => {});
-    },
-    [sessionCache],
-  );
+  const writes = useRef(Promise.resolve());
+  const persistMe = useCallback((m: Me | null) => {
+    writes.current = writes.current.then(async () => {
+      if (m) await sessionCache?.setItem(ME_CACHE_KEY, JSON.stringify(m));
+      else await sessionCache?.removeItem(ME_CACHE_KEY);
+    }).catch(() => {});
+  }, [sessionCache]);
+  const signedOut = useRef(false);
+  const transitioning = useRef(false);
+  const pendingLogout = useRef<Promise<void> | null>(null);
+  const mutations = useRef(Promise.resolve());
+
 
   // A refresh already in flight is shared rather than duplicated, and every
   // result is checked against the latest token before it writes state — two
@@ -69,10 +79,34 @@ export function AuthProvider({
     };
   }, []);
 
+  const invalidate = useCallback(() => {
+    refreshTokenRef.current += 1;
+    inFlightRef.current = null;
+    advanceAuthGeneration();
+    return refreshTokenRef.current;
+  }, []);
+
   const runRefresh = useCallback(async () => {
+    if (transitioning.current) return;
     const token = ++refreshTokenRef.current;
     const isCurrent = () => mountedRef.current && token === refreshTokenRef.current;
+    let intent: string | null | undefined;
     try {
+      await writes.current;
+      intent = await intentStorage?.getItem(SIGNED_OUT_KEY);
+    } catch {
+      // An unreadable intent cannot prove it is safe to recover a cookie.
+      if (isCurrent()) { setMeState(null); setStatus("guest"); }
+      return;
+    }
+    try {
+      if (!isCurrent()) return;
+      if (signedOut.current || intent === "1") {
+        signedOut.current = true;
+        setMeState(null);
+        setStatus("guest");
+        return;
+      }
       const m = await api.me();
       if (!isCurrent()) return;
       setMeState(m);
@@ -111,7 +145,7 @@ export function AuthProvider({
         setStatus("guest");
       }
     }
-  }, [persistMe, sessionCache]);
+  }, [persistMe, sessionCache, intentStorage]);
 
   const refresh = useCallback(async () => {
     if (inFlightRef.current) return inFlightRef.current;
@@ -131,34 +165,70 @@ export function AuthProvider({
   useEffect(() => {
     setUnauthorizedHandler(() => {
       persistMe(null);
-      refreshTokenRef.current += 1;
+      invalidate();
+      transitioning.current = false;
       if (!mountedRef.current) return;
       setMeState(null);
       setStatus("guest");
     });
     return () => setUnauthorizedHandler(null);
-  }, [persistMe]);
+  }, [persistMe, invalidate]);
 
-  const login = useCallback(
-    async (username: string, password: string) => {
+  // Serialize cookie-changing requests as well as guarding React state:
+  // an older login response must never install a cookie after logout finishes.
+  const login = useCallback((username: string, password: string) => {
+    const token = invalidate();
+    transitioning.current = true;
+    const pending = mutations.current.then(async () => {
       const m = await api.login(username, password);
+      if (token !== refreshTokenRef.current || !mountedRef.current) return m;
+      await writes.current;
+      await intentStorage?.removeItem(SIGNED_OUT_KEY);
+      if (token !== refreshTokenRef.current || !mountedRef.current) return m;
+      signedOut.current = false;
       setMeState(m);
       setStatus("authed");
       persistMe(m);
       return m;
-    },
-    [persistMe],
-  );
+    }).finally(() => {
+      if (token === refreshTokenRef.current) transitioning.current = false;
+    });
+    mutations.current = pending.then(() => {}, () => {});
+    return pending;
+  }, [persistMe, intentStorage, invalidate]);
 
-  const logout = useCallback(async () => {
-    try {
-      await api.logout();
-    } finally {
+  const logout = useCallback(() => {
+    if (pendingLogout.current) return pendingLogout.current;
+    const token = invalidate();
+    transitioning.current = true;
+    const pending = mutations.current.then(async () => {
+      let durable = false;
+      await writes.current;
+      try {
+        if (intentStorage) {
+          await intentStorage.setItem(SIGNED_OUT_KEY, "1");
+          durable = true;
+        }
+      } catch { /* Require successful server revocation if storage is unavailable. */ }
+      try {
+        await api.logout();
+      } catch (error) {
+        if (!durable && !(error instanceof ApiError && error.status === 401)) throw error;
+      }
+      signedOut.current = true;
+      try { await clearSession?.(); } catch { /* Revocation or durable intent still protects the session. */ }
+      if (token !== refreshTokenRef.current || !mountedRef.current) return;
       setMeState(null);
       setStatus("guest");
       persistMe(null);
-    }
-  }, [persistMe]);
+    }).finally(() => {
+      if (pendingLogout.current === pending) pendingLogout.current = null;
+      if (token === refreshTokenRef.current) transitioning.current = false;
+    });
+    pendingLogout.current = pending;
+    mutations.current = pending.catch(() => {});
+    return pending;
+  }, [persistMe, intentStorage, clearSession, invalidate]);
 
   // Adopt a user returned by a request that also established the session (for
   // example registration). Keep identity, status, and the offline cache atomic
@@ -167,13 +237,18 @@ export function AuthProvider({
     (m: Me | null) => {
       // A pre-session refresh may still be in flight while registration returns.
       // Invalidate it so its older /me result cannot overwrite this new session.
-      refreshTokenRef.current += 1;
-      inFlightRef.current = null;
+      invalidate();
+      transitioning.current = false;
+      signedOut.current = !m;
+      writes.current = writes.current.then(async () => {
+        if (m) await intentStorage?.removeItem(SIGNED_OUT_KEY);
+        else await intentStorage?.setItem(SIGNED_OUT_KEY, "1");
+      }).catch(() => {});
       setMeState(m);
       setStatus(m ? "authed" : "guest");
       persistMe(m);
     },
-    [persistMe],
+    [persistMe, intentStorage, invalidate],
   );
 
   const value = useMemo<AuthState>(

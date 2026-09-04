@@ -331,7 +331,7 @@ export const TrackRow = memo(function TrackRow({
         if (!selectionMode) onPlay(track);
       }}
       onKeyDown={(e) => {
-        if (e.key === "Enter" && !selectionMode) {
+        if (e.target === e.currentTarget && e.key === "Enter" && !selectionMode) {
           e.preventDefault();
           onPlay(track);
         }

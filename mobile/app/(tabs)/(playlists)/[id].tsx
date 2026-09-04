@@ -502,8 +502,10 @@ export default function PlaylistDetailScreen() {
   if (playlistQuery.isLoading || tracksQuery.isLoading) {
     return <EmptyState fill loading />;
   }
-  if (playlistQuery.isError || !playlist) {
-    return <EmptyState fill selectable message="Couldn't load playlist." />;
+  if (playlistQuery.isError || tracksQuery.isError || !playlist) {
+    return <EmptyState fill selectable message="Couldn't load playlist."
+      action={{ label: playlistQuery.isFetching || tracksQuery.isFetching ? "Retrying…" : "Try again", disabled: playlistQuery.isFetching || tracksQuery.isFetching,
+        onPress: () => { void playlistQuery.refetch(); void tracksQuery.refetch(); } }} />;
   }
 
   return (

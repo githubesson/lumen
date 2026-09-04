@@ -50,6 +50,8 @@ export interface ExportTrackFilesResult {
 }
 
 export interface ElectronApi {
+  getSignOutIntent(): Promise<boolean>;
+  setSignOutIntent(signedOut: boolean): Promise<void>;
   isElectron: true;
   platform: NodeJS.Platform;
   openSettings(): Promise<{ ok: boolean }>;
@@ -112,6 +114,8 @@ export interface ElectronApi {
 }
 
 const api: ElectronApi = {
+  getSignOutIntent: () => ipcRenderer.invoke("auth:intent:get"),
+  setSignOutIntent: (signedOut) => ipcRenderer.invoke("auth:intent:set", signedOut),
   isElectron: true,
   platform: process.platform,
   openSettings: () => ipcRenderer.invoke("settings:open"),

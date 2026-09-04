@@ -7,6 +7,17 @@ import {
 } from "../src/player/player-core";
 
 describe("fisherYatesWithAnchor", () => {
+  it("preserves repeated playlist entries when the playing track is the anchor", () => {
+    const first = { id: "a", entry: 1 };
+    const repeated = { id: "a", entry: 2 };
+    const other = { id: "b", entry: 3 };
+    const result = fisherYatesWithAnchor([first, repeated, other], "a");
+    expect(result[0]).toBe(first);
+    expect(result).toHaveLength(3);
+    expect(result).toContain(repeated);
+    expect(result).toContain(other);
+  });
+
   const items = ["a", "b", "c", "d", "e"].map((id) => ({ id }));
 
   it("pins the anchor at index 0 and keeps every item exactly once", () => {

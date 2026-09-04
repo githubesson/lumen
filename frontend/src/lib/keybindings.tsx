@@ -164,6 +164,11 @@ export function KeyBindingsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      // Space/Enter belong to the focused control. Do not turn its native
+      // activation into a global playback command (including SVG descendants).
+      if ((e.key === " " || e.key === "Enter") && e.target instanceof Element &&
+          e.target.closest('button, a[href], summary, [role="button"], [role="checkbox"], [role="switch"], [role="slider"], [role="tab"], [role="menuitem"]')) return;
       const inEditable = isEditableTarget(e.target);
 
       let best: KeyBinding | null = null;

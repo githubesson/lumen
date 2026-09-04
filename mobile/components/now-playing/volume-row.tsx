@@ -5,22 +5,15 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import Animated, {
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
-} from "react-native-reanimated";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Slider from "@react-native-community/slider";
 import { SymbolView } from "expo-symbols";
 import { useTheme } from "../../theme/theme";
 
 const VOLUME_UPDATE_INTERVAL_MS = 80;
 
 /**
- * Volume control row: quiet/loud speaker glyphs flanking the gesture-driven
- * volume bar. Drag updates are throttled before reaching `onSetVolume` so
+ * Volume control row: quiet/loud speaker glyphs flanking the native
+ * volume slider. Drag updates are throttled before reaching `onSetVolume` so
  * the player isn't flooded, with the final value always committed on release.
  */
 export function VolumeRow({
@@ -43,10 +36,19 @@ export function VolumeRow({
         size={13}
         tintColor={theme.color.fgMuted}
       />
-      <VolumeBar
+      <Slider
+        style={{ flex: 1, height: 44 }}
         value={value}
-        onChange={volumeChange.change}
-        onChangeEnd={volumeChange.commit}
+        minimumValue={0}
+        maximumValue={1}
+        step={0.01}
+        accessibilityLabel="Volume"
+        accessibilityValue={{ min: 0, max: 100, now: Math.round(value * 100), text: `${Math.round(value * 100)} percent` }}
+        onValueChange={volumeChange.change}
+        onSlidingComplete={volumeChange.commit}
+        minimumTrackTintColor={theme.color.overlayStrong}
+        maximumTrackTintColor={theme.color.overlayMuted}
+        thumbTintColor={theme.color.fg}
       />
       <SymbolView
         name="speaker.wave.3.fill"
@@ -116,119 +118,10 @@ function useThrottledVolumeChange(setVolume: (value: number) => void) {
   return useMemo(() => ({ change, commit }), [change, commit]);
 }
 
-/**
- * The bar itself: a pan gesture over a translucent track that thickens while
- * active and animates back to the reported value when idle.
- */
-function VolumeBar({
-  value,
-  onChange,
-  onChangeEnd,
-}: {
-  value: number;
-  onChange: (value: number) => void;
-  onChangeEnd: (value: number) => void;
-}) {
-  const theme = useTheme();
-  const width = useSharedValue(0);
-  const progress = useSharedValue(Math.max(0, Math.min(1, value)));
-  const active = useSharedValue(0);
-
-  useEffect(() => {
-    if (active.value === 0) {
-      // Reanimated shared values are mutable UI-thread cells by design.
-      progress.value = withTiming(Math.max(0, Math.min(1, value)), {
-        duration: 120,
-      });
-    }
-  }, [value, active, progress]);
-
-  const gesture = Gesture.Pan()
-    .minDistance(0)
-    .onBegin((event) => {
-      "worklet";
-      // Reanimated gesture worklets intentionally mutate shared UI-thread state.
-      // eslint-disable-next-line react-hooks/immutability
-      active.value = withSpring(1, { damping: 18, stiffness: 260 });
-      const availableWidth = width.value;
-      if (availableWidth > 0) {
-        const next = Math.max(0, Math.min(1, event.x / availableWidth));
-        // eslint-disable-next-line react-hooks/immutability -- Reanimated shared value.
-        progress.value = next;
-        runOnJS(onChange)(next);
-      }
-    })
-    .onUpdate((event) => {
-      "worklet";
-      const availableWidth = width.value;
-      if (availableWidth > 0) {
-        const next = Math.max(0, Math.min(1, event.x / availableWidth));
-        // eslint-disable-next-line react-hooks/immutability -- Reanimated shared value.
-        progress.value = next;
-        runOnJS(onChange)(next);
-      }
-    })
-    .onFinalize(() => {
-      "worklet";
-      // eslint-disable-next-line react-hooks/immutability -- Reanimated shared value.
-      active.value = withSpring(0, { damping: 20, stiffness: 240 });
-      runOnJS(onChangeEnd)(progress.value);
-    });
-
-  const trackStyle = useAnimatedStyle(() => {
-    const height = 4 + active.value * 6;
-    return {
-      height,
-      borderRadius: height / 2,
-    };
-  });
-
-  const fillStyle = useAnimatedStyle(() => ({
-    width: `${progress.value * 100}%`,
-  }));
-
-  return (
-    <GestureDetector gesture={gesture}>
-      <Animated.View style={styles.hit}>
-        <Animated.View
-          onLayout={(event) => {
-            width.value = event.nativeEvent.layout.width;
-          }}
-          style={[
-            styles.track,
-            trackStyle,
-            { backgroundColor: theme.color.overlayMuted },
-          ]}
-        >
-          <Animated.View
-            style={[
-              styles.fill,
-              fillStyle,
-              { backgroundColor: theme.color.overlayStrong },
-            ]}
-          />
-        </Animated.View>
-      </Animated.View>
-    </GestureDetector>
-  );
-}
-
 const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-  },
-  hit: {
-    flex: 1,
-    height: 28,
-    justifyContent: "center",
-  },
-  track: {
-    width: "100%",
-    overflow: "hidden",
-  },
-  fill: {
-    height: "100%",
   },
 });

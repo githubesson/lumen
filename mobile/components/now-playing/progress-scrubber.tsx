@@ -41,11 +41,19 @@ export function ProgressScrubber({
   return (
     <View style={[styles.container, style]}>
       <Slider
+        accessibilityLabel="Playback position"
+        accessibilityValue={{ text: `${formatDurationSec(displayTime)} of ${formatDurationSec(time.duration)}` }}
+        disabled={time.duration <= 0}
+        style={{ height: 44 }}
         value={progress}
         minimumValue={0}
         maximumValue={1}
         onSlidingStart={beginSeek}
-        onValueChange={previewSeek}
+        onValueChange={(value) => {
+          // Native accessibility adjustments can emit value changes without
+          // touch-start/end events. Commit those changes immediately.
+          if (!previewSeek(value) && time.duration > 0) onSeek(commitSeek(value));
+        }}
         onSlidingComplete={(value) => {
           const next = commitSeek(value);
           if (time.duration > 0) onSeek(next);
@@ -100,21 +108,23 @@ function useEstimatedPlaybackTime(
   useEffect(() => {
     const trackChanged = trackKeyRef.current !== trackKey;
     trackKeyRef.current = trackKey;
+    if (seekingRef.current && !trackChanged) return;
     anchorRef.current = {
       baseTime: time.currentTime,
       wallTime: performance.now(),
     };
     if (trackChanged) seekingRef.current = false;
-    if (trackChanged || !isPlaying || seekingRef.current) {
+    if (trackChanged || !isPlaying) {
       setDisplayTime(time.currentTime);
     }
   }, [isPlaying, time.currentTime, trackKey]);
 
   useEffect(() => {
-    if (appState !== "active" || !isPlaying || seekingRef.current) {
+    if (appState !== "active" || !isPlaying) {
       return;
     }
     const tick = () => {
+      if (seekingRef.current) return;
       const { baseTime, wallTime } = anchorRef.current;
       const elapsed = (performance.now() - wallTime) / 1000;
       const next =
@@ -137,8 +147,8 @@ function useEstimatedPlaybackTime(
 
   const previewSeek = useCallback(
     (value: number) => {
-      if (time.duration <= 0) return;
-      setDisplayTime(value * time.duration);
+      if (time.duration > 0) setDisplayTime(value * time.duration);
+      return seekingRef.current;
     },
     [time.duration],
   );

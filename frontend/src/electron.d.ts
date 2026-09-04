@@ -84,6 +84,8 @@ export interface UpdateStatus {
 declare global {
   interface Window {
     electron?: {
+      getSignOutIntent(): Promise<boolean>;
+      setSignOutIntent(signedOut: boolean): Promise<void>;
       isElectron: true;
       platform: string;
       openSettings: () => Promise<{ ok: boolean }>;

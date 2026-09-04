@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { AppState, Platform } from "react-native";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
 import type { TrackListItem } from "@music-library/core";
-import { downloadStore, playlistOwner } from "./download-store";
-import { autoDownloadStore } from "./auto-download";
+import { downloadStore, playlistOwner, setDownloadAccount } from "./download-store";
+import { setAutoDownloadAccount } from "./auto-download";
 import { diagnosticsLog } from "../diagnostics/log";
 import { offlineStore } from "../offline-mode";
 
@@ -25,8 +25,12 @@ export { autoDownloadStore, useAutoDownload } from "./auto-download";
  * Also drives auto-download syncs for opted-in playlists: once at startup, on
  * return to foreground, and whenever connectivity comes back.
  */
-export function DownloadsProvider({ children }: { children: ReactNode }) {
+export function DownloadsProvider({ children, accountId }: { children: ReactNode; accountId: string | null }) {
+  const [readyAccount, setReadyAccount] = useState<string | null | undefined>(undefined);
   useEffect(() => {
+    const downloads = setDownloadAccount(accountId);
+    const autoDownloads = setAutoDownloadAccount(downloads);
+    setReadyAccount(accountId);
     // The log deliberately depends on nothing but the filesystem, so the app
     // hands it the ambient context here. `appState` is what identifies a
     // failure that happened during an unattended background sync.
@@ -37,11 +41,11 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       }),
       describeBuild,
     });
-    void downloadStore.hydrate();
-    void autoDownloadStore.syncAll();
+    void downloads.hydrate();
+    if (accountId) void autoDownloads.syncAll();
 
     const appStateSub = AppState.addEventListener("change", (state) => {
-      if (state === "active") void autoDownloadStore.syncAll();
+      if (state === "active" && accountId) void autoDownloads.syncAll();
     });
 
     // The offline store already owns the NetInfo subscription and the user's
@@ -50,16 +54,18 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
     let wasOffline = offlineStore.isOffline();
     const unsubscribeOffline = offlineStore.subscribe(() => {
       const offline = offlineStore.isOffline();
-      if (wasOffline && !offline) void autoDownloadStore.syncAll();
+      if (wasOffline && !offline && accountId) void autoDownloads.syncAll();
       wasOffline = offline;
     });
 
     return () => {
+      downloads.retire();
+      autoDownloads.retire();
       appStateSub.remove();
       unsubscribeOffline();
     };
-  }, []);
-  return <>{children}</>;
+  }, [accountId]);
+  return readyAccount === accountId ? <>{children}</> : null;
 }
 
 /**

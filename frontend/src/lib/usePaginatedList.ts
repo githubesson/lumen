@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { errorMessage, type Page } from "../api";
+import { errorMessage, type Page, type SearchOffsets } from "../api";
 import { libraryChanged } from "./events";
 
 interface Options {
+  resourceKey?: string;
   /** Page size to request. Defaults to 100. */
   pageSize?: number;
   /** rootMargin for the bottom-sentinel IntersectionObserver. */
@@ -16,6 +17,7 @@ interface Options {
 }
 
 export interface PageRequest {
+  searchOffsets?: SearchOffsets;
   limit: number;
   offset: number;
   q?: string;
@@ -45,6 +47,8 @@ export function usePaginatedList<T>(
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [hasMore, setHasMore] = useState(false);
+  const nextOffsets = useRef<SearchOffsets | undefined>(undefined);
   const tokenRef = useRef(0);
   const loadingRef = useRef(false);
   const activeRequestRef = useRef<AbortController | null>(null);
@@ -63,6 +67,8 @@ export function usePaginatedList<T>(
         tokenRef.current += 1;
         activeRequestRef.current?.abort();
         setLoadingMore(false);
+        setHasMore(false);
+        nextOffsets.current = undefined;
       } else {
         if (loadingRef.current) return;
         setLoadingMore(true);
@@ -73,13 +79,19 @@ export function usePaginatedList<T>(
       activeRequestRef.current = controller;
       try {
         const page = await fetcherRef.current({
+          searchOffsets: reset ? undefined : nextOffsets.current,
           limit: pageSize,
           offset,
           q: query.trim() || undefined,
           signal: controller.signal,
         });
         if (controller.signal.aborted || token !== tokenRef.current) return;
-        setTotal(page.total);
+        nextOffsets.current = page.nextOffsets;
+        const more = page.nextOffsets !== undefined
+          ? Object.keys(page.nextOffsets).length > 0
+          : offset + page.items.length < page.total;
+        setHasMore(more);
+        setTotal(page.nextOffsets !== undefined && more ? null : page.total);
         setItems((prev) =>
           reset || !prev ? page.items : [...prev, ...page.items],
         );
@@ -106,7 +118,7 @@ export function usePaginatedList<T>(
     setItems(null);
     setTotal(null);
     void loadPage(0, true);
-  }, [loadPage]);
+  }, [loadPage, opts.resourceKey]);
 
   useEffect(
     () => () => {
@@ -139,27 +151,25 @@ export function usePaginatedList<T>(
       (entries) => {
         if (!entries.some((e) => e.isIntersecting)) return;
         if (loadingRef.current) return;
-        if (items === null || total === null) return;
-        if (items.length >= total) return;
+        if (items === null || !hasMore) return;
         void loadPage(items.length, false);
       },
       { rootMargin, root: null },
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [loadPage, items, total, rootMargin]);
+  }, [loadPage, items, hasMore, rootMargin]);
 
   // Optional: keep pulling pages until the whole set is loaded, regardless of
   // scroll. Used by aggregation views.
   useEffect(() => {
     if (!opts.loadAll) return;
-    if (items === null || total === null) return;
-    if (items.length >= total) return;
+    if (items === null || !hasMore) return;
     if (loadingRef.current) return;
     void loadPage(items.length, false);
-  }, [opts.loadAll, items, total, loadPage]);
+  }, [opts.loadAll, items, hasMore, loadPage]);
 
   const reload = useCallback(() => void loadPage(0, true), [loadPage]);
 
-  return { items, total, loadingMore, error, sentinelRef, reload };
+  return { items, total, hasMore, loadingMore, error, sentinelRef, reload };
 }

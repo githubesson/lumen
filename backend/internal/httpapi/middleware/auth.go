@@ -82,8 +82,8 @@ func RequireUser(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		// Users mid-forced-reset can only hit POST /auth/reset-password.
-		if u.MustResetPassword && !(r.Method == http.MethodPost && r.URL.Path == "/api/auth/reset-password") {
+		// A forced reset still allows session discovery and sign-out.
+		if u.MustResetPassword && !((r.Method == http.MethodPost && (r.URL.Path == "/api/auth/reset-password" || r.URL.Path == "/api/auth/logout")) || (r.Method == http.MethodGet && r.URL.Path == "/api/auth/me")) {
 			http.Error(w, "password reset required", http.StatusForbidden)
 			return
 		}

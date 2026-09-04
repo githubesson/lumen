@@ -15,8 +15,8 @@ Go HTTP API for Lumen, the self-hosted, invite-only music library.
 - **Playback** — ranged audio streaming (scrub-friendly), play history/stats,
   cross-device activity over an authenticated WebSocket with REST/Postgres
   snapshot recovery and addressed remote-control commands (see
-  [docs/playback-websocket.md](docs/playback-websocket.md)), and optional ffmpeg transcoding behind
-  `ENABLE_TRANSCODING`.
+  [docs/playback-websocket.md](docs/playback-websocket.md)). Local streaming serves
+  the original audio format; client-profile transcoding is not supported.
 - **Playlists & favorites** — CRUD plus per-user state.
 - **Sharing** — public `/share/…` link-preview pages (what Discord and chat
   apps scrape), `/embed/…` embeddable players, and server-rendered preview
@@ -80,5 +80,17 @@ go test ./...
 ## Docker
 
 The [Dockerfile](./Dockerfile) builds a static binary and ships it on Alpine
-with ffmpeg (transcoding), Node (Filen helper), and the preview fonts. The
+with ffmpeg (previews and TIDAL remuxing), Node (Filen helper), and the preview fonts. The
 deployment compose at the repo root builds it with `context: ./backend`.
+
+### Track pagination
+
+`GET /api/tracks` accepts `sort=recent|title|artist|album|duration` (default
+`recent`). Sorting is applied to the full visible result set before `limit` and
+`offset`, with a track-ID tie breaker.
+
+`GET /api/search` returns `next_offsets`, an object containing the next offset
+for each source that may have more results. Continue with only those `sources`
+and their `local_offset` / `tidal_offset` values, keeping the query and page size
+unchanged. An empty object means the search is exhausted. Each source can return
+up to 50 tracks per request; the combined result count is not a source offset.

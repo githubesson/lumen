@@ -49,6 +49,7 @@ export function errorMessage(err: unknown, fallback: string): string {
 }
 
 export type TrackSource = "local" | "tidal";
+export type SearchOffsets = Partial<Record<TrackSource, number>>;
 
 type SearchParams = PageParams & {
   sources?: TrackSource[];
@@ -72,8 +73,8 @@ export const api = {
     request<Me>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
-    }),
-  logout: () => requestVoid("/api/auth/logout", { method: "POST" }),
+    }, { notifyUnauthorized: false }),
+  logout: () => requestVoid("/api/auth/logout", { method: "POST" }, { notifyUnauthorized: false }),
   // AuthProvider applies its refresh generation check before treating /me's 401
   // as a logout. An older pre-registration request must not clear a new session.
   me: () =>
@@ -229,7 +230,7 @@ export const api = {
 
   listTracks: (params: PageParams = {}) =>
     request<TrackListItem[]>(
-      `/api/tracks${buildQuery({ limit: params.limit, offset: params.offset, q: params.q })}`,
+      `/api/tracks${buildQuery({ limit: params.limit, offset: params.offset, q: params.q, sort: params.sort })}`,
       { signal: params.signal },
     ),
   listTracksPage: (params: PageParams = {}) =>
@@ -240,10 +241,25 @@ export const api = {
         limit: params.limit,
         offset: params.offset,
         q: params.q,
-        sources: params.sources?.join(","),
+        sources: params.searchOffsets
+          ? Object.keys(params.searchOffsets).join(",")
+          : params.sources?.join(","),
+        local_offset: params.searchOffsets?.local,
+        tidal_offset: params.searchOffsets?.tidal,
       })}`,
       { signal: params.signal },
     ),
+
+  searchTracksPage: async (params: SearchParams = {}): Promise<Page<TrackListItem> & { warnings?: string[] }> => {
+    const result = await api.searchTracks({ ...params, limit: Math.min(params.limit ?? 50, 50) });
+    const items = result.tracks ?? [];
+    return {
+      items,
+      total: (params.offset ?? 0) + items.length,
+      nextOffsets: result.next_offsets ?? {},
+      warnings: result.warnings,
+    };
+  },
 
   listAlbumsPage: (params: PageParams = {}) =>
     fetchPage<Album>("/api/albums", params),
@@ -542,6 +558,7 @@ export interface CurrentPlaybackActivityResponse {
 }
 
 export interface SearchResponse {
+  next_offsets?: SearchOffsets;
   tracks: TrackListItem[];
   sources: TrackSource[];
   warnings?: string[];
@@ -700,6 +717,8 @@ export interface PendingInvite {
 }
 
 export interface Page<T> {
+  /** Search has independent source cursors; an empty object means exhausted. */
+  nextOffsets?: SearchOffsets;
   items: T[];
   total: number;
 }

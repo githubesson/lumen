@@ -97,7 +97,6 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-mlib}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mlib}?sslmode=disable
       MUSIC_PATH: /mnt/music
       TRANSCODE_CACHE: /cache
-      ENABLE_TRANSCODING: ${ENABLE_TRANSCODING:-false}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       SESSION_COOKIE: ${SESSION_COOKIE:-mlsession}
@@ -127,9 +126,8 @@ services:
     # permissions. Set MUSIC_GROUP_GID in .env to your host group's GID.
     group_add:
       - "${MUSIC_GROUP_GID:-1100}"
-    # Mounted at the same path inside the container as on the host, so music
-    # roots added in the admin UI (e.g. /mnt/music/liluzivert) resolve to the
-    # identical path the backend sees — no host/container path translation.
+    # The host music directory is always /mnt/music inside the container.
+    # Admin roots must use /mnt/music/... even for a custom MUSIC_HOST_PATH.
     volumes:
       - ${MUSIC_HOST_PATH:-/mnt/music}:/mnt/music
       # Named volume (not a bind mount): Docker initializes it with the

@@ -39,7 +39,6 @@ type Config struct {
 	TIDALHifiAPIURL            string
 	LastFMAPIKey               string
 	LastFMSharedSecret         string
-	EnableTranscoding          bool
 	TrustedProxies             []string
 	// PublicHosts optionally allowlists the hostnames that may appear in
 	// generated share/embed/og:url absolute URLs. Set via PUBLIC_HOSTS
@@ -66,10 +65,6 @@ type Config struct {
 
 func FromEnv() (*Config, error) {
 	cookieSecure, err := boolenv("COOKIE_SECURE", true)
-	if err != nil {
-		return nil, err
-	}
-	enableTranscoding, err := boolenv("ENABLE_TRANSCODING", false)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +124,6 @@ func FromEnv() (*Config, error) {
 		TIDALHifiAPIURL:            getenv("TIDAL_HIFI_API_URL", ""),
 		LastFMAPIKey:               getenv("LASTFM_API_KEY", ""),
 		LastFMSharedSecret:         getenv("LASTFM_SHARED_SECRET", ""),
-		EnableTranscoding:          enableTranscoding,
 		TrustedProxies:             trustedProxies,
 		PublicHosts:                splitenv("PUBLIC_HOSTS"),
 	}

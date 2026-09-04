@@ -38,7 +38,13 @@ const (
 //  3. dhowden/tag.Sum — pure-Go fallback if ffmpeg isn't on $PATH.
 //  4. Full-file SHA-256 — last resort. Retagging such a file registers as new.
 func AudioSHA256(ctx context.Context, path string) (string, error) {
-	if sum, err := nativeAudioSHA256(path); err == nil {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if sum, err := nativeAudioSHA256(ctx, path); err == nil {
 		return sum, nil
 	} else if !errors.Is(err, errFormatUnsupportedNative) {
 		// Native handler recognised the format but failed (e.g. truncated
@@ -60,14 +66,14 @@ func AudioSHA256(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	if sum, err := tag.Sum(f); err == nil {
+	if sum, err := tag.Sum(&hashReadSeeker{ctx: ctx, ReadSeeker: f}); err == nil {
 		return sum, nil
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return "", err
 	}
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	if _, err := io.Copy(h, &hashReadSeeker{ctx: ctx, ReadSeeker: f}); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
@@ -75,12 +81,12 @@ func AudioSHA256(ctx context.Context, path string) (string, error) {
 
 var errFormatUnsupportedNative = errors.New("no native audio-hash for this extension")
 
-func nativeAudioSHA256(path string) (string, error) {
+func nativeAudioSHA256(ctx context.Context, path string) (string, error) {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".mp3":
-		return mp3AudioSHA256(path)
+		return mp3AudioSHA256(ctx, path)
 	case ".flac":
-		return flacAudioSHA256(path)
+		return flacAudioSHA256(ctx, path)
 	default:
 		return "", errFormatUnsupportedNative
 	}
@@ -90,7 +96,7 @@ func nativeAudioSHA256(path string) (string, error) {
 // ID3v2 tag and any trailing ID3v1 / APE / Lyrics3 tag sliced off. The bytes
 // in between are concatenated MPEG audio frames — the same bytes ffmpeg emits
 // in `-c copy -f hash`.
-func mp3AudioSHA256(path string) (string, error) {
+func mp3AudioSHA256(ctx context.Context, path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -100,12 +106,12 @@ func mp3AudioSHA256(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	start, end, err := mp3AudioBounds(f, info.Size())
+	start, end, err := mp3AudioBoundsContext(ctx, f, info.Size())
 	if err != nil {
 		return "", fmt.Errorf("mp3 %s: %w", path, err)
 	}
 	h := sha256.New()
-	if _, err := io.Copy(h, io.NewSectionReader(f, start, end-start)); err != nil {
+	if _, err := io.Copy(h, &hashReadSeeker{ctx: ctx, ReadSeeker: io.NewSectionReader(f, start, end-start)}); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
@@ -116,6 +122,10 @@ func mp3AudioSHA256(path string) (string, error) {
 // any trailing ID3v1 / APE / Lyrics3 tag sliced off. Shared by the SHA hasher
 // and the duration probe so both agree on where the audio stream lives.
 func mp3AudioBounds(f *os.File, size int64) (start, end int64, err error) {
+	return mp3AudioBoundsContext(context.Background(), f, size)
+}
+
+func mp3AudioBoundsContext(ctx context.Context, f *os.File, size int64) (start, end int64, err error) {
 	start, end = 0, size
 
 	// Leading ID3v2 (v2.2 through v2.4). 10-byte header:
@@ -133,6 +143,9 @@ func mp3AudioBounds(f *os.File, size int64) (start, end int64, err error) {
 	// Trailing tags, walking backwards: [APE] [Lyrics3] [ID3v1]. Any of
 	// the three can be absent; detect, trim, repeat.
 	for {
+		if err := ctx.Err(); err != nil {
+			return 0, 0, err
+		}
 		shrunk := false
 		if end-start >= 128 {
 			tail := make([]byte, 128)
@@ -147,10 +160,16 @@ func mp3AudioBounds(f *os.File, size int64) (start, end int64, err error) {
 			if _, rerr := f.ReadAt(tail, end-32); rerr == nil && bytes.Equal(tail[:8], []byte("APETAGEX")) {
 				apeSize := int64(binary.LittleEndian.Uint32(tail[12:16]))
 				flags := binary.LittleEndian.Uint32(tail[20:24])
-				end -= apeSize
-				if flags&(1<<31) != 0 {
-					end -= 32
+				if apeSize < 32 {
+					return 0, 0, fmt.Errorf("invalid APE footer size: %d", apeSize)
 				}
+				if flags&(1<<31) != 0 {
+					apeSize += 32
+				}
+				if apeSize > end-start {
+					return 0, 0, fmt.Errorf("APE tag exceeds remaining file bounds")
+				}
+				end -= apeSize
 				shrunk = true
 				continue
 			}
@@ -179,7 +198,7 @@ func mp3AudioBounds(f *os.File, size int64) (start, end int64, err error) {
 // the "fLaC" magic and the metadata block chain. Metadata blocks (including
 // VORBIS_COMMENT and PICTURE, which are the "tags") are skipped; the audio
 // frame stream at the end is hashed. Trailing ID3v1 is tolerated but rare.
-func flacAudioSHA256(path string) (string, error) {
+func flacAudioSHA256(ctx context.Context, path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -215,6 +234,9 @@ func flacAudioSHA256(path string) (string, error) {
 	// size. Keep reading until the last-block flag.
 	mbh := make([]byte, 4)
 	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		if _, err := f.ReadAt(mbh, off); err != nil {
 			return "", err
 		}
@@ -239,7 +261,7 @@ func flacAudioSHA256(path string) (string, error) {
 		return "", fmt.Errorf("flac %s: metadata chain consumed all bytes", path)
 	}
 	h := sha256.New()
-	if _, err := io.Copy(h, io.NewSectionReader(f, off, end-off)); err != nil {
+	if _, err := io.Copy(h, &hashReadSeeker{ctx: ctx, ReadSeeker: io.NewSectionReader(f, off, end-off)}); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
@@ -361,3 +383,16 @@ func (l *lastBytes) Write(p []byte) (int, error) {
 }
 
 func (l *lastBytes) String() string { return string(l.buf) }
+
+// hashReadSeeker lets native and fallback hash readers stop between reads.
+type hashReadSeeker struct {
+	ctx context.Context
+	io.ReadSeeker
+}
+
+func (r *hashReadSeeker) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.ReadSeeker.Read(p)
+}

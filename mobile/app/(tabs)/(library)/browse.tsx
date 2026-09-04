@@ -22,6 +22,8 @@ import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import {
   api,
+  type Page,
+  type SearchOffsets,
   type Album,
   type Artist,
   type TrackListItem,
@@ -64,22 +66,27 @@ function useLibraryListQuery<T>({
   enabled: boolean;
   search: string;
   fetchPage: (args: {
+    searchOffsets?: SearchOffsets;
     q: string;
     limit: number;
     offset: number;
     signal: AbortSignal;
-  }) => Promise<{ items: T[]; total: number }>;
+  }) => Promise<Page<T>>;
 }) {
   return useInfiniteQuery({
     queryKey,
     enabled,
     staleTime: QUERY_STALE_TIME.libraryList,
-    queryFn: ({ pageParam = 0, signal }) =>
-      fetchPage({ q: search, limit: PAGE_SIZE, offset: pageParam, signal }),
-    initialPageParam: 0,
+    queryFn: ({ pageParam, signal }) =>
+      fetchPage({ q: search, limit: PAGE_SIZE, ...pageParam, signal }),
+    initialPageParam: { offset: 0 } as { offset: number; searchOffsets?: SearchOffsets },
     getNextPageParam: (last, pages) => {
       const loaded = pages.reduce((s, p) => s + p.items.length, 0);
-      return loaded < last.total ? loaded : undefined;
+      if (last.nextOffsets !== undefined) {
+        return Object.keys(last.nextOffsets).length
+          ? { offset: loaded, searchOffsets: last.nextOffsets } : undefined;
+      }
+      return loaded < last.total ? { offset: loaded } : undefined;
     },
   });
 }
@@ -118,18 +125,7 @@ export default function BrowseScreen() {
     fetchPage: async (args) => {
       if (!args.q) return api.listTracksPage(args);
 
-      // /api/tracks is the local-library browse endpoint. Text searches need
-      // the unified endpoint so remote TIDAL matches are included as well.
-      // Search returns up to PAGE_SIZE results per source and no total count,
-      // so expose the combined result as a single page.
-      const result = await api.searchTracks({
-        ...args,
-        sources: ["local", "tidal"],
-      });
-      return {
-        items: result.tracks ?? [],
-        total: result.tracks?.length ?? 0,
-      };
+      return api.searchTracksPage(args);
     },
   });
 

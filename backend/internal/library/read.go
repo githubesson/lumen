@@ -296,6 +296,7 @@ type TrackListItem struct {
 }
 
 type ListTracksParams struct {
+	Sort     string    // recent, title, artist, album, duration
 	ViewerID uuid.UUID // filter to global + this user's personal tracks
 	Limit    int
 	Offset   int
@@ -713,7 +714,7 @@ func (s *Store) ListTracks(ctx context.Context, p ListTracksParams) ([]TrackList
 			  AND t.library_visible = TRUE
 			  AND `+trackVisibleP1+trackSearchFilter+`
 			GROUP BY t.id, a.title
-			ORDER BY t.created_at DESC
+			ORDER BY `+trackOrder(p.Sort)+`
 			LIMIT $3 OFFSET $4`, p.ViewerID, p.Query, p.Limit, p.Offset)
 	} else {
 		rows, err = s.db.Query(ctx, `
@@ -733,7 +734,7 @@ func (s *Store) ListTracks(ctx context.Context, p ListTracksParams) ([]TrackList
 			  AND t.library_visible = TRUE
 			  AND `+trackVisibleP1+`
 			GROUP BY t.id, a.title
-			ORDER BY t.created_at DESC
+			ORDER BY `+trackOrder(p.Sort)+`
 			LIMIT $2 OFFSET $3`, p.ViewerID, p.Limit, p.Offset)
 	}
 	if err != nil {
@@ -886,4 +887,27 @@ func (s *Store) RecordPlay(ctx context.Context, userID, trackID uuid.UUID, compl
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// Only fixed SQL fragments reach ORDER BY; request text is never interpolated.
+func ValidTrackSort(sort string) bool {
+	switch sort {
+	case "", "recent", "title", "artist", "album", "duration":
+		return true
+	}
+	return false
+}
+func trackOrder(sort string) string {
+	switch sort {
+	case "title":
+		return "LOWER(t.title) ASC, t.id ASC"
+	case "artist":
+		return "LOWER(COALESCE(STRING_AGG(ar.name, ', ' ORDER BY ta.position) FILTER (WHERE ta.role = 'primary'), '')) ASC, LOWER(t.title) ASC, t.id ASC"
+	case "album":
+		return "LOWER(COALESCE(a.title, '')) ASC, t.disc_no ASC NULLS LAST, t.track_no ASC NULLS LAST, t.id ASC"
+	case "duration":
+		return "t.duration_ms ASC, t.id ASC"
+	default:
+		return "t.created_at DESC, t.id ASC"
+	}
 }

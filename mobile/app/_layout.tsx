@@ -1,3 +1,4 @@
+import CookieManager from "@preeternal/react-native-cookie-manager";
 import { useEffect, useRef, type ReactNode } from "react";
 import { ActivityIndicator, AppState, View } from "react-native";
 import Constants from "expo-constants";
@@ -53,7 +54,8 @@ setBaseUrl(apiBaseUrl);
 // queries aren't evicted from memory before `maxAge`. `CACHE_BUSTER` drops the
 // whole on-disk cache when the app version changes (schema/shape drift).
 const CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-const CACHE_BUSTER = `v2:${Constants.expoConfig?.version ?? "0"}`;
+// v3 replaces numeric browse page parameters with per-source search cursors.
+const CACHE_BUSTER = `v3:${Constants.expoConfig?.version ?? "0"}`;
 
 // React Query: one client for the app. Mutations and the library event bus
 // invalidate affected keys immediately; the freshness window only prevents
@@ -118,14 +120,12 @@ export default function RootLayout() {
       >
         <ThemeProvider>
           <ThemedNavigation>
-            <DownloadsProvider>
-              <AuthProvider sessionCache={asyncStorageAdapter}>
-                <AccountScopedProviders>
-                  <AuthGate />
-                  <ThemedStatusBar />
-                </AccountScopedProviders>
-              </AuthProvider>
-            </DownloadsProvider>
+            <AuthProvider sessionCache={asyncStorageAdapter} clearSession={clearSessionCookies}>
+              <AccountScopedProviders>
+                <AuthGate />
+                <ThemedStatusBar />
+              </AccountScopedProviders>
+            </AuthProvider>
           </ThemedNavigation>
         </ThemeProvider>
       </PersistQueryClientProvider>
@@ -182,15 +182,17 @@ function AccountScopedProviders({ children }: { children: ReactNode }) {
   useEffect(() => libraryChanged.on(() => invalidateLibrary(queryClient)), []);
 
   return (
-    <PlayerProvider key={`player:${accountKey}`}>
-      {children}
-      <RemoteControlIndicator />
-      {/* Renders nothing on the phone; drives the car's templates from the
-          same query cache and player these providers already own. */}
-      <CarPlayBridge />
-      {/* Handles Siri media searches and playback without presenting UI. */}
-      <SiriMediaBridge />
-    </PlayerProvider>
+    <DownloadsProvider key={`downloads:${accountKey}`} accountId={status === "authed" ? me?.id ?? null : null}>
+      <PlayerProvider key={`player:${accountKey}`}>
+        {children}
+        <RemoteControlIndicator />
+        {/* Renders nothing on the phone; drives the car's templates from the
+            same query cache and player these providers already own. */}
+        <CarPlayBridge />
+        {/* Handles Siri media searches and playback without presenting UI. */}
+        <SiriMediaBridge />
+      </PlayerProvider>
+    </DownloadsProvider>
   );
 }
 
@@ -285,4 +287,8 @@ function LoadingSplash() {
 function ThemedStatusBar() {
   const theme = useTheme();
   return <StatusBar style={theme.scheme === "dark" ? "light" : "dark"} />;
+}
+
+async function clearSessionCookies() {
+  await CookieManager.clearAll();
 }

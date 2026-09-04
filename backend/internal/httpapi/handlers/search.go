@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/githubesson/lumen/internal/library"
@@ -18,6 +19,8 @@ type Search struct {
 }
 
 type searchResp struct {
+	NextOffsets map[string]int `json:"next_offsets"` // absent source means exhausted
+
 	Tracks   []trackListItemResp `json:"tracks"`
 	Sources  []string            `json:"sources"`
 	Warnings []string            `json:"warnings,omitempty"`
@@ -38,6 +41,19 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 	sources := parseSources(q.Get("sources"))
+	offsets := map[string]int{}
+	for _, source := range sources {
+		n := offset
+		if raw := q.Get(source + "_offset"); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed < 0 {
+				http.Error(w, "invalid search offset", http.StatusBadRequest)
+				return
+			}
+			n = parsed
+		}
+		offsets[source] = n
+	}
 	// Not discarded: on error every `_, ok := favs[id]` is false, so every
 	// track would serialize favorited:false with a 200 and the user's next
 	// click would toggle against stale state, unfavoriting a real favorite.
@@ -49,17 +65,20 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 
 	// Tracks is initialized, not left nil: the TS type declares TrackListItem[],
 	// so an empty result must serialize as [] rather than null.
-	resp := searchResp{Sources: sources, Tracks: []trackListItemResp{}}
+	resp := searchResp{Sources: sources, Tracks: []trackListItemResp{}, NextOffsets: map[string]int{}}
 	if hasSource(sources, trackref.SourceLocal) {
 		items, err := h.Library.ListTracks(r.Context(), library.ListTracksParams{
 			ViewerID: u.ID,
 			Limit:    limit,
-			Offset:   offset,
+			Offset:   offsets[trackref.SourceLocal],
 			Query:    query,
 		})
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
+		}
+		if len(items) == limit {
+			resp.NextOffsets[trackref.SourceLocal] = offsets[trackref.SourceLocal] + len(items)
 		}
 		for _, it := range items {
 			_, favorited := favs[it.ID]
@@ -70,7 +89,7 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 		if h.TIDAL == nil {
 			resp.Warnings = append(resp.Warnings, "tidal proxy is not configured")
 		} else {
-			items, err := h.TIDAL.SearchTracks(r.Context(), query, limit, offset)
+			items, err := h.TIDAL.SearchTracks(r.Context(), query, limit, offsets[trackref.SourceTIDAL])
 			if err != nil {
 				if errors.Is(err, tidal.ErrNotConfigured) {
 					resp.Warnings = append(resp.Warnings, "tidal proxy is not configured")
@@ -78,6 +97,9 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 					slog.Warn("tidal search failed", "err", err)
 					resp.Warnings = append(resp.Warnings, fmt.Sprintf("tidal search failed: %s", err))
 				}
+			}
+			if err == nil && len(items) == limit {
+				resp.NextOffsets[trackref.SourceTIDAL] = offsets[trackref.SourceTIDAL] + len(items)
 			}
 			for _, it := range items {
 				resp.Tracks = append(resp.Tracks, trackListItemResp{

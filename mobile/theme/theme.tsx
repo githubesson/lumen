@@ -60,7 +60,7 @@ const LIGHT: ThemePalette = {
   bgElev2: "#ECECEE",
   fg: "#0A0A0A",
   fgSubtle: "#3C3C43",
-  fgMuted: "#8E8E93",
+  fgMuted: "#63636A",
   separator: "#D1D1D6",
   accent: "#0A84FF",
   onAccent: "#FFFFFF",

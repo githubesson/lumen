@@ -9,6 +9,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => {
   interface FakeTask {
     id: string;
+    destination: string;
+    stop: () => Promise<void>;
     metadata?: { owners?: string[]; track?: unknown };
     cbs: {
       begin?: (args: { headers: Record<string, string> }) => void;
@@ -21,6 +23,8 @@ const h = vi.hoisted(() => {
     dirs: new Set<string>(),
     kv: new Map<string, string>(),
     tasks: [] as FakeTask[],
+    baseUrl: "https://api.test",
+    cookieRead: async () => ({}),
     fetchImpl: async () => new Response(null, { status: 404 }),
     DOC: "file:///docs",
   };
@@ -106,9 +110,11 @@ vi.mock("@kesha-antonov/react-native-background-downloader", () => ({
   directories: { documents: h.DOC },
   completeHandler: vi.fn(),
   getExistingDownloadTasks: vi.fn(async () => []),
-  createDownloadTask: vi.fn((options: { id: string; metadata?: unknown }) => {
+  createDownloadTask: vi.fn((options: { id: string; destination: string; metadata?: unknown }) => {
     const task = {
       id: options.id,
+      destination: options.destination,
+      stop: vi.fn(async () => {}),
       metadata: options.metadata as { owners?: string[]; track?: unknown },
       cbs: {} as Record<string, never>,
       begin(cb: (args: { headers: Record<string, string> }) => void) {
@@ -139,12 +145,12 @@ vi.mock("@kesha-antonov/react-native-background-downloader", () => ({
 }));
 
 vi.mock("@preeternal/react-native-cookie-manager", () => ({
-  default: { get: async () => ({}) },
+  default: { get: () => h.cookieRead() },
 }));
 
 vi.mock("@music-library/core", () => ({
   downloadStreamUrl: (id: string) => `https://api.test/stream/${id}`,
-  getBaseUrl: () => "https://api.test",
+  getBaseUrl: () => h.baseUrl,
   trackCoverUrl: () => "https://api.test/cover",
   isApiOrigin: (u: string) => u.startsWith("https://api.test"),
 }));
@@ -185,11 +191,11 @@ const HTML_BODY = new Uint8Array([
 async function freshStore(): Promise<typeof storeType> {
   vi.resetModules();
   const mod = await import("../lib/downloads/download-store");
-  return mod.downloadStore;
+  return mod.setDownloadAccount("alice");
 }
 
 function partUri(id: string) {
-  return `${h.DOC}/offline-audio/${id}.part`;
+  return `${h.DOC}/offline-audio-v2/https_3A_2F_2Fapi.test/alice/${id}.part`;
 }
 
 /**
@@ -203,9 +209,9 @@ async function finishTask(
   bytes: Uint8Array,
   contentType = "audio/mpeg",
 ) {
-  const task = h.tasks.find((task) => task.id === id);
+  const task = h.tasks.findLast((task) => task.id === `${store.accountKey}:${id}`);
   if (!task) throw new Error(`no task for ${id}`);
-  h.dirs.add(`${h.DOC}/offline-audio`);
+  h.dirs.add(`${h.DOC}/offline-audio-v2/https_3A_2F_2Fapi.test/alice`);
   h.files.set(partUri(id), bytes);
   task.cbs.begin?.({ headers: { "content-type": contentType } });
   // Hand-rolled deferred rather than Promise.withResolvers, which needs
@@ -223,6 +229,8 @@ async function finishTask(
 }
 
 beforeEach(() => {
+  h.baseUrl = "https://api.test";
+  h.cookieRead = async () => ({});
   h.files.clear();
   h.dirs.clear();
   h.kv.clear();
@@ -234,7 +242,7 @@ beforeEach(() => {
 describe("downloadStore", () => {
   it("drops hydrated records whose audio file vanished", async () => {
     h.kv.set(
-      "offline-downloads.v1",
+      `offline-downloads.v2:${JSON.stringify(["https://api.test", "alice"])}`,
       JSON.stringify({
         records: [
           {
@@ -261,7 +269,7 @@ describe("downloadStore", () => {
     await finishTask(store, "a", MP3_HEAD);
     expect(store.isDownloaded("a")).toBe(true);
     expect(store.hasOwner("playlist:p1")).toBe(true);
-    expect(store.uriFor("a")).toBe(`${h.DOC}/offline-audio/a.mp3`);
+    expect(store.uriFor("a")).toBe(`${h.DOC}/offline-audio-v2/https_3A_2F_2Fapi.test/alice/a.mp3`);
   });
 
   it("adds a second owner to a stored track without re-downloading", async () => {
@@ -283,11 +291,11 @@ describe("downloadStore", () => {
 
     await store.removeOwner("a", "playlist:p1");
     expect(store.isDownloaded("a")).toBe(true);
-    expect(h.files.has(`${h.DOC}/offline-audio/a.mp3`)).toBe(true);
+    expect(h.files.has(`${h.DOC}/offline-audio-v2/https_3A_2F_2Fapi.test/alice/a.mp3`)).toBe(true);
 
     await store.removeOwner("a", "track");
     expect(store.isDownloaded("a")).toBe(false);
-    expect(h.files.has(`${h.DOC}/offline-audio/a.mp3`)).toBe(false);
+    expect(h.files.has(`${h.DOC}/offline-audio-v2/https_3A_2F_2Fapi.test/alice/a.mp3`)).toBe(false);
   });
 
   it("shares an album cover between tracks and frees it with the last one", async () => {
@@ -302,7 +310,7 @@ describe("downloadStore", () => {
     await finishTask(store, "a", MP3_HEAD);
     await finishTask(store, "b", MP3_HEAD);
 
-    const coverUri = `${h.DOC}/offline-audio/covers/cover_album1.jpg`;
+    const coverUri = `${h.DOC}/offline-audio-v2/https_3A_2F_2Fapi.test/alice/covers/cover_album1.jpg`;
     expect(h.files.has(coverUri)).toBe(true);
     expect(store.coverUriFor("a")).toBe(coverUri);
     expect(store.coverUriFor("b")).toBe(coverUri);
@@ -325,7 +333,7 @@ describe("downloadStore", () => {
 
   it("noteTracks backfills missing offline snapshots", async () => {
     h.kv.set(
-      "offline-downloads.v1",
+      `offline-downloads.v2:${JSON.stringify(["https://api.test", "alice"])}`,
       JSON.stringify({
         records: [
           {
@@ -338,8 +346,8 @@ describe("downloadStore", () => {
         ],
       }),
     );
-    h.dirs.add(`${h.DOC}/offline-audio`);
-    h.files.set(`${h.DOC}/offline-audio/a.mp3`, new Uint8Array([1, 2, 3, 4]));
+    h.dirs.add(`${h.DOC}/offline-audio-v2/https_3A_2F_2Fapi.test/alice`);
+    h.files.set(`${h.DOC}/offline-audio-v2/https_3A_2F_2Fapi.test/alice/a.mp3`, new Uint8Array([1, 2, 3, 4]));
     const store = await freshStore();
     await store.hydrate();
     expect(store.tracksForOwner("playlist:p1")).toEqual([]);
@@ -348,5 +356,64 @@ describe("downloadStore", () => {
     expect(store.tracksForOwner("playlist:p1").map((x) => x.id)).toEqual([
       "a",
     ]);
+  });
+});
+
+
+describe("account isolation", () => {
+  it("isolates files and shared playlist snapshots by both server and account", async () => {
+    const alice = await freshStore();
+    await alice.downloadTrack(t("private"), "playlist:shared");
+    await finishTask(alice, "private", MP3_HEAD);
+    const { setDownloadAccount } = await import("../lib/downloads/download-store");
+    const bob = setDownloadAccount("bob");
+    await bob.hydrate();
+    expect(bob.uriFor("private")).toBeUndefined();
+    expect(bob.tracksForOwner("playlist:shared")).toEqual([]);
+    expect(alice.uriFor("private")).toBeUndefined();
+    h.baseUrl = "https://other.test";
+    const otherServer = setDownloadAccount("alice");
+    await otherServer.hydrate();
+    expect(otherServer.uriFor("private")).toBeUndefined();
+    h.baseUrl = "https://api.test";
+    const restored = setDownloadAccount("alice");
+    await restored.hydrate();
+    expect(restored.isDownloaded("private")).toBe(true);
+  });
+
+  it("retires a cookie lookup before it can enqueue under the new account", async () => {
+    const alice = await freshStore();
+    await alice.hydrate();
+    let resolveCookie!: () => void;
+    h.cookieRead = () => new Promise((resolve) => { resolveCookie = () => resolve({}); });
+    const pending = alice.downloadTrack(t("private"), "track");
+    await vi.waitFor(() => expect(resolveCookie).toBeTypeOf("function"));
+    const { setDownloadAccount } = await import("../lib/downloads/download-store");
+    setDownloadAccount("bob");
+    resolveCookie();
+    await pending;
+    expect(createDownloadTask).not.toHaveBeenCalled();
+  });
+
+  it("stops active transfers and ignores their late completion after logout", async () => {
+    const alice = await freshStore();
+    await alice.downloadTrack(t("private"), "track");
+    const task = h.tasks[0];
+    const { setDownloadAccount } = await import("../lib/downloads/download-store");
+    const guest = setDownloadAccount(null);
+    expect(task.stop).toHaveBeenCalledOnce();
+    h.files.set(task.destination, MP3_HEAD);
+    task.cbs.done?.();
+    await Promise.resolve();
+    expect(guest.uriFor("private")).toBeUndefined();
+    expect(alice.uriFor("private")).toBeUndefined();
+  });
+
+  it("does not adopt legacy downloads without a known account owner", async () => {
+    h.kv.set("offline-downloads.v1", JSON.stringify({ records: [{ trackId: "private", filename: "private.mp3", owners: ["playlist:shared"], track: t("private") }] }));
+    h.files.set(`${h.DOC}/offline-audio/private.mp3`, MP3_HEAD);
+    const alice = await freshStore();
+    await alice.hydrate();
+    expect(alice.tracksForOwner("playlist:shared")).toEqual([]);
   });
 });

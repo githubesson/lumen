@@ -243,6 +243,26 @@ ipcMain.handle(
 ipcMain.handle("updates:check", async () => updateManager.check());
 ipcMain.handle("updates:install", () => updateManager.install());
 
+// Renderer origins use an ephemeral proxy port, so logout intent must live
+// in userData rather than port-scoped localStorage across desktop restarts.
+const authIntentPath = () => path.join(app.getPath("userData"), "signed-out");
+ipcMain.handle("auth:intent:get", async () => {
+  try { return await fsp.readFile(authIntentPath(), "utf8") === "1"; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+});
+ipcMain.handle("auth:intent:set", async (_event, signedOut: boolean) => {
+  if (typeof signedOut !== "boolean") throw new Error("Invalid sign-out intent");
+  if (signedOut) {
+    await fsp.mkdir(app.getPath("userData"), { recursive: true });
+    await fsp.writeFile(authIntentPath(), "1", { flush: true });
+  } else {
+    await fsp.rm(authIntentPath(), { force: true });
+  }
+});
+
 ipcMain.handle("config:save", async (_e, patch: SavePatch) => {
   const raw = typeof patch?.backendUrl === "string" ? patch.backendUrl.trim() : "";
   if (!raw) return { ok: false, error: "Server URL is required" };
@@ -255,7 +275,10 @@ ipcMain.handle("config:save", async (_e, patch: SavePatch) => {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return { ok: false, error: "URL must start with http:// or https://" };
   }
-  const normalized = parsed.origin + parsed.pathname.replace(/\/+$/, "");
+  if (parsed.pathname !== "/" || parsed.search || parsed.hash || parsed.username || parsed.password) {
+    return { ok: false, error: "Use the server origin only (for example https://music.example.com). Paths, query strings, fragments, and embedded credentials are not supported." };
+  }
+  const normalized = parsed.origin;
   const prev = backendUrl;
   const writePatch: SavePatch = { backendUrl: normalized };
   if (typeof patch?.discordEnabled === "boolean") {
@@ -793,6 +816,10 @@ if (!gotLock) {
     );
     const cfg = await loadConfig();
     backendUrl = cfg.backendUrl ?? "";
+    try {
+      const configured = new URL(backendUrl);
+      if (!["http:", "https:"].includes(configured.protocol) || configured.pathname !== "/" || configured.search || configured.hash || configured.username || configured.password) backendUrl = "";
+    } catch { backendUrl = ""; }
     configureDiscordPresence({
       clientId: (cfg.discordClientId ?? "").trim() || DEFAULT_DISCORD_CLIENT_ID,
       enabled: cfg.discordEnabled ?? true,

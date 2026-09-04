@@ -1,5 +1,7 @@
-import { useCallback, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import UploadDialog from "../components/UploadDialog";
+import { useAuth } from "../context/Auth";
+import { useCallback, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { PlayIcon } from "@heroicons/react/16/solid";
 import {
   api,
@@ -148,7 +150,7 @@ function LibraryBrowse({
         onQueryChange={onQueryChange}
         displayMode={displayMode}
         onDisplayModeChange={setDisplayMode}
-        sort={sort}
+        sort={query.trim() ? undefined : sort}
         onSortChange={setSort}
         selectionControlsHostId={LIBRARY_SELECTION_CONTROLS_ID}
       />
@@ -190,32 +192,26 @@ function TracksView({
   const fetcher = useCallback(
     async (p: PageRequest): Promise<Page<TrackListItem>> => {
       if (p.q?.trim()) {
-        const res = await api.searchTracks({
+        const res = await api.searchTracksPage({
           ...p,
           limit: Math.min(p.limit, 50),
         });
-        setSearchWarning(res.warnings?.join(" ") || null);
-        return {
-          items: res.tracks ?? [],
-          total: p.offset + (res.tracks?.length ?? 0),
-        };
+        if (!p.signal.aborted) setSearchWarning(res.warnings?.join(" ") || null);
+        return res;
       }
       setSearchWarning(null);
-      return api.listTracksPage(p);
+      return api.listTracksPage({ ...p, sort });
     },
-    [],
+    [sort],
   );
-  const { items, total, loadingMore, error, sentinelRef } = usePaginatedList(
+  const { items, total, hasMore, loadingMore, error, sentinelRef } = usePaginatedList(
     fetcher,
     query,
-    { pageSize: 100, pollIntervalMs: POLL_INTERVAL_MS },
+    { pageSize: 100, pollIntervalMs: POLL_INTERVAL_MS, resourceKey: sort },
   );
   const { play } = usePlayer();
 
-  // Memoize the sort so player timer ticks and unrelated parent re-renders
-  // don't re-allocate + re-sort a 600-item array (and bust child referential
-  // equality downstream). Recomputes only when the source list or key change.
-  const sorted = useMemo(() => sortTracks(items ?? [], sort), [items, sort]);
+  const sorted = items ?? [];
 
   return (
     <>
@@ -224,7 +220,7 @@ function TracksView({
       {!error && searchWarning && <ErrorBanner message={searchWarning} />}
       <div style={{ marginTop: 14 }}>
         {items === null && <LoadingState label="Loading library…" />}
-        {items && items.length === 0 && !error && <LibraryEmptyState />}
+        {items && items.length === 0 && !error && (query.trim() ? <EmptyState title="No matching tracks." hint="Try a different search." /> : <LibraryEmptyState />)}
         {items && items.length > 0 && displayMode === "list" && (
           <TrackList
             tracks={sorted}
@@ -237,6 +233,7 @@ function TracksView({
         )}
         <LoadMoreSentinel
           innerRef={sentinelRef}
+          hasMore={hasMore}
           items={items}
           total={total}
           loadingMore={loadingMore}
@@ -395,42 +392,20 @@ function ArtistCard({
   );
 }
 
-function sortTracks(tracks: TrackListItem[], sort: SortKey): TrackListItem[] {
-  if (sort === "recent") return tracks;
-  const list = [...tracks];
-  switch (sort) {
-    case "title":
-      list.sort((a, b) => a.title.localeCompare(b.title));
-      break;
-    case "artist":
-      list.sort((a, b) => (a.artist ?? "").localeCompare(b.artist ?? ""));
-      break;
-    case "album":
-      list.sort((a, b) =>
-        (a.album_title ?? "").localeCompare(b.album_title ?? ""),
-      );
-      break;
-    case "duration":
-      list.sort((a, b) => a.duration_ms - b.duration_ms);
-      break;
-  }
-  return list;
-}
-
 function LibraryEmptyState() {
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const { me } = useAuth();
   return (
-    <EmptyState
-      title="Your library is empty."
-      hint={
+    <>
+      <EmptyState title="Your library is empty." hint={
         <>
           Drop audio files into a watched folder on the server, or{" "}
-          <Link to="#" className="section-link" style={{ color: "var(--accent)" }}>
+          <button type="button" className="section-link" style={{ color: "var(--accent)" }} onClick={() => setUploadOpen(true)}>
             upload them
-          </Link>
-          . New files are ingested automatically.
+          </button>. New files are ingested automatically.
         </>
-      }
-    />
+      } />
+      <UploadDialog open={uploadOpen} isAdmin={me?.role === "admin"} onClose={() => setUploadOpen(false)} />
+    </>
   );
 }
-
