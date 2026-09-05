@@ -78,8 +78,6 @@ export default function PlaylistDetail() {
     },
     {
       id: "playlist:search",
-      label: "Search in playlist",
-      group: "Playlist",
       allowInInput: true,
     },
   );

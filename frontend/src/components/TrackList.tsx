@@ -44,8 +44,8 @@ interface Props {
   selectionControlsHostId?: string;
 }
 
-/** @deprecated import `fmtDurationMs` from `../lib/format` instead. */
-export const fmtDuration = fmtDurationMs;
+const trackId = (track: TrackListItem) => track.id;
+const exportTracks = (tracks: TrackListItem[]) => tracks;
 
 export default function TrackList({
   tracks,
@@ -79,8 +79,8 @@ export default function TrackList({
     exportSelected,
   } = useTrackSelection<TrackListItem>({
     items: tracks,
-    getId: (t) => t.id,
-    toExportItems: (items) => items,
+    getId: trackId,
+    toExportItems: exportTracks,
   });
 
   const selectedLocalTracks = useMemo(

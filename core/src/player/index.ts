@@ -24,7 +24,6 @@ export {
 } from "./remote-control";
 export {
   ACTIVITY_DEVICE_ID_STORAGE_KEY,
-  getPlaybackRemoteSession,
   getLatestPlaybackActivity,
   getOrCreateActivityDeviceId,
   sendRemotePlaybackCommand,

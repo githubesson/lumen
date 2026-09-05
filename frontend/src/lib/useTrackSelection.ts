@@ -51,8 +51,8 @@ export function useTrackSelection<T>({
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const lastSelectedIndexRef = useRef<number | null>(null);
 
-  const itemsById = useMemo(
-    () => new Map(items.map((item, i) => [getId(item), i])),
+  const itemIds = useMemo(
+    () => new Set(items.map(getId)),
     [items, getId],
   );
 
@@ -77,7 +77,7 @@ export function useTrackSelection<T>({
       let changed = false;
       const next = new Set<string>();
       for (const id of prev) {
-        if (itemsById.has(id)) {
+        if (itemIds.has(id)) {
           next.add(id);
         } else {
           changed = true;
@@ -85,7 +85,7 @@ export function useTrackSelection<T>({
       }
       return changed ? next : prev;
     });
-  }, [itemsById]);
+  }, [itemIds]);
 
   useEffect(() => {
     if (selectedIds.size === 0) lastSelectedIndexRef.current = null;
@@ -98,7 +98,7 @@ export function useTrackSelection<T>({
       setSelectionMode((value) => !value);
       setExportNotice(null);
     },
-    { id: "selection:toggle-mode", label: "Toggle track selection", group: "Selection", enabled: !disabled },
+    { id: "selection:toggle-mode", enabled: !disabled },
   );
 
   useKey(
@@ -111,8 +111,6 @@ export function useTrackSelection<T>({
     },
     {
       id: "selection:clear",
-      label: "Clear track selection",
-      group: "Selection",
       enabled: selectionMode && !disabled,
       priority: 5,
     },
@@ -128,8 +126,6 @@ export function useTrackSelection<T>({
     },
     {
       id: "selection:all",
-      label: "Select all tracks",
-      group: "Selection",
       enabled: selectionMode && !disabled,
     },
   );

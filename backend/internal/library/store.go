@@ -931,23 +931,6 @@ func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string) (i
 	return tag.RowsAffected(), nil
 }
 
-func (s *Store) KnownPaths(ctx context.Context) (map[string]struct{}, error) {
-	rows, err := s.db.Query(ctx, `SELECT file_path FROM tracks WHERE deleted_at IS NULL AND source = 'local'`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]struct{}{}
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			return nil, err
-		}
-		out[p] = struct{}{}
-	}
-	return out, rows.Err()
-}
-
 type IngestError struct {
 	ID        int64
 	FilePath  string

@@ -48,6 +48,7 @@ const COVER_DIR = "covers";
 /** Pixel size fetched for offline covers — large enough for the now-playing
  *  hero, downscaled by expo-image for rows. */
 const COVER_SIZE = 640;
+const COVER_EXTENSIONS = ["jpg", "png", "webp", "gif", "heic", "avif"];
 
 /** An owner that keeps a downloaded track alive; a track is deleted only when
  *  its last owner is removed. Playlists own their tracks as `playlist:<id>`. */
@@ -87,6 +88,7 @@ type Listener = () => void;
 
 interface PersistShape {
   records?: DownloadRecord[];
+  pendingOwners?: [string, DownloadOwner[]][];
 }
 
 export class DownloadStore {
@@ -106,6 +108,8 @@ export class DownloadStore {
     for (const task of this.tasks) void task.stop().catch(() => {});
     this.tasks.clear();
     this.records.clear();
+    this.coverReferences.clear();
+    this.coverRequests.clear();
     this.active.clear();
     this.pendingOwners.clear();
     this.errors.clear();
@@ -116,6 +120,11 @@ export class DownloadStore {
   private get storageKey(): string { return `${STORAGE_KEY}:${this.accountKey}`; }
 
   private records = new Map<string, DownloadRecord>();
+  /** References include finalizations awaiting artwork, so shared files stay live. */
+  private coverReferences = new Map<string, number>();
+  private coverRequests = new Map<string, Promise<string | undefined>>();
+  private persistPending = false;
+  private persisting: Promise<void> | null = null;
   /** Track ids with an in-flight download. */
   private active = new Set<string>();
   /** Owners requested for a track while its download is in flight. */
@@ -248,6 +257,7 @@ export class DownloadStore {
       const raw = await AsyncStorage.getItem(this.storageKey);
       if (!this.enabled) return;
       const parsed = raw ? (JSON.parse(raw) as PersistShape) : null;
+      const restoredOwners = new Map(parsed?.pendingOwners ?? []);
       const dir = this.dir;
       let mutated = false;
       for (const record of parsed?.records ?? []) {
@@ -270,6 +280,7 @@ export class DownloadStore {
           coverFilename = undefined;
           mutated = true;
         }
+        if (coverFilename) this.retainCover(coverFilename.slice(0, coverFilename.lastIndexOf(".")));
         this.records.set(record.trackId, {
           trackId: record.trackId,
           filename: record.filename,
@@ -302,6 +313,7 @@ export class DownloadStore {
           if (this.records.has(trackId)) continue;
           this.tasks.add(task);
           this.active.add(trackId);
+          this.pendingOwners.set(trackId, new Set(restoredOwners.get(trackId) ?? (meta.owners?.length ? meta.owners : ["track"])));
           task
             .done(() => {
               this.tasks.delete(task);
@@ -348,13 +360,38 @@ export class DownloadStore {
     }
   }
 
-  private async persist(): Promise<void> {
+  // Coalesce mutations in the same turn and serialize writes. Callers awaiting
+  // persistence (especially native completion callbacks) wait for the latest
+  // snapshot too; no timer can defer a background completion past suspension.
+  private persist(): Promise<void> {
+    if (!this.enabled) return Promise.resolve();
+    this.persistPending = true;
+    if (!this.persisting) {
+      this.persisting = Promise.resolve().then(async () => {
+        try {
+          while (this.enabled && this.persistPending) {
+            this.persistPending = false;
+            await this.writeSnapshot();
+          }
+        } finally {
+          this.persisting = null;
+        }
+      });
+    }
+    return this.persisting;
+  }
+
+  private async writeSnapshot(): Promise<void> {
     if (!this.enabled) return;
     try {
       const records = [...this.records.values()];
+      const pendingOwners: [string, DownloadOwner[]][] = [];
+      for (const [id, owners] of this.pendingOwners) {
+        if (!this.records.has(id)) pendingOwners.push([id, [...owners]]);
+      }
       await AsyncStorage.setItem(
         this.storageKey,
-        JSON.stringify({ records } satisfies PersistShape),
+        JSON.stringify({ records, pendingOwners } satisfies PersistShape),
       );
     } catch (error) {
       // Non-fatal for this session, but it means downloads won't survive a
@@ -383,17 +420,15 @@ export class DownloadStore {
 
     const existing = this.records.get(track.id);
     if (existing) {
-      // Backfill the offline snapshot on records that predate it.
-      if (!existing.track) {
-        existing.track = track;
-        void this.persist();
+      if (this.retainStoredTrack(existing, track, owner)) {
+        await this.persist();
+        this.emit();
       }
-      this.addOwner(existing, owner);
       return;
     }
 
     if (this.active.has(track.id)) {
-      this.queueOwner(track.id, owner);
+      if (this.queueOwner(track.id, owner)) await this.persist();
       return;
     }
 
@@ -403,6 +438,8 @@ export class DownloadStore {
     this.emit();
 
     try {
+      await this.persist();
+      if (!this.enabled) return;
       await this.startTask(track);
     } catch (error) {
       this.fail(track.id, describe(error, "Download failed"), {
@@ -585,28 +622,28 @@ export class DownloadStore {
       if (file.exists) file.delete();
       await part.move(file);
 
-      // Cover art is best-effort: a missing/failed cover must not fail the
-      // audio download, so this never throws.
-      const coverFilename = meta.track
-        ? await this.downloadCover(meta.track)
-        : undefined;
-
-      if (!this.enabled) return;
-      const owners = [
-        ...new Set([
-          ...(this.pendingOwners.get(trackId) ?? []),
-          ...(meta.owners ?? []),
-        ]),
-      ];
-      this.records.set(trackId, {
-        trackId,
-        filename,
-        size: file.size || 0,
-        downloadedAt: Date.now(),
-        owners: owners.length ? owners : ["track"],
-        coverFilename,
-        track: meta.track,
-      });
+      // Reserve artwork before awaiting it: removing another track must not
+      // delete a cover that this completion is about to reuse.
+      const coverKey = meta.track ? coverStorageKey(meta.track) : undefined;
+      if (coverKey) this.retainCover(coverKey);
+      try {
+        const coverFilename = meta.track ? await this.downloadCover(meta.track) : undefined;
+        if (!this.enabled) return;
+        // pendingOwners is authoritative, including an explicitly empty set.
+        // Native task metadata may still contain an owner removed during sync.
+        const owners = [...(this.pendingOwners.get(trackId) ?? new Set(meta.owners ?? ["track"]))];
+        if (owners.length === 0) {
+          if (file.exists) file.delete();
+        } else {
+          this.records.set(trackId, {
+            trackId, filename, size: file.size || 0, downloadedAt: Date.now(),
+            owners, coverFilename, track: meta.track,
+          });
+          if (coverFilename && coverKey) this.retainCover(coverKey);
+        }
+      } finally {
+        if (coverKey) this.releaseCover(coverKey);
+      }
       await this.persist();
       this.active.delete(trackId);
       this.pendingOwners.delete(trackId);
@@ -617,8 +654,10 @@ export class DownloadStore {
       diagnosticsLog.append({
         scope: "download",
         level: "info",
-        event: "downloaded",
-        message: `Stored ${filename} (${file.size || 0} bytes)`,
+        event: this.records.has(trackId) ? "downloaded" : "download-discarded",
+        message: this.records.has(trackId)
+          ? `Stored ${filename} (${file.size || 0} bytes)`
+          : `Discarded ${filename} after its last owner was removed`,
         trackId,
         bytes: file.size || 0,
         ...context,
@@ -659,48 +698,56 @@ export class DownloadStore {
 
   /** Remove an owner; deletes the file only when no owners remain. */
   async removeOwner(trackId: string, owner: DownloadOwner): Promise<void> {
-    const record = this.records.get(trackId);
-    if (!record) return;
-    const owners = record.owners.filter((existing) => existing !== owner);
-    if (owners.length > 0) {
-      record.owners = owners;
-      await this.persist();
-      this.emit();
-      return;
-    }
-    await this.deleteRecord(trackId, record);
+    await this.hydrate();
+    if (!this.enabled || !this.removeOwnerRecord(trackId, owner)) return;
+    await this.persist();
+    this.emit();
   }
 
-  private async deleteRecord(
-    trackId: string,
-    record: DownloadRecord,
-  ): Promise<void> {
+  /** Synchronous mutation; callers persist and notify once after a batch. */
+  private removeOwnerRecord(trackId: string, owner: DownloadOwner): boolean {
+    const pendingChanged = this.pendingOwners.get(trackId)?.delete(owner) ?? false;
+    const record = this.records.get(trackId);
+    if (!record?.owners.includes(owner)) return pendingChanged;
+    record.owners = record.owners.filter((existing) => existing !== owner);
+    if (record.owners.length === 0) this.deleteRecord(trackId, record);
+    return true;
+  }
+
+  private deleteRecord(trackId: string, record: DownloadRecord): void {
     try {
       const file = this.fileFor(record.filename);
       if (file.exists) file.delete();
     } catch {
-      // The record is dropped regardless; a leaked file is reclaimed on the
-      // next hydrate (missing owners) or by the OS clearing the container.
+      // A failed filesystem deletion must not retain an ownerless record.
     }
     this.records.delete(trackId);
     this.errors.delete(trackId);
-    // Covers are shared per album; delete the file only when no remaining
-    // record still points at it.
     if (record.coverFilename) {
-      const stillUsed = [...this.records.values()].some(
-        (other) => other.coverFilename === record.coverFilename,
-      );
-      if (!stillUsed) {
-        try {
-          const cover = this.coverFileFor(record.coverFilename);
-          if (cover.exists) cover.delete();
-        } catch {
-          // Leaked cover is reclaimed on the next hydrate sweep.
-        }
+      this.releaseCover(record.coverFilename.slice(0, record.coverFilename.lastIndexOf(".")));
+    }
+  }
+
+  private retainCover(key: string): void {
+    this.coverReferences.set(key, (this.coverReferences.get(key) ?? 0) + 1);
+  }
+
+  private releaseCover(key: string): void {
+    if (!this.enabled) return;
+    const remaining = (this.coverReferences.get(key) ?? 0) - 1;
+    if (remaining > 0) {
+      this.coverReferences.set(key, remaining);
+      return;
+    }
+    this.coverReferences.delete(key);
+    for (const extension of COVER_EXTENSIONS) {
+      try {
+        const file = this.coverFileFor(`${key}.${extension}`);
+        if (file.exists) file.delete();
+      } catch {
+        // Artwork cleanup is best effort.
       }
     }
-    await this.persist();
-    this.emit();
   }
 
   // ── playlist-level ─────────────────────────────────────────────────────────
@@ -714,7 +761,11 @@ export class DownloadStore {
   async downloadPlaylist(
     playlistId: string,
     tracks: TrackListItem[],
-    options?: { playlistName?: string },
+    options?: {
+      playlistName?: string;
+      /** Only true for a complete, successful server response. */
+      reconcile?: boolean;
+    },
   ): Promise<void> {
     await this.hydrate();
     if (!this.enabled) return;
@@ -736,33 +787,76 @@ export class DownloadStore {
       playlistId,
       owner,
     });
+    let changed = false;
+    const toStart: TrackListItem[] = [];
     for (const track of tracks) {
+      const record = this.records.get(track.id);
+      if (record) {
+        changed = this.retainStoredTrack(record, track, owner) || changed;
+      } else {
+        changed = this.queueOwner(track.id, owner) || changed;
+        if (!this.active.has(track.id)) {
+          this.active.add(track.id);
+          this.errors.delete(track.id);
+          toStart.push(track);
+          changed = true;
+        }
+      }
+    }
+    if (options?.reconcile) {
+      const keep = new Set(tracks.map((track) => track.id));
+      for (const trackId of new Set([...this.records.keys(), ...this.pendingOwners.keys()])) {
+        if (!keep.has(trackId)) changed = this.removeOwnerRecord(trackId, owner) || changed;
+      }
+    }
+    if (changed) {
+      await this.persist();
+      this.emit();
+    }
+    for (const track of toStart) {
+      if (!this.enabled) return;
+      if (this.pendingOwners.get(track.id)?.size === 0) {
+        this.active.delete(track.id);
+        this.pendingOwners.delete(track.id);
+        this.emit();
+        continue;
+      }
       try {
-        await this.downloadTrack(track, owner);
-      } catch {
-        // Already recorded as a per-track error; keep enqueueing the rest.
+        await this.startTask(track);
+      } catch (error) {
+        this.fail(track.id, describe(error, "Download failed"), {
+          event: "enqueue-failed", title: trackLabel(track), source: track.source, owner,
+        });
       }
     }
   }
 
-  /** Drop a playlist's ownership from every track it downloaded. */
-  async removePlaylist(
-    playlistId: string,
-    trackIds: string[],
-  ): Promise<void> {
+  /** Drop a playlist's ownership from the supplied tracks in one mutation. */
+  async removePlaylist(playlistId: string, trackIds: string[]): Promise<void> {
     await this.hydrate();
     if (!this.enabled) return;
     const owner = playlistOwner(playlistId);
+    let changed = false;
     for (const trackId of trackIds) {
-      await this.removeOwner(trackId, owner);
+      changed = this.removeOwnerRecord(trackId, owner) || changed;
+    }
+    if (changed) {
+      await this.persist();
+      this.emit();
     }
   }
 
-  private addOwner(record: DownloadRecord, owner: DownloadOwner): void {
-    if (record.owners.includes(owner)) return;
-    record.owners = [...record.owners, owner];
-    void this.persist();
-    this.emit();
+  private retainStoredTrack(record: DownloadRecord, track: TrackListItem, owner: DownloadOwner): boolean {
+    let changed = false;
+    if (!record.track) {
+      record.track = track;
+      changed = true;
+    }
+    if (!record.owners.includes(owner)) {
+      record.owners = [...record.owners, owner];
+      changed = true;
+    }
+    return changed;
   }
 
   /**
@@ -785,10 +879,12 @@ export class DownloadStore {
     }
   }
 
-  private queueOwner(trackId: string, owner: DownloadOwner): void {
+  private queueOwner(trackId: string, owner: DownloadOwner): boolean {
     const owners = this.pendingOwners.get(trackId) ?? new Set<DownloadOwner>();
+    if (owners.has(owner)) return false;
     owners.add(owner);
     this.pendingOwners.set(trackId, owners);
+    return true;
   }
 
   /**
@@ -797,11 +893,22 @@ export class DownloadStore {
    * downloads succeed regardless. Covers are keyed by album so tracks of the
    * same album reuse a single file.
    */
-  private async downloadCover(
-    track: TrackListItem,
-  ): Promise<string | undefined> {
+  private async downloadCover(track: TrackListItem): Promise<string | undefined> {
     if (!this.enabled || track.has_cover === false) return undefined;
+    const key = coverStorageKey(track);
+    const pending = this.coverRequests.get(key);
+    if (pending) return pending;
+    const request = this.fetchCover(track, key).finally(() => this.coverRequests.delete(key));
+    this.coverRequests.set(key, request);
+    return request;
+  }
+
+  private async fetchCover(track: TrackListItem, key: string): Promise<string | undefined> {
     try {
+      for (const extension of COVER_EXTENSIONS) {
+        const filename = `${key}.${extension}`;
+        if (this.coverFileFor(filename).exists) return filename;
+      }
       // `cover_url` can be a server- (or upstream-TIDAL-) supplied absolute URL,
       // so credentials only go to our own origin. Off-origin artwork is still
       // fetched, just anonymously.
@@ -838,8 +945,7 @@ export class DownloadStore {
         });
         return undefined;
       }
-      const coverKey = track.album_id || track.id;
-      const filename = `cover_${sanitizeId(coverKey)}.${extensionForImageContentType(contentType)}`;
+      const filename = `${key}.${extensionForImageContentType(contentType)}`;
       const file = new File(this.ensureCoverDir(), filename);
       if (!file.exists) {
         const bytes = new Uint8Array(await response.arrayBuffer());
@@ -972,4 +1078,8 @@ export function setDownloadAccount(accountId: string | null): DownloadStore {
   downloadStore.retire();
   downloadStore = new DownloadStore(accountId);
   return downloadStore;
+}
+
+function coverStorageKey(track: TrackListItem): string {
+  return `cover_${sanitizeId(track.album_id || track.id)}`;
 }

@@ -35,7 +35,7 @@ export {
   setUnauthorizedHandler,
 } from "./api-transport";
 export * from "./api-media";
-export { isValidPinID, pinIDPattern } from "./api-integration-helpers";
+export { isValidPinID } from "./api-integration-helpers";
 export type * from "./api-auth-types";
 
 /**

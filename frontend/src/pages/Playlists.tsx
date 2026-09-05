@@ -11,7 +11,6 @@ import { pluralize } from "../lib/format";
 export default function Playlists() {
   const { data: rows, error } = useApiResource<Playlist[]>(
     (signal) => api.listPlaylists({ signal }),
-    [],
     "Failed to load playlists.",
   );
 

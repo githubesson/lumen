@@ -14,7 +14,6 @@ export default function Recent() {
   const { play } = usePlayer();
   const { data: tracks, error } = useApiResource<TrackListItem[]>(
     (signal) => api.listRecent(100, { signal }),
-    [],
     "Failed to load recent plays.",
   );
 

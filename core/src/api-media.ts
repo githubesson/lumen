@@ -243,9 +243,3 @@ export function displayArtists(track: { artists?: TrackArtist[] }): string {
     .map((artist) => artist.name)
     .join(", ");
 }
-
-export function primaryArtistName(track: { artists?: TrackArtist[] }): string {
-  const artists = track.artists ?? [];
-  const performer = artists.find((artist) => artist.role !== "composer");
-  return (performer ?? artists[0])?.name ?? "";
-}

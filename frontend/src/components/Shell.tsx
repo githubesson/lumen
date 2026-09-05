@@ -150,8 +150,6 @@ export default function Shell() {
     },
     {
       id: "palette:toggle",
-      label: "Toggle command palette",
-      group: "Navigation",
       allowInInput: true,
     },
   );
@@ -161,7 +159,7 @@ export default function Shell() {
       e.preventDefault();
       toggleSidebar();
     },
-    { id: "sidebar:toggle", label: "Toggle sidebar", group: "Navigation" },
+    { id: "sidebar:toggle" },
   );
 
   const initial = (me?.username ?? "?").slice(0, 2).toUpperCase();

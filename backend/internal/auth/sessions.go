@@ -56,28 +56,6 @@ func (s *SessionStore) Create(ctx context.Context, userID uuid.UUID, r *http.Req
 	return plain, SessionInfo{ID: id, UserID: userID, ExpiresAt: expires}, nil
 }
 
-func (s *SessionStore) Lookup(ctx context.Context, plain string) (SessionInfo, error) {
-	hash := HashToken(plain)
-	var info SessionInfo
-	err := s.db.QueryRow(ctx, `
-		SELECT id, user_id, expires_at FROM sessions
-		WHERE token_hash = $1 AND expires_at > NOW()`, hash,
-	).Scan(&info.ID, &info.UserID, &info.ExpiresAt)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return SessionInfo{}, ErrSessionNotFound
-		}
-		return SessionInfo{}, err
-	}
-	// Avoid turning every authenticated request into a row update. Session
-	// activity is only operational metadata, so minute-level precision is
-	// sufficient and greatly reduces WAL/lock traffic for media segment calls.
-	_, _ = s.db.Exec(ctx, `
-		UPDATE sessions SET last_seen_at = NOW()
-		WHERE id = $1 AND last_seen_at < NOW() - INTERVAL '5 minutes'`, info.ID)
-	return info, nil
-}
-
 // LookupUser authenticates a session and returns its user in one database
 // round-trip. The data-modifying CTE throttles last_seen_at updates while the
 // joined query avoids the separate user lookup previously performed by HTTP
@@ -135,11 +113,6 @@ func (s *SessionStore) DeleteExpired(ctx context.Context) (int64, error) {
 
 func (s *SessionStore) Revoke(ctx context.Context, plain string) error {
 	_, err := s.db.Exec(ctx, `DELETE FROM sessions WHERE token_hash = $1`, HashToken(plain))
-	return err
-}
-
-func (s *SessionStore) RevokeAllForUser(ctx context.Context, userID uuid.UUID) error {
-	_, err := s.db.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID)
 	return err
 }
 

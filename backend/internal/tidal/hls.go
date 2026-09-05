@@ -171,24 +171,8 @@ func (c *Client) streamSegments(ctx context.Context, parsed parsedPlaylist, base
 			slog.Warn("tidal hls init fetch failed", "url", logSafeURL(initURL), "err", err)
 			return err
 		}
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return fmt.Errorf("tidal hls init read failed: %w", err)
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("tidal hls init status %s", resp.Status)
-		}
-		out := body
-		if parsed.initKey >= 0 && parsed.initKey < len(keys) && keys[parsed.initKey] != nil {
-			plain, derr := decryptHLSSegment(body, keys[parsed.initKey], parsed.keys[parsed.initKey].iv, 0)
-			if derr != nil {
-				return fmt.Errorf("tidal hls init decrypt failed: %w", derr)
-			}
-			out = plain
-		}
-		if _, err := w.Write(out); err != nil {
-			return err
+		if err := writeHLSSegment(resp, w, parsed.initKey, keys, parsed.keys, 0); err != nil {
+			return fmt.Errorf("tidal hls init: %w", err)
 		}
 	}
 	for i, seg := range parsed.segments {
@@ -202,27 +186,45 @@ func (c *Client) streamSegments(ctx context.Context, parsed parsedPlaylist, base
 			slog.Warn("tidal hls segment fetch failed", "url", logSafeURL(segURL), "err", err)
 			return err
 		}
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return fmt.Errorf("tidal hls segment read failed: %w", err)
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("tidal hls segment %d status %s", i+1, resp.Status)
-		}
-		out := body
-		if seg.keyIndex >= 0 && seg.keyIndex < len(keys) && keys[seg.keyIndex] != nil {
-			plain, derr := decryptHLSSegment(body, keys[seg.keyIndex], parsed.keys[seg.keyIndex].iv, parsed.mediaSequence+uint64(i))
-			if derr != nil {
-				return fmt.Errorf("tidal hls segment %d decrypt failed: %w", i+1, derr)
-			}
-			out = plain
-		}
-		if _, err := w.Write(out); err != nil {
-			return err
+		if err := writeHLSSegment(resp, w, seg.keyIndex, keys, parsed.keys, parsed.mediaSequence+uint64(i)); err != nil {
+			return fmt.Errorf("tidal hls segment %d: %w", i+1, err)
 		}
 	}
 	return nil
+}
+
+// Encrypted segments need a complete ciphertext for CBC padding validation.
+// 32 MiB accommodates large lossless audio segments without unbounded buffering.
+const maxEncryptedHLSSegmentBytes = 32 << 20
+
+func writeHLSSegment(resp *http.Response, w io.Writer, keyIndex int, keys [][]byte, refs []hlsKeyRef, sequence uint64) error {
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("status %s", resp.Status)
+	}
+	if keyIndex < 0 || keyIndex >= len(keys) || keys[keyIndex] == nil {
+		_, err := io.Copy(w, resp.Body)
+		return err
+	}
+	if keyIndex >= len(refs) {
+		return errors.New("missing encryption key metadata")
+	}
+	if resp.ContentLength > maxEncryptedHLSSegmentBytes {
+		return errors.New("encrypted segment exceeds size limit")
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxEncryptedHLSSegmentBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(body) > maxEncryptedHLSSegmentBytes {
+		return errors.New("encrypted segment exceeds size limit")
+	}
+	plain, err := decryptHLSSegment(body, keys[keyIndex], refs[keyIndex].iv, sequence)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(plain)
+	return err
 }
 
 func isHLSResponse(resp *http.Response, rawURL string) bool {

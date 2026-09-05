@@ -236,7 +236,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         controls.toggle();
       }
     },
-    { id: "player:toggle", label: "Play / pause", group: "Playback" },
+    { id: "player:toggle" },
   );
   useKey(
     "left",
@@ -250,7 +250,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         });
       } else controls.seek(Math.max(0, time.currentTime - 5));
     },
-    { id: "player:seek-back", label: "Seek back 5s", group: "Playback" },
+    { id: "player:seek-back" },
   );
   useKey(
     "right",
@@ -268,7 +268,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         );
       }
     },
-    { id: "player:seek-fwd", label: "Seek forward 5s", group: "Playback" },
+    { id: "player:seek-fwd" },
   );
   useKey(
     "up",
@@ -280,7 +280,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         });
       } else controls.setVolume(state.volume + 0.05);
     },
-    { id: "player:vol-up", label: "Volume up", group: "Playback" },
+    { id: "player:vol-up" },
   );
   useKey(
     "down",
@@ -292,23 +292,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         });
       } else controls.setVolume(state.volume - 0.05);
     },
-    { id: "player:vol-down", label: "Volume down", group: "Playback" },
+    { id: "player:vol-down" },
   );
   useKey("n", () => {
     if (targetDevice) void sendCommand("next");
     else controls.next();
   }, {
-    id: "player:next",
-    label: "Next track",
-    group: "Playback",
+    id: "player:next"
   });
   useKey("p", () => {
     if (targetDevice) void sendCommand("previous");
     else controls.prev();
   }, {
-    id: "player:prev",
-    label: "Previous track",
-    group: "Playback",
+    id: "player:prev"
   });
   useKey("m", () => {
     if (targetDevice) {
@@ -316,18 +312,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
     else controls.toggleMute();
   }, {
-    id: "player:mute",
-    label: "Mute / unmute",
-    group: "Playback",
+    id: "player:mute"
   });
   useKey("s", () => {
     if (targetDevice) {
       void sendCommand("set_shuffle", { shuffle: !controlled.shuffle });
     } else controls.toggleShuffle();
   }, {
-    id: "player:shuffle",
-    label: "Shuffle",
-    group: "Playback",
+    id: "player:shuffle"
   });
   useKey("r", () => {
     if (targetDevice) {
@@ -336,9 +328,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       });
     } else controls.cycleRepeat();
   }, {
-    id: "player:repeat",
-    label: "Repeat",
-    group: "Playback",
+    id: "player:repeat"
   });
 
   const routedPlay = useCallback<PlayerControls["play"]>(

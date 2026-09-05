@@ -396,8 +396,6 @@ function useDetailTrackSearch(
     },
     {
       id: `library:${kind}:search`,
-      label: `Search this ${kind}`,
-      group: "Library",
       allowInInput: true,
     },
   );

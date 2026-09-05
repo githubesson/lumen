@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type DependencyList } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage } from "../api";
 
 export interface ApiResource<T> {
@@ -9,61 +9,12 @@ export interface ApiResource<T> {
   reload: () => void;
 }
 
-// Object deps are identified by insertion order in a WeakMap rather than by
-// value, so the key preserves `Object.is` semantics without retaining anything.
-const depIds = new WeakMap<object, number>();
-let nextDepId = 0;
-
-function depToken(dep: unknown): string {
-  if (dep === null) return "null";
-  const kind = typeof dep;
-  if (kind === "object" || kind === "function") {
-    const obj = dep as object;
-    let id = depIds.get(obj);
-    if (id === undefined) {
-      id = ++nextDepId;
-      depIds.set(obj, id);
-    }
-    return `o${id}`;
-  }
-  if (kind === "undefined") return "undef";
-  if (kind === "symbol") return `y${String(dep as symbol)}`;
-  return `${kind[0]}${String(dep)}`;
-}
-
 /**
- * Collapse a caller-supplied dependency list into one string.
- *
- * The effect below must have a fixed-length dependency array: spreading `deps`
- * into it made React throw "The final argument passed to useEffect changed size
- * between renders" for any caller whose list length varies (e.g. a conditional
- * dep). One string dep is always one element.
- */
-function depsKey(deps: DependencyList): string {
-  // Length-prefixed rather than separator-joined: a token can contain any
-  // character, so ["a","b"] and ["ab"] must not produce the same key.
-  return deps.map((dep) => {
-    const token = depToken(dep);
-    return `${token.length}:${token}`;
-  }).join("");
-}
-
-/**
- * Fetch a single resource with loading/error state and automatic cancellation.
- * Owns the AbortController and an aborted-guard so a dependency change or
- * unmount can't set state on a stale resolve. Replaces the hand-rolled
- * useState + useEffect + AbortController + ApiError boilerplate that was
- * copy-pasted across the list pages.
- *
- * `deps` are the values that should trigger a refetch (same contract as
- * useEffect's dependency array). `fetcher` and `fallbackMessage` deliberately
- * do not: they are read through refs, so an inline fetcher does not cause a
- * refetch loop, but it is also never a stale closure — the ref is refreshed
- * before the fetch effect re-runs.
+ * Load a resource on mount or explicit reload, cancelling superseded requests.
+ * Fetchers are read through refs so inline callbacks do not trigger refetches.
  */
 export function useApiResource<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
-  deps: DependencyList,
   fallbackMessage = "Something went wrong.",
 ): ApiResource<T> {
   const [data, setData] = useState<T | null>(null);
@@ -83,12 +34,10 @@ export function useApiResource<T>(
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
 
-  const key = depsKey(deps);
-
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
-    // A changed resource key begins a new request lifecycle.
+    // Mount and explicit reload begin a new request lifecycle.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
@@ -108,7 +57,7 @@ export function useApiResource<T>(
       active = false;
       controller.abort();
     };
-  }, [key, nonce]);
+  }, [nonce]);
 
   return { data, error, loading, reload };
 }

@@ -160,9 +160,10 @@ class AutoDownloadStore {
       return;
     }
     await this.downloads.hydrate();
-    const missing = tracks.filter((track) => !this.downloads.isDownloaded(track.id));
-    if (missing.length === 0) return;
-    await this.downloads.downloadPlaylist(playlistId, missing, {
+    if (this.retired || !this.enabled.has(playlistId)) return;
+    // Existing downloads also need this playlist's ownership. Screen data may
+    // be cached, so only sync()'s complete server response removes old owners.
+    await this.downloads.downloadPlaylist(playlistId, tracks, {
       playlistName: options?.playlistName,
     });
   }
@@ -184,9 +185,15 @@ class AutoDownloadStore {
     this.syncing.add(playlistId);
     try {
       const response = await api.listPlaylistTracks(playlistId);
-      const tracks = (response.tracks ?? []).map(playlistEntryToTrack);
-      if (tracks.length === 0) return;
-      await this.syncWithTracks(playlistId, tracks, options);
+      if (this.retired || !this.enabled.has(playlistId) || offlineStore.isOffline()) return;
+      if (!Array.isArray(response.tracks) || response.tracks.some(
+        (track) => !track || typeof track.track_id !== "string" || !track.track_id,
+      )) throw new Error("Invalid playlist track response");
+      const tracks = response.tracks.map(playlistEntryToTrack);
+      await this.downloads.downloadPlaylist(playlistId, tracks, {
+        playlistName: options?.playlistName,
+        reconcile: true,
+      });
     } catch (error) {
       // Offline or server-side failure: leave existing downloads untouched and
       // retry on the next foreground / reconnect. This is the one failure that

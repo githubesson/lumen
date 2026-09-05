@@ -23,6 +23,9 @@ const h = vi.hoisted(() => {
     dirs: new Set<string>(),
     kv: new Map<string, string>(),
     tasks: [] as FakeTask[],
+    writes: [] as { key: string; value: string }[],
+    beforeWrite: async () => {},
+    listPlaylistTracks: vi.fn(),
     baseUrl: "https://api.test",
     cookieRead: async () => ({}),
     fetchImpl: async () => new Response(null, { status: 404 }),
@@ -34,6 +37,8 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
   default: {
     getItem: async (key: string) => h.kv.get(key) ?? null,
     setItem: async (key: string, value: string) => {
+      h.writes.push({ key, value });
+      await h.beforeWrite();
       h.kv.set(key, value);
     },
     removeItem: async (key: string) => {
@@ -148,7 +153,13 @@ vi.mock("@preeternal/react-native-cookie-manager", () => ({
   default: { get: () => h.cookieRead() },
 }));
 
+vi.mock("../lib/offline-mode", () => ({ offlineStore: { isOffline: () => false } }));
+
 vi.mock("@music-library/core", () => ({
+  api: { listPlaylistTracks: (id: string) => h.listPlaylistTracks(id) },
+  playlistEntryToTrack: (entry: { track_id: string; title: string; duration_ms: number }) => ({
+    ...entry, id: entry.track_id,
+  }),
   downloadStreamUrl: (id: string) => `https://api.test/stream/${id}`,
   getBaseUrl: () => h.baseUrl,
   trackCoverUrl: () => "https://api.test/cover",
@@ -171,7 +182,7 @@ vi.mock("../lib/downloads/live-activity", () => ({
 vi.stubGlobal("fetch", (...args: unknown[]) => h.fetchImpl(...args));
 
 import type { TrackListItem } from "@music-library/core";
-import { createDownloadTask } from "@kesha-antonov/react-native-background-downloader";
+import { createDownloadTask, getExistingDownloadTasks } from "@kesha-antonov/react-native-background-downloader";
 import type { downloadStore as storeType } from "../lib/downloads/download-store";
 
 const t = (id: string, albumId = "album1"): TrackListItem => ({
@@ -221,6 +232,7 @@ async function finishTask(
     resolve = res;
   });
   const unsubscribe = store.subscribe(() => {
+    if (store.isActive(id)) return;
     unsubscribe();
     resolve();
   });
@@ -235,8 +247,12 @@ beforeEach(() => {
   h.dirs.clear();
   h.kv.clear();
   h.tasks.length = 0;
+  h.writes.length = 0;
+  h.beforeWrite = async () => {};
+  h.listPlaylistTracks.mockReset().mockResolvedValue({ tracks: [] });
   h.fetchImpl = async () => new Response(null, { status: 404 });
   vi.clearAllMocks();
+  vi.mocked(getExistingDownloadTasks).mockResolvedValue([]);
 });
 
 describe("downloadStore", () => {
@@ -415,5 +431,238 @@ describe("account isolation", () => {
     const alice = await freshStore();
     await alice.hydrate();
     expect(alice.tracksForOwner("playlist:shared")).toEqual([]);
+  });
+});
+
+function seedDownloads(ids: string[], owner = "playlist:p1", cover = false) {
+  const dir = `${h.DOC}/offline-audio-v2/https_3A_2F_2Fapi.test/alice`;
+  const records = ids.map((id) => {
+    h.files.set(`${dir}/${id}.mp3`, MP3_HEAD);
+    return {
+      trackId: id, filename: `${id}.mp3`, size: MP3_HEAD.length,
+      downloadedAt: 1, owners: [owner], track: t(id),
+      coverFilename: cover ? "cover_album1.jpg" : undefined,
+    };
+  });
+  if (cover) h.files.set(`${dir}/covers/cover_album1.jpg`, new Uint8Array([1, 2, 3, 4]));
+  h.kv.set(`offline-downloads.v2:${JSON.stringify([h.baseUrl, "alice"])}`, JSON.stringify({ records }));
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => { resolve = res; });
+  return { promise, resolve };
+}
+
+function coverResponse() {
+  return new Response(new Uint8Array([1, 2, 3, 4]).buffer, {
+    headers: { "content-type": "image/jpeg" },
+  });
+}
+
+describe("batched download mutations", () => {
+  it("removes a large playlist with one write and notification while preserving shared files", async () => {
+    const ids = Array.from({ length: 200 }, (_, i) => `track${i}`);
+    seedDownloads(ids, "playlist:p1", true);
+    const store = await freshStore();
+    await store.hydrate();
+    await store.downloadTrack(t(ids[0]), "playlist:p2");
+    const coverUri = store.coverUriFor(ids[0])!;
+    h.writes.length = 0;
+    const listener = vi.fn();
+    store.subscribe(listener);
+    await store.removePlaylist("p1", ids);
+    expect(h.writes).toHaveLength(1);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(store.tracksForOwner("playlist:p1")).toEqual([]);
+    expect(store.tracksForOwner("playlist:p2").map((track) => track.id)).toEqual([ids[0]]);
+    expect(h.files.has(coverUri)).toBe(true);
+    await store.removePlaylist("p2", [ids[0]]);
+    expect(h.files.has(coverUri)).toBe(false);
+  });
+
+  it("attaches a playlist to stored tracks with one write and no transfers", async () => {
+    const ids = ["a", "b", "c"];
+    seedDownloads(ids);
+    const store = await freshStore();
+    await store.hydrate();
+    h.writes.length = 0;
+    const listener = vi.fn();
+    store.subscribe(listener);
+    await store.downloadPlaylist("p2", ids.map((id) => t(id)));
+    expect(h.writes).toHaveLength(1);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(createDownloadTask).not.toHaveBeenCalled();
+    expect(store.tracksForOwner("playlist:p2")).toHaveLength(3);
+    await store.downloadPlaylist("p2", ids.map((id) => t(id)));
+    expect(h.writes).toHaveLength(1);
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it("serializes overlapping writes and persists the latest ownership", async () => {
+    seedDownloads(["a"]);
+    const store = await freshStore();
+    await store.hydrate();
+    const gate = deferred<void>();
+    h.beforeWrite = () => gate.promise;
+    const first = store.downloadTrack(t("a"), "playlist:p2");
+    await vi.waitFor(() => expect(h.writes).toHaveLength(1));
+    const second = store.downloadTrack(t("a"), "playlist:p3");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.writes).toHaveLength(1);
+    gate.resolve();
+    await Promise.all([first, second]);
+    const saved = JSON.parse(h.kv.get(`offline-downloads.v2:${store.accountKey}`)!);
+    expect(saved.records[0].owners).toEqual(["playlist:p1", "playlist:p2", "playlist:p3"]);
+  });
+});
+
+describe("artwork reuse", () => {
+  it("reuses hydrated artwork without a request", async () => {
+    seedDownloads(["a"], "track", true);
+    const store = await freshStore();
+    h.fetchImpl = vi.fn(async () => new Response(null, { status: 500 }));
+    await store.downloadTrack(t("b"), "track");
+    await finishTask(store, "b", MP3_HEAD);
+    expect(h.fetchImpl).not.toHaveBeenCalled();
+    expect(store.coverUriFor("b")).toBe(store.coverUriFor("a"));
+  });
+
+  it("shares an in-flight request and releases artwork only after both tracks are removed", async () => {
+    const gate = deferred<Response>();
+    h.fetchImpl = vi.fn(() => gate.promise);
+    const store = await freshStore();
+    await store.downloadPlaylist("p1", [t("a"), t("b")]);
+    const completed = Promise.all([finishTask(store, "a", MP3_HEAD), finishTask(store, "b", MP3_HEAD)]);
+    await vi.waitFor(() => expect(h.fetchImpl).toHaveBeenCalledOnce());
+    gate.resolve(coverResponse());
+    await completed;
+    const uri = store.coverUriFor("a")!;
+    expect(uri).toBe(store.coverUriFor("b"));
+    expect(h.files.has(uri)).toBe(true);
+    await store.removeOwner("a", "playlist:p1");
+    expect(h.files.has(uri)).toBe(true);
+    await store.removeOwner("b", "playlist:p1");
+    expect(h.files.has(uri)).toBe(false);
+  });
+
+  it("retries failed artwork on a later track", async () => {
+    h.fetchImpl = vi.fn().mockResolvedValueOnce(new Response(null, { status: 404 })).mockImplementation(coverResponse);
+    const store = await freshStore();
+    await store.downloadTrack(t("a"), "track");
+    await finishTask(store, "a", MP3_HEAD);
+    await store.downloadTrack(t("b"), "track");
+    await finishTask(store, "b", MP3_HEAD);
+    expect(h.fetchImpl).toHaveBeenCalledTimes(2);
+    expect(store.coverUriFor("b")).toBeDefined();
+  });
+
+  it("does not resurrect removed owners when concurrent downloads complete", async () => {
+    const gate = deferred<Response>();
+    h.fetchImpl = vi.fn(() => gate.promise);
+    const store = await freshStore();
+    await store.downloadTrack(t("a"), "playlist:p1");
+    await store.downloadTrack(t("b"), "playlist:p2");
+    const completed = Promise.all([finishTask(store, "a", MP3_HEAD), finishTask(store, "b", MP3_HEAD)]);
+    await vi.waitFor(() => expect(h.fetchImpl).toHaveBeenCalledOnce());
+    await store.downloadPlaylist("p1", [], { reconcile: true });
+    gate.resolve(coverResponse());
+    await completed;
+    expect(store.isDownloaded("a")).toBe(false);
+    expect(store.hasOwner("playlist:p1")).toBe(false);
+    expect(store.isDownloaded("b")).toBe(true);
+    expect(h.files.has(store.coverUriFor("b")!)).toBe(true);
+    await store.removeOwner("b", "playlist:p2");
+    expect([...h.files.keys()].filter((path) => path.includes("/covers/"))).toEqual([]);
+  });
+});
+
+async function autoStore(store: typeof storeType, playlistId = "p2") {
+  h.kv.set(`auto-download.playlists.v1:v2:${store.accountKey}`, JSON.stringify([playlistId]));
+  const { setAutoDownloadAccount } = await import("../lib/downloads/auto-download");
+  return setAutoDownloadAccount(store);
+}
+
+function serverTracks(ids: string[]) {
+  return { tracks: ids.map((id) => ({ ...t(id), track_id: id })) };
+}
+
+describe("automatic ownership reconciliation", () => {
+  it("retains an existing download for a second playlist", async () => {
+    seedDownloads(["a"]);
+    const store = await freshStore();
+    const auto = await autoStore(store);
+    h.listPlaylistTracks.mockResolvedValue(serverTracks(["a"]));
+    await auto.sync("p2");
+    await store.removePlaylist("p1", ["a"]);
+    expect(store.isDownloaded("a")).toBe(true);
+    expect(store.hasOwner("playlist:p2")).toBe(true);
+    expect(createDownloadTask).not.toHaveBeenCalled();
+  });
+
+  it("removes obsolete owners after successful responses, including empty playlists", async () => {
+    seedDownloads(["a", "b"], "playlist:p2");
+    const store = await freshStore();
+    const auto = await autoStore(store);
+    h.listPlaylistTracks.mockResolvedValue(serverTracks(["b"]));
+    await auto.sync("p2");
+    expect(store.isDownloaded("a")).toBe(false);
+    expect(store.isDownloaded("b")).toBe(true);
+    h.listPlaylistTracks.mockResolvedValue(serverTracks([]));
+    await auto.sync("p2");
+    expect(store.isDownloaded("b")).toBe(false);
+  });
+
+  it("keeps downloads on failed or malformed responses and adds ownership from screen data", async () => {
+    seedDownloads(["a", "b"], "playlist:p2");
+    const store = await freshStore();
+    const auto = await autoStore(store);
+    h.listPlaylistTracks.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({});
+    await auto.sync("p2");
+    await auto.sync("p2");
+    await auto.syncWithTracks("p2", [t("a")]);
+    expect(store.isDownloaded("a")).toBe(true);
+    expect(store.isDownloaded("b")).toBe(true);
+    await store.downloadTrack(t("a"), "playlist:p1");
+    await store.removeOwner("a", "playlist:p2");
+    await auto.syncWithTracks("p2", [t("a")]);
+    await store.removeOwner("a", "playlist:p1");
+    expect(store.isDownloaded("a")).toBe(true);
+  });
+
+  it("ignores an in-flight response after automatic downloads are disabled", async () => {
+    seedDownloads(["a"], "playlist:p2");
+    const store = await freshStore();
+    const auto = await autoStore(store);
+    const gate = deferred<ReturnType<typeof serverTracks>>();
+    h.listPlaylistTracks.mockReturnValue(gate.promise);
+    const sync = auto.sync("p2");
+    await vi.waitFor(() => expect(h.listPlaylistTracks).toHaveBeenCalledOnce());
+    await auto.setEnabled("p2", false);
+    gate.resolve(serverTracks([]));
+    await sync;
+    await store.hydrate();
+    expect(store.isDownloaded("a")).toBe(true);
+  });
+});
+
+
+describe("pending ownership after restart", () => {
+  it.each([false, true])("restores pending owner removals (remaining owner: %s)", async (keepSecondOwner) => {
+    const store = await freshStore();
+    await store.downloadTrack(t("a"), "playlist:p1");
+    if (keepSecondOwner) await store.downloadTrack(t("a"), "playlist:p2");
+    await store.removeOwner("a", "playlist:p1");
+    const task = h.tasks[0];
+    vi.mocked(getExistingDownloadTasks).mockResolvedValue([
+      task as unknown as Awaited<ReturnType<typeof getExistingDownloadTasks>>[number],
+    ]);
+    const restored = await freshStore();
+    await restored.hydrate();
+    await finishTask(restored, "a", MP3_HEAD);
+    expect(restored.hasOwner("playlist:p1")).toBe(false);
+    expect(restored.hasOwner("playlist:p2")).toBe(keepSecondOwner);
+    expect(restored.isDownloaded("a")).toBe(keepSecondOwner);
   });
 });

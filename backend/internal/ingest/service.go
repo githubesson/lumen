@@ -497,14 +497,3 @@ func joinArtistNames(refs []ArtistRef) string {
 	}
 	return strings.Join(names, ", ")
 }
-
-// RelativeMusicPath returns a path relative to whichever configured root
-// contains it, or the original path if it lies outside every root.
-func (s *Service) RelativeMusicPath(p string) string {
-	for _, root := range s.AllRoots(context.Background()) {
-		if rel, err := filepath.Rel(root, p); err == nil && !strings.HasPrefix(rel, "..") {
-			return rel
-		}
-	}
-	return p
-}

@@ -258,10 +258,6 @@ export function subscribePlaybackRemoteSession(
   return () => remoteSessionListeners.delete(listener);
 }
 
-export function getPlaybackRemoteSession(): PlaybackRemoteSessionSnapshot {
-  return remoteSessionSnapshot;
-}
-
 export function usePlaybackRemoteSession(): PlaybackRemoteSessionSnapshot {
   const [snapshot, setSnapshot] = useState(remoteSessionSnapshot);
   useEffect(() => subscribePlaybackRemoteSession(setSnapshot), []);

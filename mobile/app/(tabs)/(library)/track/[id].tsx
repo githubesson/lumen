@@ -66,7 +66,7 @@ export default function TrackInfoScreen() {
           ) : null}
         </View>
 
-        <InfoBlock title="Artists" theme={theme}>
+        <InfoBlock title="Artists">
           {t.artists.length === 0 ? (
             <InfoRow label="—" value="" theme={theme} />
           ) : (
@@ -76,7 +76,7 @@ export default function TrackInfoScreen() {
           )}
         </InfoBlock>
 
-        <InfoBlock title="Details" theme={theme}>
+        <InfoBlock title="Details">
           <InfoRow label="Duration" value={formatDurationMs(t.duration_ms)} theme={theme} />
           {typeof t.track_no === "number" ? (
             <InfoRow label="Track" value={String(t.track_no)} theme={theme} />
@@ -122,11 +122,9 @@ export default function TrackInfoScreen() {
 function InfoBlock({
   title,
   children,
-  theme,
 }: {
   title: string;
   children: React.ReactNode;
-  theme: ThemeTokens;
 }) {
   return (
     <View style={{ width: "100%", gap: 6 }}>

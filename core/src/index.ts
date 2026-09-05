@@ -49,7 +49,6 @@ export {
   clampVolume,
   VOLUME_STORAGE_KEY,
   ACTIVITY_DEVICE_ID_STORAGE_KEY,
-  getPlaybackRemoteSession,
   getLatestPlaybackActivity,
   getOrCreateActivityDeviceId,
   sendRemotePlaybackCommand,

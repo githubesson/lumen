@@ -244,26 +244,6 @@ func (c *Client) Track(ctx context.Context, id string) (Track, error) {
 	return track, nil
 }
 
-func (c *Client) StreamResponse(ctx context.Context, id string, incoming *http.Request) (*http.Response, error) {
-	streamURL, err := c.StreamURL(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.openStream(ctx, streamURL, incoming)
-	if err == nil && resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusNotFound {
-		return resp, nil
-	}
-	if resp != nil {
-		resp.Body.Close()
-	}
-	c.forgetStream(id)
-	streamURL, err = c.StreamURL(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	return c.openStream(ctx, streamURL, incoming)
-}
-
 func (c *Client) HLSResponse(ctx context.Context, id string, incoming *http.Request, proxyURL func(string) string) (*http.Response, error) {
 	slog.Debug("tidal hifi stream resolve start", "track", id)
 	streamURL, err := c.StreamURL(ctx, id)
@@ -454,12 +434,6 @@ func (c *Client) storeCachedStream(key, streamURL string, now time.Time) {
 		}
 	}
 	c.streamCache[key] = cachedStream{URL: streamURL, ExpiresAt: now.Add(streamCacheTTL)}
-}
-
-func (c *Client) forgetStream(id string) {
-	c.mu.Lock()
-	delete(c.streamCache, c.cacheKey(id))
-	c.mu.Unlock()
 }
 
 func (c *Client) cacheKey(id string) string {
