@@ -2,9 +2,24 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
+import corePackage from "../core/package.json";
 
-const coreSource = (path: string) =>
-  fileURLToPath(new URL(`../core/src/${path}`, import.meta.url));
+// Resolve every public core entry from the checked-out source package. Using
+// node_modules for only some subpaths can pick up an older installed manifest.
+const coreAliases = Object.entries(corePackage.exports).map(([entry, target]) => {
+  const specifier = entry === "."
+    ? corePackage.name
+    : `${corePackage.name}/${entry.slice(2)}`;
+  const pattern = specifier
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace("\\*", "(.*)");
+  return {
+    find: new RegExp(`^${pattern}$`),
+    replacement: fileURLToPath(
+      new URL(`../core/${target.replace("*", "$1")}`, import.meta.url),
+    ),
+  };
+});
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -14,20 +29,7 @@ export default defineConfig({
     // react@19 devDependency — two React copies, null dispatcher, dead
     // renderer. Force everything onto this package's copy.
     dedupe: ["react", "react-dom"],
-    alias: [
-      {
-        find: "@music-library/core/api",
-        replacement: coreSource("api.ts"),
-      },
-      {
-        find: "@music-library/core/events",
-        replacement: coreSource("events.ts"),
-      },
-      {
-        find: /^@music-library\/core$/,
-        replacement: coreSource("index.ts"),
-      },
-    ],
+    alias: coreAliases,
   },
   server: {
     port: 5173,
