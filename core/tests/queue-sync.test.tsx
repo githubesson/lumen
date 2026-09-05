@@ -5,6 +5,7 @@ import { api, setBaseUrl, type TrackListItem } from "../src/api";
 import { usePlaybackActivityPublisher, usePlaybackRemoteSession } from "../src/player/activity-sync";
 import { remotePlayerState, useRemotePlaybackCommands } from "../src/player/remote-control";
 import type { PlayerControls, PlayerState } from "../src/player/player-core";
+import type { AudioAdapter, AudioAdapterEvent } from "../src/player/audio-adapter";
 
 class Socket {
   static OPEN = 1;
@@ -41,7 +42,7 @@ afterEach(() => {
   Socket.instances = [];
 });
 
-async function setup() {
+async function setup(adapter?: Pick<AudioAdapter, "on" | "currentTime" | "duration">) {
   vi.stubGlobal("WebSocket", Socket);
   setBaseUrl("https://lumen.test");
   vi.spyOn(api, "upsertPlaybackActivity").mockResolvedValue(undefined as never);
@@ -51,7 +52,7 @@ async function setup() {
     "setVolume", "setMuted", "toggleMute", "setShuffle", "toggleShuffle", "setRepeat", "cycleRepeat",
   ].map((key) => [key, vi.fn()])) as unknown as PlayerControls;
   const hook = renderHook((s: PlayerState) => {
-    usePlaybackActivityPublisher({ state: s, time, storage, deviceName: "Test", controls });
+    usePlaybackActivityPublisher({ state: s, time, storage, deviceName: "Test", controls, adapter });
     return usePlaybackRemoteSession();
   }, { initialProps: state });
   await act(async () => {});
@@ -59,6 +60,55 @@ async function setup() {
   act(() => socket.open());
   return { ...hook, socket, controls };
 }
+
+function liveClock() {
+  const listeners = new Map<AudioAdapterEvent, () => void>();
+  const clock = { currentTime: 45, duration: 300 };
+  const adapter = {
+    currentTime: () => clock.currentTime,
+    duration: () => clock.duration,
+    on(event: AudioAdapterEvent, listener: () => void) {
+      listeners.set(event, listener);
+      return () => { listeners.delete(event); };
+    },
+  };
+  return { clock, adapter, emit: (event: AudioAdapterEvent) => listeners.get(event)?.() };
+}
+
+it("publishes live audio time while the source UI clock is frozen, including reconnect", async () => {
+  const { adapter, clock } = liveClock();
+  const { socket } = await setup(adapter);
+  expect(socket.sent.at(-1)).toMatchObject({ activity: { position_sec: 45, duration_sec: 300 } });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  act(() => socket.close());
+  clock.currentTime = 65;
+  act(() => vi.advanceTimersByTime(1000));
+  const reconnected = Socket.instances[1];
+  act(() => reconnected.open());
+  expect(reconnected.sent.at(-1)).toMatchObject({ activity: { position_sec: 65 } });
+});
+
+it("publishes a completed seek before the UI has committed its new time", async () => {
+  const { adapter, clock, emit } = liveClock();
+  const { socket } = await setup(adapter);
+  clock.currentTime = 120;
+  act(() => emit("seeked"));
+  expect(socket.sent.at(-1)).toMatchObject({ activity: { position_sec: 120, duration_sec: 300 } });
+  clock.currentTime = 12;
+  act(() => emit("seeked"));
+  expect(socket.sent.at(-1)).toMatchObject({ activity: { position_sec: 12 } });
+});
+
+it("samples each heartbeat independently of paused rendering", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  const { adapter, clock } = liveClock();
+  const { socket } = await setup(adapter);
+  for (const seconds of [55, 65, 75]) {
+    clock.currentTime = seconds;
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(socket.sent.at(-1)).toMatchObject({ activity: { position_sec: seconds } });
+  }
+});
 
 it("publishes actual queue order and advances the window immediately, including while paused", async () => {
   const { socket, rerender } = await setup();

@@ -222,7 +222,7 @@ export interface PlaybackActivityPublisherOptions {
   time: TimeState;
   storage: Storage;
   deviceName: string;
-  adapter?: Pick<AudioAdapter, "on">;
+  adapter?: Pick<AudioAdapter, "on" | "currentTime" | "duration">;
   controls?: PlayerControls;
   capabilities?: PlaybackCapability[];
   controlEnabled?: boolean;
@@ -393,7 +393,11 @@ export function usePlaybackActivityPublisher({
       stateRef.current.isPlaying,
       stateRef.current.volume,
       stateRef.current.muted,
-      timeRef.current,
+      // UI interpolation stops in background tabs/apps and can lag a seek
+      // event until React commits. Heartbeats must sample the audio engine.
+      adapter
+        ? { currentTime: adapter.currentTime(), duration: adapter.duration() }
+        : timeRef.current,
     );
     const revision = ++revisionRef.current;
     if (!payload) {
@@ -431,7 +435,7 @@ export function usePlaybackActivityPublisher({
     // REST remains a compatibility path while the socket connects or when an
     // older deployment proxy does not yet support WebSocket upgrades.
     if (!sent) void api.upsertPlaybackActivity(payload).catch(() => {});
-  }, [deviceId, deviceName, enabled]);
+  }, [adapter, deviceId, deviceName, enabled]);
 
   // Keep the ref current from an effect: writing refs during render is
   // illegal under concurrent React (and rejected by the React Compiler).
@@ -574,7 +578,12 @@ export function usePlaybackActivityPublisher({
 
   useEffect(() => {
     if (!adapter) return;
-    return adapter.on("seeked", publish);
+    const offSeeked = adapter.on("seeked", publish);
+    const offMetadata = adapter.on("loadedmetadata", publish);
+    return () => {
+      offSeeked();
+      offMetadata();
+    };
   }, [adapter, publish]);
 
   const hasCurrentTrack = state.current != null;

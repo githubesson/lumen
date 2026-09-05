@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => {
   const calls: string[] = [];
   let resolveSeek: (() => void) | null = null;
+  let rejectSeek: (() => void) | null = null;
   let statusListener: ((status: unknown) => void) | null = null;
   const fakePlayer = {
     currentStatus: { isLoaded: true, playing: false, didJustFinish: false, duration: 0 },
@@ -27,10 +28,14 @@ const h = vi.hoisted(() => {
     pause: () => {
       calls.push("pause");
     },
-    seekTo: (_seconds: number) => {
+    seekTo: (seconds: number) => {
       calls.push("seekTo");
-      return new Promise<void>((resolve) => {
-        resolveSeek = resolve;
+      return new Promise<void>((resolve, reject) => {
+        resolveSeek = () => {
+          fakePlayer.currentTime = seconds;
+          resolve();
+        };
+        rejectSeek = () => reject(new Error("seek failed"));
       });
     },
     replace: (_source: { uri: string }) => {
@@ -43,6 +48,8 @@ const h = vi.hoisted(() => {
     calls,
     fakePlayer,
     finishSeek: () => resolveSeek?.(),
+    captureSeekCompletion: () => resolveSeek,
+    failSeek: () => rejectSeek?.(),
     emitStatus: (status: unknown) => statusListener?.(status),
   };
 });
@@ -125,6 +132,46 @@ describe("useExpoAudioAdapter seek/play ordering", () => {
     await flushMicrotasks();
     await adapter.play();
     expect(h.calls).toEqual(["seekTo", "play"]);
+  });
+
+  it("reports seeked only after the native playhead has moved", async () => {
+    const adapter = useExpoAudioAdapter();
+    h.fakePlayer.currentTime = 40;
+    const positions: number[] = [];
+    adapter.on("seeked", () => positions.push(adapter.currentTime()));
+    adapter.seek(90);
+    expect(positions).toEqual([]);
+    h.finishSeek();
+    await flushMicrotasks();
+    expect(positions).toEqual([90]);
+  });
+
+  it("does not publish a seek completion for a replaced track", async () => {
+    const adapter = useExpoAudioAdapter();
+    const seeked = vi.fn();
+    adapter.on("seeked", seeked);
+    adapter.seek(90);
+    adapter.load("https://example.test/next.mp3");
+    h.finishSeek();
+    await flushMicrotasks();
+    expect(seeked).not.toHaveBeenCalled();
+  });
+
+  it("ignores superseded and failed seeks", async () => {
+    const adapter = useExpoAudioAdapter();
+    const seeked = vi.fn();
+    adapter.on("seeked", seeked);
+    adapter.seek(10);
+    const finishFirst = h.captureSeekCompletion();
+    adapter.seek(90);
+    finishFirst?.();
+    await flushMicrotasks();
+    expect(seeked).not.toHaveBeenCalled();
+    h.failSeek();
+    await flushMicrotasks();
+    expect(seeked).not.toHaveBeenCalled();
+    await adapter.play();
+    expect(h.calls.at(-1)).toBe("play");
   });
 });
 

@@ -254,14 +254,21 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         player.pause();
       },
       seek(seconds) {
-        const seekPromise = player.seekTo(seconds).catch(() => {});
-        pendingSeekRef.current = seekPromise;
-        void seekPromise.then(() => {
-          if (pendingSeekRef.current === seekPromise) {
+        const seekPromise = player.seekTo(seconds).then(
+          () => {
+            if (pendingSeekRef.current !== seekPromise) return;
             pendingSeekRef.current = null;
-          }
-        });
-        dispatch("seeked");
+            // The core and remote activity publisher read currentTime on
+            // this event, so it must wait until the native seek completes.
+            dispatch("seeked");
+          },
+          () => {
+            if (pendingSeekRef.current === seekPromise) {
+              pendingSeekRef.current = null;
+            }
+          },
+        );
+        pendingSeekRef.current = seekPromise;
       },
       setVolume(v) {
         player.volume = v;
