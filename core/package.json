@@ -21,7 +21,11 @@
     "./favorites/toggle": "./src/favorites/favorite-toggle.ts",
     "./replay/period": "./src/replay/period.ts",
     "./player": "./src/player/index.ts",
-    "./player/*": "./src/player/*.ts"
+    "./player/*": "./src/player/*.ts",
+    "./lyrics": "./src/lyrics.ts",
+    "./metadata-edit": "./src/metadata-edit.ts",
+    "./share-snippet": "./src/share-snippet.ts",
+    "./auth/validation": "./src/auth/validation.ts"
   },
   "peerDependencies": {
     "react": "^18.3.1 || ^19.0.0"

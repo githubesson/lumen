@@ -1,3 +1,4 @@
+import { validateRegistrationInput } from "@music-library/core/auth/validation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -12,7 +13,6 @@ import {
 import { FormScreen } from "../../components/form-screen";
 import {
   extractInviteToken,
-  validateRegistrationInput,
 } from "../../lib/invite-registration";
 import { useTheme } from "../../theme/theme";
 

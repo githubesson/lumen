@@ -41,3 +41,5 @@ export {
   type RemotePlaybackCommandStatus,
   type RemotePlaybackControlEvent,
 } from "./activity-sync";
+
+export { useRoutedPlayerControls, type RoutedPlayerControlsOptions } from "./use-routed-player-controls";

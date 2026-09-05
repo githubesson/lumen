@@ -1,3 +1,4 @@
+import { buildTrackPatch } from "@music-library/core/metadata-edit";
 import { FormEvent, useEffect, useState } from "react";
 import {
   api,
@@ -67,28 +68,7 @@ export function EditTrackDialog({
       // Only send fields the user actually touched — detect by comparing to
       // initial values. Simpler: just always send fields that changed from
       // the loaded value.
-      const patch: Parameters<typeof api.updateTrack>[1] = {};
-      if (title !== track.title) patch.title = title;
-      const parsedArtists = artists
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const currentArtists = track.artists
-        .filter((a) => a.role !== "composer")
-        .map((a) => a.name);
-      if (parsedArtists.join("\u0000") !== currentArtists.join("\u0000"))
-        patch.artists = parsedArtists;
-      if (albumTitle !== (track.album_title ?? ""))
-        patch.album_title = albumTitle;
-      if (albumArtist !== "") patch.album_artist = albumArtist;
-      const y = parseInt(year || "0", 10);
-      if ((track.year ?? 0) !== y) patch.year = y;
-      if ((track.genre ?? "") !== genre) patch.genre = genre;
-      const tn = parseInt(trackNo || "0", 10);
-      if ((track.track_no ?? 0) !== tn) patch.track_no = tn;
-      const dn = parseInt(discNo || "0", 10);
-      if ((track.disc_no ?? 0) !== dn) patch.disc_no = dn;
-
+      const patch = buildTrackPatch(track, { title, artists, albumTitle, albumArtist, year, genre, trackNo, discNo });
       const updated = await api.updateTrack(trackId, patch);
       libraryChanged.emit();
       onSaved?.(updated);

@@ -1,3 +1,4 @@
+import { buildAlbumPatch } from "@music-library/core/metadata-edit";
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { PhotoIcon, TrashIcon } from "@heroicons/react/16/solid";
 import { api, albumCoverUrl, errorMessage, type Album } from "../../api";
@@ -103,12 +104,7 @@ export function EditAlbumDialog({
     setBusy(true);
     setError(null);
     try {
-      const patch: Parameters<typeof api.updateAlbum>[1] = {};
-      if (title !== album.title) patch.title = title;
-      if (albumArtist !== (album.artist_name ?? "")) patch.album_artist = albumArtist;
-      const y = parseInt(year || "0", 10);
-      if ((album.release_year ?? 0) !== y) patch.release_year = y;
-      if (isCompilation !== album.is_compilation) patch.is_compilation = isCompilation;
+      const patch = buildAlbumPatch(album, { title, albumArtist, year, isCompilation });
       const updated = await api.updateAlbum(album.id, patch);
       libraryChanged.emit();
       onSaved?.(updated);

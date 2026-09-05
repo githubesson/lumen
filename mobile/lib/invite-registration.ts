@@ -3,13 +3,6 @@ const MAX_INVITE_USES = 2_147_483_647;
 const INVITE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,}$/;
 const URL_CANDIDATE_PATTERN = /(?:https?:\/\/|musiclibrarymobile:\/\/)[^\s<>"']+/gi;
 
-export type RegistrationValidation = {
-  username: string;
-  usernameError: string | null;
-  passwordError: string | null;
-  valid: boolean;
-};
-
 export type InviteCreationValidation = {
   maxUses: number | null;
   expiresAt: string | undefined;
@@ -55,30 +48,6 @@ export function buildInviteShareMessage(token: string): string {
     "If the link doesn't open, open Lumen, choose Create account, and paste this invite token:",
     token,
   ].join("\n");
-}
-
-export function validateRegistrationInput(
-  usernameInput: string,
-  password: string,
-): RegistrationValidation {
-  const username = usernameInput.trim();
-  const usernameError =
-    Array.from(username).length >= 2
-      ? null
-      : "Username must be at least 2 characters.";
-  const passwordError =
-    Array.from(password).length < 8
-      ? "Password must be at least 8 characters."
-      : utf8ByteLength(password) > 256
-        ? "Password must be no more than 256 bytes."
-        : null;
-
-  return {
-    username,
-    usernameError,
-    passwordError,
-    valid: usernameError === null && passwordError === null,
-  };
 }
 
 export function validateInviteCreationInput(
@@ -139,22 +108,6 @@ function tokenFromUrl(candidate: string): string | null {
 
 function isInviteToken(value: string): boolean {
   return INVITE_TOKEN_PATTERN.test(value);
-}
-
-function utf8ByteLength(value: string): number {
-  let bytes = 0;
-  for (const character of value) {
-    const codePoint = character.codePointAt(0) ?? 0;
-    bytes +=
-      codePoint <= 0x7f
-        ? 1
-        : codePoint <= 0x7ff
-          ? 2
-          : codePoint <= 0xffff
-            ? 3
-            : 4;
-  }
-  return bytes;
 }
 
 function parsePositiveInteger(value: string): number | null {

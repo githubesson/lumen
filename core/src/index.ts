@@ -31,6 +31,8 @@ export {
 } from "./replay/period";
 export {
   usePlayerCore,
+  useRoutedPlayerControls,
+  type RoutedPlayerControlsOptions,
   activityTrack,
   buildRemoteQueue,
   compactRemoteTrack,
@@ -74,3 +76,8 @@ export {
   type UsePlayerCoreOptions,
   type UsePlayerCoreReturn,
 } from "./player";
+
+export * from "./lyrics";
+export * from "./metadata-edit";
+export * from "./share-snippet";
+export * from "./auth/validation";

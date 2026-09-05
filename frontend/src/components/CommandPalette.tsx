@@ -36,7 +36,7 @@ import CoverArt from "./CoverArt";
 import { displayText } from "../lib/format";
 import { useTrackContextMenu } from "./TrackContextMenu";
 import { useAuth } from "../context/Auth";
-import { usePlayer } from "../context/Player";
+import { usePlayer, useRemotePlayback } from "../context/Player";
 import { useTheme } from "../context/Theme";
 
 interface Props {
@@ -60,8 +60,8 @@ export default function CommandPalette({
   const { me, logout } = useAuth();
   const { theme, toggle: toggleTheme } = useTheme();
   const {
-    current,
-    isPlaying,
+    current: localCurrent,
+    isPlaying: localIsPlaying,
     toggle,
     next,
     prev,
@@ -69,6 +69,12 @@ export default function CommandPalette({
     cycleRepeat,
     play,
   } = usePlayer();
+  const { targetDevice } = useRemotePlayback();
+  // Match the device that the player controls currently route commands to.
+  const hasTrack = targetDevice ? !!targetDevice.activity : !!localCurrent;
+  const isPlaying = targetDevice
+    ? !!targetDevice.activity?.is_playing
+    : localIsPlaying;
 
   const [query, setQuery] = useState("");
   const [tracks, setTracks] = useState<TrackListItem[]>([]);
@@ -204,7 +210,7 @@ export default function CommandPalette({
         keywords: "playback toggle",
         icon: isPlaying ? PauseIcon : PlayIcon,
         perform: toggle,
-        disabled: !current,
+        disabled: !hasTrack,
       },
       {
         id: "next",
@@ -212,7 +218,7 @@ export default function CommandPalette({
         keywords: "skip forward",
         icon: ForwardIcon,
         perform: next,
-        disabled: !current,
+        disabled: !hasTrack,
       },
       {
         id: "prev",
@@ -220,7 +226,7 @@ export default function CommandPalette({
         keywords: "back prev",
         icon: BackwardIcon,
         perform: prev,
-        disabled: !current,
+        disabled: !hasTrack,
       },
       {
         id: "shuffle",
@@ -237,7 +243,7 @@ export default function CommandPalette({
         perform: cycleRepeat,
       },
     ],
-    [isPlaying, current, toggle, next, prev, toggleShuffle, cycleRepeat],
+    [isPlaying, hasTrack, toggle, next, prev, toggleShuffle, cycleRepeat],
   );
 
   return (

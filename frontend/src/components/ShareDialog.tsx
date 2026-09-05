@@ -1,4 +1,10 @@
 import {
+  snippetHandleBounds,
+  normalizeSnippetSelection,
+  snippetWindow,
+  adjustSnippetWindow,
+} from "@music-library/core/share-snippet";
+import {
   useCallback,
   useEffect,
   useMemo,
@@ -17,8 +23,6 @@ import {
 } from "@heroicons/react/16/solid";
 import {
   DEFAULT_SHARE_SNIPPET_DURATION_SEC,
-  MAX_SHARE_SNIPPET_DURATION_SEC,
-  MIN_SHARE_SNIPPET_DURATION_SEC,
   createTrackShareLink,
   errorMessage,
   streamUrl,
@@ -121,22 +125,14 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     () => (track ? Math.max(0, track.duration_ms / 1000) : 0),
     [track],
   );
-  const maxPreviewDurationSec = durationSec > 0
-    ? Math.min(MAX_SHARE_SNIPPET_DURATION_SEC, Math.max(1, Math.ceil(durationSec)))
-    : DEFAULT_SHARE_SNIPPET_DURATION_SEC;
-  const minPreviewDurationSec = Math.min(
-    MIN_SHARE_SNIPPET_DURATION_SEC,
-    maxPreviewDurationSec,
-  );
-  const effectivePreviewSec = Math.min(
-    Math.max(minPreviewDurationSec, selectedDurationSec),
-    maxPreviewDurationSec,
-  );
-  const maxStartSec = Math.max(0, Math.floor(durationSec - effectivePreviewSec));
-  const endSec = Math.min(durationSec, startSec + effectivePreviewSec);
-  const displayPreviewSec = durationSec > 0
-    ? Math.min(effectivePreviewSec, durationSec)
-    : effectivePreviewSec;
+  const {
+    maxDurationSec: maxPreviewDurationSec,
+    minDurationSec: minPreviewDurationSec,
+    effectiveDurationSec: effectivePreviewSec,
+    maxStartSec,
+    endSec,
+    displayDurationSec: displayPreviewSec,
+  } = snippetWindow(durationSec, selectedDurationSec, startSec);
   // Reset picker state on open / track changes so reopening on a different row
   // starts clean. Track metadata itself is loaded by useTrackDetail, which
   // guards against stale slow responses from a previous track.
@@ -212,15 +208,8 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
   };
 
   const onWindowChange = (nextStartSec: number, nextDurationSec: number) => {
-    const nextDuration = Math.max(
-      minPreviewDurationSec,
-      Math.min(maxPreviewDurationSec, Math.round(nextDurationSec)),
-    );
-    const nextMaxStart = Math.max(0, Math.floor(durationSec - nextDuration));
-    const nextStart = Math.max(
-      0,
-      Math.min(nextMaxStart, Math.round(nextStartSec)),
-    );
+    const { startSec: nextStart, durationSec: nextDuration } =
+      normalizeSnippetSelection(durationSec, nextStartSec, nextDurationSec);
     setSelectedDurationSec(nextDuration);
     setStartSec(nextStart);
     setPicked(true);
@@ -520,9 +509,18 @@ function PreviewStrip({
     kind: "start" | "end" | "window";
     grabOffsetSec: number;
   } | null>(null);
-  const selectableEndSec = durationSec < minPreviewDurationSec
-    ? durationSec
-    : Math.floor(durationSec);
+  const {
+    minStartSec,
+    maxStartSec: maxResizeStartSec,
+    minEndSec,
+    maxEndSec,
+  } = snippetHandleBounds({
+    durationSec,
+    startSec,
+    endSec,
+    minDurationSec: minPreviewDurationSec,
+    maxDurationSec: maxPreviewDurationSec,
+  });
 
   const pointerSec = useCallback(
     (clientX: number) => {
@@ -541,40 +539,17 @@ function PreviewStrip({
       if (!drag || durationSec <= 0) return;
 
       const atSec = pointerSec(clientX) - drag.grabOffsetSec;
-      if (drag.kind === "start") {
-        const minStart = Math.max(0, endSec - maxPreviewDurationSec);
-        const maxStart = Math.max(minStart, endSec - minPreviewDurationSec);
-        const nextStart = Math.max(
-          minStart,
-          Math.min(maxStart, Math.round(atSec)),
-        );
-        onWindowChange(nextStart, endSec - nextStart);
-        return;
-      }
-
-      if (drag.kind === "end") {
-        const minEnd = Math.min(
-          selectableEndSec,
-          startSec + minPreviewDurationSec,
-        );
-        const maxEnd = Math.min(
-          selectableEndSec,
-          startSec + maxPreviewDurationSec,
-        );
-        const nextEnd = Math.max(
-          minEnd,
-          Math.min(maxEnd, Math.round(atSec)),
-        );
-        onWindowChange(startSec, nextEnd - startSec);
-        return;
-      }
-
-      const windowDuration = endSec - startSec;
-      const nextStart = Math.max(
-        0,
-        Math.min(maxStartSec, Math.round(atSec)),
-      );
-      onWindowChange(nextStart, windowDuration);
+      const next = adjustSnippetWindow({
+        kind: drag.kind,
+        atSec,
+        startSec,
+        endSec,
+        durationSec,
+        minDurationSec: minPreviewDurationSec,
+        maxDurationSec: maxPreviewDurationSec,
+        maxStartSec,
+      });
+      onWindowChange(next.startSec, next.durationSec);
     },
     [
       durationSec,
@@ -584,7 +559,6 @@ function PreviewStrip({
       minPreviewDurationSec,
       onWindowChange,
       pointerSec,
-      selectableEndSec,
       startSec,
     ],
   );
@@ -647,38 +621,25 @@ function PreviewStrip({
     event: ReactKeyboardEvent<HTMLDivElement>,
   ) => {
     const step = event.shiftKey ? 5 : 1;
-    if (edge === "start") {
-      const minStart = Math.max(0, endSec - maxPreviewDurationSec);
-      const maxStart = Math.max(minStart, endSec - minPreviewDurationSec);
-      let nextStart: number | null = null;
-      if (event.key === "ArrowLeft") nextStart = startSec - step;
-      if (event.key === "ArrowRight") nextStart = startSec + step;
-      if (event.key === "Home") nextStart = minStart;
-      if (event.key === "End") nextStart = maxStart;
-      if (nextStart === null) return;
-      event.preventDefault();
-      nextStart = Math.max(minStart, Math.min(maxStart, nextStart));
-      onWindowChange(nextStart, endSec - nextStart);
-      return;
-    }
-
-    const minEnd = Math.min(
-      selectableEndSec,
-      startSec + minPreviewDurationSec,
-    );
-    const maxEnd = Math.min(
-      selectableEndSec,
-      startSec + maxPreviewDurationSec,
-    );
-    let nextEnd: number | null = null;
-    if (event.key === "ArrowLeft") nextEnd = endSec - step;
-    if (event.key === "ArrowRight") nextEnd = endSec + step;
-    if (event.key === "Home") nextEnd = minEnd;
-    if (event.key === "End") nextEnd = maxEnd;
-    if (nextEnd === null) return;
+    const value = edge === "start" ? startSec : endSec;
+    let atSec: number | null = null;
+    if (event.key === "ArrowLeft") atSec = value - step;
+    if (event.key === "ArrowRight") atSec = value + step;
+    if (event.key === "Home") atSec = edge === "start" ? minStartSec : minEndSec;
+    if (event.key === "End") atSec = edge === "start" ? maxResizeStartSec : maxEndSec;
+    if (atSec === null) return;
     event.preventDefault();
-    nextEnd = Math.max(minEnd, Math.min(maxEnd, nextEnd));
-    onWindowChange(startSec, nextEnd - startSec);
+    const next = adjustSnippetWindow({
+      kind: edge,
+      atSec,
+      startSec,
+      endSec,
+      durationSec,
+      maxStartSec,
+      minDurationSec: minPreviewDurationSec,
+      maxDurationSec: maxPreviewDurationSec,
+    });
+    onWindowChange(next.startSec, next.durationSec);
   };
 
   const pct = (sec: number) =>
@@ -747,22 +708,16 @@ function PreviewStrip({
         edge="start"
         positionPct={startPct}
         valueSec={startSec}
-        minSec={Math.max(0, endSec - maxPreviewDurationSec)}
-        maxSec={Math.max(0, endSec - minPreviewDurationSec)}
+        minSec={minStartSec}
+        maxSec={maxResizeStartSec}
         onKeyDown={(event) => resizeFromKeyboard("start", event)}
       />
       <TrimHandle
         edge="end"
         positionPct={endPct}
         valueSec={endSec}
-        minSec={Math.min(
-          selectableEndSec,
-          startSec + minPreviewDurationSec,
-        )}
-        maxSec={Math.min(
-          selectableEndSec,
-          startSec + maxPreviewDurationSec,
-        )}
+        minSec={minEndSec}
+        maxSec={maxEndSec}
         onKeyDown={(event) => resizeFromKeyboard("end", event)}
       />
       {/* Playhead while previewing */}

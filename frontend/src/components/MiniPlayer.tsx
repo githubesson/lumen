@@ -54,6 +54,7 @@ export default function MiniPlayer() {
     toggleMute,
     toggleShuffle,
     cycleRepeat,
+    seek,
   } = usePlayer();
   const { open: lyricsOpen, setOpen: setLyricsOpen } = useLyricsPanel();
   const {
@@ -64,7 +65,6 @@ export default function MiniPlayer() {
     controlledMuted,
     controlledShuffle,
     controlledRepeat,
-    sendCommand,
   } = useRemotePlayback();
   const { isFavorite, toggle: toggleFavorite } = useFavorites();
   const fh6Snapshot = useFH6Snapshot();
@@ -211,11 +211,7 @@ export default function MiniPlayer() {
             className={"t-btn" + (shownShuffle ? " active" : "")}
             aria-label="Shuffle"
             aria-pressed={shownShuffle}
-            onClick={() => {
-              if (isRemoteMode) {
-                void sendCommand("set_shuffle", { shuffle: !shownShuffle });
-              } else toggleShuffle();
-            }}
+            onClick={toggleShuffle}
             disabled={isFH6Mode || commandPending}
           >
             <ArrowsRightLeftIcon className="size-3.5" />
@@ -225,11 +221,7 @@ export default function MiniPlayer() {
             className="t-btn"
             aria-label="Previous"
             onClick={
-              isRemoteMode
-                ? () => void sendCommand("previous")
-                : isFH6Mode
-                  ? () => void fh6Transport("previous")
-                  : prev
+              isFH6Mode ? () => void fh6Transport("previous") : prev
             }
             disabled={
               commandPending ||
@@ -247,15 +239,9 @@ export default function MiniPlayer() {
             className="play-btn"
             aria-label={displayPlaying ? "Pause" : "Play"}
             onClick={
-              isRemoteMode
-                ? () =>
-                    void sendCommand("set_playing", {
-                      playing: !displayPlaying,
-                    })
-                : isFH6Mode
-                  ? () =>
-                      void fh6Transport(displayPlaying ? "pause" : "play")
-                  : toggle
+              isFH6Mode
+                ? () => void fh6Transport(displayPlaying ? "pause" : "play")
+                : toggle
             }
             disabled={
               commandPending ||
@@ -277,11 +263,7 @@ export default function MiniPlayer() {
             className="t-btn"
             aria-label="Next"
             onClick={
-              isRemoteMode
-                ? () => void sendCommand("next")
-                : isFH6Mode
-                  ? () => void fh6Transport("next")
-                  : next
+              isFH6Mode ? () => void fh6Transport("next") : next
             }
             disabled={
               commandPending ||
@@ -298,18 +280,7 @@ export default function MiniPlayer() {
             type="button"
             className={"t-btn" + (shownRepeat !== "off" ? " active" : "")}
             aria-label={`Repeat: ${shownRepeat}`}
-            onClick={() => {
-              if (isRemoteMode) {
-                void sendCommand("set_repeat", {
-                  repeat:
-                    shownRepeat === "off"
-                      ? "all"
-                      : shownRepeat === "all"
-                        ? "one"
-                        : "off",
-                });
-              } else cycleRepeat();
-            }}
+            onClick={cycleRepeat}
             disabled={isFH6Mode || commandPending}
           >
             <ArrowPathRoundedSquareIcon className="size-3.5" />
@@ -331,16 +302,8 @@ export default function MiniPlayer() {
             className="volume transport-volume"
             muted={shownMuted}
             volume={shownVolume}
-            onToggleMute={() => {
-              if (isRemoteMode) {
-                void sendCommand("set_muted", { muted: !shownMuted });
-              } else toggleMute();
-            }}
-            onSeek={(nextVolume) => {
-              if (isRemoteMode) {
-                void sendCommand("set_volume", { volume: nextVolume });
-              } else setVolume(nextVolume);
-            }}
+            onToggleMute={toggleMute}
+            onSeek={setVolume}
           />
         </div>
         <ProgressBar
@@ -352,8 +315,7 @@ export default function MiniPlayer() {
                   duration: remoteActivity.duration_sec ?? 0,
                   isPlaying: remoteActivity.is_playing,
                   updatedAt: remoteActivity.updated_at,
-                  onSeek: (seconds) =>
-                    void sendCommand("seek", { position_sec: seconds }),
+                  onSeek: seek,
                 }
               : isFH6Mode
               ? {
@@ -456,16 +418,8 @@ export default function MiniPlayer() {
           className="volume"
           muted={shownMuted}
           volume={shownVolume}
-          onToggleMute={() => {
-            if (isRemoteMode) {
-              void sendCommand("set_muted", { muted: !shownMuted });
-            } else toggleMute();
-          }}
-          onSeek={(nextVolume) => {
-            if (isRemoteMode) {
-              void sendCommand("set_volume", { volume: nextVolume });
-            } else setVolume(nextVolume);
-          }}
+          onToggleMute={toggleMute}
+          onSeek={setVolume}
         />
         {canResizeWindow && (
           <button

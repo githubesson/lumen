@@ -9,18 +9,14 @@ import {
 } from "react";
 import {
   asyncifySyncStorage,
-  buildRemoteQueue,
-  clampVolume,
-  compactRemoteTrack,
   controlledStateForDevice,
   filterRemoteDevices,
-  nextRepeatMode,
-  remoteActivityTime,
   useRemoteActivityClock,
   useRemotePlaybackCommands,
   usePlaybackActivityPublisher,
   usePlaybackRemoteSession,
   usePlayerCore,
+  useRoutedPlayerControls,
   type AudioAdapter,
   type PlaybackDevice,
   type PlayerControls,
@@ -54,6 +50,8 @@ type RemotePlaybackCtxValue = {
     args?: Record<string, unknown>,
   ) => Promise<RemotePlaybackCommandResult>;
 };
+
+const EMPTY_REMOTE_QUEUE: PlayerState["queue"] = [];
 
 const PlayerCtx = createContext<Ctx | null>(null);
 const PlayerTimeCtx = createContext<TimeState | null>(null);
@@ -223,132 +221,44 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     mediaSeek,
   ]);
 
-  // Keyboard shortcuts (spec §5) — routed through the central registry.
-  useKey(
-    "space",
-    (e) => {
-      e.preventDefault();
-      if (targetDevice) {
-        void sendCommand("set_playing", {
-          playing: !targetDevice.activity?.is_playing,
-        });
-      } else {
-        controls.toggle();
-      }
-    },
-    { id: "player:toggle" },
-  );
-  useKey(
-    "left",
-    () => {
-      if (targetDevice) {
-        void sendCommand("seek", {
-          position_sec: Math.max(
-            0,
-            remoteActivityTime(targetDevice.activity).currentTime - 5,
-          ),
-        });
-      } else controls.seek(Math.max(0, time.currentTime - 5));
-    },
-    { id: "player:seek-back" },
-  );
-  useKey(
-    "right",
-    () => {
-      if (targetDevice) {
-        void sendCommand("seek", {
-          position_sec: Math.min(
-            targetDevice.activity?.duration_sec || Infinity,
-            remoteActivityTime(targetDevice.activity).currentTime + 5,
-          ),
-        });
-      } else {
-        controls.seek(
-          Math.min(time.duration || Infinity, time.currentTime + 5),
-        );
-      }
-    },
-    { id: "player:seek-fwd" },
-  );
-  useKey(
-    "up",
-    (e) => {
-      e.preventDefault();
-      if (targetDevice) {
-        void sendCommand("set_volume", {
-          volume: clampVolume(controlled.volume + 0.05),
-        });
-      } else controls.setVolume(state.volume + 0.05);
-    },
-    { id: "player:vol-up" },
-  );
-  useKey(
-    "down",
-    (e) => {
-      e.preventDefault();
-      if (targetDevice) {
-        void sendCommand("set_volume", {
-          volume: clampVolume(controlled.volume - 0.05),
-        });
-      } else controls.setVolume(state.volume - 0.05);
-    },
-    { id: "player:vol-down" },
-  );
-  useKey("n", () => {
-    if (targetDevice) void sendCommand("next");
-    else controls.next();
-  }, {
-    id: "player:next"
+  const routedControls = useRoutedPlayerControls({
+    controls,
+    targetDevice,
+    controlled,
+    sendCommand,
+    // Web does not expose a remote queue yet.
+    remoteQueue: EMPTY_REMOTE_QUEUE,
   });
-  useKey("p", () => {
-    if (targetDevice) void sendCommand("previous");
-    else controls.prev();
-  }, {
-    id: "player:prev"
-  });
-  useKey("m", () => {
-    if (targetDevice) {
-      void sendCommand("set_muted", { muted: !controlled.muted });
-    }
-    else controls.toggleMute();
-  }, {
-    id: "player:mute"
-  });
-  useKey("s", () => {
-    if (targetDevice) {
-      void sendCommand("set_shuffle", { shuffle: !controlled.shuffle });
-    } else controls.toggleShuffle();
-  }, {
-    id: "player:shuffle"
-  });
-  useKey("r", () => {
-    if (targetDevice) {
-      void sendCommand("set_repeat", {
-        repeat: nextRepeatMode(controlled.repeat),
-      });
-    } else controls.cycleRepeat();
-  }, {
-    id: "player:repeat"
-  });
+  const shownVolume = targetDevice ? controlled.volume : state.volume;
 
-  const routedPlay = useCallback<PlayerControls["play"]>(
-    (track, queue) => {
-      if (!targetDevice) {
-        controls.play(track, queue);
-        return;
-      }
-      const remoteQueue = buildRemoteQueue(track, queue);
-      void sendCommand("play_track", {
-        track: compactRemoteTrack(track),
-        queue: remoteQueue.map(compactRemoteTrack),
-      });
-    },
-    [controls, sendCommand, targetDevice],
-  );
+  // Keyboard bindings use the same routing as buttons and command-palette actions.
+  useKey("space", (event) => {
+    event.preventDefault();
+    routedControls.toggle();
+  }, { id: "player:toggle" });
+  useKey("left", () => {
+    routedControls.seek(Math.max(0, displayedTime.currentTime - 5));
+  }, { id: "player:seek-back" });
+  useKey("right", () => {
+    routedControls.seek(Math.min(displayedTime.duration || Infinity, displayedTime.currentTime + 5));
+  }, { id: "player:seek-fwd" });
+  useKey("up", (event) => {
+    event.preventDefault();
+    routedControls.setVolume(shownVolume + 0.05);
+  }, { id: "player:vol-up" });
+  useKey("down", (event) => {
+    event.preventDefault();
+    routedControls.setVolume(shownVolume - 0.05);
+  }, { id: "player:vol-down" });
+  useKey("n", routedControls.next, { id: "player:next" });
+  useKey("p", routedControls.prev, { id: "player:prev" });
+  useKey("m", routedControls.toggleMute, { id: "player:mute" });
+  useKey("s", routedControls.toggleShuffle, { id: "player:shuffle" });
+  useKey("r", routedControls.cycleRepeat, { id: "player:repeat" });
 
   const value = useMemo<Ctx>(
-    () => ({ ...state, ...controls, play: routedPlay }),
-    [state, controls, routedPlay],
+    () => ({ ...state, ...routedControls }),
+    [state, routedControls],
   );
   const remoteValue = useMemo<RemotePlaybackCtxValue>(
     () => ({

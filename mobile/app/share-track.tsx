@@ -1,3 +1,4 @@
+import { normalizeSnippetSelection, snippetWindow } from "@music-library/core/share-snippet";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -23,7 +24,6 @@ import {
   ApiError,
   DEFAULT_SHARE_SNIPPET_DURATION_SEC,
   MAX_SHARE_SNIPPET_DURATION_SEC,
-  MIN_SHARE_SNIPPET_DURATION_SEC,
   api,
   createTrackShareLink,
   createTrackStoryBackgroundVideo,
@@ -133,19 +133,13 @@ export default function ShareTrackScreen() {
         : 0,
     [trackQuery.data],
   );
-  const maxSnippetDurationSec = durationSec > 0
-    ? Math.min(MAX_SHARE_SNIPPET_DURATION_SEC, Math.max(1, Math.ceil(durationSec)))
-    : DEFAULT_SHARE_SNIPPET_DURATION_SEC;
-  const minSnippetDurationSec = Math.min(
-    MIN_SHARE_SNIPPET_DURATION_SEC,
-    maxSnippetDurationSec,
-  );
-  const effectivePreviewSec = Math.min(
-    Math.max(minSnippetDurationSec, selectedDurationSec),
-    maxSnippetDurationSec,
-  );
-  const maxStartSec = Math.max(0, Math.floor(durationSec - effectivePreviewSec));
-  const endSec = Math.min(durationSec, startSec + effectivePreviewSec);
+  const {
+    maxDurationSec: maxSnippetDurationSec,
+    minDurationSec: minSnippetDurationSec,
+    effectiveDurationSec: effectivePreviewSec,
+    maxStartSec,
+    endSec,
+  } = snippetWindow(durationSec, selectedDurationSec, startSec);
   const currentSec = playerStatus.playing ? playerStatus.currentTime : startSec;
 
   useEffect(() => {
@@ -199,14 +193,8 @@ export default function ShareTrackScreen() {
 
   const onWindowChange = useCallback(
     (nextStartSec: number, nextDurationSec: number) => {
-      const nextDuration = Math.max(
-        minSnippetDurationSec,
-        Math.min(maxSnippetDurationSec, Math.round(nextDurationSec)),
-      );
-      const nextMaxStart = Math.max(0, Math.floor(durationSec - nextDuration));
-      const nextStart = Math.max(
-        0,
-        Math.min(nextMaxStart, Math.round(nextStartSec)),
+      const { startSec: nextStart, durationSec: nextDuration } = normalizeSnippetSelection(
+        durationSec, nextStartSec, nextDurationSec,
       );
       setSelectedDurationSec(nextDuration);
       setStartSec(nextStart);
@@ -218,8 +206,6 @@ export default function ShareTrackScreen() {
     },
     [
       durationSec,
-      maxSnippetDurationSec,
-      minSnippetDurationSec,
       playerStatus.playing,
       seekPreview,
     ],

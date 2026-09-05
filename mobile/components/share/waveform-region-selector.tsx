@@ -1,3 +1,4 @@
+import { snippetHandleBounds, adjustSnippetWindow } from "@music-library/core/share-snippet";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   PanResponder,
@@ -70,47 +71,24 @@ export function WaveformRegionSelector({
       const ratio = Math.max(0, Math.min(1, x / availableWidth));
       const atSec = ratio * durationSec - drag.grabOffsetSec;
 
-      if (drag.kind === "start") {
-        const minStart = Math.max(
-          0,
-          drag.anchorEndSec - maxSnippetDurationSec,
-        );
-        const maxStart = Math.max(
-          minStart,
-          drag.anchorEndSec - minSnippetDurationSec,
-        );
-        const nextStart = clamp(Math.round(atSec), minStart, maxStart);
-        onWindowChange(nextStart, drag.anchorEndSec - nextStart);
-        return;
-      }
-
-      if (drag.kind === "end") {
-        const selectableEndSec = durationSec < minSnippetDurationSec
-          ? durationSec
-          : Math.floor(durationSec);
-        const minEnd = Math.min(
-          selectableEndSec,
-          drag.anchorStartSec + minSnippetDurationSec,
-        );
-        const maxEnd = Math.min(
-          selectableEndSec,
-          drag.anchorStartSec + maxSnippetDurationSec,
-        );
-        const nextEnd = clamp(Math.round(atSec), minEnd, maxEnd);
-        onWindowChange(drag.anchorStartSec, nextEnd - drag.anchorStartSec);
-        return;
-      }
-
-      onWindowChange(clamp(Math.round(atSec), 0, maxStartSec), endSec - startSec);
+      const next = adjustSnippetWindow({
+        kind: drag.kind,
+        atSec,
+        startSec: drag.anchorStartSec,
+        endSec: drag.anchorEndSec,
+        durationSec,
+        minDurationSec: minSnippetDurationSec,
+        maxDurationSec: maxSnippetDurationSec,
+        maxStartSec,
+      });
+      onWindowChange(next.startSec, next.durationSec);
     },
     [
       durationSec,
-      endSec,
       maxSnippetDurationSec,
       maxStartSec,
       minSnippetDurationSec,
       onWindowChange,
-      startSec,
     ],
   );
 
@@ -188,22 +166,18 @@ export function WaveformRegionSelector({
   const right = width * selectionEnd;
   const selectedWidth = Math.max(0, right - left);
   const playheadLeft = width * Math.max(0, Math.min(1, playhead));
-  const minStartSec = Math.max(0, endSec - maxSnippetDurationSec);
-  const maxResizeStartSec = Math.max(
+  const {
     minStartSec,
-    endSec - minSnippetDurationSec,
-  );
-  const selectableEndSec = durationSec < minSnippetDurationSec
-    ? durationSec
-    : Math.floor(durationSec);
-  const minEndSec = Math.min(
-    selectableEndSec,
-    startSec + minSnippetDurationSec,
-  );
-  const maxEndSec = Math.min(
-    selectableEndSec,
-    startSec + maxSnippetDurationSec,
-  );
+    maxStartSec: maxResizeStartSec,
+    minEndSec,
+    maxEndSec,
+  } = snippetHandleBounds({
+    durationSec,
+    startSec,
+    endSec,
+    minDurationSec: minSnippetDurationSec,
+    maxDurationSec: maxSnippetDurationSec,
+  });
 
   const moveWindowBy = (delta: number) => {
     onWindowChange(clamp(startSec + delta, 0, maxStartSec), endSec - startSec);

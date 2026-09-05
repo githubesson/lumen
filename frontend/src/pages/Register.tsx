@@ -1,3 +1,4 @@
+import { validateRegistrationInput } from "@music-library/core/auth/validation";
 import { FormEvent, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, errorMessage, type InviteCheck } from "../api";
@@ -35,10 +36,15 @@ export default function Register() {
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    const validation = validateRegistrationInput(username, password);
+    if (!validation.valid) {
+      setError(validation.usernameError ?? validation.passwordError);
+      return;
+    }
     setError(null);
     setBusy(true);
     try {
-      const me = await api.register(token, username, password);
+      const me = await api.register(token, validation.username, password);
       setMe(me);
       navigate("/", { replace: true });
     } catch (err) {
