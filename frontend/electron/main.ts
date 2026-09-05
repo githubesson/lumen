@@ -38,7 +38,7 @@ import { createLocalProxy } from "./local-proxy";
 
 export type { Density, Layout, Theme, Tweaks } from "./config";
 
-import type { SetupDoneOpts, ExportTrackFileItem } from "./contracts";
+import type { SetupDoneOpts, ExportTrackFileItem } from "../src/contracts/desktop";
 
 
 const DIST_DIR = path.join(__dirname, "..", "..", "dist");

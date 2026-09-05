@@ -1,5 +1,5 @@
-import type { DiscordActivityPayload } from "./contracts";
-export type { DiscordActivityPayload } from "./contracts";
+import type { DiscordActivityPayload } from "../src/contracts/desktop";
+export type { DiscordActivityPayload } from "../src/contracts/desktop";
 
 // discord-rpc is CommonJS-only and intentionally loaded lazily.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

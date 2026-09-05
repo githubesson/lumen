@@ -1,5 +1,5 @@
 // An import type expression keeps this file a classic script (module: None).
-type SetupApi = import("./contracts").SetupApi;
+type SetupApi = import("../src/contracts/desktop").SetupApi;
 
 // Global augmentation — this file is a script, not a module, so this merges
 // with lib.dom's Window. It has no local reference by design.

@@ -1,9 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { UpdateStatus } from "./contracts";
+import type { UpdateStatus } from "../src/contracts/desktop";
 
-import type { ElectronApi } from "./contracts";
+import type { ElectronApi } from "../src/contracts/desktop";
 export type { ElectronApi, Tweaks, DiscordActivityPayload, FH6StatusPayload,
-  ExportTrackFileItem, ExportTrackFilesResult } from "./contracts";
+  ExportTrackFileItem, ExportTrackFilesResult } from "../src/contracts/desktop";
 
 const api: ElectronApi = {
   getSignOutIntent: () => ipcRenderer.invoke("auth:intent:get"),

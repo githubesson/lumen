@@ -15,8 +15,8 @@ import {
   setTitleBarTheme,
 } from "../lib/platform";
 
-import type { Theme, Density, Layout, Tweaks } from "../../electron/contracts";
-export type { Theme, Density, Layout, Tweaks } from "../../electron/contracts";
+import type { Theme, Density, Layout, Tweaks } from "../contracts/desktop";
+export type { Theme, Density, Layout, Tweaks } from "../contracts/desktop";
 
 const STORAGE_KEY = "lumen.tweaks";
 

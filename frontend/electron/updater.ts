@@ -6,8 +6,8 @@ import {
   type UpdateInfo,
 } from "electron-updater";
 
-import type { UpdateBranch, UpdateStatus, UpdatePreferences } from "./contracts";
-export type { UpdateBranch, UpdateState, UpdateStatus, UpdatePreferences } from "./contracts";
+import type { UpdateBranch, UpdateStatus, UpdatePreferences } from "../src/contracts/desktop";
+export type { UpdateBranch, UpdateState, UpdateStatus, UpdatePreferences } from "../src/contracts/desktop";
 
 interface GitHubRepo {
   owner: string;

@@ -3,8 +3,8 @@ import * as path from "node:path";
 import * as fsp from "node:fs/promises";
 import type { UpdateBranch } from "./updater";
 
-import type { Tweaks } from "./contracts";
-export type { Theme, Density, Layout, Tweaks } from "./contracts";
+import type { Tweaks } from "../src/contracts/desktop";
+export type { Theme, Density, Layout, Tweaks } from "../src/contracts/desktop";
 
 export interface Config {
   backendUrl?: string;

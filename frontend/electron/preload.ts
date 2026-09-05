@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-import type { SetupApi } from "./contracts";
-export type { SetupApi } from "./contracts";
+import type { SetupApi } from "../src/contracts/desktop";
+export type { SetupApi } from "../src/contracts/desktop";
 
 const api: SetupApi = {
   getConfig: () => ipcRenderer.invoke("config:get"),

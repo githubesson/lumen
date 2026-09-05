@@ -6,8 +6,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { loadConfig, saveConfigPatch } from "./config";
 
-import type { FH6InstallRequest, FH6StatusPayload as FH6Status } from "./contracts";
-export type { FH6InstallRequest, FH6StatusPayload as FH6Status } from "./contracts";
+import type { FH6InstallRequest, FH6StatusPayload as FH6Status } from "../src/contracts/desktop";
+export type { FH6InstallRequest, FH6StatusPayload as FH6Status } from "../src/contracts/desktop";
 
 
 export const DEFAULT_FH6_BRIDGE_PORT = 8420;
