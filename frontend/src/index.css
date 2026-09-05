@@ -223,13 +223,15 @@ textarea { font: inherit; color: inherit; }
    ============================================================ */
 .app {
   display: grid;
-  grid-template-columns: var(--sidebar-w, 248px) 1fr var(--lyrics-panel-w, 0px);
+  /* Explicit gutters let the lyrics gap collapse with its panel. A column-gap
+     would still reserve space beside a zero-width track. */
+  grid-template-columns: var(--sidebar-w, 248px) 6px minmax(0, 1fr) var(--lyrics-panel-gap, 0px) var(--lyrics-panel-w, 0px);
   grid-template-rows: 1fr auto;
   grid-template-areas:
-    "sidebar main lyrics"
-    "player  player player";
+    "sidebar . main . lyrics"
+    "player player player player player";
   height: 100vh;
-  gap: 6px;
+  row-gap: 6px;
   padding: 6px;
   background:
     radial-gradient(1200px 600px at 80% -10%, color-mix(in oklch, var(--accent) 6%, transparent), transparent 60%),
@@ -252,6 +254,7 @@ textarea { font: inherit; color: inherit; }
 [data-layout="wide"] .app { --sidebar-w: 296px; }
 
 .app[data-lyrics-open="true"] {
+  --lyrics-panel-gap: 6px;
   --lyrics-panel-w: 280px;
 }
 [data-layout="wide"] .app[data-lyrics-open="true"] {
