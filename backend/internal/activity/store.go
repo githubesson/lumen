@@ -81,6 +81,8 @@ func (s *Store) Upsert(ctx context.Context, in UpsertInput) (*Activity, error) {
 		in.Volume = &volume
 	}
 
+	// Keep $13 floating-point: COALESCE($13, 1) infers an integer parameter,
+	// causing pgx to truncate every fractional volume before sending it.
 	var out Activity
 	err := s.db.QueryRow(ctx, `
 		INSERT INTO playback_activity (
@@ -90,7 +92,7 @@ func (s *Store) Upsert(ctx context.Context, in UpsertInput) (*Activity, error) {
 		) VALUES (
 			$1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''),
 			NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, 0), $11, $12,
-			COALESCE($13, 1), COALESCE($14, FALSE), NOW()
+			COALESCE($13::double precision, 1), COALESCE($14, FALSE), NOW()
 		)
 		ON CONFLICT (user_id, device_id) DO UPDATE SET
 			device_name = EXCLUDED.device_name,
