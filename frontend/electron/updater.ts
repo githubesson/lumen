@@ -6,35 +6,8 @@ import {
   type UpdateInfo,
 } from "electron-updater";
 
-export type UpdateBranch = "main" | "dev";
-
-export type UpdateState =
-  | "idle"
-  | "checking"
-  | "available"
-  | "downloading"
-  | "downloaded"
-  | "up-to-date"
-  | "error"
-  | "unsupported";
-
-export interface UpdateStatus {
-  state: UpdateState;
-  branch: UpdateBranch;
-  repoUrl: string;
-  defaultRepoUrl: string;
-  currentVersion: string;
-  targetVersion?: string;
-  progress?: number;
-  message: string;
-  canCheck: boolean;
-  canInstall: boolean;
-}
-
-export interface UpdatePreferences {
-  branch: UpdateBranch;
-  repoUrl: string;
-}
+import type { UpdateBranch, UpdateStatus, UpdatePreferences } from "./contracts";
+export type { UpdateBranch, UpdateState, UpdateStatus, UpdatePreferences } from "./contracts";
 
 interface GitHubRepo {
   owner: string;

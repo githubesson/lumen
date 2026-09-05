@@ -289,3 +289,17 @@ export function DownloadHistoryTable<Download extends DownloadLike & {
     </section>
   );
 }
+
+export function PinDestinationCell({ path, rootExists }: { path: string; rootExists: boolean }) {
+  return (
+    <td className="mono" style={{ wordBreak: "break-all" }}>
+      {path}
+      {!rootExists && (
+        <span title="The pinned source root does not exist on the server"
+          style={{ marginLeft: 8, color: "var(--warning-fg)", fontSize: 11 }}>
+          missing
+        </span>
+      )}
+    </td>
+  );
+}

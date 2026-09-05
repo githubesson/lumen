@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,7 +20,6 @@ import (
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/pinscan"
-	"github.com/githubesson/lumen/internal/safego"
 )
 
 type ScanSummary struct {
@@ -49,50 +47,30 @@ type Scanner struct {
 	NodePath     string
 	ScriptPath   string
 
-	mu       sync.Mutex
-	inflight map[uuid.UUID]struct{}
-	jobs     sync.WaitGroup
+	scans pinscan.Group
 }
 
 func (s *Scanner) Run(ctx context.Context) {
 	if s == nil || s.Store == nil {
 		return
 	}
-	interval := s.PollInterval
-	if interval <= 0 {
-		interval = 5 * time.Minute
-	}
-	timer := time.NewTimer(pinscan.InitialScanDelay)
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-			s.scanDue(ctx)
-			timer.Reset(interval)
-		}
-	}
+	pinscan.Run(ctx, s.PollInterval, s.scanDue)
 }
 
 func (s *Scanner) StartPinScan(ctx context.Context, id uuid.UUID) (bool, error) {
-	if !s.tryBegin(id) {
+	if !s.scans.TryBegin(id) {
 		return false, nil
 	}
 	pin, err := s.Store.GetPin(ctx, id)
 	if err != nil {
-		s.finish(id)
+		s.scans.End(id)
 		return false, err
 	}
-	s.jobs.Add(1)
-	go func() {
-		defer s.jobs.Done()
-		defer s.finish(id)
-		defer safego.Recover("filen manual scan")
+	s.scans.Go(id, "filen manual scan", func() {
 		if _, err := s.ScanPin(ctx, pin); err != nil && s.Logger != nil {
 			s.Logger.Warn("filen manual scan failed", "pin", id, "err", err)
 		}
-	}()
+	})
 	return true, nil
 }
 
@@ -106,24 +84,20 @@ func (s *Scanner) scanDue(ctx context.Context) {
 	}
 	for _, pin := range pins {
 		pin := pin
-		if !s.tryBegin(pin.ID) {
+		if !s.scans.TryBegin(pin.ID) {
 			continue
 		}
-		s.jobs.Add(1)
-		go func() {
-			defer s.jobs.Done()
-			defer s.finish(pin.ID)
-			defer safego.Recover("filen scheduled scan")
+		s.scans.Go(pin.ID, "filen scheduled scan", func() {
 			if _, err := s.ScanPin(ctx, pin); err != nil && s.Logger != nil {
 				s.Logger.Warn("filen scheduled scan failed", "pin", pin.ID, "err", err)
 			}
-		}()
+		})
 	}
 }
 
 // Wait blocks until all scheduled and manually-triggered scans have stopped.
 // Call it after Run has returned so no new jobs can be added.
-func (s *Scanner) Wait() { s.jobs.Wait() }
+func (s *Scanner) Wait() { s.scans.Wait() }
 
 func (s *Scanner) ScanPin(ctx context.Context, pin Pin) (ScanSummary, error) {
 	summary := ScanSummary{PinID: pin.ID, StartedAt: time.Now().UTC()}
@@ -417,23 +391,4 @@ func resolveScriptPath(configured string) (string, error) {
 		return "", fmt.Errorf("filen downloader script not found at %s", configured)
 	}
 	return "", fmt.Errorf("filen downloader script not found")
-}
-
-func (s *Scanner) tryBegin(id uuid.UUID) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.inflight == nil {
-		s.inflight = map[uuid.UUID]struct{}{}
-	}
-	if _, ok := s.inflight[id]; ok {
-		return false
-	}
-	s.inflight[id] = struct{}{}
-	return true
-}
-
-func (s *Scanner) finish(id uuid.UUID) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.inflight, id)
 }

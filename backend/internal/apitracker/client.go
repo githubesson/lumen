@@ -12,8 +12,7 @@ import (
 	"time"
 
 	"github.com/githubesson/lumen/internal/httpx"
-	"github.com/githubesson/lumen/internal/ingest"
-	"github.com/githubesson/lumen/internal/lastshare"
+	"github.com/githubesson/lumen/internal/sourceurl"
 )
 
 const DefaultBaseURL = "https://trackers.musicfiles.su/api"
@@ -230,80 +229,15 @@ func (c *Client) fetchEntriesPage(ctx context.Context, trackerID int64, limit, o
 }
 
 func (c *Client) ResolveDownloadURL(ctx context.Context, rawURL string) (string, error) {
-	u, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil {
-		return "", err
-	}
-	host := strings.ToLower(u.Hostname())
-	switch {
-	case lastshare.IsShareURL(rawURL):
-		return "", fmt.Errorf("lastshare share could not be resolved to a file")
-	case host == "pillows.su" || strings.HasSuffix(host, ".pillows.su"):
-		parts := pathParts(u.Path)
-		if len(parts) >= 2 && parts[0] == "f" {
-			return "https://api.pillows.su/api/download/" + url.PathEscape(parts[1]), nil
-		}
-	case host == "imgur.gg" || strings.HasSuffix(host, ".imgur.gg"):
-		id := imgurGGFileID(u)
-		if id == "" {
-			return rawURL, nil
-		}
-		return c.resolveImgurGG(ctx, id)
-	}
-	return rawURL, nil
+	return sourceurl.Resolve(ctx, rawURL, c.resolveImgurGG)
 }
 
 func (c *Client) ExpandSourceURL(ctx context.Context, rawURL string, resolveClient *http.Client) ([]string, error) {
-	if !lastshare.IsShareURL(rawURL) {
-		return []string{rawURL}, nil
-	}
-	if resolveClient == nil {
-		resolveClient = httpx.DefaultDownloadClient()
-	}
-	share, err := (&lastshare.Client{HTTP: resolveClient}).Resolve(ctx, rawURL)
-	if err != nil {
-		return nil, err
-	}
-	urls := make([]string, 0, len(share.Files))
-	for _, f := range share.Files {
-		if ingest.IsSupported(f.Name) {
-			urls = append(urls, f.DownloadURL)
-		}
-	}
-	if len(urls) == 0 {
-		return nil, fmt.Errorf("lastshare share %s contains no audio files", share.ID)
-	}
-	return urls, nil
+	return sourceurl.Expand(ctx, rawURL, resolveClient)
 }
 
 func (c *Client) resolveImgurGG(ctx context.Context, id string) (string, error) {
-	apiURL := "https://imgur.gg/api/file/" + url.PathEscape(id) + "/download"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, nil)
-	if err != nil {
-		return "", err
-	}
-	for k, v := range imgurGGHeaders(id) {
-		req.Header.Set(k, v)
-	}
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("imgur.gg resolve %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-	var parsed struct {
-		URL string `json:"url"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(parsed.URL) == "" {
-		return "", fmt.Errorf("imgur.gg returned no download URL")
-	}
-	return parsed.URL, nil
+	return sourceurl.ResolveImgurGG(ctx, id, c.httpClient())
 }
 
 func (c *Client) apiURL(p string) string {
@@ -330,7 +264,7 @@ func NormalizeBaseURL(raw string) string {
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return strings.TrimRight(raw, "/")
 	}
-	parts := pathParts(u.Path)
+	parts := sourceurl.PathParts(u.Path)
 	for i, part := range parts {
 		if strings.EqualFold(part, "v1") {
 			u.Path = "/" + strings.Join(parts[:i], "/")
@@ -349,7 +283,7 @@ func ExtractBaseURL(raw string) string {
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return ""
 	}
-	parts := pathParts(u.Path)
+	parts := sourceurl.PathParts(u.Path)
 	for i, part := range parts {
 		if strings.EqualFold(part, "v1") {
 			u.Path = "/" + strings.Join(parts[:i], "/")
@@ -383,7 +317,7 @@ func ExtractTrackerID(raw string) int64 {
 			}
 		}
 	}
-	parts := pathParts(u.Path)
+	parts := sourceurl.PathParts(u.Path)
 	for i, part := range parts {
 		if strings.EqualFold(part, "trackers") && i+1 < len(parts) {
 			return ExtractTrackerID(parts[i+1])
@@ -401,39 +335,6 @@ func decodeJSON(r io.Reader, out any) error {
 func setHeaders(req *http.Request) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", httpx.BrowserUserAgent)
-}
-
-func imgurGGHeaders(id string) map[string]string {
-	return map[string]string{
-		"Accept":          "*/*",
-		"Accept-Language": "en-US,en;q=0.9",
-		"Content-Type":    "application/json",
-		"Origin":          "https://imgur.gg",
-		"Referer":         "https://imgur.gg/f/" + id,
-		"User-Agent":      httpx.BrowserUserAgent,
-	}
-}
-
-func pathParts(p string) []string {
-	raw := strings.Split(strings.Trim(p, "/"), "/")
-	out := raw[:0]
-	for _, part := range raw {
-		if part != "" {
-			out = append(out, part)
-		}
-	}
-	return out
-}
-
-func imgurGGFileID(u *url.URL) string {
-	parts := pathParts(u.Path)
-	if len(parts) >= 2 && parts[0] == "f" {
-		return parts[1]
-	}
-	if len(parts) == 1 {
-		return parts[0]
-	}
-	return ""
 }
 
 func anyString(v any) string {

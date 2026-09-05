@@ -1,25 +1,5 @@
-interface SetupApi {
-  getConfig(): Promise<{
-    backendUrl: string;
-    discordEnabled: boolean;
-    alwaysOnTop: boolean;
-    fh6RadioEnabled: boolean;
-    fh6GameDir: string;
-    fh6BridgePort: number;
-  }>;
-  saveConfig(
-    patch: {
-      backendUrl: string;
-      discordEnabled?: boolean;
-      alwaysOnTop?: boolean;
-      fh6RadioEnabled?: boolean;
-      fh6GameDir?: string;
-      fh6BridgePort?: number;
-    },
-  ): Promise<{ ok: boolean; error?: string; changed?: boolean }>;
-  setupDone(opts?: { clearSession?: boolean }): Promise<{ ok: boolean }>;
-  setupCancel(): Promise<{ ok: boolean }>;
-}
+// An import type expression keeps this file a classic script (module: None).
+type SetupApi = import("./contracts").SetupApi;
 
 // Global augmentation — this file is a script, not a module, so this merges
 // with lib.dom's Window. It has no local reference by design.

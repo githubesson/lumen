@@ -4,12 +4,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage, useAuth, type Visibility } from "@music-library/core";
 import {
   FormError,
-  FormField,
-  FormTextInput,
 } from "../../../components/form-field";
 import { FormScreen } from "../../../components/form-screen";
 import { HeaderTextButton } from "../../../components/header-buttons";
-import { SegmentedControl } from "../../../components/segmented-control";
+import { PlaylistFields } from "../../../components/playlist-fields";
 import { qk } from "../../../lib/query-keys";
 import { useTheme } from "../../../theme/theme";
 
@@ -69,42 +67,14 @@ export default function NewPlaylistScreen() {
         }}
       />
       <FormScreen>
-        <FormField label="Name">
-          <FormTextInput
-            placeholder="Playlist name"
-            value={name}
-            onChangeText={setName}
-            returnKeyType="next"
-          />
-        </FormField>
-
-        <FormField label="Description" optional>
-          <FormTextInput
-            placeholder="Add a description"
-            value={description}
-            onChangeText={setDescription}
-            style={{ minHeight: 96, textAlignVertical: "top" }}
-            multiline
-          />
-        </FormField>
-
-        <FormField
-          label="Visibility"
-          hint={
-            visibility === "private"
-              ? "Only you can see this playlist."
-              : "Invite others to add and reorder tracks."
-          }
-        >
-          <SegmentedControl<Visibility>
-            options={[
-              { label: "Private", value: "private" },
-              { label: "Collaborative", value: "collaborative" },
-            ]}
-            value={visibility}
-            onChange={setVisibility}
-          />
-        </FormField>
+        <PlaylistFields
+          name={name}
+          description={description}
+          visibility={visibility}
+          setName={setName}
+          setDescription={setDescription}
+          setVisibility={setVisibility}
+        />
 
         <FormError
           message={

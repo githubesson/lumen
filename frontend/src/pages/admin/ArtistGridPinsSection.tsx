@@ -1,19 +1,19 @@
-import { FormEvent, useState } from "react";
-import { LinkIcon } from "@heroicons/react/16/solid";
-import {
-  api,
-  errorMessage,
-  type ArtistGridDownload,
-  type ArtistGridPin,
-} from "../../api";
-import { Button } from "../../components/Button";
+import { useState } from "react";
+import { api, type ArtistGridDownload, type ArtistGridPin } from "../../api";
 import { Field, TextInput } from "../../components/Field";
-import { Select } from "../../components/Select";
 import { AdminSectionIntro } from "./AdminSectionTitle";
-import { DownloadHistoryTable, PinTable } from "./PinComponents";
+import {
+  DownloadHistoryTable,
+  PinTable,
+  PinDestinationCell,
+} from "./PinComponents";
 import { usePinManager } from "./usePinManager";
-
-type RootOption = { value: string; label: string; disabled: boolean };
+import {
+  PinCreateForm,
+  usePinForm,
+  type RootOption,
+  TrackerFields,
+} from "./PinCreateForm";
 
 /**
  * ArtistGrid trackers: pin a tracker to a configured source folder, manage its
@@ -40,45 +40,27 @@ export function ArtistGridPinsSection({
     onError,
   });
 
-  const [pinRootPath, setPinRootPath] = useState("");
   const [tracker, setTracker] = useState("");
-  const [destinationSubdir, setDestinationSubdir] = useState("");
-  const [trackerTab, setTrackerTab] = useState("");
-  const [pinLabel, setPinLabel] = useState("");
+  const [tab, setTab] = useState("");
   const [primaryArtist, setPrimaryArtist] = useState("");
-  const [scanMinutes, setScanMinutes] = useState("60");
-  const [addingPin, setAddingPin] = useState(false);
-
-  const effectiveRootPath = pinRootPath || defaultRootPath;
-
-  const addPin = async (e: FormEvent) => {
-    e.preventDefault();
-    onError("");
-    setAddingPin(true);
-    try {
-      const interval = Math.max(5, Number.parseInt(scanMinutes, 10) || 60);
-      await api.createArtistGridPin({
-        root_path: effectiveRootPath,
-        destination_subdir: destinationSubdir.trim(),
+  const form = usePinForm({
+    defaultRootPath,
+    create: (common) =>
+      api.createArtistGridPin({
+        ...common,
         tracker: tracker.trim(),
-        tab: trackerTab.trim(),
-        label: pinLabel.trim(),
+        tab: tab.trim(),
         primary_artist: primaryArtist.trim(),
-        scan_interval_seconds: interval * 60,
-      });
+      }),
+    reset: () => {
       setTracker("");
-      setDestinationSubdir("");
-      setTrackerTab("");
-      setPinLabel("");
+      setTab("");
       setPrimaryArtist("");
-      setScanMinutes("60");
-      await manager.reload();
-    } catch (err) {
-      onError(errorMessage(err, "Failed to pin ArtistGrid tracker."));
-    } finally {
-      setAddingPin(false);
-    }
-  };
+    },
+    reload: manager.reload,
+    onError,
+    failureMessage: "Failed to pin ArtistGrid tracker.",
+  });
 
   const historyPin = manager.historyPinID
     ? manager.pins?.find((pin) => pin.id === manager.historyPinID)
@@ -88,26 +70,29 @@ export function ArtistGridPinsSection({
     : undefined;
 
   return (
-    <section aria-labelledby="artistgrid-pins" style={{ display: "grid", gap: 14 }}>
+    <section
+      aria-labelledby="artistgrid-pins"
+      style={{ display: "grid", gap: 14 }}
+    >
       <AdminSectionIntro
         id="artistgrid-pins"
         title="ArtistGrid trackers"
         description="Pin trackers to folders that are already configured as sources. Scans download only missing files; existing files are recorded and ingested in place."
       />
 
-      <form
-        onSubmit={addPin}
-        className="surface"
-        style={{ padding: 20, display: "grid", gap: 14 }}
-      >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-            gap: 12,
-          }}
-        >
-          <Field label="Tracker URL or ID" hint="ArtistGrid tracker link or raw tracker id">
+      <PinCreateForm
+        form={form}
+        rootOptions={rootOptions}
+        destinationPlaceholder="ArtistGrid"
+        labelPlaceholder="ArtistGrid"
+        submitLabel="Pin tracker"
+        hasSource={!!tracker.trim()}
+        fieldMinWidth={140}
+        sourceField={
+          <Field
+            label="Tracker URL or ID"
+            hint="ArtistGrid tracker link or raw tracker id"
+          >
             <TextInput
               value={tracker}
               onChange={(e) => setTracker(e.target.value)}
@@ -115,81 +100,15 @@ export function ArtistGridPinsSection({
               required
             />
           </Field>
-          <Field label="Source folder">
-            <Select
-              value={effectiveRootPath}
-              onChange={setPinRootPath}
-              options={rootOptions}
-              placeholder="Select source folder"
-              disabled={!rootOptions.length}
-            />
-          </Field>
-        </div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-            gap: 12,
-          }}
-        >
-          <Field label="Destination subfolder" hint="Relative to the selected source">
-            <TextInput
-              value={destinationSubdir}
-              onChange={(e) => setDestinationSubdir(e.target.value)}
-              placeholder="ArtistGrid"
-            />
-          </Field>
-          <Field label="Tab" hint="Optional">
-            <TextInput
-              value={trackerTab}
-              onChange={(e) => setTrackerTab(e.target.value)}
-              placeholder="Leaks"
-            />
-          </Field>
-          <Field label="Primary artist" hint="Optional override">
-            <TextInput
-              value={primaryArtist}
-              onChange={(e) => setPrimaryArtist(e.target.value)}
-              placeholder="Artist"
-            />
-          </Field>
-          <Field label="Every" hint="Minutes">
-            <TextInput
-              type="number"
-              min={5}
-              step={5}
-              value={scanMinutes}
-              onChange={(e) => setScanMinutes(e.target.value)}
-            />
-          </Field>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "end",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ flex: "1 1 260px" }}>
-            <Field label="Label" hint="Optional display name">
-              <TextInput
-                value={pinLabel}
-                onChange={(e) => setPinLabel(e.target.value)}
-                placeholder="ArtistGrid tracker"
-              />
-            </Field>
-          </div>
-          <Button
-            type="submit"
-            variant="primary"
-            leadingIcon={<LinkIcon className="size-4" />}
-            disabled={addingPin || !tracker.trim() || !effectiveRootPath}
-          >
-            {addingPin ? "Pinning..." : "Pin tracker"}
-          </Button>
-        </div>
-      </form>
+        }
+      >
+        <TrackerFields
+          tab={tab}
+          setTab={setTab}
+          primaryArtist={primaryArtist}
+          setPrimaryArtist={setPrimaryArtist}
+        />
+      </PinCreateForm>
 
       <PinTable
         manager={manager}
@@ -207,21 +126,10 @@ export function ArtistGridPinsSection({
                 {pin.tab ? ` / ${pin.tab}` : ""}
               </div>
             </td>
-            <td className="mono" style={{ wordBreak: "break-all" }}>
-              {pin.destination_path}
-              {!pin.root_exists && (
-                <span
-                  title="The pinned source root does not exist on the server"
-                  style={{
-                    marginLeft: 8,
-                    color: "var(--warning-fg)",
-                    fontSize: 11,
-                  }}
-                >
-                  missing
-                </span>
-              )}
-            </td>
+            <PinDestinationCell
+              path={pin.destination_path}
+              rootExists={pin.root_exists}
+            />
           </>
         )}
       />

@@ -3,18 +3,8 @@ import * as path from "node:path";
 import * as fsp from "node:fs/promises";
 import type { UpdateBranch } from "./updater";
 
-export type Theme = "light" | "dark";
-export type Density = "airy" | "balanced" | "dense";
-export type Layout = "compact" | "sidebar" | "wide";
-
-export interface Tweaks {
-  theme: Theme;
-  depth: number;
-  radius: number;
-  density: Density;
-  layout: Layout;
-  glow: boolean;
-}
+import type { Tweaks } from "./contracts";
+export type { Theme, Density, Layout, Tweaks } from "./contracts";
 
 export interface Config {
   backendUrl?: string;

@@ -1,6 +1,5 @@
 import { apiUrl, rawFetch, request } from "./api-transport";
 import type {
-  PlaylistTrackEntry,
   StoryBackgroundCrop,
   StoryBackgroundUploadFile,
   TrackArtist,
@@ -221,21 +220,8 @@ export function getPublicTrackShare(
   );
 }
 
-export function toQueueItem(entry: PlaylistTrackEntry): TrackListItem {
-  return {
-    id: entry.track_id,
-    title: entry.title,
-    album_id: entry.album_id,
-    album_title: entry.album_title,
-    track_no: entry.track_no,
-    duration_ms: entry.duration_ms,
-    artist: entry.artist,
-    source: entry.source,
-    source_id: entry.source_id,
-    source_album_id: entry.source_album_id,
-    cover_url: entry.cover_url,
-  };
-}
+// Backwards-compatible name for the canonical playlist-entry converter.
+export { playlistEntryToTrack as toQueueItem } from "./track";
 
 export function displayArtists(track: { artists?: TrackArtist[] }): string {
   return (track.artists ?? [])

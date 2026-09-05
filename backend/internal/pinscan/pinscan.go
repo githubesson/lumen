@@ -1,8 +1,5 @@
-// Package pinscan holds the constants shared by the "pinned download source"
-// integrations (filen, artistgrid). These two packages implement the same
-// pin -> scan -> download -> ingest pipeline against different upstreams; the
-// values here keep their status vocabulary and scheduler tuning in one place so
-// the two pipelines cannot silently drift apart (as they previously had).
+// Package pinscan shares scheduling, scan reservations, and store policy across
+// the API tracker, ArtistGrid, and Filen download integrations.
 package pinscan
 
 import "time"

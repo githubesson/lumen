@@ -38,14 +38,8 @@ import { createLocalProxy } from "./local-proxy";
 
 export type { Density, Layout, Theme, Tweaks } from "./config";
 
-interface SetupDoneOpts {
-  clearSession?: boolean;
-}
+import type { SetupDoneOpts, ExportTrackFileItem } from "./contracts";
 
-interface ExportTrackFileItem {
-  url: string;
-  filename: string;
-}
 
 const DIST_DIR = path.join(__dirname, "..", "..", "dist");
 const SETUP_FILE = path.join(__dirname, "..", "setup.html");

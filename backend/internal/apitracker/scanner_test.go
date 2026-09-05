@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/githubesson/lumen/internal/downloadfile"
 	"github.com/githubesson/lumen/internal/httpx"
 )
 
@@ -66,9 +67,9 @@ func TestDownloadOneSkipsUnsupportedExtensionBeforeWriting(t *testing.T) {
 	if filePath == "" || filepath.Ext(filePath) != ".txt" {
 		t.Fatalf("expected skipped txt target path, got %q", filePath)
 	}
-	var skipErr skipDownloadError
+	var skipErr downloadfile.SkipError
 	if !errors.As(err, &skipErr) {
-		t.Fatalf("expected skipDownloadError, got %T %v", err, err)
+		t.Fatalf("expected downloadfile.SkipError, got %T %v", err, err)
 	}
 	if skipErr.Error() != "unsupported file extension" {
 		t.Fatalf("unexpected skip reason: %q", skipErr.Error())
@@ -220,9 +221,9 @@ func TestDownloadOneRejectsLoopbackByDefaultBeforeRequest(t *testing.T) {
 	if resolved != srv.URL {
 		t.Fatalf("resolved URL mismatch: %q", resolved)
 	}
-	var skipErr skipDownloadError
+	var skipErr downloadfile.SkipError
 	if !errors.As(err, &skipErr) {
-		t.Fatalf("expected skipDownloadError, got %T %v", err, err)
+		t.Fatalf("expected downloadfile.SkipError, got %T %v", err, err)
 	}
 	if requested {
 		t.Fatal("loopback server was requested")

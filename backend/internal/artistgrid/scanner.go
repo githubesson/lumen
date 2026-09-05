@@ -5,24 +5,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/githubesson/lumen/internal/downloadfile"
 	"github.com/githubesson/lumen/internal/httpx"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/pinscan"
-	"github.com/githubesson/lumen/internal/safego"
+	"github.com/githubesson/lumen/internal/sourceurl"
 )
 
 // Fallback per-file download deadline when *_FILE_TIMEOUT is unset or <= 0.
@@ -40,9 +38,7 @@ type Scanner struct {
 	downloadHTTP      *http.Client
 	downloadURLPolicy httpx.DownloadPolicy
 
-	mu       sync.Mutex
-	inflight map[uuid.UUID]struct{}
-	jobs     sync.WaitGroup
+	scans pinscan.Group
 }
 
 type ScanSummary struct {
@@ -62,42 +58,24 @@ func (s *Scanner) Run(ctx context.Context) {
 	if s == nil || s.Store == nil {
 		return
 	}
-	interval := s.PollInterval
-	if interval <= 0 {
-		interval = 5 * time.Minute
-	}
-	timer := time.NewTimer(pinscan.InitialScanDelay)
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-			s.scanDue(ctx)
-			timer.Reset(interval)
-		}
-	}
+	pinscan.Run(ctx, s.PollInterval, s.scanDue)
 }
 
 func (s *Scanner) StartPinScan(ctx context.Context, id uuid.UUID) (bool, error) {
-	if !s.tryBegin(id) {
+	if !s.scans.TryBegin(id) {
 		return false, nil
 	}
 	pin, err := s.Store.GetPin(ctx, id)
 	if err != nil {
-		s.end(id)
+		s.scans.End(id)
 		return false, err
 	}
-	s.jobs.Add(1)
-	go func() {
-		defer s.jobs.Done()
-		defer s.end(id)
-		defer safego.Recover("artistgrid manual scan")
+	s.scans.Go(id, "artistgrid manual scan", func() {
 		_, err := s.ScanPin(ctx, pin)
 		if err != nil && s.Logger != nil {
 			s.Logger.Warn("artistgrid manual scan failed", "pin", id, "err", err)
 		}
-	}()
+	})
 	return true, nil
 }
 
@@ -110,25 +88,21 @@ func (s *Scanner) scanDue(ctx context.Context) {
 		return
 	}
 	for _, pin := range pins {
-		if !s.tryBegin(pin.ID) {
+		if !s.scans.TryBegin(pin.ID) {
 			continue
 		}
-		s.jobs.Add(1)
-		go func(pin Pin) {
-			defer s.jobs.Done()
-			defer s.end(pin.ID)
-			defer safego.Recover("artistgrid scheduled scan")
+		s.scans.Go(pin.ID, "artistgrid scheduled scan", func() {
 			_, err := s.ScanPin(ctx, pin)
 			if err != nil && s.Logger != nil {
 				s.Logger.Warn("artistgrid scheduled scan failed", "pin", pin.ID, "tracker", pin.TrackerID, "err", err)
 			}
-		}(pin)
+		})
 	}
 }
 
 // Wait blocks until all scheduled and manually-triggered scans have stopped.
 // Call it after Run has returned so no new jobs can be added.
-func (s *Scanner) Wait() { s.jobs.Wait() }
+func (s *Scanner) Wait() { s.scans.Wait() }
 
 func (s *Scanner) ScanPin(ctx context.Context, pin Pin) (ScanSummary, error) {
 	trackerID := s.trackerIDForPin(ctx, &pin)
@@ -212,12 +186,12 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 				continue
 			}
 			summary.Seen++
-			fallback := SanitizeName(rec.ItemName)
+			fallback := downloadfile.SanitizeName(rec.ItemName)
 			if len(sourceURLs) > 1 {
 				fallback = fmt.Sprintf("%s_%d", fallback, i+1)
 			}
 			metadata := recordMetadata(data, pin, tab, rec, ctxMeta)
-			if ShouldSkipURL(sourceURL) {
+			if sourceurl.ShouldSkipURL(sourceURL) {
 				summary.Skipped++
 				_ = s.Store.RecordDownload(ctx, DownloadInput{
 					PinID:     pin.ID,
@@ -235,7 +209,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 				ctx, pin, destBase, rec, fallback, sourceURL, ctxMeta,
 			)
 			if err != nil {
-				var skipErr skipDownloadError
+				var skipErr downloadfile.SkipError
 				if errors.As(err, &skipErr) {
 					summary.Skipped++
 					_ = s.Store.RecordDownload(ctx, DownloadInput{
@@ -339,7 +313,7 @@ func (s *Scanner) previousStillPresent(ctx context.Context, pinID uuid.UUID, sou
 			return true
 		}
 	case StatusDownloaded, StatusExisting:
-		if prev.FilePath != "" && fileNonEmpty(prev.FilePath) {
+		if prev.FilePath != "" && downloadfile.NonEmpty(prev.FilePath) {
 			if prev.TrackID == nil {
 				trackID, inserted := s.ingestPath(ctx, prev.FilePath, TrackContext{}, false)
 				_ = s.Store.RecordDownload(ctx, DownloadInput{
@@ -376,7 +350,7 @@ func (s *Scanner) downloadOne(
 		return "", "", "", nil, false, err
 	}
 	if _, err := httpx.ValidateDownloadURL(resolvedURL, s.downloadURLPolicy); err != nil {
-		return "", resolvedURL, "", nil, false, skipDownloadError{reason: err.Error()}
+		return "", resolvedURL, "", nil, false, downloadfile.SkipError{Reason: err.Error()}
 	}
 	fileCtx, cancel := context.WithTimeout(ctx, s.fileTimeout())
 	defer cancel()
@@ -401,55 +375,23 @@ func (s *Scanner) downloadOne(
 	if eraName == "" {
 		eraName = rec.EraID
 	}
-	destDir := filepath.Join(destBase, SanitizeName(eraName), SanitizeName(rec.Category))
-	name := PickFilename(resp, resp.Request.URL.String(), fallbackName)
+	destDir := filepath.Join(destBase, downloadfile.SanitizeName(eraName), downloadfile.SanitizeName(rec.Category))
+	name := downloadfile.PickFilename(resp, resp.Request.URL.String(), fallbackName)
 	target := filepath.Join(destDir, name)
 	if !ingest.IsSupported(target) {
-		return "", resolvedURL, target, nil, false, skipDownloadError{reason: "unsupported file extension"}
+		return "", resolvedURL, target, nil, false, downloadfile.SkipError{Reason: "unsupported file extension"}
 	}
-	if fileNonEmpty(target) {
-		trackID, ingestInserted = s.ingestPath(ctx, target, trackCtx, false)
-		return StatusExisting, resolvedURL, target, trackID, ingestInserted, nil
-	}
-	if pathExists(target) {
-		target = nextAvailablePath(target)
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		if isReadOnlyDestinationError(err) {
-			return "", resolvedURL, target, nil, false, skipDownloadError{reason: "destination is read-only"}
-		}
-		return "", resolvedURL, target, nil, false, err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".*.part")
-	if err != nil {
-		if isReadOnlyDestinationError(err) {
-			return "", resolvedURL, target, nil, false, skipDownloadError{reason: "destination is read-only"}
-		}
-		return "", resolvedURL, target, nil, false, err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
-		tmp.Close()
-		return "", resolvedURL, target, nil, false, err
-	}
-	if err := tmp.Close(); err != nil {
-		return "", resolvedURL, target, nil, false, err
-	}
-	if pathExists(target) {
-		if fileNonEmpty(target) {
-			trackID, ingestInserted = s.ingestPath(ctx, target, trackCtx, false)
-			return StatusExisting, resolvedURL, target, trackID, ingestInserted, nil
-		}
-		target = nextAvailablePath(target)
-	}
-	target, err = installNoOverwrite(tmpPath, target)
+	var existing bool
+	target, existing, err = downloadfile.Save(resp.Body, target)
 	if err != nil {
 		return "", resolvedURL, target, nil, false, err
 	}
-	trackID, ingestInserted = s.ingestPath(ctx, target, trackCtx, true)
-	return StatusDownloaded, resolvedURL, target, trackID, ingestInserted, nil
+	trackID, ingestInserted = s.ingestPath(ctx, target, trackCtx, !existing)
+	status = StatusDownloaded
+	if existing {
+		status = StatusExisting
+	}
+	return status, resolvedURL, target, trackID, ingestInserted, nil
 }
 
 func (s *Scanner) downloadClient() *http.Client {
@@ -536,92 +478,6 @@ func pinDestination(pin Pin) (string, error) {
 	return dest, nil
 }
 
-func nextAvailablePath(target string) string {
-	if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
-		return target
-	}
-	ext := filepath.Ext(target)
-	base := strings.TrimSuffix(target, ext)
-	for i := 1; i < 10000; i++ {
-		cand := fmt.Sprintf("%s-%d%s", base, i, ext)
-		if _, err := os.Stat(cand); errors.Is(err, os.ErrNotExist) {
-			return cand
-		}
-	}
-	return fmt.Sprintf("%s-%d%s", base, time.Now().UnixNano(), ext)
-}
-
-func fileNonEmpty(p string) bool {
-	info, err := os.Stat(p)
-	return err == nil && !info.IsDir() && info.Size() > 0
-}
-
-func pathExists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
-}
-
-type skipDownloadError struct {
-	reason string
-}
-
-func (e skipDownloadError) Error() string {
-	return e.reason
-}
-
-func isReadOnlyDestinationError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if os.IsPermission(err) {
-		return true
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "read-only file system")
-}
-
-func installNoOverwrite(tmpPath, target string) (string, error) {
-	for i := 0; i < 10000; i++ {
-		if err := os.Link(tmpPath, target); err == nil {
-			_ = os.Remove(tmpPath)
-			return target, nil
-		} else if os.IsExist(err) {
-			target = nextAvailablePath(target)
-			continue
-		}
-
-		// Some filesystems disallow hard links. Fall back to an O_EXCL copy,
-		// preserving the same no-overwrite guarantee.
-		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-		if os.IsExist(err) {
-			target = nextAvailablePath(target)
-			continue
-		}
-		if err != nil {
-			return target, err
-		}
-		in, err := os.Open(tmpPath)
-		if err != nil {
-			out.Close()
-			_ = os.Remove(target)
-			return target, err
-		}
-		_, copyErr := io.Copy(out, in)
-		closeErr := out.Close()
-		in.Close()
-		if copyErr != nil {
-			_ = os.Remove(target)
-			return target, copyErr
-		}
-		if closeErr != nil {
-			_ = os.Remove(target)
-			return target, closeErr
-		}
-		_ = os.Remove(tmpPath)
-		return target, nil
-	}
-	return target, fmt.Errorf("could not find an available target path")
-}
-
 func recordMetadata(data TrackerData, pin Pin, tab string, rec Record, tc TrackContext) json.RawMessage {
 	b, err := json.Marshal(map[string]any{
 		"tracker_id":     pin.TrackerID,
@@ -637,23 +493,4 @@ func recordMetadata(data TrackerData, pin Pin, tab string, rec Record, tc TrackC
 		return json.RawMessage(`{}`)
 	}
 	return b
-}
-
-func (s *Scanner) tryBegin(id uuid.UUID) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.inflight == nil {
-		s.inflight = map[uuid.UUID]struct{}{}
-	}
-	if _, ok := s.inflight[id]; ok {
-		return false
-	}
-	s.inflight[id] = struct{}{}
-	return true
-}
-
-func (s *Scanner) end(id uuid.UUID) {
-	s.mu.Lock()
-	delete(s.inflight, id)
-	s.mu.Unlock()
 }

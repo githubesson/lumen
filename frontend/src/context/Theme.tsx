@@ -15,20 +15,8 @@ import {
   setTitleBarTheme,
 } from "../lib/platform";
 
-export type Theme = "light" | "dark";
-export type Density = "airy" | "balanced" | "dense";
-export type Layout = "compact" | "sidebar" | "wide";
-
-export interface Tweaks {
-  theme: Theme;
-  depth: number;
-  radius: number;
-  density: Density;
-  layout: Layout;
-  /** Ambient accent glow — the album-cover-driven color wash on the app
-   *  background, detail headers, mini-player, etc. Turn off for a flat look. */
-  glow: boolean;
-}
+import type { Theme, Density, Layout, Tweaks } from "../../electron/contracts";
+export type { Theme, Density, Layout, Tweaks } from "../../electron/contracts";
 
 const STORAGE_KEY = "lumen.tweaks";
 

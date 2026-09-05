@@ -9,6 +9,7 @@ import (
 
 	xdraw "golang.org/x/image/draw"
 
+	"github.com/githubesson/lumen/internal/colormath"
 	"github.com/githubesson/lumen/internal/library"
 )
 
@@ -113,29 +114,8 @@ func extractAccentFromImage(src image.Image) (accentOKLCH, bool) {
 }
 
 func rgbToOklch(r, g, b float64) accentOKLCH {
-	lr := srgbToLinear(r)
-	lg := srgbToLinear(g)
-	lb := srgbToLinear(b)
-	l_ := math.Cbrt(0.4122214708*lr + 0.5363325363*lg + 0.0514459929*lb)
-	m_ := math.Cbrt(0.2119034982*lr + 0.6806995451*lg + 0.1073969566*lb)
-	s_ := math.Cbrt(0.0883024619*lr + 0.2817188376*lg + 0.6299787005*lb)
-	L := 0.2104542553*l_ + 0.7936177850*m_ - 0.0040720468*s_
-	a := 1.9779984951*l_ - 2.4285922050*m_ + 0.4505937099*s_
-	bb := 0.0259040371*l_ + 0.7827717662*m_ - 0.8086757660*s_
-	C := math.Hypot(a, bb)
-	H := math.Atan2(bb, a) * 180 / math.Pi
-	if H < 0 {
-		H += 360
-	}
-	return accentOKLCH{l: L, c: C, h: H}
-}
-
-func srgbToLinear(v float64) float64 {
-	s := v / 255
-	if s <= 0.04045 {
-		return s / 12.92
-	}
-	return math.Pow((s+0.055)/1.055, 2.4)
+	c := colormath.FromSRGB(r, g, b)
+	return accentOKLCH{l: c.L, c: c.C, h: c.H}
 }
 
 func clampAccentDark(raw accentOKLCH) accentOKLCH {
@@ -147,29 +127,6 @@ func clampAccentDark(raw accentOKLCH) accentOKLCH {
 }
 
 func oklchToHex(c accentOKLCH) string {
-	h := c.h * math.Pi / 180
-	a := c.c * math.Cos(h)
-	b := c.c * math.Sin(h)
-
-	l_ := c.l + 0.3963377774*a + 0.2158037573*b
-	m_ := c.l - 0.1055613458*a - 0.0638541728*b
-	s_ := c.l - 0.0894841775*a - 1.2914855480*b
-
-	l := l_ * l_ * l_
-	m := m_ * m_ * m_
-	s := s_ * s_ * s_
-
-	r := linearToSRGB(4.0767416621*l - 3.3077115913*m + 0.2309699292*s)
-	g := linearToSRGB(-1.2684380046*l + 2.6097574011*m - 0.3413193965*s)
-	bl := linearToSRGB(-0.0041960863*l - 0.7034186147*m + 1.7076147010*s)
-
-	return fmt.Sprintf("#%02x%02x%02x", byte(math.Round(r*255)), byte(math.Round(g*255)), byte(math.Round(bl*255)))
-}
-
-func linearToSRGB(v float64) float64 {
-	v = math.Max(0, math.Min(1, v))
-	if v <= 0.0031308 {
-		return 12.92 * v
-	}
-	return 1.055*math.Pow(v, 1/2.4) - 0.055
+	rgb := colormath.ToSRGB(colormath.OKLCH{L: c.l, C: c.c, H: c.h})
+	return fmt.Sprintf("#%02x%02x%02x", byte(math.Round(rgb.R)), byte(math.Round(rgb.G)), byte(math.Round(rgb.B)))
 }

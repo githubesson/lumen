@@ -6,24 +6,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { loadConfig, saveConfigPatch } from "./config";
 
-export interface FH6InstallRequest {
-  gameDir?: string;
-  mediaSource?: string;
-  skipMedia?: boolean;
-}
+import type { FH6InstallRequest, FH6StatusPayload as FH6Status } from "./contracts";
+export type { FH6InstallRequest, FH6StatusPayload as FH6Status } from "./contracts";
 
-export interface FH6Status {
-  enabled: boolean;
-  gameDir: string;
-  bridgeUrl: string;
-  gameDirExists: boolean;
-  exeFound: boolean;
-  bridgeInstalled: boolean;
-  configInstalled: boolean;
-  mediaInstalled: boolean;
-  packagedModAvailable: boolean;
-  candidates: string[];
-}
 
 export const DEFAULT_FH6_BRIDGE_PORT = 8420;
 const execFileAsync = promisify(execFile);
