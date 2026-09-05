@@ -15,6 +15,13 @@ import type {
   TimeState,
 } from "./player-core";
 
+import {
+  buildPlaybackQueueSnapshot,
+  PLAYBACK_SOCKET_MAX_BYTES,
+  utf8ByteLength,
+  type PlaybackQueueSnapshot,
+} from "./queue-sync";
+
 export const ACTIVITY_DEVICE_ID_STORAGE_KEY = "mlib-activity-device-id";
 
 const PLAYBACK_SYNC_PROTOCOL = 1;
@@ -31,6 +38,7 @@ const DEFAULT_PLAYBACK_CAPABILITIES: PlaybackCapability[] = [
 
 export type PlaybackCapability = "playback" | "seek" | "volume" | "queue";
 export type RemotePlaybackCommandAction =
+  | "jump_to"
   | "play_track"
   | "set_playing"
   | "next"
@@ -56,6 +64,7 @@ export interface PlaybackDevice {
   capabilities: PlaybackCapability[];
   connectedAt: string;
   activity: PlaybackActivity | null;
+  queue?: PlaybackQueueSnapshot | null;
 }
 
 export type RemotePlaybackCommandStatus =
@@ -98,6 +107,7 @@ interface PlaybackSyncUpdateMessage {
   protocol: number;
   revision: number;
   activity: PlaybackActivityInput;
+  queue?: PlaybackQueueSnapshot;
 }
 
 interface PlaybackSyncClearMessage {
@@ -156,6 +166,7 @@ interface PlaybackSyncDevicesMessage {
     capabilities: PlaybackCapability[];
     connected_at: string;
     activity: PlaybackActivity | null;
+    queue?: PlaybackQueueSnapshot | null;
   }>;
 }
 
@@ -339,6 +350,7 @@ export function usePlaybackActivityPublisher({
   const socketRef = useRef<WebSocket | null>(null);
   const revisionRef = useRef(0);
   const publishedRef = useRef(false);
+  const queueVersionRef = useRef<{ source: TrackListItem[]; revision: string } | null>(null);
   const publishRef = useRef<() => void>(() => {});
   const controlsRef = useRef(controls);
   const commandQueueRef = useRef(Promise.resolve());
@@ -397,13 +409,25 @@ export function usePlaybackActivityPublisher({
       return;
     }
 
-    publishedRef.current = true;
-    const sent = sendSocketMessage(socketRef.current, {
+    if (queueVersionRef.current?.source !== stateRef.current.queue) {
+      queueVersionRef.current = { source: stateRef.current.queue, revision: createDeviceId() };
+    }
+    const message: PlaybackSyncUpdateMessage = {
       type: "activity.update",
       protocol: PLAYBACK_SYNC_PROTOCOL,
       revision,
       activity: payload,
-    });
+    };
+    // Include the envelope, UTF-8 metadata, queue key and delimiters in the
+    // budget. Reconnect uses this same path, so it cannot resend an oversize frame.
+    const envelopeBytes = utf8ByteLength(JSON.stringify({ ...message, queue: null })) - 4;
+    const queue = buildPlaybackQueueSnapshot(
+      stateRef.current,
+      queueVersionRef.current.revision,
+      PLAYBACK_SOCKET_MAX_BYTES - envelopeBytes,
+    );
+    publishedRef.current = true;
+    const sent = queue !== null && sendSocketMessage(socketRef.current, { ...message, queue });
     // REST remains a compatibility path while the socket connects or when an
     // older deployment proxy does not yet support WebSocket upgrades.
     if (!sent) void api.upsertPlaybackActivity(payload).catch(() => {});
@@ -478,6 +502,8 @@ export function usePlaybackActivityPublisher({
               controlsRef.current,
               revisionRef,
               processedCommandsRef.current,
+              queueVersionRef.current?.source === stateRef.current.queue
+                ? queueVersionRef.current.revision : undefined,
             ),
           );
           return;
@@ -540,6 +566,10 @@ export function usePlaybackActivityPublisher({
     state.isPlaying,
     state.volume,
     state.muted,
+    state.queue,
+    state.index,
+    state.shuffle,
+    state.repeat,
   ]);
 
   useEffect(() => {
@@ -611,7 +641,9 @@ function sendSocketMessage(
 ): boolean {
   if (!socket || socket.readyState !== WebSocket.OPEN) return false;
   try {
-    socket.send(JSON.stringify(message));
+    const serialized = JSON.stringify(message);
+    if (utf8ByteLength(serialized) > PLAYBACK_SOCKET_MAX_BYTES) return false;
+    socket.send(serialized);
     return true;
   } catch {
     return false;
@@ -677,6 +709,7 @@ function normalizeDevices(
       capabilities: device.capabilities.filter(isPlaybackCapability),
       connectedAt:
         typeof device.connected_at === "string" ? device.connected_at : "",
+      queue: device.queue ?? null,
       activity:
         device.activity && typeof device.activity === "object"
           ? device.activity
@@ -762,13 +795,14 @@ async function handlePlaybackCommand(
   controls: PlayerControls | undefined,
   revision: { current: number },
   processed: Map<string, PlaybackCommandExecutionResult>,
+  queueRevision?: string,
 ): Promise<void> {
   if (message.target_device_id !== deviceId) return;
 
   let result = processed.get(message.command_id);
   const isFirstDelivery = !result;
   if (!result) {
-    result = executePlaybackCommand(message, state, controls);
+    result = executePlaybackCommand(message, state, controls, queueRevision);
     processed.set(message.command_id, result);
     if (processed.size > 128) {
       const oldest = processed.keys().next().value;
@@ -806,6 +840,7 @@ function executePlaybackCommand(
   message: PlaybackSyncCommandMessage,
   state: PlayerState,
   controls: PlayerControls | undefined,
+  queueRevision?: string,
 ): PlaybackCommandExecutionResult {
   if (!controls) {
     return { status: "unsupported", error: "remote control is unavailable" };
@@ -813,6 +848,16 @@ function executePlaybackCommand(
   const args = message.args ?? {};
   try {
     switch (message.action) {
+      case "jump_to": {
+        const index = commandNumber(args, "index");
+        if (!queueRevision || args.queue_revision !== queueRevision ||
+            !Number.isInteger(index) || index < 0 || index >= state.queue.length ||
+            state.queue[index].id !== args.track_id) {
+          return { status: "rejected", error: "queue changed; select the track again" };
+        }
+        controls.jumpTo(index);
+        break;
+      }
       case "play_track":
         controls.play(commandTrack(args, "track"), commandTrackQueue(args));
         break;
@@ -920,6 +965,7 @@ function isRemoteCommandAction(
   action: unknown,
 ): action is RemotePlaybackCommandAction {
   return (
+    action === "jump_to" ||
     action === "play_track" ||
     action === "set_playing" ||
     action === "next" ||

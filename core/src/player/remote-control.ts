@@ -15,6 +15,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import type { PlaybackQueueSnapshot } from "./queue-sync";
 import type { PlaybackActivity, TrackListItem } from "../api";
 import { clampVolume, type PlayerState, type RepeatMode, type TimeState } from "./player-core";
 import {
@@ -116,31 +117,7 @@ export function buildRemoteQueue(
   return window.some((item) => item.id === track.id) ? window : [track];
 }
 
-/**
- * Strip a track to the fields the receiving device needs. Track rows can carry
- * large incidental payloads, and a 50-track queue multiplies whatever is left
- * on them by fifty.
- */
-export function compactRemoteTrack(track: TrackListItem): TrackListItem {
-  return {
-    id: track.id,
-    db_track_id: track.db_track_id,
-    source: track.source,
-    source_id: track.source_id,
-    source_album_id: track.source_album_id,
-    title: track.title,
-    album_id: track.album_id,
-    album_title: track.album_title,
-    track_no: track.track_no,
-    duration_ms: track.duration_ms,
-    artist: track.artist,
-    aka: track.aka,
-    favorited: track.favorited,
-    has_cover: track.has_cover,
-    cover_url: track.cover_url,
-    owned: track.owned,
-  };
-}
+export { compactRemoteTrack } from "./queue-sync";
 
 /**
  * The remote device's current position, extrapolated forward from the
@@ -247,6 +224,7 @@ export interface UseRemotePlaybackCommandsOptions {
   targetActivity: PlaybackActivity | null | undefined;
   /** Seed for the controlled state before any target is picked. */
   initialState: ControlledPlaybackState;
+  targetQueue?: PlaybackQueueSnapshot | null;
 }
 
 export interface UseRemotePlaybackCommandsReturn {
@@ -276,6 +254,7 @@ export function useRemotePlaybackCommands({
   targetDeviceId,
   sourceDeviceId,
   targetActivity,
+  targetQueue,
   initialState,
 }: UseRemotePlaybackCommandsOptions): UseRemotePlaybackCommandsReturn {
   const [controlled, setControlled] = useState<ControlledPlaybackState>(
@@ -287,10 +266,10 @@ export function useRemotePlaybackCommands({
 
   const activityVolume = targetActivity?.volume;
   const activityMuted = targetActivity?.muted;
+  const queueShuffle = targetQueue?.shuffle;
+  const queueRepeat = targetQueue?.repeat;
 
-  // Reconcile against what the target actually reports. Only volume and mute:
-  // shuffle and repeat are not carried on the activity payload, so they stay
-  // wherever the last accepted command left them.
+  // Reconcile controls with the target’s activity and actual queue order.
   useEffect(() => {
     if (!targetActivity) return;
     // Playback activity is an external device snapshot; controlled state must
@@ -303,11 +282,13 @@ export function useRemotePlaybackCommands({
           ? clampVolume(activityVolume)
           : current.volume,
       muted: typeof activityMuted === "boolean" ? activityMuted : current.muted,
+      shuffle: queueShuffle ?? current.shuffle,
+      repeat: queueRepeat ?? current.repeat,
     }));
     // `targetActivity` itself is a fresh object on every heartbeat; depending
     // on it would re-run this on each poll even when nothing changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activityVolume, activityMuted]);
+  }, [activityVolume, activityMuted, queueShuffle, queueRepeat, targetDeviceId]);
 
   const seedControlled = useCallback((seed: ControlledPlaybackState) => {
     setControlled(seed);
@@ -372,7 +353,25 @@ export function controlledStateForDevice(
         : fallback.volume,
     muted:
       typeof activity?.muted === "boolean" ? activity.muted : fallback.muted,
-    shuffle: fallback.shuffle,
-    repeat: fallback.repeat,
+    shuffle: device?.queue?.shuffle ?? fallback.shuffle,
+    repeat: device?.queue?.repeat ?? fallback.repeat,
+  };
+}
+
+/** Present the selected device's state without modifying the local audio player. */
+export function remotePlayerState(
+  device: PlaybackDevice,
+  controlled: ControlledPlaybackState,
+): PlayerState {
+  const snapshot = device.queue;
+  const current = snapshot
+    ? snapshot.tracks[snapshot.index] ?? null
+    : activityTrack(device.activity);
+  return {
+    ...controlled,
+    current,
+    queue: snapshot?.tracks ?? (current ? [current] : []),
+    index: snapshot?.index ?? 0,
+    isPlaying: !!device.activity?.is_playing,
   };
 }

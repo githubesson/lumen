@@ -58,7 +58,7 @@ surface for invites and library management.
 ### Mobile app (Expo, iOS / Android)
 
 - Background playback with lock-screen / now-playing controls (custom native module)
-- Live cross-device playback activity over WebSockets, with a protocol seam for future remote controls
+- Live cross-device playback activity and remote controls over WebSockets, including queue, shuffle, and repeat sync
 - AirPlay output picker on iOS
 - Instagram story sharing for Replay and tracks
 - Full library, playlists (incl. collaborators), favorites, uploads, metadata editing, and admin screens on the go

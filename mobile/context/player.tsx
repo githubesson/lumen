@@ -16,7 +16,7 @@ import {
 import { Alert, AppState, Platform } from "react-native";
 import * as Haptics from "expo-haptics";
 import {
-  activityTrack,
+  remotePlayerState,
   controlledStateForDevice,
   filterRemoteDevices,
   trackCoverUrl,
@@ -163,7 +163,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [targetDeviceId, setTargetDeviceId] = useState<string | null>(null);
   const [targetDeviceSnapshot, setTargetDeviceSnapshot] =
     useState<PlaybackDevice | null>(null);
-  const [controlledQueue, setControlledQueue] = useState<TrackListItem[]>([]);
   const remoteDevices = useMemo(
     () => filterRemoteDevices(remoteSession.devices, remoteSession.deviceId),
     [remoteSession.deviceId, remoteSession.devices],
@@ -181,10 +180,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     (targetDeviceSnapshot?.deviceId === targetDeviceId
       ? targetDeviceSnapshot
       : null);
-  const remoteCurrent = useMemo(
-    () => activityTrack(targetDevice?.activity),
-    [targetDevice?.activity],
-  );
   const {
     controlled,
     commandPending,
@@ -195,6 +190,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     targetDeviceId,
     sourceDeviceId: remoteSession.deviceId,
     targetActivity: targetDevice?.activity,
+    targetQueue: targetDevice?.queue,
     initialState: {
       volume: state.volume,
       muted: state.muted,
@@ -207,19 +203,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (liveTargetDevice) setTargetDeviceSnapshot(liveTargetDevice);
   }, [liveTargetDevice]);
 
-  useEffect(() => {
-    if (!targetDevice) return;
-    if (!remoteCurrent) {
-      setControlledQueue([]);
-      return;
-    }
-    setControlledQueue((queue) =>
-      queue.some((track) => track.id === remoteCurrent.id)
-        ? queue
-        : [remoteCurrent],
-    );
-  }, [remoteCurrent, targetDevice]);
-
   // Destructured so this callback's identity tracks only the fields it reads.
   // Depending on `state` wholesale would also rebuild it on every queue change,
   // and it is handed to consumers through the remote-playback context.
@@ -230,7 +213,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const nextDevice =
         remoteDevices.find((device) => device.deviceId === nextDeviceId) ??
         null;
-      const nextTrack = activityTrack(nextDevice?.activity);
       setTargetDeviceId(nextDeviceId);
       setTargetDeviceSnapshot(nextDevice);
       seedControlled(
@@ -241,7 +223,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           repeat,
         }),
       );
-      setControlledQueue(nextTrack ? [nextTrack] : []);
     },
     [
       controls,
@@ -340,45 +321,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // isPlaying stays in the deps so pause/resume refresh playbackRate.
   }, [adapter, nowPlayingMetadata, state.isPlaying, targetDevice]);
 
+  const displayedState = useMemo<PlayerState>(
+    () => targetDevice ? remotePlayerState(targetDevice, controlled) : state,
+    [targetDevice, controlled, state],
+  );
   const routedControls = useRoutedPlayerControls({
     controls,
     targetDevice,
     controlled,
     sendCommand,
-    remoteQueue: controlledQueue,
+    remoteQueue: displayedState.queue,
     canPlayLocally,
-    onRemoteQueueApplied: setControlledQueue,
   });
   const routedPlay = routedControls.play;
-  const controlledIndex = remoteCurrent
-    ? Math.max(
-        0,
-        controlledQueue.findIndex((track) => track.id === remoteCurrent.id),
-      )
-    : 0;
-  const displayedState = useMemo<PlayerState>(
-    () =>
-      targetDevice
-        ? {
-            current: remoteCurrent,
-            queue: controlledQueue,
-            index: controlledIndex,
-            isPlaying: !!targetDevice.activity?.is_playing,
-            volume: controlled.volume,
-            muted: controlled.muted,
-            shuffle: controlled.shuffle,
-            repeat: controlled.repeat,
-          }
-        : state,
-    [
-      controlledIndex,
-      controlledQueue,
-      controlled,
-      remoteCurrent,
-      state,
-      targetDevice,
-    ],
-  );
   // Ticking, not memoized from the heartbeat: snapshots arrive every ~10s,
   // and a memo keyed on them made cast-mode lyrics/scrubber time advance in
   // ten-second leaps. Foreground-gated like `interpolateProgress` above.

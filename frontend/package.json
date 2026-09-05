@@ -24,7 +24,8 @@
     "electron:build:linux": "npm run build && npm run electron:compile && electron-builder --linux --publish never --config electron-builder.cjs",
     "electron:build:mac": "npm run build && npm run electron:compile && electron-builder --mac dmg --publish never --config electron-builder.cjs",
     "electron:build:mac:universal": "npm run build && npm run electron:compile && electron-builder --mac --universal --publish never --config electron-builder.cjs",
-    "icons": "node scripts/generate-icons.mjs"
+    "icons": "node scripts/generate-icons.mjs",
+    "test": "vitest run"
   },
   "dependencies": {
     "@heroicons/react": "^2.1.5",
@@ -40,6 +41,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
@@ -49,11 +51,13 @@
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^16.5.0",
+    "jsdom": "^29.1.1",
     "sharp": "^0.35.3",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.5.4",
     "typescript-eslint": "^8.65.0",
-    "vite": "^8.1.5"
+    "vite": "^8.1.5",
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "discord-rpc": {

@@ -16,6 +16,7 @@ export {
   filterRemoteDevices,
   optimisticControlledState,
   remoteActivityTime,
+  remotePlayerState,
   useRemoteActivityClock,
   useRemotePlaybackCommands,
   type ControlledPlaybackState,
@@ -43,3 +44,5 @@ export {
 } from "./activity-sync";
 
 export { useRoutedPlayerControls, type RoutedPlayerControlsOptions } from "./use-routed-player-controls";
+
+export type { PlaybackQueueSnapshot } from "./queue-sync";

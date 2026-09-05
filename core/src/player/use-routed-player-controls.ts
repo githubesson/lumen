@@ -87,7 +87,15 @@ export function useRoutedPlayerControls({
       },
       jumpTo: (index) => {
         if (!targetDevice) controls.jumpTo(index);
-        else if (remoteQueue[index]) play(remoteQueue[index], remoteQueue);
+        else if (targetDevice.queue?.tracks[index]) {
+          void sendCommand("jump_to", {
+            index: targetDevice.queue.offset + index,
+            track_id: targetDevice.queue.tracks[index].id,
+            queue_revision: targetDevice.queue.revision,
+          });
+        } else if (!targetDevice.queue && remoteQueue[index]) {
+          play(remoteQueue[index], remoteQueue);
+        }
       },
       seek: (seconds) => {
         if (targetDevice) void sendCommand("seek", { position_sec: seconds });

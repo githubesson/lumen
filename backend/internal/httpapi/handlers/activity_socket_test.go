@@ -152,6 +152,45 @@ func TestActivitySocketRoutesRemoteControlCommands(t *testing.T) {
 	}
 	readDeviceSnapshotContaining(t, ctx, target, "phone")
 
+	queue := json.RawMessage(`{"revision":"queue-1","tracks":[{"id":"t70","title":"Song","duration_ms":1000},{"id":"t71","title":"Next","duration_ms":1000}],"index":0,"offset":70,"total":120,"shuffle":true,"repeat":"all"}`)
+	writeSocketMessage(t, ctx, target, playbackSocketClientMessage{
+		Type: "activity.update", Protocol: playbackSocketProtocolVersion, Revision: 2,
+		Activity: &playbackActivityReq{DeviceID: "desktop", DeviceName: "Desktop", TrackID: "t70", Title: "Song", IsPlaying: true},
+		Queue:    queue,
+	})
+	for {
+		snapshot := readDeviceSnapshotContaining(t, ctx, controller, "desktop")
+		found := false
+		for _, device := range snapshot.Devices {
+			if device.DeviceID == "desktop" && len(device.Queue) > 0 {
+				var got map[string]any
+				if err := json.Unmarshal(device.Queue, &got); err != nil {
+					t.Fatal(err)
+				}
+				if got["revision"] != "queue-1" || got["offset"] != float64(70) || got["shuffle"] != true {
+					t.Fatalf("unexpected queue: %s", device.Queue)
+				}
+				found = true
+			}
+		}
+		if found {
+			break
+		}
+	}
+	// A controller connecting after playback began receives the existing queue.
+	late := dialActivitySocket(t, ctx, server.URL, sessions.cookieName, "late-phone")
+	defer late.CloseNow()
+	writeSocketMessage(t, ctx, late, playbackSocketClientMessage{
+		Type: "device.hello", Protocol: playbackSocketProtocolVersion, Revision: 1,
+		DeviceName: "Late phone", Capabilities: []string{"queue"}, ControlEnabled: true,
+	})
+	snapshot := readDeviceSnapshotContaining(t, ctx, late, "desktop")
+	for _, device := range snapshot.Devices {
+		if device.DeviceID == "desktop" && len(device.Queue) == 0 {
+			t.Fatal("late controller missed queue")
+		}
+	}
+
 	commandID := uuid.NewString()
 	writeSocketMessage(t, ctx, controller, playbackSocketClientMessage{
 		Type:           "playback.command",
@@ -174,7 +213,7 @@ func TestActivitySocketRoutesRemoteControlCommands(t *testing.T) {
 	writeSocketMessage(t, ctx, target, playbackSocketClientMessage{
 		Type:      "playback.command_result",
 		Protocol:  playbackSocketProtocolVersion,
-		Revision:  2,
+		Revision:  3,
 		CommandID: commandID,
 		Status:    "applied",
 	})
@@ -197,6 +236,22 @@ func TestActivitySocketRoutesRemoteControlCommands(t *testing.T) {
 	if offline.Status != "offline" || offline.TargetDeviceID != "offline-device" {
 		t.Fatalf("offline result = %+v", offline)
 	}
+	writeSocketMessage(t, ctx, target, playbackSocketClientMessage{
+		Type: "activity.clear", Protocol: playbackSocketProtocolVersion, Revision: 4, DeviceID: "desktop",
+	})
+	for {
+		snapshot := readDeviceSnapshotContaining(t, ctx, controller, "desktop")
+		cleared := false
+		for _, device := range snapshot.Devices {
+			if device.DeviceID == "desktop" && device.Activity == nil && len(device.Queue) == 0 {
+				cleared = true
+			}
+		}
+		if cleared {
+			break
+		}
+	}
+
 }
 
 func dialActivitySocket(

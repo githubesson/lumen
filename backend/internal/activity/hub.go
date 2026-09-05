@@ -26,6 +26,7 @@ var (
 )
 
 type Device struct {
+	Queue          json.RawMessage
 	DeviceID       string
 	DeviceName     string
 	Capabilities   []string
@@ -75,6 +76,7 @@ type completedCommand struct {
 }
 
 type deviceConnection struct {
+	queue        json.RawMessage
 	subscription *Subscription
 	announced    bool
 	deviceName   string
@@ -196,6 +198,20 @@ func (h *Hub) Announce(
 	return true
 }
 
+// UpdateQueue stores only the current connection's ephemeral queue snapshot.
+// Reconnecting devices must republish it; queues are never restored from an old session.
+func (h *Hub) UpdateQueue(sub *Subscription, queue json.RawMessage) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	connection := h.currentConnectionLocked(sub)
+	if connection == nil {
+		return false
+	}
+	connection.queue = append(json.RawMessage(nil), queue...)
+	h.signalDevicesLocked(sub.UserID)
+	return true
+}
+
 func (h *Hub) IsAnnounced(sub *Subscription) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -224,6 +240,7 @@ func (h *Hub) Devices(userID uuid.UUID) []Device {
 			Capabilities:   capabilities,
 			ControlEnabled: connection.control,
 			ConnectedAt:    connection.connectedAt,
+			Queue:          append(json.RawMessage(nil), connection.queue...),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

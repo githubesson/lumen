@@ -393,7 +393,6 @@ export default function MiniPlayer() {
           aria-label="Queue"
           aria-expanded={queueOpen}
           onClick={() => setQueueOpen((v) => !v)}
-          disabled={isRemoteMode}
         >
           <QueueListIcon className="size-3.5" />
         </button>

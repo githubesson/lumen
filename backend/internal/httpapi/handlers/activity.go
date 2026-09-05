@@ -107,6 +107,7 @@ type currentPlaybackActivityResp struct {
 }
 
 type playbackSocketClientMessage struct {
+	Queue          json.RawMessage      `json:"queue,omitempty"`
 	Type           string               `json:"type"`
 	Protocol       int                  `json:"protocol"`
 	Revision       uint64               `json:"revision"`
@@ -138,6 +139,7 @@ type playbackSocketServerMessage struct {
 }
 
 type playbackDeviceResp struct {
+	Queue          json.RawMessage       `json:"queue,omitempty"`
 	DeviceID       string                `json:"device_id"`
 	DeviceName     string                `json:"device_name"`
 	Online         bool                  `json:"online"`
@@ -343,6 +345,14 @@ func (h *Activity) readPlaybackSocket(
 				return errors.New("device connection is no longer current")
 			}
 		case "activity.update":
+			var queue json.RawMessage
+			if len(msg.Queue) > 0 {
+				var err error
+				queue, err = validatePlaybackQueue(msg.Queue)
+				if err != nil {
+					return err
+				}
+			}
 			if msg.Activity == nil {
 				return errors.New("activity payload required")
 			}
@@ -370,6 +380,9 @@ func (h *Activity) readPlaybackSocket(
 			if err != nil {
 				return err
 			}
+			if queue != nil && !h.Hub.UpdateQueue(subscription, queue) {
+				return errors.New("device connection is no longer current")
+			}
 		case "activity.clear":
 			if msg.DeviceID != "" && strings.TrimSpace(msg.DeviceID) != subscription.DeviceID {
 				return errors.New("clear device_id does not match connection")
@@ -380,6 +393,7 @@ func (h *Activity) readPlaybackSocket(
 			if err != nil {
 				return err
 			}
+			h.Hub.UpdateQueue(subscription, nil)
 		case "playback.command":
 			now := time.Now()
 			if now.Sub(commandWindowStarted) >= time.Second {
@@ -546,6 +560,7 @@ func (h *Activity) writeDeviceSnapshot(
 			Capabilities:   device.Capabilities,
 			ConnectedAt:    device.ConnectedAt.Format(time.RFC3339Nano),
 			Activity:       activityByDevice[device.DeviceID],
+			Queue:          device.Queue,
 		})
 	}
 
@@ -648,6 +663,18 @@ func validatePlaybackCommandArgs(
 	raw json.RawMessage,
 ) (json.RawMessage, string, error) {
 	switch action {
+	case "jump_to":
+		var args struct {
+			Index         *int   `json:"index"`
+			TrackID       string `json:"track_id"`
+			QueueRevision string `json:"queue_revision"`
+		}
+		if err := decodeStrictArgs(raw, &args); err != nil || args.Index == nil || *args.Index < 0 ||
+			strings.TrimSpace(args.TrackID) == "" || len(args.TrackID) > 500 ||
+			strings.TrimSpace(args.QueueRevision) == "" || len(args.QueueRevision) > 100 {
+			return nil, "", errors.New("jump_to requires index, track_id and queue_revision")
+		}
+		return marshalCommandArgs(args), playbackCapabilityQueue, nil
 	case "play_track":
 		var args struct {
 			Track playbackCommandTrack   `json:"track"`
@@ -735,6 +762,39 @@ func validatePlaybackCommandArgs(
 	default:
 		return nil, "", errors.New("unsupported playback command action")
 	}
+}
+
+// Queue snapshots are bounded like play_track commands, while offset/total
+// preserve absolute positions in queues larger than the transmitted window.
+func validatePlaybackQueue(raw json.RawMessage) (json.RawMessage, error) {
+	var queue struct {
+		Revision string                 `json:"revision"`
+		Tracks   []playbackCommandTrack `json:"tracks"`
+		Index    *int                   `json:"index"`
+		Offset   *int                   `json:"offset"`
+		Total    *int                   `json:"total"`
+		Shuffle  *bool                  `json:"shuffle"`
+		Repeat   string                 `json:"repeat"`
+	}
+	if err := decodeStrictArgs(raw, &queue); err != nil ||
+		strings.TrimSpace(queue.Revision) == "" || len(queue.Revision) > 100 ||
+		queue.Index == nil || queue.Offset == nil || queue.Total == nil || queue.Shuffle == nil ||
+		queue.Tracks == nil || len(queue.Tracks) > 50 ||
+		(queue.Repeat != "off" && queue.Repeat != "all" && queue.Repeat != "one") {
+		return nil, errors.New("invalid playback queue snapshot")
+	}
+	if *queue.Offset < 0 || *queue.Total < 0 || *queue.Offset > *queue.Total ||
+		len(queue.Tracks) > *queue.Total-*queue.Offset || *queue.Index < 0 ||
+		(*queue.Total == 0 && (*queue.Index != 0 || *queue.Offset != 0 || len(queue.Tracks) != 0)) ||
+		(*queue.Total > 0 && (*queue.Index >= len(queue.Tracks))) {
+		return nil, errors.New("invalid playback queue position")
+	}
+	for _, track := range queue.Tracks {
+		if !validPlaybackCommandTrack(track) {
+			return nil, errors.New("invalid playback queue track")
+		}
+	}
+	return marshalCommandArgs(queue), nil
 }
 
 func validPlaybackCommandTrack(track playbackCommandTrack) bool {

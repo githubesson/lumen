@@ -165,6 +165,25 @@ describe("routed player controls", () => {
     expect(options.sendCommand).not.toHaveBeenCalled();
   });
 
+  it("jumps to the absolute queue position without replacing or reshuffling it", () => {
+    const { result, options, controls } = setup({
+      ...device,
+      queue: {
+        tracks: [track, second], index: 0, offset: 60, total: 100,
+        revision: "queue-v2", shuffle: true, repeat: "all",
+      },
+    });
+    result.current.jumpTo(1);
+    expect(options.sendCommand).toHaveBeenCalledExactlyOnceWith("jump_to", {
+      index: 61, track_id: "t2", queue_revision: "queue-v2",
+    });
+    expect(controls.play).not.toHaveBeenCalled();
+    expect(options.onRemoteQueueApplied).not.toHaveBeenCalled();
+    result.current.jumpTo(-1);
+    result.current.jumpTo(2);
+    expect(options.sendCommand).toHaveBeenCalledOnce();
+  });
+
   it("uses current toggle state and returns to local controls after deselection", () => {
     const { result, rerender, options, controls } = setup(device);
     rerender({

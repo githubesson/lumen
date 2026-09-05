@@ -246,3 +246,40 @@ func receiveResult(t *testing.T, ch <-chan CommandResult) CommandResult {
 		return CommandResult{}
 	}
 }
+
+func TestQueueSnapshotsBelongToUserAndConnection(t *testing.T) {
+	h := NewHub()
+	user := uuid.New()
+	old, cancelOld := h.Register(user, "desktop")
+	defer cancelOld()
+	h.Announce(old, "Desktop", []string{"queue"}, true)
+	queue := json.RawMessage(`{"revision":"v1"}`)
+	if !h.UpdateQueue(old, queue) {
+		t.Fatal("queue update failed")
+	}
+	queue[0] = 'x'
+	devices := h.Devices(user)
+	if string(devices[0].Queue) != `{"revision":"v1"}` {
+		t.Fatal("queue was not copied")
+	}
+	devices[0].Queue[0] = 'x'
+	if string(h.Devices(user)[0].Queue) != `{"revision":"v1"}` {
+		t.Fatal("snapshot mutated hub queue")
+	}
+	if len(h.Devices(uuid.New())) != 0 {
+		t.Fatal("queue leaked to another user")
+	}
+	replacement, cancelReplacement := h.Register(user, "desktop")
+	defer cancelReplacement()
+	h.Announce(replacement, "Desktop", []string{"queue"}, true)
+	if h.UpdateQueue(old, json.RawMessage(`{}`)) {
+		t.Fatal("stale connection updated queue")
+	}
+	if len(h.Devices(user)[0].Queue) != 0 {
+		t.Fatal("reconnect retained stale queue")
+	}
+	cancelReplacement()
+	if len(h.Devices(user)) != 0 {
+		t.Fatal("disconnected device retained")
+	}
+}

@@ -11,6 +11,7 @@ import {
   asyncifySyncStorage,
   controlledStateForDevice,
   filterRemoteDevices,
+  remotePlayerState,
   useRemoteActivityClock,
   useRemotePlaybackCommands,
   usePlaybackActivityPublisher,
@@ -118,6 +119,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     targetDeviceId,
     sourceDeviceId: remoteSession.deviceId,
     targetActivity: targetDevice?.activity,
+    targetQueue: targetDevice?.queue,
     initialState: {
       volume: state.volume,
       muted: state.muted,
@@ -221,13 +223,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     mediaSeek,
   ]);
 
+  const displayedState = useMemo(
+    () => targetDevice ? remotePlayerState(targetDevice, controlled) : state,
+    [targetDevice, controlled, state],
+  );
   const routedControls = useRoutedPlayerControls({
     controls,
     targetDevice,
     controlled,
     sendCommand,
-    // Web does not expose a remote queue yet.
-    remoteQueue: EMPTY_REMOTE_QUEUE,
+    remoteQueue: targetDevice?.queue?.tracks ?? EMPTY_REMOTE_QUEUE,
   });
   const shownVolume = targetDevice ? controlled.volume : state.volume;
 
@@ -257,8 +262,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useKey("r", routedControls.cycleRepeat, { id: "player:repeat" });
 
   const value = useMemo<Ctx>(
-    () => ({ ...state, ...routedControls }),
-    [state, routedControls],
+    () => ({ ...displayedState, ...routedControls }),
+    [displayedState, routedControls],
   );
   const remoteValue = useMemo<RemotePlaybackCtxValue>(
     () => ({

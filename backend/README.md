@@ -94,3 +94,21 @@ for each source that may have more results. Continue with only those `sources`
 and their `local_offset` / `tidal_offset` values, keeping the query and page size
 unchanged. An empty object means the search is exhausted. Each source can return
 up to 50 tracks per request; the combined result count is not a source offset.
+
+### Remote playback queue sync
+
+Web, desktop, and mobile players publish their actual queue order alongside
+WebSocket `activity.update` messages. `devices.snapshot` includes the latest
+queue for each connected device, so controllers can join playback already in
+progress. Queue snapshots stay in memory for that connection and are cleared
+when playback is cleared or the device disconnects; no database migration is
+required.
+
+Snapshots fit within the 64 KiB WebSocket message limit, including the activity
+payload. They contain up to 50 tracks around the current track, plus the window
+offset, full queue length, current index within the window, shuffle/repeat
+settings, and a queue revision. The window advances with playback. The
+`jump_to` command uses an absolute index, track ID, and queue revision to select
+a track without replacing or reshuffling the target's queue. The target rejects
+selections from an outdated queue. Queue sync requires an updated backend and
+both clients; older clients can continue sending activity without a queue.

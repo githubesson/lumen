@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef } from "react";
 import {
   getLatestPlaybackActivity,
+  remoteActivityTime,
+  type PlaybackDevice,
   subscribePlaybackActivity,
 } from "@music-library/core";
 import {
@@ -8,7 +10,7 @@ import {
   type PlaybackActivity,
   type TrackListItem,
 } from "../api";
-import { usePlayer, usePlayerAdapter } from "../context/Player";
+import { usePlayer, usePlayerAdapter, useRemotePlayback } from "../context/Player";
 import {
   clearDiscordActivity,
   isElectron,
@@ -24,7 +26,10 @@ interface SignedCoverCacheEntry {
  * Push the currently playing track to Discord Rich Presence when running
  * inside Electron. No-ops in the browser build.
  *
- * Pushes happen on raw adapter events (`play`, `pause`, `seeked`, `ended`,
+ * A selected remote device uses its activity timestamps; local adapter events
+ * are ignored until playback returns to this desktop.
+ *
+ * Local pushes happen on raw adapter events (`play`, `pause`, `seeked`, `ended`,
  * `loadedmetadata`) reading live `currentTime` / `duration` from the adapter,
  * so the embed updates the same frame the audio engine reacts. Avoids the
  * React-state round-trip and the 250 ms quantization in `usePlayerTime`.
@@ -32,6 +37,8 @@ interface SignedCoverCacheEntry {
 export function useDiscordPresence() {
   const { current, isPlaying } = usePlayer();
   const adapter = usePlayerAdapter();
+  const { targetDevice } = useRemotePlayback();
+  const targetDeviceRef = useRef<PlaybackDevice | null>(null);
   const currentRef = useRef<TrackListItem | null>(null);
   const isPlayingRef = useRef(false);
   const coverUrlCacheRef = useRef<Map<string, SignedCoverCacheEntry>>(new Map());
@@ -43,8 +50,10 @@ export function useDiscordPresence() {
   >(() => {});
 
   useEffect(() => {
-    currentRef.current = current;
-  }, [current]);
+    // usePlayer exposes the displayed device; the adapter always stays local.
+    targetDeviceRef.current = targetDevice;
+    currentRef.current = targetDevice ? null : current;
+  }, [current, targetDevice]);
 
   useEffect(() => {
     isPlayingRef.current = isPlaying;
@@ -52,6 +61,9 @@ export function useDiscordPresence() {
 
   const pushRemoteActivity = useCallback(
     async (activity: PlaybackActivity | null) => {
+      // An explicitly selected device owns presence, including its paused or
+      // empty state. Other devices' broadcasts must not replace it.
+      if (targetDeviceRef.current) activity = targetDeviceRef.current.activity;
       const localTrack = currentRef.current;
       // A playing local player stays authoritative. A paused local player only
       // yields to a remote device that is actually playing; paused remote
@@ -103,7 +115,7 @@ export function useDiscordPresence() {
         album: activity.album || undefined,
         coverUrl,
         durationSec: activity.duration_sec,
-        elapsedSec: activity.position_sec,
+        elapsedSec: Math.floor(remoteActivityTime(activity).currentTime),
         isPlaying: activity.is_playing,
       });
     },
@@ -121,7 +133,7 @@ export function useDiscordPresence() {
       elapsedSec?: number;
     }) => {
       const track = currentRef.current;
-      if (!track) return;
+      if (targetDeviceRef.current || !track) return;
       const generation = ++remotePushGenerationRef.current;
       remoteActivityPendingRef.current = false;
       remoteActivityPushedRef.current = false;
@@ -135,6 +147,7 @@ export function useDiscordPresence() {
         const coverUrl = await resolveSignedCoverUrl(track, cover);
         if (
           generation !== remotePushGenerationRef.current ||
+          targetDeviceRef.current !== null ||
           currentRef.current?.id !== trackId
         ) {
           return;
@@ -157,6 +170,7 @@ export function useDiscordPresence() {
       isPlaying: boolean;
       elapsedSec?: number;
     }) => {
+      if (targetDeviceRef.current) return;
       isPlayingRef.current = overrides.isPlaying;
       const remote = getLatestPlaybackActivity();
       if (!overrides.isPlaying && remote?.is_playing) {
@@ -191,10 +205,14 @@ export function useDiscordPresence() {
     };
   }, [adapter, pushRemoteActivity]);
 
-  // Track and local play-state changes re-evaluate which device owns presence.
+  // Track, play-state and target changes re-evaluate which device owns presence.
   // A new local track starts at elapsedSec=0 until the adapter reports more.
   useEffect(() => {
     if (!isElectron()) return;
+    if (targetDevice) {
+      void pushRemoteActivity(targetDevice.activity);
+      return;
+    }
     if (!current) {
       void pushRemoteActivity(getLatestPlaybackActivity());
       return;
@@ -205,7 +223,7 @@ export function useDiscordPresence() {
     } else {
       pushLocalActivityRef.current({ isPlaying, elapsedSec: 0 });
     }
-  }, [current, isPlaying, pushRemoteActivity]);
+  }, [current, isPlaying, pushRemoteActivity, targetDevice]);
 
   // The player-owned WebSocket publishes live snapshots from other signed-in
   // devices. Keep Discord mirrored while this desktop player is not actively
@@ -213,7 +231,7 @@ export function useDiscordPresence() {
   useEffect(() => {
     if (!isElectron()) return;
     return subscribePlaybackActivity((activity) => {
-      void pushRemoteActivity(activity);
+      if (!targetDeviceRef.current) void pushRemoteActivity(activity);
     });
   }, [pushRemoteActivity]);
 
