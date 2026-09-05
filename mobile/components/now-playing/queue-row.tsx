@@ -11,7 +11,6 @@ import Animated, {
   useAnimatedStyle,
   type SharedValue,
 } from "react-native-reanimated";
-import { SymbolView } from "expo-symbols";
 import type { TrackListItem } from "@music-library/core";
 import { CoverArt } from "../cover-art";
 import { useTheme } from "../../theme/theme";
@@ -21,28 +20,25 @@ export const QUEUE_ROW_HEIGHT = 64;
 
 /**
  * One upcoming track in the Now Playing queue list. Rides the shared
- * `advanceOffset` so the whole list slides up when the queue advances, and
- * swaps its artwork for a flat placeholder until the open animation settles
- * (`showArtwork`).
+ * `advanceOffset` so the whole list slides up when the queue advances.
+ * Artwork mounts with the row and uses the normal image cache.
  */
 function QueueRowImpl({
   track,
   position,
   advanceOffset,
-  showArtwork,
   onJumpToPosition,
   style,
 }: {
   track: TrackListItem;
   position: number;
   advanceOffset: SharedValue<number>;
-  showArtwork: boolean;
   onJumpToPosition: (position: number) => void;
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
   const advanceStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: advanceOffset.value }],
+    transform: [{ translateY: advanceOffset.get() }],
   }));
 
   return (
@@ -59,22 +55,13 @@ function QueueRowImpl({
           pressed ? { opacity: 0.58 } : null,
         ]}
       >
-        {showArtwork ? (
-          <CoverArt
-            track={track}
-            size={44}
-            transitionMs={0}
-            priority="low"
-          />
-        ) : (
-          <View
-            style={[
-              styles.artPlaceholder,
-              { backgroundColor: theme.color.bgElev2 },
-            ]}
-          />
-        )}
-        <View style={{ flex: 1, minWidth: 0 }}>
+        <CoverArt
+          track={track}
+          size={44}
+          transitionMs={120}
+          priority="normal"
+        />
+        <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
           <View style={styles.titleLine}>
             <Text
               numberOfLines={1}
@@ -97,11 +84,6 @@ function QueueRowImpl({
             </Text>
           ) : null}
         </View>
-        <SymbolView
-          name="line.3.horizontal"
-          size={22}
-          tintColor={theme.color.overlayMuted}
-        />
       </Pressable>
     </Animated.View>
   );
@@ -113,11 +95,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-  },
-  artPlaceholder: {
-    width: 44,
-    height: 44,
-    borderRadius: 8,
   },
   titleLine: {
     flexDirection: "row",

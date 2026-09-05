@@ -9,9 +9,11 @@ import {
 import Animated, {
   Easing,
   Extrapolation,
+  ReduceMotion,
   interpolate,
   useAnimatedStyle,
   useSharedValue,
+  withSpring,
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -79,7 +81,8 @@ export default function NowPlayingScreen() {
   const [completedTranslation, setCompletedTranslation] = useState<
     (LyricsTranslationRequest & { trackId: string; visible: boolean }) | null
   >(null);
-  const transition = useSharedValue(0);
+  const transition = useSharedValue(queueParam === "1" ? 1 : 0);
+  const queueVisibility = useSharedValue(queueParam === "1" ? 1 : 0);
   const isTabletLayout = Math.min(width, height) >= TABLET_BREAKPOINT;
   const panelOpen = queueOpen || lyricsOpen;
   const pad = isTabletLayout
@@ -100,11 +103,25 @@ export default function NowPlayingScreen() {
   }, [queueParam]);
 
   useEffect(() => {
-    transition.value = withTiming(panelOpen ? 1 : 0, {
-      duration: 240,
-      easing: Easing.bezier(0.2, 0.8, 0.2, 1),
-    });
+    transition.set(
+      withSpring(panelOpen ? 1 : 0, {
+        duration: 300,
+        dampingRatio: 1,
+        overshootClamping: true,
+        reduceMotion: ReduceMotion.System,
+      }),
+    );
   }, [panelOpen, transition]);
+
+  useEffect(() => {
+    queueVisibility.set(
+      withTiming(queueOpen ? 1 : 0, {
+        duration: queueOpen ? 240 : 180,
+        easing: Easing.bezier(0.23, 1, 0.32, 1),
+        reduceMotion: ReduceMotion.System,
+      }),
+    );
+  }, [queueOpen, queueVisibility]);
 
   const measuredBottomControls =
     bottomControlsHeight ||
@@ -185,7 +202,6 @@ export default function NowPlayingScreen() {
         bottomControlsTop - HERO_META_BLOCK_HEIGHT - PHONE_META_CONTROLS_GAP,
       );
   const metaEndTop = 6;
-  const metaStartLeft = 0;
   const metaEndLeft = COMPACT_COVER_SIZE + 6;
   const actionsLeft = Math.max(0, bodyWidth - headerActionsWidth);
   const minimumMetaWidth = translationControlVisible ? 64 : 120;
@@ -197,29 +213,13 @@ export default function NowPlayingScreen() {
   const heroExpandedHeight = metaStartTop + 50;
   const heroCompactHeight = COMPACT_COVER_SIZE + 2;
   const queueBottomInset = measuredBottomControls + 18;
-  const queueOpenTop = heroCompactHeight + 4;
-  const queueClosedTop = Math.max(
-    queueOpenTop,
-    Math.min(
-      heroExpandedHeight + 10,
-      Math.max(queueOpenTop, availableBodyHeight - queueBottomInset - 24),
-    ),
-  );
-
-  const heroStyle = useAnimatedStyle(() => ({
-    height: interpolate(
-      transition.value,
-      [0, 1],
-      [heroExpandedHeight, heroCompactHeight],
-      Extrapolation.CLAMP,
-    ),
-  }));
+  const queueOpenTop = heroCompactHeight + 20;
 
   const coverStyle = useAnimatedStyle(() => ({
     transform: [
       {
         translateX: interpolate(
-          transition.value,
+          transition.get(),
           [0, 1],
           [0, coverEndCenterX - coverStartCenterX],
           Extrapolation.CLAMP,
@@ -227,7 +227,7 @@ export default function NowPlayingScreen() {
       },
       {
         translateY: interpolate(
-          transition.value,
+          transition.get(),
           [0, 1],
           [0, coverEndCenterY - coverStartCenterY],
           Extrapolation.CLAMP,
@@ -235,7 +235,7 @@ export default function NowPlayingScreen() {
       },
       {
         scale: interpolate(
-          transition.value,
+          transition.get(),
           [0, 1],
           [1, COMPACT_COVER_SIZE / coverSize],
           Extrapolation.CLAMP,
@@ -244,75 +244,45 @@ export default function NowPlayingScreen() {
     ],
   }));
 
+  // Both text layouts have fixed widths. Crossfade between them while their
+  // shared transform follows the cover, avoiding text re-layout every frame.
   const metaStyle = useAnimatedStyle(() => ({
-    top: interpolate(
-      transition.value,
-      [0, 1],
-      [metaStartTop, metaEndTop],
-      Extrapolation.CLAMP,
-    ),
-    left: interpolate(
-      transition.value,
-      [0, 1],
-      [metaStartLeft, metaEndLeft],
-      Extrapolation.CLAMP,
-    ),
-    width: interpolate(
-      transition.value,
-      [0, 1],
-      [metaStartWidth, metaEndWidth],
-      Extrapolation.CLAMP,
-    ),
     transform: [
-      {
-        scale: interpolate(
-          transition.value,
-          [0, 1],
-          [1, 0.8],
-          Extrapolation.CLAMP,
-        ),
-      },
+      { translateX: metaEndLeft * transition.get() },
+      { translateY: (metaEndTop - metaStartTop) * transition.get() },
+      { scale: 1 - 0.2 * transition.get() },
     ],
+  }));
+  const expandedMetaStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(
+      transition.get(),
+      [0, 0.45, 0.75],
+      [1, 1, 0],
+      Extrapolation.CLAMP,
+    ),
+  }));
+  const compactMetaStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(
+      transition.get(),
+      [0.45, 0.75, 1],
+      [0, 1, 1],
+      Extrapolation.CLAMP,
+    ),
   }));
 
   const actionsStyle = useAnimatedStyle(() => ({
-    top: interpolate(
-      transition.value,
-      [0, 1],
-      [metaStartTop + 2, 10],
-      Extrapolation.CLAMP,
-    ),
+    transform: [{ translateY: (10 - metaStartTop - 2) * transition.get() }],
   }));
 
+  // The list always has its final viewport. Translating this surface avoids
+  // asking FlashList/Yoga to remeasure rows throughout the opening animation.
   const queueSectionStyle = useAnimatedStyle(() => ({
-    top: interpolate(
-      transition.value,
-      [0, 1],
-      [queueClosedTop, queueOpenTop],
-      Extrapolation.CLAMP,
-    ),
-    opacity: interpolate(
-      transition.value,
-      [0, 0.25, 1],
-      [0, 0, 1],
-      Extrapolation.CLAMP,
-    ),
-    marginTop: interpolate(
-      transition.value,
-      [0, 1],
-      [0, 16],
-      Extrapolation.CLAMP,
-    ),
-    transform: [
-      {
-        translateY: interpolate(
-          transition.value,
-          [0, 1],
-          [-10, 0],
-          Extrapolation.CLAMP,
-        ),
-      },
-    ],
+    opacity: queueVisibility.get(),
+    transform: [{ translateY: 24 * (1 - queueVisibility.get()) }],
+  }));
+  const lyricsSectionStyle = useAnimatedStyle(() => ({
+    opacity: transition.get(),
+    transform: [{ translateY: 24 * (1 - transition.get()) }],
   }));
 
   const handleQueueJump = useCallback(
@@ -444,7 +414,7 @@ export default function NowPlayingScreen() {
         }}
         style={[styles.body, { paddingHorizontal: pad }]}
       >
-        <Animated.View style={[styles.hero, heroStyle]}>
+        <View style={[styles.hero, { height: heroExpandedHeight }]}>
           <Animated.View
             style={[
               styles.heroCover,
@@ -465,14 +435,45 @@ export default function NowPlayingScreen() {
             />
           </Animated.View>
 
-          <Animated.View style={[styles.heroMeta, metaStyle]}>
+          <Animated.View
+            pointerEvents={panelOpen ? "none" : "auto"}
+            accessibilityElementsHidden={panelOpen}
+            importantForAccessibility={
+              panelOpen ? "no-hide-descendants" : "auto"
+            }
+            style={[
+              styles.heroMeta,
+              { top: metaStartTop, left: 0, width: metaStartWidth },
+              metaStyle,
+              expandedMetaStyle,
+            ]}
+          >
+            <HeroMeta track={track} />
+          </Animated.View>
+          <Animated.View
+            pointerEvents={panelOpen ? "auto" : "none"}
+            accessibilityElementsHidden={!panelOpen}
+            importantForAccessibility={
+              panelOpen ? "auto" : "no-hide-descendants"
+            }
+            style={[
+              styles.heroMeta,
+              { top: metaStartTop, left: 0, width: metaEndWidth },
+              metaStyle,
+              compactMetaStyle,
+            ]}
+          >
             <HeroMeta track={track} />
           </Animated.View>
 
           <Animated.View
             style={[
               styles.heroActions,
-              { left: actionsLeft, width: headerActionsWidth },
+              {
+                left: actionsLeft,
+                top: metaStartTop + 2,
+                width: headerActionsWidth,
+              },
               actionsStyle,
             ]}
           >
@@ -513,7 +514,7 @@ export default function NowPlayingScreen() {
               accessibilityLabel="More actions"
             />
           </Animated.View>
-        </Animated.View>
+        </View>
 
         {translationControlVisible && translationSelectorOpen ? (
           <View
@@ -545,34 +546,44 @@ export default function NowPlayingScreen() {
           </View>
         ) : null}
 
-        {queueOpen ? (
-          <Animated.View
-            style={[
-              styles.queueSection,
-              { bottom: queueBottomInset, left: pad, right: pad },
-              queueSectionStyle,
-            ]}
-          >
-            <QueueSection
-              queueOpen={queueOpen}
-              queue={queue}
-              startIndex={index + 1}
-              artistLabel={track.artist ?? "current queue"}
-              shuffle={shuffle}
-              repeat={repeat}
-              onJumpToPosition={handleQueueJump}
-              onToggleShuffle={handleQueueShuffle}
-              onCycleRepeat={handleQueueRepeat}
-            />
-          </Animated.View>
-        ) : null}
+        <Animated.View
+          pointerEvents={queueOpen ? "auto" : "none"}
+          accessibilityElementsHidden={!queueOpen}
+          importantForAccessibility={queueOpen ? "auto" : "no-hide-descendants"}
+          style={[
+            styles.queueSection,
+            {
+              top: queueOpenTop,
+              bottom: queueBottomInset,
+              left: pad,
+              right: pad,
+            },
+            queueSectionStyle,
+          ]}
+        >
+          <QueueSection
+            queueOpen={queueOpen}
+            queue={queue}
+            startIndex={index + 1}
+            shuffle={shuffle}
+            repeat={repeat}
+            onJumpToPosition={handleQueueJump}
+            onToggleShuffle={handleQueueShuffle}
+            onCycleRepeat={handleQueueRepeat}
+          />
+        </Animated.View>
 
         {lyricsOpen ? (
           <Animated.View
             style={[
               styles.queueSection,
-              { bottom: queueBottomInset, left: pad, right: pad },
-              queueSectionStyle,
+              {
+                top: queueOpenTop,
+                bottom: queueBottomInset,
+                left: pad,
+                right: pad,
+              },
+              lyricsSectionStyle,
             ]}
           >
             <LyricsSection
@@ -625,6 +636,7 @@ const styles = StyleSheet.create({
   },
   heroMeta: {
     position: "absolute",
+    transformOrigin: "left top",
     gap: 2,
   },
   heroActions: {
