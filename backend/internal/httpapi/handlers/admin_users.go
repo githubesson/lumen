@@ -281,6 +281,13 @@ func (h *AdminUsers) List(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, u)
 	}
+	// Without this a mid-iteration connection reset or statement timeout would
+	// serialize a truncated user list as 200 — a disabled account simply
+	// appears to have vanished.
+	if err := rows.Err(); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

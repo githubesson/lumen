@@ -40,6 +40,19 @@ func TestShareSignRoundTrip(t *testing.T) {
 	}
 }
 
+func TestShareDurationSignRoundTrip(t *testing.T) {
+	sig := SignShareURLWithDuration(signKey, "track-9", 42, 75)
+	if err := VerifyShareURLWithDuration(signKey, "track-9", 42, 75, sig); err != nil {
+		t.Fatalf("valid duration share sig rejected: %v", err)
+	}
+	if err := VerifyShareURLWithDuration(signKey, "track-9", 42, 76, sig); err == nil {
+		t.Fatal("expected mismatch for a different duration_sec")
+	}
+	if err := VerifyShareURL(signKey, "track-9", 42, sig); err == nil {
+		t.Fatal("duration signature must not validate as a legacy share signature")
+	}
+}
+
 func TestPreviewSignRoundTrip(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	exp, sig := SignPreviewURL(signKey, "track-9", 42, now)
@@ -48,6 +61,17 @@ func TestPreviewSignRoundTrip(t *testing.T) {
 	}
 	if err := VerifyPreviewURL(signKey, "track-9", 42, sig, exp, time.Unix(exp+1, 0)); err == nil {
 		t.Fatal("expected expired error past exp")
+	}
+}
+
+func TestPreviewDurationSignRoundTrip(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	exp, sig := SignPreviewURLWithDuration(signKey, "track-9", 42, 75, now)
+	if err := VerifyPreviewURLWithDuration(signKey, "track-9", 42, 75, sig, exp, now); err != nil {
+		t.Fatalf("valid duration preview sig rejected: %v", err)
+	}
+	if err := VerifyPreviewURLWithDuration(signKey, "track-9", 42, 76, sig, exp, now); err == nil {
+		t.Fatal("expected mismatch for a different duration_sec")
 	}
 }
 
@@ -64,5 +88,11 @@ func TestSignatureWireFormat(t *testing.T) {
 	}
 	if got := computePreviewSig(signKey, "track-9", 42, exp); got != signMessage(signKey, "preview|track|track-9|42|1700007200") {
 		t.Fatalf("preview payload format changed: %q", got)
+	}
+	if got := signMessage(signKey, shareDurationSigPayload("track-9", 42, 75)); got != signMessage(signKey, "share|track|track-9|42|75") {
+		t.Fatalf("duration share payload format changed: %q", got)
+	}
+	if got := signMessage(signKey, previewDurationSigPayload("track-9", 42, 75, exp)); got != signMessage(signKey, "preview|track|track-9|42|75|1700007200") {
+		t.Fatalf("duration preview payload format changed: %q", got)
 	}
 }

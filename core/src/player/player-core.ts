@@ -14,7 +14,10 @@ export interface PlayerState {
 }
 
 export interface PlayerControls {
-  play: (track: TrackListItem, queue?: TrackListItem[]) => void;
+  /** Returns false when local playback policy rejects the track. */
+  play: (track: TrackListItem, queue?: TrackListItem[]) => false | void;
+  resume: () => void;
+  pause: () => void;
   toggle: () => void;
   next: () => void;
   prev: () => void;
@@ -22,8 +25,11 @@ export interface PlayerControls {
   jumpTo: (index: number) => void;
   seek: (seconds: number) => void;
   setVolume: (v: number) => void;
+  setMuted: (muted: boolean) => void;
   toggleMute: () => void;
+  setShuffle: (shuffle: boolean) => void;
   toggleShuffle: () => void;
+  setRepeat: (repeat: RepeatMode) => void;
   cycleRepeat: () => void;
 }
 
@@ -41,12 +47,13 @@ export function fisherYatesWithAnchor<T extends { id: string }>(
   items: T[],
   anchorId: string | null,
 ): T[] {
-  const rest = items.filter((t) => t.id !== anchorId);
+  const rest = [...items];
+  const anchorIndex = anchorId === null ? -1 : rest.findIndex((t) => t.id === anchorId);
+  const anchor = anchorIndex < 0 ? undefined : rest.splice(anchorIndex, 1)[0];
   for (let i = rest.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [rest[i], rest[j]] = [rest[j], rest[i]];
   }
-  const anchor = anchorId ? items.find((t) => t.id === anchorId) : undefined;
   return anchor ? [anchor, ...rest] : rest;
 }
 

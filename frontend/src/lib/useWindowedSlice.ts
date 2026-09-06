@@ -44,15 +44,23 @@ export function useWindowedSlice(
     end: Math.min(totalCount, 50),
   });
 
-  // Measure --row-h from the list element. Picks up density changes without a
-  // reload because --row-h is defined on [data-density] and inherits down.
+  // Measure an actual row: content can make dense rows taller than --row-h.
+  // Observe density changes even when the surrounding viewport stays fixed.
   useLayoutEffect(() => {
     const el = listRef.current;
     if (!el) return;
-    const raw = getComputedStyle(el).getPropertyValue("--row-h").trim();
-    const n = parseFloat(raw);
-    if (!Number.isNaN(n) && n > 0 && n !== rowHeight) setRowHeight(n);
-  }, [listRef, rowHeight]);
+    const measure = () => {
+      const row = el.querySelector("tbody tr:not(.vt-spacer)");
+      const n = row?.getBoundingClientRect().height || parseFloat(getComputedStyle(el).getPropertyValue("--row-h"));
+      if (Number.isFinite(n) && n > 0) setRowHeight(n);
+    };
+    measure();
+    const observer = new MutationObserver(measure);
+    observer.observe(document.documentElement, {
+      attributes: true, subtree: true, attributeFilter: ["data-density"],
+    });
+    return () => observer.disconnect();
+  }, [listRef, totalCount]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -64,6 +72,7 @@ export function useWindowedSlice(
       rafId = null;
       const listEl = listRef.current;
       if (!listEl) return;
+      const scroller = findScrollParent(listEl);
       const listRect = listEl.getBoundingClientRect();
       let viewportTop: number;
       let viewportHeight: number;
@@ -75,10 +84,7 @@ export function useWindowedSlice(
         viewportTop = -listRect.top;
         viewportHeight = window.innerHeight;
       }
-      const start = Math.max(
-        0,
-        Math.floor(viewportTop / rowHeight) - overscan,
-      );
+      const start = Math.max(0, Math.floor(viewportTop / rowHeight) - overscan);
       const end = Math.min(
         totalCount,
         Math.ceil((viewportTop + viewportHeight) / rowHeight) + overscan,
@@ -95,15 +101,9 @@ export function useWindowedSlice(
 
     computeRange();
 
-    // Scroll events on the nearest scrollable ancestor (or window fallback).
-    // rAF-throttled so bursts during momentum scroll collapse into one
-    // compute per frame.
-    const scrollTarget: EventTarget = scroller ?? window;
-    scrollTarget.addEventListener(
-      "scroll",
-      scheduleCompute,
-      { passive: true } as AddEventListenerOptions,
-    );
+    // Capture ancestor scrolls, including a container that only becomes
+    // scrollable after resize. Momentum events share one computation per frame.
+    window.addEventListener("scroll", scheduleCompute, { passive: true, capture: true });
 
     // Viewport resize → ResizeObserver instead of window `resize`. The raw
     // event fires 60–100× per second during a drag, and even with rAF
@@ -115,13 +115,11 @@ export function useWindowedSlice(
     if (typeof ResizeObserver !== "undefined") {
       ro = new ResizeObserver(scheduleCompute);
       ro.observe(scroller ?? document.documentElement);
+      ro.observe(document.documentElement);
     }
 
     return () => {
-      scrollTarget.removeEventListener(
-        "scroll",
-        scheduleCompute as EventListener,
-      );
+      window.removeEventListener("scroll", scheduleCompute, true);
       ro?.disconnect();
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
@@ -140,11 +138,17 @@ export function useWindowedSlice(
   };
 }
 
-function findScrollParent(el: HTMLElement): HTMLElement | null {
+/** First scrollable ancestor of `el` (skipping horizontal-only scrollers),
+ *  or null when the element scrolls with the page. */
+export function findScrollParent(el: HTMLElement): HTMLElement | null {
   let p: HTMLElement | null = el.parentElement;
   while (p && p !== document.body) {
+    if (p.hasAttribute("data-horizontal-scroll")) {
+      p = p.parentElement;
+      continue;
+    }
     const s = getComputedStyle(p);
-    if (/(auto|scroll)/.test(s.overflowY) || /(auto|scroll)/.test(s.overflow)) {
+    if (/(auto|scroll)/.test(s.overflowY) && p.scrollHeight > p.clientHeight + 1) {
       return p;
     }
     p = p.parentElement;

@@ -1,8 +1,9 @@
-import { memo } from "react";
+import { memo, useSyncExternalStore } from "react";
 import { PixelRatio, StyleSheet, View } from "react-native";
 import { Image, type ImageProps } from "expo-image";
 import { albumCoverUrl, trackCoverUrl } from "@music-library/core";
 import { useTheme } from "../theme/theme";
+import { downloadStore } from "../lib/downloads";
 
 interface Props {
   /** Track source; cover URL comes from the shared `trackCoverUrl` helper. */
@@ -34,12 +35,22 @@ function CoverArtImpl({
 }: Props) {
   const theme = useTheme();
   const requestSize = Math.max(1, Math.round(size * PixelRatio.get()));
-  const shouldLoadCover = (track ?? album)?.has_cover !== false;
-  const uri = track
-    ? trackCoverUrl(track, requestSize)
-    : album
-      ? albumCoverUrl(album.id, requestSize)
-      : undefined;
+  // A downloaded track keeps its cover on disk; prefer it so offline pages and
+  // the now-playing hero render artwork with no network. Per-track selector →
+  // only the affected cover re-renders when a download lands.
+  const localCover = useSyncExternalStore(
+    downloadStore.subscribe,
+    () => downloadStore.coverUriFor(track?.id),
+    () => downloadStore.coverUriFor(track?.id),
+  );
+  const shouldLoadCover = localCover != null || (track ?? album)?.has_cover !== false;
+  const uri =
+    localCover ??
+    (track
+      ? trackCoverUrl(track, requestSize)
+      : album
+        ? albumCoverUrl(album.id, requestSize)
+        : undefined);
   return (
     <View
       style={[
@@ -64,7 +75,7 @@ function CoverArtImpl({
           decodeFormat="rgb"
           recyclingKey={
             recyclingKey ??
-            `${track ? (track.album_id ?? track.id) : album?.id}:${requestSize}`
+            `${track ? (track.album_id ?? track.id) : album?.id}:${requestSize}${localCover ? ":local" : ""}`
           }
         />
       ) : null}

@@ -121,7 +121,7 @@ func (s *Store) ListPins(ctx context.Context) ([]Pin, error) {
 
 func (s *Store) DuePins(ctx context.Context, limit int) ([]Pin, error) {
 	if limit <= 0 {
-		limit = 20
+		limit = pinscan.DefaultScanBatch
 	}
 	rows, err := s.db.Query(ctx, `
 		SELECT id, root_id, root_path, destination_subdir, share_url, password,
@@ -165,10 +165,10 @@ func (s *Store) GetPin(ctx context.Context, id uuid.UUID) (Pin, error) {
 
 func (s *Store) AddPin(ctx context.Context, in AddPinInput) (Pin, error) {
 	if in.ScanIntervalSeconds == 0 {
-		in.ScanIntervalSeconds = 3600
+		in.ScanIntervalSeconds = pinscan.DefaultIntervalSeconds
 	}
-	if in.ScanIntervalSeconds < 300 {
-		return Pin{}, fmt.Errorf("scan_interval_seconds must be at least 300")
+	if err := pinscan.ValidateInterval(in.ScanIntervalSeconds); err != nil {
+		return Pin{}, err
 	}
 	p, err := scanPin(s.db.QueryRow(ctx, `
 		INSERT INTO filen_share_pins (
@@ -190,24 +190,14 @@ func (s *Store) AddPin(ctx context.Context, in AddPinInput) (Pin, error) {
 
 func (s *Store) PatchPin(ctx context.Context, id uuid.UUID, in PatchPinInput) (Pin, error) {
 	var set dbutil.SetBuilder
-	set.AddRaw("updated_at = NOW()")
-	if in.DestinationSubdir != nil {
-		set.Add("destination_subdir = $%d", *in.DestinationSubdir)
+	if err := pinscan.AddPatch(&set, pinscan.PatchFields{
+		DestinationSubdir: in.DestinationSubdir, Label: in.Label,
+		Enabled: in.Enabled, ScanIntervalSeconds: in.ScanIntervalSeconds,
+	}); err != nil {
+		return Pin{}, err
 	}
 	if in.Password != nil {
 		set.Add("password = $%d", *in.Password)
-	}
-	if in.Label != nil {
-		set.Add("label = $%d", *in.Label)
-	}
-	if in.Enabled != nil {
-		set.Add("enabled = $%d", *in.Enabled)
-	}
-	if in.ScanIntervalSeconds != nil {
-		if *in.ScanIntervalSeconds < 300 {
-			return Pin{}, fmt.Errorf("scan_interval_seconds must be at least 300")
-		}
-		set.Add("scan_interval_seconds = $%d", *in.ScanIntervalSeconds)
 	}
 	setClause, args := set.Build()
 	args = append(args, id)
@@ -284,10 +274,7 @@ func (s *Store) RecordDownload(ctx context.Context, in DownloadInput) error {
 	in.FilePath = dbtext.Clean(in.FilePath)
 	in.Status = dbtext.Clean(in.Status)
 	in.Error = dbtext.Clean(in.Error)
-	var downloadedAt any
-	if in.Status == StatusDownloaded || in.Status == StatusExisting {
-		downloadedAt = time.Now().UTC()
-	}
+	downloadedAt := pinscan.DownloadedAt(in.Status)
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO filen_downloads (
 			pin_id, source_path, file_path, size_bytes, status, error,
@@ -317,9 +304,7 @@ func (s *Store) RecordDownload(ctx context.Context, in DownloadInput) error {
 }
 
 func (s *Store) ListDownloads(ctx context.Context, pinID uuid.UUID, limit int) ([]Download, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 200
-	}
+	limit = pinscan.HistoryLimit(limit)
 	rows, err := s.db.Query(ctx, `
 		SELECT id, pin_id, source_path, file_path, size_bytes, status, error,
 		       track_id, metadata, first_seen_at, downloaded_at, updated_at

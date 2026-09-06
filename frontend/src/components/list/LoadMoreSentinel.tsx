@@ -11,13 +11,15 @@ export default function LoadMoreSentinel({
   items,
   total,
   loadingMore,
+  hasMore: more,
 }: {
   innerRef: React.Ref<HTMLDivElement>;
   items: unknown[] | null;
   total: number | null;
   loadingMore: boolean;
+  hasMore?: boolean;
 }) {
-  const hasMore = items !== null && total !== null && items.length < total;
+  const hasMore = more ?? (items !== null && total !== null && items.length < total);
   return (
     <>
       {hasMore && <div ref={innerRef} aria-hidden="true" style={{ height: 1 }} />}

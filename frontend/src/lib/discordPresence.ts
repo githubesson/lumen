@@ -1,6 +1,16 @@
-import { useEffect, useRef } from "react";
-import { signAlbumCoverUrl, type TrackListItem } from "../api";
-import { usePlayer, usePlayerAdapter } from "../context/Player";
+import { useCallback, useEffect, useRef } from "react";
+import {
+  getLatestPlaybackActivity,
+  remoteActivityTime,
+  type PlaybackDevice,
+  subscribePlaybackActivity,
+} from "@music-library/core";
+import {
+  signAlbumCoverUrl,
+  type PlaybackActivity,
+  type TrackListItem,
+} from "../api";
+import { usePlayer, usePlayerAdapter, useRemotePlayback } from "../context/Player";
 import {
   clearDiscordActivity,
   isElectron,
@@ -16,30 +26,117 @@ interface SignedCoverCacheEntry {
  * Push the currently playing track to Discord Rich Presence when running
  * inside Electron. No-ops in the browser build.
  *
- * Pushes happen on raw adapter events (`play`, `pause`, `seeked`, `ended`,
+ * A selected remote device uses its activity timestamps; local adapter events
+ * are ignored until playback returns to this desktop.
+ *
+ * Local pushes happen on raw adapter events (`play`, `pause`, `seeked`, `ended`,
  * `loadedmetadata`) reading live `currentTime` / `duration` from the adapter,
  * so the embed updates the same frame the audio engine reacts. Avoids the
  * React-state round-trip and the 250 ms quantization in `usePlayerTime`.
  */
 export function useDiscordPresence() {
-  const { current } = usePlayer();
+  const { current, isPlaying } = usePlayer();
   const adapter = usePlayerAdapter();
+  const { targetDevice } = useRemotePlayback();
+  const targetDeviceRef = useRef<PlaybackDevice | null>(null);
   const currentRef = useRef<TrackListItem | null>(null);
+  const isPlayingRef = useRef(false);
   const coverUrlCacheRef = useRef<Map<string, SignedCoverCacheEntry>>(new Map());
+  const remoteActivityPushedRef = useRef(false);
+  const remoteActivityPendingRef = useRef(false);
+  const remotePushGenerationRef = useRef(0);
+  const pushLocalActivityRef = useRef<
+    (overrides?: { isPlaying?: boolean; elapsedSec?: number }) => void
+  >(() => {});
 
   useEffect(() => {
-    currentRef.current = current;
-  }, [current]);
+    // usePlayer exposes the displayed device; the adapter always stays local.
+    targetDeviceRef.current = targetDevice;
+    currentRef.current = targetDevice ? null : current;
+  }, [current, targetDevice]);
+
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
+  const pushRemoteActivity = useCallback(
+    async (activity: PlaybackActivity | null) => {
+      // An explicitly selected device owns presence, including its paused or
+      // empty state. Other devices' broadcasts must not replace it.
+      if (targetDeviceRef.current) activity = targetDeviceRef.current.activity;
+      const localTrack = currentRef.current;
+      // A playing local player stays authoritative. A paused local player only
+      // yields to a remote device that is actually playing; paused remote
+      // heartbeats must not replace (or leave behind) its local status.
+      if (
+        localTrack &&
+        (isPlayingRef.current || !activity?.is_playing)
+      ) {
+        if (
+          remoteActivityPushedRef.current ||
+          remoteActivityPendingRef.current
+        ) {
+          pushLocalActivityRef.current({
+            isPlaying: isPlayingRef.current,
+          });
+        }
+        return;
+      }
+
+      const generation = ++remotePushGenerationRef.current;
+      remoteActivityPendingRef.current = !!activity;
+      if (!activity) {
+        remoteActivityPushedRef.current = false;
+        await clearDiscordActivity();
+        return;
+      }
+
+      const track = activityToTrack(activity);
+      const coverUrl = await resolveSignedCoverUrl(
+        track,
+        coverUrlCacheRef.current,
+      );
+      if (
+        generation !== remotePushGenerationRef.current ||
+        (currentRef.current !== null &&
+          (isPlayingRef.current || !activity.is_playing))
+      ) {
+        if (generation === remotePushGenerationRef.current) {
+          remoteActivityPendingRef.current = false;
+        }
+        return;
+      }
+      remoteActivityPendingRef.current = false;
+      remoteActivityPushedRef.current = true;
+      await pushDiscordActivity({
+        trackId: activity.track_id,
+        title: activity.title,
+        artist: activity.artist || undefined,
+        album: activity.album || undefined,
+        coverUrl,
+        durationSec: activity.duration_sec,
+        elapsedSec: Math.floor(remoteActivityTime(activity).currentTime),
+        isPlaying: activity.is_playing,
+      });
+    },
+    [],
+  );
 
   // Push on every interesting adapter event. The adapter fires these directly
   // from the underlying audio element, so there's no quantization or rAF
   // delay between the user action and the Discord update.
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron()) return;
 
-    const push = (overrides?: { isPlaying?: boolean; elapsedSec?: number }) => {
+    const pushLocal = (overrides?: {
+      isPlaying?: boolean;
+      elapsedSec?: number;
+    }) => {
       const track = currentRef.current;
-      if (!track) return;
+      if (targetDeviceRef.current || !track) return;
+      const generation = ++remotePushGenerationRef.current;
+      remoteActivityPendingRef.current = false;
+      remoteActivityPushedRef.current = false;
       const cover = coverUrlCacheRef.current;
       const trackId = track.id;
       const duration = adapter.duration() || 0;
@@ -48,7 +145,13 @@ export function useDiscordPresence() {
       const isPlaying = overrides?.isPlaying ?? true;
       void (async () => {
         const coverUrl = await resolveSignedCoverUrl(track, cover);
-        if (currentRef.current?.id !== trackId) return;
+        if (
+          generation !== remotePushGenerationRef.current ||
+          targetDeviceRef.current !== null ||
+          currentRef.current?.id !== trackId
+        ) {
+          return;
+        }
         await pushDiscordActivity({
           trackId,
           title: track.title,
@@ -62,66 +165,104 @@ export function useDiscordPresence() {
       })();
     };
 
-    const offPlay = adapter.on("play", () => push({ isPlaying: true }));
-    const offPause = adapter.on("pause", () => push({ isPlaying: false }));
+    pushLocalActivityRef.current = pushLocal;
+    const pushPreferred = (overrides: {
+      isPlaying: boolean;
+      elapsedSec?: number;
+    }) => {
+      if (targetDeviceRef.current) return;
+      isPlayingRef.current = overrides.isPlaying;
+      const remote = getLatestPlaybackActivity();
+      if (!overrides.isPlaying && remote?.is_playing) {
+        void pushRemoteActivity(remote);
+      } else {
+        pushLocal(overrides);
+      }
+    };
+
+    const offPlay = adapter.on("play", () =>
+      pushPreferred({ isPlaying: true }),
+    );
+    const offPause = adapter.on("pause", () =>
+      pushPreferred({ isPlaying: false }),
+    );
     // `repeat:one` is handled by the core (ended → seek(0) → play), so the
     // loop reset reaches us via `seeked`. Non-loop track ends arrive as a
     // `current` change, which the track-change effect below handles.
-    const offSeeked = adapter.on("seeked", () => push());
-    const offMeta = adapter.on("loadedmetadata", () => push());
+    const offSeeked = adapter.on("seeked", () =>
+      pushPreferred({ isPlaying: isPlayingRef.current }),
+    );
+    const offMeta = adapter.on("loadedmetadata", () =>
+      pushPreferred({ isPlaying: isPlayingRef.current }),
+    );
 
     return () => {
+      pushLocalActivityRef.current = () => {};
       offPlay();
       offPause();
       offSeeked();
       offMeta();
     };
-  }, [adapter]);
+  }, [adapter, pushRemoteActivity]);
 
-  // Track changes: push a fresh activity (with elapsedSec=0 since the new
-  // track hasn't started yet) and clear presence when nothing is playing.
+  // Track, play-state and target changes re-evaluate which device owns presence.
+  // A new local track starts at elapsedSec=0 until the adapter reports more.
   useEffect(() => {
-    if (!isElectron) return;
-    if (!current) {
-      void clearDiscordActivity();
+    if (!isElectron()) return;
+    if (targetDevice) {
+      void pushRemoteActivity(targetDevice.activity);
       return;
     }
-    const trackId = current.id;
-    void (async () => {
-      const coverUrl = await resolveSignedCoverUrl(
-        current,
-        coverUrlCacheRef.current,
-      );
-      if (currentRef.current?.id !== trackId) return;
-      await pushDiscordActivity({
-        trackId,
-        title: current.title,
-        artist: current.artist ?? undefined,
-        album: current.album_title ?? undefined,
-        coverUrl,
-        durationSec: undefined,
-        elapsedSec: 0,
-        isPlaying: true,
-      });
-    })();
-  }, [current]);
+    if (!current) {
+      void pushRemoteActivity(getLatestPlaybackActivity());
+      return;
+    }
+    const remote = getLatestPlaybackActivity();
+    if (!isPlaying && remote?.is_playing) {
+      void pushRemoteActivity(remote);
+    } else {
+      pushLocalActivityRef.current({ isPlaying, elapsedSec: 0 });
+    }
+  }, [current, isPlaying, pushRemoteActivity, targetDevice]);
+
+  // The player-owned WebSocket publishes live snapshots from other signed-in
+  // devices. Keep Discord mirrored while this desktop player is not actively
+  // playing, including when it still has a paused track loaded.
+  useEffect(() => {
+    if (!isElectron()) return;
+    return subscribePlaybackActivity((activity) => {
+      if (!targetDeviceRef.current) void pushRemoteActivity(activity);
+    });
+  }, [pushRemoteActivity]);
 
   // Clear presence when the tab/app closes so users don't end up "listening"
   // to a ghost track forever.
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron()) return;
     const onUnload = () => void clearDiscordActivity();
     window.addEventListener("beforeunload", onUnload);
     return () => window.removeEventListener("beforeunload", onUnload);
   }, []);
 }
 
+function activityToTrack(activity: PlaybackActivity): TrackListItem {
+  return {
+    id: activity.track_id,
+    title: activity.title,
+    artist: activity.artist,
+    album_id: activity.album_id,
+    album_title: activity.album,
+    cover_url: activity.cover_url,
+    duration_ms: (activity.duration_sec ?? 0) * 1000,
+  };
+}
+
 /**
- * Resolve the cover URL to ship with a Discord activity push. Remote sources
- * such as TIDAL already carry public HTTPS artwork URLs, so those can be
- * passed straight through. Local covers need the signed backend path because
- * Discord's media proxy fetches `large_image` server-side without user
- * cookies.
+ * Resolve the cover URL to ship with a Discord activity push. Discord's media
+ * proxy fetches `large_image` server-side without user cookies, so it can
+ * only use public URLs: remote (TIDAL) covers arrive as the backend's authed
+ * `/api/covers/remote?url=…` proxy path and must be unwrapped back to the
+ * public CDN URL, while local covers need the signed backend path.
  *
  * Returns undefined when the track has no usable cover or signing failed;
  * Electron then falls back to the uploaded "lumen" asset
@@ -131,7 +272,12 @@ async function resolveSignedCoverUrl(
   track: TrackListItem,
   cache: Map<string, SignedCoverCacheEntry>,
 ): Promise<string | undefined> {
-  if (track.cover_url) return toAbsolute(track.cover_url);
+  if (track.cover_url) {
+    const publicUrl = publicCoverUrl(track.cover_url);
+    if (publicUrl) return publicUrl;
+    // Same-origin authed path Discord can't fetch — fall through to the
+    // signed album cover, or the Discord-side asset fallback.
+  }
   if (!track.album_id) return undefined;
   const nowSec = Math.floor(Date.now() / 1000);
   const cached = cache.get(track.album_id);
@@ -144,6 +290,28 @@ async function resolveSignedCoverUrl(
     const res = await signAlbumCoverUrl(track.album_id);
     cache.set(track.album_id, { url: res.url, expiresAt: res.expires_at });
     return toAbsolute(res.url);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Extract a publicly fetchable URL from a track's cover_url, or undefined if
+ * there isn't one. The backend's `/api/covers/remote?url=…` proxy carries the
+ * original CDN URL in its query string; other cross-origin URLs (e.g. raw
+ * CDN links in activity rows written before the proxy existed) are already
+ * public. Anything else same-origin is auth-gated and useless to Discord.
+ */
+function publicCoverUrl(coverUrl: string): string | undefined {
+  const abs = toAbsolute(coverUrl);
+  if (!abs) return undefined;
+  try {
+    const u = new URL(abs);
+    if (u.pathname.endsWith("/api/covers/remote")) {
+      return u.searchParams.get("url") ?? undefined;
+    }
+    if (u.origin !== window.location.origin) return abs;
+    return undefined;
   } catch {
     return undefined;
   }

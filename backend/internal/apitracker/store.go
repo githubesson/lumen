@@ -133,7 +133,7 @@ func (s *Store) ListPins(ctx context.Context) ([]Pin, error) {
 
 func (s *Store) DuePins(ctx context.Context, limit int) ([]Pin, error) {
 	if limit <= 0 {
-		limit = 20
+		limit = pinscan.DefaultScanBatch
 	}
 	rows, err := s.db.Query(ctx, `
 		SELECT id, root_id, root_path, destination_subdir, api_base_url,
@@ -182,10 +182,10 @@ func (s *Store) AddPin(ctx context.Context, in AddPinInput) (Pin, error) {
 		return Pin{}, fmt.Errorf("tracker_id must be positive")
 	}
 	if in.ScanIntervalSeconds == 0 {
-		in.ScanIntervalSeconds = 3600
+		in.ScanIntervalSeconds = pinscan.DefaultIntervalSeconds
 	}
-	if in.ScanIntervalSeconds < 300 {
-		return Pin{}, fmt.Errorf("scan_interval_seconds must be at least 300")
+	if err := pinscan.ValidateInterval(in.ScanIntervalSeconds); err != nil {
+		return Pin{}, err
 	}
 	in.APIBaseURL = NormalizeBaseURL(in.APIBaseURL)
 	p, err := scanPin(s.db.QueryRow(ctx, `
@@ -210,27 +210,17 @@ func (s *Store) AddPin(ctx context.Context, in AddPinInput) (Pin, error) {
 
 func (s *Store) PatchPin(ctx context.Context, id uuid.UUID, in PatchPinInput) (Pin, error) {
 	var set dbutil.SetBuilder
-	set.AddRaw("updated_at = NOW()")
-	if in.DestinationSubdir != nil {
-		set.Add("destination_subdir = $%d", *in.DestinationSubdir)
+	if err := pinscan.AddPatch(&set, pinscan.PatchFields{
+		DestinationSubdir: in.DestinationSubdir, Label: in.Label,
+		Enabled: in.Enabled, ScanIntervalSeconds: in.ScanIntervalSeconds,
+	}); err != nil {
+		return Pin{}, err
 	}
 	if in.Tab != nil {
 		set.Add("tab = $%d", *in.Tab)
 	}
-	if in.Label != nil {
-		set.Add("label = $%d", *in.Label)
-	}
 	if in.PrimaryArtist != nil {
 		set.Add("primary_artist = $%d", *in.PrimaryArtist)
-	}
-	if in.Enabled != nil {
-		set.Add("enabled = $%d", *in.Enabled)
-	}
-	if in.ScanIntervalSeconds != nil {
-		if *in.ScanIntervalSeconds < 300 {
-			return Pin{}, fmt.Errorf("scan_interval_seconds must be at least 300")
-		}
-		set.Add("scan_interval_seconds = $%d", *in.ScanIntervalSeconds)
 	}
 	setClause, args := set.Build()
 	args = append(args, id)
@@ -251,6 +241,42 @@ func (s *Store) PatchPin(ctx context.Context, id uuid.UUID, in PatchPinInput) (P
 		return Pin{}, fmt.Errorf("tracker is already pinned for that destination")
 	}
 	return p, err
+}
+
+// MigrateBaseURL rewrites every pin's api_base_url to base (normalized), so
+// changing API_TRACKER_BASE_URL persists into the database on startup. Pins
+// that would collide with the unique source constraint — the same tracker
+// already pinned at the target base URL, or duplicates among the rewritten
+// rows — are left untouched and reported as skipped.
+func (s *Store) MigrateBaseURL(ctx context.Context, base string) (updated, skipped int64, err error) {
+	base = NormalizeBaseURL(base)
+	tag, err := s.db.Exec(ctx, `
+		WITH candidates AS (
+			SELECT DISTINCT ON (root_path, destination_subdir, tracker_id, tab) id
+			FROM api_tracker_pins p
+			WHERE api_base_url <> $1
+			  AND NOT EXISTS (
+			      SELECT 1 FROM api_tracker_pins q
+			      WHERE q.root_path = p.root_path
+			        AND q.destination_subdir = p.destination_subdir
+			        AND q.tracker_id = p.tracker_id
+			        AND q.tab = p.tab
+			        AND q.api_base_url = $1
+			  )
+			ORDER BY root_path, destination_subdir, tracker_id, tab, created_at, id
+		)
+		UPDATE api_tracker_pins
+		SET api_base_url = $1, updated_at = NOW()
+		FROM candidates
+		WHERE api_tracker_pins.id = candidates.id`, base)
+	if err != nil {
+		return 0, 0, err
+	}
+	updated = tag.RowsAffected()
+	err = s.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM api_tracker_pins WHERE api_base_url <> $1`, base,
+	).Scan(&skipped)
+	return updated, skipped, err
 }
 
 func (s *Store) DeletePin(ctx context.Context, id uuid.UUID) error {
@@ -317,10 +343,7 @@ func (s *Store) RecordDownload(ctx context.Context, in DownloadInput) error {
 	in.FilePath = dbtext.Clean(in.FilePath)
 	in.Status = dbtext.Clean(in.Status)
 	in.Error = dbtext.Clean(in.Error)
-	var downloadedAt any
-	if in.Status == StatusDownloaded || in.Status == StatusExisting {
-		downloadedAt = time.Now().UTC()
-	}
+	downloadedAt := pinscan.DownloadedAt(in.Status)
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO api_tracker_downloads (
 			pin_id, entry_id, source_url, resolved_url, file_path, status, error,
@@ -347,9 +370,7 @@ func (s *Store) RecordDownload(ctx context.Context, in DownloadInput) error {
 }
 
 func (s *Store) ListDownloads(ctx context.Context, pinID uuid.UUID, limit int) ([]Download, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 200
-	}
+	limit = pinscan.HistoryLimit(limit)
 	rows, err := s.db.Query(ctx, `
 		SELECT id, pin_id, entry_id, source_url, resolved_url, file_path, status, error,
 		       track_id, metadata, first_seen_at, downloaded_at, updated_at

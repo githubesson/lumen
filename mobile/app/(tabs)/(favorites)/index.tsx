@@ -11,8 +11,10 @@ import {
   useBottomDockInset,
   useDockScrollHandler,
 } from "../../../components/dock/dock-context";
+import { useFavoritesQuery } from "../../../context/favorites";
 import { qk } from "../../../lib/query-keys";
 import { usePlayQueue } from "../../../lib/use-play-queue";
+import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme } from "../../../theme/theme";
 
 type Mode = "favorites" | "recent";
@@ -25,14 +27,14 @@ export default function FavoritesScreen() {
   const { me } = useAuth();
   const userId = me?.id;
 
-  const query = useQuery({
-    queryKey: mode === "favorites" ? qk.favorites(userId) : qk.recent(userId),
-    queryFn: ({ signal }) =>
-      mode === "favorites"
-        ? api.listFavorites({ signal })
-        : api.listRecent(100, { signal }),
-    enabled: !!userId,
+  const favoritesQuery = useFavoritesQuery(mode === "favorites");
+  const recentQuery = useQuery({
+    queryKey: qk.recent(userId),
+    queryFn: ({ signal }) => api.listRecent(100, { signal }),
+    enabled: mode === "recent" && !!userId,
   });
+  const query = mode === "favorites" ? favoritesQuery : recentQuery;
+  const { refreshing, onRefresh } = usePullToRefresh(query.refetch);
 
   const tracks = useMemo<TrackListItem[]>(
     () => query.data ?? [],
@@ -85,8 +87,8 @@ export default function FavoritesScreen() {
       contentContainerStyle={{ paddingBottom: dockInset + 24 }}
       refreshControl={
         <RefreshControl
-          refreshing={query.isRefetching}
-          onRefresh={() => void query.refetch()}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
           tintColor={theme.color.fgMuted}
         />
       }

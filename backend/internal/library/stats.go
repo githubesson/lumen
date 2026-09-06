@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // ReplayBucket is the granularity of the listening-activity time series.
@@ -52,10 +53,12 @@ type ReplayArtist struct {
 }
 
 type ReplayAlbum struct {
-	ID     uuid.UUID
-	Title  string
-	Artist string
-	Plays  int
+	ID            uuid.UUID
+	Title         string
+	Artist        string
+	Source        string
+	SourceAlbumID string
+	Plays         int
 }
 
 type ReplayGenreSlice struct {
@@ -197,10 +200,16 @@ func (s *Store) replaySummary(ctx context.Context, p ReplayStatsParams, out *Rep
 			LIMIT 1`,
 			p.ViewerID, p.From, p.To,
 		).Scan(&ha.ID, &ha.Name, &ha.Plays)
-		if err == nil {
+		switch {
+		case err == nil:
 			out.Summary.HeadlineArtist = &ha
+		case errors.Is(err, pgx.ErrNoRows):
+			// A user with no play history in the window simply has no headline
+			// artist. Everything else — a cancelled context, a saturated pool —
+			// is a real failure and must not render as a silently empty Replay.
+		default:
+			return err
 		}
-		// If err != nil we just leave HeadlineArtist nil — not a fatal error.
 	}
 	return nil
 }
@@ -285,7 +294,19 @@ func (s *Store) replayTopArtists(ctx context.Context, p ReplayStatsParams, out *
 
 func (s *Store) replayTopAlbums(ctx context.Context, p ReplayStatsParams, out *ReplayData) error {
 	rows, err := s.db.Query(ctx, `
-		SELECT al.id, al.title, COALESCE(aa.name, ''), COUNT(*)::int AS plays
+		SELECT
+			al.id,
+			al.title,
+			COALESCE(aa.name, ''),
+			CASE WHEN BOOL_AND(t.source = 'tidal') THEN 'tidal' ELSE 'local' END AS source,
+			CASE
+				WHEN BOOL_AND(t.source = 'tidal') THEN COALESCE(
+					MAX(NULLIF(t.external_meta->>'album_id', '')),
+					''
+				)
+				ELSE ''
+			END AS source_album_id,
+			COUNT(*)::int AS plays
 		FROM play_history ph
 		JOIN tracks t ON t.id = ph.track_id AND t.deleted_at IS NULL
 		    AND `+trackVisibleP1+`
@@ -304,7 +325,14 @@ func (s *Store) replayTopAlbums(ctx context.Context, p ReplayStatsParams, out *R
 	defer rows.Close()
 	for rows.Next() {
 		var a ReplayAlbum
-		if err := rows.Scan(&a.ID, &a.Title, &a.Artist, &a.Plays); err != nil {
+		if err := rows.Scan(
+			&a.ID,
+			&a.Title,
+			&a.Artist,
+			&a.Source,
+			&a.SourceAlbumID,
+			&a.Plays,
+		); err != nil {
 			return err
 		}
 		out.TopAlbums = append(out.TopAlbums, a)
@@ -350,8 +378,9 @@ func (s *Store) replayActivity(ctx context.Context, p ReplayStatsParams, bucket 
 		  AND ($2::timestamptz IS NULL OR ph.played_at >= $2)
 		  AND ($3::timestamptz IS NULL OR ph.played_at <  $3)
 		GROUP BY bucket_start
-		ORDER BY bucket_start ASC`,
-		p.ViewerID, p.From, p.To, string(bucket))
+		ORDER BY bucket_start ASC
+		LIMIT $5`,
+		p.ViewerID, p.From, p.To, string(bucket), maxReplayBuckets)
 	if err != nil {
 		return err
 	}
@@ -371,7 +400,8 @@ func (s *Store) replayAvailableYears(ctx context.Context, viewerID uuid.UUID, ou
 		SELECT DISTINCT EXTRACT(YEAR FROM ph.played_at)::int AS y
 		FROM play_history ph
 		WHERE ph.user_id = $1
-		ORDER BY y DESC`, viewerID)
+		ORDER BY y DESC
+		LIMIT $2`, viewerID, maxReplayYearBuckets)
 	if err != nil {
 		return err
 	}

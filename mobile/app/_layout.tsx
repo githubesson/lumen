@@ -1,10 +1,6 @@
+import CookieManager from "@preeternal/react-native-cookie-manager";
 import { useEffect, useRef, type ReactNode } from "react";
-import {
-  ActivityIndicator,
-  AppState,
-  View,
-  useColorScheme,
-} from "react-native";
+import { ActivityIndicator, AppState, View } from "react-native";
 import Constants from "expo-constants";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -12,18 +8,16 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import {
   focusManager,
   QueryClient,
-  QueryClientProvider,
   onlineManager,
 } from "@tanstack/react-query";
-import NetInfo from "@react-native-community/netinfo";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import {
   ThemeProvider as NavThemeProvider,
   DarkTheme as NavDarkTheme,
   DefaultTheme as NavDefaultTheme,
-} from "@react-navigation/native";
+} from "expo-router/react-navigation";
 import {
   AuthProvider,
-  FavoritesProvider,
   libraryChanged,
   setBaseUrl,
   useAuth,
@@ -31,6 +25,17 @@ import {
 import { PlayerProvider } from "../context/player";
 import { ThemeProvider, useTheme } from "../theme/theme";
 import { invalidateLibrary } from "../lib/query-keys";
+import { DownloadsProvider } from "../lib/downloads";
+import { RemoteControlIndicator } from "../components/remote-control-indicator";
+import { CarPlayBridge } from "../components/carplay-bridge";
+import { SiriMediaBridge } from "../components/siri-media-bridge";
+import {
+  fileSystemPersister,
+  shouldPersistQuery,
+} from "../lib/query-persister";
+import { QUERY_STALE_TIME } from "../lib/query-policy";
+import { offlineStore } from "../lib/offline-mode";
+import { asyncStorageAdapter } from "../adapters/async-storage-adapter";
 
 // Resolve the backend base URL. Prefer a build-time env var (EXPO_PUBLIC_...)
 // for flexibility across dev / staging / prod; fall back to app.json `extra`.
@@ -44,24 +49,37 @@ const apiBaseUrl =
 // `api.me()`. Module side-effect is safe: imports resolve synchronously.
 setBaseUrl(apiBaseUrl);
 
-// React Query: one client for the app. Sensible defaults for a mobile
-// streaming app — short stale-time, retry once, pause while offline.
+// How long a persisted page cache stays usable offline. Kept generous so the
+// app still renders after days without a launch; `gcTime` matches so restored
+// queries aren't evicted from memory before `maxAge`. `CACHE_BUSTER` drops the
+// whole on-disk cache when the app version changes (schema/shape drift).
+const CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+// v3 replaces numeric browse page parameters with per-source search cursors.
+const CACHE_BUSTER = `v3:${Constants.expoConfig?.version ?? "0"}`;
+
+// React Query: one client for the app. Mutations and the library event bus
+// invalidate affected keys immediately; the freshness window only prevents
+// repeated mount/focus requests for data fetched in the last couple of minutes.
+// Offline, `onlineManager` pauses requests and the selective persisted cache is
+// what renders. `gcTime` matches the disk cache's maximum age.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5 * 60 * 1000,
+      staleTime: QUERY_STALE_TIME.default,
+      gcTime: CACHE_MAX_AGE,
       retry: 1,
       refetchOnReconnect: true,
     },
   },
 });
 
-// Wire React Query to NetInfo so queries pause cleanly while offline instead
-// of spamming retries.
+// Wire React Query to the offline store so queries pause cleanly while
+// offline instead of spamming retries. Forced offline must also pause React
+// Query, so onlineManager follows the offline store, not NetInfo directly.
+offlineStore.start();
 onlineManager.setEventListener((setOnline) => {
-  return NetInfo.addEventListener((state) => {
-    setOnline(!!state.isConnected);
-  });
+  setOnline(!offlineStore.isOffline());
+  return offlineStore.subscribe(() => setOnline(!offlineStore.isOffline()));
 });
 
 /**
@@ -76,11 +94,6 @@ onlineManager.setEventListener((setOnline) => {
  * client build.
  */
 export default function RootLayout() {
-  // @react-navigation/native ThemeProvider prevents header-button flicker
-  // when the tab navigator swaps stacks.
-  const colorScheme = useColorScheme();
-  const navTheme = colorScheme === "dark" ? NavDarkTheme : NavDefaultTheme;
-
   useEffect(() => {
     focusManager.setFocused(AppState.currentState === "active");
     const subscription = AppState.addEventListener("change", (status) => {
@@ -93,24 +106,43 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <QueryClientProvider client={queryClient}>
-        <NavThemeProvider value={navTheme}>
-          <ThemeProvider>
-            <AuthProvider>
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={{
+          persister: fileSystemPersister,
+          maxAge: CACHE_MAX_AGE,
+          buster: CACHE_BUSTER,
+          dehydrateOptions: {
+            shouldDehydrateMutation: () => false,
+            shouldDehydrateQuery: shouldPersistQuery,
+          },
+        }}
+      >
+        <ThemeProvider>
+          <ThemedNavigation>
+            <AuthProvider sessionCache={asyncStorageAdapter} clearSession={clearSessionCookies}>
               <AccountScopedProviders>
                 <AuthGate />
                 <ThemedStatusBar />
               </AccountScopedProviders>
             </AuthProvider>
-          </ThemeProvider>
-        </NavThemeProvider>
-      </QueryClientProvider>
+          </ThemedNavigation>
+        </ThemeProvider>
+      </PersistQueryClientProvider>
     </GestureHandlerRootView>
   );
 }
 
+/** Keep React Navigation's UIKit-owned headers on the app's resolved theme,
+ * including a persisted override that differs from the device setting. */
+function ThemedNavigation({ children }: { children: ReactNode }) {
+  const theme = useTheme();
+  const navTheme = theme.scheme === "dark" ? NavDarkTheme : NavDefaultTheme;
+  return <NavThemeProvider value={navTheme}>{children}</NavThemeProvider>;
+}
+
 function AccountScopedProviders({ children }: { children: ReactNode }) {
-  const { status, me } = useAuth();
+  const { status, me, refresh } = useAuth();
   const accountKey = status === "authed" ? me?.id ?? "authed" : status;
   const previousAccountKey = useRef<string | null>(null);
 
@@ -122,9 +154,24 @@ function AccountScopedProviders({ children }: { children: ReactNode }) {
     }
     if (previousAccountKey.current !== accountKey) {
       queryClient.clear();
+      // Drop the on-disk cache too, so a signed-out/switched account can't
+      // restore the previous account's pages on the next cold launch.
+      void fileSystemPersister.removeClient();
       previousAccountKey.current = accountKey;
     }
   }, [accountKey, status]);
+
+  // Revalidate the session on the offline → online edge: a cookie that
+  // expired while offline turns into a 401 here, which sends AuthGate to
+  // login and the account-switch purge above clears the caches.
+  useEffect(() => {
+    let wasOffline = offlineStore.isOffline();
+    return offlineStore.subscribe(() => {
+      const off = offlineStore.isOffline();
+      if (wasOffline && !off) void refresh();
+      wasOffline = off;
+    });
+  }, [refresh]);
 
   // The library event bus is the single signal that library content changed
   // (upload, delete, metadata edit, admin rescan). One subscriber here turns
@@ -135,9 +182,17 @@ function AccountScopedProviders({ children }: { children: ReactNode }) {
   useEffect(() => libraryChanged.on(() => invalidateLibrary(queryClient)), []);
 
   return (
-    <FavoritesProvider key={`favorites:${accountKey}`}>
-      <PlayerProvider key={`player:${accountKey}`}>{children}</PlayerProvider>
-    </FavoritesProvider>
+    <DownloadsProvider key={`downloads:${accountKey}`} accountId={status === "authed" ? me?.id ?? null : null}>
+      <PlayerProvider key={`player:${accountKey}`}>
+        {children}
+        <RemoteControlIndicator />
+        {/* Renders nothing on the phone; drives the car's templates from the
+            same query cache and player these providers already own. */}
+        <CarPlayBridge />
+        {/* Handles Siri media searches and playback without presenting UI. */}
+        <SiriMediaBridge />
+      </PlayerProvider>
+    </DownloadsProvider>
   );
 }
 
@@ -232,4 +287,8 @@ function LoadingSplash() {
 function ThemedStatusBar() {
   const theme = useTheme();
   return <StatusBar style={theme.scheme === "dark" ? "light" : "dark"} />;
+}
+
+async function clearSessionCookies() {
+  await CookieManager.clearAll();
 }

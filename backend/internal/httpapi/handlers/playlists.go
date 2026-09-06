@@ -168,7 +168,7 @@ func (h *Playlists) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Store.Update(r.Context(), pid, req.Name, req.Description, vis); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -193,7 +193,7 @@ func (h *Playlists) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Store.Delete(r.Context(), pid); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -266,7 +266,7 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 			AddedByName:   t.AddedByName,
 			AddedAt:       t.AddedAt.Format("2006-01-02T15:04:05Z07:00"),
 			PlayCount:     t.PlayCount,
-			CoverURL:      t.CoverURL,
+			CoverURL:      proxyRemoteCoverURL(t.CoverURL),
 		}
 		if t.AlbumID != nil {
 			ti.AlbumID = t.AlbumID.String()
@@ -282,6 +282,8 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 type addTracksReq struct {
 	TrackIDs []string `json:"track_ids"`
 }
+
+const maxPlaylistTrackAddBatch = 1000
 
 func (h *Playlists) AddTracks(w http.ResponseWriter, r *http.Request) {
 	u, ok := requireUser(w, r)
@@ -305,6 +307,10 @@ func (h *Playlists) AddTracks(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	if len(req.TrackIDs) > maxPlaylistTrackAddBatch {
+		http.Error(w, "too many track_ids in one request", http.StatusBadRequest)
+		return
+	}
 	ids := make([]uuid.UUID, 0, len(req.TrackIDs))
 	for _, s := range req.TrackIDs {
 		id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, s, true)
@@ -319,7 +325,7 @@ func (h *Playlists) AddTracks(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, id)
 	}
 	if err := h.Store.AddTracks(r.Context(), pid, ids, u.ID); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -383,7 +389,9 @@ func (h *Playlists) Reorder(w http.ResponseWriter, r *http.Request) {
 	}
 	ids := make([]uuid.UUID, 0, len(req.TrackIDs))
 	for _, s := range req.TrackIDs {
-		id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, s, true)
+		// Reordering can only reference rows already in this playlist. Do not
+		// materialize a new remote track before the exact-multiset validation.
+		id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, s, false)
 		if err != nil {
 			if errors.Is(err, tidal.ErrNotConfigured) {
 				http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
@@ -394,8 +402,12 @@ func (h *Playlists) Reorder(w http.ResponseWriter, r *http.Request) {
 		}
 		ids = append(ids, id)
 	}
-	if err := h.Store.ReplaceOrder(r.Context(), pid, ids); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	if err := h.Store.ReplaceOrder(r.Context(), pid, u.ID, ids); err != nil {
+		if errors.Is(err, playlists.ErrInvalidOrder) {
+			http.Error(w, "track_ids must contain every current playlist entry exactly once", http.StatusBadRequest)
+			return
+		}
+		writeStoreError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -529,7 +541,7 @@ func (h *Playlists) RemoveCollaborator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Store.RemoveCollaborator(r.Context(), pid, uid); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -571,7 +583,7 @@ func (h *Playlists) SetCollaboratorRole(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.Store.SetCollaboratorRole(r.Context(), pid, uid, role); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -642,7 +654,7 @@ func (h *Playlists) DeclineInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Store.RemoveCollaborator(r.Context(), pid, u.ID); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

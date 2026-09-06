@@ -1,0 +1,10 @@
+{
+  "name": "js-crypto-key-utils",
+  "version": "1.0.7-lumen.1",
+  "description": "Minimal Node crypto compatibility layer for the Filen SDK",
+  "private": true,
+  "main": "index.cjs",
+  "engines": {
+    "node": ">=20"
+  }
+}

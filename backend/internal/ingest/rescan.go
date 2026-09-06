@@ -20,6 +20,20 @@ type RescanProgress struct {
 	Errored   atomic.Int64
 	Pruned    atomic.Int64
 	Done      atomic.Bool
+	// Failure holds the error that aborted the scan, if any. Without it a scan
+	// that died immediately (unreadable music root, say) was indistinguishable
+	// from a completed empty one: status reported running:false with all-zero
+	// counters and nothing was logged.
+	Failure atomic.Pointer[string]
+}
+
+// FailureMessage returns the recorded abort reason, or "" if the scan did not
+// fail.
+func (p *RescanProgress) FailureMessage() string {
+	if msg := p.Failure.Load(); msg != nil {
+		return *msg
+	}
+	return ""
 }
 
 // Rescan walks every configured music root and ingests every supported audio
@@ -65,6 +79,10 @@ func (s *Service) Rescan(ctx context.Context, p *RescanProgress) error {
 
 func (s *Service) rescanRoot(ctx context.Context, root string, p *RescanProgress) error {
 	s.log().Info("rescan walking", "root", root)
+	// Fix non-UTF-8 names before enumerating: renaming a directory during the
+	// ingest walk would strand its already-listed children until the next
+	// rescan, while a pre-pass keeps everything ingestable in this one.
+	s.sanitizeTree(ctx, root)
 	var supportedFound int64
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {

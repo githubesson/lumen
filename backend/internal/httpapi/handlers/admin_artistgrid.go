@@ -19,6 +19,7 @@ type AdminArtistGrid struct {
 	MusicRoots  *musicroots.Store
 	Scanner     *artistgrid.Scanner
 	PrimaryRoot string
+	Background  context.Context
 }
 
 type artistGridPinResp struct {
@@ -171,7 +172,7 @@ func (h *AdminArtistGrid) Scan(w http.ResponseWriter, r *http.Request) {
 	if h.Scanner != nil {
 		start = h.Scanner.StartPinScan
 	}
-	scanPinNow(w, r, artistgrid.ErrNotFound, start)
+	scanPinNow(w, r, artistgrid.ErrNotFound, h.Background, start)
 }
 
 func (h *AdminArtistGrid) Downloads(w http.ResponseWriter, r *http.Request) {

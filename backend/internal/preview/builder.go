@@ -1,4 +1,4 @@
-// Package preview builds 30-second MP4 snippets (album cover + audio slice)
+// Package preview builds variable-length MP4 snippets (album cover + audio slice)
 // that Discord — and any chat app honoring og:video — can autoplay inline as
 // link previews. Generation is lazy (first /api/public/previews/... request
 // builds the file and caches it on disk), so tracks that are never shared
@@ -33,15 +33,21 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// PreviewDuration is the length of the generated snippet. Long enough that
-// the embed feels like a real preview, short enough to keep the MP4 tiny
-// and well under Discord's inline video size limits.
-const PreviewDuration = 30 * time.Second
+const (
+	// MinimumPreviewDuration is the shortest selectable snippet for tracks
+	// that are at least this long. Shorter tracks are shared in full.
+	MinimumPreviewDuration = 5 * time.Second
+	// DefaultPreviewDuration preserves the original share-link behaviour and
+	// is also used by already-issued links that do not carry a duration.
+	DefaultPreviewDuration = 30 * time.Second
+	// MaximumPreviewDuration bounds generated media size and ffmpeg work.
+	MaximumPreviewDuration = 120 * time.Second
+)
 
-// buildTimeout bounds a single ffmpeg invocation. Static-image + 30s audio
-// transcodes are fast; anything past this almost certainly indicates the
-// audio file is unreadable or ffmpeg is stuck.
-const buildTimeout = 45 * time.Second
+// buildTimeout bounds a single ffmpeg invocation. The upper end of the
+// selectable range is four times the original 30-second render, and story
+// videos render substantially more frames than square previews.
+const buildTimeout = 3 * time.Minute
 
 const defaultFFmpegConcurrency = 2
 
@@ -51,7 +57,8 @@ var (
 )
 
 // Builder owns the preview cache directory + an in-flight dedupe group so
-// concurrent requests for the same (track, startSec) only run ffmpeg once.
+// concurrent requests for the same (track, startSec, durationSec) only run
+// ffmpeg once.
 type Builder struct {
 	// CacheDir is where generated MP4s live. Created on first use.
 	CacheDir string
@@ -67,12 +74,13 @@ type Builder struct {
 
 // Input describes a single preview build request.
 type Input struct {
-	TrackID   string // used to name the cache file
-	AudioPath string // absolute path to the source audio file on disk
-	CoverPath string // absolute path to the album cover image on disk; empty → no image (audio-only MP4, still works)
-	StartSec  int    // seconds into the audio to start the 30s slice
-	Title     string // optional; used by story renders
-	Artist    string // optional; used by story renders
+	TrackID     string // used to name the cache file
+	AudioPath   string // absolute path to the source audio file on disk
+	CoverPath   string // absolute path to the album cover image on disk; empty → no image (audio-only MP4, still works)
+	StartSec    int    // seconds into the audio at which the slice begins
+	DurationSec int    // slice length; zero uses DefaultPreviewDuration
+	Title       string // optional; used by story renders
+	Artist      string // optional; used by story renders
 }
 
 // Crop is a normalized source-image rectangle. Values are fractions of the
@@ -95,21 +103,52 @@ type CustomBackground struct {
 // returns the path to the cached file. Safe for concurrent calls with the
 // same input — only one ffmpeg process runs.
 func (b *Builder) EnsureBuilt(ctx context.Context, in Input) (string, error) {
-	return b.ensureBuilt(ctx, in, "preview", b.cachePath(in.TrackID, in.StartSec), b.run)
+	in = normalizeInput(in)
+	return b.ensureBuilt(ctx, in, "preview", b.cachePath(in.TrackID, in.StartSec, in.DurationSec), b.run)
+}
+
+// CachedPreview returns the path of an already-built preview MP4 for
+// (trackID, startSec, durationSec), or ok=false when a build would be required. Lets
+// callers skip materializing the audio source (expensive for streamed
+// tracks) when the output is already on disk.
+func (b *Builder) CachedPreview(trackID string, startSec, durationSec int) (string, bool) {
+	return b.cachedOutput(b.cachePath(trackID, startSec, normalizeDurationSec(durationSec)))
+}
+
+// CachedStory is CachedPreview for the story variant.
+func (b *Builder) CachedStory(trackID string, startSec, durationSec int) (string, bool) {
+	return b.cachedOutput(b.storyCachePath(trackID, startSec, normalizeDurationSec(durationSec)))
+}
+
+// CachedStoryBackground is CachedPreview for the background-only story variant.
+func (b *Builder) CachedStoryBackground(trackID string, startSec, durationSec int) (string, bool) {
+	return b.cachedOutput(b.storyBackgroundCachePath(trackID, startSec, normalizeDurationSec(durationSec)))
+}
+
+func (b *Builder) cachedOutput(path string) (string, bool) {
+	if b == nil || b.CacheDir == "" {
+		return "", false
+	}
+	if st, err := os.Stat(path); err == nil && st.Size() > 0 {
+		return path, true
+	}
+	return "", false
 }
 
 // EnsureStoryBuilt builds the Instagram-story-shaped MP4 for `in` if it isn't
 // cached. The story variant is 1080x1920 with a textured color background,
-// artwork card, title/artist text, and the same 30s audio window.
+// artwork card, title/artist text, and the same selected audio window.
 func (b *Builder) EnsureStoryBuilt(ctx context.Context, in Input) (string, error) {
-	return b.ensureBuilt(ctx, in, "story-v12", b.storyCachePath(in.TrackID, in.StartSec), b.runStory)
+	in = normalizeInput(in)
+	return b.ensureBuilt(ctx, in, "story-v12", b.storyCachePath(in.TrackID, in.StartSec, in.DurationSec), b.runStory)
 }
 
 // EnsureStoryBackgroundBuilt builds a background-only Instagram story MP4.
 // The mobile app can pass this as backgroundVideo and render the sticker
 // separately so text is not baked into the compressed video.
 func (b *Builder) EnsureStoryBackgroundBuilt(ctx context.Context, in Input) (string, error) {
-	return b.ensureBuilt(ctx, in, "story-bg-v4", b.storyBackgroundCachePath(in.TrackID, in.StartSec), b.runStoryBackground)
+	in = normalizeInput(in)
+	return b.ensureBuilt(ctx, in, "story-bg-v4", b.storyBackgroundCachePath(in.TrackID, in.StartSec, in.DurationSec), b.runStoryBackground)
 }
 
 // BuildCustomStoryBackground builds a one-off background-only Instagram story
@@ -134,6 +173,7 @@ func (b *Builder) BuildCustomStoryBackground(ctx context.Context, in Input, bg C
 	if in.StartSec < 0 {
 		in.StartSec = 0
 	}
+	in = normalizeInput(in)
 	if err := b.ensureCacheDir(); err != nil {
 		return err
 	}
@@ -168,7 +208,7 @@ func (b *Builder) ensureBuilt(
 		return outPath, nil
 	}
 
-	key := kind + "|" + in.TrackID + "@" + strconv.Itoa(in.StartSec)
+	key := kind + "|" + in.TrackID + "@" + strconv.Itoa(in.StartSec) + "+" + strconv.Itoa(in.DurationSec)
 	ch := b.group.DoChan(key, func() (any, error) {
 		// Re-check inside the singleflight in case another goroutine
 		// finished the work between our stat and the singleflight entry.
@@ -206,21 +246,40 @@ func (b *Builder) ensureCacheDir() error {
 	return nil
 }
 
-func (b *Builder) cachePath(trackID string, startSec int) string {
-	// File name encodes (trackID, startSec). Both are already URL-safe
-	// (UUID + decimal integer).
-	name := trackID + "-" + strconv.Itoa(startSec) + ".mp4"
+func (b *Builder) cachePath(trackID string, startSec, durationSec int) string {
+	// Keep the original filename for 30-second clips so existing cache entries
+	// remain useful after the duration parameter is introduced.
+	name := trackID + "-" + strconv.Itoa(startSec) + durationCacheSuffix(durationSec) + ".mp4"
 	return filepath.Join(b.CacheDir, name)
 }
 
-func (b *Builder) storyCachePath(trackID string, startSec int) string {
-	name := trackID + "-" + strconv.Itoa(startSec) + "-story-v12.mp4"
+func (b *Builder) storyCachePath(trackID string, startSec, durationSec int) string {
+	name := trackID + "-" + strconv.Itoa(startSec) + durationCacheSuffix(durationSec) + "-story-v12.mp4"
 	return filepath.Join(b.CacheDir, name)
 }
 
-func (b *Builder) storyBackgroundCachePath(trackID string, startSec int) string {
-	name := trackID + "-" + strconv.Itoa(startSec) + "-story-bg-v4.mp4"
+func (b *Builder) storyBackgroundCachePath(trackID string, startSec, durationSec int) string {
+	name := trackID + "-" + strconv.Itoa(startSec) + durationCacheSuffix(durationSec) + "-story-bg-v4.mp4"
 	return filepath.Join(b.CacheDir, name)
+}
+
+func normalizeInput(in Input) Input {
+	in.DurationSec = normalizeDurationSec(in.DurationSec)
+	return in
+}
+
+func normalizeDurationSec(durationSec int) int {
+	if durationSec <= 0 {
+		return int(DefaultPreviewDuration / time.Second)
+	}
+	return min(durationSec, int(MaximumPreviewDuration/time.Second))
+}
+
+func durationCacheSuffix(durationSec int) string {
+	if durationSec == int(DefaultPreviewDuration/time.Second) {
+		return ""
+	}
+	return "-" + strconv.Itoa(durationSec) + "s"
 }
 
 // run invokes ffmpeg. Uses a temp file next to the output so readers never
@@ -320,7 +379,7 @@ func defaultPreviewFFmpegSemaphore() *semaphore.Weighted {
 // audio slice) muxed to H.264/AAC MP4 at 720x720. 1 fps + -tune stillimage
 // keeps the encoded video a few kilobytes; most of the MP4 size is audio.
 func buildArgs(in Input, outPath string) []string {
-	dur := strconv.Itoa(int(PreviewDuration / time.Second))
+	dur := strconv.Itoa(normalizeDurationSec(in.DurationSec))
 	args := []string{
 		"-y",
 		"-hide_banner",
@@ -335,7 +394,7 @@ func buildArgs(in Input, outPath string) []string {
 		)
 	}
 	// Fast seek on the audio input via pre-input -ss. Accurate enough for
-	// a 30s preview and much faster than post-input seeking on long files.
+	// a short preview and much faster than post-input seeking on long files.
 	args = append(args,
 		"-ss", strconv.Itoa(in.StartSec),
 		"-t", dur,
@@ -385,7 +444,7 @@ func buildArgs(in Input, outPath string) []string {
 }
 
 func buildStoryArgs(in Input, framePath string, outPath string) []string {
-	dur := strconv.Itoa(int(PreviewDuration / time.Second))
+	dur := strconv.Itoa(normalizeDurationSec(in.DurationSec))
 	audioIndex := 1
 	args := []string{
 		"-y",

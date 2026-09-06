@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, type RefObject } from "react";
-import Hls from "hls.js";
+import type Hls from "hls.js";
 import type { AudioAdapter, AudioAdapterEvent } from "@music-library/core";
 
 /**
@@ -14,53 +14,76 @@ import type { AudioAdapter, AudioAdapterEvent } from "@music-library/core";
  */
 export function useHtmlAudioAdapter(): {
   adapter: AudioAdapter;
-  audioRef: RefObject<HTMLAudioElement>;
+  audioRefs: readonly [RefObject<HTMLAudioElement>, RefObject<HTMLAudioElement>];
 } {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const preloadAudioRef = useRef<HTMLAudioElement>(null);
+  const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const preparedAudioRef = useRef<HTMLAudioElement | null>(null);
+  const preparedUrlRef = useRef<string | null>(null);
+  const preparedPendingRef = useRef<Promise<void> | null>(null);
+  const preparedGenerationRef = useRef(0);
   const hlsRef = useRef<Hls | null>(null);
+  const preparedHlsRef = useRef<Hls | null>(null);
+  const pendingLoadRef = useRef<Promise<void> | null>(null);
+  const loadGenerationRef = useRef(0);
+  const playIntentRef = useRef(0);
   const listenersRef = useRef<Map<AudioAdapterEvent, Set<() => void>>>(
     new Map(),
   );
 
+  const dispatch = (event: AudioAdapterEvent) => {
+    const set = listenersRef.current.get(event);
+    if (!set) return;
+    for (const fn of set) fn();
+  };
+
   // Wire native events → listener registry once the element mounts.
   useEffect(() => {
-    const a = audioRef.current;
-    if (!a) return;
+    const primary = audioRef.current;
+    const secondary = preloadAudioRef.current;
+    if (!primary || !secondary) return;
+    activeAudioRef.current = primary;
 
-    const dispatchEvent = (event: AudioAdapterEvent) => () => {
-      const set = listenersRef.current.get(event);
-      if (!set) return;
-      for (const fn of set) fn();
+    const wire = (a: HTMLAudioElement) => {
+      const dispatchIfActive = (event: AudioAdapterEvent) => () => {
+        if (activeAudioRef.current === a) dispatch(event);
+      };
+      const handlers = {
+        timeupdate: dispatchIfActive("timeupdate"),
+        loadedmetadata: dispatchIfActive("loadedmetadata"),
+        ended: dispatchIfActive("ended"),
+        seeked: dispatchIfActive("seeked"),
+        play: dispatchIfActive("play"),
+        pause: dispatchIfActive("pause"),
+      };
+      for (const [event, handler] of Object.entries(handlers)) {
+        a.addEventListener(event, handler);
+      }
+      return () => {
+        for (const [event, handler] of Object.entries(handlers)) {
+          a.removeEventListener(event, handler);
+        }
+      };
     };
 
-    const onTime = dispatchEvent("timeupdate");
-    const onMeta = dispatchEvent("loadedmetadata");
-    const onEnd = dispatchEvent("ended");
-    const onSeeked = dispatchEvent("seeked");
-    const onPlay = dispatchEvent("play");
-    const onPause = dispatchEvent("pause");
-
-    a.addEventListener("timeupdate", onTime);
-    a.addEventListener("loadedmetadata", onMeta);
-    a.addEventListener("ended", onEnd);
-    a.addEventListener("seeked", onSeeked);
-    a.addEventListener("play", onPlay);
-    a.addEventListener("pause", onPause);
+    const unwirePrimary = wire(primary);
+    const unwireSecondary = wire(secondary);
 
     return () => {
-      a.removeEventListener("timeupdate", onTime);
-      a.removeEventListener("loadedmetadata", onMeta);
-      a.removeEventListener("ended", onEnd);
-      a.removeEventListener("seeked", onSeeked);
-      a.removeEventListener("play", onPlay);
-      a.removeEventListener("pause", onPause);
+      unwirePrimary();
+      unwireSecondary();
+      activeAudioRef.current = null;
     };
   }, []);
 
+  // Teardown goes through the adapter's own dispose(). The hand-rolled version
+  // that used to live here was a partial copy: it omitted the element reset and
+  // listenersRef.clear(), so listener sets survived a provider remount.
+  const disposeRef = useRef<(() => void) | null>(null);
   useEffect(
     () => () => {
-      hlsRef.current?.destroy();
-      hlsRef.current = null;
+      disposeRef.current?.();
     },
     [],
   );
@@ -68,69 +91,243 @@ export function useHtmlAudioAdapter(): {
   const adapter = useMemo<AudioAdapter>(
     () => ({
       load(url) {
-        const a = audioRef.current;
+        const a = activeAudioRef.current ?? audioRef.current;
         if (!a) return;
+        const prepared = preparedAudioRef.current;
+        preparedGenerationRef.current += 1;
+        preparedPendingRef.current = null;
+        preparedHlsRef.current?.destroy();
+        preparedHlsRef.current = null;
+        preparedAudioRef.current = null;
+        preparedUrlRef.current = null;
+        if (prepared && prepared !== a) resetAudio(prepared);
+        const generation = ++loadGenerationRef.current;
+        playIntentRef.current += 1;
+        pendingLoadRef.current = null;
         hlsRef.current?.destroy();
         hlsRef.current = null;
         a.removeAttribute("src");
         a.load();
         if (shouldUseHLS(url)) {
-          if (Hls.isSupported()) {
-            const hls = new Hls();
-            hlsRef.current = hls;
-            hls.attachMedia(a);
-            hls.loadSource(url);
-            hls.on(Hls.Events.ERROR, (_event, data) => {
-              if (!data.fatal) return;
-              if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                hls.startLoad();
+          // hls.js is by far the largest renderer dependency. Load it only for
+          // an HLS source, and make play() wait for this one-time import so the
+          // player's immediate load() -> play() sequence remains race-safe.
+          const pending = import("hls.js")
+            .then(({ default: HlsRuntime }) => {
+              if (
+                generation !== loadGenerationRef.current ||
+                activeAudioRef.current !== a
+              ) {
                 return;
               }
-              if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-                hls.recoverMediaError();
+              if (HlsRuntime.isSupported()) {
+                const hls = new HlsRuntime();
+                hlsRef.current = hls;
+                hls.attachMedia(a);
+                hls.loadSource(url);
+                hls.on(HlsRuntime.Events.ERROR, (_event, data) => {
+                  if (!data.fatal) return;
+                  if (data.type === HlsRuntime.ErrorTypes.NETWORK_ERROR) {
+                    hls.startLoad();
+                    return;
+                  }
+                  if (data.type === HlsRuntime.ErrorTypes.MEDIA_ERROR) {
+                    hls.recoverMediaError();
+                    return;
+                  }
+                  hls.destroy();
+                  if (hlsRef.current === hls) hlsRef.current = null;
+                });
                 return;
               }
-              hls.destroy();
-              if (hlsRef.current === hls) hlsRef.current = null;
+              a.src = url;
+            })
+            .catch(() => {
+              if (
+                generation === loadGenerationRef.current &&
+                activeAudioRef.current === a
+              ) {
+                // Native HLS-capable browsers can still recover if the optional
+                // module fails to load; other browsers surface the normal media
+                // error through HTMLAudioElement.
+                a.src = url;
+              }
             });
-            return;
-          }
-          if (a.canPlayType("application/vnd.apple.mpegurl")) {
-            a.src = url;
-            return;
-          }
+          pendingLoadRef.current = pending;
+          void pending.finally(() => {
+            if (pendingLoadRef.current === pending) {
+              pendingLoadRef.current = null;
+            }
+          });
+          return;
         }
         a.src = url;
       },
+      prepareNext(url) {
+        if (preparedUrlRef.current === url) return;
+        const active = activeAudioRef.current ?? audioRef.current;
+        const primary = audioRef.current;
+        const secondary = preloadAudioRef.current;
+        const next = active === primary ? secondary : primary;
+        if (!active || !next) return;
+
+        const previous = preparedAudioRef.current;
+        preparedGenerationRef.current += 1;
+        preparedPendingRef.current = null;
+        preparedHlsRef.current?.destroy();
+        preparedHlsRef.current = null;
+        if (previous && previous !== active) resetAudio(previous);
+
+        const generation = preparedGenerationRef.current;
+        preparedAudioRef.current = next;
+        preparedUrlRef.current = url;
+        resetAudio(next);
+        next.preload = "auto";
+        next.volume = active.volume;
+        next.muted = active.muted;
+
+        if (shouldUseHLS(url)) {
+          const pending = import("hls.js")
+            .then(({ default: HlsRuntime }) => {
+              if (
+                generation !== preparedGenerationRef.current ||
+                preparedAudioRef.current !== next ||
+                preparedUrlRef.current !== url
+              ) {
+                return;
+              }
+              if (HlsRuntime.isSupported()) {
+                const hls = new HlsRuntime({
+                  maxBufferLength: 20,
+                  maxMaxBufferLength: 30,
+                });
+                preparedHlsRef.current = hls;
+                hls.attachMedia(next);
+                hls.loadSource(url);
+                hls.on(HlsRuntime.Events.ERROR, (_event, data) => {
+                  if (!data.fatal) return;
+                  if (data.type === HlsRuntime.ErrorTypes.NETWORK_ERROR) {
+                    hls.startLoad();
+                    return;
+                  }
+                  if (data.type === HlsRuntime.ErrorTypes.MEDIA_ERROR) {
+                    hls.recoverMediaError();
+                    return;
+                  }
+                  hls.destroy();
+                  if (preparedHlsRef.current === hls) {
+                    preparedHlsRef.current = null;
+                    preparedAudioRef.current = null;
+                    preparedUrlRef.current = null;
+                  } else if (hlsRef.current === hls) {
+                    hlsRef.current = null;
+                  }
+                });
+                return;
+              }
+              next.src = url;
+              next.load();
+            })
+            .catch(() => {
+              if (
+                generation === preparedGenerationRef.current &&
+                preparedAudioRef.current === next
+              ) {
+                next.src = url;
+                next.load();
+              }
+            });
+          preparedPendingRef.current = pending;
+          void pending.finally(() => {
+            if (preparedPendingRef.current === pending) {
+              preparedPendingRef.current = null;
+            }
+          });
+          return;
+        }
+
+        next.src = url;
+        next.load();
+      },
+      activatePrepared(url) {
+        const next = preparedAudioRef.current;
+        const old = activeAudioRef.current ?? audioRef.current;
+        if (
+          !next ||
+          !old ||
+          preparedUrlRef.current !== url ||
+          preparedPendingRef.current ||
+          next.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+        ) {
+          return false;
+        }
+
+        loadGenerationRef.current += 1;
+        playIntentRef.current += 1;
+        pendingLoadRef.current = null;
+        const previousHls = hlsRef.current;
+        hlsRef.current = preparedHlsRef.current;
+        preparedHlsRef.current = null;
+        preparedGenerationRef.current += 1;
+        preparedPendingRef.current = null;
+        preparedAudioRef.current = null;
+        preparedUrlRef.current = null;
+        activeAudioRef.current = next;
+        previousHls?.destroy();
+        old.pause();
+        resetAudio(old);
+        dispatch("loadedmetadata");
+        try {
+          void next.play().catch(() => dispatch("pause"));
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      clearPrepared() {
+        const prepared = preparedAudioRef.current;
+        preparedGenerationRef.current += 1;
+        preparedPendingRef.current = null;
+        preparedHlsRef.current?.destroy();
+        preparedHlsRef.current = null;
+        preparedAudioRef.current = null;
+        preparedUrlRef.current = null;
+        if (prepared && prepared !== activeAudioRef.current) resetAudio(prepared);
+      },
       play() {
-        const a = audioRef.current;
+        const a = activeAudioRef.current ?? audioRef.current;
         if (!a) return Promise.reject(new Error("audio element not mounted"));
-        const result = a.play();
-        return result ?? Promise.resolve();
+        const intent = ++playIntentRef.current;
+        const playNow = () =>
+          intent === playIntentRef.current
+            ? (a.play() ?? Promise.resolve())
+            : Promise.resolve();
+        return pendingLoadRef.current
+          ? pendingLoadRef.current.then(playNow)
+          : playNow();
       },
       pause() {
-        audioRef.current?.pause();
+        playIntentRef.current += 1;
+        activeAudioRef.current?.pause();
       },
       seek(seconds) {
-        const a = audioRef.current;
+        const a = activeAudioRef.current ?? audioRef.current;
         if (!a) return;
         a.currentTime = seconds;
       },
       setVolume(v) {
-        const a = audioRef.current;
-        if (!a) return;
-        a.volume = v;
+        if (audioRef.current) audioRef.current.volume = v;
+        if (preloadAudioRef.current) preloadAudioRef.current.volume = v;
       },
       setMuted(m) {
-        const a = audioRef.current;
-        if (!a) return;
-        a.muted = m;
+        if (audioRef.current) audioRef.current.muted = m;
+        if (preloadAudioRef.current) preloadAudioRef.current.muted = m;
       },
       currentTime() {
-        return audioRef.current?.currentTime ?? 0;
+        return activeAudioRef.current?.currentTime ?? 0;
       },
       duration() {
-        return audioRef.current?.duration ?? 0;
+        return activeAudioRef.current?.duration ?? 0;
       },
       on(event, handler) {
         let set = listenersRef.current.get(event);
@@ -144,15 +341,40 @@ export function useHtmlAudioAdapter(): {
         };
       },
       dispose() {
+        loadGenerationRef.current += 1;
+        playIntentRef.current += 1;
+        pendingLoadRef.current = null;
         hlsRef.current?.destroy();
         hlsRef.current = null;
+        preparedGenerationRef.current += 1;
+        preparedPendingRef.current = null;
+        preparedHlsRef.current?.destroy();
+        preparedHlsRef.current = null;
+        preparedAudioRef.current = null;
+        preparedUrlRef.current = null;
+        if (audioRef.current) resetAudio(audioRef.current);
+        if (preloadAudioRef.current) resetAudio(preloadAudioRef.current);
         listenersRef.current.clear();
       },
     }),
     [],
   );
+  useEffect(() => {
+    disposeRef.current = () => adapter.dispose?.();
+  }, [adapter]);
 
-  return { adapter, audioRef };
+  const audioRefs = useMemo(
+    () => [audioRef, preloadAudioRef] as const,
+    [],
+  );
+
+  return { adapter, audioRefs };
+}
+
+function resetAudio(audio: HTMLAudioElement): void {
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
 }
 
 function shouldUseHLS(url: string): boolean {

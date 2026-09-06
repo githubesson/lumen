@@ -1,10 +1,9 @@
 import { FormEvent, useState } from "react";
 import { api, errorMessage, type Playlist, type Visibility } from "../../api";
-import { Button } from "../../components/Button";
-import DialogFooter from "../../components/DialogFooter";
+import { SaveCancelFooter } from "../../components/DialogFooter";
 import { DialogShell } from "../../components/DialogShell";
 import ErrorBanner from "../../components/ErrorBanner";
-import { Field, TextInput } from "../../components/Field";
+import { Field, NativeSelect, TextInput } from "../../components/Field";
 
 export default function EditPlaylistDialog({
   open,
@@ -58,24 +57,16 @@ export default function EditPlaylistDialog({
           />
         </Field>
         <Field label="Visibility">
-          <select
-            className="input"
+          <NativeSelect
             value={visibility}
             onChange={(e) => setVisibility(e.target.value as Visibility)}
           >
             <option value="private">Private</option>
             <option value="collaborative">Collaborative</option>
-          </select>
+          </NativeSelect>
         </Field>
         {error && <ErrorBanner message={error} />}
-        <DialogFooter bordered={false}>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={busy}>
-            {busy ? "Saving…" : "Save"}
-          </Button>
-        </DialogFooter>
+        <SaveCancelFooter onCancel={onClose} busy={busy} />
       </form>
     </DialogShell>
   );

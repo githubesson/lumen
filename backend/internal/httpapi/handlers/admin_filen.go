@@ -19,6 +19,7 @@ type AdminFilen struct {
 	MusicRoots  *musicroots.Store
 	Scanner     *filen.Scanner
 	PrimaryRoot string
+	Background  context.Context
 }
 
 type filenPinResp struct {
@@ -85,6 +86,11 @@ func (h *AdminFilen) Add(w http.ResponseWriter, r *http.Request) {
 	}
 	if shareURL == "" {
 		http.Error(w, "share_url is required", http.StatusBadRequest)
+		return
+	}
+	shareURL, err = filen.ValidateShareURL(shareURL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	enabled := true
@@ -154,7 +160,7 @@ func (h *AdminFilen) Scan(w http.ResponseWriter, r *http.Request) {
 	if h.Scanner != nil {
 		start = h.Scanner.StartPinScan
 	}
-	scanPinNow(w, r, filen.ErrNotFound, start)
+	scanPinNow(w, r, filen.ErrNotFound, h.Background, start)
 }
 
 func (h *AdminFilen) Downloads(w http.ResponseWriter, r *http.Request) {

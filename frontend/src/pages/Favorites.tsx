@@ -14,7 +14,6 @@ export default function Favorites() {
   const { play } = usePlayer();
   const { data: tracks, error } = useApiResource<TrackListItem[]>(
     (signal) => api.listFavorites({ signal }),
-    [],
     "Failed to load favorites.",
   );
 

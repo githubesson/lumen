@@ -4,6 +4,7 @@ import { CoverArt } from "./cover-art";
 import { ListRow } from "./list-row";
 import { TrackActionsContextMenu } from "./track-actions-menu";
 import { formatDurationMs } from "../lib/format";
+import { useTrackUnavailableOffline } from "../lib/offline-mode";
 
 interface Props {
   track: TrackListItem;
@@ -15,8 +16,10 @@ interface Props {
  * scroll-window calculations stay predictable.
  */
 function TrackRowImpl({ track, onPress }: Props) {
+  const unavailable = useTrackUnavailableOffline(track.id);
   const row = (
     <ListRow
+      style={unavailable ? { opacity: 0.4 } : undefined}
       onPress={() => onPress(track)}
       accessibilityLabel={
         track.artist ? `${track.title} by ${track.artist}` : track.title

@@ -42,6 +42,11 @@ export const qk = {
   favorites: (userId: UserId) => ["user", userId, "favorites"] as const,
   recent: (userId: UserId) => ["user", userId, "recent"] as const,
 
+  /** Flat first page of albums for the CarPlay browse list. Separate from
+   *  {@link qk.albumsList}, which the phone reads as an infinite query — the
+   *  same key would mean two cache shapes clobbering each other. */
+  carPlayAlbums: (userId: UserId) => ["user", userId, "carplay-albums"] as const,
+
   album: (userId: UserId, id: Id) => ["user", userId, "album", id] as const,
   albumTracks: (userId: UserId, id: Id) =>
     ["user", userId, "album-tracks", id] as const,
@@ -67,6 +72,8 @@ export const qk = {
   albumCoverBust: (id: Id) => ["album-cover-bust", id] as const,
   /** Public/share track fetch used by the share modal (not user-scoped). */
   shareTrack: (id: Id) => ["track", id] as const,
+  lyrics: (id: Id, title?: string, artist?: string, album?: string) =>
+    ["lyrics", id, title ?? "", artist ?? "", album ?? ""] as const,
   playlistCollaborators: (id: Id) =>
     ["playlist-collaborators", id] as const,
 
@@ -74,6 +81,7 @@ export const qk = {
   adminMusicRoots: ["admin", "music-roots"] as const,
   adminRescanStatus: ["admin", "rescan-status"] as const,
   adminInvites: ["admin", "invites"] as const,
+  adminTidalStatus: ["admin", "tidal-status"] as const,
 
   // ---- replay ----
   replay: (periodKey: string) => ["replay", periodKey] as const,

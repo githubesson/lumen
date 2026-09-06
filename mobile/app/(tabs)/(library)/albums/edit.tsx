@@ -1,3 +1,4 @@
+import { buildAlbumPatch } from "@music-library/core/metadata-edit";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -16,11 +17,10 @@ import * as Haptics from "expo-haptics";
 import {
   albumCoverUrl,
   api,
-  ApiError,
+  errorMessage,
   libraryChanged,
   useAuth,
   type Album,
-  type AlbumPatch,
 } from "@music-library/core";
 import {
   PrimaryButton,
@@ -76,6 +76,8 @@ export default function AlbumEditScreen() {
   // refetch of the same album doesn't clobber in-progress edits.
   useEffect(() => {
     if (!album) return;
+    // The edit draft intentionally snapshots the queried album.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTitle(album.title);
     setAlbumArtist(album.artist_name ?? "");
     setYear(album.release_year ? String(album.release_year) : "");
@@ -131,7 +133,7 @@ export default function AlbumEditScreen() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setError(messageFor(err, "Cover upload failed."));
+      setError(errorMessage(err, "Cover upload failed."));
     } finally {
       setCoverBusy(false);
     }
@@ -161,7 +163,7 @@ export default function AlbumEditScreen() {
                 void Haptics.notificationAsync(
                   Haptics.NotificationFeedbackType.Error,
                 );
-                setError(messageFor(err, "Couldn't remove the cover."));
+                setError(errorMessage(err, "Couldn't remove the cover."));
               } finally {
                 setCoverBusy(false);
               }
@@ -177,14 +179,14 @@ export default function AlbumEditScreen() {
     setSaving(true);
     setError(null);
     try {
-      const patch = buildPatch(album, { title, albumArtist, year, isCompilation });
+      const patch = buildAlbumPatch(album, { title, albumArtist, year, isCompilation });
       const updated = await api.updateAlbum(id, patch);
       applyAlbumUpdate(updated);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.back();
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setError(messageFor(err, "Save failed."));
+      setError(errorMessage(err, "Save failed."));
       setSaving(false);
     }
   };
@@ -360,40 +362,6 @@ export default function AlbumEditScreen() {
       </ScrollView>
     </>
   );
-}
-
-/**
- * Diff the form against the loaded album and return only the changed fields,
- * mirroring the web edit dialog so the server PATCH stays minimal.
- */
-function buildPatch(
-  album: Album,
-  form: {
-    title: string;
-    albumArtist: string;
-    year: string;
-    isCompilation: boolean;
-  },
-): AlbumPatch {
-  const patch: AlbumPatch = {};
-  const title = form.title.trim();
-  if (title && title !== album.title) patch.title = title;
-  const albumArtist = form.albumArtist.trim();
-  if (albumArtist !== (album.artist_name ?? "")) {
-    patch.album_artist = albumArtist;
-  }
-  const year = parseInt(form.year || "0", 10) || 0;
-  if ((album.release_year ?? 0) !== year) patch.release_year = year;
-  if (form.isCompilation !== album.is_compilation) {
-    patch.is_compilation = form.isCompilation;
-  }
-  return patch;
-}
-
-function messageFor(err: unknown, fallback: string): string {
-  if (err instanceof ApiError) return err.message || fallback;
-  if (err instanceof Error) return err.message || fallback;
-  return fallback;
 }
 
 const styles = StyleSheet.create({

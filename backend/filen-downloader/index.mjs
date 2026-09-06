@@ -4,18 +4,24 @@ import path from "node:path"
 import fs from "node:fs/promises"
 import { constants as fsConstants } from "node:fs"
 import { randomUUID } from "node:crypto"
+import { pathToFileURL } from "node:url"
 
 function usage() {
-  console.error("Usage: node index.mjs [--json] [--password <pw> | --password-env <name>] <filen-share-url> <outDir>")
+  console.error("Usage: node index.mjs [--json] [--password <pw> | --password-env <name>] [--] <filen-share-url> <outDir>")
   process.exit(1)
 }
 
 function parseArgs(argv) {
   const args = { json: false, password: "", passwordEnv: "", url: "", outDir: "" }
   const rest = []
+  // Everything after a bare `--` is positional, so a share URL that happens to
+  // start with a dash can never be read as an option.
+  let positionalOnly = false
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === "--json") args.json = true
+    if (positionalOnly) rest.push(a)
+    else if (a === "--") positionalOnly = true
+    else if (a === "--json") args.json = true
     else if (a === "--password" || a === "-p") args.password = argv[++i] ?? ""
     else if (a === "--password-env") args.passwordEnv = argv[++i] ?? ""
     else if (a === "-h" || a === "--help") usage()
@@ -51,7 +57,7 @@ function isAllowedFile(name) {
   return ALLOWED_EXTENSIONS.has(path.extname(name).toLowerCase())
 }
 
-function parseShareUrl(raw) {
+export function parseShareUrl(raw) {
   const decoded = raw.replace(/%23/gi, "#")
   const m = decoded.match(/\/([fd])\/([A-Za-z0-9-]+)(?:#([^\s?&]+))?/)
   if (!m) throw new Error("Couldn't find /f/<uuid> or /d/<uuid> in URL")
@@ -136,7 +142,7 @@ async function tempPathForTarget(outDir, target) {
   return resolveInside(outDir, path.join(path.dirname(target), `.${path.basename(target)}.${randomUUID()}.part`))
 }
 
-async function assertCompleteDownload(tmpPath, expectedSize) {
+export async function assertCompleteDownload(tmpPath, expectedSize) {
   const st = await fs.stat(tmpPath)
   if (!st.isFile()) {
     throw new Error("download target is not a regular file")
@@ -194,7 +200,7 @@ function readOnlyError(err) {
   return err?.code === "EROFS" || err?.code === "EACCES" || msg.includes("read-only file system")
 }
 
-async function downloadSingleFile(cloud, linkUuid, linkKey, password, outDir) {
+export async function downloadSingleFile(cloud, linkUuid, linkKey, password, outDir) {
   let info
   try {
     info = await cloud.filePublicLinkInfo({
@@ -317,7 +323,7 @@ async function walkFolder(cloud, linkUuid, linkKey, password, salt, folderUuid, 
   )
 }
 
-async function downloadFolderLink(cloud, linkUuid, linkKey, password, outDir) {
+export async function downloadFolderLink(cloud, linkUuid, linkKey, password, outDir) {
   let info
   try {
     info = await cloud.directoryPublicLinkInfo({ uuid: linkUuid, key: linkKey })
@@ -410,7 +416,13 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error(err.stack ?? err.message ?? err)
-  process.exit(1)
-})
+const invokedAsScript =
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+
+if (invokedAsScript) {
+  main().catch(err => {
+    console.error(err.stack ?? err.message ?? err)
+    process.exit(1)
+  })
+}

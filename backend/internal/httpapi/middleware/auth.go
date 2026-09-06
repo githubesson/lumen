@@ -3,12 +3,21 @@ package middleware
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/githubesson/lumen/internal/auth"
 	"github.com/githubesson/lumen/internal/models"
-	"github.com/githubesson/lumen/internal/users"
 )
+
+const authenticationTimeout = 10 * time.Second
+
+type sessionAuthenticator interface {
+	CookieName() string
+	LookupUser(context.Context, string) (auth.SessionInfo, *models.User, error)
+	ClearCookie(http.ResponseWriter)
+}
 
 type ctxKey int
 
@@ -29,7 +38,7 @@ func SessionTokenFromContext(ctx context.Context) (string, bool) {
 
 // Authenticate loads the user from the session cookie, if present. It does
 // not reject unauthenticated requests — that's RequireUser / RequireAdmin.
-func Authenticate(ss *auth.SessionStore, usersStore *users.Store) func(http.Handler) http.Handler {
+func Authenticate(ss sessionAuthenticator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			cookie, err := r.Cookie(ss.CookieName())
@@ -37,17 +46,21 @@ func Authenticate(ss *auth.SessionStore, usersStore *users.Store) func(http.Hand
 				next.ServeHTTP(w, r)
 				return
 			}
-			info, err := ss.Lookup(r.Context(), cookie.Value)
+			authCtx, cancel := context.WithTimeout(r.Context(), authenticationTimeout)
+			_, u, err := ss.LookupUser(authCtx, cookie.Value)
+			cancel()
 			if err != nil {
 				if errors.Is(err, auth.ErrSessionNotFound) {
 					ss.ClearCookie(w)
+					next.ServeHTTP(w, r)
+					return
 				}
-				next.ServeHTTP(w, r)
-				return
-			}
-			u, err := usersStore.ByID(r.Context(), info.UserID)
-			if err != nil {
-				next.ServeHTTP(w, r)
+				if errors.Is(err, context.Canceled) && r.Context().Err() != nil {
+					return
+				}
+				slog.Error("session lookup failed", "err", err)
+				w.Header().Set("Retry-After", "5")
+				http.Error(w, "authentication service unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			if u.Disabled {
@@ -69,8 +82,8 @@ func RequireUser(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		// Users mid-forced-reset can only hit POST /auth/reset-password.
-		if u.MustResetPassword && !(r.Method == http.MethodPost && r.URL.Path == "/api/auth/reset-password") {
+		// A forced reset still allows session discovery and sign-out.
+		if u.MustResetPassword && !((r.Method == http.MethodPost && (r.URL.Path == "/api/auth/reset-password" || r.URL.Path == "/api/auth/logout")) || (r.Method == http.MethodGet && r.URL.Path == "/api/auth/me")) {
 			http.Error(w, "password reset required", http.StatusForbidden)
 			return
 		}

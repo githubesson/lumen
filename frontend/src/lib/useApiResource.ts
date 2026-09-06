@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type DependencyList } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage } from "../api";
 
 export interface ApiResource<T> {
@@ -10,18 +10,11 @@ export interface ApiResource<T> {
 }
 
 /**
- * Fetch a single resource with loading/error state and automatic cancellation.
- * Owns the AbortController and an aborted-guard so a dependency change or
- * unmount can't set state on a stale resolve. Replaces the hand-rolled
- * useState + useEffect + AbortController + ApiError boilerplate that was
- * copy-pasted across the list pages.
- *
- * `deps` are the values that should trigger a refetch (same contract as
- * useEffect's dependency array).
+ * Load a resource on mount or explicit reload, cancelling superseded requests.
+ * Fetchers are read through refs so inline callbacks do not trigger refetches.
  */
 export function useApiResource<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
-  deps: DependencyList,
   fallbackMessage = "Something went wrong.",
 ): ApiResource<T> {
   const [data, setData] = useState<T | null>(null);
@@ -29,14 +22,27 @@ export function useApiResource<T>(
   const [loading, setLoading] = useState(true);
   const [nonce, setNonce] = useState(0);
 
+  const fetcherRef = useRef(fetcher);
+  const fallbackRef = useRef(fallbackMessage);
+  // Writing refs during render is illegal under concurrent React and rejected
+  // by the React Compiler. Declared before the fetch effect so it commits
+  // first on renders where both change.
+  useEffect(() => {
+    fetcherRef.current = fetcher;
+    fallbackRef.current = fallbackMessage;
+  }, [fetcher, fallbackMessage]);
+
   const reload = useCallback(() => setNonce((n) => n + 1), []);
 
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
+    // Mount and explicit reload begin a new request lifecycle.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
-    fetcher(controller.signal)
+    fetcherRef
+      .current(controller.signal)
       .then((result) => {
         if (!active) return;
         setData(result);
@@ -44,15 +50,14 @@ export function useApiResource<T>(
       })
       .catch((err) => {
         if (!active || controller.signal.aborted) return;
-        setError(errorMessage(err, fallbackMessage));
+        setError(errorMessage(err, fallbackRef.current));
         setLoading(false);
       });
     return () => {
       active = false;
       controller.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, nonce]);
+  }, [nonce]);
 
   return { data, error, loading, reload };
 }

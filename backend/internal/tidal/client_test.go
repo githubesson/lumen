@@ -8,12 +8,16 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/githubesson/lumen/internal/httpx"
 )
@@ -124,6 +128,60 @@ func TestHifiTrackManifestReturnsHLSURI(t *testing.T) {
 	}
 	if trackCalled {
 		t.Fatal("/track/ fallback was called")
+	}
+}
+
+func TestStreamURLCollapsesConcurrentCacheMisses(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		time.Sleep(20 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"data":{"attributes":{"trackPresentation":"FULL","uri":"https://audio.tidal.com/test.m3u8","formats":["FLAC"]}}}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{HifiAPIURL: srv.URL, Quality: "LOSSLESS"})
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got, err := c.StreamURL(context.Background(), "123")
+			if err == nil && got != "https://audio.tidal.com/test.m3u8" {
+				err = fmt.Errorf("StreamURL = %q", got)
+			}
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("resolver calls = %d, want 1", got)
+	}
+}
+
+func TestStreamCacheIsBoundedAndDropsExpiredEntries(t *testing.T) {
+	c := NewClient(Config{})
+	now := time.Now()
+	for i := 0; i < streamCacheMaxEntries+25; i++ {
+		c.storeCachedStream(fmt.Sprintf("key-%d", i), fmt.Sprintf("url-%d", i), now)
+	}
+	if got := len(c.streamCache); got != streamCacheMaxEntries {
+		t.Fatalf("cache size = %d, want %d", got, streamCacheMaxEntries)
+	}
+	c.streamCache["expired"] = cachedStream{URL: "old", ExpiresAt: now.Add(-time.Second)}
+	if _, ok := c.cachedStreamURL("expired", now); ok {
+		t.Fatal("expired cache entry was returned")
+	}
+	if _, ok := c.streamCache["expired"]; ok {
+		t.Fatal("expired cache entry was not deleted")
 	}
 }
 
@@ -394,7 +452,7 @@ func TestFileResponseAES128Decrypts(t *testing.T) {
 	key := aesKeyFixture
 	iv, _ := hex.DecodeString("00000000000000000000000000000001")
 	plain1 := []byte("the quick brown fox jumps over the lazy dog") // 43 bytes
-	plain2 := []byte("final segment!")                               // 14 bytes
+	plain2 := []byte("final segment!")                              // 14 bytes
 
 	enc1 := encryptAES128CBC(plain1, key, iv)
 	enc2 := encryptAES128CBC(plain2, key, iv)

@@ -81,11 +81,9 @@ func (h *Stats) ReplayImage(w http.ResponseWriter, r *http.Request) {
 			Artist: t.Artist,
 			Plays:  t.Plays,
 		}
-		if t.AlbumID != nil {
-			path, cleanup := h.replayCoverPath(r.Context(), u.ID, *t.AlbumID)
-			defer cleanup()
-			card.CoverPath = path
-		}
+		path, cleanup := h.replayCoverPath(r.Context(), u.ID, t.AlbumID, t.CoverURL)
+		defer cleanup()
+		card.CoverPath = path
 		in.Tracks = append(in.Tracks, card)
 	}
 
@@ -105,37 +103,72 @@ func (h *Stats) ReplayImage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// replayCoverPath materializes an album's cover to a local temp file for the
-// renderer (mirrors Share.localCoverPath). Failures are non-fatal: the card
-// falls back to a placeholder tile. cleanup is always safe to call.
-func (h *Stats) replayCoverPath(ctx context.Context, viewerID, albumID uuid.UUID) (string, func()) {
+// replayCoverPath materializes a track's cover to a local temp file for the
+// renderer. Local album covers come from storage; streamed tracks fall back to
+// their allowlisted remote artwork through the shared cover cache. Failures are
+// non-fatal: the card falls back to a placeholder tile. cleanup is always safe
+// to call.
+func (h *Stats) replayCoverPath(
+	ctx context.Context,
+	viewerID uuid.UUID,
+	albumID *uuid.UUID,
+	coverURL string,
+) (string, func()) {
 	noop := func() {}
-	key, err := h.Library.AlbumCoverPathForViewer(ctx, albumID, viewerID)
-	if err != nil || key == "" {
+
+	if albumID != nil {
+		key, err := h.Library.AlbumCoverPathForViewer(ctx, *albumID, viewerID)
+		if err == nil && key != "" {
+			path, cleanup, err := h.replayStorageCoverToTemp(ctx, key)
+			if err == nil {
+				return path, cleanup
+			}
+			slog.Warn("replay image: local cover fetch failed", "album", *albumID, "err", err)
+		}
+
+		// Older remote rows may have only a cover_id. Reuse the album lookup to
+		// derive a TIDAL CDN URL when the track itself has no stored cover_url.
+		if coverURL == "" {
+			if cover, err := h.Library.RemoteAlbumCoverForViewer(ctx, *albumID, viewerID); err == nil {
+				coverURL = remoteCoverURLForSize(cover, maxServedCoverDimension)
+			}
+		}
+	}
+
+	if coverURL == "" {
 		return "", noop
 	}
+	path, cleanup, err := remoteCoverToTemp(coverURL)
+	if err != nil {
+		slog.Warn("replay image: remote cover fetch failed", "url", coverURL, "err", err)
+		return "", noop
+	}
+	return path, cleanup
+}
+
+func (h *Stats) replayStorageCoverToTemp(ctx context.Context, key string) (string, func(), error) {
+	noop := func() {}
 	body, _, err := h.Storage.Get(ctx, key)
 	if err != nil {
-		slog.Warn("replay image: cover fetch failed", "album", albumID, "err", err)
-		return "", noop
+		return "", noop, err
 	}
 	defer body.Close()
 
 	tmp, err := os.CreateTemp("", "lumen-replay-cover-*"+filepath.Ext(key))
 	if err != nil {
-		return "", noop
+		return "", noop, err
 	}
 	cleanup := func() { _ = os.Remove(tmp.Name()) }
 	if _, err := io.Copy(tmp, body); err != nil {
 		_ = tmp.Close()
 		cleanup()
-		return "", noop
+		return "", noop, err
 	}
 	if err := tmp.Close(); err != nil {
 		cleanup()
-		return "", noop
+		return "", noop, err
 	}
-	return tmp.Name(), cleanup
+	return tmp.Name(), cleanup, nil
 }
 
 // formatListeningTime renders a millisecond total the way the mobile Replay

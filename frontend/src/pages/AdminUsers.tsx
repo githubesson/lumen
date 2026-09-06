@@ -43,6 +43,8 @@ export function UsersAdminSection() {
   }, []);
 
   useEffect(() => {
+    // Initial load synchronizes this screen with the API resource.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 

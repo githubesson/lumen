@@ -5,8 +5,13 @@ self-hosted music library.
 
 ## Stack
 
-- Expo SDK 55, React 19, React Native 0.83, file-based routes under `app/`
+- Expo SDK 57, React 19, React Native 0.86, file-based routes under `app/`
+  (minimum iOS 16.4 as of SDK 56)
 - `expo-audio` with background playback, lock-screen / now-playing controls
+- `expo-widgets` Live Activity (`widgets/`) showing playlist download
+  progress on the iOS Lock Screen / Dynamic Island (iOS 16.4+; set your
+  Apple Team ID via `npm run configure` or `app.local.json` so EAS can sign
+  the widget extension)
 - React Query for data fetching, FlashList for big lists
 - Shared logic from [`@music-library/core`](../core/) via a synced copy in
   `packages/music-library-core` (see below)
@@ -80,3 +85,61 @@ Builds go through [EAS](https://docs.expo.dev/eas/). `eas.json` is not
 tracked (it carries personal project/app IDs) — `npm run configure` creates
 it with the standard development / preview / production profiles, plus an
 `eas submit` block if you provide an App Store Connect app ID.
+
+## OTA Updates
+
+The app supports over-the-air updates via `expo-updates`, letting you push JavaScript and asset changes without going through app store review.
+
+### Setup
+
+`npm run configure` sets `updates.url` from the EAS project ID you give it.
+To wire it up by hand instead, get the ID with `eas project:info` and add the
+endpoint to `app.local.json` (or `app.json`):
+
+```json
+{
+  "updates": {
+    "url": "https://u.expo.dev/YOUR_PROJECT_ID"
+  }
+}
+```
+
+`runtimeVersion` (`fingerprint` policy) lives in `app.json` and the update
+channels live in `eas.json` — both are already set, nothing to add there.
+
+Then rebuild — OTA only reaches users who have a build with `expo-updates`
+configured:
+
+```sh
+eas build --platform ios --profile production
+```
+
+### Publishing updates
+
+```sh
+eas update --branch production --message "Bug fixes"
+eas update --branch preview     --message "Testing new feature"
+```
+
+Each build profile carries a matching channel (`development` / `preview` /
+`production`), and each channel is mapped to the branch of the same name — so
+a build installs the updates published to its own branch. `eas channel:list`
+shows the mapping; `eas channel:create <name>` recreates one if it's missing.
+
+### Runtime versions
+
+The `fingerprint` policy hashes the native project — deps, config plugins,
+`patches/`, `modules/`. Any native change produces a new runtime version, so
+an update can never land on a build that lacks the native code it needs.
+Check what a commit hashes to with `npx expo-updates fingerprint:generate`;
+if it differs from the installed build's fingerprint, that build needs a
+rebuild, not an update.
+
+The tradeoff is that a bare JS fix must be published from a tree whose native
+inputs match the build. Switching `app.json` to
+`"runtimeVersion": { "policy": "appVersion" }` relaxes that to "any build with
+the same `version`", at the risk of shipping JS to a build without the native
+side it expects.
+
+The app checks for an update on launch and applies it on the next launch —
+that's the `expo-updates` default; no code in `app/` drives it.

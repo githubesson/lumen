@@ -1,16 +1,4 @@
-import { useEffect, useState } from "react";
-
-/**
- * Returns `value` after it has stayed unchanged for `delayMs`. Used to debounce
- * search input before firing queries.
- */
-export function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value);
-
-  useEffect(() => {
-    const timeout = setTimeout(() => setDebounced(value), delayMs);
-    return () => clearTimeout(timeout);
-  }, [delayMs, value]);
-
-  return debounced;
-}
+// Re-export of the shared debounce hook. The implementation lives in
+// `core/src/use-debounced-value.ts` — this file and a copy inlined at the
+// bottom of `frontend/src/pages/Library.tsx` were the same hook twice.
+export { useDebouncedValue } from "@music-library/core/use-debounced-value";

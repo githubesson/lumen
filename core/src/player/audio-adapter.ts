@@ -25,6 +25,15 @@ export type AudioAdapterEvent =
 export interface AudioAdapter {
   /** Replace the current source; does not auto-play. */
   load(url: string): void;
+  /** Begin loading the next source without disturbing current playback. */
+  prepareNext?(url: string): void;
+  /**
+   * Promote and start a source previously passed to `prepareNext`. Returns
+   * false when it is not ready so the core can fall back to `load` + `play`.
+   */
+  activatePrepared?(url: string): boolean;
+  /** Cancel and release any source prepared for a future transition. */
+  clearPrepared?(): void;
   /**
    * Begin playback (or resume). Must be idempotent when already playing.
    * Resolves on success; rejects if the platform refused (e.g. web autoplay

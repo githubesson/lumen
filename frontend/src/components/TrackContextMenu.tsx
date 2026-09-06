@@ -33,6 +33,7 @@ import {
   extensionFromStream,
   triggerDownload,
 } from "../lib/download";
+import { canShareTrack, isLocalTrack } from "../lib/track";
 import { useDismiss } from "../lib/useDismiss";
 import { useAuth } from "../context/Auth";
 import { useFavorites } from "../context/Favorites";
@@ -527,7 +528,7 @@ export function useTrackContextMenu() {
             (trackInfo ? () => trackInfo.open(track.id) : undefined),
           onShare:
             opts.onShare ??
-            (share && isLocalTrack(track) ? () => share.open(track.id) : undefined),
+            (share && canShareTrack(track) ? () => share.open(track.id) : undefined),
         });
       },
     [trackInfo, share],
@@ -550,8 +551,4 @@ export function useTrackContextMenu() {
   ) : null;
 
   return { bind, menu, close, isOpen: state !== null };
-}
-
-function isLocalTrack(track: TrackListItem): boolean {
-  return !track.source || track.source === "local";
 }

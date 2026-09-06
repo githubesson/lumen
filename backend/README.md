@@ -13,7 +13,10 @@ Go HTTP API for Lumen, the self-hosted, invite-only music library.
 - **Library** — admin-managed music roots, filesystem scanning and ingest with
   a watcher + rescan support, metadata extraction, cover art, search.
 - **Playback** — ranged audio streaming (scrub-friendly), play history/stats,
-  optional ffmpeg transcoding behind `ENABLE_TRANSCODING`.
+  cross-device activity over an authenticated WebSocket with REST/Postgres
+  snapshot recovery and addressed remote-control commands (see
+  [docs/playback-websocket.md](docs/playback-websocket.md)). Local streaming serves
+  the original audio format; client-profile transcoding is not supported.
 - **Playlists & favorites** — CRUD plus per-user state.
 - **Sharing** — public `/share/…` link-preview pages (what Discord and chat
   apps scrape), `/embed/…` embeddable players, and server-rendered preview
@@ -48,7 +51,7 @@ filen-downloader/     Node 20 helper the Docker image bundles for Filen links
 
 ## Run (local)
 
-Requires Go 1.22+ and a Postgres 16 instance:
+Requires Go 1.23+ and a Postgres 16 instance:
 
 ```sh
 docker run --rm -e POSTGRES_PASSWORD=mlib -e POSTGRES_USER=mlib -e POSTGRES_DB=mlib -p 5432:5432 postgres:16
@@ -59,6 +62,12 @@ DATABASE_URL=postgres://mlib:mlib@localhost:5432/mlib?sslmode=disable COOKIE_SEC
 Migrations run automatically on boot. `COOKIE_SECURE=false` is needed over
 plain HTTP so the session cookie isn't dropped. All knobs are listed in
 [.env.example](./.env.example).
+
+Configuration is validated strictly at startup: booleans must be accepted by
+Go's `strconv.ParseBool`, durations must parse and be greater than zero, and
+`TRUSTED_PROXIES` entries must be IP literals or CIDR ranges. Invalid values
+stop startup with the variable name instead of silently falling back. Check
+existing deployment environment files before upgrading.
 
 ## Test / lint
 
@@ -71,5 +80,35 @@ go test ./...
 ## Docker
 
 The [Dockerfile](./Dockerfile) builds a static binary and ships it on Alpine
-with ffmpeg (transcoding), Node (Filen helper), and the preview fonts. The
+with ffmpeg (previews and TIDAL remuxing), Node (Filen helper), and the preview fonts. The
 deployment compose at the repo root builds it with `context: ./backend`.
+
+### Track pagination
+
+`GET /api/tracks` accepts `sort=recent|title|artist|album|duration` (default
+`recent`). Sorting is applied to the full visible result set before `limit` and
+`offset`, with a track-ID tie breaker.
+
+`GET /api/search` returns `next_offsets`, an object containing the next offset
+for each source that may have more results. Continue with only those `sources`
+and their `local_offset` / `tidal_offset` values, keeping the query and page size
+unchanged. An empty object means the search is exhausted. Each source can return
+up to 50 tracks per request; the combined result count is not a source offset.
+
+### Remote playback queue sync
+
+Web, desktop, and mobile players publish their actual queue order alongside
+WebSocket `activity.update` messages. `devices.snapshot` includes the latest
+queue for each connected device, so controllers can join playback already in
+progress. Queue snapshots stay in memory for that connection and are cleared
+when playback is cleared or the device disconnects; no database migration is
+required.
+
+Snapshots fit within the 64 KiB WebSocket message limit, including the activity
+payload. They contain up to 50 tracks around the current track, plus the window
+offset, full queue length, current index within the window, shuffle/repeat
+settings, and a queue revision. The window advances with playback. The
+`jump_to` command uses an absolute index, track ID, and queue revision to select
+a track without replacing or reshuffling the target's queue. The target rejects
+selections from an outdated queue. Queue sync requires an updated backend and
+both clients; older clients can continue sending activity without a queue.

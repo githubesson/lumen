@@ -1,7 +1,7 @@
 # frontend
 
-React + Vite + TypeScript web client for Lumen, also packaged as a Windows
-desktop app via Electron.
+React + Vite + TypeScript web client for Lumen, also packaged as a Windows,
+macOS, and Linux desktop app via Electron.
 
 ## Features
 
@@ -18,7 +18,7 @@ desktop app via Electron.
   [discord.com/developers](https://discord.com/developers/applications) and
   put its ID in `.env`, copied from [.env.example](./.env.example); the
   build step bakes it into the packaged app, and the app's `config.json`
-  can override it at runtime), FH6 radio page
+  can override it at runtime), automatic desktop updates, FH6 radio page
 
 Styling is Tailwind CSS v4 (via the Vite plugin). Shared logic (API client,
 player state, auth, favorites) comes from
@@ -65,15 +65,57 @@ npm run build      # emits dist/
 ## Electron (desktop)
 
 ```sh
-npm run electron:compile   # compile main/preload
-npm run electron:dev       # build web + run Electron locally
-npm run electron:build     # package Windows portable + NSIS installer
+npm run electron:compile             # compile main/preload
+npm run electron:dev                 # build web + run Electron locally
+npm run electron:build               # package Windows portable + NSIS installer
+npm run electron:build:linux         # package Linux AppImage + deb
+npm run electron:build:mac           # package a DMG for this Mac's architecture
+npm run electron:build:mac:universal # package the universal DMG (release artifact)
 ```
 
-Packaging config is [electron-builder.yml](./electron-builder.yml). Note its
-`extraResources` block pulls an optional FH6-radio bridge (a game-mod DLL)
-from an untracked `_local/` folder — it is not part of this repo. Remove that
-block if you don't have it.
+Packaging config is [electron-builder.cjs](./electron-builder.cjs). It
+bundles an optional FH6-radio bridge (a game-mod DLL) from an untracked
+`_local/` folder when that folder exists, and skips it otherwise — no config
+edits needed either way.
+
+Icon files (`icon.ico`/`icon.icns`/`icon.png`/`Assets.car`) and the DMG
+background are committed, so packaging never regenerates them. After changing
+the app icon run `npm run icons` (needs Xcode 26 on macOS for the appearance
+variants); after changing the DMG layout run `npm run dmg:background`.
+
+On macOS, if `CSC_NAME` and `APPLE_KEYCHAIN_PROFILE` are set the build also
+signs, notarizes, and staples the DMG container automatically (see
+[AGENTS.md](./AGENTS.md) for the one-time credential setup). Without them you
+get an unsigned dev build.
+
+GitHub releases intentionally build unsigned binaries for all three desktop
+platforms. Stable `v*` tags run automatically. Branch builds run only when the
+release workflow is manually dispatched and are published as uniquely versioned
+prereleases. Windows may show an unknown-publisher warning and macOS may require
+the user to explicitly approve the app in Gatekeeper.
+
+### Desktop updates
+
+Packaged desktop builds check for updates shortly after launch and every six
+hours, download an available update, and install it on quit (or immediately
+when the user chooses **restart & install**). The Updates section in the tweaks
+panel lets users choose one of two strictly whitelisted release streams:
+
+- `main` follows stable GitHub Releases and reads `latest*.yml` metadata.
+- `dev` follows explicitly requested prereleases and reads `dev*.yml` metadata.
+
+Dev builds default to `dev`; stable builds default to `main`. Users may switch
+between them and may override the public GitHub repository URL, which must be
+an `https://github.com/owner/repo` URL. `UPDATE_REPO_URL` is baked into the app
+by `electron:compile` just like `DISCORD_CLIENT_ID`; it defaults to this
+repository and can be set in `.env` locally or as a GitHub Actions repository
+variable.
+
+Auto-update works for installed Windows NSIS builds and supported Linux
+packages. It is unavailable in the Windows portable build. macOS auto-update
+requires a signed app and ZIP update artifact; the ZIP is produced by the
+release workflow, but the intentionally unsigned CI builds cannot auto-update
+until signing is configured.
 
 ## Docker
 

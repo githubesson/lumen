@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,6 +34,9 @@ type ScanSummary struct {
 	FinishedAt time.Time `json:"finished_at"`
 }
 
+// Fallback per-file download deadline when *_FILE_TIMEOUT is unset or <= 0.
+const defaultFileTimeout = 30 * time.Minute
+
 type Scanner struct {
 	Store        *Store
 	Ingest       *ingest.Service
@@ -45,46 +47,30 @@ type Scanner struct {
 	NodePath     string
 	ScriptPath   string
 
-	mu       sync.Mutex
-	inflight map[uuid.UUID]struct{}
+	scans pinscan.Group
 }
 
 func (s *Scanner) Run(ctx context.Context) {
 	if s == nil || s.Store == nil {
 		return
 	}
-	interval := s.PollInterval
-	if interval <= 0 {
-		interval = 5 * time.Minute
-	}
-	timer := time.NewTimer(pinscan.InitialScanDelay)
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-			s.scanDue(ctx)
-			timer.Reset(interval)
-		}
-	}
+	pinscan.Run(ctx, s.PollInterval, s.scanDue)
 }
 
 func (s *Scanner) StartPinScan(ctx context.Context, id uuid.UUID) (bool, error) {
-	if !s.tryBegin(id) {
+	if !s.scans.TryBegin(id) {
 		return false, nil
 	}
 	pin, err := s.Store.GetPin(ctx, id)
 	if err != nil {
-		s.finish(id)
+		s.scans.End(id)
 		return false, err
 	}
-	go func() {
-		defer s.finish(id)
+	s.scans.Go(id, "filen manual scan", func() {
 		if _, err := s.ScanPin(ctx, pin); err != nil && s.Logger != nil {
 			s.Logger.Warn("filen manual scan failed", "pin", id, "err", err)
 		}
-	}()
+	})
 	return true, nil
 }
 
@@ -98,23 +84,23 @@ func (s *Scanner) scanDue(ctx context.Context) {
 	}
 	for _, pin := range pins {
 		pin := pin
-		if !s.tryBegin(pin.ID) {
+		if !s.scans.TryBegin(pin.ID) {
 			continue
 		}
-		go func() {
-			defer s.finish(pin.ID)
+		s.scans.Go(pin.ID, "filen scheduled scan", func() {
 			if _, err := s.ScanPin(ctx, pin); err != nil && s.Logger != nil {
 				s.Logger.Warn("filen scheduled scan failed", "pin", pin.ID, "err", err)
 			}
-		}()
+		})
 	}
 }
 
+// Wait blocks until all scheduled and manually-triggered scans have stopped.
+// Call it after Run has returned so no new jobs can be added.
+func (s *Scanner) Wait() { s.scans.Wait() }
+
 func (s *Scanner) ScanPin(ctx context.Context, pin Pin) (ScanSummary, error) {
 	summary := ScanSummary{PinID: pin.ID, StartedAt: time.Now().UTC()}
-	if s.FileTimeout <= 0 {
-		s.FileTimeout = 30 * time.Minute
-	}
 	if err := s.Store.MarkScanStarted(ctx, pin.ID); err != nil {
 		return summary, err
 	}
@@ -126,12 +112,23 @@ func (s *Scanner) ScanPin(ctx context.Context, pin Pin) (ScanSummary, error) {
 	return summary, scanErr
 }
 
+// fileTimeout reads the configured per-file deadline, falling back to the
+// default without writing it back: ScanPin runs concurrently (scanDue fans out
+// one goroutine per due pin while StartPinScan adds more from the admin
+// handler), so that was an unsynchronized write to shared state.
+func (s *Scanner) fileTimeout() time.Duration {
+	if s.FileTimeout > 0 {
+		return s.FileTimeout
+	}
+	return defaultFileTimeout
+}
+
 func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) error {
 	destBase, err := pinDestination(pin)
 	if err != nil {
 		return err
 	}
-	runCtx, cancel := context.WithTimeout(ctx, s.FileTimeout)
+	runCtx, cancel := context.WithTimeout(ctx, s.fileTimeout())
 	defer cancel()
 
 	node := strings.TrimSpace(s.NodePath)
@@ -143,7 +140,15 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(runCtx, node, script, "--json", "--password-env", "FILEN_SHARE_PASSWORD", pin.ShareURL, destBase)
+	// Re-validate here as well as at the API boundary: pins created before the
+	// check existed are still in the database, and `--` only stops the helper
+	// from reading a leading-dash URL as an option, not from being handed
+	// nonsense.
+	shareURL, err := ValidateShareURL(pin.ShareURL)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(runCtx, node, script, "--json", "--password-env", "FILEN_SHARE_PASSWORD", "--", shareURL, destBase)
 	cmd.Env = append(
 		os.Environ(),
 		"FILEN_SHARE_PASSWORD="+pin.Password,
@@ -169,7 +174,10 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 		close(stderrDone)
 	}()
 
-	readErr := s.readEvents(ctx, pin, destBase, stdout, summary)
+	// runCtx, not ctx: the helper process is bounded by runCtx, so ingesting
+	// its events under the wider context would outlive the process producing
+	// them.
+	readErr := s.readEvents(runCtx, pin, destBase, stdout, summary)
 	waitErr := cmd.Wait()
 	<-stderrDone
 	if readErr != nil {
@@ -383,23 +391,4 @@ func resolveScriptPath(configured string) (string, error) {
 		return "", fmt.Errorf("filen downloader script not found at %s", configured)
 	}
 	return "", fmt.Errorf("filen downloader script not found")
-}
-
-func (s *Scanner) tryBegin(id uuid.UUID) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.inflight == nil {
-		s.inflight = map[uuid.UUID]struct{}{}
-	}
-	if _, ok := s.inflight[id]; ok {
-		return false
-	}
-	s.inflight[id] = struct{}{}
-	return true
-}
-
-func (s *Scanner) finish(id uuid.UUID) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.inflight, id)
 }

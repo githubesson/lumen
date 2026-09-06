@@ -8,6 +8,7 @@ import {
 } from "@heroicons/react/16/solid";
 import { Button } from "../components/Button";
 import ErrorBanner from "../components/ErrorBanner";
+import { TextInput } from "../components/Field";
 import { Select } from "../components/Select";
 import { api, type Playlist } from "../api";
 import {
@@ -104,7 +105,7 @@ export default function FH6Radio() {
   useEffect(() => {
     let alive = true;
     void (async () => {
-      if (!isElectron) return;
+      if (!isElectron()) return;
       const [cfg, nextStatus] = await Promise.all([
         getDesktopConfig?.(),
         getFH6Status?.(),
@@ -124,6 +125,9 @@ export default function FH6Radio() {
     void refreshPlaylists();
     const timer = window.setInterval(() => void refreshBridge(false), 2500);
     return () => window.clearInterval(timer);
+    // refreshBridge is recreated from bridgeUrl, which is already the scalar
+    // dependency that should restart this polling lifecycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, bridgeUrl]);
 
   async function refreshPlaylists() {
@@ -250,7 +254,7 @@ export default function FH6Radio() {
     });
   }
 
-  if (!isElectron) {
+  if (!isElectron()) {
     return (
       <div className="view fh6-radio-view">
         <PageTitle />
@@ -271,7 +275,7 @@ export default function FH6Radio() {
           <Button
             variant="primary"
             leadingIcon={<PowerIcon className="size-4" />}
-            onClick={() => void electron?.openSettings()}
+            onClick={() => void electron()?.openSettings()}
           >
             Open settings
           </Button>
@@ -407,8 +411,7 @@ export default function FH6Radio() {
           </label>
           <label>
             Search
-            <input
-              className="input"
+            <TextInput
               value={sourceDraft.search}
               placeholder="Optional"
               onChange={(e) => updateSourceDraft({ search: e.currentTarget.value })}
@@ -439,8 +442,7 @@ export default function FH6Radio() {
           </label>
           <label>
             Limit
-            <input
-              className="input"
+            <TextInput
               type="number"
               min={1}
               max={1000}

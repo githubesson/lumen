@@ -1,12 +1,10 @@
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useId,
   useMemo,
   useRef,
-  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
@@ -29,11 +27,9 @@ import {
  *   - "shift+/"     → ? (common "show help" binding)
  */
 
-export interface KeyBinding {
+interface KeyBinding {
   id: string;
   keys: string;
-  label?: string;
-  group?: string;
   allowInInput?: boolean;
   priority?: number;
   handler: (e: KeyboardEvent) => void;
@@ -41,8 +37,6 @@ export interface KeyBinding {
 
 interface Registry {
   register: (b: KeyBinding) => () => void;
-  subscribe: (listener: () => void) => () => void;
-  snapshot: () => KeyBinding[];
 }
 
 const Ctx = createContext<Registry | null>(null);
@@ -128,40 +122,27 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 export function KeyBindingsProvider({ children }: { children: ReactNode }) {
   const bindings = useRef<Map<string, KeyBinding>>(new Map());
-  const listeners = useRef<Set<() => void>>(new Set());
 
   const registry = useMemo<Registry>(() => {
-    // Cache the snapshot array and only rebuild it on a real change, so
-    // useSyncExternalStore's stable-snapshot contract holds (returning a fresh
-    // Array.from() every call causes an infinite re-render loop).
-    let snapshotCache: KeyBinding[] = [];
-    const notify = () => {
-      snapshotCache = Array.from(bindings.current.values());
-      for (const l of listeners.current) l();
-    };
     return {
       register(b) {
         bindings.current.set(b.id, b);
-        notify();
         return () => {
           if (bindings.current.get(b.id) === b) {
             bindings.current.delete(b.id);
-            notify();
           }
         };
-      },
-      subscribe(l) {
-        listeners.current.add(l);
-        return () => listeners.current.delete(l);
-      },
-      snapshot() {
-        return snapshotCache;
       },
     };
   }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      // Space/Enter belong to the focused control. Do not turn its native
+      // activation into a global playback command (including SVG descendants).
+      if ((e.key === " " || e.key === "Enter") && e.target instanceof Element &&
+          e.target.closest('button, a[href], summary, [role="button"], [role="checkbox"], [role="switch"], [role="slider"], [role="tab"], [role="menuitem"]')) return;
       const inEditable = isEditableTarget(e.target);
 
       let best: KeyBinding | null = null;
@@ -187,8 +168,6 @@ export function KeyBindingsProvider({ children }: { children: ReactNode }) {
 
 interface UseKeyOptions {
   id?: string;
-  label?: string;
-  group?: string;
   allowInInput?: boolean;
   priority?: number;
   enabled?: boolean;
@@ -222,8 +201,6 @@ export function useKey(
     return reg.register({
       id,
       keys,
-      label: opts.label,
-      group: opts.group,
       allowInInput: opts.allowInInput,
       priority: opts.priority,
       handler: (e) => handlerRef.current(e),
@@ -234,45 +211,7 @@ export function useKey(
     keys,
     idPrefix,
     uid,
-    opts.label,
-    opts.group,
     opts.allowInInput,
     opts.priority,
   ]);
-}
-
-/** Observe the full list of currently registered bindings (for a help panel). */
-export function useKeyBindings(): KeyBinding[] {
-  const reg = useContext(Ctx);
-  return useSyncExternalStore(
-    useCallback(
-      (l) => (reg ? reg.subscribe(l) : () => {}),
-      [reg],
-    ),
-    useCallback(() => (reg ? reg.snapshot() : []), [reg]),
-    () => [],
-  );
-}
-
-/** Pretty-print a binding string for display. */
-export function formatKeys(keys: string): string {
-  return keys
-    .split("+")
-    .map((t) => {
-      const k = t.toLowerCase();
-      if (k === "mod") return IS_MAC ? "⌘" : "Ctrl";
-      if (k === "meta" || k === "cmd") return IS_MAC ? "⌘" : "Win";
-      if (k === "ctrl") return "Ctrl";
-      if (k === "alt" || k === "option") return IS_MAC ? "⌥" : "Alt";
-      if (k === "shift") return IS_MAC ? "⇧" : "Shift";
-      if (k === "space") return "Space";
-      if (k === "esc") return "Esc";
-      if (k === "enter" || k === "return") return "↵";
-      if (k === "up") return "↑";
-      if (k === "down") return "↓";
-      if (k === "left") return "←";
-      if (k === "right") return "→";
-      return t.length === 1 ? t.toUpperCase() : t[0].toUpperCase() + t.slice(1);
-    })
-    .join(IS_MAC ? "" : "+");
 }

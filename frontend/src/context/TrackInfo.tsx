@@ -1,12 +1,19 @@
 import {
+  Suspense,
   createContext,
+  lazy,
   useCallback,
   useContext,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
-import { TrackInfoDialog } from "../components/TrackInfoDialog";
+
+const TrackInfoDialog = lazy(() =>
+  import("../components/TrackInfoDialog").then((module) => ({
+    default: module.TrackInfoDialog,
+  })),
+);
 
 interface TrackInfoCtxValue {
   /** Opens the read-only track-info dialog for the given track id. */
@@ -22,15 +29,18 @@ const TrackInfoContext = createContext<TrackInfoCtxValue | null>(null);
  * entrypoints don't each need to manage their own copy.
  */
 export function TrackInfoProvider({ children }: { children: ReactNode }) {
+  const [dialogLoaded, setDialogLoaded] = useState(false);
   const [request, setRequest] = useState<{ id: string; nonce: number } | null>(
     null,
   );
   const open = useCallback(
-    (trackId: string) =>
+    (trackId: string) => {
+      setDialogLoaded(true);
       setRequest((prev) => ({
         id: trackId,
         nonce: (prev?.nonce ?? 0) + 1,
-      })),
+      }));
+    },
     [],
   );
   const close = useCallback(() => setRequest(null), []);
@@ -38,12 +48,16 @@ export function TrackInfoProvider({ children }: { children: ReactNode }) {
   return (
     <TrackInfoContext.Provider value={value}>
       {children}
-      <TrackInfoDialog
-        open={request !== null}
-        trackId={request?.id ?? null}
-        requestNonce={request?.nonce ?? 0}
-        onClose={close}
-      />
+      {dialogLoaded && (
+        <Suspense fallback={null}>
+          <TrackInfoDialog
+            open={request !== null}
+            trackId={request?.id ?? null}
+            requestNonce={request?.nonce ?? 0}
+            onClose={close}
+          />
+        </Suspense>
+      )}
     </TrackInfoContext.Provider>
   );
 }

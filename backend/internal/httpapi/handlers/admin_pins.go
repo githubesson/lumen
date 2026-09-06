@@ -69,7 +69,7 @@ func deletePin(w http.ResponseWriter, r *http.Request, notFound error, del func(
 // scanPinNow implements the admin "scan now" endpoint. start must be nil when
 // the source's scanner is not wired (callers do the typed-nil check so a nil
 // *Scanner never hides inside the func value).
-func scanPinNow(w http.ResponseWriter, r *http.Request, notFound error, start func(context.Context, uuid.UUID) (bool, error)) {
+func scanPinNow(w http.ResponseWriter, r *http.Request, notFound error, background context.Context, start func(context.Context, uuid.UUID) (bool, error)) {
 	id, ok := pathPinID(w, r)
 	if !ok {
 		return
@@ -78,7 +78,10 @@ func scanPinNow(w http.ResponseWriter, r *http.Request, notFound error, start fu
 		http.Error(w, "scanner not configured", http.StatusServiceUnavailable)
 		return
 	}
-	started, err := start(context.WithoutCancel(r.Context()), id)
+	if background == nil {
+		background = context.WithoutCancel(r.Context())
+	}
+	started, err := start(background, id)
 	if err != nil {
 		if errors.Is(err, notFound) {
 			http.Error(w, "not found", http.StatusNotFound)

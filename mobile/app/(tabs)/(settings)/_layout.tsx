@@ -10,6 +10,10 @@ export default function SettingsStackLayout() {
         options={{ headerLargeTitle: false, title: "Replay" }}
       />
       <Stack.Screen
+        name="download-log"
+        options={{ headerLargeTitle: false, title: "Download log" }}
+      />
+      <Stack.Screen
         name="albums/[id]"
         options={{ headerLargeTitle: false, title: "" }}
       />
@@ -24,6 +28,10 @@ export default function SettingsStackLayout() {
       <Stack.Screen
         name="admin-library"
         options={{ headerLargeTitle: false, title: "Library" }}
+      />
+      <Stack.Screen
+        name="admin-tidal"
+        options={{ headerLargeTitle: false, title: "TIDAL" }}
       />
       <Stack.Screen
         name="admin-new-invite"

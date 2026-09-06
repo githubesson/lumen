@@ -36,7 +36,7 @@ import CoverArt from "./CoverArt";
 import { displayText } from "../lib/format";
 import { useTrackContextMenu } from "./TrackContextMenu";
 import { useAuth } from "../context/Auth";
-import { usePlayer } from "../context/Player";
+import { usePlayer, useRemotePlayback } from "../context/Player";
 import { useTheme } from "../context/Theme";
 
 interface Props {
@@ -60,8 +60,8 @@ export default function CommandPalette({
   const { me, logout } = useAuth();
   const { theme, toggle: toggleTheme } = useTheme();
   const {
-    current,
-    isPlaying,
+    current: localCurrent,
+    isPlaying: localIsPlaying,
     toggle,
     next,
     prev,
@@ -69,6 +69,12 @@ export default function CommandPalette({
     cycleRepeat,
     play,
   } = usePlayer();
+  const { targetDevice } = useRemotePlayback();
+  // Match the device that the player controls currently route commands to.
+  const hasTrack = targetDevice ? !!targetDevice.activity : !!localCurrent;
+  const isPlaying = targetDevice
+    ? !!targetDevice.activity?.is_playing
+    : localIsPlaying;
 
   const [query, setQuery] = useState("");
   const [tracks, setTracks] = useState<TrackListItem[]>([]);
@@ -81,6 +87,8 @@ export default function CommandPalette({
   // Reset query whenever the dialog opens so the user starts fresh.
   useEffect(() => {
     if (open) {
+      // Opening the external dialog state starts a fresh search session.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setQuery("");
       setTracks([]);
       setAlbums([]);
@@ -95,6 +103,8 @@ export default function CommandPalette({
   useEffect(() => {
     const q = query.trim();
     if (!open || q.length < 2) {
+      // A non-searchable query intentionally clears the previous result set.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTracks([]);
       setAlbums([]);
       setArtists([]);
@@ -104,27 +114,32 @@ export default function CommandPalette({
     }
     setLoading(true);
     const id = ++reqId.current;
+    const controller = new AbortController();
     const t = window.setTimeout(async () => {
       try {
         const [albumsPage, artistsPage, trackResult] = await Promise.all([
-          api.listAlbumsPage({ q, limit: 8 }),
-          api.listArtistsPage({ q, limit: 8 }),
-          api.searchTracks({ q, limit: 20 }),
+          api.listAlbumsPage({ q, limit: 8, signal: controller.signal }),
+          api.listArtistsPage({ q, limit: 8, signal: controller.signal }),
+          api.searchTracks({ q, limit: 20, signal: controller.signal }),
         ]);
-        if (id !== reqId.current) return;
+        if (controller.signal.aborted || id !== reqId.current) return;
         setAlbums(albumsPage.items ?? []);
         setArtists(artistsPage.items ?? []);
         setTracks(trackResult.tracks ?? []);
         setSearchError(trackResult.warnings?.join(" ") || null);
         setLoading(false);
       } catch (err) {
+        if (controller.signal.aborted) return;
         if (id === reqId.current) {
           setSearchError(errorMessage(err, "Search failed."));
           setLoading(false);
         }
       }
     }, 160);
-    return () => window.clearTimeout(t);
+    return () => {
+      controller.abort();
+      window.clearTimeout(t);
+    };
   }, [query, open]);
 
   const close = () => onOpenChange(false);
@@ -195,7 +210,7 @@ export default function CommandPalette({
         keywords: "playback toggle",
         icon: isPlaying ? PauseIcon : PlayIcon,
         perform: toggle,
-        disabled: !current,
+        disabled: !hasTrack,
       },
       {
         id: "next",
@@ -203,7 +218,7 @@ export default function CommandPalette({
         keywords: "skip forward",
         icon: ForwardIcon,
         perform: next,
-        disabled: !current,
+        disabled: !hasTrack,
       },
       {
         id: "prev",
@@ -211,7 +226,7 @@ export default function CommandPalette({
         keywords: "back prev",
         icon: BackwardIcon,
         perform: prev,
-        disabled: !current,
+        disabled: !hasTrack,
       },
       {
         id: "shuffle",
@@ -228,7 +243,7 @@ export default function CommandPalette({
         perform: cycleRepeat,
       },
     ],
-    [isPlaying, current, toggle, next, prev, toggleShuffle, cycleRepeat],
+    [isPlaying, hasTrack, toggle, next, prev, toggleShuffle, cycleRepeat],
   );
 
   return (

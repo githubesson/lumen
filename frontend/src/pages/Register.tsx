@@ -1,3 +1,4 @@
+import { validateRegistrationInput } from "@music-library/core/auth/validation";
 import { FormEvent, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, errorMessage, type InviteCheck } from "../api";
@@ -21,6 +22,7 @@ export default function Register() {
 
   useEffect(() => {
     if (!token) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCheck({ valid: false });
       setChecking(false);
       return;
@@ -34,10 +36,15 @@ export default function Register() {
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    const validation = validateRegistrationInput(username, password);
+    if (!validation.valid) {
+      setError(validation.usernameError ?? validation.passwordError);
+      return;
+    }
     setError(null);
     setBusy(true);
     try {
-      const me = await api.register(token, username, password);
+      const me = await api.register(token, validation.username, password);
       setMe(me);
       navigate("/", { replace: true });
     } catch (err) {
@@ -50,7 +57,7 @@ export default function Register() {
   if (checking) {
     return (
       <CenteredCard title="Checking invite">
-        <p className="text-center text-sm/5 text-neutral-500 dark:text-neutral-400">
+        <p className="text-center text-sm/5 text-[var(--fg-subtle)]">
           One moment…
         </p>
       </CenteredCard>
@@ -63,7 +70,7 @@ export default function Register() {
         title="Invite unavailable"
         intro="This link is missing, expired, or already used."
       >
-        <p className="text-center text-sm/5 text-neutral-500 dark:text-neutral-400">
+        <p className="text-center text-sm/5 text-[var(--fg-subtle)]">
           Ask an admin for a fresh invite.
         </p>
       </CenteredCard>

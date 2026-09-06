@@ -17,9 +17,9 @@ surface for invites and library management.
 - Multiple music roots, scanned and indexed with a filesystem watcher; manual rescan from the admin UI
 - Metadata and cover-art extraction, album/artist/track browsing, search (with a command palette on web)
 - Range-request audio streaming — instant scrubbing, no full-file buffering
-- Optional ffmpeg transcoding behind a flag
 - Persistent player with queue, mini player, and now-playing view
 - Play history (recently played) and per-user play stats
+- Optional per-user Last.fm now-playing and scrobble integration
 - Uploads from the web and mobile apps
 - Track and album metadata editing
 
@@ -47,9 +47,10 @@ surface for invites and library management.
 
 - Pull new files into the library from external sources on a poll interval: Filen share links, ArtistGrid, Lastshare, and tracker-API pins with per-pin destination folders
 
-### Desktop app (Electron, Windows)
+### Desktop app (Electron, Windows / macOS / Linux)
 
-- Portable build + NSIS installer
+- Windows portable build + NSIS installer, universal macOS DMG, and Linux
+  AppImage + Debian package
 - Discord Rich Presence ("Listening to Lumen" with cover art)
 - First-run server-setup window, always-on-top toggle, custom window controls
 - Optional Forza Horizon 6 in-game radio bridge
@@ -57,6 +58,7 @@ surface for invites and library management.
 ### Mobile app (Expo, iOS / Android)
 
 - Background playback with lock-screen / now-playing controls (custom native module)
+- Live cross-device playback activity and remote controls over WebSockets, including queue, shuffle, and repeat sync
 - AirPlay output picker on iOS
 - Instagram story sharing for Replay and tracks
 - Full library, playlists (incl. collaborators), favorites, uploads, metadata editing, and admin screens on the go
@@ -68,8 +70,8 @@ surface for invites and library management.
 
 | Directory | What it is |
 | --- | --- |
-| [`backend/`](backend/) | Go HTTP API — auth, invites, library scanning/ingest, streaming, playlists, sharing, previews, optional ffmpeg transcoding. Postgres-backed. |
-| [`frontend/`](frontend/) | React + Vite + TypeScript web app, also packaged as a Windows desktop app via Electron. |
+| [`backend/`](backend/) | Go HTTP API — auth, invites, library scanning/ingest, streaming, playlists, sharing, previews. Postgres-backed. |
+| [`frontend/`](frontend/) | React + Vite + TypeScript web app, also packaged for Windows, macOS, and Linux via Electron. |
 | [`mobile/`](mobile/) | Expo Router / React Native app for iOS and Android. |
 | [`core/`](core/) | Shared TypeScript package (`@music-library/core`) — API client, player state, auth, favorites — consumed by the web and mobile clients. |
 
@@ -93,8 +95,9 @@ That starts:
 - **frontend** — SPA behind nginx on `127.0.0.1:${FRONTEND_PORT}` (default 8081)
 
 Your music lives wherever `MUSIC_HOST_PATH` points (default `/mnt/music`).
-It's bind-mounted into the backend at the **same path** as on the host, so
-music roots added in the admin UI resolve identically inside the container.
+It's bind-mounted at **`/mnt/music` inside the backend container**. Add music
+roots using container paths: for `MUSIC_HOST_PATH=/srv/music`, the host folder
+`/srv/music/artist` is `/mnt/music/artist` in the admin UI.
 
 On first run the backend seeds an `admin` user; if you didn't set
 `ADMIN_PASSWORD` in `.env`, grab the generated one from:
@@ -123,17 +126,19 @@ This is intentionally a passthrough setup:
 - Playlists can contain both local tracks and TIDAL tracks.
 - TIDAL playlist entries store track metadata plus the remote TIDAL id, not an
   audio file.
-- One subscribed TIDAL account powers playback for all invite-only users.
+- One or more subscribed TIDAL accounts power playback for all invite-only users.
 
 No TIDAL developer app, OAuth client id, client secret, redirect URL, or scopes
-are required for this path. The only TIDAL auth state is the device token that
-`hifi-api` writes to `./tidal-hifi/token.json`.
+are required for this path. The only TIDAL auth state is the device-token set
+that `hifi-api` writes to `./tidal-hifi/token.json`.
 
 Configure the TIDAL values in the root `.env`. Use the country for the
 subscribed account, for example `PL`:
 
 ```env
 HIFI_API_PORT=8000
+HIFI_API_UID=1000
+HIFI_API_GID=1000
 TIDAL_COUNTRY_CODE=PL
 TIDAL_QUALITY=LOSSLESS
 TIDAL_HIFI_USE_PROXIES=False
@@ -148,25 +153,41 @@ the host; Compose uses it for the private `hifi-api` service and derives the
 backend URL as `http://hifi-api:${HIFI_API_PORT}` internally. Do not set
 `TIDAL_HIFI_API_URL` in `.env` for the Docker setup.
 
-After the image has built, generate the token once:
+`HIFI_API_UID` and `HIFI_API_GID` must match the owner of `./tidal-hifi` on the
+host. The `1000:1000` defaults match a typical first Linux user. Prepare the
+directory before starting the stack:
 
 ```sh
-docker compose run --rm hifi-api python tidal_auth/tidal_auth.py
+mkdir -p tidal-hifi
+chown -R 1000:1000 tidal-hifi
+chmod 700 tidal-hifi
 ```
 
-Follow the device-login instructions and sign in with the subscribed TIDAL
-account. The command writes `./tidal-hifi/token.json`; that directory is local
-runtime state and is gitignored.
+If your deployment user has different IDs, use the values printed by `id -u`
+and `id -g` in both `.env` and the `chown` command.
 
-Then restart the stack:
+Start (or recreate) the stack:
 
 ```sh
 docker compose up -d --build
 ```
 
-In the admin UI, the TIDAL panel should show the proxy as connected. From there,
-normal search and playback use the same UI as local tracks. If playback fails,
-check both logs:
+Then link a subscribed account from **Admin → Library → TIDAL accounts** in the
+web/desktop client, or **Settings → Admin → TIDAL** in the mobile client. Lumen
+opens TIDAL's device sign-in page and updates the panel as soon as approval
+finishes. Accounts can be added, replaced, or unlinked there without restarting
+the stack. Tokens remain in `./tidal-hifi/token.json`; that directory is local
+runtime state and is gitignored.
+
+The original command-line device flow remains available as a recovery path:
+
+```sh
+docker compose run --rm hifi-api python tidal_auth/tidal_auth.py
+docker compose restart hifi-api
+```
+
+Once an account is linked, normal search and playback use the same UI as local
+tracks. If playback fails, check both logs:
 
 ```sh
 docker compose logs backend hifi-api
@@ -179,8 +200,9 @@ Common checks:
   resolves to `http://hifi-api:8000` or your chosen `HIFI_API_PORT`.
 - Preview-only or low-quality playback usually means the token was generated
   with an account or country that TIDAL is not granting full playback for.
-- Changing account, country, or subscription state is easiest by deleting
-  `./tidal-hifi/token.json`, running the auth command again, and restarting.
+- Relink an account from either admin client when its authorization or
+  subscription changes. `TIDAL_COUNTRY_CODE` still requires recreating the
+  containers because it is server configuration rather than account state.
 
 ## Putting it on the internet
 
@@ -244,9 +266,14 @@ frontend/            web + Electron client (Dockerfile builds with repo root as 
 mobile/              Expo app
 ```
 
-Runtime data (`./pgdata`, `./transcode-cache`, `./tidal-hifi`) is created next
-to the compose file and gitignored.
+Runtime data (`./pgdata`, `./tidal-hifi`) is created next to the compose file
+and gitignored. The transcode/preview cache lives in the `transcode-cache`
+named Docker volume (a bind mount would inherit host ownership, which the
+container's non-root user can't write to).
 
-CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) tests the backend
-and frontend on every push/PR, and publishes Docker images to GHCR on pushes
-to `main` and version tags.
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on pull requests
+targeting `main` and on pushes to `main`: backend `gofmt`/`vet`/`build`/`test`,
+`core` lint + typecheck + vitest, `frontend` lint + typecheck + build, and
+`mobile` vitest plus a check that the vendored core copy matches `core/`.
+Docker images are published to GHCR only on pushes to `main` and on version
+tags.

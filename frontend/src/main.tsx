@@ -8,6 +8,7 @@ import { PlayerProvider } from "./context/Player";
 import { FavoritesProvider } from "./context/Favorites";
 import { ShareProvider } from "./context/Share";
 import { TrackInfoProvider } from "./context/TrackInfo";
+import { LyricsPanelProvider } from "./context/LyricsPanel";
 import { KeyBindingsProvider } from "./lib/keybindings";
 import "./index.css";
 
@@ -19,11 +20,13 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <AuthProvider>
             <FavoritesProvider>
               <PlayerProvider>
-                <TrackInfoProvider>
-                  <ShareProvider>
-                    <App />
-                  </ShareProvider>
-                </TrackInfoProvider>
+                <LyricsPanelProvider>
+                  <TrackInfoProvider>
+                    <ShareProvider>
+                      <App />
+                    </ShareProvider>
+                  </TrackInfoProvider>
+                </LyricsPanelProvider>
               </PlayerProvider>
             </FavoritesProvider>
           </AuthProvider>

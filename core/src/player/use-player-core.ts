@@ -24,6 +24,19 @@ export interface UsePlayerCoreOptions {
   adapter: AudioAdapter;
   storage: Storage;
   interpolateProgress?: boolean;
+  /**
+   * Resolve a playable URI for a track id before falling back to the network
+   * stream. Returns a local `file://` URI when the track is available offline,
+   * or `undefined`/empty to stream. Read synchronously on every source swap,
+   * so it must be cheap (e.g. an in-memory lookup).
+   */
+  resolveTrackUri?: (trackId: string) => string | null | undefined;
+  /**
+   * Gate consulted when starting a track or advancing through the queue: return false to skip a
+   * track (e.g. not downloaded while offline). Read synchronously on user
+   * action / track end, so it must be cheap. Absent → everything is playable.
+   */
+  isTrackPlayable?: (trackId: string) => boolean;
 }
 
 export interface UsePlayerCoreReturn {
@@ -33,6 +46,7 @@ export interface UsePlayerCoreReturn {
 }
 
 const TIME_STATE_GRANULARITY_SEC = 0.25;
+const NEXT_TRACK_PREPARE_RATIO = 0.7;
 
 function quantizeTime(seconds: number, duration: number): number {
   const clamped =
@@ -40,6 +54,23 @@ function quantizeTime(seconds: number, duration: number): number {
       ? Math.min(Math.max(0, seconds), duration)
       : Math.max(0, seconds);
   return Math.round(clamped / TIME_STATE_GRANULARITY_SEC) * TIME_STATE_GRANULARITY_SEC;
+}
+
+/** First index in [from..to] (inclusive, step ±1) whose track passes the
+ *  gate; -1 when none does. No gate → the first in-bounds index. */
+function firstPlayableIndex(
+  queue: TrackListItem[],
+  from: number,
+  to: number,
+  isPlayable?: (trackId: string) => boolean,
+): number {
+  const step = from <= to ? 1 : -1;
+  for (let i = from; step > 0 ? i <= to : i >= to; i += step) {
+    const track = queue[i];
+    if (!track) continue;
+    if (!isPlayable || isPlayable(track.id)) return i;
+  }
+  return -1;
 }
 
 /**
@@ -57,6 +88,8 @@ export function usePlayerCore({
   adapter,
   storage,
   interpolateProgress = true,
+  resolveTrackUri,
+  isTrackPlayable,
 }: UsePlayerCoreOptions): UsePlayerCoreReturn {
   const [current, setCurrent] = useState<TrackListItem | null>(null);
   // `queue` is the actual play order — when shuffle is on it's a Fisher-Yates
@@ -69,11 +102,21 @@ export function usePlayerCore({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolumeState] = useState<number>(0.8);
+  const [volumeHydrated, setVolumeHydrated] = useState(false);
   const [muted, setMuted] = useState(false);
-  const [shuffle, setShuffle] = useState(false);
-  const [repeat, setRepeat] = useState<RepeatMode>("off");
+  const [shuffle, setShuffleState] = useState(false);
+  const [repeat, setRepeatState] = useState<RepeatMode>("off");
   const playbackReportedRef = useRef<string | null>(null);
+  const lastFMScrobbledRef = useRef<string | null>(null);
+  // Lazily seeded (see the track-change effect below) rather than
+  // `useRef(Date.now())`: the initializer expression is evaluated on every
+  // render, and calling an impure function during render is a purity violation
+  // the React Compiler rejects.
+  const trackStartedAtRef = useRef(0);
+  const listenedSecondsRef = useRef(0);
+  const listeningTickRef = useRef<number | null>(null);
   const loadedTrackIdRef = useRef<string | null>(null);
+  const preparedNextRef = useRef<{ trackId: string; uri: string } | null>(null);
   // Anchor used to interpolate currentTime against the wall clock between the
   // adapter's (infrequent) timeupdate pings.
   const anchorRef = useRef<{ audioTime: number; wallTime: number }>({
@@ -86,24 +129,49 @@ export function usePlayerCore({
   useEffect(() => {
     let cancelled = false;
     void storage.getItem(VOLUME_STORAGE_KEY).then((v) => {
-      if (cancelled || v == null) return;
-      const parsed = parseFloat(v);
-      if (Number.isFinite(parsed)) setVolumeState(clampVolume(parsed));
+      if (cancelled) return;
+      if (v != null) {
+        const parsed = parseFloat(v);
+        if (Number.isFinite(parsed)) setVolumeState(clampVolume(parsed));
+      }
+      setVolumeHydrated(true);
     });
     return () => {
       cancelled = true;
     };
   }, [storage]);
 
-  // Push volume / mute to the adapter and persist.
+  // Push volume / mute to the adapter immediately. Persistence waits for the
+  // initial read so the default value cannot overwrite a saved volume while
+  // asynchronous storage is still hydrating.
   useEffect(() => {
     adapter.setVolume(volume);
     adapter.setMuted(muted);
+  }, [adapter, volume, muted]);
+
+  useEffect(() => {
+    if (!volumeHydrated) return;
     void storage.setItem(VOLUME_STORAGE_KEY, String(volume));
-  }, [adapter, storage, volume, muted]);
+  }, [storage, volume, volumeHydrated]);
+
+  // Zero the visible clock the moment a different track is chosen. Without
+  // this the wall-clock interpolation keeps advancing from the previous
+  // track's anchor, so the scrubber shows the old track's position against
+  // the old duration until the new one's `loadedmetadata` lands — and then
+  // snaps. `next()` has always reset these; jumps, prev and fresh plays get
+  // the same treatment here. No-op when the track is already loaded (e.g.
+  // re-clicking the playing track), where no `loadedmetadata` would follow
+  // to restore the duration.
+  const resetClockForTrackChange = useCallback((trackId: string) => {
+    if (loadedTrackIdRef.current === trackId) return;
+    setCurrentTime(0);
+    setDuration(0);
+    anchorRef.current = { audioTime: 0, wallTime: performance.now() };
+  }, []);
 
   const play = useCallback<PlayerControls["play"]>(
     (track, q) => {
+      if (isTrackPlayable && !isTrackPlayable(track.id)) return false;
       const base = q && q.length ? q : [track];
       setSourceQueue(base);
       if (shuffle) {
@@ -117,9 +185,10 @@ export function usePlayerCore({
       }
       setCurrent(track);
       setIsPlaying(true);
+      resetClockForTrackChange(track.id);
       playbackReportedRef.current = null;
     },
-    [shuffle],
+    [isTrackPlayable, resetClockForTrackChange, shuffle],
   );
 
   const toggle = useCallback<PlayerControls["toggle"]>(() => {
@@ -127,31 +196,103 @@ export function usePlayerCore({
     setIsPlaying((p) => !p);
   }, [current]);
 
+  const resume = useCallback<PlayerControls["resume"]>(() => {
+    if (current) setIsPlaying(true);
+  }, [current]);
+
+  const pause = useCallback<PlayerControls["pause"]>(() => {
+    if (current) setIsPlaying(false);
+  }, [current]);
+
+  const resolvePlayableUri = useCallback(
+    (trackId: string) => resolveTrackUri?.(trackId) || streamUrl(trackId),
+    [resolveTrackUri],
+  );
+
+  const clearPreparedNext = useCallback(() => {
+    preparedNextRef.current = null;
+    adapter.clearPrepared?.();
+  }, [adapter]);
+
   const next = useCallback<PlayerControls["next"]>(() => {
     if (!queue.length) return;
-    const ni = index + 1;
-    if (ni >= queue.length) {
-      if (repeat !== "all") return;
+    // Guard the empty forward range explicitly: firstPlayableIndex infers
+    // scan direction from from/to ordering, so (index+1, length-1) at the
+    // last track would scan BACKWARD and return the current track instead
+    // of -1 — replaying it instead of stopping or wrapping.
+    let nextIndex =
+      index + 1 < queue.length
+        ? firstPlayableIndex(queue, index + 1, queue.length - 1, isTrackPlayable)
+        : -1;
+    let nextQueue: TrackListItem[] | null = null;
+    if (nextIndex === -1) {
+      if (repeat !== "all") {
+        clearPreparedNext();
+        setIsPlaying(false);
+        return;
+      }
       // Wrap. If shuffle is on, reshuffle for a fresh pass so you don't
       // replay the same permutation.
       if (shuffle && sourceQueue.length > 1) {
         const reshuffled = fisherYatesWithAnchor(sourceQueue, null);
-        setQueue(reshuffled);
-        setIndex(0);
-        setCurrent(reshuffled[0] ?? null);
+        nextIndex = firstPlayableIndex(
+          reshuffled,
+          0,
+          reshuffled.length - 1,
+          isTrackPlayable,
+        );
+        if (nextIndex !== -1) nextQueue = reshuffled;
       } else {
-        setIndex(0);
-        setCurrent(queue[0]);
+        nextIndex = firstPlayableIndex(queue, 0, index, isTrackPlayable);
       }
-      setIsPlaying(true);
-      playbackReportedRef.current = null;
+      if (nextIndex === -1) {
+        // Nothing playable anywhere in the queue — stop instead of looping
+        // into tracks that cannot start.
+        clearPreparedNext();
+        setIsPlaying(false);
+        return;
+      }
+    }
+
+    const nextTrack = (nextQueue ?? queue)[nextIndex] ?? null;
+    if (!nextTrack) {
+      clearPreparedNext();
+      setIsPlaying(false);
       return;
     }
-    setIndex(ni);
-    setCurrent(queue[ni]);
+
+    const prepared = preparedNextRef.current;
+    const nextUri = resolvePlayableUri(nextTrack.id);
+    const activated =
+      prepared?.trackId === nextTrack.id &&
+      prepared.uri === nextUri &&
+      adapter.activatePrepared?.(nextUri) === true;
+    if (activated) {
+      loadedTrackIdRef.current = nextTrack.id;
+    } else {
+      adapter.clearPrepared?.();
+    }
+    preparedNextRef.current = null;
+
+    if (nextQueue) setQueue(nextQueue);
+    setIndex(nextIndex);
+    setCurrent(nextTrack);
     setIsPlaying(true);
+    setCurrentTime(0);
+    setDuration(activated ? adapter.duration() || 0 : 0);
+    anchorRef.current = { audioTime: 0, wallTime: performance.now() };
     playbackReportedRef.current = null;
-  }, [queue, index, shuffle, repeat, sourceQueue]);
+  }, [
+    adapter,
+    clearPreparedNext,
+    index,
+    isTrackPlayable,
+    queue,
+    repeat,
+    resolvePlayableUri,
+    shuffle,
+    sourceQueue,
+  ]);
 
   const prev = useCallback<PlayerControls["prev"]>(() => {
     if (!queue.length) return;
@@ -162,22 +303,39 @@ export function usePlayerCore({
       setCurrentTime(0);
       return;
     }
-    const ni = Math.max(0, index - 1);
+    const ni =
+      index > 0
+        ? firstPlayableIndex(queue, index - 1, 0, isTrackPlayable)
+        : -1;
+    if (ni === -1) {
+      // Nothing playable behind us — restart the current track instead of
+      // landing on an unplayable one.
+      adapter.seek(0);
+      setCurrentTime(0);
+      return;
+    }
+    clearPreparedNext();
     setIndex(ni);
     setCurrent(queue[ni]);
     setIsPlaying(true);
+    resetClockForTrackChange(queue[ni].id);
     playbackReportedRef.current = null;
-  }, [adapter, queue, index]);
+  }, [adapter, clearPreparedNext, queue, index, isTrackPlayable, resetClockForTrackChange]);
 
   const jumpTo = useCallback<PlayerControls["jumpTo"]>(
     (i) => {
       if (i < 0 || i >= queue.length) return;
+      // Silently ignore taps on tracks the gate rejects (e.g. not downloaded
+      // while offline) — queue UIs dim them instead.
+      if (isTrackPlayable && queue[i] && !isTrackPlayable(queue[i].id)) return;
+      clearPreparedNext();
       setIndex(i);
       setCurrent(queue[i]);
       setIsPlaying(true);
+      resetClockForTrackChange(queue[i].id);
       playbackReportedRef.current = null;
     },
-    [queue],
+    [clearPreparedNext, queue, isTrackPlayable, resetClockForTrackChange],
   );
 
   const seek = useCallback<PlayerControls["seek"]>(
@@ -199,11 +357,15 @@ export function usePlayerCore({
     [],
   );
 
-  const toggleShuffle = useCallback<PlayerControls["toggleShuffle"]>(() => {
-    const turningOn = !shuffle;
-    setShuffle(turningOn);
+  const setMutedValue = useCallback<PlayerControls["setMuted"]>((value) => {
+    setMuted(value);
+  }, []);
+
+  const setShuffle = useCallback<PlayerControls["setShuffle"]>((value) => {
+    if (value === shuffle) return;
+    setShuffleState(value);
     if (!queue.length) return;
-    if (turningOn) {
+    if (value) {
       // Reshuffle remaining queue; keep the currently playing track at 0 so
       // playback doesn't jump.
       const source = sourceQueue.length ? sourceQueue : queue;
@@ -221,10 +383,43 @@ export function usePlayerCore({
     }
   }, [shuffle, queue, sourceQueue, current]);
 
+  const toggleShuffle = useCallback<PlayerControls["toggleShuffle"]>(() => {
+    setShuffle(!shuffle);
+  }, [setShuffle, shuffle]);
+
+  const setRepeat = useCallback<PlayerControls["setRepeat"]>((value) => {
+    setRepeatState(value);
+  }, []);
+
   const cycleRepeat = useCallback<PlayerControls["cycleRepeat"]>(
-    () => setRepeat((r) => nextRepeatMode(r)),
+    () => setRepeatState((r) => nextRepeatMode(r)),
     [],
   );
+
+  const nextTrackToPrepare = useMemo(() => {
+    if (!current || repeat === "one" || !queue.length) return null;
+    // Same empty-range guard as next(): at the last track the unguarded
+    // scan returns the CURRENT track and we'd preload what's playing.
+    const ni =
+      index + 1 < queue.length
+        ? firstPlayableIndex(queue, index + 1, queue.length - 1, isTrackPlayable)
+        : -1;
+    if (ni !== -1) return queue[ni] ?? null;
+    // A repeat-all shuffle creates a fresh permutation at the boundary, so
+    // its next track is intentionally unknown until then.
+    if (repeat === "all" && !shuffle) {
+      const first = queue[0];
+      if (first && (!isTrackPlayable || isTrackPlayable(first.id))) return first;
+    }
+    return null;
+  }, [current, index, isTrackPlayable, queue, repeat, shuffle]);
+
+  useEffect(() => {
+    const prepared = preparedNextRef.current;
+    if (prepared && prepared.trackId !== nextTrackToPrepare?.id) {
+      clearPreparedNext();
+    }
+  }, [clearPreparedNext, nextTrackToPrepare?.id]);
 
   // When the track changes, replace the adapter's source and (optionally)
   // kick off playback.
@@ -232,11 +427,31 @@ export function usePlayerCore({
     if (!current) return;
     if (loadedTrackIdRef.current === current.id) return;
     loadedTrackIdRef.current = current.id;
-    adapter.load(streamUrl(current.id));
+    adapter.load(resolvePlayableUri(current.id));
     if (isPlaying) {
       adapter.play().catch(() => setIsPlaying(false));
     }
-  }, [adapter, current, isPlaying]);
+  }, [adapter, current, isPlaying, resolvePlayableUri]);
+
+  const currentId = current?.id;
+
+  useEffect(() => {
+    if (!currentId) return;
+    trackStartedAtRef.current = Math.floor(Date.now() / 1000);
+    lastFMScrobbledRef.current = null;
+    listenedSecondsRef.current = 0;
+    listeningTickRef.current = performance.now();
+  }, [currentId]);
+
+  // Keyed on the id, and the id is all the body reads. Previously the body
+  // dereferenced `current` while declaring only `[current?.id]`, so two
+  // different TrackListItem objects with the same id — the same track refetched
+  // with updated favourite state, say — left the effect holding the old object.
+  useEffect(() => {
+    if (currentId && isPlaying) {
+      void api.updateNowPlaying(currentId).catch(() => {});
+    }
+  }, [currentId, isPlaying]);
 
   // When isPlaying toggles without a track change, sync the adapter.
   useEffect(() => {
@@ -248,8 +463,42 @@ export function usePlayerCore({
     }
   }, [adapter, isPlaying, current]);
 
+  // Values the adapter event handlers read at fire time. Held in a ref so the
+  // subscription effect below can depend on `[adapter]` alone: it previously
+  // listed isPlaying/current/next/nextTrackToPrepare/repeat, so all six
+  // listeners were torn down and re-registered on essentially every playback
+  // state change — exactly the churn the ref pattern elsewhere in this file
+  // exists to avoid.
+  const eventStateRef = useRef({
+    isPlaying,
+    current,
+    next,
+    nextTrackToPrepare,
+    repeat,
+    resolvePlayableUri,
+  });
+  useEffect(() => {
+    eventStateRef.current = {
+      isPlaying,
+      current,
+      next,
+      nextTrackToPrepare,
+      repeat,
+      resolvePlayableUri,
+    };
+  }, [isPlaying, current, next, nextTrackToPrepare, repeat, resolvePlayableUri]);
+
   // Wire adapter events → hook state.
   useEffect(() => {
+    const syncListenedTime = () => {
+      const now = performance.now();
+      const previous = listeningTickRef.current;
+      const playing = eventStateRef.current.isPlaying;
+      if (previous != null && playing) {
+        listenedSecondsRef.current += Math.max(0, (now - previous) / 1000);
+      }
+      listeningTickRef.current = playing ? now : null;
+    };
     const syncAnchor = () => {
       anchorRef.current = {
         audioTime: adapter.currentTime(),
@@ -260,10 +509,24 @@ export function usePlayerCore({
       // Gently resync the anchor on every native update to prevent drift, but
       // don't touch React state here — the rAF loop owns currentTime.
       syncAnchor();
+      syncListenedTime();
       // Fire a single /play ping once past 30s OR >=50% of duration.
-      const trackId = current?.id;
+      const { current: currentTrack, nextTrackToPrepare: toPrepare } =
+        eventStateRef.current;
+      const trackId = currentTrack?.id;
       const now = adapter.currentTime();
       const d = adapter.duration();
+      if (
+        toPrepare &&
+        adapter.prepareNext &&
+        d > 0 &&
+        now / d >= NEXT_TRACK_PREPARE_RATIO &&
+        preparedNextRef.current?.trackId !== toPrepare.id
+      ) {
+        const uri = eventStateRef.current.resolvePlayableUri(toPrepare.id);
+        preparedNextRef.current = { trackId: toPrepare.id, uri };
+        adapter.prepareNext(uri);
+      }
       if (
         trackId &&
         playbackReportedRef.current !== trackId &&
@@ -273,6 +536,22 @@ export function usePlayerCore({
         const completion = d > 0 ? now / d : 0;
         void api.recordPlay(trackId, completion).catch(() => {});
       }
+      const lastFMThreshold = d > 0 ? Math.min(d / 2, 240) : Infinity;
+      if (
+        trackId &&
+        d > 30 &&
+        listenedSecondsRef.current >= lastFMThreshold &&
+        lastFMScrobbledRef.current !== trackId
+      ) {
+        lastFMScrobbledRef.current = trackId;
+        void api
+          .scrobbleTrack(
+            trackId,
+            trackStartedAtRef.current,
+            listenedSecondsRef.current,
+          )
+          .catch(() => {});
+      }
     });
     const offMeta = adapter.on("loadedmetadata", () => {
       setDuration(adapter.duration() || 0);
@@ -280,21 +559,49 @@ export function usePlayerCore({
       setCurrentTime(quantizeTime(adapter.currentTime(), adapter.duration()));
     });
     const offEnd = adapter.on("ended", () => {
-      if (repeat === "one") {
+      const { repeat: repeatMode, current: currentTrack } = eventStateRef.current;
+      if (repeatMode === "one") {
+        // Restart the same track. Re-arm play reporting so each loop counts
+        // as a fresh play — otherwise playbackReportedRef stays pinned to this
+        // trackId and the timeupdate guard never fires recordPlay again.
+        playbackReportedRef.current = null;
+        lastFMScrobbledRef.current = null;
+        trackStartedAtRef.current = Math.floor(Date.now() / 1000);
+        listenedSecondsRef.current = 0;
+        listeningTickRef.current = performance.now();
+        if (currentTrack) void api.updateNowPlaying(currentTrack.id).catch(() => {});
         adapter.seek(0);
-        void adapter.play().catch(() => {});
+        // Mirror the other play() sites: if the platform refuses to restart
+        // (e.g. audio-session activation failed mid-interruption), reflect the
+        // pause in state instead of showing a playing UI over silence.
+        void adapter.play().catch(() => setIsPlaying(false));
         return;
       }
-      next();
+      eventStateRef.current.next();
     });
     const offSeeked = adapter.on("seeked", () => {
       syncAnchor();
       setCurrentTime(quantizeTime(adapter.currentTime(), adapter.duration()));
     });
-    const offPlay = adapter.on("play", () => syncAnchor());
+    const offPlay = adapter.on("play", () => {
+      listeningTickRef.current = performance.now();
+      syncAnchor();
+      // Playback can start outside our controls (lock-screen play command,
+      // an interruption ending with auto-resume) — adopt the platform state.
+      setIsPlaying(true);
+    });
     const offPause = adapter.on("pause", () => {
+      syncListenedTime();
+      listeningTickRef.current = null;
       syncAnchor();
       setCurrentTime(quantizeTime(adapter.currentTime(), adapter.duration()));
+      // System-originated pauses (headphones disconnecting, an audio
+      // interruption, lock-screen pause) surface only as this event; without
+      // mirroring it the UI keeps showing a playing state over silence.
+      // Adapters must only emit `pause` for genuine pauses — buffering
+      // stalls, source swaps and natural track end are not pauses in the
+      // web event model this contract follows.
+      setIsPlaying(false);
     });
     return () => {
       offTime();
@@ -304,7 +611,9 @@ export function usePlayerCore({
       offPlay();
       offPause();
     };
-  }, [adapter, current, next, repeat]);
+  }, [adapter]);
+
+  useEffect(() => () => adapter.clearPrepared?.(), [adapter]);
 
   // rAF-driven smoothing: while playing, interpolate between the adapter's
   // last-known position and the current wall-clock moment. Native update
@@ -343,26 +652,36 @@ export function usePlayerCore({
   const controls = useMemo<PlayerControls>(
     () => ({
       play,
+      resume,
+      pause,
       toggle,
       next,
       prev,
       jumpTo,
       seek,
       setVolume,
+      setMuted: setMutedValue,
       toggleMute,
+      setShuffle,
       toggleShuffle,
+      setRepeat,
       cycleRepeat,
     }),
     [
       play,
+      resume,
+      pause,
       toggle,
       next,
       prev,
       jumpTo,
       seek,
       setVolume,
+      setMutedValue,
       toggleMute,
+      setShuffle,
       toggleShuffle,
+      setRepeat,
       cycleRepeat,
     ],
   );

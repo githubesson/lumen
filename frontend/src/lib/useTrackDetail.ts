@@ -31,6 +31,8 @@ export function useTrackDetail(
         message: "Track info request timed out.",
       });
     }, 15000);
+    // A changed track id invalidates the previous resource snapshot.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTrack(null);
     setError(null);
     api

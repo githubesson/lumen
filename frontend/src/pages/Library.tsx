@@ -1,5 +1,7 @@
-import { useCallback, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import UploadDialog from "../components/UploadDialog";
+import { useAuth } from "../context/Auth";
+import { useCallback, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { PlayIcon } from "@heroicons/react/16/solid";
 import {
   api,
@@ -10,6 +12,7 @@ import {
   type Page,
   type TrackListItem,
 } from "../api";
+import { useDebouncedValue } from "@music-library/core/use-debounced-value";
 import { displayText, pluralize } from "../lib/format";
 import TrackList from "../components/TrackList";
 import CoverArt from "../components/CoverArt";
@@ -22,7 +25,10 @@ import PageHeader from "../components/PageHeader";
 import { useTrackContextMenu } from "../components/TrackContextMenu";
 import BrowseToolbar from "../components/library/BrowseToolbar";
 import { usePlayer } from "../context/Player";
-import { usePaginatedList } from "../lib/usePaginatedList";
+import {
+  usePaginatedList,
+  type PageRequest,
+} from "../lib/usePaginatedList";
 import GridView from "./library/GridView";
 import {
   AlbumDetailView,
@@ -131,6 +137,7 @@ function LibraryBrowse({
 }) {
   const [displayMode, setDisplayMode] = useState<"grid" | "list">("list");
   const [sort, setSort] = useState<SortKey>("recent");
+  const requestQuery = useDebouncedValue(query, 250);
 
   return (
     <div className="view">
@@ -143,16 +150,20 @@ function LibraryBrowse({
         onQueryChange={onQueryChange}
         displayMode={displayMode}
         onDisplayModeChange={setDisplayMode}
-        sort={sort}
+        sort={query.trim() ? undefined : sort}
         onSortChange={setSort}
         selectionControlsHostId={LIBRARY_SELECTION_CONTROLS_ID}
       />
 
       {view === "tracks" && (
-        <TracksView query={query} sort={sort} displayMode={displayMode} />
+        <TracksView query={requestQuery} sort={sort} displayMode={displayMode} />
       )}
-      {view === "albums" && <AlbumsView query={query} onOpen={onOpenAlbum} />}
-      {view === "artists" && <ArtistsView query={query} onOpen={onOpenArtist} />}
+      {view === "albums" && (
+        <AlbumsView query={requestQuery} onOpen={onOpenAlbum} />
+      )}
+      {view === "artists" && (
+        <ArtistsView query={requestQuery} onOpen={onOpenArtist} />
+      )}
     </div>
   );
 }
@@ -178,33 +189,29 @@ function TracksView({
   displayMode: "grid" | "list";
 }) {
   const [searchWarning, setSearchWarning] = useState<string | null>(null);
-  const fetcher = useCallback(async (p: {
-    limit: number;
-    offset: number;
-    q?: string;
-  }): Promise<Page<TrackListItem>> => {
-    if (p.q?.trim()) {
-      const res = await api.searchTracks({ ...p, limit: Math.min(p.limit, 50) });
-      setSearchWarning(res.warnings?.join(" ") || null);
-      return {
-        items: res.tracks ?? [],
-        total: p.offset + (res.tracks?.length ?? 0),
-      };
-    }
-    setSearchWarning(null);
-    return api.listTracksPage(p);
-  }, []);
-  const { items, total, loadingMore, error, sentinelRef } = usePaginatedList(
+  const fetcher = useCallback(
+    async (p: PageRequest): Promise<Page<TrackListItem>> => {
+      if (p.q?.trim()) {
+        const res = await api.searchTracksPage({
+          ...p,
+          limit: Math.min(p.limit, 50),
+        });
+        if (!p.signal.aborted) setSearchWarning(res.warnings?.join(" ") || null);
+        return res;
+      }
+      setSearchWarning(null);
+      return api.listTracksPage({ ...p, sort });
+    },
+    [sort],
+  );
+  const { items, total, hasMore, loadingMore, error, sentinelRef } = usePaginatedList(
     fetcher,
     query,
-    { pageSize: 100, pollIntervalMs: POLL_INTERVAL_MS },
+    { pageSize: 100, pollIntervalMs: POLL_INTERVAL_MS, resourceKey: sort },
   );
   const { play } = usePlayer();
 
-  // Memoize the sort so player timer ticks and unrelated parent re-renders
-  // don't re-allocate + re-sort a 600-item array (and bust child referential
-  // equality downstream). Recomputes only when the source list or key change.
-  const sorted = useMemo(() => sortTracks(items ?? [], sort), [items, sort]);
+  const sorted = items ?? [];
 
   return (
     <>
@@ -213,7 +220,7 @@ function TracksView({
       {!error && searchWarning && <ErrorBanner message={searchWarning} />}
       <div style={{ marginTop: 14 }}>
         {items === null && <LoadingState label="Loading library…" />}
-        {items && items.length === 0 && !error && <LibraryEmptyState />}
+        {items && items.length === 0 && !error && (query.trim() ? <EmptyState title="No matching tracks." hint="Try a different search." /> : <LibraryEmptyState />)}
         {items && items.length > 0 && displayMode === "list" && (
           <TrackList
             tracks={sorted}
@@ -226,6 +233,7 @@ function TracksView({
         )}
         <LoadMoreSentinel
           innerRef={sentinelRef}
+          hasMore={hasMore}
           items={items}
           total={total}
           loadingMore={loadingMore}
@@ -243,7 +251,7 @@ function AlbumsView({
   onOpen: (id: string) => void;
 }) {
   const fetcher = useCallback(
-    (p: { limit: number; offset: number; q?: string }) => api.listAlbumsPage(p),
+    (p: PageRequest) => api.listAlbumsPage(p),
     [],
   );
   return (
@@ -266,7 +274,7 @@ function ArtistsView({
   onOpen: (id: string) => void;
 }) {
   const fetcher = useCallback(
-    (p: { limit: number; offset: number; q?: string }) => api.listArtistsPage(p),
+    (p: PageRequest) => api.listArtistsPage(p),
     [],
   );
   return (
@@ -384,41 +392,20 @@ function ArtistCard({
   );
 }
 
-function sortTracks(tracks: TrackListItem[], sort: SortKey): TrackListItem[] {
-  if (sort === "recent") return tracks;
-  const list = [...tracks];
-  switch (sort) {
-    case "title":
-      list.sort((a, b) => a.title.localeCompare(b.title));
-      break;
-    case "artist":
-      list.sort((a, b) => (a.artist ?? "").localeCompare(b.artist ?? ""));
-      break;
-    case "album":
-      list.sort((a, b) =>
-        (a.album_title ?? "").localeCompare(b.album_title ?? ""),
-      );
-      break;
-    case "duration":
-      list.sort((a, b) => a.duration_ms - b.duration_ms);
-      break;
-  }
-  return list;
-}
-
 function LibraryEmptyState() {
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const { me } = useAuth();
   return (
-    <EmptyState
-      title="Your library is empty."
-      hint={
+    <>
+      <EmptyState title="Your library is empty." hint={
         <>
           Drop audio files into a watched folder on the server, or{" "}
-          <Link to="#" className="section-link" style={{ color: "var(--accent)" }}>
+          <button type="button" className="section-link" style={{ color: "var(--accent)" }} onClick={() => setUploadOpen(true)}>
             upload them
-          </Link>
-          . New files are ingested automatically.
+          </button>. New files are ingested automatically.
         </>
-      }
-    />
+      } />
+      <UploadDialog open={uploadOpen} isAdmin={me?.role === "admin"} onClose={() => setUploadOpen(false)} />
+    </>
   );
 }

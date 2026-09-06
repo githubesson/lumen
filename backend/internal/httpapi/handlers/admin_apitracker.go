@@ -20,6 +20,7 @@ type AdminAPITracker struct {
 	MusicRoots  *musicroots.Store
 	Scanner     *apitracker.Scanner
 	PrimaryRoot string
+	Background  context.Context
 }
 
 type apiTrackerPinResp struct {
@@ -214,7 +215,7 @@ func (h *AdminAPITracker) Scan(w http.ResponseWriter, r *http.Request) {
 	if h.Scanner != nil {
 		start = h.Scanner.StartPinScan
 	}
-	scanPinNow(w, r, apitracker.ErrNotFound, start)
+	scanPinNow(w, r, apitracker.ErrNotFound, h.Background, start)
 }
 
 func (h *AdminAPITracker) Downloads(w http.ResponseWriter, r *http.Request) {

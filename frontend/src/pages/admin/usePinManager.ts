@@ -70,9 +70,13 @@ export function usePinManager<Pin extends PinLike, Download extends DownloadLike
     {},
   );
 
-  // Always read the latest config (parent re-creates it each render).
+  // Always read the latest config (parent re-creates it each render). Written
+  // from an effect, not during render: a render React throws away must not
+  // mutate a ref. Every reader below runs from a callback or effect.
   const cfg = useRef(config);
-  cfg.current = config;
+  useEffect(() => {
+    cfg.current = config;
+  }, [config]);
 
   // Track follow-up re-fetch timers so they can be cleared on unmount or before
   // re-scheduling. Previously these were untracked setTimeout calls that orphaned

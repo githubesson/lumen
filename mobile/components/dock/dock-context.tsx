@@ -114,6 +114,13 @@ export const DOCK_COLLAPSE_SPRING = {
   mass: 1,
 } as const;
 
+// One-way slide for selection capsules (active tab, segmented control,
+// header search, replay period): fast ease-out, no overshoot.
+export const DOCK_CAPSULE_TIMING = {
+  duration: 180,
+  easing: Easing.out(Easing.cubic),
+} as const;
+
 const TABLET_BREAKPOINT = 600;
 
 export function isTabletLayout(width: number, height: number): boolean {
@@ -160,6 +167,8 @@ export function DockProvider({ children }: { children: ReactNode }) {
       setCollapsedState(next);
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       const target = next ? 1 : 0;
+      // Reanimated shared values are mutable UI-thread cells by design.
+      // eslint-disable-next-line react-hooks/immutability
       collapseProgress.value = reducedMotion
         ? target
         : withSpring(target, DOCK_COLLAPSE_SPRING);

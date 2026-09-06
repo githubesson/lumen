@@ -37,7 +37,7 @@ const TRIGGER: Record<Variant, string> = {
   outlined:
     "flex w-full items-center justify-between gap-x-2 input text-left",
   minimal:
-    "inline-flex items-center gap-x-1 text-[12.5px] mono text-muted hover:text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-50",
+    "inline-flex items-center gap-x-1 text-[12.5px] mono text-muted hover:text-fg focus:outline-none focus-visible:outline-2 focus-visible:outline-[var(--ring)] focus-visible:outline-offset-2 rounded-[var(--r-sm)] disabled:cursor-not-allowed disabled:opacity-50",
 };
 
 const POPUP_BASE =
@@ -91,6 +91,7 @@ export function Select<V extends string = string>({
 
   useEffect(() => {
     if (!mounted) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setActive(selectedIndex >= 0 ? selectedIndex : firstEnabled(options));
     listRef.current?.focus();
   }, [mounted, selectedIndex, options]);

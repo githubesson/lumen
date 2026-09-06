@@ -18,6 +18,7 @@ import { api, useAuth, type Playlist } from "@music-library/core";
 import { EmptyState } from "../components/empty-state";
 import { TRACK_FLASH_LIST_PERFORMANCE_PROPS } from "../components/list-performance";
 import { qk } from "../lib/query-keys";
+import { usePullToRefresh } from "../lib/use-pull-to-refresh";
 import { useTheme } from "../theme/theme";
 
 type SortMode = "recent" | "name" | "created";
@@ -47,6 +48,8 @@ export default function PlaylistPickerScreen() {
   useEffect(() => {
     let cancelled = false;
     if (!userId) {
+      // Losing the authenticated user invalidates the persisted recent list.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRecentIds([]);
       return;
     }
@@ -72,6 +75,7 @@ export default function PlaylistPickerScreen() {
     queryFn: ({ signal }) => api.listPlaylists({ signal }),
     enabled: !!userId,
   });
+  const { refreshing, onRefresh } = usePullToRefresh(playlistsQuery.refetch);
 
   const addMutation = useMutation({
     mutationFn: (playlist: Playlist) => {
@@ -218,8 +222,8 @@ export default function PlaylistPickerScreen() {
         }}
         refreshControl={
           <RefreshControl
-            refreshing={playlistsQuery.isRefetching}
-            onRefresh={() => void playlistsQuery.refetch()}
+            refreshing={refreshing}
+            onRefresh={onRefresh}
             tintColor={theme.color.fgMuted}
           />
         }

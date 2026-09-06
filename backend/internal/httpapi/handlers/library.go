@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,11 +16,14 @@ import (
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/models"
+	"github.com/githubesson/lumen/internal/safego"
 )
 
 type Library struct {
-	Ingest  *ingest.Service
-	Library *library.Store
+	Ingest     *ingest.Service
+	Library    *library.Store
+	Background context.Context
+	StartJob   func(func())
 
 	mu     sync.Mutex
 	rescan *ingest.RescanProgress
@@ -123,16 +127,9 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 			results = append(results, result{File: fh.Filename, Error: "file too large"})
 			continue
 		}
-		dst, err := uniquePath(destDir, name)
-		if err != nil {
-			h.log().Error("upload: could not allocate a destination path",
-				"user", u.ID, "file", fh.Filename, "dir", destDir, "err", err)
-			results = append(results, result{File: fh.Filename, Error: err.Error()})
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		if err := os.MkdirAll(destDir, 0o755); err != nil {
 			h.log().Error("upload: could not create destination directory — check filesystem permissions on the music volume",
-				"user", u.ID, "file", fh.Filename, "dir", filepath.Dir(dst), "err", err)
+				"user", u.ID, "file", fh.Filename, "dir", destDir, "err", err)
 			results = append(results, result{File: fh.Filename, Error: err.Error()})
 			continue
 		}
@@ -143,34 +140,35 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 			results = append(results, result{File: fh.Filename, Error: err.Error()})
 			continue
 		}
-		out, err := os.Create(dst)
-		if err != nil {
-			src.Close()
-			h.log().Error("upload: could not create destination file — check filesystem permissions on the music volume",
-				"user", u.ID, "file", fh.Filename, "dst", dst, "err", err)
-			results = append(results, result{File: fh.Filename, Error: err.Error()})
-			continue
-		}
-		if _, err := copyFileLimited(out, src, maxUploadFileBytes); err != nil {
-			src.Close()
-			out.Close()
-			_ = os.Remove(dst)
-			if errors.Is(err, errFileTooLarge) {
+		dst, _, copyErr := writeUniqueUpload(r.Context(), destDir, name, src, maxUploadFileBytes)
+		_ = src.Close()
+		if copyErr != nil {
+			if errors.Is(copyErr, errFileTooLarge) {
 				h.log().Warn("upload: file exceeds per-file size limit",
 					"user", u.ID, "file", fh.Filename, "limit_bytes", maxUploadFileBytes)
 				results = append(results, result{File: fh.Filename, Error: "file too large"})
 				continue
 			}
 			h.log().Error("upload: writing the uploaded file to disk failed",
-				"user", u.ID, "file", fh.Filename, "dst", dst, "err", err)
-			results = append(results, result{File: fh.Filename, Error: err.Error()})
+				"user", u.ID, "file", fh.Filename, "dst", dst, "err", copyErr)
+			results = append(results, result{File: fh.Filename, Error: copyErr.Error()})
 			continue
 		}
-		src.Close()
-		out.Close()
 
 		res := h.Ingest.IngestFileAs(r.Context(), dst, ownerID)
-		rr := result{File: fh.Filename, Inserted: res.Inserted, Dedup: !res.Inserted && res.Err == nil, TrackID: res.TrackID.String()}
+		// res.Skipped must be honoured: a file that vanished between write and
+		// stat comes back Inserted=false, Err=nil, and was reported as
+		// `dedup: true` — a success. The nil track id likewise has to stay out of
+		// the response; omitempty cannot suppress an all-zeroes UUID string.
+		rr := result{
+			File:     fh.Filename,
+			Inserted: res.Inserted,
+			Skipped:  res.Skipped,
+			Dedup:    !res.Inserted && !res.Skipped && res.Err == nil,
+		}
+		if res.TrackID != uuid.Nil {
+			rr.TrackID = res.TrackID.String()
+		}
 		if res.Err != nil {
 			h.log().Error("upload: ingest failed after the file was written to disk",
 				"user", u.ID, "file", fh.Filename, "dst", dst, "err", res.Err)
@@ -221,10 +219,22 @@ func (h *Library) Rescan(w http.ResponseWriter, r *http.Request) {
 	// Detach from the request: the handler returns immediately with 202, and
 	// the goroutine needs a context that outlives the response. Keep request
 	// values (for tracing) but drop the cancel signal.
-	scanCtx := context.WithoutCancel(r.Context())
-	go func() {
-		_ = h.Ingest.Rescan(scanCtx, p)
-	}()
+	scanCtx := h.Background
+	if scanCtx == nil {
+		scanCtx = context.WithoutCancel(r.Context())
+	}
+	job := func() {
+		if err := h.Ingest.Rescan(scanCtx, p); err != nil {
+			msg := err.Error()
+			p.Failure.Store(&msg)
+			h.log().Error("library rescan failed", "err", err)
+		}
+	}
+	if h.StartJob != nil {
+		h.StartJob(job)
+	} else {
+		safego.Go("library rescan", job)
+	}
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -237,7 +247,7 @@ func (h *Library) RescanStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"running": false})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	status := map[string]any{
 		"running":   !p.Done.Load(),
 		"total":     p.Total.Load(),
 		"processed": p.Processed.Load(),
@@ -245,7 +255,11 @@ func (h *Library) RescanStatus(w http.ResponseWriter, r *http.Request) {
 		"dedup":     p.Dedup.Load(),
 		"errored":   p.Errored.Load(),
 		"pruned":    p.Pruned.Load(),
-	})
+	}
+	if msg := p.FailureMessage(); msg != "" {
+		status["error"] = msg
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 // Errors lists recent ingest failures.
@@ -258,20 +272,67 @@ func (h *Library) Errors(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, errs)
 }
 
-func uniquePath(dir, name string) (string, error) {
-	p := filepath.Join(dir, name)
-	if _, err := os.Stat(p); os.IsNotExist(err) {
-		return p, nil
-	}
+// createUniqueUpload atomically reserves a destination name and returns the
+// open file. O_EXCL is essential here: checking with Stat and opening later
+// lets concurrent uploads choose and truncate the same path.
+func createUniqueUpload(dir, name string) (string, *os.File, error) {
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
-	for i := 1; i < 10000; i++ {
-		cand := filepath.Join(dir, base+"-"+itoa(i)+ext)
-		if _, err := os.Stat(cand); os.IsNotExist(err) {
-			return cand, nil
+	for i := 0; i < 10000; i++ {
+		candidateName := name
+		if i > 0 {
+			candidateName = base + "-" + itoa(i) + ext
+		}
+		candidate := filepath.Join(dir, candidateName)
+		f, err := os.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			return candidate, f, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return "", nil, err
 		}
 	}
-	return "", os.ErrExist
+	return "", nil, os.ErrExist
+}
+
+// writeUniqueUpload owns cleanup of the exclusively-created destination. A
+// short read, write failure, close failure, size violation, or cancellation
+// cannot leave a partial file behind for a later rescan to ingest.
+func writeUniqueUpload(ctx context.Context, dir, name string, src io.Reader, maxBytes int64) (string, int64, error) {
+	if err := ctx.Err(); err != nil {
+		return "", 0, err
+	}
+	dst, out, err := createUniqueUpload(dir, name)
+	if err != nil {
+		return "", 0, err
+	}
+	written, copyErr := copyFileLimited(out, &contextReader{ctx: ctx, r: src}, maxBytes)
+	if copyErr == nil {
+		copyErr = ctx.Err()
+	}
+	if closeErr := out.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr == nil {
+		copyErr = ctx.Err()
+	}
+	if copyErr != nil {
+		_ = os.Remove(dst)
+		return "", written, copyErr
+	}
+	return dst, written, nil
+}
+
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
 }
 
 func itoa(i int) string {

@@ -19,6 +19,18 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
+// ErrInvalidInput marks a caller mistake (empty title, unknown target album)
+// as distinct from a store failure. Handlers used to render *every* non-
+// ErrNotFound error as 400 with the raw error string, so a pgx connection
+// reset during PATCH told the client its request was malformed and no retry
+// ever fired.
+var ErrInvalidInput = errors.New("invalid input")
+
+// MaxTrackArtists bounds the artist list a single track may carry. Names come
+// straight from user input (TrackPatch.Artists, RemoteTrackInput.ArtistNames)
+// and each one is work inside the caller's transaction.
+const MaxTrackArtists = 64
+
 type Store struct {
 	db *pgxpool.Pool
 }
@@ -43,36 +55,16 @@ func UpsertArtist(ctx context.Context, q pgx.Tx, name string) (uuid.UUID, error)
 
 // UpsertAlbum finds or creates an album by (title, album_artist_id). When
 // albumArtistID is nil the album is treated as a compilation candidate.
+//
+// Atomic by way of the albums_title_artist_uniq index (migration 0017): the
+// previous SELECT-then-INSERT let two concurrent ingests of the same album both
+// miss the SELECT and both INSERT, permanently splitting the tracklist across
+// two rows. The index COALESCEs a NULL album_artist_id to the nil UUID so
+// compilations collide too, and the ON CONFLICT target has to name the same
+// expression.
 func UpsertAlbum(ctx context.Context, q pgx.Tx, title string, albumArtistID *uuid.UUID, year int, isCompilation bool, coverPath string) (uuid.UUID, error) {
 	title = dbtext.Clean(title)
 	coverPath = dbtext.Clean(coverPath)
-	var id uuid.UUID
-	var err error
-	if albumArtistID == nil {
-		err = q.QueryRow(ctx, `
-			SELECT id FROM albums
-			WHERE title = $1 AND album_artist_id IS NULL
-			LIMIT 1`, title).Scan(&id)
-	} else {
-		err = q.QueryRow(ctx, `
-			SELECT id FROM albums
-			WHERE title = $1 AND album_artist_id = $2
-			LIMIT 1`, title, *albumArtistID).Scan(&id)
-	}
-	if err == nil {
-		// Opportunistically fill fields we now know.
-		_, _ = q.Exec(ctx, `
-			UPDATE albums SET
-				release_year = COALESCE(NULLIF(release_year, 0), NULLIF($2::int, 0)),
-				is_compilation = is_compilation OR $3,
-				cover_art_path = COALESCE(cover_art_path, NULLIF($4, '')),
-				updated_at = NOW()
-			WHERE id = $1`, id, year, isCompilation, coverPath)
-		return id, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, err
-	}
 	var ptrYear *int
 	if year > 0 {
 		ptrYear = &year
@@ -81,11 +73,24 @@ func UpsertAlbum(ctx context.Context, q pgx.Tx, title string, albumArtistID *uui
 	if coverPath != "" {
 		ptrCover = &coverPath
 	}
-	err = q.QueryRow(ctx, `
+	var id uuid.UUID
+	// DO UPDATE rather than DO NOTHING: DO NOTHING suppresses the RETURNING row
+	// on conflict, and the SET list is the same opportunistic fill the old
+	// read path did — never overwriting a value we already have.
+	err := q.QueryRow(ctx, `
 		INSERT INTO albums (title, album_artist_id, release_year, is_compilation, cover_art_path)
 		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (title, COALESCE(album_artist_id, '00000000-0000-0000-0000-000000000000'::uuid))
+		DO UPDATE SET
+			release_year = COALESCE(NULLIF(albums.release_year, 0), NULLIF(EXCLUDED.release_year, 0)),
+			is_compilation = albums.is_compilation OR EXCLUDED.is_compilation,
+			cover_art_path = COALESCE(albums.cover_art_path, EXCLUDED.cover_art_path),
+			updated_at = NOW()
 		RETURNING id`, title, albumArtistID, ptrYear, isCompilation, ptrCover).Scan(&id)
-	return id, err
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return id, nil
 }
 
 type TrackInsert struct {
@@ -134,7 +139,7 @@ func (s *Store) UpsertRemoteTrack(ctx context.Context, in RemoteTrackInput) (uui
 	source := strings.ToLower(dbtext.Clean(in.Source))
 	externalID := dbtext.Clean(strings.TrimSpace(in.ExternalID))
 	if source == "" || source == "local" || externalID == "" {
-		return uuid.Nil, errors.New("remote source and external id are required")
+		return uuid.Nil, fmt.Errorf("%w: remote source and external id are required", ErrInvalidInput)
 	}
 	title := dbtext.Clean(in.Title)
 	if title == "" {
@@ -283,7 +288,16 @@ func InsertTrack(ctx context.Context, q pgx.Tx, t TrackInsert) (id uuid.UUID, in
 	// 2a. Admin uploading: promote any personal row to global, else insert new global.
 	if t.OwnerID == nil {
 		var personalID uuid.UUID
-		err = q.QueryRow(ctx, `SELECT id FROM tracks WHERE audio_sha256 = $1 AND deleted_at IS NULL LIMIT 1`, t.AudioSHA256).Scan(&personalID)
+		// ORDER BY created_at: without it the promoted row was whichever the
+		// planner happened to return. The partial indexes in
+		// 0013_track_sha_ignore_deleted permit several live personal rows for the
+		// same audio, and the ones left behind stay personal — so those users see
+		// the track twice, forever.
+		err = q.QueryRow(ctx, `
+			SELECT id FROM tracks
+			WHERE audio_sha256 = $1 AND deleted_at IS NULL
+			ORDER BY created_at ASC, id ASC
+			LIMIT 1`, t.AudioSHA256).Scan(&personalID)
 		switch {
 		case err == nil:
 			if _, err := q.Exec(ctx, `UPDATE tracks SET owner_id = NULL, updated_at = NOW() WHERE id = $1`, personalID); err != nil {
@@ -391,48 +405,83 @@ func RecordAlias(ctx context.Context, q pgx.Tx, trackID uuid.UUID, a AliasInput)
 // ReplaceTrackArtists wipes and re-inserts track_artists for a track. Used by
 // the edit endpoint when an admin rewrites the artist list.
 func ReplaceTrackArtists(ctx context.Context, q pgx.Tx, trackID uuid.UUID, names []string) error {
+	if len(names) > MaxTrackArtists {
+		return fmt.Errorf("%w: at most %d artists per track", ErrInvalidInput, MaxTrackArtists)
+	}
 	if _, err := q.Exec(ctx, `DELETE FROM track_artists WHERE track_id = $1`, trackID); err != nil {
 		return err
 	}
+	// One statement each for the artist upsert and the link insert, rather than
+	// two per name: `names` comes straight from user input, so a 200-name array
+	// used to issue 400 sequential statements inside the caller's transaction.
+	kept := make([]string, 0, len(names))
+	positions := make([]int32, 0, len(names))
+	roles := make([]string, 0, len(names))
 	for i, name := range names {
-		n := name
-		if n == "" {
+		if name == "" {
 			continue
 		}
-		aid, err := UpsertArtist(ctx, q, n)
-		if err != nil {
-			return err
-		}
-		role := "featured"
+		kept = append(kept, dbtext.Clean(name))
+		positions = append(positions, int32(i))
 		if i == 0 {
-			role = "primary"
-		}
-		if _, err := q.Exec(ctx, `
-			INSERT INTO track_artists (track_id, artist_id, role, position)
-			VALUES ($1, $2, $3, $4)
-			ON CONFLICT DO NOTHING`, trackID, aid, role, i); err != nil {
-			return err
+			roles = append(roles, "primary")
+		} else {
+			roles = append(roles, "featured")
 		}
 	}
-	return nil
+	if len(kept) == 0 {
+		return nil
+	}
+	// DISTINCT ON is load-bearing: ON CONFLICT DO UPDATE errors out if one
+	// statement tries to touch the same row twice, and two spellings of the
+	// same artist ("Drake", "drake") collide on the LOWER(name) index.
+	if _, err := q.Exec(ctx, `
+		INSERT INTO artists (name)
+		SELECT DISTINCT ON (LOWER(n)) n
+		FROM unnest($1::text[]) AS n
+		ORDER BY LOWER(n), n
+		ON CONFLICT (LOWER(name)) DO UPDATE SET updated_at = NOW()`, kept); err != nil {
+		return err
+	}
+	// Likewise deduped on the (track, artist, role) primary key before it
+	// reaches the insert.
+	_, err := q.Exec(ctx, `
+		INSERT INTO track_artists (track_id, artist_id, role, position)
+		SELECT DISTINCT ON (a.id, t.role) $1, a.id, t.role, t.position
+		FROM unnest($2::text[], $3::text[], $4::int[]) AS t(name, role, position)
+		JOIN artists a ON LOWER(a.name) = LOWER(t.name)
+		ORDER BY a.id, t.role, t.position
+		ON CONFLICT DO NOTHING`, trackID, kept, roles, positions)
+	return err
 }
 
 // LinkTrackArtists inserts track_artists rows for all provided artists.
 func LinkTrackArtists(ctx context.Context, q pgx.Tx, trackID uuid.UUID, artistIDs []uuid.UUID, roles []string) error {
-	for i, aid := range artistIDs {
-		role := "primary"
-		if i < len(roles) && roles[i] != "" {
-			role = roles[i]
-		}
-		_, err := q.Exec(ctx, `
-			INSERT INTO track_artists (track_id, artist_id, role, position)
-			VALUES ($1, $2, $3, $4)
-			ON CONFLICT DO NOTHING`, trackID, aid, role, i)
-		if err != nil {
-			return err
-		}
+	if len(artistIDs) == 0 {
+		return nil
 	}
-	return nil
+	if len(artistIDs) > MaxTrackArtists {
+		return fmt.Errorf("%w: at most %d artists per track", ErrInvalidInput, MaxTrackArtists)
+	}
+	// One multi-row insert rather than one statement per artist.
+	roleCol := make([]string, len(artistIDs))
+	posCol := make([]int32, len(artistIDs))
+	for i := range artistIDs {
+		roleCol[i] = "primary"
+		if i < len(roles) && roles[i] != "" {
+			roleCol[i] = roles[i]
+		}
+		posCol[i] = int32(i)
+	}
+	// DISTINCT ON keeps a repeated (artist, role) pair from reaching the insert
+	// twice in one statement.
+	_, err := q.Exec(ctx, `
+		INSERT INTO track_artists (track_id, artist_id, role, position)
+		SELECT DISTINCT ON (t.artist_id, t.role) $1, t.artist_id, t.role, t.position
+		FROM unnest($2::uuid[], $3::text[], $4::int[]) AS t(artist_id, role, position)
+		ORDER BY t.artist_id, t.role, t.position
+		ON CONFLICT DO NOTHING`, trackID, artistIDs, roleCol, posCol)
+	return err
 }
 
 // TrackPatch holds the mutable fields of a track. Any nil pointer means "no
@@ -478,7 +527,7 @@ func (s *Store) UpdateTrack(ctx context.Context, id uuid.UUID, p TrackPatch) err
 	set.AddRaw("updated_at = NOW()")
 	if p.Title != nil {
 		if *p.Title == "" {
-			return errors.New("title cannot be empty")
+			return fmt.Errorf("%w: title cannot be empty", ErrInvalidInput)
 		}
 		set.Add("title = $%d", *p.Title)
 	}
@@ -509,7 +558,7 @@ func (s *Store) UpdateTrack(ctx context.Context, id uuid.UUID, p TrackPatch) err
 		var exists uuid.UUID
 		err := tx.QueryRow(ctx, `SELECT id FROM albums WHERE id = $1`, *p.AlbumID).Scan(&exists)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errors.New("album not found")
+			return fmt.Errorf("%w: album not found", ErrInvalidInput)
 		}
 		if err != nil {
 			return err
@@ -590,7 +639,7 @@ func (s *Store) UpdateAlbum(ctx context.Context, id uuid.UUID, p AlbumPatch) err
 
 	if p.Title != nil {
 		if *p.Title == "" {
-			return errors.New("title cannot be empty")
+			return fmt.Errorf("%w: title cannot be empty", ErrInvalidInput)
 		}
 		set.Add("title = $%d", *p.Title)
 	}
@@ -681,18 +730,24 @@ func (s *Store) ClearAlbumCover(ctx context.Context, albumID uuid.UUID) error {
 	return nil
 }
 
-func (s *Store) RecordIngestError(ctx context.Context, path, msg string) {
+// RecordIngestError stores why a file failed to ingest. These rows are the
+// *only* record of that failure, so a dropped write is invisible: the rescan
+// counters report N errored files while ListIngestErrors shows a clean
+// library. Returns the error so the caller can log it.
+func (s *Store) RecordIngestError(ctx context.Context, path, msg string) error {
 	path = dbtext.Clean(path)
 	msg = dbtext.Clean(msg)
-	_, _ = s.db.Exec(ctx, `INSERT INTO ingest_errors (file_path, error) VALUES ($1, $2)`, path, msg)
+	_, err := s.db.Exec(ctx, `INSERT INTO ingest_errors (file_path, error) VALUES ($1, $2)`, path, msg)
+	return err
 }
 
 // ClearIngestErrorsForPath removes any stale ingest_errors rows for a path —
 // used when the file is successfully (re-)ingested so transient failures don't
 // accumulate forever.
-func (s *Store) ClearIngestErrorsForPath(ctx context.Context, path string) {
+func (s *Store) ClearIngestErrorsForPath(ctx context.Context, path string) error {
 	path = dbtext.Clean(path)
-	_, _ = s.db.Exec(ctx, `DELETE FROM ingest_errors WHERE file_path = $1`, path)
+	_, err := s.db.Exec(ctx, `DELETE FROM ingest_errors WHERE file_path = $1`, path)
+	return err
 }
 
 // TrackHasFilePath reports whether a live local track row still points at path.
@@ -727,11 +782,17 @@ func (s *Store) SoftDeleteByPath(ctx context.Context, path string) error {
 // can be cleanly re-ingested if it ever reappears.
 func (s *Store) HardDeleteByPath(ctx context.Context, path string) error {
 	path = dbtext.Clean(path)
-	if _, err := s.db.Exec(ctx, `DELETE FROM ingest_errors WHERE file_path = $1`, path); err != nil {
+	// One transaction: run as two independent pool statements, a cancelled
+	// rescan or a lock wait between them left the ingest-error row gone while
+	// the stale tracks row survived, and the only caller (pruneMissing) just
+	// logs a warning — so the inconsistency was permanent.
+	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM ingest_errors WHERE file_path = $1`, path); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `DELETE FROM tracks WHERE file_path = $1`, path)
 		return err
-	}
-	_, err := s.db.Exec(ctx, `DELETE FROM tracks WHERE file_path = $1`, path)
-	return err
+	})
 }
 
 // DeletePersonalTrack hard-deletes a track from a user's personal library.
@@ -825,8 +886,11 @@ func (s *Store) DistinctPathsUnder(ctx context.Context, prefixes []string) ([]st
 	if len(prefixes) == 0 {
 		return nil, nil
 	}
-	for i := range prefixes {
-		prefixes[i] = dbtext.Clean(prefixes[i])
+	// Clean into a copy: rewriting the caller's slice in place is a trap for
+	// anyone who reuses it after the call.
+	cleaned := make([]string, len(prefixes))
+	for i, pfx := range prefixes {
+		cleaned[i] = dbtext.Clean(pfx)
 	}
 	rows, err := s.db.Query(ctx, `
 		SELECT DISTINCT file_path FROM (
@@ -836,7 +900,7 @@ func (s *Store) DistinctPathsUnder(ctx context.Context, prefixes []string) ([]st
 		) p
 		WHERE EXISTS (
 			SELECT 1 FROM unnest($1::text[]) pfx WHERE starts_with(file_path, pfx)
-		)`, prefixes)
+		)`, cleaned)
 	if err != nil {
 		return nil, err
 	}
@@ -865,23 +929,6 @@ func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string) (i
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
-}
-
-func (s *Store) KnownPaths(ctx context.Context) (map[string]struct{}, error) {
-	rows, err := s.db.Query(ctx, `SELECT file_path FROM tracks WHERE deleted_at IS NULL AND source = 'local'`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]struct{}{}
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			return nil, err
-		}
-		out[p] = struct{}{}
-	}
-	return out, rows.Err()
 }
 
 type IngestError struct {

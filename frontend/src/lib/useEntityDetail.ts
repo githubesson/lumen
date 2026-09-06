@@ -29,6 +29,8 @@ export function useEntityDetail<T>(
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
+    // A changed entity id invalidates the previous entity/track snapshot.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setEntity(null);
     setTracks(null);
     setError(null);

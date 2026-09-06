@@ -2,7 +2,7 @@ import { useRef } from "react";
 import { createPortal } from "react-dom";
 import { MusicalNoteIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { trackCoverUrl } from "../api";
-import { usePlayer } from "../context/Player";
+import { usePlayer, useRemotePlayback } from "../context/Player";
 import { useDismiss } from "../lib/useDismiss";
 import CoverArt from "./CoverArt";
 
@@ -40,6 +40,8 @@ export default function QueuePopover({
   onClose,
 }: Props) {
   const { queue, index, jumpTo, current } = usePlayer();
+  const { targetDevice } = useRemotePlayback();
+  const remoteQueue = targetDevice?.queue;
   const ref = useRef<HTMLDivElement>(null);
 
   useDismiss(ref, {
@@ -81,7 +83,7 @@ export default function QueuePopover({
       ? `${externalIndex + 1} / ${externalTracks.length}`
       : null
     : current
-      ? `${index + 1} / ${queue.length}`
+      ? `${(remoteQueue?.offset ?? 0) + index + 1} / ${remoteQueue?.total ?? queue.length}`
       : null;
 
   return createPortal(

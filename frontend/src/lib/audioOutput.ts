@@ -37,7 +37,7 @@ interface AudioOutputCtx {
 const AudioOutputContext = createContext<AudioOutputCtx | null>(null);
 
 interface ProviderProps {
-  audioRef: RefObject<HTMLAudioElement>;
+  audioRefs: readonly RefObject<HTMLAudioElement>[];
   children: ReactNode;
 }
 
@@ -77,8 +77,8 @@ async function listOutputs(): Promise<OutputDevice[]> {
     }));
 }
 
-export function AudioOutputProvider({ audioRef, children }: ProviderProps) {
-  const supported = useMemo(isSupported, []);
+export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
+  const supported = useMemo(() => isSupported(), []);
   const [devices, setDevices] = useState<OutputDevice[]>([]);
   const [deviceId, setDeviceId] = useState<string>(() => {
     if (typeof window === "undefined") return "";
@@ -88,14 +88,21 @@ export function AudioOutputProvider({ audioRef, children }: ProviderProps) {
   // Track the desired sinkId separately so we can re-apply after the audio
   // element mounts late (the ref is null on first render).
   const desiredRef = useRef<string>(deviceId);
-  desiredRef.current = deviceId;
+  // Keep the ref current from an effect: writing refs during render is illegal
+  // under concurrent React (a render that is thrown away still mutates it) and
+  // is rejected by the React Compiler.
+  useEffect(() => {
+    desiredRef.current = deviceId;
+  }, [deviceId]);
 
   const applySink = useCallback(
     async (id: string) => {
-      const el = audioRef.current as AudioElementWithSink | null;
-      if (!el || !el.setSinkId) return;
+      const elements = audioRefs
+        .map((ref) => ref.current as AudioElementWithSink | null)
+        .filter((el): el is AudioElementWithSink => !!el?.setSinkId);
+      if (!elements.length) return;
       try {
-        await el.setSinkId(id);
+        await Promise.all(elements.map((el) => el.setSinkId!(id)));
         setError(null);
       } catch (e) {
         const msg = (e as Error).message || String(e);
@@ -110,11 +117,13 @@ export function AudioOutputProvider({ audioRef, children }: ProviderProps) {
           } catch {
             // ignore
           }
-          await el.setSinkId("").catch(() => {});
+          await Promise.all(
+            elements.map((el) => el.setSinkId!("").catch(() => {})),
+          );
         }
       }
     },
-    [audioRef],
+    [audioRefs],
   );
 
   const refresh = useCallback(async () => {
@@ -138,7 +147,7 @@ export function AudioOutputProvider({ audioRef, children }: ProviderProps) {
       } catch {
         // ignore
       }
-      if (isElectron) {
+      if (isElectron()) {
         void saveTweaks({ audioSinkId: id });
       }
       await applySink(id);
@@ -149,7 +158,7 @@ export function AudioOutputProvider({ audioRef, children }: ProviderProps) {
   // In Electron localStorage is tied to the random proxy port, so the
   // canonical sink id lives in config.json. Load it once at startup.
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron()) return;
     let cancelled = false;
     getTweaks()
       .then(({ audioSinkId }) => {
@@ -168,10 +177,12 @@ export function AudioOutputProvider({ audioRef, children }: ProviderProps) {
   useEffect(() => {
     if (!supported) return;
     let cancelled = false;
+    let frame: number | null = null;
     const tryApply = () => {
+      frame = null;
       if (cancelled) return;
-      if (!audioRef.current) {
-        requestAnimationFrame(tryApply);
+      if (audioRefs.some((ref) => !ref.current)) {
+        frame = requestAnimationFrame(tryApply);
         return;
       }
       const id = desiredRef.current || DEFAULT_DEVICE_ID;
@@ -180,12 +191,15 @@ export function AudioOutputProvider({ audioRef, children }: ProviderProps) {
     tryApply();
     return () => {
       cancelled = true;
+      if (frame !== null) cancelAnimationFrame(frame);
     };
-  }, [supported, applySink, audioRef]);
+  }, [supported, applySink, audioRefs]);
 
   // Keep the device list fresh when hardware is plugged/unplugged.
   useEffect(() => {
     if (!supported) return;
+    // Device enumeration synchronizes React with the browser media-device API.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
     const onChange = () => {
       void refresh();
@@ -201,6 +215,9 @@ export function AudioOutputProvider({ audioRef, children }: ProviderProps) {
     [supported, devices, deviceId, error, selectDevice, refresh],
   );
 
+  // `value` closes over callbacks that read `audioRefs[n].current`, but only
+  // from event handlers — no ref is dereferenced during this render.
+  // eslint-disable-next-line react-hooks/refs
   return createElement(AudioOutputContext.Provider, { value }, children);
 }
 

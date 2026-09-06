@@ -9,8 +9,11 @@ import {
 } from "react-router-dom";
 import {
   AdjustmentsHorizontalIcon,
+  ArrowDownTrayIcon,
   ArrowLeftEndOnRectangleIcon,
   ArrowUpTrayIcon,
+  Bars3Icon,
+  BookOpenIcon,
   ChevronDoubleLeftIcon,
   ChevronDoubleRightIcon,
   ChevronRightIcon,
@@ -27,15 +30,19 @@ import {
   ServerStackIcon,
   SparklesIcon,
   SunIcon,
+  XMarkIcon,
 } from "@heroicons/react/16/solid";
 import { api, type Playlist } from "../api";
 import { useAuth } from "../context/Auth";
 import { useTheme } from "../context/Theme";
 import { useKey } from "../lib/keybindings";
 import { useDiscordPresence } from "../lib/discordPresence";
+import { startDesktopDownload } from "../lib/downloads";
 import { swatchFor } from "../lib/swatch";
 import { electron, getDesktopConfig, isElectron } from "../lib/platform";
+import { useLyricsPanel } from "../context/LyricsPanel";
 import MiniPlayer from "./MiniPlayer";
+import LyricsSidebar from "./LyricsSidebar";
 import UploadDialog from "./UploadDialog";
 import TweaksPanel from "./TweaksPanel";
 import WindowControls from "./WindowControls";
@@ -48,7 +55,9 @@ type NavItemCfg = {
   icon: typeof QueueListIcon;
 };
 
-const BROWSE: NavItemCfg[] = [{ label: "Tracks", to: "/library", icon: QueueListIcon }];
+const BROWSE: NavItemCfg[] = [
+  { label: "Tracks", to: "/library", icon: QueueListIcon },
+];
 
 const LIBRARY: NavItemCfg[] = [
   { label: "Favorites", to: "/favorites", icon: HeartIcon },
@@ -59,6 +68,7 @@ const LIBRARY: NavItemCfg[] = [
 export default function Shell() {
   const { me, logout } = useAuth();
   const { theme, toggle: toggleTheme, layout, setLayout } = useTheme();
+  const { open: lyricsOpen, toggle: toggleLyrics } = useLyricsPanel();
   const navigate = useNavigate();
   const location = useLocation();
   const params = useParams();
@@ -68,12 +78,16 @@ export default function Shell() {
   const [tweaksOpen, setTweaksOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [fh6RadioEnabled, setFh6RadioEnabled] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useDiscordPresence();
 
   useEffect(() => {
     if (!me || me.must_reset_password) return;
-    void api.listPlaylists().then((p) => setPlaylists(p ?? [])).catch(() => {});
+    void api
+      .listPlaylists()
+      .then((p) => setPlaylists(p ?? []))
+      .catch(() => {});
     void api
       .listPendingInvites()
       .then((p) => setPendingCount(p?.length ?? 0))
@@ -81,14 +95,19 @@ export default function Shell() {
     // must_reset_password is a dep: ForceReset lives inside this persistent
     // Shell, so the false→true→false flip with the same user id must re-run
     // this, otherwise the sidebar stays empty after a forced reset.
-  }, [me?.id, me?.must_reset_password]);
+  }, [me?.id, me?.must_reset_password, me]);
 
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron()) return;
     void getDesktopConfig()
       ?.then((cfg) => setFh6RadioEnabled(cfg.fh6RadioEnabled === true))
       .catch(() => setFh6RadioEnabled(false));
   }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMobileNavOpen(false);
+  }, [location.pathname]);
 
   const onLogout = async () => {
     await logout();
@@ -111,13 +130,28 @@ export default function Shell() {
   const toggleSidebar = () =>
     setLayout(layout === "compact" ? lastExpandedRef.current : "compact");
 
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMobileNavOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [mobileNavOpen]);
+
   useKey(
     "mod+k",
     (e) => {
       e.preventDefault();
       setPaletteOpen((o) => !o);
     },
-    { id: "palette:toggle", label: "Toggle command palette", group: "Navigation", allowInInput: true },
+    {
+      id: "palette:toggle",
+      allowInInput: true,
+    },
   );
   useKey(
     "ctrl+b",
@@ -125,15 +159,19 @@ export default function Shell() {
       e.preventDefault();
       toggleSidebar();
     },
-    { id: "sidebar:toggle", label: "Toggle sidebar", group: "Navigation" },
+    { id: "sidebar:toggle" },
   );
 
   const initial = (me?.username ?? "?").slice(0, 2).toUpperCase();
 
   return (
-    <div className="app">
+    <div className="app" data-lyrics-open={lyricsOpen ? "true" : undefined}>
       {/* Sidebar */}
-      <aside className="sidebar" aria-label="Sidebar">
+      <aside
+        id="app-sidebar"
+        className={`sidebar${mobileNavOpen ? " mobile-open" : ""}`}
+        aria-label="Sidebar"
+      >
         <Link to="/" className="brand">
           <div className="brand-mark">L</div>
           <div className="brand-text">
@@ -143,7 +181,12 @@ export default function Shell() {
 
         <div className="nav">
           <div className="nav-section-title">Browse</div>
-          <NavItem to="/" icon={<MusicalNoteIcon className="nav-icon" />} label="Home" end />
+          <NavItem
+            to="/"
+            icon={<MusicalNoteIcon className="nav-icon" />}
+            label="Home"
+            end
+          />
           {BROWSE.map((i) => (
             <NavItem
               key={i.to}
@@ -208,7 +251,11 @@ export default function Shell() {
           {playlists.length === 0 && (
             <div
               className="mono"
-              style={{ padding: "4px 10px", fontSize: 10, color: "var(--fg-subtle)" }}
+              style={{
+                padding: "4px 10px",
+                fontSize: 10,
+                color: "var(--fg-subtle)",
+              }}
             >
               None yet
             </div>
@@ -231,12 +278,79 @@ export default function Shell() {
           ))}
         </div>
 
+        <div
+          className="mobile-sidebar-actions"
+          aria-label="Application actions"
+        >
+          <button
+            className="nav-item mobile-sidebar-action"
+            type="button"
+            onClick={() => {
+              setMobileNavOpen(false);
+              setUploadOpen(true);
+            }}
+          >
+            <ArrowUpTrayIcon className="nav-icon" aria-hidden="true" />
+            <span className="nav-label">Add music</span>
+          </button>
+          <button
+            className="nav-item mobile-sidebar-action"
+            type="button"
+            onClick={toggleTheme}
+          >
+            {theme === "dark" ? (
+              <SunIcon className="nav-icon" aria-hidden="true" />
+            ) : (
+              <MoonIcon className="nav-icon" aria-hidden="true" />
+            )}
+            <span className="nav-label">
+              {theme === "dark" ? "Light mode" : "Dark mode"}
+            </span>
+          </button>
+          <button
+            className="nav-item mobile-sidebar-action"
+            type="button"
+            onClick={() => {
+              setMobileNavOpen(false);
+              setTweaksOpen(true);
+            }}
+          >
+            <AdjustmentsHorizontalIcon
+              className="nav-icon"
+              aria-hidden="true"
+            />
+            <span className="nav-label">Tweaks</span>
+          </button>
+          {isElectron() && (
+            <button
+              className="nav-item mobile-sidebar-action"
+              type="button"
+              onClick={() => void electron()?.openSettings()}
+            >
+              <ServerStackIcon className="nav-icon" aria-hidden="true" />
+              <span className="nav-label">Server settings</span>
+            </button>
+          )}
+        </div>
+
         <div className="sidebar-footer">
           <div className="avatar">{initial}</div>
           <div className="user-text" style={{ flex: 1, minWidth: 0 }}>
             <div className="user-name">{me?.username}</div>
-            <div className="user-plan">{me?.role === "admin" ? "admin" : "local library"}</div>
+            <div className="user-plan">
+              {me?.role === "admin" ? "admin" : "local library"}
+            </div>
           </div>
+          {!isElectron() && (
+            <button
+              className="iconbtn"
+              title="Download desktop app"
+              aria-label="Download desktop app"
+              onClick={() => void startDesktopDownload()}
+            >
+              <ArrowDownTrayIcon className="size-4" />
+            </button>
+          )}
           <button
             className="iconbtn"
             title="Sign out"
@@ -247,15 +361,40 @@ export default function Shell() {
           </button>
         </div>
       </aside>
+      <button
+        type="button"
+        className={`mobile-nav-backdrop${mobileNavOpen ? " visible" : ""}`}
+        aria-label="Close navigation"
+        aria-hidden={!mobileNavOpen}
+        tabIndex={mobileNavOpen ? 0 : -1}
+        onClick={() => setMobileNavOpen(false)}
+      />
 
       {/* Main */}
       <main className="main">
         <div className="topbar">
           <button
             type="button"
-            className="iconbtn"
+            className="iconbtn sidebar-toggle-mobile"
+            onClick={() => setMobileNavOpen((open) => !open)}
+            aria-controls="app-sidebar"
+            aria-expanded={mobileNavOpen}
+            aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
+            title={mobileNavOpen ? "Close navigation" : "Open navigation"}
+          >
+            {mobileNavOpen ? (
+              <XMarkIcon className="size-4" aria-hidden="true" />
+            ) : (
+              <Bars3Icon className="size-4" aria-hidden="true" />
+            )}
+          </button>
+          <button
+            type="button"
+            className="iconbtn sidebar-toggle-desktop"
             onClick={toggleSidebar}
-            aria-label={layout === "compact" ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={
+              layout === "compact" ? "Expand sidebar" : "Collapse sidebar"
+            }
             title={layout === "compact" ? "Expand sidebar" : "Collapse sidebar"}
           >
             {layout === "compact" ? (
@@ -266,8 +405,10 @@ export default function Shell() {
           </button>
           <div className="crumbs">
             {crumbs.map((c, i) => (
-              <span key={`${c.label}-${i}`} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                {i > 0 && <ChevronRightIcon className="size-3" aria-hidden="true" />}
+              <span key={`${c.label}-${i}`} className="crumb">
+                {i > 0 && (
+                  <ChevronRightIcon className="size-3" aria-hidden="true" />
+                )}
                 {c.current ? (
                   <b>{c.label}</b>
                 ) : c.to ? (
@@ -283,7 +424,7 @@ export default function Shell() {
 
           <button
             type="button"
-            className="search"
+            className="search topbar-search"
             onClick={() => setPaletteOpen(true)}
             aria-label="Open command palette"
             style={{
@@ -293,14 +434,25 @@ export default function Shell() {
             }}
           >
             <MagnifyingGlassIcon className="size-3.5" aria-hidden="true" />
-            <span style={{ flex: 1, color: "var(--fg-subtle)", fontSize: 12.5 }}>
+            <span className="topbar-search-label">
               Search library, albums, tracks…
             </span>
             <kbd>⌘K</kbd>
           </button>
 
           <button
-            className="iconbtn"
+            className={"iconbtn" + (lyricsOpen ? " active" : "")}
+            type="button"
+            title="Lyrics"
+            aria-label="Toggle lyrics panel"
+            aria-pressed={lyricsOpen}
+            onClick={toggleLyrics}
+          >
+            <BookOpenIcon className="size-4" aria-hidden="true" />
+          </button>
+
+          <button
+            className="iconbtn topbar-secondary"
             type="button"
             title="Add music"
             aria-label="Add music"
@@ -310,9 +462,11 @@ export default function Shell() {
           </button>
 
           <button
-            className="iconbtn"
+            className="iconbtn topbar-secondary"
             type="button"
-            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            title={
+              theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+            }
             aria-label="Toggle theme"
             onClick={toggleTheme}
           >
@@ -324,7 +478,9 @@ export default function Shell() {
           </button>
 
           <button
-            className={"iconbtn" + (tweaksOpen ? " active" : "")}
+            className={
+              "iconbtn topbar-secondary" + (tweaksOpen ? " active" : "")
+            }
             type="button"
             title="Tweaks"
             aria-label="Tweaks"
@@ -334,13 +490,13 @@ export default function Shell() {
             <AdjustmentsHorizontalIcon className="size-4" aria-hidden="true" />
           </button>
 
-          {isElectron && (
+          {isElectron() && (
             <button
-              className="iconbtn"
+              className="iconbtn topbar-secondary"
               type="button"
               title="Change server URL"
               aria-label="Change server URL"
-              onClick={() => void electron?.openSettings()}
+              onClick={() => void electron()?.openSettings()}
             >
               <ServerStackIcon className="size-4" aria-hidden="true" />
             </button>
@@ -354,6 +510,8 @@ export default function Shell() {
         </div>
       </main>
 
+      <LyricsSidebar />
+
       {/* Player */}
       <MiniPlayer />
 
@@ -365,22 +523,24 @@ export default function Shell() {
         onClose={() => setUploadOpen(false)}
       />
 
-      <Suspense fallback={null}>
-        <CommandPalette
-          open={paletteOpen}
-          onOpenChange={setPaletteOpen}
-          playlists={playlists}
-          pendingInvites={pendingCount}
-          onOpenTweaks={() => {
-            setPaletteOpen(false);
-            setTweaksOpen(true);
-          }}
-          onOpenUpload={() => {
-            setPaletteOpen(false);
-            setUploadOpen(true);
-          }}
-        />
-      </Suspense>
+      {paletteOpen && (
+        <Suspense fallback={null}>
+          <CommandPalette
+            open
+            onOpenChange={setPaletteOpen}
+            playlists={playlists}
+            pendingInvites={pendingCount}
+            onOpenTweaks={() => {
+              setPaletteOpen(false);
+              setTweaksOpen(true);
+            }}
+            onOpenUpload={() => {
+              setPaletteOpen(false);
+              setUploadOpen(true);
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
@@ -421,13 +581,22 @@ function buildCrumbs(
     return [{ label: "Library", current: true }];
   }
   if (pathname.startsWith("/favorites")) {
-    return [{ label: "Library", to: "/library" }, { label: "Favorites", current: true }];
+    return [
+      { label: "Library", to: "/library" },
+      { label: "Favorites", current: true },
+    ];
   }
   if (pathname.startsWith("/recent")) {
-    return [{ label: "Library", to: "/library" }, { label: "Recent", current: true }];
+    return [
+      { label: "Library", to: "/library" },
+      { label: "Recent", current: true },
+    ];
   }
   if (pathname.startsWith("/replay")) {
-    return [{ label: "Library", to: "/library" }, { label: "Replay", current: true }];
+    return [
+      { label: "Library", to: "/library" },
+      { label: "Replay", current: true },
+    ];
   }
   if (pathname.startsWith("/fh6-radio")) {
     return [{ label: "Lumen Radio", current: true }];

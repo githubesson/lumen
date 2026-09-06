@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/githubesson/lumen/internal/models"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -55,30 +56,63 @@ func (s *SessionStore) Create(ctx context.Context, userID uuid.UUID, r *http.Req
 	return plain, SessionInfo{ID: id, UserID: userID, ExpiresAt: expires}, nil
 }
 
-func (s *SessionStore) Lookup(ctx context.Context, plain string) (SessionInfo, error) {
+// LookupUser authenticates a session and returns its user in one database
+// round-trip. The data-modifying CTE throttles last_seen_at updates while the
+// joined query avoids the separate user lookup previously performed by HTTP
+// middleware on every request.
+func (s *SessionStore) LookupUser(ctx context.Context, plain string) (SessionInfo, *models.User, error) {
 	hash := HashToken(plain)
-	var info SessionInfo
+	var (
+		info SessionInfo
+		u    models.User
+		role string
+	)
 	err := s.db.QueryRow(ctx, `
-		SELECT id, user_id, expires_at FROM sessions
-		WHERE token_hash = $1 AND expires_at > NOW()`, hash,
-	).Scan(&info.ID, &info.UserID, &info.ExpiresAt)
+		WITH valid_session AS MATERIALIZED (
+			SELECT id, user_id, expires_at
+			FROM sessions
+			WHERE token_hash = $1 AND expires_at > NOW()
+		), touch AS (
+			UPDATE sessions
+			SET last_seen_at = NOW()
+			WHERE id = (SELECT id FROM valid_session)
+			  AND last_seen_at < NOW() - INTERVAL '5 minutes'
+		)
+		SELECT
+			s.id, s.user_id, s.expires_at,
+			u.id, u.username, u.password_hash, u.role, u.disabled,
+			u.must_reset_password, u.invite_id, u.last_login_at,
+			u.created_at, u.updated_at
+		FROM valid_session s
+		JOIN users u ON u.id = s.user_id`, hash,
+	).Scan(
+		&info.ID, &info.UserID, &info.ExpiresAt,
+		&u.ID, &u.Username, &u.PasswordHash, &role, &u.Disabled,
+		&u.MustResetPassword, &u.InviteID, &u.LastLoginAt,
+		&u.CreatedAt, &u.UpdatedAt,
+	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return SessionInfo{}, ErrSessionNotFound
+			return SessionInfo{}, nil, ErrSessionNotFound
 		}
-		return SessionInfo{}, err
+		return SessionInfo{}, nil, err
 	}
-	_, _ = s.db.Exec(ctx, `UPDATE sessions SET last_seen_at = NOW() WHERE id = $1`, info.ID)
-	return info, nil
+	u.Role = models.Role(role)
+	return info, &u, nil
+}
+
+// DeleteExpired removes session rows that can never authenticate again.
+// Callers run this periodically from the application lifecycle context.
+func (s *SessionStore) DeleteExpired(ctx context.Context) (int64, error) {
+	tag, err := s.db.Exec(ctx, `DELETE FROM sessions WHERE expires_at <= NOW()`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (s *SessionStore) Revoke(ctx context.Context, plain string) error {
 	_, err := s.db.Exec(ctx, `DELETE FROM sessions WHERE token_hash = $1`, HashToken(plain))
-	return err
-}
-
-func (s *SessionStore) RevokeAllForUser(ctx context.Context, userID uuid.UUID) error {
-	_, err := s.db.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID)
 	return err
 }
 

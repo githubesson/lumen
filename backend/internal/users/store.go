@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/githubesson/lumen/internal/dbutil"
 	"github.com/githubesson/lumen/internal/models"
 )
 
@@ -54,13 +55,22 @@ func (s *Store) Create(ctx context.Context, p CreateParams) (*models.User, error
 	return scanUser(row)
 }
 
-func (s *Store) UpdatePassword(ctx context.Context, id uuid.UUID, newHash string, clearReset bool) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE users SET password_hash = $2,
-		                 must_reset_password = CASE WHEN $3 THEN FALSE ELSE must_reset_password END,
-		                 updated_at = NOW()
-		WHERE id = $1`, id, newHash, clearReset)
-	return err
+// ChangePassword atomically replaces the verified password and revokes sessions.
+// The old hash condition prevents a concurrent reset using a stale verification.
+func (s *Store) ChangePassword(ctx context.Context, id uuid.UUID, oldHash, newHash string) error {
+	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `UPDATE users SET password_hash = $3,
+    must_reset_password = FALSE, updated_at = NOW()
+    WHERE id = $1 AND password_hash = $2`, id, oldHash, newHash)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return ErrNotFound
+		}
+		_, err = tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, id)
+		return err
+	})
 }
 
 func (s *Store) TouchLogin(ctx context.Context, id uuid.UUID, now time.Time) error {

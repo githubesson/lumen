@@ -11,8 +11,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/githubesson/lumen/internal/downloadfile"
 	"github.com/githubesson/lumen/internal/httpx"
 )
+
+func TestClientForBaseURLOverride(t *testing.T) {
+	pin := Pin{APIBaseURL: "https://pinned.example/api"}
+
+	s := &Scanner{Client: NewClient("")}
+	if got := s.clientFor(pin).BaseURL; got != "https://pinned.example/api" {
+		t.Fatalf("without override: BaseURL = %q, want pin URL", got)
+	}
+
+	s = &Scanner{
+		Client:          NewClient(""),
+		BaseURLOverride: "https://override.example/api",
+	}
+	if got := s.clientFor(pin).BaseURL; got != "https://override.example/api" {
+		t.Fatalf("with override: BaseURL = %q, want override URL", got)
+	}
+	if got := s.clientFor(Pin{}).BaseURL; got != "https://override.example/api" {
+		t.Fatalf("with override, blank pin: BaseURL = %q, want override URL", got)
+	}
+}
 
 func TestDownloadOneSkipsUnsupportedExtensionBeforeWriting(t *testing.T) {
 	var requested bool
@@ -46,9 +67,9 @@ func TestDownloadOneSkipsUnsupportedExtensionBeforeWriting(t *testing.T) {
 	if filePath == "" || filepath.Ext(filePath) != ".txt" {
 		t.Fatalf("expected skipped txt target path, got %q", filePath)
 	}
-	var skipErr skipDownloadError
+	var skipErr downloadfile.SkipError
 	if !errors.As(err, &skipErr) {
-		t.Fatalf("expected skipDownloadError, got %T %v", err, err)
+		t.Fatalf("expected downloadfile.SkipError, got %T %v", err, err)
 	}
 	if skipErr.Error() != "unsupported file extension" {
 		t.Fatalf("unexpected skip reason: %q", skipErr.Error())
@@ -200,9 +221,9 @@ func TestDownloadOneRejectsLoopbackByDefaultBeforeRequest(t *testing.T) {
 	if resolved != srv.URL {
 		t.Fatalf("resolved URL mismatch: %q", resolved)
 	}
-	var skipErr skipDownloadError
+	var skipErr downloadfile.SkipError
 	if !errors.As(err, &skipErr) {
-		t.Fatalf("expected skipDownloadError, got %T %v", err, err)
+		t.Fatalf("expected downloadfile.SkipError, got %T %v", err, err)
 	}
 	if requested {
 		t.Fatal("loopback server was requested")

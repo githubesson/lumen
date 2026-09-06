@@ -9,7 +9,7 @@ import (
 // Share links are the URLs a user copies into Discord / chat apps. The
 // signature proves an authenticated user minted the link — without it, the
 // /share/track/{id}?t=N endpoint would let anyone cause preview MP4s to be
-// generated for arbitrary (track, start_sec) pairs.
+// generated for arbitrary track windows.
 //
 // Unlike cover signatures these *don't* carry an `exp` — share links are
 // meant to live indefinitely in chat history. The signature is only
@@ -33,12 +33,36 @@ func VerifyShareURL(key []byte, trackID string, startSec int, sig string) error 
 	return nil
 }
 
+// SignShareURLWithDuration returns the HMAC signature for a variable-length
+// share link. Duration is part of the signed payload so it cannot be changed
+// after an authenticated user mints the link.
+func SignShareURLWithDuration(key []byte, trackID string, startSec, durationSec int) string {
+	return signMessage(key, shareDurationSigPayload(trackID, startSec, durationSec))
+}
+
+// VerifyShareURLWithDuration verifies a variable-length, non-expiring share
+// URL. The legacy functions above remain unchanged so existing 30-second links
+// continue to work.
+func VerifyShareURLWithDuration(key []byte, trackID string, startSec, durationSec int, sig string) error {
+	if len(key) == 0 {
+		return errors.New("share sign key not configured")
+	}
+	if !verifyMessage(key, shareDurationSigPayload(trackID, startSec, durationSec), sig) {
+		return errors.New("signature mismatch")
+	}
+	return nil
+}
+
 func computeShareSig(key []byte, trackID string, startSec int) string {
 	return signMessage(key, shareSigPayload(trackID, startSec))
 }
 
 func shareSigPayload(trackID string, startSec int) string {
 	return fmt.Sprintf("share|track|%s|%d", trackID, startSec)
+}
+
+func shareDurationSigPayload(trackID string, startSec, durationSec int) string {
+	return fmt.Sprintf("share|track|%s|%d|%d", trackID, startSec, durationSec)
 }
 
 // PreviewSignValidity mirrors CoverSignValidity — Discord's media proxy
@@ -66,10 +90,33 @@ func VerifyPreviewURL(key []byte, trackID string, startSec int, sig string, expU
 	return nil
 }
 
+// SignPreviewURLWithDuration signs an expiring media URL and binds the selected
+// duration alongside the track and start time.
+func SignPreviewURLWithDuration(key []byte, trackID string, startSec, durationSec int, now time.Time) (exp int64, sig string) {
+	exp = expiryBucket(now, PreviewSignValidity)
+	sig = signMessage(key, previewDurationSigPayload(trackID, startSec, durationSec, exp))
+	return exp, sig
+}
+
+// VerifyPreviewURLWithDuration verifies an expiring variable-length media URL.
+func VerifyPreviewURLWithDuration(key []byte, trackID string, startSec, durationSec int, sig string, expUnix int64, now time.Time) error {
+	if err := checkExpiry(key, expUnix, now, "preview"); err != nil {
+		return err
+	}
+	if !verifyMessage(key, previewDurationSigPayload(trackID, startSec, durationSec, expUnix), sig) {
+		return errors.New("signature mismatch")
+	}
+	return nil
+}
+
 func computePreviewSig(key []byte, trackID string, startSec int, exp int64) string {
 	return signMessage(key, previewSigPayload(trackID, startSec, exp))
 }
 
 func previewSigPayload(trackID string, startSec int, exp int64) string {
 	return fmt.Sprintf("preview|track|%s|%d|%d", trackID, startSec, exp)
+}
+
+func previewDurationSigPayload(trackID string, startSec, durationSec int, exp int64) string {
+	return fmt.Sprintf("preview|track|%s|%d|%d|%d", trackID, startSec, durationSec, exp)
 }

@@ -28,10 +28,20 @@ function rgbToOklch(r: number, g: number, b: number): AccentOKLCH {
   return { l: L, c, h };
 }
 
+function isSameOriginUrl(src: string): boolean {
+  try {
+    return new URL(src, window.location.href).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
 async function extractAccent(src: string, signal: AbortSignal): Promise<AccentOKLCH | null> {
   return new Promise((resolve) => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!isSameOriginUrl(src)) {
+      img.crossOrigin = "anonymous";
+    }
     img.decoding = "async";
     img.loading = "eager";
 
@@ -102,8 +112,6 @@ function clampAccent(raw: AccentOKLCH, theme: "light" | "dark"): AccentOKLCH {
 export function useAccentFromCover(coverSrc: string | null | undefined) {
   const { theme, glow, setAccent, resetAccent } = useTheme();
   useEffect(() => {
-    // When the user disabled ambient glow, stay on the default accent instead
-    // of re-tinting everything from the album cover.
     if (!glow || !coverSrc) {
       resetAccent();
       return;

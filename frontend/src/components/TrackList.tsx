@@ -1,25 +1,32 @@
 import {
   memo,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-import { HeartIcon, PencilSquareIcon } from "@heroicons/react/16/solid";
+import { PencilSquareIcon } from "@heroicons/react/16/solid";
 import { trackCoverUrl, type TrackListItem } from "../api";
 import { displayText, fmtDurationMs } from "../lib/format";
+import { isLocalTrack } from "../lib/track";
 import CoverArt from "./CoverArt";
-import { EditTrackDialog, MoveToAlbumDialog } from "./EditDialog";
+import { EditTrackDialog } from "./edit/EditTrackDialog";
+import { MoveToAlbumDialog } from "./edit/MoveToAlbumDialog";
 import Tooltip from "./Tooltip";
 import { useTrackContextMenu } from "./TrackContextMenu";
 import { useAuth } from "../context/Auth";
 import { useFavorites } from "../context/Favorites";
 import { usePlayer } from "../context/Player";
-import { usePopKey } from "../lib/useTransitionMount";
 import { useTrackSelection } from "../lib/useTrackSelection";
 import { useWindowedSlice } from "../lib/useWindowedSlice";
-import TrackCheckbox from "./TrackCheckbox";
+import {
+  FavoriteButton,
+  SelectAllHeaderCell,
+  TrackIndexCell,
+  TrackSelectCell,
+} from "./TrackRowCells";
 import TrackSelectionToolbar from "./TrackSelectionToolbar";
 
 interface Props {
@@ -37,8 +44,8 @@ interface Props {
   selectionControlsHostId?: string;
 }
 
-/** @deprecated import `fmtDurationMs` from `../lib/format` instead. */
-export const fmtDuration = fmtDurationMs;
+const trackId = (track: TrackListItem) => track.id;
+const exportTracks = (tracks: TrackListItem[]) => tracks;
 
 export default function TrackList({
   tracks,
@@ -72,8 +79,8 @@ export default function TrackList({
     exportSelected,
   } = useTrackSelection<TrackListItem>({
     items: tracks,
-    getId: (t) => t.id,
-    toExportItems: (items) => items,
+    getId: trackId,
+    toExportItems: exportTracks,
   });
 
   const selectedLocalTracks = useMemo(
@@ -85,7 +92,12 @@ export default function TrackList({
   // latest list without invalidating React.memo on every pagination page.
   const queue = queueSource ?? tracks;
   const queueRef = useRef(queue);
-  queueRef.current = queue;
+  // Refreshed from an effect rather than during render: a discarded render must
+  // not mutate a ref. Every reader is an event handler, so a tick of lag is
+  // harmless.
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
 
   // Stable action callbacks: each takes the track (or id) at event time,
   // instead of closing over a new function per row on every parent render.
@@ -166,76 +178,80 @@ export default function TrackList({
         }}
         hostId={selectionControlsHostId}
       />
-      <table
-        className={`table${selectionMode ? " table-selecting" : ""}`}
-        ref={tableRef}
-      >
-        <thead>
-          <tr>
-            {selectionMode && (
-              <th className="col-select">
-                <TrackCheckbox
-                  checked={allSelected}
-                  indeterminate={someSelected && !allSelected}
-                  ariaLabel={allSelected ? "Deselect all tracks" : "Select all tracks"}
-                  onChange={selectAll}
+      <div className="table-scroll" data-horizontal-scroll="">
+        <div className="table-scroll-inner">
+          <table
+            className={`table${selectionMode ? " table-selecting" : ""}`}
+            ref={tableRef}
+          >
+            <thead>
+              <tr>
+                {selectionMode && (
+                  <SelectAllHeaderCell
+                    allSelected={allSelected}
+                    someSelected={someSelected}
+                    onToggle={selectAll}
+                  />
+                )}
+                <th className="col-idx">#</th>
+                {showCover && <th className="col-art" aria-label="Cover" />}
+                <th>Title</th>
+                {showAlbum && <th>Album</th>}
+                {extraColumn && (
+                  <th className={extraColumn.className ?? "col-extra"}>
+                    {extraColumn.header}
+                  </th>
+                )}
+                <th className="col-dur">Time</th>
+                <th className="col-acts" aria-label="Actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {topSpacerPx > 0 && (
+                <tr aria-hidden="true" className="vt-spacer">
+                  <td colSpan={columnCount} style={{ height: topSpacerPx }} />
+                </tr>
+              )}
+              {visible.map((t, i) => (
+                <TrackRow
+                  key={t.id}
+                  track={t}
+                  index={start + i}
+                  showCover={showCover}
+                  showAlbum={showAlbum}
+                  extra={
+                    extraColumn
+                      ? {
+                          content: extraColumn.render(t),
+                          className: extraColumn.className,
+                        }
+                      : undefined
+                  }
+                  isNow={current?.id === t.id}
+                  isPlaying={isPlaying && current?.id === t.id}
+                  fav={isFavorite(t.id)}
+                  canEdit={isAdmin && isLocalTrack(t)}
+                  selectionMode={selectionMode}
+                  selected={selectedIds.has(t.id)}
+                  onPlay={handlePlay}
+                  onToggleSelect={handleToggleSelection}
+                  onToggleFav={handleToggleFav}
+                  onEdit={isAdmin ? handleEdit : undefined}
+                  onContextMenu={handleContextMenu}
                 />
-              </th>
-            )}
-            <th className="col-idx">#</th>
-            {showCover && <th className="col-art" aria-label="Cover" />}
-            <th>Title</th>
-            {showAlbum && <th>Album</th>}
-            {extraColumn && (
-              <th className={extraColumn.className ?? "col-extra"}>
-                {extraColumn.header}
-              </th>
-            )}
-            <th className="col-dur">Time</th>
-            <th className="col-acts" aria-label="Actions" />
-          </tr>
-        </thead>
-        <tbody>
-          {topSpacerPx > 0 && (
-            <tr aria-hidden="true" className="vt-spacer">
-              <td colSpan={columnCount} style={{ height: topSpacerPx }} />
-            </tr>
-          )}
-          {visible.map((t, i) => (
-            <TrackRow
-              key={t.id}
-              track={t}
-              index={start + i}
-              showCover={showCover}
-              showAlbum={showAlbum}
-              extra={
-                extraColumn
-                  ? {
-                      content: extraColumn.render(t),
-                      className: extraColumn.className,
-                    }
-                  : undefined
-              }
-              isNow={current?.id === t.id}
-              isPlaying={isPlaying && current?.id === t.id}
-              fav={isFavorite(t.id)}
-              canEdit={isAdmin && isLocalTrack(t)}
-              selectionMode={selectionMode}
-              selected={selectedIds.has(t.id)}
-              onPlay={handlePlay}
-              onToggleSelect={handleToggleSelection}
-              onToggleFav={handleToggleFav}
-              onEdit={isAdmin ? handleEdit : undefined}
-              onContextMenu={handleContextMenu}
-            />
-          ))}
-          {bottomSpacerPx > 0 && (
-            <tr aria-hidden="true" className="vt-spacer">
-              <td colSpan={columnCount} style={{ height: bottomSpacerPx }} />
-            </tr>
-          )}
-        </tbody>
-      </table>
+              ))}
+              {bottomSpacerPx > 0 && (
+                <tr aria-hidden="true" className="vt-spacer">
+                  <td
+                    colSpan={columnCount}
+                    style={{ height: bottomSpacerPx }}
+                  />
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
       <EditTrackDialog
         open={editId !== null}
         trackId={editId}
@@ -295,7 +311,6 @@ export const TrackRow = memo(function TrackRow({
   onEdit,
   onContextMenu,
 }: TrackRowProps) {
-  const popKey = usePopKey(fav);
   const akaParts = useMemo(
     () => (track.aka ? track.aka.split(" • ") : null),
     [track.aka],
@@ -303,7 +318,10 @@ export const TrackRow = memo(function TrackRow({
 
   return (
     <tr
-      className={`${isNow ? "playing" : ""}${selected ? " selected" : ""}`.trim() || undefined}
+      className={
+        `${isNow ? "playing" : ""}${selected ? " selected" : ""}`.trim() ||
+        undefined
+      }
       aria-selected={selectionMode ? selected : undefined}
       onClick={(e) => {
         if (!selectionMode) return;
@@ -312,30 +330,22 @@ export const TrackRow = memo(function TrackRow({
       onDoubleClick={() => {
         if (!selectionMode) onPlay(track);
       }}
+      onKeyDown={(e) => {
+        if (e.target === e.currentTarget && e.key === "Enter" && !selectionMode) {
+          e.preventDefault();
+          onPlay(track);
+        }
+      }}
       onContextMenu={(e) => onContextMenu(track, e)}
     >
       {selectionMode && (
-        <td className="col-select">
-          <TrackCheckbox
-            checked={selected}
-            ariaLabel={`Select ${displayText(track.title, "track")}`}
-            onChange={(e) => onToggleSelect(track, index, e.shiftKey)}
-          />
-        </td>
+        <TrackSelectCell
+          selected={selected}
+          label={displayText(track.title, "track")}
+          onToggle={(range) => onToggleSelect(track, index, range)}
+        />
       )}
-      <td className="col-idx">
-        <span className="play-cell">
-          {isNow && isPlaying ? (
-            <span className="playing-bars idx-bars" aria-label="now playing">
-              <span />
-              <span />
-              <span />
-            </span>
-          ) : (
-            <span className="idx-num">{String(index + 1).padStart(2, "0")}</span>
-          )}
-        </span>
-      </td>
+      <TrackIndexCell index={index} isPlaying={isNow && isPlaying} onPlay={() => onPlay(track)} playLabel={`Play ${track.title}`} />
       {showCover && (
         <td className="col-art">
           <CoverArt
@@ -389,10 +399,15 @@ export const TrackRow = memo(function TrackRow({
             </Tooltip>
           )}
         </div>
-        <div className="track-sub">{displayText(track.artist, "Unknown artist")}</div>
+        <div className="track-sub">
+          {displayText(track.artist, "Unknown artist")}
+        </div>
       </td>
       {showAlbum && (
-        <td className="mono" style={{ color: "var(--fg-subtle)", fontSize: 11 }}>
+        <td
+          className="mono"
+          style={{ color: "var(--fg-subtle)", fontSize: 11 }}
+        >
           {track.album_title ? displayText(track.album_title) : "—"}
         </td>
       )}
@@ -414,27 +429,9 @@ export const TrackRow = memo(function TrackRow({
               <PencilSquareIcon className="size-3.5" />
             </button>
           )}
-          <button
-            type="button"
-            className={fav ? "active" : undefined}
-            aria-label={fav ? "Remove from favorites" : "Add to favorites"}
-            aria-pressed={fav}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleFav(track.id);
-            }}
-          >
-            <HeartIcon
-              key={popKey}
-              className={`size-3.5 ${popKey > 0 ? "motion-safe:animate-heart-pop" : ""}`}
-            />
-          </button>
+          <FavoriteButton fav={fav} onToggle={() => onToggleFav(track.id)} />
         </div>
       </td>
     </tr>
   );
 });
-
-function isLocalTrack(track: TrackListItem): boolean {
-  return !track.source || track.source === "local";
-}

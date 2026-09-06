@@ -248,6 +248,37 @@ func (s *Store) RemoteAlbumCoverForViewer(ctx context.Context, albumID, viewerID
 	return c, nil
 }
 
+// RemoteAlbumCover is the viewer-less variant of RemoteAlbumCoverForViewer,
+// for signed public endpoints (share pages) where the HMAC signature on the
+// URL is the authorization instead of a session.
+func (s *Store) RemoteAlbumCover(ctx context.Context, albumID uuid.UUID) (RemoteCover, error) {
+	var c RemoteCover
+	err := s.db.QueryRow(ctx, `
+		SELECT
+			t.source,
+			COALESCE(t.external_meta->>'cover_id', ''),
+			COALESCE(t.external_meta->>'cover_url', '')
+		FROM tracks t
+		WHERE t.album_id = $1
+		  AND t.deleted_at IS NULL
+		  AND t.source <> 'local'
+		  AND (
+		    COALESCE(t.external_meta->>'cover_id', '') <> ''
+		    OR COALESCE(t.external_meta->>'cover_url', '') <> ''
+		  )
+		ORDER BY
+			(COALESCE(t.external_meta->>'cover_id', '') <> '') DESC,
+			t.created_at DESC
+		LIMIT 1`, albumID).Scan(&c.Source, &c.CoverID, &c.CoverURL)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RemoteCover{}, ErrNotFound
+		}
+		return RemoteCover{}, err
+	}
+	return c, nil
+}
+
 type TrackListItem struct {
 	ID         uuid.UUID
 	Title      string
@@ -265,6 +296,7 @@ type TrackListItem struct {
 }
 
 type ListTracksParams struct {
+	Sort     string    // recent, title, artist, album, duration
 	ViewerID uuid.UUID // filter to global + this user's personal tracks
 	Limit    int
 	Offset   int
@@ -387,6 +419,17 @@ func (s *Store) GetAlbum(ctx context.Context, albumID, viewerID uuid.UUID) (*Alb
 	return &a, nil
 }
 
+// Safety backstops on the result sets that take no paging parameters. Set far
+// above any real value — a 5000-track album or a 200k-favorite user does not
+// exist — so they never truncate a genuine response, but a pathological or
+// corrupted row set cannot be materialized into memory unbounded.
+const (
+	maxUnpagedTrackRows  = 5000
+	maxFavoriteIDRows    = 200000
+	maxReplayBuckets     = 4000
+	maxReplayYearBuckets = 200
+)
+
 // ListAlbumTracks returns every track on an album that the viewer can see,
 // sorted by disc/track number.
 func (s *Store) ListAlbumTracks(ctx context.Context, albumID, viewerID uuid.UUID) ([]TrackListItem, error) {
@@ -407,8 +450,9 @@ func (s *Store) ListAlbumTracks(ctx context.Context, albumID, viewerID uuid.UUID
 		  AND t.library_visible = TRUE
 		  AND `+trackVisibleP2+`
 		GROUP BY t.id, a.title
-		ORDER BY COALESCE(t.disc_no, 0) ASC, COALESCE(t.track_no, 0) ASC, t.title ASC`,
-		albumID, viewerID)
+		ORDER BY COALESCE(t.disc_no, 0) ASC, COALESCE(t.track_no, 0) ASC, t.title ASC
+		LIMIT $3`,
+		albumID, viewerID, maxUnpagedTrackRows)
 	if err != nil {
 		return nil, err
 	}
@@ -601,8 +645,9 @@ func (s *Store) ListArtistTracks(ctx context.Context, artistID, viewerID uuid.UU
 		  AND `+trackVisibleP2+`
 		GROUP BY t.id, a.title
 		ORDER BY (a.title IS NULL), a.title ASC,
-		         COALESCE(t.disc_no, 0) ASC, COALESCE(t.track_no, 0) ASC, t.title ASC`,
-		artistID, viewerID)
+		         COALESCE(t.disc_no, 0) ASC, COALESCE(t.track_no, 0) ASC, t.title ASC
+		LIMIT $3`,
+		artistID, viewerID, maxUnpagedTrackRows)
 	if err != nil {
 		return nil, err
 	}
@@ -669,7 +714,7 @@ func (s *Store) ListTracks(ctx context.Context, p ListTracksParams) ([]TrackList
 			  AND t.library_visible = TRUE
 			  AND `+trackVisibleP1+trackSearchFilter+`
 			GROUP BY t.id, a.title
-			ORDER BY t.created_at DESC
+			ORDER BY `+trackOrder(p.Sort)+`
 			LIMIT $3 OFFSET $4`, p.ViewerID, p.Query, p.Limit, p.Offset)
 	} else {
 		rows, err = s.db.Query(ctx, `
@@ -689,7 +734,7 @@ func (s *Store) ListTracks(ctx context.Context, p ListTracksParams) ([]TrackList
 			  AND t.library_visible = TRUE
 			  AND `+trackVisibleP1+`
 			GROUP BY t.id, a.title
-			ORDER BY t.created_at DESC
+			ORDER BY `+trackOrder(p.Sort)+`
 			LIMIT $2 OFFSET $3`, p.ViewerID, p.Limit, p.Offset)
 	}
 	if err != nil {
@@ -766,7 +811,8 @@ func (s *Store) ListFavorites(ctx context.Context, userID uuid.UUID, limit, offs
 func (s *Store) FavoriteIDs(ctx context.Context, userID uuid.UUID) (map[uuid.UUID]struct{}, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT track_id FROM user_track_stats
-		WHERE user_id = $1 AND favorited = TRUE`, userID)
+		WHERE user_id = $1 AND favorited = TRUE
+		LIMIT $2`, userID, maxFavoriteIDRows)
 	if err != nil {
 		return nil, err
 	}
@@ -841,4 +887,27 @@ func (s *Store) RecordPlay(ctx context.Context, userID, trackID uuid.UUID, compl
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// Only fixed SQL fragments reach ORDER BY; request text is never interpolated.
+func ValidTrackSort(sort string) bool {
+	switch sort {
+	case "", "recent", "title", "artist", "album", "duration":
+		return true
+	}
+	return false
+}
+func trackOrder(sort string) string {
+	switch sort {
+	case "title":
+		return "LOWER(t.title) ASC, t.id ASC"
+	case "artist":
+		return "LOWER(COALESCE(STRING_AGG(ar.name, ', ' ORDER BY ta.position) FILTER (WHERE ta.role = 'primary'), '')) ASC, LOWER(t.title) ASC, t.id ASC"
+	case "album":
+		return "LOWER(COALESCE(a.title, '')) ASC, t.disc_no ASC NULLS LAST, t.track_no ASC NULLS LAST, t.id ASC"
+	case "duration":
+		return "t.duration_ms ASC, t.id ASC"
+	default:
+		return "t.created_at DESC, t.id ASC"
+	}
 }

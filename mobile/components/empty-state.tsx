@@ -1,3 +1,4 @@
+import { SecondaryButton } from "./buttons";
 import {
   ActivityIndicator,
   StyleSheet,
@@ -19,9 +20,11 @@ export function EmptyState({
   selectable = false,
   fill = false,
   style,
+  action,
 }: {
   /** Show a spinner instead of the message. */
   loading?: boolean;
+  action?: { label: string; onPress: () => void; disabled?: boolean };
   message?: string;
   /** Allow copying the text (useful for error messages). */
   selectable?: boolean;
@@ -49,6 +52,7 @@ export function EmptyState({
           {message}
         </Text>
       )}
+      {action && !loading && <View style={{ marginTop: 20, minWidth: 140 }}><SecondaryButton {...action} /></View>}
     </View>
   );
 }

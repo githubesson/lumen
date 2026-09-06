@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { TrackListItem } from "@music-library/core";
 import { usePlayTrack } from "../context/player";
 
@@ -11,7 +11,11 @@ import { usePlayTrack } from "../context/player";
 export function usePlayQueue(tracks: TrackListItem[]) {
   const play = usePlayTrack();
   const tracksRef = useRef(tracks);
-  tracksRef.current = tracks;
+  // Ref updates belong in an effect: writing refs during render is illegal
+  // under concurrent React (and rejected by the React Compiler).
+  useEffect(() => {
+    tracksRef.current = tracks;
+  }, [tracks]);
   return useCallback(
     (track: TrackListItem) => play(track, tracksRef.current),
     [play],

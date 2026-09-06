@@ -7,14 +7,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/githubesson/lumen/internal/dbutil"
 )
 
 var (
-	ErrNotFound  = errors.New("playlist not found")
-	ErrForbidden = errors.New("forbidden")
+	ErrNotFound     = errors.New("playlist not found")
+	ErrForbidden    = errors.New("forbidden")
+	ErrInvalidOrder = errors.New("playlist order does not match current entries")
 )
 
 type Visibility string
@@ -83,7 +85,12 @@ func (s *Store) Create(ctx context.Context, ownerID uuid.UUID, name, description
 		RETURNING id, owner_id, name, COALESCE(description, ''), visibility, is_smart, created_at, updated_at`,
 		ownerID, name, description, visibility,
 	).Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.CreatedAt, &p.UpdatedAt)
-	return p, err
+	if err != nil {
+		// Never hand back a half-scanned row alongside an error, matching
+		// library.Store.GetTrack.
+		return nil, err
+	}
+	return p, nil
 }
 
 func (s *Store) Get(ctx context.Context, id uuid.UUID) (*Playlist, error) {
@@ -95,7 +102,10 @@ func (s *Store) Get(ctx context.Context, id uuid.UUID) (*Playlist, error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	return p, err
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // ListForUser returns playlists the user owns or is an accepted collaborator on.
@@ -111,7 +121,8 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]*Playlist,
 		 AND pc.status = 'accepted'
 		 AND p.visibility = 'collaborative'
 		WHERE p.owner_id = $1 OR pc.user_id IS NOT NULL
-		ORDER BY p.updated_at DESC`, userID)
+		ORDER BY p.updated_at DESC
+		LIMIT $2`, userID, maxPlaylistRows)
 	if err != nil {
 		return nil, err
 	}
@@ -130,10 +141,15 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]*Playlist,
 // Update changes name/description/visibility. Owner-only, enforced by caller.
 func (s *Store) Update(ctx context.Context, id uuid.UUID, name, description string, visibility Visibility) error {
 	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			UPDATE playlists SET name = $2, description = NULLIF($3, ''), visibility = $4, updated_at = NOW()
-			WHERE id = $1`, id, name, description, visibility); err != nil {
+			WHERE id = $1`, id, name, description, visibility)
+		if err != nil {
 			return err
+		}
+		// Without this a PATCH against a deleted playlist returns 200.
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
 		}
 		if visibility == VisibilityPrivate {
 			if _, err := tx.Exec(ctx, `DELETE FROM playlist_collaborators WHERE playlist_id = $1`, id); err != nil {
@@ -145,15 +161,31 @@ func (s *Store) Update(ctx context.Context, id uuid.UUID, name, description stri
 }
 
 func (s *Store) Delete(ctx context.Context, id uuid.UUID) error {
-	_, err := s.db.Exec(ctx, `DELETE FROM playlists WHERE id = $1`, id)
-	return err
+	tag, err := s.db.Exec(ctx, `DELETE FROM playlists WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	// Without this DELETE /playlists/{missing-id} returns 204.
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
+
+// Safety backstops on the result sets that take no paging parameters. Set far
+// above any real value so they never truncate a genuine response, but a
+// pathological row set cannot be materialized into memory unbounded.
+const (
+	maxPlaylistTrackRows = 100000
+	maxPlaylistRows      = 10000
+)
 
 // Tracks returns all tracks in a playlist in order.
 func (s *Store) Tracks(ctx context.Context, id uuid.UUID) ([]TrackEntry, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT position, track_id, added_by, added_at FROM playlist_tracks
-		WHERE playlist_id = $1 ORDER BY position ASC`, id)
+		WHERE playlist_id = $1 ORDER BY position ASC
+		LIMIT $2`, id, maxPlaylistTrackRows)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +253,8 @@ func (s *Store) TracksDetailed(ctx context.Context, id, viewerID uuid.UUID) ([]T
 		LEFT JOIN users u ON u.id = pt.added_by
 		WHERE pt.playlist_id = $1
 		  AND (t.owner_id IS NULL OR t.owner_id = $2)
-		ORDER BY pt.position ASC`, id, viewerID)
+		ORDER BY pt.position ASC
+		LIMIT $3`, id, viewerID, maxPlaylistTrackRows)
 	if err != nil {
 		return nil, err
 	}
@@ -242,24 +275,44 @@ func (s *Store) TracksDetailed(ctx context.Context, id, viewerID uuid.UUID) ([]T
 	return out, rows.Err()
 }
 
+// lockPlaylist serializes track-list mutations on a playlist. Locking the
+// parent row is preferable to locking the current playlist_tracks rows because
+// an empty playlist has no child row to lock, and it also prevents concurrent
+// playlist deletion while the mutation is in progress.
+func lockPlaylist(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	var lockedID uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT id FROM playlists WHERE id = $1 FOR UPDATE`, id).Scan(&lockedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
+}
+
 // AddTracks appends trackIDs to the end of the playlist, preserving order.
 func (s *Store) AddTracks(ctx context.Context, id uuid.UUID, trackIDs []uuid.UUID, addedBy uuid.UUID) error {
 	if len(trackIDs) == 0 {
 		return nil
 	}
 	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+		if err := lockPlaylist(ctx, tx, id); err != nil {
+			return err
+		}
 		var maxPos int
 		if err := tx.QueryRow(ctx, `
 			SELECT COALESCE(MAX(position), -1) FROM playlist_tracks WHERE playlist_id = $1`, id,
 		).Scan(&maxPos); err != nil {
 			return err
 		}
-		for i, tid := range trackIDs {
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO playlist_tracks (playlist_id, position, track_id, added_by)
-				VALUES ($1, $2, $3, $4)`, id, maxPos+1+i, tid, addedBy); err != nil {
-				return err
-			}
+		// One statement, not one per track: the playlist row is held under
+		// FOR UPDATE for the whole transaction, so a 1000-id batch issued as
+		// 1000 round-trips blocked every concurrent add/remove/reorder on that
+		// playlist for the duration, and could outlive the request deadline.
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO playlist_tracks (playlist_id, position, track_id, added_by)
+			SELECT $1, $2 + ord, t.tid, $4
+			FROM unnest($3::uuid[]) WITH ORDINALITY AS t(tid, ord)`,
+			id, maxPos, trackIDs, addedBy); err != nil {
+			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE playlists SET updated_at = NOW() WHERE id = $1`, id); err != nil {
 			return err
@@ -271,6 +324,9 @@ func (s *Store) AddTracks(ctx context.Context, id uuid.UUID, trackIDs []uuid.UUI
 // RemoveTrackAt deletes one position then compacts remaining positions.
 func (s *Store) RemoveTrackAt(ctx context.Context, id uuid.UUID, position int) error {
 	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+		if err := lockPlaylist(ctx, tx, id); err != nil {
+			return err
+		}
 		tag, err := tx.Exec(ctx, `DELETE FROM playlist_tracks WHERE playlist_id = $1 AND position = $2`, id, position)
 		if err != nil {
 			return err
@@ -299,43 +355,140 @@ func (s *Store) RemoveTrackAt(ctx context.Context, id uuid.UUID, position int) e
 	})
 }
 
-// ReplaceOrder rewrites positions for a playlist from an ordered slice of
-// existing track_ids. Any IDs not currently in the playlist are ignored.
-func (s *Store) ReplaceOrder(ctx context.Context, id uuid.UUID, trackIDs []uuid.UUID) error {
+// orderedEntries returns the current entries in the requested order. For
+// duplicate tracks, occurrences are matched in their previous position order,
+// which deterministically preserves each occurrence's attribution. A reorder
+// must be an exact permutation: silently dropping, adding, or duplicating an
+// entry would otherwise turn a stale client request into data loss.
+func orderedEntries(existing []TrackEntry, trackIDs []uuid.UUID) ([]TrackEntry, error) {
+	if len(existing) != len(trackIDs) {
+		return nil, ErrInvalidOrder
+	}
+
+	byTrack := make(map[uuid.UUID][]TrackEntry, len(existing))
+	for _, entry := range existing {
+		byTrack[entry.TrackID] = append(byTrack[entry.TrackID], entry)
+	}
+
+	ordered := make([]TrackEntry, 0, len(trackIDs))
+	for _, trackID := range trackIDs {
+		occurrences := byTrack[trackID]
+		if len(occurrences) == 0 {
+			return nil, ErrInvalidOrder
+		}
+		ordered = append(ordered, occurrences[0])
+		byTrack[trackID] = occurrences[1:]
+	}
+	return ordered, nil
+}
+
+type reorderEntry struct {
+	TrackEntry
+	visible bool
+}
+
+func mergeVisibleOrder(allEntries []reorderEntry, orderedVisible []TrackEntry) []reorderEntry {
+	visibleIndex := 0
+	for i := range allEntries {
+		if !allEntries[i].visible {
+			continue
+		}
+		allEntries[i].TrackEntry = orderedVisible[visibleIndex]
+		visibleIndex++
+	}
+	return allEntries
+}
+
+// ReplaceOrder rewrites the entries visible to viewerID from an exact
+// permutation of their current track IDs. Entries owned by another user are
+// retained in their existing relative slots, while references to soft-deleted
+// tracks are pruned because no client can include them in a reorder request.
+func (s *Store) ReplaceOrder(ctx context.Context, id, viewerID uuid.UUID, trackIDs []uuid.UUID) error {
 	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
-		// Snapshot current rows keyed by track_id -> added_by, added_at so we
-		// preserve attribution across the rewrite.
-		existing := map[uuid.UUID]TrackEntry{}
+		if err := lockPlaylist(ctx, tx, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM playlist_tracks pt
+			USING tracks t
+			WHERE pt.playlist_id = $1
+			  AND t.id = pt.track_id
+			  AND t.deleted_at IS NOT NULL`, id); err != nil {
+			return err
+		}
+
+		// Snapshot all remaining entries. Only the viewer-visible projection is
+		// validated/reordered; hidden personal entries keep their relative slots.
+		var (
+			allEntries     []reorderEntry
+			visibleEntries []TrackEntry
+		)
 		rows, err := tx.Query(ctx, `
-			SELECT position, track_id, added_by, added_at FROM playlist_tracks WHERE playlist_id = $1`, id)
+			SELECT pt.position, pt.track_id, pt.added_by, pt.added_at,
+			       (t.owner_id IS NULL OR t.owner_id = $2) AS visible
+			FROM playlist_tracks pt
+			JOIN tracks t ON t.id = pt.track_id AND t.deleted_at IS NULL
+			WHERE pt.playlist_id = $1
+			ORDER BY pt.position`, id, viewerID)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
-			var te TrackEntry
-			if err := rows.Scan(&te.Position, &te.TrackID, &te.AddedBy, &te.AddedAt); err != nil {
+			var entry reorderEntry
+			if err := rows.Scan(
+				&entry.Position, &entry.TrackID, &entry.AddedBy, &entry.AddedAt,
+				&entry.visible,
+			); err != nil {
 				rows.Close()
 				return err
 			}
-			existing[te.TrackID] = te
+			allEntries = append(allEntries, entry)
+			if entry.visible {
+				visibleEntries = append(visibleEntries, entry.TrackEntry)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
 		}
 		rows.Close()
+
+		orderedVisible, err := orderedEntries(visibleEntries, trackIDs)
+		if err != nil {
+			return err
+		}
+		allEntries = mergeVisibleOrder(allEntries, orderedVisible)
 
 		if _, err := tx.Exec(ctx, `DELETE FROM playlist_tracks WHERE playlist_id = $1`, id); err != nil {
 			return err
 		}
-		pos := 0
-		for _, tid := range trackIDs {
-			prev, ok := existing[tid]
-			if !ok {
-				continue
+		// One statement, not one per entry. Unlike AddTracks the reorder handler
+		// applies no length cap (the payload only has to be a permutation), so a
+		// single drag on a 5000-track playlist issued 5001 statements inside the
+		// locked transaction.
+		trackIDCol := make([]uuid.UUID, len(allEntries))
+		// pgtype.UUID, not *uuid.UUID: uuid.UUID has a value-receiver Value()
+		// method, so pgx routes a []*uuid.UUID through driver.Valuer and panics
+		// on the nil element — and added_by is nullable (ON DELETE SET NULL when
+		// the adding user is removed).
+		addedByCol := make([]pgtype.UUID, len(allEntries))
+		addedAtCol := make([]time.Time, len(allEntries))
+		for i, entry := range allEntries {
+			trackIDCol[i] = entry.TrackID
+			if entry.AddedBy != nil {
+				addedByCol[i] = pgtype.UUID{Bytes: *entry.AddedBy, Valid: true}
 			}
+			addedAtCol[i] = entry.AddedAt
+		}
+		if len(allEntries) > 0 {
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO playlist_tracks (playlist_id, position, track_id, added_by, added_at)
-				VALUES ($1, $2, $3, $4, $5)`, id, pos, tid, prev.AddedBy, prev.AddedAt); err != nil {
+				SELECT $1, t.ord - 1, t.track_id, t.added_by, t.added_at
+				FROM unnest($2::uuid[], $3::uuid[], $4::timestamptz[])
+				     WITH ORDINALITY AS t(track_id, added_by, added_at, ord)`,
+				id, trackIDCol, addedByCol, addedAtCol); err != nil {
 				return err
 			}
-			pos++
 		}
 		if _, err := tx.Exec(ctx, `UPDATE playlists SET updated_at = NOW() WHERE id = $1`, id); err != nil {
 			return err
@@ -393,16 +546,28 @@ func (s *Store) SetCollaboratorStatus(ctx context.Context, playlistID, userID uu
 }
 
 func (s *Store) RemoveCollaborator(ctx context.Context, playlistID, userID uuid.UUID) error {
-	_, err := s.db.Exec(ctx, `
+	tag, err := s.db.Exec(ctx, `
 		DELETE FROM playlist_collaborators WHERE playlist_id = $1 AND user_id = $2`, playlistID, userID)
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) SetCollaboratorRole(ctx context.Context, playlistID, userID uuid.UUID, role CollaboratorRole) error {
-	_, err := s.db.Exec(ctx, `
+	tag, err := s.db.Exec(ctx, `
 		UPDATE playlist_collaborators SET role = $3
 		WHERE playlist_id = $1 AND user_id = $2 AND status = 'accepted'`, playlistID, userID, role)
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // scanCollaborators drains rows selecting the standard collaborator column
@@ -526,7 +691,9 @@ type OwnedPlaylist struct {
 }
 
 func (s *Store) OwnedPlaylists(ctx context.Context, userID uuid.UUID) ([]OwnedPlaylist, error) {
-	rows, err := s.db.Query(ctx, `SELECT id, name FROM playlists WHERE owner_id = $1 ORDER BY created_at ASC`, userID)
+	rows, err := s.db.Query(ctx, `
+		SELECT id, name FROM playlists WHERE owner_id = $1
+		ORDER BY created_at ASC LIMIT $2`, userID, maxPlaylistRows)
 	if err != nil {
 		return nil, err
 	}

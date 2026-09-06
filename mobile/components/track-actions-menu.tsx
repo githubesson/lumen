@@ -5,15 +5,15 @@ import { Directory, File } from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
 import {
-  useFavorite,
-  useFavoriteActions,
   api,
+  isTidalTrack,
   libraryChanged,
   downloadStreamUrl,
   useAuth,
   type TrackDetail,
   type TrackListItem,
 } from "@music-library/core";
+import { useFavorite, useFavoriteActions } from "../context/favorites";
 import { usePlayTrack } from "../context/player";
 import { AdaptiveGlass } from "./adaptive-glass";
 import { useTheme } from "../theme/theme";
@@ -296,25 +296,26 @@ export function useTrackActionModel(track: TrackListItem) {
 
   const toggleFavorite = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    void toggleFav(track.id);
-  }, [toggleFav, track.id]);
+    void toggleFav(track);
+  }, [toggleFav, track]);
 
   const openAlbum = useCallback(() => {
     void (async () => {
       try {
         let localAlbumId = track.album_id;
-        let tidalAlbumId =
-          track.source === "tidal" ? track.source_album_id : undefined;
+        let tidalAlbumId = isTidalTrack(track)
+          ? track.source_album_id
+          : undefined;
 
-        if (!localAlbumId || (track.source === "tidal" && !tidalAlbumId)) {
+        if (!localAlbumId || (isTidalTrack(track) && !tidalAlbumId)) {
           const detail = await api.getTrack(track.id);
           localAlbumId = localAlbumId || detail.album_id;
-          if (detail.source === "tidal") {
+          if (isTidalTrack(detail)) {
             tidalAlbumId = tidalAlbumId || detail.source_album_id;
           }
         }
 
-        if (track.source === "tidal" && tidalAlbumId) {
+        if (isTidalTrack(track) && tidalAlbumId) {
           router.push({
             pathname: "/(tabs)/(library)/tidal-albums/[id]" as never,
             params: { id: tidalAlbumId },
@@ -454,8 +455,10 @@ export function useTrackActionModel(track: TrackListItem) {
     download,
     downloading,
     favorite,
-    hasAlbum: Boolean(track.album_id || track.album_title || track.source === "tidal"),
-    hasEditableAlbum: Boolean(track.album_id && track.source !== "tidal"),
+    hasAlbum: Boolean(
+      track.album_id || track.album_title || isTidalTrack(track),
+    ),
+    hasEditableAlbum: Boolean(track.album_id && !isTidalTrack(track)),
     isAdmin,
     openAlbum,
     openEditAlbum,

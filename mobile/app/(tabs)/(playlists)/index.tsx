@@ -26,6 +26,7 @@ import {
   useDockScrollHandler,
 } from "../../../components/dock/dock-context";
 import { qk } from "../../../lib/query-keys";
+import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
 
 export default function PlaylistsScreen() {
@@ -50,6 +51,14 @@ export default function PlaylistsScreen() {
     queryFn: ({ signal }) => api.listPendingInvites({ signal }),
     enabled: !!userId,
   });
+
+  const { refetch: refetchPlaylists } = playlistsQuery;
+  const { refetch: refetchInvites } = invitesQuery;
+  const refetchAll = useCallback(
+    () => Promise.allSettled([refetchPlaylists(), refetchInvites()]),
+    [refetchPlaylists, refetchInvites],
+  );
+  const { refreshing, onRefresh } = usePullToRefresh(refetchAll);
 
   const acceptMutation = useMutation({
     mutationFn: (id: string) => api.acceptInvite(id),
@@ -152,13 +161,8 @@ export default function PlaylistsScreen() {
         }}
         refreshControl={
           <RefreshControl
-            refreshing={
-              playlistsQuery.isRefetching || invitesQuery.isRefetching
-            }
-            onRefresh={() => {
-              void playlistsQuery.refetch();
-              void invitesQuery.refetch();
-            }}
+            refreshing={refreshing}
+            onRefresh={onRefresh}
             tintColor={theme.color.fgMuted}
           />
         }

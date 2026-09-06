@@ -1,17 +1,31 @@
 {
   "name": "music-library-frontend",
   "version": "0.1.0",
+  "description": "Self-hosted music library web and desktop client",
+  "author": {
+    "name": "esson",
+    "email": "55195336+githubesson@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/githubesson/lumen",
+  "desktopName": "Lumen",
   "private": true,
   "type": "module",
   "main": "electron/build/main.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "dmg:background": "node scripts/generate-dmg-background.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
+    "lint": "eslint . --max-warnings=0",
     "electron:compile": "node scripts/electron-buildenv.mjs && tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.setup.json",
     "electron:dev": "npm run build && npm run electron:compile && electron .",
-    "electron:build": "npm run build && npm run electron:compile && electron-builder --win --publish never --config electron-builder.yml"
+    "electron:build": "npm run build && npm run electron:compile && electron-builder --win --publish never --config electron-builder.cjs",
+    "electron:build:linux": "npm run build && npm run electron:compile && electron-builder --linux --publish never --config electron-builder.cjs",
+    "electron:build:mac": "npm run build && npm run electron:compile && electron-builder --mac dmg --publish never --config electron-builder.cjs",
+    "electron:build:mac:universal": "npm run build && npm run electron:compile && electron-builder --mac --universal --publish never --config electron-builder.cjs",
+    "icons": "node scripts/generate-icons.mjs",
+    "test": "vitest run"
   },
   "dependencies": {
     "@heroicons/react": "^2.1.5",
@@ -19,21 +33,35 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "discord-rpc": "^4.0.1",
+    "electron-updater": "^6.8.9",
     "hls.js": "^1.6.16",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.2"
+    "react-router-dom": "^6.30.4"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.0.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.1",
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8",
-    "tailwindcss": "^4.0.0",
+    "@vitejs/plugin-react": "^6.0.3",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^16.5.0",
+    "jsdom": "^29.1.1",
+    "sharp": "^0.35.3",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.5.4",
-    "vite": "^5.4.3"
+    "typescript-eslint": "^8.65.0",
+    "vite": "^8.1.5",
+    "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "discord-rpc": {
+      "ws": "^7.5.11"
+    }
   }
 }

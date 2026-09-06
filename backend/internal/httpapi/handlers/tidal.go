@@ -3,7 +3,6 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -35,8 +34,7 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	limit, offset := pageParams(r.URL.Query())
 	album, err := h.TIDAL.Album(r.Context(), chi.URLParam(r, "id"), limit, offset)
 	if err != nil {
 		if errors.Is(err, tidal.ErrNotConfigured) {
@@ -57,7 +55,7 @@ func makeTIDALAlbumResp(album tidal.Album) tidalAlbumResp {
 		ReleaseYear: album.ReleaseYear,
 		TrackCount:  album.TrackCount,
 		DurationMS:  album.DurationMS,
-		CoverURL:    album.CoverURL,
+		CoverURL:    proxyRemoteCoverURL(album.CoverURL),
 		Tracks:      make([]trackListItemResp, 0, len(album.Tracks)),
 	}
 	for _, it := range album.Tracks {
@@ -71,7 +69,7 @@ func makeTIDALAlbumResp(album tidal.Album) tidalAlbumResp {
 			TrackNo:       it.TrackNo,
 			DurationMS:    it.DurationMS,
 			Artist:        strings.Join(it.Artists, ", "),
-			CoverURL:      firstNonEmpty(it.CoverURL, album.CoverURL),
+			CoverURL:      proxyRemoteCoverURL(firstNonEmpty(it.CoverURL, album.CoverURL)),
 		})
 	}
 	return out

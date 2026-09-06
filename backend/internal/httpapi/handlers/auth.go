@@ -114,7 +114,10 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 
 func (h *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 	if token, ok := middleware.SessionTokenFromContext(r.Context()); ok {
-		_ = h.Sessions.Revoke(r.Context(), token)
+		if err := h.Sessions.Revoke(r.Context(), token); err != nil {
+			http.Error(w, "could not sign out; try again", http.StatusServiceUnavailable)
+			return
+		}
 	}
 	h.Sessions.ClearCookie(w)
 	w.WriteHeader(http.StatusNoContent)
@@ -167,12 +170,11 @@ func (h *Auth) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if err := h.Users.UpdatePassword(r.Context(), u.ID, hash, true); err != nil {
+	if err := h.Users.ChangePassword(r.Context(), u.ID, u.PasswordHash, hash); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	// Invalidate all sessions (including current), then issue a fresh one.
-	_ = h.Sessions.RevokeAllForUser(r.Context(), u.ID)
+	// Password replacement and session revocation committed together.
 	if !h.issueSession(w, r, u.ID) {
 		return
 	}

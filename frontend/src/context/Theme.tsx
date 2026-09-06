@@ -15,20 +15,8 @@ import {
   setTitleBarTheme,
 } from "../lib/platform";
 
-export type Theme = "light" | "dark";
-export type Density = "airy" | "balanced" | "dense";
-export type Layout = "compact" | "sidebar" | "wide";
-
-export interface Tweaks {
-  theme: Theme;
-  depth: number;
-  radius: number;
-  density: Density;
-  layout: Layout;
-  /** Ambient accent glow — the album-cover-driven color wash on the app
-   *  background, detail headers, mini-player, etc. Turn off for a flat look. */
-  glow: boolean;
-}
+import type { Theme, Density, Layout, Tweaks } from "../contracts/desktop";
+export type { Theme, Density, Layout, Tweaks } from "../contracts/desktop";
 
 const STORAGE_KEY = "lumen.tweaks";
 
@@ -82,7 +70,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     el.setAttribute("data-layout", tweaks.layout);
     el.setAttribute("data-glow", tweaks.glow ? "on" : "off");
     localStorage.setItem(STORAGE_KEY, JSON.stringify(tweaks));
-    if (isElectron && electronLoadedRef.current) {
+    if (isElectron() && electronLoadedRef.current) {
       void saveTweaks({ tweaks });
     }
   }, [tweaks]);
@@ -91,7 +79,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // from the previous run is on a different origin. Load the canonical copy
   // from config.json once at startup and merge it on top of defaults.
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron()) return;
     let cancelled = false;
     getTweaks()
       .then(({ tweaks: electronTweaks }) => {
@@ -108,7 +96,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron()) return;
     const isDark = tweaks.theme === "dark";
     void setTitleBarTheme({
       color: isDark ? "#1a1a1e" : "#ffffff",

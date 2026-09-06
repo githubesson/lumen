@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+
+	"github.com/githubesson/lumen/internal/safego"
 )
 
 // Watcher debounces fsnotify events and feeds stable paths to the ingest
@@ -26,6 +28,12 @@ type Watcher struct {
 
 	mu      sync.Mutex
 	pending map[string]*time.Timer
+
+	// refreshMu serializes Refresh against itself. The heavy part of a refresh
+	// (a DB round-trip plus a recursive walk of every root) runs *outside*
+	// fwMu, so this is what keeps two concurrent refreshes from interleaving
+	// their reconciliations.
+	refreshMu sync.Mutex
 
 	fwMu     sync.Mutex
 	fw       *fsnotify.Watcher
@@ -64,6 +72,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 		return err
 	}
 	defer fw.Close()
+	defer w.stopPending()
 
 	w.fwMu.Lock()
 	w.fw = fw
@@ -91,7 +100,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// schedules any supported file we know about. SHA dedup handles
 			// files that were already ingested.
 			w.svc.Logger.Warn("fsnotify error — running catch-up walk", "err", err)
-			go w.catchUp(ctx)
+			safego.Go("ingest catch-up walk", func() { w.catchUp(ctx) })
 		}
 	}
 }
@@ -101,11 +110,20 @@ func (w *Watcher) Run(ctx context.Context) error {
 // the watch set is absorbed — its subdirectories are registered and existing
 // supported files are scheduled for ingest. Safe to call from any goroutine.
 func (w *Watcher) Refresh(ctx context.Context) {
+	w.refreshMu.Lock()
+	defer w.refreshMu.Unlock()
+
 	w.fwMu.Lock()
-	if w.fw == nil {
-		w.fwMu.Unlock()
+	ready := w.fw != nil
+	w.fwMu.Unlock()
+	if !ready {
 		return
 	}
+
+	// The DB query and the recursive walk of every root run without fwMu held.
+	// Holding it across both blocked all fsnotify-driven directory absorption
+	// (absorbDir contends on the same mutex) for the whole walk, so files
+	// created during that window were only picked up on the next catch-up.
 	newRoots := w.svc.AllRoots(ctx)
 
 	// Build the set of directories that should be watched.
@@ -132,6 +150,11 @@ func (w *Watcher) Refresh(ctx context.Context) {
 		})
 	}
 
+	w.fwMu.Lock()
+	if w.fw == nil {
+		w.fwMu.Unlock()
+		return
+	}
 	for p := range w.watchSet {
 		if _, keep := want[p]; !keep {
 			_ = w.fw.Remove(p)
@@ -267,8 +290,17 @@ func (w *Watcher) schedule(ctx context.Context, path string) {
 	if t, ok := w.pending[path]; ok {
 		t.Stop()
 	}
-	w.pending[path] = time.AfterFunc(w.debounce, func() {
+	var timer *time.Timer
+	timer = time.AfterFunc(w.debounce, func() {
 		w.mu.Lock()
+		// Identity check, not a bare delete: when the previous timer had already
+		// fired and its callback was blocked on w.mu, Stop() returned false and
+		// the stale callback would delete the *new* timer's entry — so both ran
+		// and the file ingested twice.
+		if w.pending[path] != timer {
+			w.mu.Unlock()
+			return
+		}
 		delete(w.pending, path)
 		w.mu.Unlock()
 		select {
@@ -282,6 +314,19 @@ func (w *Watcher) schedule(ctx context.Context, path string) {
 		}
 		_ = w.svc.IngestFile(ctx, path)
 	})
+	w.pending[path] = timer
+}
+
+// stopPending cancels every debounced ingest still waiting to fire. Called on
+// Run's way out so a shutdown doesn't leave timers running against a cancelled
+// context.
+func (w *Watcher) stopPending() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for path, t := range w.pending {
+		t.Stop()
+		delete(w.pending, path)
+	}
 }
 
 func lstatOrNil(path string) (os.FileInfo, error) {

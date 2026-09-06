@@ -2,7 +2,6 @@ import { useCallback, useMemo } from "react";
 import {
   ActivityIndicator,
   PixelRatio,
-  Pressable,
   StyleSheet,
   Text,
   View,
@@ -10,11 +9,9 @@ import {
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import { useQuery } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams } from "expo-router";
-import { Image } from "expo-image";
-import { SymbolView } from "expo-symbols";
-import * as Haptics from "expo-haptics";
 import {
   api,
+  resolveCoverUrl,
   useAuth,
   type TrackListItem,
 } from "@music-library/core";
@@ -27,8 +24,7 @@ import { TrackRow } from "../../../../components/track-row";
 import { qk } from "../../../../lib/query-keys";
 import { usePlayQueue } from "../../../../lib/use-play-queue";
 import { useTheme } from "../../../../theme/theme";
-
-const ALBUM_ART_SIZE = 220;
+import { AlbumHeader, ALBUM_ART_SIZE } from "../../../../components/album-header";
 
 export default function TidalAlbumDetailScreen() {
   const theme = useTheme();
@@ -66,98 +62,18 @@ export default function TidalAlbumDetailScreen() {
       1,
       Math.round(ALBUM_ART_SIZE * PixelRatio.get()),
     );
-    const coverUri = album.cover_url || null;
+    const coverUri = album.cover_url ? resolveCoverUrl(album.cover_url) : null;
     return (
-      <View
-        style={{
-          paddingHorizontal: theme.space.lg,
-          paddingBottom: theme.space.md,
-        }}
-      >
-        <View
-          style={{
-            alignItems: "center",
-            paddingVertical: theme.space.xl,
-            gap: theme.space.md,
-          }}
-        >
-          <View
-            style={{
-              width: ALBUM_ART_SIZE,
-              height: ALBUM_ART_SIZE,
-              borderRadius: theme.radius.lg,
-              overflow: "hidden",
-              borderCurve: "continuous",
-              backgroundColor: theme.color.bgElev2,
-            }}
-          >
-            {coverUri ? (
-              <Image
-                source={{ uri: coverUri }}
-                style={{ width: ALBUM_ART_SIZE, height: ALBUM_ART_SIZE }}
-                contentFit="cover"
-                transition={120}
-                cachePolicy="memory-disk"
-                allowDownscaling
-                decodeFormat="rgb"
-                recyclingKey={`${album.id}:${requestSize}`}
-              />
-            ) : null}
-          </View>
-          <View style={{ alignItems: "center", gap: 2 }}>
-            <Text
-              style={{
-                fontSize: 22,
-                fontWeight: "700",
-                color: theme.color.fg,
-                letterSpacing: -0.2,
-                textAlign: "center",
-              }}
-              numberOfLines={2}
-            >
-              {album.title}
-            </Text>
-            {album.artist ? (
-              <Text
-                style={{ fontSize: 16, color: theme.color.fgMuted }}
-                numberOfLines={1}
-              >
-                {album.artist}
-              </Text>
-            ) : null}
-            <Text style={{ fontSize: 13, color: theme.color.fgMuted, marginTop: 4 }}>
-              {album.track_count} {album.track_count === 1 ? "track" : "tracks"}
-              {album.release_year ? ` - ${album.release_year}` : ""}
-            </Text>
-          </View>
-        </View>
-        {tracks.length > 0 ? (
-          <Pressable
-            onPress={() => {
-              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              onTrackPress(tracks[0]);
-            }}
-            style={({ pressed }) => ({
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              backgroundColor: theme.color.accent,
-              borderRadius: theme.radius.md,
-              paddingVertical: 12,
-              opacity: pressed ? 0.85 : 1,
-              borderCurve: "continuous",
-            })}
-          >
-            <SymbolView name="play.fill" size={14} tintColor={theme.color.onAccent} />
-            <Text style={{ color: theme.color.onAccent, fontWeight: "600", fontSize: 15 }}>
-              Play
-            </Text>
-          </Pressable>
-        ) : null}
-      </View>
+      <AlbumHeader
+        title={album.title}
+        artist={album.artist}
+        coverUri={coverUri}
+        coverKey={`${album.id}:${requestSize}`}
+        metadata={`${album.track_count} ${album.track_count === 1 ? "track" : "tracks"}${album.release_year ? ` - ${album.release_year}` : ""}`}
+        onPlay={tracks.length > 0 ? () => onTrackPress(tracks[0]) : undefined}
+      />
     );
-  }, [albumQuery.data, onTrackPress, tracks, theme]);
+  }, [albumQuery.data, onTrackPress, tracks]);
 
   if (albumQuery.isLoading) {
     return (

@@ -1,3 +1,4 @@
+import { buildTrackPatch } from "@music-library/core/metadata-edit";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -14,8 +15,6 @@ import {
   ApiError,
   libraryChanged,
   useAuth,
-  type TrackDetail,
-  type TrackPatch,
 } from "@music-library/core";
 import { PrimaryButton } from "../../../../components/buttons";
 import {
@@ -63,6 +62,8 @@ export default function TrackEditScreen() {
   // doesn't clobber in-progress edits.
   useEffect(() => {
     if (!track) return;
+    // The edit draft intentionally snapshots the queried track.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTitle(track.title);
     setArtists(
       track.artists
@@ -85,7 +86,7 @@ export default function TrackEditScreen() {
     setSaving(true);
     setError(null);
     try {
-      const patch = buildPatch(track, {
+      const patch = buildTrackPatch(track, {
         title,
         artists,
         albumTitle,
@@ -241,59 +242,6 @@ export default function TrackEditScreen() {
       </ScrollView>
     </>
   );
-}
-
-/**
- * Diff the form against the loaded track and return only the fields that
- * actually changed — mirrors the web edit dialog so the server PATCH stays
- * minimal. An untouched album-artist field is never sent (it isn't part of
- * TrackDetail, so there's nothing to compare it against).
- */
-function buildPatch(
-  track: TrackDetail,
-  form: {
-    title: string;
-    artists: string;
-    albumTitle: string;
-    albumArtist: string;
-    year: string;
-    genre: string;
-    trackNo: string;
-    discNo: string;
-  },
-): TrackPatch {
-  const patch: TrackPatch = {};
-  const title = form.title.trim();
-  if (title && title !== track.title) patch.title = title;
-
-  const parsedArtists = form.artists
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const currentArtists = track.artists
-    .filter((a) => a.role !== "composer")
-    .map((a) => a.name);
-  if (parsedArtists.join(" ") !== currentArtists.join(" ")) {
-    patch.artists = parsedArtists;
-  }
-
-  const albumTitle = form.albumTitle.trim();
-  if (albumTitle !== (track.album_title ?? "")) patch.album_title = albumTitle;
-  const albumArtist = form.albumArtist.trim();
-  if (albumArtist !== "") patch.album_artist = albumArtist;
-
-  const year = parseInt(form.year || "0", 10) || 0;
-  if ((track.year ?? 0) !== year) patch.year = year;
-
-  const genre = form.genre.trim();
-  if ((track.genre ?? "") !== genre) patch.genre = genre;
-
-  const tn = parseInt(form.trackNo || "0", 10) || 0;
-  if ((track.track_no ?? 0) !== tn) patch.track_no = tn;
-  const dn = parseInt(form.discNo || "0", 10) || 0;
-  if ((track.disc_no ?? 0) !== dn) patch.disc_no = dn;
-
-  return patch;
 }
 
 const styles = StyleSheet.create({

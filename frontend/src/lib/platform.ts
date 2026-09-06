@@ -5,55 +5,110 @@ import type { Tweaks as ElectronTweaks } from "../electron";
 type ElectronApi = NonNullable<Window["electron"]>;
 
 /**
- * Single platform seam. The Electron preload bridge (or undefined on web),
- * captured once, plus narrow capability helpers — so components ask for a
- * capability instead of poking `window.electron?.X` inline in a dozen places.
+ * Single platform seam. The Electron preload bridge (or undefined on web), plus
+ * narrow capability helpers — so components ask for a capability instead of
+ * poking `window.electron?.X` inline in a dozen places.
+ *
+ * Resolved on every access rather than captured at module-eval time. The
+ * preload does run before the bundle today, but freezing the bridge and the
+ * capability flags at first import made that an invisible ordering dependency
+ * that would fail silently — and untraceably — if it ever stopped holding.
  */
-export const electron: ElectronApi | undefined =
-  typeof window !== "undefined" ? window.electron : undefined;
+export function electron(): ElectronApi | undefined {
+  return typeof window !== "undefined" ? window.electron : undefined;
+}
 
 /** True when running inside the Electron desktop shell. */
-export const isElectron = !!electron;
+export function isElectron(): boolean {
+  return !!electron();
+}
 
 /** Whether the desktop shell can toggle the compact mini-player window. */
-export const canSetMiniPlayer = !!electron?.setMiniPlayerMode;
+export function canSetMiniPlayer(): boolean {
+  return !!electron()?.setMiniPlayerMode;
+}
 
 /** Whether the desktop shell can export many track streams into a chosen folder. */
-export const canExportTrackFiles = !!electron?.exportTrackFiles;
+export function canExportTrackFiles(): boolean {
+  return !!electron()?.exportTrackFiles;
+}
 
 export function setMiniPlayerMode(enabled: boolean) {
   return (
-    electron?.setMiniPlayerMode?.(enabled) ??
+    electron()?.setMiniPlayerMode?.(enabled) ??
     Promise.resolve({ ok: false, miniPlayer: false })
   );
 }
 
 export function setTitleBarTheme(opts: { color: string; symbolColor: string }) {
-  return electron?.setTitleBarTheme?.(opts) ?? Promise.resolve({ ok: false });
+  return electron()?.setTitleBarTheme?.(opts) ?? Promise.resolve({ ok: false });
 }
 
 export function pushDiscordActivity(payload: DiscordActivityPayload) {
-  return electron?.setDiscordActivity?.(payload);
+  return electron()?.setDiscordActivity?.(payload);
 }
 
 export function clearDiscordActivity() {
-  return electron?.clearDiscordActivity?.();
+  return electron()?.clearDiscordActivity?.();
 }
 
 export function getDesktopConfig() {
-  return electron?.getConfig?.();
+  return electron()?.getConfig?.();
+}
+
+export function reserveExternalWindow(): Window | null {
+  if (electron()) return null;
+  const opened = window.open("", "_blank");
+  if (opened) opened.opener = null;
+  return opened;
+}
+
+export function closeExternalWindow(opened: Window | null): void {
+  if (opened && !opened.closed) opened.close();
+}
+
+export async function openExternal(url: string, reservedWindow?: Window | null) {
+  const bridge = electron();
+  if (bridge?.openExternal) return bridge.openExternal(url);
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    closeExternalWindow(reservedWindow ?? null);
+    return { ok: false, error: "Invalid URL." };
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    closeExternalWindow(reservedWindow ?? null);
+    return { ok: false, error: "Only HTTP and HTTPS links can be opened." };
+  }
+
+  const opened =
+    reservedWindow && !reservedWindow.closed
+      ? reservedWindow
+      : reserveExternalWindow();
+  if (!opened) {
+    return { ok: false, error: "The browser blocked the authorization window." };
+  }
+  try {
+    opened.location.replace(parsed.href);
+  } catch {
+    closeExternalWindow(opened);
+    return { ok: false, error: "Could not open the authorization window." };
+  }
+  return { ok: true };
 }
 
 export function getFH6Status() {
-  return electron?.getFH6Status?.();
+  return electron()?.getFH6Status?.();
 }
 
 export function chooseFH6GameDir() {
-  return electron?.chooseFH6GameDir?.();
+  return electron()?.chooseFH6GameDir?.();
 }
 
 export function chooseFH6MediaSource() {
-  return electron?.chooseFH6MediaSource?.();
+  return electron()?.chooseFH6MediaSource?.();
 }
 
 export function installFH6Radio(opts: {
@@ -61,20 +116,20 @@ export function installFH6Radio(opts: {
   mediaSource?: string;
   skipMedia?: boolean;
 }) {
-  return electron?.installFH6Radio?.(opts);
+  return electron()?.installFH6Radio?.(opts);
 }
 
 export function syncFH6Session() {
-  return electron?.syncFH6Session?.();
+  return electron()?.syncFH6Session?.();
 }
 
 export function exportTrackFiles(items: ExportTrackFileItem[]) {
-  return electron?.exportTrackFiles?.(items);
+  return electron()?.exportTrackFiles?.(items);
 }
 
 export function getTweaks() {
   return (
-    electron?.getTweaks?.() ??
+    electron()?.getTweaks?.() ??
     Promise.resolve({ tweaks: {} as Partial<ElectronTweaks>, audioSinkId: "" })
   );
 }
@@ -83,5 +138,5 @@ export function saveTweaks(payload: {
   tweaks?: Partial<ElectronTweaks>;
   audioSinkId?: string;
 }) {
-  return electron?.saveTweaks?.(payload) ?? Promise.resolve({ ok: false });
+  return electron()?.saveTweaks?.(payload) ?? Promise.resolve({ ok: false });
 }

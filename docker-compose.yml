@@ -2,8 +2,15 @@ name: music-library
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     restart: unless-stopped
+    # Baseline hardening applied to every service: no privilege escalation, and
+    # resource ceilings so a runaway transcode or scanner cannot take the host
+    # with it. Tune the limits to your hardware.
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${POSTGRES_MEM_LIMIT:-2g}
+    pids_limit: 512
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-mlib}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
@@ -21,10 +28,26 @@ services:
       retries: 5
 
   hifi-api:
+    # Third-party image built straight from a remote repository. The commit-SHA
+    # pin is what makes that acceptable — never relax it to a branch name.
     build:
       context: https://github.com/binimum/hifi-api.git#e52d1091407c2014958116a6875d9ac37e265c03
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${HIFI_API_PORT:-8000}", "--no-access-log"]
+    # The thin Lumen ASGI extension adds device login and account removal to
+    # the otherwise unchanged, commit-pinned proxy. It is only reachable on
+    # this private Compose network; authenticated admin routes in the backend
+    # are the public boundary.
+    command: ["uvicorn", "lumen_hifi:app", "--host", "0.0.0.0", "--port", "${HIFI_API_PORT:-8000}", "--no-access-log"]
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Match the owner of the host bind mount below. With every capability
+    # dropped, container root cannot bypass host directory permissions when
+    # atomically replacing token.json.
+    user: "${HIFI_API_UID:-1000}:${HIFI_API_GID:-1000}"
+    mem_limit: ${HIFI_API_MEM_LIMIT:-1g}
+    pids_limit: 256
     environment:
       TOKEN_FILE: /app/data/token.json
       COUNTRY_CODE: ${TIDAL_COUNTRY_CODE:-US}
@@ -36,8 +59,28 @@ services:
       DEV_MODE: ${TIDAL_HIFI_DEV_MODE:-False}
     volumes:
       - ./tidal-hifi:/app/data
+      - ./hifi-api/lumen_hifi.py:/app/lumen_hifi.py:ro
     expose:
       - "${HIFI_API_PORT:-8000}"
+    # Without this the backend starts as soon as the container exists and 5xx's
+    # every TIDAL request until uvicorn is actually listening. Note the
+    # backend's depends_on uses service_healthy, so if this probe is wrong for
+    # your build of the image the backend will never start — check
+    # `docker compose ps` first if it hangs in "waiting".
+    #
+    # A TCP connect via the interpreter that is definitely in this image; the
+    # binary is python3 on most slim bases and python on others, and neither
+    # curl nor wget is guaranteed to be installed.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import socket; socket.create_connection(('127.0.0.1', ${HIFI_API_PORT:-8000}), 3).close()"
+          || python -c "import socket; socket.create_connection(('127.0.0.1', ${HIFI_API_PORT:-8000}), 3).close()"
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   backend:
     image: music-library-backend:local
@@ -45,12 +88,15 @@ services:
       context: ./backend
     pull_policy: never
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${BACKEND_MEM_LIMIT:-4g}
+    pids_limit: 1024
     environment:
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://${POSTGRES_USER:-mlib}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mlib}?sslmode=disable
       MUSIC_PATH: /mnt/music
       TRANSCODE_CACHE: /cache
-      ENABLE_TRANSCODING: ${ENABLE_TRANSCODING:-false}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       SESSION_COOKIE: ${SESSION_COOKIE:-mlsession}
@@ -60,7 +106,14 @@ services:
       TIDAL_COUNTRY_CODE: ${TIDAL_COUNTRY_CODE:-US}
       TIDAL_QUALITY: ${TIDAL_QUALITY:-LOSSLESS}
       TIDAL_HIFI_API_URL: http://hifi-api:${HIFI_API_PORT:-8000}
+      LASTFM_API_KEY: ${LASTFM_API_KEY:-}
+      LASTFM_SHARED_SECRET: ${LASTFM_SHARED_SECRET:-}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      PUBLIC_HOSTS: ${PUBLIC_HOSTS:-}
+      GENIUS_PROXY_URL: ${GENIUS_PROXY_URL:-}
+      # Overrides the tracker-API instance for all scans (including per-pin
+      # api_base_url values). Blank keeps each pin's stored URL.
+      API_TRACKER_BASE_URL: ${API_TRACKER_BASE_URL:-}
     # Bind to loopback only — the host-level nginx reverse proxy connects over
     # 127.0.0.1:${BACKEND_PORT}. Drop the "127.0.0.1:" prefix to make it
     # reachable on all interfaces (not recommended — nothing enforces auth at
@@ -73,17 +126,20 @@ services:
     # permissions. Set MUSIC_GROUP_GID in .env to your host group's GID.
     group_add:
       - "${MUSIC_GROUP_GID:-1100}"
-    # Mounted at the same path inside the container as on the host, so music
-    # roots added in the admin UI (e.g. /mnt/music/liluzivert) resolve to the
-    # identical path the backend sees — no host/container path translation.
+    # The host music directory is always /mnt/music inside the container.
+    # Admin roots must use /mnt/music/... even for a custom MUSIC_HOST_PATH.
     volumes:
       - ${MUSIC_HOST_PATH:-/mnt/music}:/mnt/music
-      - ./transcode-cache:/cache
+      # Named volume (not a bind mount): Docker initializes it with the
+      # image's ownership, so the non-root app user can write. A host bind
+      # mount here inherits host ownership and breaks preview/transcode
+      # writes with "permission denied".
+      - transcode-cache:/cache
     depends_on:
       postgres:
         condition: service_healthy
       hifi-api:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/health"]
       interval: 15s
@@ -98,7 +154,24 @@ services:
       dockerfile: frontend/Dockerfile
     pull_policy: never
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # nginx binds 8080 as an unprivileged user, so no capabilities are needed.
+    mem_limit: ${FRONTEND_MEM_LIMIT:-256m}
+    pids_limit: 256
     ports:
       - "127.0.0.1:${FRONTEND_PORT:-8081}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+
+volumes:
+  transcode-cache:
