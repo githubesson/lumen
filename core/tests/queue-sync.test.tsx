@@ -127,6 +127,29 @@ it("publishes actual queue order and advances the window immediately, including 
   expect(socket.sent.at(-1)?.type).toBe("activity.clear");
 });
 
+it("reports rejected remote plays and preserves the result on duplicate delivery", async () => {
+  const { socket, controls } = await setup();
+  vi.mocked(controls.play).mockReturnValue(false);
+  const command = {
+    type: "playback.command", command_id: "offline-play", source_device_id: "phone",
+    target_device_id: "local", action: "play_track",
+    args: { track: tracks[0], queue: tracks.slice(0, 2) },
+  };
+  await act(async () => socket.receive(command));
+  expect(controls.play).toHaveBeenCalledExactlyOnceWith(tracks[0], tracks.slice(0, 2));
+  expect(socket.sent.at(-1)).toMatchObject({
+    type: "playback.command_result", command_id: "offline-play",
+    status: "rejected", error: "track is not available for local playback",
+  });
+  await act(async () => socket.receive(command));
+  expect(controls.play).toHaveBeenCalledOnce();
+  expect(socket.sent.at(-1)).toMatchObject({ status: "rejected" });
+
+  vi.mocked(controls.play).mockReturnValue(undefined);
+  await act(async () => socket.receive({ ...command, command_id: "online-play" }));
+  expect(socket.sent.at(-1)).toMatchObject({ status: "applied" });
+});
+
 it("applies queue jumps by absolute index and rejects stale queue revisions", async () => {
   const { socket, controls, rerender } = await setup();
   const revision = socket.queue().revision;

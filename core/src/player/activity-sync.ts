@@ -868,7 +868,9 @@ function executePlaybackCommand(
         break;
       }
       case "play_track":
-        controls.play(commandTrack(args, "track"), commandTrackQueue(args));
+        if (controls.play(commandTrack(args, "track"), commandTrackQueue(args)) === false) {
+          return { status: "rejected", error: "track is not available for local playback" };
+        }
         break;
       case "set_playing": {
         const playing = commandBoolean(args, "playing");

@@ -14,7 +14,8 @@ export interface PlayerState {
 }
 
 export interface PlayerControls {
-  play: (track: TrackListItem, queue?: TrackListItem[]) => void;
+  /** Returns false when local playback policy rejects the track. */
+  play: (track: TrackListItem, queue?: TrackListItem[]) => false | void;
   resume: () => void;
   pause: () => void;
   toggle: () => void;

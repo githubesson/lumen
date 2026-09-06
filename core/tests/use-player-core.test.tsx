@@ -121,7 +121,9 @@ describe("usePlayerCore", () => {
 
     // Remote commands use these raw controls even when the socket stays online.
     offline = true;
-    act(() => result.current.controls.play(t("b"), queue4()));
+    act(() => {
+      expect(result.current.controls.play(t("b"), queue4())).toBe(false);
+    });
     expect(result.current.state).toEqual(previousState);
     expect(adapter.load).not.toHaveBeenCalled();
     expect(adapter.play).not.toHaveBeenCalled();

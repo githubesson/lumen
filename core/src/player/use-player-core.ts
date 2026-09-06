@@ -171,7 +171,7 @@ export function usePlayerCore({
 
   const play = useCallback<PlayerControls["play"]>(
     (track, q) => {
-      if (isTrackPlayable && !isTrackPlayable(track.id)) return;
+      if (isTrackPlayable && !isTrackPlayable(track.id)) return false;
       const base = q && q.length ? q : [track];
       setSourceQueue(base);
       if (shuffle) {

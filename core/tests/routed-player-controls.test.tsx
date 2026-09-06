@@ -103,7 +103,7 @@ describe("routed player controls", () => {
     expect(controls.setShuffle).toHaveBeenCalledWith(true);
     expect(controls.setRepeat).toHaveBeenCalledWith("one");
     vi.mocked(options.canPlayLocally!).mockReturnValue(false);
-    result.current.play(second);
+    expect(result.current.play(second)).toBe(false);
     expect(controls.play).toHaveBeenCalledOnce();
     expect(options.sendCommand).not.toHaveBeenCalled();
   });
