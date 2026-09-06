@@ -568,11 +568,9 @@ textarea { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   gap: 12px;
-  /* Transparent so the parent's `::before` highlight fade is visible along the
-     top edge — matches the sidebar's top glow. Content below keeps its own
-     backgrounds, so we don't need a dark wash here. */
+  /* Keep the parent's highlight visible without blurring its rounded edge.
+     The topbar sits outside the scrolling content, so no backdrop blur is needed. */
   background: transparent;
-  backdrop-filter: blur(8px);
   position: relative;
   z-index: 2;
 }
