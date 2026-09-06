@@ -589,6 +589,47 @@ function serverTracks(ids: string[]) {
 }
 
 describe("automatic ownership reconciliation", () => {
+  it("forgets deleted playlists without removing tracks retained elsewhere", async () => {
+    seedDownloads(["a", "b"], "playlist:p2");
+    const store = await freshStore();
+    const auto = await autoStore(store);
+    await store.downloadTrack(t("b"), "track");
+    await store.downloadTrack(t("pending"), "playlist:p2");
+    const gate = deferred<ReturnType<typeof serverTracks>>();
+    h.listPlaylistTracks.mockReturnValue(gate.promise);
+    const sync = auto.sync("p2");
+    await vi.waitFor(() => expect(h.listPlaylistTracks).toHaveBeenCalledOnce());
+
+    await auto.removePlaylist("p2");
+    gate.resolve(serverTracks(["a", "new"]));
+    await sync;
+    await finishTask(store, "pending", MP3_HEAD);
+    expect(auto.isEnabled("p2")).toBe(false);
+    expect(store.hasOwner("playlist:p2")).toBe(false);
+    expect(store.isDownloaded("a")).toBe(false);
+    expect(store.isDownloaded("b")).toBe(true);
+    expect(store.isDownloaded("pending")).toBe(false);
+    expect(createDownloadTask).toHaveBeenCalledTimes(1);
+
+    h.listPlaylistTracks.mockClear();
+    await auto.syncAll();
+    expect(h.listPlaylistTracks).not.toHaveBeenCalled();
+    const { setAutoDownloadAccount } = await import("../lib/downloads/auto-download");
+    const restored = setAutoDownloadAccount(store);
+    await restored.hydrate();
+    expect(restored.isEnabled("p2")).toBe(false);
+  });
+
+  it("removes manual playlist downloads even when auto-download was never enabled", async () => {
+    seedDownloads(["a"], "playlist:manual");
+    const store = await freshStore();
+    const auto = await autoStore(store);
+    await auto.removePlaylist("manual");
+    expect(store.isDownloaded("a")).toBe(false);
+    expect(store.hasOwner("playlist:manual")).toBe(false);
+    expect(auto.isEnabled("p2")).toBe(true);
+  });
+
   it("retains an existing download for a second playlist", async () => {
     seedDownloads(["a"]);
     const store = await freshStore();

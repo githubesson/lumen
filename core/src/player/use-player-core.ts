@@ -32,7 +32,7 @@ export interface UsePlayerCoreOptions {
    */
   resolveTrackUri?: (trackId: string) => string | null | undefined;
   /**
-   * Gate consulted when advancing through the queue: return false to skip a
+   * Gate consulted when starting a track or advancing through the queue: return false to skip a
    * track (e.g. not downloaded while offline). Read synchronously on user
    * action / track end, so it must be cheap. Absent → everything is playable.
    */
@@ -171,6 +171,7 @@ export function usePlayerCore({
 
   const play = useCallback<PlayerControls["play"]>(
     (track, q) => {
+      if (isTrackPlayable && !isTrackPlayable(track.id)) return;
       const base = q && q.length ? q : [track];
       setSourceQueue(base);
       if (shuffle) {
@@ -187,7 +188,7 @@ export function usePlayerCore({
       resetClockForTrackChange(track.id);
       playbackReportedRef.current = null;
     },
-    [resetClockForTrackChange, shuffle],
+    [isTrackPlayable, resetClockForTrackChange, shuffle],
   );
 
   const toggle = useCallback<PlayerControls["toggle"]>(() => {

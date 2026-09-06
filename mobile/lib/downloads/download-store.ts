@@ -831,13 +831,13 @@ export class DownloadStore {
     }
   }
 
-  /** Drop a playlist's ownership from the supplied tracks in one mutation. */
-  async removePlaylist(playlistId: string, trackIds: string[]): Promise<void> {
+  /** Drop ownership from supplied tracks, or every stored/pending track when omitted. */
+  async removePlaylist(playlistId: string, trackIds?: string[]): Promise<void> {
     await this.hydrate();
     if (!this.enabled) return;
     const owner = playlistOwner(playlistId);
     let changed = false;
-    for (const trackId of trackIds) {
+    for (const trackId of trackIds ?? new Set([...this.records.keys(), ...this.pendingOwners.keys()])) {
       changed = this.removeOwnerRecord(trackId, owner) || changed;
     }
     if (changed) {

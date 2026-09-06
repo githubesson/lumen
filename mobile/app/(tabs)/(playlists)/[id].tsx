@@ -171,7 +171,8 @@ export default function PlaylistDetailScreen() {
 
   const deleteMutation = useMutation({
     mutationFn: () => api.deletePlaylist(id!),
-    onSuccess: () => {
+    onSuccess: async () => {
+      await autoDownloadStore.removePlaylist(id!);
       void queryClient.invalidateQueries({ queryKey: playlistsQueryKey });
       router.back();
     },

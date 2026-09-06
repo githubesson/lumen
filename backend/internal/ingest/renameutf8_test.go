@@ -2,6 +2,8 @@ package ingest
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -76,6 +78,37 @@ func TestFixInvalidUTF8PathAvoidsCollision(t *testing.T) {
 	}
 	if b, err := os.ReadFile(filepath.Join(root, "Sder.wav")); err != nil || string(b) != "a" {
 		t.Fatalf("existing file clobbered: %q, err %v", b, err)
+	}
+}
+
+func TestRenameInvalidRefusesExhaustedNames(t *testing.T) {
+	root := t.TempDir()
+	existing := make(map[string]string)
+	for i := 0; i <= 99; i++ {
+		name := "Sder.wav"
+		if i > 0 {
+			name = fmt.Sprintf("Sder (%d).wav", i)
+		}
+		path := filepath.Join(root, name)
+		existing[path] = fmt.Sprintf("original audio %d", i)
+		if err := os.WriteFile(path, []byte(existing[path]), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	name := "S\xf6der.wav"
+	from := filepath.Join(root, name)
+	existing[from] = "new audio"
+	if err := os.WriteFile(from, []byte(existing[from]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{MusicRoot: root}
+	if _, err := s.renameInvalid(context.Background(), from, root, name); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("rename error = %v, want ErrExist", err)
+	}
+	for path, want := range existing {
+		if got, err := os.ReadFile(path); err != nil || string(got) != want {
+			t.Errorf("audio changed at %q: got %q, error %v", path, got, err)
+		}
 	}
 }
 

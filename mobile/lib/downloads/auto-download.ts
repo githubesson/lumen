@@ -212,6 +212,12 @@ class AutoDownloadStore {
     }
   }
 
+  /** Forget a deleted playlist, including downloads absent from the screen cache. */
+  async removePlaylist(playlistId: string): Promise<void> {
+    await this.setEnabled(playlistId, false);
+    await this.downloads.removePlaylist(playlistId);
+  }
+
   /** Sync every opted-in playlist. Sequential to avoid a burst of requests. */
   async syncAll(): Promise<void> {
     await this.hydrate();

@@ -107,6 +107,32 @@ beforeEach(() => {
 });
 
 describe("usePlayerCore", () => {
+  it("gates direct play calls before changing the queue or loading a stream", async () => {
+    let offline = false;
+    const { result, adapter } = await setup({
+      isTrackPlayable: (id) => !offline || id === "a",
+      resolveTrackUri: (id) => id === "a" ? "file:///a.mp3" : undefined,
+    });
+    act(() => result.current.controls.play(t("a"), [t("a")]));
+    act(() => result.current.controls.pause());
+    const previousState = result.current.state;
+    vi.mocked(adapter.load).mockClear();
+    vi.mocked(adapter.play).mockClear();
+
+    // Remote commands use these raw controls even when the socket stays online.
+    offline = true;
+    act(() => result.current.controls.play(t("b"), queue4()));
+    expect(result.current.state).toEqual(previousState);
+    expect(adapter.load).not.toHaveBeenCalled();
+    expect(adapter.play).not.toHaveBeenCalled();
+
+    act(() => result.current.controls.play(t("a")));
+    expect(result.current.state.isPlaying).toBe(true);
+    offline = false;
+    act(() => result.current.controls.play(t("b")));
+    expect(adapter.load).toHaveBeenCalledWith("test://stream/b");
+  });
+
   it("play() loads the track, sets the queue and starts playback", async () => {
     const { result, adapter, state } = await setup();
     act(() => result.current.controls.play(t("b"), queue4()));

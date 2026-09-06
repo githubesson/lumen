@@ -54,8 +54,11 @@ func (s *Service) fixInvalidUTF8Path(ctx context.Context, path string) string {
 // its cleaned, collision-free variant and clears any stale ingest_errors row
 // recorded under the old path.
 func (s *Service) renameInvalid(ctx context.Context, from, dir, name string) (string, error) {
-	to := uniquePath(filepath.Join(dir, cleanPathSegment(name)))
-	if err := os.Rename(from, to); err != nil {
+	to, err := uniquePath(filepath.Join(dir, cleanPathSegment(name)))
+	if err == nil {
+		err = os.Rename(from, to)
+	}
+	if err != nil {
 		s.log().Warn("rename of non-UTF-8 path failed",
 			"path", dbtext.Clean(from), "err", err)
 		return "", err
@@ -123,18 +126,23 @@ func cleanPathSegment(seg string) string {
 }
 
 // uniquePath returns p, or the first "p (n)" variant (before the extension)
-// that does not exist yet.
-func uniquePath(p string) string {
+// that does not exist yet. Fail closed if all candidates are occupied or a
+// filesystem error prevents checking whether a candidate exists.
+func uniquePath(p string) (string, error) {
 	if _, err := os.Lstat(p); errors.Is(err, os.ErrNotExist) {
-		return p
+		return p, nil
+	} else if err != nil {
+		return "", err
 	}
 	ext := filepath.Ext(p)
 	stem := strings.TrimSuffix(p, ext)
 	for i := 1; i <= 99; i++ {
 		cand := fmt.Sprintf("%s (%d)%s", stem, i, ext)
 		if _, err := os.Lstat(cand); errors.Is(err, os.ErrNotExist) {
-			return cand
+			return cand, nil
+		} else if err != nil {
+			return "", err
 		}
 	}
-	return p
+	return "", fmt.Errorf("no unused sanitized path for %q: %w", p, os.ErrExist)
 }
