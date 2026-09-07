@@ -10,10 +10,6 @@ interface Options {
   rootMargin?: string;
   /** Poll the server every N ms. Off when undefined or 0. */
   pollIntervalMs?: number;
-  /** When true, keep requesting pages until everything is loaded. Used for
-   *  aggregation views where the user shouldn't need to scroll to get a
-   *  complete picture. */
-  loadAll?: boolean;
 }
 
 export interface PageRequest {
@@ -160,16 +156,5 @@ export function usePaginatedList<T>(
     return () => obs.disconnect();
   }, [loadPage, items, hasMore, rootMargin]);
 
-  // Optional: keep pulling pages until the whole set is loaded, regardless of
-  // scroll. Used by aggregation views.
-  useEffect(() => {
-    if (!opts.loadAll) return;
-    if (items === null || !hasMore) return;
-    if (loadingRef.current) return;
-    void loadPage(items.length, false);
-  }, [opts.loadAll, items, hasMore, loadPage]);
-
-  const reload = useCallback(() => void loadPage(0, true), [loadPage]);
-
-  return { items, total, hasMore, loadingMore, error, sentinelRef, reload };
+  return { items, total, hasMore, loadingMore, error, sentinelRef };
 }

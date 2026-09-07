@@ -25,11 +25,11 @@ export function APITrackerPinsSection({
   onError: (message: string) => void;
 }) {
   const manager = usePinManager<APITrackerPin, APITrackerDownload>({
-    list: () => api.listAPITrackerPins(),
-    update: (id, patch) => api.updateAPITrackerPin(id, patch),
-    remove: (id) => api.deleteAPITrackerPin(id),
-    scan: (id) => api.scanAPITrackerPin(id),
-    listDownloads: (id, limit) => api.listAPITrackerDownloads(id, limit),
+    list: api.listAPITrackerPins,
+    update: api.updateAPITrackerPin,
+    remove: api.deleteAPITrackerPin,
+    scan: api.scanAPITrackerPin,
+    listDownloads: api.listAPITrackerDownloads,
     kind: "API tracker",
     confirmRemove: (pin) =>
       `Remove API tracker ${pin.label || pin.tracker_name || pin.tracker_id}?\n\nDownloaded files stay on disk and remain in the library.`,

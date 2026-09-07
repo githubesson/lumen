@@ -109,13 +109,6 @@ export default function TrackList({
     (id: string) => void toggle(id),
     [toggle],
   );
-  const handleEdit = useCallback((id: string) => setEditId(id), []);
-  const handleToggleSelection = useCallback(
-    (track: TrackListItem, index: number, range: boolean) => {
-      toggleSelection(track, index, range);
-    },
-    [toggleSelection],
-  );
   const handleExportSelected = useCallback(() => {
     void exportSelected();
   }, [exportSelected]);
@@ -234,9 +227,9 @@ export default function TrackList({
                   selectionMode={selectionMode}
                   selected={selectedIds.has(t.id)}
                   onPlay={handlePlay}
-                  onToggleSelect={handleToggleSelection}
+                  onToggleSelect={toggleSelection}
                   onToggleFav={handleToggleFav}
-                  onEdit={isAdmin ? handleEdit : undefined}
+                  onEdit={isAdmin ? setEditId : undefined}
                   onContextMenu={handleContextMenu}
                 />
               ))}

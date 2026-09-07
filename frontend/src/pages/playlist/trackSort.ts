@@ -1,9 +1,4 @@
-import {
-  SORT_DEFAULT_ASC,
-  compareSortableTracks,
-  type SortKey,
-} from "@music-library/core/track-sort";
-import type { PlaylistTrackEntry } from "../../api";
+import type { SortKey } from "@music-library/core/track-sort";
 import type { SelectOption } from "../../components/Select";
 
 // ── Local sorting ────────────────────────────────────────────────────────────
@@ -15,7 +10,11 @@ import type { SelectOption } from "../../components/Select";
 // worded for a desktop dropdown ("Custom order" rather than the phone's
 // "Custom").
 
-export { SORT_DEFAULT_ASC, type SortKey };
+export {
+  SORT_DEFAULT_ASC,
+  compareSortableTracks as compareEntries,
+  type SortKey,
+} from "@music-library/core/track-sort";
 
 export const SORT_OPTIONS: SelectOption<SortKey>[] = [
   { value: "custom", label: "Custom order" },
@@ -23,11 +22,3 @@ export const SORT_OPTIONS: SelectOption<SortKey>[] = [
   { value: "duration", label: "Length" },
   { value: "plays", label: "Plays" },
 ];
-
-export function compareEntries(
-  a: PlaylistTrackEntry,
-  b: PlaylistTrackEntry,
-  key: SortKey,
-): number {
-  return compareSortableTracks(a, b, key);
-}
