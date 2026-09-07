@@ -107,9 +107,8 @@ export default function Home() {
         </div>
       )}
 
-      <ShelfStatus title="Recently played" to="/recent" loading={recentResource.loading} error={recentResource.error} reload={recentResource.reload} />
-      {recent.length > 0 && (
-        <Shelf sub="Picked up where you left off" title="Recently played" to="/recent">
+      {(recent.length > 0 || recentResource.loading || recentResource.error) && (
+        <Shelf sub="Picked up where you left off" title="Recently played" to="/recent" status={<ShelfStatus title="Recently played" loading={recentResource.loading} error={recentResource.error} reload={recentResource.reload} />}>
           {recent.slice(0, 12).map((t) => (
             <MediaCard
               key={t.id}
@@ -124,9 +123,8 @@ export default function Home() {
         </Shelf>
       )}
 
-      <ShelfStatus title="Albums" to="/library?view=albums" loading={tracksResource.loading} error={tracksResource.error} reload={tracksResource.reload} />
-      {albums.length > 0 && (
-        <Shelf sub="Your library" title="Albums" to="/library?view=albums">
+      {(albums.length > 0 || tracksResource.loading || tracksResource.error) && (
+        <Shelf sub="Your library" title="Albums" to="/library?view=albums" status={<ShelfStatus title="Albums" loading={tracksResource.loading} error={tracksResource.error} reload={tracksResource.reload} />}>
           {albums.slice(0, 12).map((a) => (
             <MediaCard
               key={a.key}
@@ -143,9 +141,8 @@ export default function Home() {
         </Shelf>
       )}
 
-      <ShelfStatus title="Your favorites" to="/favorites" loading={favorites.loading} error={favorites.error} reload={() => void favorites.refresh()} />
-      {favs.length > 0 && (
-        <Shelf sub="Hearts" title="Your favorites" to="/favorites">
+      {(favs.length > 0 || favorites.loading || favorites.error) && (
+        <Shelf sub="Hearts" title="Your favorites" to="/favorites" status={<ShelfStatus title="Your favorites" loading={favorites.loading} error={favorites.error} reload={() => void favorites.refresh()} />}>
           {favs.slice(0, 12).map((t) => (
             <MediaCard
               key={t.id}
@@ -160,9 +157,8 @@ export default function Home() {
         </Shelf>
       )}
 
-      <ShelfStatus title="Playlists" to="/playlists" loading={playlistResource.loading} error={playlistResource.error} reload={playlistResource.reload} />
-      {playlists.length > 0 && (
-        <Shelf sub="Curated" title="Playlists" to="/playlists">
+      {(playlists.length > 0 || playlistResource.loading || playlistResource.error) && (
+        <Shelf sub="Curated" title="Playlists" to="/playlists" status={<ShelfStatus title="Playlists" loading={playlistResource.loading} error={playlistResource.error} reload={playlistResource.reload} />}>
           {playlists.slice(0, 12).map((p) => (
             <PlaylistCard key={p.id} playlist={p} />
           ))}
@@ -172,22 +168,19 @@ export default function Home() {
   );
 }
 
-function ShelfStatus({ title, to, loading, error, reload }: {
+function ShelfStatus({ title, loading, error, reload }: {
   title: string;
-  to: string;
   loading: boolean;
   error: string | null;
   reload: () => void;
 }) {
   if (!loading && !error) return null;
   return (
-    <Shelf sub="Your music" title={title} to={to}>
-      <div role="status" aria-busy={loading}>
-        {loading ? `Loading ${title.toLowerCase()}…` : (
-          <><p>{error}</p><Button onClick={reload}>Retry {title.toLowerCase()}</Button></>
-        )}
-      </div>
-    </Shelf>
+    <div role="status" aria-busy={loading}>
+      {loading ? `Loading ${title.toLowerCase()}…` : (
+        <><p>{error}</p><Button onClick={reload}>Retry {title.toLowerCase()}</Button></>
+      )}
+    </div>
   );
 }
 
@@ -196,11 +189,13 @@ function Shelf({
   title,
   to,
   children,
+  status,
 }: {
   sub: string;
   title: string;
   to: string;
   children: React.ReactNode;
+  status?: React.ReactNode;
 }) {
   return (
     <Section
@@ -212,6 +207,7 @@ function Shelf({
         </Link>
       }
     >
+      {status}
       <div className="shelf">{children}</div>
     </Section>
   );

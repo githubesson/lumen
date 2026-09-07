@@ -94,3 +94,31 @@ it("revalidates shared lists when returning home after navigation", async () => 
   expect(mock.playlists).toHaveBeenCalledTimes(2);
   expect(mock.favorites).toHaveBeenCalledTimes(2);
 });
+
+it("keeps one shelf per populated list while revalidation is pending or fails", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  mock.favorites.mockResolvedValueOnce([{ id: "favorite", title: "Saved favorite", duration_ms: 180000 }]);
+  mock.playlists.mockResolvedValueOnce([{ id: "playlist", name: "Saved playlist" }]);
+  renderHome();
+  await act(async () => {});
+  const favorites = deferred<TrackListItem[]>();
+  const playlists = deferred<Playlist[]>();
+  mock.favorites.mockReturnValueOnce(favorites.promise);
+  mock.playlists.mockReturnValueOnce(playlists.promise);
+  await act(async () => { fireEvent.click(screen.getByText("Away")); });
+  await act(async () => { fireEvent.click(screen.getByText("Home", { selector: "a" })); });
+
+  for (const title of ["Your favorites", "Playlists"]) {
+    expect(screen.getAllByText(title, { exact: true })).toHaveLength(1);
+  }
+  expect(screen.getByText("Saved favorite")).toBeTruthy();
+  expect(screen.getByText("Loading playlists…")).toBeTruthy();
+
+  await act(async () => { favorites.reject(new Error("offline")); playlists.reject(new Error("offline")); });
+  for (const title of ["Your favorites", "Playlists"]) {
+    expect(screen.getAllByText(title, { exact: true })).toHaveLength(1);
+  }
+  expect(screen.getByText("Saved favorite")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Retry your favorites" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Retry playlists" })).toBeTruthy();
+});
