@@ -79,14 +79,6 @@ type PlaylistTrackRowModel = {
 // copy. Only the option list stays here: it is menu-shaped and worded for a
 // phone context menu ("Custom" rather than the desktop's "Custom order").
 
-function compareModels(
-  a: PlaylistTrackRowModel,
-  b: PlaylistTrackRowModel,
-  key: SortKey,
-): number {
-  return compareSortableTracks(a.entry, b.entry, key);
-}
-
 export default function PlaylistDetailScreen() {
   const theme = useTheme();
   const router = useRouter();
@@ -206,7 +198,9 @@ export default function PlaylistDetailScreen() {
   // What the list actually shows; the play queue follows this order too.
   const displayModels = useMemo<PlaylistTrackRowModel[]>(() => {
     if (sortKey === "custom") return rowModels;
-    const sorted = [...rowModels].sort((a, b) => compareModels(a, b, sortKey));
+    const sorted = [...rowModels].sort((a, b) =>
+      compareSortableTracks(a.entry, b.entry, sortKey),
+    );
     return sortAsc ? sorted : sorted.reverse();
   }, [rowModels, sortKey, sortAsc]);
   const tracks = useMemo<TrackListItem[]>(

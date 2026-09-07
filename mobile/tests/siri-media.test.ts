@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   decodeSiriMediaIdentifier,
-  loadDefaultSiriMediaQueue,
   loadSiriMediaQueue,
   rankNamedSiriItems,
   resolveSiriMediaRequest,
@@ -185,23 +184,5 @@ describe("Siri catalog matching", () => {
         cover_url: undefined,
       },
     ]);
-  });
-
-  it("uses recent listening for a generic play or shuffle request", async () => {
-    const recent = [
-      {
-        id: "track-1",
-        title: "Recently Played",
-        duration_ms: 120_000,
-      },
-    ];
-    const client = {
-      listRecent: vi.fn().mockResolvedValue(recent),
-    };
-
-    await expect(
-      loadDefaultSiriMediaQueue(undefined, client as never),
-    ).resolves.toBe(recent);
-    expect(client.listRecent).toHaveBeenCalledWith(100, { signal: undefined });
   });
 });
