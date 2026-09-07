@@ -27,7 +27,6 @@ interface UseTrackSelectionResult<T> {
   someSelected: boolean;
   exporting: boolean;
   exportNotice: string | null;
-  toggleMode: () => void;
   toggleSelection: (item: T, index: number, range: boolean) => void;
   selectAll: () => void;
   clearSelection: () => void;
@@ -170,11 +169,6 @@ export function useTrackSelection<T>({
     setExportNotice(null);
   }, []);
 
-  const toggleMode = useCallback(() => {
-    setSelectionMode((value) => !value);
-    setExportNotice(null);
-  }, []);
-
   const exportSelected = useCallback(async () => {
     if (exporting || exportableItems.length === 0) return;
     setExporting(true);
@@ -185,10 +179,7 @@ export function useTrackSelection<T>({
         setExportNotice("Export canceled.");
         return;
       }
-      const parts: string[] = [];
-      if (result.failed > 0) parts.push(`${result.failed} failed`);
-      if (result.skipped > 0) parts.push(`${result.skipped} streaming-only skipped`);
-      const suffix = parts.length > 0 ? `, ${parts.join(", ")}` : "";
+      const suffix = result.failed > 0 ? `, ${result.failed} failed` : "";
       setExportNotice(
         result.usedFolderPicker
           ? `Exported ${result.exported} file${result.exported === 1 ? "" : "s"}${suffix}.`
@@ -210,7 +201,6 @@ export function useTrackSelection<T>({
     someSelected,
     exporting,
     exportNotice,
-    toggleMode,
     toggleSelection,
     selectAll,
     clearSelection,

@@ -51,7 +51,6 @@ export interface BatchExportResult {
   canceled: boolean;
   exported: number;
   failed: number;
-  skipped: number;
   folder?: string;
   errors: string[];
   usedFolderPicker: boolean;
@@ -60,17 +59,11 @@ export interface BatchExportResult {
 export async function exportTracksAsFiles(
   tracks: TrackListItem[],
 ): Promise<BatchExportResult> {
-  // The backend /stream endpoint now serves a full, contiguous file for
-  // every supported source (local files on disk, and TIDAL tracks via HLS
-  // segment assembly), so all tracks are exportable.
-  const exportable = tracks;
-  const skipped = tracks.length - exportable.length;
-  if (exportable.length === 0) {
+  if (tracks.length === 0) {
     return {
       canceled: false,
       exported: 0,
       failed: 0,
-      skipped,
       errors: [],
       usedFolderPicker: false,
     };
@@ -83,7 +76,7 @@ export async function exportTracksAsFiles(
   }> = [];
   let failed = 0;
   const errors: string[] = [];
-  for (const track of exportable) {
+  for (const track of tracks) {
     try {
       let detail: TrackDetail | null = null;
       try {
@@ -114,7 +107,6 @@ export async function exportTracksAsFiles(
         canceled: true,
         exported: 0,
         failed,
-        skipped,
         folder: res.folder,
         errors,
         usedFolderPicker: true,
@@ -125,7 +117,6 @@ export async function exportTracksAsFiles(
         canceled: false,
         exported: 0,
         failed: failed + prepared.length,
-        skipped,
         errors: [...errors, "Desktop export is unavailable."],
         usedFolderPicker: true,
       };
@@ -134,7 +125,6 @@ export async function exportTracksAsFiles(
       canceled: false,
       exported: res.saved ?? 0,
       failed: failed + (res.failed ?? 0),
-      skipped,
       folder: res.folder,
       errors: [...errors, ...(res.errors ?? []), ...(res.error ? [res.error] : [])],
       usedFolderPicker: true,
@@ -149,7 +139,6 @@ export async function exportTracksAsFiles(
     canceled: false,
     exported: prepared.length,
     failed,
-    skipped,
     errors,
     usedFolderPicker: false,
   };

@@ -24,11 +24,11 @@ export function FilenPinsSection({
   onError: (message: string) => void;
 }) {
   const manager = usePinManager<FilenPin, FilenDownload>({
-    list: () => api.listFilenPins(),
-    update: (id, patch) => api.updateFilenPin(id, patch),
-    remove: (id) => api.deleteFilenPin(id),
-    scan: (id) => api.scanFilenPin(id),
-    listDownloads: (id, limit) => api.listFilenDownloads(id, limit),
+    list: api.listFilenPins,
+    update: api.updateFilenPin,
+    remove: api.deleteFilenPin,
+    scan: api.scanFilenPin,
+    listDownloads: api.listFilenDownloads,
     kind: "Filen share",
     confirmRemove: (pin) =>
       `Remove Filen share ${pin.label || pin.share_url}?\n\nDownloaded files stay on disk and remain in the library.`,

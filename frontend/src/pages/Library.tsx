@@ -250,13 +250,9 @@ function AlbumsView({
   query: string;
   onOpen: (id: string) => void;
 }) {
-  const fetcher = useCallback(
-    (p: PageRequest) => api.listAlbumsPage(p),
-    [],
-  );
   return (
     <GridView<Album>
-      fetcher={fetcher}
+      fetcher={api.listAlbumsPage}
       query={query}
       pageSize={60}
       unit="album"
@@ -273,13 +269,9 @@ function ArtistsView({
   query: string;
   onOpen: (id: string) => void;
 }) {
-  const fetcher = useCallback(
-    (p: PageRequest) => api.listArtistsPage(p),
-    [],
-  );
   return (
     <GridView<Artist>
-      fetcher={fetcher}
+      fetcher={api.listArtistsPage}
       query={query}
       pageSize={60}
       unit="artist"

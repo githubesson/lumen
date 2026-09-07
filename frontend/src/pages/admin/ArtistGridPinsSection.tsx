@@ -29,11 +29,11 @@ export function ArtistGridPinsSection({
   onError: (message: string) => void;
 }) {
   const manager = usePinManager<ArtistGridPin, ArtistGridDownload>({
-    list: () => api.listArtistGridPins(),
-    update: (id, patch) => api.updateArtistGridPin(id, patch),
-    remove: (id) => api.deleteArtistGridPin(id),
-    scan: (id) => api.scanArtistGridPin(id),
-    listDownloads: (id, limit) => api.listArtistGridDownloads(id, limit),
+    list: api.listArtistGridPins,
+    update: api.updateArtistGridPin,
+    remove: api.deleteArtistGridPin,
+    scan: api.scanArtistGridPin,
+    listDownloads: api.listArtistGridDownloads,
     kind: "tracker",
     confirmRemove: (pin) =>
       `Remove tracker pin ${pin.label || pin.tracker_id}?\n\nDownloaded files stay on disk and remain in the library.`,
