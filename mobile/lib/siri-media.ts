@@ -23,7 +23,6 @@ type SiriCatalogApi = Pick<
   | "listArtistTracks"
   | "listPlaylists"
   | "listPlaylistTracks"
-  | "listRecent"
   | "searchTracks"
 >;
 
@@ -263,14 +262,6 @@ export async function loadSiriMediaQueue(
       ];
     }
   }
-}
-
-/** Queue used for generic requests such as "play music" or "shuffle something". */
-export function loadDefaultSiriMediaQueue(
-  signal?: AbortSignal,
-  client: SiriCatalogApi = api,
-): Promise<TrackListItem[]> {
-  return client.listRecent(100, { signal });
 }
 
 export function trackSiriMediaItem(track: TrackListItem): SiriMediaItem {

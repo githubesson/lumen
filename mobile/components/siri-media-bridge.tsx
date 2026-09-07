@@ -13,7 +13,6 @@ import {
   usePlayerPlayback,
 } from "../context/player";
 import {
-  loadDefaultSiriMediaQueue,
   loadSiriMediaQueue,
   resolveSiriMediaRequest,
   trackSiriMediaItem,
@@ -201,7 +200,7 @@ export function SiriMediaBridge() {
         }
         const loadedQueue = entity
           ? await loadSiriMediaQueue(entity, controller.signal)
-          : await loadDefaultSiriMediaQueue(controller.signal);
+          : await api.listRecent(100, { signal: controller.signal });
         const playableQueue = loadedQueue.filter((track) =>
           isTrackPlayableOffline(track.id),
         );

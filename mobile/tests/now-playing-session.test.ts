@@ -7,19 +7,7 @@ import { describe, expect, it } from "vitest";
 import { shouldExposeNowPlayingSession } from "../context/now-playing-session";
 
 describe("shouldExposeNowPlayingSession", () => {
-  it("keeps the session when a loaded track is paused in the background", () => {
-    expect(
-      shouldExposeNowPlayingSession({ hasTrack: true, isCasting: false }),
-    ).toBe(true);
-  });
-
-  it("keeps the session while a loaded track is playing in the background", () => {
-    expect(
-      shouldExposeNowPlayingSession({ hasTrack: true, isCasting: false }),
-    ).toBe(true);
-  });
-
-  it("keeps the session when a loaded track is paused in the foreground", () => {
+  it("keeps the session while a track is loaded locally", () => {
     expect(
       shouldExposeNowPlayingSession({ hasTrack: true, isCasting: false }),
     ).toBe(true);

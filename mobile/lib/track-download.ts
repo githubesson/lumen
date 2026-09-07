@@ -70,28 +70,14 @@ export function looksLikeMediaBytes(bytes: Uint8Array, contentType?: string) {
   const type = contentType?.split(";")[0]?.toLowerCase().trim();
   if (type?.startsWith("audio/") || type?.startsWith("video/")) return true;
   if (type === "application/octet-stream" || !type) {
-    return hasKnownMediaSignature(bytes);
+    return extensionForMediaBytes(bytes) !== undefined;
   }
   return true;
 }
 
-function hasKnownMediaSignature(bytes: Uint8Array) {
-  const ascii = (offset: number, length: number) =>
-    String.fromCharCode(...bytes.slice(offset, offset + length));
-
-  return (
-    ascii(0, 3) === "ID3" ||
-    ascii(0, 4) === "fLaC" ||
-    ascii(0, 4) === "OggS" ||
-    ascii(0, 4) === "RIFF" ||
-    ascii(4, 4) === "ftyp" ||
-    (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)
-  );
-}
-
 /** Sniff the audio container from magic bytes (the first 16 are enough).
- *  Mirrors {@link hasKnownMediaSignature}; used when the transport gives no
- *  usable content type (e.g. background downloads finalized after restart). */
+ *  Used for validation and when the transport gives no usable content type
+ *  (e.g. background downloads finalized after restart). */
 export function extensionForMediaBytes(
   bytes: Uint8Array,
 ): "mp3" | "flac" | "ogg" | "wav" | "m4a" | undefined {

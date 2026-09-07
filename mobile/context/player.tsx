@@ -44,7 +44,6 @@ import {
   setLockScreenTrackControlsEnabled,
 } from "../modules/lock-screen-controls";
 
-type Ctx = PlayerState & PlayerControls;
 type PlayerQueueState = Pick<PlayerState, "queue" | "index">;
 type PlayerPlaybackState = Pick<
   PlayerState,
@@ -81,7 +80,6 @@ function createRequiredContext<T>(hookName: string) {
   return [Ctx, useRequiredContext] as const;
 }
 
-const [PlayerCtx, usePlayerCtx] = createRequiredContext<Ctx>("usePlayer");
 const [PlayerControlsCtx, usePlayerControlsCtx] =
   createRequiredContext<PlayerControls>("usePlayerControls");
 const [PlayerPlayCtx, usePlayTrackCtx] =
@@ -101,7 +99,6 @@ const [PlayerVolumeCtx, usePlayerVolumeCtx] =
 const [RemotePlaybackCtx, useRemotePlaybackCtx] =
   createRequiredContext<RemotePlaybackContextValue>("useRemotePlayback");
 
-export const usePlayer = usePlayerCtx;
 export const usePlayerControls = usePlayerControlsCtx;
 export const usePlayTrack = usePlayTrackCtx;
 export const usePlayerTime = usePlayerTimeCtx;
@@ -333,7 +330,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     remoteQueue: displayedState.queue,
     canPlayLocally,
   });
-  const routedPlay = routedControls.play;
   // Ticking, not memoized from the heartbeat: snapshots arrive every ~10s,
   // and a memo keyed on them made cast-mode lyrics/scrubber time advance in
   // ten-second leaps. Foreground-gated like `interpolateProgress` above.
@@ -342,10 +338,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     appState === "active",
   );
   const displayedTime = targetDevice ? remoteTime : time;
-  const value = useMemo<Ctx>(
-    () => ({ ...displayedState, ...routedControls }),
-    [displayedState, routedControls],
-  );
   const queueValue = useMemo<PlayerQueueState>(
     () => ({ queue: displayedState.queue, index: displayedState.index }),
     [displayedState.queue, displayedState.index],
@@ -387,25 +379,23 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   return (
     <RemotePlaybackCtx.Provider value={remoteValue}>
-    <PlayerCurrentCtx.Provider value={displayedState.current}>
-      <PlayerIsPlayingCtx.Provider value={displayedState.isPlaying}>
-        <PlayerQueueCtx.Provider value={queueValue}>
-          <PlayerPlaybackCtx.Provider value={playbackValue}>
-            <PlayerVolumeCtx.Provider value={volumeValue}>
-              <PlayerPlayCtx.Provider value={routedControls.play}>
-                <PlayerControlsCtx.Provider value={routedControls}>
-                  <PlayerCtx.Provider value={value}>
+      <PlayerCurrentCtx.Provider value={displayedState.current}>
+        <PlayerIsPlayingCtx.Provider value={displayedState.isPlaying}>
+          <PlayerQueueCtx.Provider value={queueValue}>
+            <PlayerPlaybackCtx.Provider value={playbackValue}>
+              <PlayerVolumeCtx.Provider value={volumeValue}>
+                <PlayerPlayCtx.Provider value={routedControls.play}>
+                  <PlayerControlsCtx.Provider value={routedControls}>
                     <PlayerTimeCtx.Provider value={displayedTime}>
                       {children}
                     </PlayerTimeCtx.Provider>
-                  </PlayerCtx.Provider>
-                </PlayerControlsCtx.Provider>
-              </PlayerPlayCtx.Provider>
-            </PlayerVolumeCtx.Provider>
-          </PlayerPlaybackCtx.Provider>
-        </PlayerQueueCtx.Provider>
-      </PlayerIsPlayingCtx.Provider>
-    </PlayerCurrentCtx.Provider>
+                  </PlayerControlsCtx.Provider>
+                </PlayerPlayCtx.Provider>
+              </PlayerVolumeCtx.Provider>
+            </PlayerPlaybackCtx.Provider>
+          </PlayerQueueCtx.Provider>
+        </PlayerIsPlayingCtx.Provider>
+      </PlayerCurrentCtx.Provider>
     </RemotePlaybackCtx.Provider>
   );
 }

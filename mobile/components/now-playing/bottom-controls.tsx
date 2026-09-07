@@ -66,46 +66,33 @@ export const NowPlayingBottomControls = memo(function NowPlayingBottomControls({
         trackKey={current?.id ?? null}
         time={time}
         isPlaying={isPlaying}
-        onSeek={(seconds) => controls.seek(seconds)}
+        onSeek={controls.seek}
       />
 
       <TransportControls
         isPlaying={isPlaying}
-        onPrev={() => controls.prev()}
-        onToggle={() => controls.toggle()}
-        onNext={() => controls.next()}
+        onPrev={controls.prev}
+        onToggle={controls.toggle}
+        onNext={controls.next}
         style={isTabletLayout ? styles.transportTablet : styles.transport}
       />
 
       <VolumeRow
         value={muted ? 0 : volume}
-        onSetVolume={(value) => controls.setVolume(value)}
+        onSetVolume={controls.setVolume}
         style={isTabletLayout ? styles.volumeRowTablet : styles.volumeRow}
       />
 
-      {isTabletLayout ? (
-        <View style={[styles.toolbar, styles.toolbarTablet]}>
-          <AirPlayButton />
-          <PlaybackDeviceButton glass />
-          <LyricsToggleButton lyricsOpen={lyricsOpen} onPress={toggleLyrics} />
-          <QueueToggleButton
-            queueOpen={queueOpen}
-            shuffle={shuffle}
-            onPress={toggleQueue}
-          />
-        </View>
-      ) : (
-        <View style={styles.toolbar}>
-          <AirPlayButton />
-          <PlaybackDeviceButton glass />
-          <LyricsToggleButton lyricsOpen={lyricsOpen} onPress={toggleLyrics} />
-          <QueueToggleButton
-            queueOpen={queueOpen}
-            shuffle={shuffle}
-            onPress={toggleQueue}
-          />
-        </View>
-      )}
+      <View style={[styles.toolbar, isTabletLayout && styles.toolbarTablet]}>
+        <AirPlayButton />
+        <PlaybackDeviceButton glass />
+        <LyricsToggleButton lyricsOpen={lyricsOpen} onPress={toggleLyrics} />
+        <QueueToggleButton
+          queueOpen={queueOpen}
+          shuffle={shuffle}
+          onPress={toggleQueue}
+        />
+      </View>
     </View>
   );
 });
