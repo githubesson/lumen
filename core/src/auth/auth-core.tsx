@@ -15,6 +15,8 @@ import type { Storage } from "../storage";
 export interface AuthState {
   status: "loading" | "guest" | "authed";
   me: Me | null;
+  /** A failed session check is distinct from the server rejecting a session. */
+  refreshError: string | null;
   refresh: () => Promise<void>;
   login: (username: string, password: string) => Promise<Me>;
   logout: () => Promise<void>;
@@ -51,6 +53,7 @@ export function AuthProvider({
 }) {
   const [me, setMeState] = useState<Me | null>(null);
   const [status, setStatus] = useState<AuthState["status"]>("loading");
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   const writes = useRef(Promise.resolve());
   const persistMe = useCallback((m: Me | null) => {
@@ -88,6 +91,8 @@ export function AuthProvider({
 
   const runRefresh = useCallback(async () => {
     if (transitioning.current) return;
+    setRefreshError(null);
+    setStatus((current) => current === "authed" ? current : "loading");
     const token = ++refreshTokenRef.current;
     const isCurrent = () => mountedRef.current && token === refreshTokenRef.current;
     let intent: string | null | undefined;
@@ -96,7 +101,11 @@ export function AuthProvider({
       intent = await intentStorage?.getItem(SIGNED_OUT_KEY);
     } catch {
       // An unreadable intent cannot prove it is safe to recover a cookie.
-      if (isCurrent()) { setMeState(null); setStatus("guest"); }
+      if (isCurrent()) {
+        setMeState(null);
+        setStatus("guest");
+        setRefreshError("Could not read your saved sign-in preferences.");
+      }
       return;
     }
     try {
@@ -143,6 +152,7 @@ export function AuthProvider({
       } else {
         setMeState(null);
         setStatus("guest");
+        setRefreshError("Could not connect to your server. Check your connection and try again.");
       }
     }
   }, [persistMe, sessionCache, intentStorage]);
@@ -168,6 +178,7 @@ export function AuthProvider({
       invalidate();
       transitioning.current = false;
       if (!mountedRef.current) return;
+      setRefreshError(null);
       setMeState(null);
       setStatus("guest");
     });
@@ -186,6 +197,7 @@ export function AuthProvider({
       await intentStorage?.removeItem(SIGNED_OUT_KEY);
       if (token !== refreshTokenRef.current || !mountedRef.current) return m;
       signedOut.current = false;
+      setRefreshError(null);
       setMeState(m);
       setStatus("authed");
       persistMe(m);
@@ -218,6 +230,7 @@ export function AuthProvider({
       signedOut.current = true;
       try { await clearSession?.(); } catch { /* Revocation or durable intent still protects the session. */ }
       if (token !== refreshTokenRef.current || !mountedRef.current) return;
+      setRefreshError(null);
       setMeState(null);
       setStatus("guest");
       persistMe(null);
@@ -238,6 +251,7 @@ export function AuthProvider({
       // A pre-session refresh may still be in flight while registration returns.
       // Invalidate it so its older /me result cannot overwrite this new session.
       invalidate();
+      setRefreshError(null);
       transitioning.current = false;
       signedOut.current = !m;
       writes.current = writes.current.then(async () => {
@@ -252,8 +266,8 @@ export function AuthProvider({
   );
 
   const value = useMemo<AuthState>(
-    () => ({ status, me, refresh, login, logout, setMe }),
-    [status, me, refresh, login, logout, setMe],
+    () => ({ status, me, refreshError, refresh, login, logout, setMe }),
+    [status, me, refreshError, refresh, login, logout, setMe],
   );
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
