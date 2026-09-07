@@ -1,5 +1,5 @@
-import { Suspense, lazy } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Suspense, lazy, useEffect } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./context/Auth";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
@@ -7,8 +7,11 @@ import ForceReset from "./pages/ForceReset";
 import SharePreview from "./pages/SharePreview";
 import Shell from "./components/Shell";
 import WindowControls from "./components/WindowControls";
+import StartupConnection from "./components/StartupConnection";
+import { PlaylistsProvider } from "./context/Playlists";
 
-const Home = lazy(() => import("./pages/Home"));
+const loadHome = () => import("./pages/Home");
+const Home = lazy(loadHome);
 const Library = lazy(() => import("./pages/Library"));
 const Favorites = lazy(() => import("./pages/Favorites"));
 const Recent = lazy(() => import("./pages/Recent"));
@@ -35,27 +38,20 @@ const PageFallback = () => (
 );
 
 export default function App() {
-  const { status, me } = useAuth();
+  const { status, me, refreshError } = useAuth();
+  const { pathname } = useLocation();
 
-  if (status === "loading") {
+  useEffect(() => {
+    // Fetch/parse the landing route while /me is in flight. Its data requests
+    // still begin only after authentication permits the route to mount.
+    if (pathname === "/") void loadHome().catch(() => {});
+  }, [pathname]);
+
+  if (status === "loading" || (!me && refreshError && pathname !== "/register" && !pathname.startsWith("/shared/"))) {
     return (
       <>
         <WindowControls className="root-window-controls" />
-        <div
-          role="status"
-          aria-live="polite"
-          className="mono"
-          style={{
-            display: "grid",
-            placeItems: "center",
-            minHeight: "100dvh",
-            fontSize: 11,
-            color: "var(--fg-subtle)",
-            background: "var(--bg)",
-          }}
-        >
-          Loading...
-        </div>
+        <StartupConnection key={status} />
       </>
     );
   }
@@ -68,7 +64,9 @@ export default function App() {
         <Route path="/register" element={<Register />} />
         <Route path="/shared/track/:id" element={<SharePreview />} />
 
-        <Route element={me ? <Shell /> : <Navigate to="/login" replace />}>
+        <Route element={me ? (
+          <PlaylistsProvider key={`${me.id}:${me.must_reset_password}`}><Shell /></PlaylistsProvider>
+        ) : <Navigate to="/login" replace />}>
           <Route
             path="/"
             element={

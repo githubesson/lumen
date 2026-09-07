@@ -152,6 +152,7 @@ async function openMain(): Promise<void> {
     normalBounds = null;
   });
   await mainWindow.loadURL(`http://127.0.0.1:${localProxy.port}/`);
+  updateManager.startAutomaticChecks();
 }
 
 function openSetup(): void {
@@ -177,6 +178,7 @@ function openSetup(): void {
     },
   });
   hardenNavigation(setupWindow);
+  setupWindow.webContents.once("did-finish-load", () => updateManager.startAutomaticChecks());
   setupWindow.setMenuBarVisibility(false);
   setupWindow.on("closed", () => {
     setupWindow = null;
@@ -825,7 +827,6 @@ if (!gotLock) {
     const updateRepoUrl =
       parseGitHubRepoUrl(cfg.updateRepoUrl)?.url ?? DEFAULT_UPDATE_REPO_URL;
     updateManager.configure({ branch: updateBranch, repoUrl: updateRepoUrl });
-    updateManager.startAutomaticChecks();
     await localProxy.start();
     if (!backendUrl) openSetup();
     else await openMain();

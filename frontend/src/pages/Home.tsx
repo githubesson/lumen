@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { PlayIcon, SparklesIcon } from "@heroicons/react/16/solid";
 import {
@@ -6,7 +6,6 @@ import {
   albumCoverUrl,
   coverUrl,
   trackCoverUrl,
-  type Playlist,
   type TrackListItem,
 } from "../api";
 import MediaCard from "../components/MediaCard";
@@ -16,33 +15,29 @@ import { Button } from "../components/Button";
 import { useTrackContextMenu } from "../components/TrackContextMenu";
 import { useAuth } from "../context/Auth";
 import { usePlayer } from "../context/Player";
+import { useFavorites } from "../context/Favorites";
+import { usePlaylists } from "../context/Playlists";
+import { useApiResource } from "../lib/useApiResource";
 import { displayText } from "../lib/format";
+
+const EMPTY_TRACKS: TrackListItem[] = [];
 
 export default function Home() {
   const { me } = useAuth();
   const { play } = usePlayer();
-  const [recent, setRecent] = useState<TrackListItem[]>([]);
-  const [tracks, setTracks] = useState<TrackListItem[]>([]);
-  const [favs, setFavs] = useState<TrackListItem[]>([]);
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const recentResource = useApiResource(
+    (signal) => api.listRecent(20, { signal }), "Could not load recently played tracks.",
+  );
+  const tracksResource = useApiResource(
+    (signal) => api.listTracks({ limit: 24, signal }), "Could not load your library.",
+  );
+  const favorites = useFavorites();
+  const playlistResource = usePlaylists();
+  const recent = recentResource.data ?? EMPTY_TRACKS;
+  const tracks = tracksResource.data ?? EMPTY_TRACKS;
+  const favs = favorites.tracks.filter((track) => favorites.ids.has(track.id));
+  const playlists = playlistResource.data ?? [];
   const { bind: bindCtx, menu: ctxMenu } = useTrackContextMenu();
-
-  useEffect(() => {
-    const ac = new AbortController();
-    Promise.allSettled([
-      api.listRecent(20, { signal: ac.signal }),
-      api.listTracks({ limit: 24, signal: ac.signal }),
-      api.listFavorites({ signal: ac.signal }),
-      api.listPlaylists({ signal: ac.signal }),
-    ]).then((results) => {
-      if (ac.signal.aborted) return;
-      if (results[0].status === "fulfilled") setRecent(results[0].value ?? []);
-      if (results[1].status === "fulfilled") setTracks(results[1].value ?? []);
-      if (results[2].status === "fulfilled") setFavs(results[2].value ?? []);
-      if (results[3].status === "fulfilled") setPlaylists(results[3].value ?? []);
-    });
-    return () => ac.abort();
-  }, []);
 
   const hero = recent[0] ?? tracks[0] ?? null;
   const albums = useMemo(() => groupAlbums(tracks), [tracks]);
@@ -79,6 +74,21 @@ export default function Home() {
             </div>
           </div>
         </div>
+      ) : recentResource.loading || tracksResource.loading ? (
+        <div className="hero" aria-busy="true">
+          <div className="hero-body">
+            <div className="hero-eyebrow">Welcome, {me?.username}</div>
+            <h1 className="hero-title">Your library</h1>
+            <p role="status">Loading your music…</p>
+          </div>
+        </div>
+      ) : recentResource.error || tracksResource.error ? (
+        <div className="hero">
+          <div className="hero-body">
+            <h1 className="hero-title">Your library</h1>
+            <p>Some music could not be loaded. Retry the sections below.</p>
+          </div>
+        </div>
       ) : (
         <div className="hero">
           <div className="hero-body">
@@ -97,8 +107,8 @@ export default function Home() {
         </div>
       )}
 
-      {recent.length > 0 && (
-        <Shelf sub="Picked up where you left off" title="Recently played" to="/recent">
+      {(recent.length > 0 || recentResource.loading || recentResource.error) && (
+        <Shelf sub="Picked up where you left off" title="Recently played" to="/recent" status={<ShelfStatus title="Recently played" loading={recentResource.loading} error={recentResource.error} reload={recentResource.reload} />}>
           {recent.slice(0, 12).map((t) => (
             <MediaCard
               key={t.id}
@@ -113,8 +123,8 @@ export default function Home() {
         </Shelf>
       )}
 
-      {albums.length > 0 && (
-        <Shelf sub="Your library" title="Albums" to="/library?view=albums">
+      {(albums.length > 0 || tracksResource.loading || tracksResource.error) && (
+        <Shelf sub="Your library" title="Albums" to="/library?view=albums" status={<ShelfStatus title="Albums" loading={tracksResource.loading} error={tracksResource.error} reload={tracksResource.reload} />}>
           {albums.slice(0, 12).map((a) => (
             <MediaCard
               key={a.key}
@@ -131,8 +141,8 @@ export default function Home() {
         </Shelf>
       )}
 
-      {favs.length > 0 && (
-        <Shelf sub="Hearts" title="Your favorites" to="/favorites">
+      {(favs.length > 0 || favorites.loading || favorites.error) && (
+        <Shelf sub="Hearts" title="Your favorites" to="/favorites" status={<ShelfStatus title="Your favorites" loading={favorites.loading} error={favorites.error} reload={() => void favorites.refresh()} />}>
           {favs.slice(0, 12).map((t) => (
             <MediaCard
               key={t.id}
@@ -147,12 +157,28 @@ export default function Home() {
         </Shelf>
       )}
 
-      {playlists.length > 0 && (
-        <Shelf sub="Curated" title="Playlists" to="/playlists">
+      {(playlists.length > 0 || playlistResource.loading || playlistResource.error) && (
+        <Shelf sub="Curated" title="Playlists" to="/playlists" status={<ShelfStatus title="Playlists" loading={playlistResource.loading} error={playlistResource.error} reload={playlistResource.reload} />}>
           {playlists.slice(0, 12).map((p) => (
             <PlaylistCard key={p.id} playlist={p} />
           ))}
         </Shelf>
+      )}
+    </div>
+  );
+}
+
+function ShelfStatus({ title, loading, error, reload }: {
+  title: string;
+  loading: boolean;
+  error: string | null;
+  reload: () => void;
+}) {
+  if (!loading && !error) return null;
+  return (
+    <div role="status" aria-busy={loading}>
+      {loading ? `Loading ${title.toLowerCase()}…` : (
+        <><p>{error}</p><Button onClick={reload}>Retry {title.toLowerCase()}</Button></>
       )}
     </div>
   );
@@ -163,11 +189,13 @@ function Shelf({
   title,
   to,
   children,
+  status,
 }: {
   sub: string;
   title: string;
   to: string;
   children: React.ReactNode;
+  status?: React.ReactNode;
 }) {
   return (
     <Section
@@ -179,6 +207,7 @@ function Shelf({
         </Link>
       }
     >
+      {status}
       <div className="shelf">{children}</div>
     </Section>
   );

@@ -8,12 +8,16 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api } from "../api";
+import { api, type TrackListItem } from "../api";
 import { useAuth } from "../auth/auth-core";
 import { withFavoriteId } from "./favorite-toggle";
 
 export interface FavoritesState {
   ids: Set<string>;
+  /** Latest fetched rows, shared with Home to avoid a second startup request. */
+  tracks: TrackListItem[];
+  loading: boolean;
+  error: string | null;
   isFavorite: (id: string) => boolean;
   toggle: (id: string) => Promise<void>;
   refresh: () => Promise<void>;
@@ -34,6 +38,10 @@ const Ctx = createContext<FavoritesState | null>(null);
 export function FavoritesProvider({ children }: { children: ReactNode }) {
   const { status } = useAuth();
   const [ids, setIds] = useState<Set<string>>(new Set());
+  const [tracks, setTracks] = useState<TrackListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
   // Mirrors `ids` for the callbacks below, so they can stay referentially
   // stable. Written from an effect (never during render) plus optimistically
   // inside `toggle`.
@@ -43,14 +51,25 @@ export function FavoritesProvider({ children }: { children: ReactNode }) {
   }, [ids]);
 
   const refresh = useCallback(async () => {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    setLoading(true);
+    setError(null);
     try {
-      const rows = await api.listFavorites();
+      const rows = await api.listFavorites({ signal: controller.signal });
+      if (controller.signal.aborted) return;
+      setTracks(rows);
       setIds(new Set(rows.map((t) => t.id)));
     } catch (err) {
+      if (controller.signal.aborted) return;
+      setError("Could not load favorites.");
       // Non-fatal — the set is re-fetched on the next auth transition and every
       // toggle reconciles against the server — but swallowing it silently made
       // a persistently failing endpoint indistinguishable from "no favorites".
       console.warn("favorites refresh failed", err);
+    } finally {
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, []);
 
@@ -59,6 +78,7 @@ export function FavoritesProvider({ children }: { children: ReactNode }) {
     // local cache when it transitions to authenticated.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (status === "authed") void refresh();
+    return () => requestRef.current?.abort();
   }, [status, refresh]);
 
   const isFavorite = useCallback((id: string) => ids.has(id), [ids]);
@@ -86,8 +106,8 @@ export function FavoritesProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<FavoritesState>(
-    () => ({ ids, isFavorite, toggle, refresh }),
-    [ids, isFavorite, toggle, refresh],
+    () => ({ ids, tracks, loading, error, isFavorite, toggle, refresh }),
+    [ids, tracks, loading, error, isFavorite, toggle, refresh],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

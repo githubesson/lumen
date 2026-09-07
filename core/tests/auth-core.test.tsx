@@ -235,3 +235,51 @@ describe("auth transitions", () => {
     expect(result.current.me).toEqual(staleUser);
   });
 });
+
+describe("startup connection errors", () => {
+  const Wrapper = ({ children }: { children: ReactNode }) => <AuthProvider>{children}</AuthProvider>;
+
+  beforeEach(() => { h.me.mockReset(); });
+
+  it("exposes a connection failure and clears it when retry succeeds", async () => {
+    h.me.mockRejectedValueOnce(new TypeError("offline"));
+    const { result, unmount } = renderHook(() => useAuth(), { wrapper: Wrapper });
+    await act(async () => {});
+    expect(result.current.status).toBe("guest");
+    expect(result.current.me).toBeNull();
+    expect(result.current.refreshError).toContain("Could not connect");
+
+    const retry = deferred<Me>();
+    h.me.mockReturnValueOnce(retry.promise);
+    let pending!: Promise<void>;
+    act(() => { pending = result.current.refresh(); });
+    expect(result.current.status).toBe("loading");
+    expect(result.current.refreshError).toBeNull();
+    await act(async () => { retry.resolve(registeredUser); await pending; });
+    expect(result.current.status).toBe("authed");
+    expect(result.current.me).toEqual(registeredUser);
+    unmount();
+  });
+
+  it("treats a rejected session as signed out, not a connection failure", async () => {
+    h.me.mockRejectedValueOnce(new ApiError(401, "Unauthorized"));
+    const { result, unmount } = renderHook(() => useAuth(), { wrapper: Wrapper });
+    await act(async () => {});
+    expect(result.current.status).toBe("guest");
+    expect(result.current.refreshError).toBeNull();
+    unmount();
+  });
+
+  it("does not restore an old connection error after a new login", async () => {
+    const old = deferred<Me>();
+    h.me.mockReturnValueOnce(old.promise);
+    h.login.mockResolvedValueOnce(registeredUser);
+    const { result, unmount } = renderHook(() => useAuth(), { wrapper: Wrapper });
+    await act(async () => {});
+    await act(async () => { await result.current.login("user", "password"); });
+    await act(async () => { old.reject(new TypeError("offline")); });
+    expect(result.current.me).toEqual(registeredUser);
+    expect(result.current.refreshError).toBeNull();
+    unmount();
+  });
+});

@@ -1,9 +1,8 @@
 import { app, BrowserWindow } from "electron";
-import {
-  autoUpdater,
-  type AppUpdater,
-  type ProgressInfo,
-  type UpdateInfo,
+import type {
+  AppUpdater,
+  ProgressInfo,
+  UpdateInfo,
 } from "electron-updater";
 
 import type { UpdateBranch, UpdateStatus, UpdatePreferences } from "../src/contracts/desktop";
@@ -124,20 +123,9 @@ export class DesktopUpdateManager {
     }
 
     try {
-      const updater = this.ensureUpdater();
-      const channel = branch === "dev" ? "dev" : "latest";
-      updater.allowPrerelease = branch === "dev";
-      updater.channel = channel;
-      // Channel changes are an explicit user choice. This permits returning
-      // from a newer dev build to the latest stable release as well as opting
-      // into dev.
-      updater.allowDowngrade = true;
-      updater.setFeedURL({
-        provider: "github",
-        owner: repo.owner,
-        repo: repo.repo,
-        channel,
-      });
+      // Preferences/status are cheap to prepare during boot. Loading the
+      // updater and its dependencies waits until an actual check.
+      if (this.updater) this.applyPreferences(this.updater);
     } catch (error) {
       console.error("[updater] initialization failed", error);
       this.setStatus({
@@ -176,7 +164,7 @@ export class DesktopUpdateManager {
   }
 
   async check(): Promise<UpdateStatus> {
-    if (!this.status.canCheck || !this.updater) return this.getStatus();
+    if (!this.status.canCheck) return this.getStatus();
     if (this.status.state === "checking" || this.status.state === "downloading") {
       return this.getStatus();
     }
@@ -187,7 +175,7 @@ export class DesktopUpdateManager {
       progress: undefined,
     });
     try {
-      await this.updater.checkForUpdates();
+      await this.ensureUpdater().checkForUpdates();
     } catch (error) {
       this.setStatus({
         state: "error",
@@ -227,6 +215,10 @@ export class DesktopUpdateManager {
 
   private ensureUpdater(): AppUpdater {
     if (this.updater) return this.updater;
+    // CommonJS Electron entry: require only on the delayed/manual check path.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { autoUpdater } = require("electron-updater") as typeof import("electron-updater");
+    this.applyPreferences(autoUpdater);
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.logger = console;
@@ -279,6 +271,17 @@ export class DesktopUpdateManager {
 
     this.updater = autoUpdater;
     return autoUpdater;
+  }
+
+  private applyPreferences(updater: AppUpdater): void {
+    const { branch, repoUrl } = this.preferences;
+    const repo = parseGitHubRepoUrl(repoUrl)!;
+    const channel = branch === "dev" ? "dev" : "latest";
+    updater.allowPrerelease = branch === "dev";
+    updater.channel = channel;
+    // Permit switching from a newer dev build back to stable.
+    updater.allowDowngrade = true;
+    updater.setFeedURL({ provider: "github", owner: repo.owner, repo: repo.repo, channel });
   }
 
   private setStatus(patch: Partial<UpdateStatus>): void {

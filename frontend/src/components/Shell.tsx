@@ -34,6 +34,7 @@ import {
 } from "@heroicons/react/16/solid";
 import { api, type Playlist } from "../api";
 import { useAuth } from "../context/Auth";
+import { usePlaylists } from "../context/Playlists";
 import { useTheme } from "../context/Theme";
 import { useKey } from "../lib/keybindings";
 import { useDiscordPresence } from "../lib/discordPresence";
@@ -48,6 +49,7 @@ import TweaksPanel from "./TweaksPanel";
 import WindowControls from "./WindowControls";
 
 const CommandPalette = lazy(() => import("./CommandPalette"));
+const EMPTY_PLAYLISTS: Playlist[] = [];
 
 type NavItemCfg = {
   label: string;
@@ -72,7 +74,8 @@ export default function Shell() {
   const navigate = useNavigate();
   const location = useLocation();
   const params = useParams();
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const { data: playlistRows } = usePlaylists();
+  const playlists = playlistRows ?? EMPTY_PLAYLISTS;
   const [pendingCount, setPendingCount] = useState(0);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [tweaksOpen, setTweaksOpen] = useState(false);
@@ -84,10 +87,6 @@ export default function Shell() {
 
   useEffect(() => {
     if (!me || me.must_reset_password) return;
-    void api
-      .listPlaylists()
-      .then((p) => setPlaylists(p ?? []))
-      .catch(() => {});
     void api
       .listPendingInvites()
       .then((p) => setPendingCount(p?.length ?? 0))
