@@ -89,11 +89,48 @@ deployment compose at the repo root builds it with `context: ./backend`.
 `recent`). Sorting is applied to the full visible result set before `limit` and
 `offset`, with a track-ID tie breaker.
 
-`GET /api/search` returns `next_offsets`, an object containing the next offset
-for each source that may have more results. Continue with only those `sources`
-and their `local_offset` / `tidal_offset` values, keeping the query and page size
-unchanged. An empty object means the search is exhausted. Each source can return
-up to 50 tracks per request; the combined result count is not a source offset.
+### Search types
+
+`GET /api/search?q=radiohead&type=album` searches albums. `type` accepts
+`all`, `track`, `album`, or `artist`; `song` and plural names are also accepted.
+Omitting `type` preserves the original track-only behavior. The shared client
+provides `api.search` / `api.searchPage` (default `all`) and keeps
+`api.searchTracks` / `api.searchTracksPage` track-only for playlist pickers.
+
+The response contains `tracks`, `albums`, and `artists` arrays (including empty
+arrays for excluded types), `sources`, `next_offsets`, and optional `warnings`.
+Local results respect the viewer's library visibility. Remote albums and
+artists include `source: "tidal"`, `source_id`, a namespaced `id`, and optional
+`cover_url`. Open them with `/api/tidal/albums/{source_id}` or
+`/api/tidal/artists/{source_id}`. The artist endpoint returns top songs and
+releases from the proxy's bounded artist aggregation.
+
+`sources=local,tidal` is the default; either source can be selected alone.
+`limit` is per source and type (default 25, maximum 50). `all` may therefore
+return up to six times `limit`. A source failure leaves successful results in
+the response and adds a warning; retry the search to retry failed sources.
+
+`next_offsets` contains only streams that may have more results. Track streams
+retain the `local` / `tidal` keys; album and artist streams use `local_album`,
+`tidal_album`, `local_artist`, and `tidal_artist`. Continue with `streams` set to
+exactly the returned keys and a `<key>_offset` parameter for each value:
+
+```text
+/api/search?q=radiohead&type=all&limit=25&streams=tidal,tidal_album&tidal_offset=25&tidal_album_offset=50
+```
+
+Keep the query, type, sources, and limit unchanged across pages. An empty
+`next_offsets` means exhausted (`streams=` explicitly requests no streams).
+The combined result count is never a per-stream offset. Legacy track-only
+callers can still continue with only the returned `sources` and their
+`local_offset` / `tidal_offset` values.
+
+TIDAL album and artist search requires the updated bundled
+`hifi-api/lumen_hifi.py` extension (`/lumen/search/albums` and
+`/lumen/search/artists`). Restart the Compose `hifi-api` service when deploying
+this change. These endpoints query full collections rather than capped top
+hits, using the proxy's existing credential handling. Independently hosted
+proxies need the same extension to support these search types.
 
 ### Remote playback queue sync
 

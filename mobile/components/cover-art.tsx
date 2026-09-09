@@ -1,7 +1,7 @@
 import { memo, useSyncExternalStore } from "react";
 import { PixelRatio, StyleSheet, View } from "react-native";
 import { Image, type ImageProps } from "expo-image";
-import { albumCoverUrl, trackCoverUrl } from "@music-library/core";
+import { albumCoverUrl, trackCoverUrl, resolveCoverUrl } from "@music-library/core";
 import { useTheme } from "../theme/theme";
 import { downloadStore } from "../lib/downloads";
 
@@ -9,7 +9,7 @@ interface Props {
   /** Track source; cover URL comes from the shared `trackCoverUrl` helper. */
   track?: { id: string; album_id?: string | null; has_cover?: boolean };
   /** Album source; cover URL comes from `albumCoverUrl`. */
-  album?: { id: string; has_cover?: boolean };
+  album?: { id: string; has_cover?: boolean; cover_url?: string };
   size: number;
   transitionMs?: number;
   priority?: ImageProps["priority"];
@@ -49,7 +49,7 @@ function CoverArtImpl({
     (track
       ? trackCoverUrl(track, requestSize)
       : album
-        ? albumCoverUrl(album.id, requestSize)
+        ? album.cover_url ? resolveCoverUrl(album.cover_url) : albumCoverUrl(album.id, requestSize)
         : undefined);
   return (
     <View

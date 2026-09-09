@@ -1,10 +1,10 @@
 import { memo } from "react";
-import { type Album } from "@music-library/core";
+import { type Album, type SearchAlbum } from "@music-library/core";
 import { CoverArt } from "./cover-art";
 import { ListRow } from "./list-row";
 
 interface Props {
-  album: Album;
+  album: Album | SearchAlbum;
   onPress: (album: Album) => void;
 }
 
@@ -29,7 +29,7 @@ function AlbumRowImpl({ album, onPress }: Props) {
         />
       }
       title={album.title}
-      subtitle={album.artist_name}
+      subtitle={[album.artist_name, "source" in album && album.source === "tidal" ? "TIDAL" : null].filter(Boolean).join(" · ")}
       trailing={`${album.track_count} ${album.track_count === 1 ? "track" : "tracks"}`}
     />
   );

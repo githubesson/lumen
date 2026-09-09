@@ -15,7 +15,7 @@ export type PageParams = {
   offset?: number;
   q?: string;
   sort?: "recent" | "title" | "artist" | "album" | "duration";
-  searchOffsets?: Partial<Record<"local" | "tidal", number>>;
+  searchOffsets?: Partial<Record<"local" | "tidal" | "local_album" | "tidal_album" | "local_artist" | "tidal_artist", number>>;
   signal?: AbortSignal;
 };
 

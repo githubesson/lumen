@@ -1,3 +1,4 @@
+import { SearchResults } from "../../../components/library/search-results";
 import {
   useCallback,
   useDeferredValue,
@@ -119,9 +120,9 @@ export default function BrowseScreen() {
   }, [searchOpen]);
 
   const tracksQuery = useLibraryListQuery({
-    queryKey: qk.tracksList(deferredSearch),
-    enabled: mode === "tracks",
-    search: deferredSearch,
+    queryKey: qk.tracksList(""),
+    enabled: !searchOpen && mode === "tracks",
+    search: "",
     fetchPage: async (args) => {
       if (!args.q) return api.listTracksPage(args);
 
@@ -130,16 +131,16 @@ export default function BrowseScreen() {
   });
 
   const albumsQuery = useLibraryListQuery({
-    queryKey: qk.albumsList(deferredSearch),
-    enabled: mode === "albums",
-    search: deferredSearch,
+    queryKey: qk.albumsList(""),
+    enabled: !searchOpen && mode === "albums",
+    search: "",
     fetchPage: (args) => api.listAlbumsPage(args),
   });
 
   const artistsQuery = useLibraryListQuery({
-    queryKey: qk.artistsList(deferredSearch),
-    enabled: mode === "artists",
-    search: deferredSearch,
+    queryKey: qk.artistsList(""),
+    enabled: !searchOpen && mode === "artists",
+    search: "",
     fetchPage: (args) => api.listArtistsPage(args),
   });
 
@@ -340,6 +341,8 @@ export default function BrowseScreen() {
       }}
     />
   );
+
+  if (searchOpen) return <>{stackBits}<SearchResults search={deferredSearch} /></>;
 
   if (mode === "tracks") {
     const fx = emptyOrFooter(tracksQuery, "tracks");

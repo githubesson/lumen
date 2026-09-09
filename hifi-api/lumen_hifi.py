@@ -477,3 +477,16 @@ async def remove_lumen_account(account_id: str) -> dict[str, Any]:
             raise HTTPException(status_code=500, detail="Could not update the TIDAL token file") from exc
     logger.info("Lumen TIDAL account removed account_id=%s", account_id)
     return {"removed": True}
+
+
+@app.get("/lumen/search/{kind}")
+async def search_lumen_catalog(kind: str, q: str, limit: int = 25, offset: int = 0):
+    """Search a full entity collection instead of the capped, mixed top hits."""
+    if kind not in {"albums", "artists"}:
+        raise HTTPException(status_code=400, detail="Unsupported search type")
+    if not 1 <= limit <= 50 or offset < 0:
+        raise HTTPException(status_code=400, detail="Invalid search pagination")
+    return await hifi.make_request(
+        f"https://api.tidal.com/v1/search/{kind}",
+        params={"query": q, "limit": limit, "offset": offset, "countryCode": hifi.COUNTRY_CODE},
+    )

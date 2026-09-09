@@ -49,9 +49,21 @@ export function errorMessage(err: unknown, fallback: string): string {
 }
 
 export type TrackSource = "local" | "tidal";
-export type SearchOffsets = Partial<Record<TrackSource, number>>;
+export type SearchType = "all" | "track" | "album" | "artist";
+export const SEARCH_TYPE_OPTIONS: { value: SearchType; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "track", label: "Songs" },
+  { value: "album", label: "Albums" },
+  { value: "artist", label: "Artists" },
+];
+export function isSearchType(value: string | null): value is SearchType {
+  return SEARCH_TYPE_OPTIONS.some((option) => option.value === value);
+}
+export type SearchStream = TrackSource | `${TrackSource}_album` | `${TrackSource}_artist`;
+export type SearchOffsets = Partial<Record<SearchStream, number>>;
 
-type SearchParams = PageParams & {
+export type SearchParams = PageParams & {
+  type?: SearchType;
   sources?: TrackSource[];
 };
 
@@ -235,31 +247,38 @@ export const api = {
     ),
   listTracksPage: (params: PageParams = {}) =>
     fetchPage<TrackListItem>("/api/tracks", params),
-  searchTracks: (params: SearchParams = {}) =>
-    request<SearchResponse>(
-      `/api/search${buildQuery({
-        limit: params.limit,
-        offset: params.offset,
-        q: params.q,
-        sources: params.searchOffsets
-          ? Object.keys(params.searchOffsets).join(",")
-          : params.sources?.join(","),
-        local_offset: params.searchOffsets?.local,
-        tidal_offset: params.searchOffsets?.tidal,
-      })}`,
-      { signal: params.signal },
-    ),
-
-  searchTracksPage: async (params: SearchParams = {}): Promise<Page<TrackListItem> & { warnings?: string[] }> => {
+  search: (params: SearchParams = {}) => {
+    const query = buildQuery({
+      limit: params.limit,
+      offset: params.offset,
+      q: params.q,
+      type: params.type ?? "all",
+      sources: params.sources?.join(","),
+      ...Object.fromEntries(Object.entries(params.searchOffsets ?? {}).map(([key, value]) => [`${key}_offset`, value])),
+    });
+    // buildQuery omits empty strings; streams= explicitly means exhausted.
+    const streams = params.searchOffsets === undefined ? "" : `&streams=${encodeURIComponent(Object.keys(params.searchOffsets).join(","))}`;
+    return request<SearchResponse>(`/api/search${query}${streams}`, { signal: params.signal });
+  },
+  searchPage: async (params: SearchParams = {}): Promise<Page<SearchResult> & { warnings?: string[] }> => {
+    const result = await api.search({ ...params, limit: Math.min(params.limit ?? 25, 50) });
+    const items: SearchResult[] = [
+      ...(result.artists ?? []).map((item): SearchResult => ({ type: "artist", item })),
+      ...(result.albums ?? []).map((item): SearchResult => ({ type: "album", item })),
+      ...(result.tracks ?? []).map((item): SearchResult => ({ type: "track", item })),
+    ];
+    return { items, total: (params.offset ?? 0) + items.length, nextOffsets: result.next_offsets ?? {}, warnings: result.warnings };
+  },
+  // Song-only callers (playlist pickers, Siri, etc.) never receive other types.
+  searchTracks: (params: Omit<SearchParams, "type"> = {}) =>
+    api.search({ ...params, type: "track", sources: params.searchOffsets ? Object.keys(params.searchOffsets) as TrackSource[] : params.sources }),
+  searchTracksPage: async (params: Omit<SearchParams, "type"> = {}): Promise<Page<TrackListItem> & { warnings?: string[] }> => {
     const result = await api.searchTracks({ ...params, limit: Math.min(params.limit ?? 50, 50) });
     const items = result.tracks ?? [];
-    return {
-      items,
-      total: (params.offset ?? 0) + items.length,
-      nextOffsets: result.next_offsets ?? {},
-      warnings: result.warnings,
-    };
+    return { items, total: (params.offset ?? 0) + items.length, nextOffsets: result.next_offsets ?? {}, warnings: result.warnings };
   },
+  getTidalArtist: (id: string, options: RequestOptions = {}) =>
+    request<{ albums: SearchAlbum[]; tracks: TrackListItem[] }>(`/api/tidal/artists/${pathID(id)}`, options),
 
   listAlbumsPage: (params: PageParams = {}) =>
     fetchPage<Album>("/api/albums", params),
@@ -557,7 +576,24 @@ export interface CurrentPlaybackActivityResponse {
   activity: PlaybackActivity | null;
 }
 
+export interface SearchAlbum extends Album {
+  source: TrackSource;
+  source_id?: string;
+  cover_url?: string;
+}
+export interface SearchArtist extends Artist {
+  source: TrackSource;
+  source_id?: string;
+  cover_url?: string;
+}
+export type SearchResult =
+  | { type: "track"; item: TrackListItem }
+  | { type: "album"; item: SearchAlbum }
+  | { type: "artist"; item: SearchArtist };
+
 export interface SearchResponse {
+  albums: SearchAlbum[];
+  artists: SearchArtist[];
   next_offsets?: SearchOffsets;
   tracks: TrackListItem[];
   sources: TrackSource[];

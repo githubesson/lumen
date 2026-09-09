@@ -492,7 +492,9 @@ func (id *tidalID) UnmarshalJSON(b []byte) error {
 }
 
 type apiArtist struct {
-	Name string `json:"name"`
+	ID      tidalID `json:"id"`
+	Picture string  `json:"picture"`
+	Name    string  `json:"name"`
 }
 
 type apiAlbum struct {
