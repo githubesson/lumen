@@ -109,6 +109,8 @@ releases from the proxy's bounded artist aggregation.
 `limit` is per source and type (default 25, maximum 50). `all` may therefore
 return up to six times `limit`. A source failure leaves successful results in
 the response and adds a warning; retry the search to retry failed sources.
+Unconfigured TIDAL is skipped by default; an explicit TIDAL source request
+returns a configuration warning.
 
 `next_offsets` contains only streams that may have more results. Track streams
 retain the `local` / `tidal` keys; album and artist streams use `local_album`,

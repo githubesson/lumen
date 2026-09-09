@@ -29,7 +29,7 @@ export function AlbumCard({
         }
         seed={a.id}
         label={a.title}
-        forcePlaceholder={!a.has_cover}
+        forcePlaceholder={!("cover_url" in a && a.cover_url) && !a.has_cover}
       />
       <div>
         <div className="card-title">{displayText(a.title)}</div>
@@ -38,7 +38,7 @@ export function AlbumCard({
             a.artist_name ||
               (a.is_compilation ? "Various Artists" : "Unknown artist"),
           )}{" "}
-          · {a.track_count}
+          · {pluralize(a.track_count, "track")}
           {"source" in a && a.source === "tidal" && " · TIDAL"}
         </div>
       </div>

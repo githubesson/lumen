@@ -71,6 +71,9 @@ func (c *Client) ArtistReleases(ctx context.Context, id string) (ArtistReleases,
 	u := c.hifiURL("/artist/")
 	q := u.Query()
 	q.Set("f", id)
+	// In the Compose-pinned hifi-api (e52d109), skip_tracks skips full album
+	// track aggregation, but explicitly fetches 15 top tracks and returns them
+	// in `tracks` (main.py:992-1033). False would fetch every album's tracks.
 	q.Set("skip_tracks", "true")
 	u.RawQuery = q.Encode()
 	var out struct {

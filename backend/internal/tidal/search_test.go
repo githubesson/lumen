@@ -16,9 +16,9 @@ func TestCatalogSearchPaginationAndMetadata(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/lumen/search/albums":
-			fmt.Fprint(w, `{"data":{"items":[{"id":"123","title":"Album","artist":{"name":"Artist"},"numberOfTracks":12,"duration":120,"releaseDate":"2024-01-01","cover":"a-b-c"},{"id":456}]}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"items":[{"id":"123","title":"Album","artist":{"name":"Artist"},"numberOfTracks":12,"duration":120,"releaseDate":"2024-01-01","cover":"a-b-c"},{"id":456}]}}`)
 		case "/lumen/search/artists":
-			fmt.Fprint(w, `{"data":{"items":[{"id":123,"name":"Artist","picture":"a-b-c"},{"name":"Missing ID"}]}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"items":[{"id":123,"name":"Artist","picture":"a-b-c"},{"name":"Missing ID"}]}}`)
 		default:
 			t.Errorf("unexpected endpoint %s", r.URL.Path)
 		}
@@ -46,7 +46,7 @@ func TestArtistReleasesUsesBoundedAggregation(t *testing.T) {
 		if r.URL.Path != "/artist/" || r.URL.Query().Get("f") != "123" || r.URL.Query().Get("skip_tracks") != "true" {
 			t.Errorf("unexpected artist request %s", r.URL)
 		}
-		fmt.Fprint(w, `{"albums":{"items":[{"id":456,"title":"Release"}]},"tracks":[{"id":789,"title":"Top song"}]}`)
+		_, _ = fmt.Fprint(w, `{"albums":{"items":[{"id":456,"title":"Release"}]},"tracks":[{"id":789,"title":"Top song"}]}`)
 	}))
 	defer server.Close()
 	result, err := NewClient(Config{HifiAPIURL: server.URL}).ArtistReleases(context.Background(), "123")

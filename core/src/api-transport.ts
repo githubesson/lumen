@@ -10,12 +10,15 @@ type RequestBehavior = {
   notifyUnauthorized?: boolean;
 };
 
+export type SearchStream = "local" | "tidal" | `${"local" | "tidal"}_album` | `${"local" | "tidal"}_artist`;
+export type SearchOffsets = Partial<Record<SearchStream, number>>;
+
 export type PageParams = {
   limit?: number;
   offset?: number;
   q?: string;
   sort?: "recent" | "title" | "artist" | "album" | "duration";
-  searchOffsets?: Partial<Record<"local" | "tidal" | "local_album" | "tidal_album" | "local_artist" | "tidal_artist", number>>;
+  searchOffsets?: SearchOffsets;
   signal?: AbortSignal;
 };
 

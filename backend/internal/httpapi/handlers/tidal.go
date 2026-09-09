@@ -94,6 +94,10 @@ func (h *TIDAL) Artist(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.TIDAL.ArtistReleases(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
+		if errors.Is(err, tidal.ErrNotConfigured) {
+			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, "tidal artist unavailable", http.StatusBadGateway)
 		return
 	}

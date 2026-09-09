@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -148,12 +149,20 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	wg.Wait()
+	warnedNotConfigured := false
 	for i, result := range results {
 		stream := streams[i]
 		if result.err != nil {
 			if stream.source == trackref.SourceLocal {
 				writeStoreError(w, result.err)
 				return
+			}
+			if errors.Is(result.err, tidal.ErrNotConfigured) {
+				if q.Get("sources") != "" && !warnedNotConfigured {
+					resp.Warnings = append(resp.Warnings, "TIDAL is not configured.")
+					warnedNotConfigured = true
+				}
+				continue
 			}
 			slog.Warn("tidal search failed", "type", stream.kind, "err", result.err)
 			resp.Warnings = append(resp.Warnings, "TIDAL "+stream.kind+" search is unavailable. Try again later.")

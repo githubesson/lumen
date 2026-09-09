@@ -6,6 +6,7 @@ import { useRouter } from "expo-router";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import {
   api,
+  searchEntityID,
   SEARCH_TYPE_OPTIONS,
   useAuth,
   type SearchOffsets,
@@ -78,7 +79,7 @@ export function SearchResults({ search }: { search: string }) {
                   result.item.source === "tidal"
                     ? "/(tabs)/(library)/tidal-albums/[id]"
                     : "/(tabs)/(library)/albums/[id]",
-                params: { id: result.item.source_id ?? result.item.id },
+                params: { id: searchEntityID(result.item) },
               })
             }
           />
@@ -94,7 +95,7 @@ export function SearchResults({ search }: { search: string }) {
                     ? "/(tabs)/(library)/tidal-artists/[id]"
                     : "/(tabs)/(library)/artists/[id]",
                 params: {
-                  id: result.item.source_id ?? result.item.id,
+                  id: searchEntityID(result.item),
                   name: result.item.name,
                 },
               })

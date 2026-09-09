@@ -25,6 +25,7 @@ import {
 import {
   albumCoverUrl,
   api,
+  searchEntityID,
   errorMessage,
   trackCoverUrl,
   resolveCoverUrl,
@@ -326,7 +327,7 @@ export default function CommandPalette({
                   onSelect={() =>
                     run(() =>
                       navigate(
-                        `/library?q=${encodeURIComponent(query.trim())}&type=${searchType}&${a.source === "tidal" ? "tidalAlbum" : "album"}=${encodeURIComponent(a.source_id ?? a.id)}`,
+                        `/library?q=${encodeURIComponent(query.trim())}&type=${searchType}&${a.source === "tidal" ? "tidalAlbum" : "album"}=${encodeURIComponent(searchEntityID(a))}`,
                       ),
                     )
                   }
@@ -336,7 +337,7 @@ export default function CommandPalette({
                     src={a.cover_url ? resolveCoverUrl(a.cover_url) : a.has_cover ? albumCoverUrl(a.id) : null}
                     seed={a.id}
                     label={a.title}
-                    forcePlaceholder={!a.has_cover}
+                    forcePlaceholder={!a.cover_url && !a.has_cover}
                   />
                   <span className="cmdk-item-main">
                     <span className="cmdk-item-title">{a.title}</span>
@@ -363,7 +364,7 @@ export default function CommandPalette({
                   onSelect={() =>
                     run(() =>
                       navigate(
-                        `/library?q=${encodeURIComponent(query.trim())}&type=${searchType}&${a.source === "tidal" ? "tidalArtist" : "artist"}=${encodeURIComponent(a.source_id ?? a.id)}&artistName=${encodeURIComponent(a.name)}`,
+                        `/library?q=${encodeURIComponent(query.trim())}&type=${searchType}&${a.source === "tidal" ? "tidalArtist" : "artist"}=${encodeURIComponent(searchEntityID(a))}&artistName=${encodeURIComponent(a.name)}`,
                       ),
                     )
                   }

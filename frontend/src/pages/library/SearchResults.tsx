@@ -162,14 +162,20 @@ export function TidalArtistResults({
               <TrackList tracks={data.tracks} queueSource={data.tracks} />
             </section>
           )}
-          <section>
-            <h2>Albums</h2>
-            <div className="grid-cards">
-              {data.albums.map((album) => (
-                <AlbumCard key={album.id} album={album} onOpen={onOpenAlbum} />
-              ))}
-            </div>
-          </section>
+          {data.albums.length > 0 && (
+            <section>
+              <h2>Albums</h2>
+              <div className="grid-cards">
+                {data.albums.map((album) => (
+                  <AlbumCard
+                    key={album.id}
+                    album={album}
+                    onOpen={onOpenAlbum}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
           {!data.albums.length && !data.tracks.length && (
             <EmptyState title="No releases found." />
           )}

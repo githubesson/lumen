@@ -60,12 +60,10 @@ const SEARCH_DEBOUNCE_MS = 250;
 function useLibraryListQuery<T>({
   queryKey,
   enabled,
-  search,
   fetchPage,
 }: {
   queryKey: QueryKey;
   enabled: boolean;
-  search: string;
   fetchPage: (args: {
     searchOffsets?: SearchOffsets;
     q: string;
@@ -79,7 +77,7 @@ function useLibraryListQuery<T>({
     enabled,
     staleTime: QUERY_STALE_TIME.libraryList,
     queryFn: ({ pageParam, signal }) =>
-      fetchPage({ q: search, limit: PAGE_SIZE, ...pageParam, signal }),
+      fetchPage({ q: "", limit: PAGE_SIZE, ...pageParam, signal }),
     initialPageParam: { offset: 0 } as { offset: number; searchOffsets?: SearchOffsets },
     getNextPageParam: (last, pages) => {
       const loaded = pages.reduce((s, p) => s + p.items.length, 0);
@@ -122,25 +120,18 @@ export default function BrowseScreen() {
   const tracksQuery = useLibraryListQuery({
     queryKey: qk.tracksList(""),
     enabled: !searchOpen && mode === "tracks",
-    search: "",
-    fetchPage: async (args) => {
-      if (!args.q) return api.listTracksPage(args);
-
-      return api.searchTracksPage(args);
-    },
+    fetchPage: (args) => api.listTracksPage(args),
   });
 
   const albumsQuery = useLibraryListQuery({
     queryKey: qk.albumsList(""),
     enabled: !searchOpen && mode === "albums",
-    search: "",
     fetchPage: (args) => api.listAlbumsPage(args),
   });
 
   const artistsQuery = useLibraryListQuery({
     queryKey: qk.artistsList(""),
     enabled: !searchOpen && mode === "artists",
-    search: "",
     fetchPage: (args) => api.listArtistsPage(args),
   });
 

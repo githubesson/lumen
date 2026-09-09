@@ -170,3 +170,23 @@ it("opens remote albums and keeps the query and filter when returning", async ()
     type: "album",
   });
 });
+
+it("uses explicit remote artwork even when the local cover flag is false", async () => {
+  mock.search.mockResolvedValue(
+    page([
+      {
+        ...album,
+        item: { ...album.item, cover_url: "/api/tidal/cover?url=fixture" },
+      },
+    ]),
+  );
+  const { container } = render(
+    <MemoryRouter initialEntries={["/library?q=hello&type=album"]}>
+      <Library />
+    </MemoryRouter>,
+  );
+  await act(async () => {});
+  expect(container.querySelector(".card-art img")?.getAttribute("src")).toBe(
+    "/api/tidal/cover?url=fixture",
+  );
+});

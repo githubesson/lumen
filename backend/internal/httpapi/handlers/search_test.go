@@ -125,15 +125,15 @@ func TestSearchPartialTIDALFailureAndSourceOffsets(t *testing.T) {
 		seen[r.URL.Path] = r.URL.Query()
 		mu.Unlock()
 		if r.URL.Path == "/lumen/search/albums" {
-			http.Error(w, "unavailable", 503)
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/lumen/search/artists" {
-			fmt.Fprint(w, `{"data":{"items":[{"id":12,"name":"Remote artist"}]}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"items":[{"id":12,"name":"Remote artist"}]}}`)
 			return
 		}
-		fmt.Fprint(w, `{"data":{"items":[{"id":42,"title":"Remote song"}]}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"items":[{"id":42,"title":"Remote song"}]}}`)
 	}))
 	defer server.Close()
 	store := &searchTestLibrary{viewer: uuid.New()}
@@ -171,5 +171,36 @@ func TestSearchFavoriteFailureDoesNotAffectAlbumSearch(t *testing.T) {
 	(&Search{}).Search(w, httptest.NewRequest(http.MethodGet, "/api/search?type=all", nil))
 	if w.Code != http.StatusUnauthorized {
 		t.Fatal("search must require authentication")
+	}
+}
+
+func TestSearchUnconfiguredTIDAL(t *testing.T) {
+	for _, client := range []*tidal.Client{nil, tidal.NewClient(tidal.Config{})} {
+		store := &searchTestLibrary{viewer: uuid.New()}
+		for _, explicit := range []bool{false, true} {
+			query := "q=hello&type=all"
+			if explicit {
+				query += "&sources=tidal"
+			}
+			w := runSearch(t, &Search{Library: store, TIDAL: client}, store.viewer, query)
+			var resp searchResp
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatal(w.Body.String())
+			}
+			if explicit && (len(resp.Warnings) != 1 || resp.Warnings[0] != "TIDAL is not configured.") {
+				t.Fatal(resp.Warnings)
+			}
+			if !explicit && (len(resp.Warnings) != 0 || len(resp.Tracks) != 1) {
+				t.Fatal(w.Body.String())
+			}
+		}
+		sessions := &activitySocketSessions{cookieName: "session", user: &models.User{ID: store.viewer}}
+		r := httptest.NewRequest(http.MethodGet, "/api/tidal/artists/42", nil)
+		r.AddCookie(&http.Cookie{Name: "session", Value: "test"})
+		w := httptest.NewRecorder()
+		middleware.Authenticate(sessions)(http.HandlerFunc((&TIDAL{TIDAL: client}).Artist)).ServeHTTP(w, r)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("unconfigured artist status = %d", w.Code)
+		}
 	}
 }

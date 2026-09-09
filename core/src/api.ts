@@ -6,7 +6,7 @@ import {
   request,
   requestVoid,
 } from "./api-transport";
-import type { PageParams, RequestOptions } from "./api-transport";
+import type { PageParams, RequestOptions, SearchOffsets } from "./api-transport";
 import type { LyricsResult, ReplayBucket, ReplayData } from "./api-media";
 import type {
   AdminUser,
@@ -59,8 +59,7 @@ export const SEARCH_TYPE_OPTIONS: { value: SearchType; label: string }[] = [
 export function isSearchType(value: string | null): value is SearchType {
   return SEARCH_TYPE_OPTIONS.some((option) => option.value === value);
 }
-export type SearchStream = TrackSource | `${TrackSource}_album` | `${TrackSource}_artist`;
-export type SearchOffsets = Partial<Record<SearchStream, number>>;
+export type { SearchStream, SearchOffsets } from "./api-transport";
 
 export type SearchParams = PageParams & {
   type?: SearchType;
@@ -270,8 +269,15 @@ export const api = {
     return { items, total: (params.offset ?? 0) + items.length, nextOffsets: result.next_offsets ?? {}, warnings: result.warnings };
   },
   // Song-only callers (playlist pickers, Siri, etc.) never receive other types.
-  searchTracks: (params: Omit<SearchParams, "type"> = {}) =>
-    api.search({ ...params, type: "track", sources: params.searchOffsets ? Object.keys(params.searchOffsets) as TrackSource[] : params.sources }),
+  searchTracks: (params: Omit<SearchParams, "type"> = {}) => {
+    const searchOffsets = params.searchOffsets === undefined ? undefined : Object.fromEntries(
+      Object.entries(params.searchOffsets).filter(([key]) => key === "local" || key === "tidal"),
+    );
+    const sources = searchOffsets === undefined ? params.sources : Object.keys(searchOffsets).filter(
+      (key): key is TrackSource => key === "local" || key === "tidal",
+    );
+    return api.search({ ...params, type: "track", searchOffsets, sources });
+  },
   searchTracksPage: async (params: Omit<SearchParams, "type"> = {}): Promise<Page<TrackListItem> & { warnings?: string[] }> => {
     const result = await api.searchTracks({ ...params, limit: Math.min(params.limit ?? 50, 50) });
     const items = result.tracks ?? [];
@@ -586,6 +592,11 @@ export interface SearchArtist extends Artist {
   source_id?: string;
   cover_url?: string;
 }
+/** Match the detail route's source and tolerate older remote payloads without source_id. */
+export function searchEntityID(item: { id: string; source: TrackSource; source_id?: string }): string {
+  return item.source === "tidal" ? item.source_id || item.id.replace(/^tidal:/, "") : item.id;
+}
+
 export type SearchResult =
   | { type: "track"; item: TrackListItem }
   | { type: "album"; item: SearchAlbum }

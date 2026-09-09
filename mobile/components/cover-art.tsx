@@ -43,7 +43,7 @@ function CoverArtImpl({
     () => downloadStore.coverUriFor(track?.id),
     () => downloadStore.coverUriFor(track?.id),
   );
-  const shouldLoadCover = localCover != null || (track ?? album)?.has_cover !== false;
+  const shouldLoadCover = localCover != null || !!album?.cover_url || (track ?? album)?.has_cover !== false;
   const uri =
     localCover ??
     (track

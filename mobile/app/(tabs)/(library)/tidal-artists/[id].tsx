@@ -3,7 +3,12 @@ import { Text, View } from "react-native";
 import { FlashList } from "@shopify/flash-list";
 import { useQuery } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { api, useAuth, type SearchResult } from "@music-library/core";
+import {
+  api,
+  searchEntityID,
+  useAuth,
+  type SearchResult,
+} from "@music-library/core";
 import { TrackRow } from "../../../../components/track-row";
 import { AlbumRow } from "../../../../components/album-row";
 import { EmptyState } from "../../../../components/empty-state";
@@ -57,7 +62,7 @@ export default function TidalArtistScreen() {
               onPress={() =>
                 router.push({
                   pathname: "/(tabs)/(library)/tidal-albums/[id]",
-                  params: { id: result.item.source_id! },
+                  params: { id: searchEntityID(result.item) },
                 })
               }
             />
