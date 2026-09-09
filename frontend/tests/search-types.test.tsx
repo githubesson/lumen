@@ -190,3 +190,27 @@ it("uses explicit remote artwork even when the local cover flag is false", async
     "/api/tidal/cover?url=fixture",
   );
 });
+
+it("does not confirm an empty search while a stream failed, and retries", async () => {
+  mock.search
+    .mockResolvedValueOnce({
+      ...page([]),
+      warnings: ["TIDAL album search is unavailable."],
+    })
+    .mockResolvedValueOnce(page([]));
+  render(
+    <MemoryRouter initialEntries={["/library?q=hello"]}>
+      <Library />
+    </MemoryRouter>,
+  );
+  await act(async () => {});
+  expect(screen.getByRole("alert").textContent).toBe(
+    "TIDAL album search is unavailable.",
+  );
+  expect(screen.queryByText("No matching results.")).toBeNull();
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Retry search" }));
+  });
+  expect(screen.getByText("No matching results.")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+});

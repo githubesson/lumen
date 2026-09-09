@@ -161,7 +161,7 @@ export function SearchResults({ search }: { search: string }) {
           <EmptyState message="Search for songs, albums, and artists." />
         ) : query.isLoading ? (
           <EmptyState loading />
-        ) : (
+        ) : query.isError || warnings.length === 0 ? (
           <EmptyState
             message={
               query.isError
@@ -169,7 +169,7 @@ export function SearchResults({ search }: { search: string }) {
                 : "No matching results."
             }
           />
-        )
+        ) : null
       }
       ListFooterComponent={
         query.isFetchingNextPage ? (

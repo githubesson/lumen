@@ -71,7 +71,7 @@ export default function SearchResults({
         </div>
       )}
       {items === null && <LoadingState label="Searching…" />}
-      {items?.length === 0 && !error && (
+      {items?.length === 0 && !error && !warning && (
         <EmptyState
           title="No matching results."
           hint="Try another search or type."

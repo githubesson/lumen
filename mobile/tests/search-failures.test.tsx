@@ -2,6 +2,7 @@ import React, { type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import TidalArtistScreen from "../app/(tabs)/(library)/tidal-artists/[id]";
+import { SearchResults } from "../components/library/search-results";
 
 const mock = vi.hoisted(() => ({
   query: {
@@ -18,12 +19,37 @@ const mock = vi.hoisted(() => ({
     refetch: vi.fn(),
   },
   retry: undefined as undefined | { onPress: () => void; disabled: boolean },
+  searchQuery: {
+    data: { pages: [{ items: [], warnings: [] as string[] }] },
+    isError: false,
+    isLoading: false,
+    refetch: vi.fn(),
+  },
+  retrySearch: undefined as undefined | (() => void),
 }));
 vi.mock("react-native", () => ({
   View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   Text: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+  Pressable: ({
+    children,
+    onPress,
+  }: {
+    children: ReactNode;
+    onPress: () => void;
+  }) => {
+    mock.retrySearch = onPress;
+    return <button>{children}</button>;
+  },
 }));
-vi.mock("@tanstack/react-query", () => ({ useQuery: () => mock.query }));
+vi.mock("@tanstack/react-query", () => ({
+  useQuery: () => mock.query,
+  useInfiniteQuery: () => mock.searchQuery,
+}));
+vi.mock("expo-router/react-navigation", () => ({ useHeaderHeight: () => 0 }));
+vi.mock("../components/glass-segmented-control", () => ({
+  GlassSegmentedControl: () => null,
+}));
+vi.mock("../components/artist-row", () => ({ ArtistRow: () => null }));
 vi.mock("expo-router", () => ({
   Stack: { Screen: () => null },
   useLocalSearchParams: () => ({ id: "123", name: "Artist" }),
@@ -31,6 +57,7 @@ vi.mock("expo-router", () => ({
 }));
 vi.mock("@music-library/core", () => ({
   api: {},
+  SEARCH_TYPE_OPTIONS: [],
   searchEntityID: vi.fn(),
   useAuth: () => ({ me: { id: "user" } }),
 }));
@@ -108,6 +135,9 @@ beforeEach(() => {
   });
   mock.query.refetch.mockReset();
   mock.retry = undefined;
+  mock.searchQuery.data = { pages: [{ items: [], warnings: [] }] };
+  mock.searchQuery.refetch.mockReset();
+  mock.retrySearch = undefined;
 });
 const markup = () => renderToStaticMarkup(<TidalArtistScreen />);
 
@@ -150,4 +180,19 @@ it("distinguishes incomplete empty results from confirmed empty results and clea
   expect(html).toContain("No releases found.");
   expect(html).not.toContain("Retry artist");
   expect(html).not.toContain("Couldn");
+});
+
+it("does not confirm an empty search while a stream failed, and offers retry", () => {
+  mock.searchQuery.data.pages[0].warnings = [
+    "TIDAL album search is unavailable.",
+  ];
+  const html = renderToStaticMarkup(<SearchResults search="hello" />);
+  expect(html).toContain("TIDAL album search is unavailable.");
+  expect(html).not.toContain("No matching results.");
+  mock.retrySearch?.();
+  expect(mock.searchQuery.refetch).toHaveBeenCalledOnce();
+  mock.searchQuery.data.pages[0].warnings = [];
+  const recovered = renderToStaticMarkup(<SearchResults search="hello" />);
+  expect(recovered).toContain("No matching results.");
+  expect(recovered).not.toContain("Retry search");
 });
