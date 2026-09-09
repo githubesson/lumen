@@ -128,6 +128,9 @@ This is intentionally a passthrough setup:
   partial failures and HTTP 502 when all sections fail. The public
   `/api/tidal/artists/{id}` response includes user-facing `warnings` alongside
   available albums and tracks; web, desktop, and mobile offer a retry.
+  Deploy the updated `hifi-api/lumen_hifi.py` extension and restart `hifi-api`
+  when upgrading, including on independently hosted proxy deployments; the
+  upstream service alone does not provide `/lumen/artist`.
 - Playlists can contain both local tracks and TIDAL tracks.
 - TIDAL playlist entries store track metadata plus the remote TIDAL id, not an
   audio file.
