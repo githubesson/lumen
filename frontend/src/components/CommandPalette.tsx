@@ -27,12 +27,16 @@ import {
   api,
   errorMessage,
   trackCoverUrl,
-  type Album,
-  type Artist,
+  resolveCoverUrl,
+  SEARCH_TYPE_OPTIONS,
+  type SearchType,
+  type SearchAlbum,
+  type SearchArtist,
   type Playlist,
   type TrackListItem,
 } from "../api";
 import CoverArt from "./CoverArt";
+import SegmentedControl from "./SegmentedControl";
 import { displayText } from "../lib/format";
 import { useTrackContextMenu } from "./TrackContextMenu";
 import { useAuth } from "../context/Auth";
@@ -77,9 +81,11 @@ export default function CommandPalette({
     : localIsPlaying;
 
   const [query, setQuery] = useState("");
+  const [searchType, setSearchType] = useState<SearchType>("all");
+  const inputRef = useRef<HTMLInputElement>(null);
   const [tracks, setTracks] = useState<TrackListItem[]>([]);
-  const [albums, setAlbums] = useState<Album[]>([]);
-  const [artists, setArtists] = useState<Artist[]>([]);
+  const [albums, setAlbums] = useState<SearchAlbum[]>([]);
+  const [artists, setArtists] = useState<SearchArtist[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const reqId = useRef(0);
@@ -90,6 +96,7 @@ export default function CommandPalette({
       // Opening the external dialog state starts a fresh search session.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setQuery("");
+      setSearchType("all");
       setTracks([]);
       setAlbums([]);
       setArtists([]);
@@ -97,9 +104,8 @@ export default function CommandPalette({
     }
   }, [open]);
 
-  // Debounced library search — runs albums, artists, and tracks in parallel
-  // so they stay in sync for a single keystroke. Albums and artists are
-  // capped small since they surface above tracks and should stay scannable.
+  // Fetch only the selected entity type; the library page continues this
+  // preview with full source/type pagination.
   useEffect(() => {
     const q = query.trim();
     if (!open || q.length < 2) {
@@ -112,21 +118,21 @@ export default function CommandPalette({
       setLoading(false);
       return;
     }
+    setTracks([]);
+    setAlbums([]);
+    setArtists([]);
+    setSearchError(null);
     setLoading(true);
     const id = ++reqId.current;
     const controller = new AbortController();
     const t = window.setTimeout(async () => {
       try {
-        const [albumsPage, artistsPage, trackResult] = await Promise.all([
-          api.listAlbumsPage({ q, limit: 8, signal: controller.signal }),
-          api.listArtistsPage({ q, limit: 8, signal: controller.signal }),
-          api.searchTracks({ q, limit: 20, signal: controller.signal }),
-        ]);
+        const result = await api.search({ q, type: searchType, limit: searchType === "all" ? 8 : 20, signal: controller.signal });
         if (controller.signal.aborted || id !== reqId.current) return;
-        setAlbums(albumsPage.items ?? []);
-        setArtists(artistsPage.items ?? []);
-        setTracks(trackResult.tracks ?? []);
-        setSearchError(trackResult.warnings?.join(" ") || null);
+        setAlbums(result.albums ?? []);
+        setArtists(result.artists ?? []);
+        setTracks(result.tracks ?? []);
+        setSearchError(result.warnings?.join(" ") || null);
         setLoading(false);
       } catch (err) {
         if (controller.signal.aborted) return;
@@ -140,7 +146,7 @@ export default function CommandPalette({
       controller.abort();
       window.clearTimeout(t);
     };
-  }, [query, open]);
+  }, [query, open, searchType]);
 
   const close = () => onOpenChange(false);
 
@@ -269,6 +275,7 @@ export default function CommandPalette({
         <MagnifyingGlassIcon className="size-4 shrink-0 text-subtle" />
         <Command.Input
           autoFocus
+          ref={inputRef}
           value={query}
           onValueChange={setQuery}
           onKeyDown={(e) => {
@@ -286,9 +293,18 @@ export default function CommandPalette({
               e.stopPropagation();
             }
           }}
-          placeholder="Type a command or search tracks…"
+          placeholder="Type a command or search music…"
         />
         <kbd className="cmdk-kbd">esc</kbd>
+      </div>
+
+      <div style={{ padding: "10px 12px" }} onKeyDown={(event) => { if (event.key !== "Escape" && event.key !== "Tab") event.stopPropagation(); }}>
+        <SegmentedControl
+          aria-label="Search type"
+          value={searchType}
+          options={SEARCH_TYPE_OPTIONS}
+          onChange={(type) => { setSearchType(type); inputRef.current?.focus(); }}
+        />
       </div>
 
       <Command.List className="cmdk-list">
@@ -306,18 +322,18 @@ export default function CommandPalette({
               {albums.map((a) => (
                 <Command.Item
                   key={`album-${a.id}`}
-                  value={`album ${a.title} ${a.artist_name ?? ""}`}
+                  value={`album ${a.id} ${a.title} ${a.artist_name ?? ""}`}
                   onSelect={() =>
                     run(() =>
                       navigate(
-                        `/library?view=albums&album=${encodeURIComponent(a.id)}`,
+                        `/library?q=${encodeURIComponent(query.trim())}&type=${searchType}&${a.source === "tidal" ? "tidalAlbum" : "album"}=${encodeURIComponent(a.source_id ?? a.id)}`,
                       ),
                     )
                   }
                 >
                   <CoverArt
                     className="cmdk-art"
-                    src={a.has_cover ? albumCoverUrl(a.id) : null}
+                    src={a.cover_url ? resolveCoverUrl(a.cover_url) : a.has_cover ? albumCoverUrl(a.id) : null}
                     seed={a.id}
                     label={a.title}
                     forcePlaceholder={!a.has_cover}
@@ -329,6 +345,7 @@ export default function CommandPalette({
                         (a.is_compilation ? "Various Artists" : "Unknown artist")}
                       {" · "}
                       {a.track_count} {a.track_count === 1 ? "track" : "tracks"}
+                      {a.source === "tidal" && " · TIDAL"}
                     </span>
                   </span>
                   <span className="cmdk-shortcut">open</span>
@@ -342,11 +359,11 @@ export default function CommandPalette({
               {artists.map((a) => (
                 <Command.Item
                   key={`artist-${a.id}`}
-                  value={`artist ${a.name}`}
+                  value={`artist ${a.id} ${a.name}`}
                   onSelect={() =>
                     run(() =>
                       navigate(
-                        `/library?view=artists&artist=${encodeURIComponent(a.id)}`,
+                        `/library?q=${encodeURIComponent(query.trim())}&type=${searchType}&${a.source === "tidal" ? "tidalArtist" : "artist"}=${encodeURIComponent(a.source_id ?? a.id)}&artistName=${encodeURIComponent(a.name)}`,
                       ),
                     )
                   }
@@ -355,13 +372,14 @@ export default function CommandPalette({
                     className="cmdk-art"
                     seed={a.id}
                     label={a.name}
+                    src={a.cover_url ? resolveCoverUrl(a.cover_url) : null}
                     radius={999}
-                    forcePlaceholder
+                    forcePlaceholder={!a.cover_url}
                   />
                   <span className="cmdk-item-main">
                     <span className="cmdk-item-title">{a.name}</span>
                     <span className="cmdk-item-sub">
-                      {a.track_count} {a.track_count === 1 ? "track" : "tracks"}
+                      {a.source === "tidal" ? "TIDAL artist" : `${a.track_count} ${a.track_count === 1 ? "track" : "tracks"}`}
                       {a.album_count > 0 && (
                         <>
                           {" · "}
@@ -382,7 +400,7 @@ export default function CommandPalette({
               {tracks.map((t) => (
                 <Command.Item
                   key={`track-${t.id}`}
-                  value={`track ${t.title} ${t.artist ?? ""} ${t.album_title ?? ""}`}
+                  value={`track ${t.id} ${t.title} ${t.artist ?? ""} ${t.album_title ?? ""}`}
                   onSelect={() =>
                     run(() => play(t, tracks))
                   }
@@ -408,6 +426,11 @@ export default function CommandPalette({
             </Command.Group>
           )}
 
+          {query.trim().length >= 2 && <Command.Item value="show all search results" onSelect={() => run(() => navigate(`/library?q=${encodeURIComponent(query.trim())}&type=${searchType}`))}>
+            <MagnifyingGlassIcon className="size-4" /><span>View all results</span>
+          </Command.Item>}
+
+          {(query.trim().length < 2 || searchType === "all") && <>
           <Command.Group heading="Navigate" className="cmdk-group">
             <NavItem icon={MusicalNoteIcon} label="Home" hint="/" onSelect={() => run(() => navigate("/"))} />
             <NavItem icon={QueueListIcon} label="Library" hint="/library" onSelect={() => run(() => navigate("/library"))} />
@@ -484,6 +507,7 @@ export default function CommandPalette({
               </Command.Item>
             ))}
           </Command.Group>
+          </>}
         </Command.List>
 
       <div className="cmdk-footer">
