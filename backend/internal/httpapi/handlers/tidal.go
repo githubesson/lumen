@@ -102,9 +102,10 @@ func (h *TIDAL) Artist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := struct {
-		Albums []searchAlbumResp   `json:"albums"`
-		Tracks []trackListItemResp `json:"tracks"`
-	}{Albums: []searchAlbumResp{}, Tracks: []trackListItemResp{}}
+		Albums   []searchAlbumResp   `json:"albums"`
+		Tracks   []trackListItemResp `json:"tracks"`
+		Warnings []string            `json:"warnings,omitempty"`
+	}{Albums: []searchAlbumResp{}, Tracks: []trackListItemResp{}, Warnings: result.Warnings}
 	for _, album := range result.Albums {
 		out.Albums = append(out.Albums, makeSearchTIDALAlbumResp(album))
 	}

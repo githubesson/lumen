@@ -3,6 +3,32 @@ import { api, searchEntityID } from "../src/api";
 
 afterEach(() => vi.unstubAllGlobals());
 
+it("preserves artist partial failure warnings and rejects a total upstream failure", async () => {
+  const partial = {
+    albums: [{ id: "tidal:42" }],
+    tracks: [],
+    warnings: ["Couldn't load singles and EPs."],
+  };
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json(partial))
+    .mockResolvedValueOnce(
+      new Response("tidal artist unavailable", { status: 502 }),
+    );
+  vi.stubGlobal("fetch", fetch);
+  const controller = new AbortController();
+  const pending = api.getTidalArtist("123", { signal: controller.signal });
+  controller.abort();
+  expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
+  expect(await pending).toEqual(partial);
+  expect(new URL(fetch.mock.calls[0][0], "https://example.test").pathname).toBe(
+    "/api/tidal/artists/123",
+  );
+  await expect(api.getTidalArtist("123")).rejects.toMatchObject({
+    status: 502,
+  });
+});
+
 it("uses local IDs for local routes and strips remote prefixes for legacy payloads", () => {
   expect(
     searchEntityID({

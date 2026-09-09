@@ -123,6 +123,11 @@ This is intentionally a passthrough setup:
 
 - Local files stay in the normal Postgres-backed library.
 - TIDAL is searched live through the unified search endpoint.
+- Artist details use the Lumen proxy extension (`/lumen/artist?id=…`) to fetch
+  albums, singles/EPs, and 15 top songs. The proxy returns `failed_sections` for
+  partial failures and HTTP 502 when all sections fail. The public
+  `/api/tidal/artists/{id}` response includes user-facing `warnings` alongside
+  available albums and tracks; web, desktop, and mobile offer a retry.
 - Playlists can contain both local tracks and TIDAL tracks.
 - TIDAL playlist entries store track metadata plus the remote TIDAL id, not an
   audio file.

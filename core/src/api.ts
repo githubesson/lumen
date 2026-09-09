@@ -284,7 +284,7 @@ export const api = {
     return { items, total: (params.offset ?? 0) + items.length, nextOffsets: result.next_offsets ?? {}, warnings: result.warnings };
   },
   getTidalArtist: (id: string, options: RequestOptions = {}) =>
-    request<{ albums: SearchAlbum[]; tracks: TrackListItem[] }>(`/api/tidal/artists/${pathID(id)}`, options),
+    request<{ albums: SearchAlbum[]; tracks: TrackListItem[]; warnings?: string[] }>(`/api/tidal/artists/${pathID(id)}`, options),
 
   listAlbumsPage: (params: PageParams = {}) =>
     fetchPage<Album>("/api/albums", params),

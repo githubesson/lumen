@@ -2,6 +2,7 @@ package tidal
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -60,32 +61,47 @@ func (c *Client) SearchArtists(ctx context.Context, query string, limit, offset 
 }
 
 type ArtistReleases struct {
-	Albums []Album
-	Tracks []Track
+	Albums   []Album
+	Tracks   []Track
+	Warnings []string
 }
 
 func (c *Client) ArtistReleases(ctx context.Context, id string) (ArtistReleases, error) {
 	if strings.TrimSpace(c.cfg.HifiAPIURL) == "" {
 		return ArtistReleases{}, ErrNotConfigured
 	}
-	u := c.hifiURL("/artist/")
+	u := c.hifiURL("/lumen/artist")
 	q := u.Query()
-	q.Set("f", id)
-	// In the Compose-pinned hifi-api (e52d109), skip_tracks skips full album
-	// track aggregation, but explicitly fetches 15 top tracks and returns them
-	// in `tracks` (main.py:992-1033). False would fetch every album's tracks.
-	q.Set("skip_tracks", "true")
+	q.Set("id", id)
 	u.RawQuery = q.Encode()
 	var out struct {
 		Albums struct {
 			Items []apiAlbum `json:"items"`
 		} `json:"albums"`
-		Tracks []apiTrack `json:"tracks"`
+		Tracks         []apiTrack `json:"tracks"`
+		FailedSections []string   `json:"failed_sections"`
 	}
 	if err := c.doHifiJSON(ctx, u.String(), &out); err != nil {
 		return ArtistReleases{}, err
 	}
 	result := ArtistReleases{}
+	// Require the extension's explicit status contract; a legacy or malformed
+	// success response must not be presented as an empty artist.
+	if out.FailedSections == nil || out.Albums.Items == nil || out.Tracks == nil {
+		return ArtistReleases{}, fmt.Errorf("invalid tidal artist response")
+	}
+	for _, section := range out.FailedSections {
+		switch section {
+		case "albums":
+			result.Warnings = append(result.Warnings, "Couldn't load albums.")
+		case "singles":
+			result.Warnings = append(result.Warnings, "Couldn't load singles and EPs.")
+		case "tracks":
+			result.Warnings = append(result.Warnings, "Couldn't load top songs.")
+		default:
+			return ArtistReleases{}, fmt.Errorf("invalid tidal artist section status")
+		}
+	}
 	for _, item := range out.Albums.Items {
 		if item.ID != "" && item.Title != "" {
 			result.Albums = append(result.Albums, item.album())

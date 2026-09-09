@@ -12,6 +12,7 @@ import {
 import { TrackRow } from "../../../../components/track-row";
 import { AlbumRow } from "../../../../components/album-row";
 import { EmptyState } from "../../../../components/empty-state";
+import { SecondaryButton } from "../../../../components/buttons";
 import {
   useBottomDockInset,
   useDockScrollHandler,
@@ -34,6 +35,8 @@ export default function TidalArtistScreen() {
   });
   const tracks = useMemo(() => query.data?.tracks ?? [], [query.data]);
   const onTrackPress = usePlayQueue(tracks);
+  const warning = query.data?.warnings?.join(" ");
+  const problem = query.isError ? "Couldn't load artist." : warning;
   const results = useMemo<SearchResult[]>(
     () => [
       ...tracks.map((item): SearchResult => ({ type: "track", item })),
@@ -69,22 +72,34 @@ export default function TidalArtistScreen() {
           ) : null
         }
         ListHeaderComponent={
-          <View style={{ padding: theme.space.lg }}>
+          <View style={{ padding: theme.space.lg, gap: theme.space.md }}>
             <Text selectable style={{ color: theme.color.fgMuted }}>
               Top songs and releases
             </Text>
+            {!!problem && (
+              <>
+                <Text
+                  accessibilityRole="alert"
+                  selectable
+                  style={{ color: theme.color.danger }}
+                >
+                  {problem}
+                </Text>
+                <SecondaryButton
+                  label={query.isFetching ? "Retrying…" : "Retry artist"}
+                  disabled={query.isFetching}
+                  onPress={() => void query.refetch()}
+                />
+              </>
+            )}
           </View>
         }
         ListEmptyComponent={
           query.isLoading ? (
             <EmptyState loading />
-          ) : (
-            <EmptyState
-              message={
-                query.isError ? "Couldn't load artist." : "No releases found."
-              }
-            />
-          )
+          ) : !problem ? (
+            <EmptyState message="No releases found." />
+          ) : null
         }
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ paddingBottom: dockInset + 24 }}

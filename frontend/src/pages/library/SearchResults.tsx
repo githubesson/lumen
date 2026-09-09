@@ -133,6 +133,10 @@ export function TidalArtistResults({
     ReturnType<typeof api.getTidalArtist>
   > | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [completedAttempt, setCompletedAttempt] = useState(-1);
+  const loading = completedAttempt !== attempt;
+  const warning = data?.warnings?.join(" ");
   useEffect(() => {
     const controller = new AbortController();
     api
@@ -143,9 +147,12 @@ export function TidalArtistResults({
       .catch((err) => {
         if (!controller.signal.aborted)
           setError(errorMessage(err, "Couldn't load artist."));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCompletedAttempt(attempt);
       });
     return () => controller.abort();
-  }, [id]);
+  }, [id, attempt]);
   return (
     <div className="view" style={{ display: "grid", gap: 18 }}>
       <div>
@@ -153,7 +160,21 @@ export function TidalArtistResults({
       </div>
       <h1>{name}</h1>
       {error && <ErrorBanner message={error} />}
-      {!data && !error && <LoadingState label="Loading artist…" />}
+      {warning && <ErrorBanner message={warning} />}
+      {(error || warning) && (
+        <div>
+          <Button
+            disabled={loading}
+            onClick={() => {
+              setError(null);
+              setAttempt((value) => value + 1);
+            }}
+          >
+            {loading ? "Retrying…" : "Retry artist"}
+          </Button>
+        </div>
+      )}
+      {!data && loading && <LoadingState label="Loading artist…" />}
       {data && (
         <>
           {data.tracks.length > 0 && (
@@ -176,9 +197,11 @@ export function TidalArtistResults({
               </div>
             </section>
           )}
-          {!data.albums.length && !data.tracks.length && (
-            <EmptyState title="No releases found." />
-          )}
+          {!data.albums.length &&
+            !data.tracks.length &&
+            !warning &&
+            !error &&
+            !loading && <EmptyState title="No releases found." />}
         </>
       )}
     </div>

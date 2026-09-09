@@ -8,6 +8,14 @@ on:
     branches: [main]
 
 jobs:
+  hifi-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: python3 -m venv /tmp/lumen-hifi-tests
+      - run: /tmp/lumen-hifi-tests/bin/pip install -r hifi-api/requirements-test.txt
+      - run: /tmp/lumen-hifi-tests/bin/python -m unittest discover -s hifi-api -p 'test_*.py'
+
   backend:
     runs-on: ubuntu-latest
     services:
