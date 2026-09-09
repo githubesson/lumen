@@ -83,3 +83,34 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+
+func (h *TIDAL) Artist(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireUser(w, r); !ok {
+		return
+	}
+	if h.TIDAL == nil {
+		http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	result, err := h.TIDAL.ArtistReleases(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		if errors.Is(err, tidal.ErrNotConfigured) {
+			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		http.Error(w, "tidal artist unavailable", http.StatusBadGateway)
+		return
+	}
+	out := struct {
+		Albums   []searchAlbumResp   `json:"albums"`
+		Tracks   []trackListItemResp `json:"tracks"`
+		Warnings []string            `json:"warnings,omitempty"`
+	}{Albums: []searchAlbumResp{}, Tracks: []trackListItemResp{}, Warnings: result.Warnings}
+	for _, album := range result.Albums {
+		out.Albums = append(out.Albums, makeSearchTIDALAlbumResp(album))
+	}
+	for _, track := range result.Tracks {
+		out.Tracks = append(out.Tracks, makeTIDALTrackResp(track))
+	}
+	writeJSON(w, http.StatusOK, out)
+}

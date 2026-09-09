@@ -1,3 +1,4 @@
+import type { SearchType } from "@music-library/core";
 import type { QueryClient } from "@tanstack/react-query";
 
 /**
@@ -29,6 +30,9 @@ type Id = string | undefined;
 export const qk = {
   /** Root of every user-scoped key; invalidating this refreshes the account. */
   userRoot: ["user"] as const,
+
+  search: (userId: UserId, query: string, type: SearchType) => ["user", userId, "search", query, type] as const,
+  tidalArtist: (userId: UserId, id: Id) => ["user", userId, "tidal-artist", id] as const,
 
   // ---- user-scoped ----
   playlists: (userId: UserId) => ["user", userId, "playlists"] as const,

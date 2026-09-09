@@ -477,3 +477,81 @@ async def remove_lumen_account(account_id: str) -> dict[str, Any]:
             raise HTTPException(status_code=500, detail="Could not update the TIDAL token file") from exc
     logger.info("Lumen TIDAL account removed account_id=%s", account_id)
     return {"removed": True}
+
+
+@app.get("/lumen/search/{kind}")
+async def search_lumen_catalog(kind: str, q: str, limit: int = 25, offset: int = 0):
+    """Search a full entity collection instead of the capped, mixed top hits."""
+    if kind not in {"albums", "artists"}:
+        raise HTTPException(status_code=400, detail="Unsupported search type")
+    if not 1 <= limit <= 50 or offset < 0:
+        raise HTTPException(status_code=400, detail="Invalid search pagination")
+    return await hifi.make_request(
+        f"https://api.tidal.com/v1/search/{kind}",
+        params={"query": q, "limit": limit, "offset": offset, "countryCode": hifi.COUNTRY_CODE},
+    )
+
+
+@app.get("/lumen/artist")
+async def get_lumen_artist(id: int):
+    """Bounded artist results with explicit failures for each upstream section.
+
+    The pinned upstream /artist handler hides failures as empty lists. Keep
+    successful sections here, report failed_sections on partial success, and
+    return 502 if none of the three requests succeeded.
+    """
+    if id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid artist ID")
+    try:
+        token, cred = await hifi.get_tidal_token_for_cred()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="TIDAL artist unavailable") from exc
+
+    async def fetch_section(endpoint: str, **params):
+        data, _, _ = await hifi.authed_get_json(
+            f"https://api.tidal.com/v1/artists/{id}/{endpoint}",
+            params={"countryCode": hifi.COUNTRY_CODE, **params},
+            token=token,
+            cred=cred,
+        )
+        items = data.get("items") if isinstance(data, dict) else data
+        if not isinstance(items, list) or any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("id"), (int, str))
+            or not item.get("id")
+            or not isinstance(item.get("title"), str)
+            or not item.get("title")
+            for item in items
+        ):
+            raise ValueError("Invalid TIDAL artist section")
+        return items
+
+    sections = ("albums", "singles", "tracks")
+    results = await asyncio.gather(
+        fetch_section("albums", limit=100),
+        fetch_section("albums", limit=100, filter="EPSANDSINGLES"),
+        fetch_section("toptracks", limit=15),
+        return_exceptions=True,
+    )
+    failed_sections = []
+    releases = []
+    tracks = []
+    seen_ids = set()
+    for section, result in zip(sections, results):
+        if isinstance(result, BaseException):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            logger.warning("Lumen TIDAL artist section unavailable artist=%s section=%s", id, section)
+            failed_sections.append(section)
+            continue
+        if section == "tracks":
+            tracks = result
+        else:
+            for item in result:
+                release_id = str(item["id"])
+                if release_id not in seen_ids:
+                    releases.append(item)
+                    seen_ids.add(release_id)
+    if len(failed_sections) == len(sections):
+        raise HTTPException(status_code=502, detail="TIDAL artist unavailable")
+    return {"albums": {"items": releases}, "tracks": tracks, "failed_sections": failed_sections}

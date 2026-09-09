@@ -156,5 +156,5 @@ export function usePaginatedList<T>(
     return () => obs.disconnect();
   }, [loadPage, items, hasMore, rootMargin]);
 
-  return { items, total, hasMore, loadingMore, error, sentinelRef };
+  return { items, total, hasMore, loadingMore, error, sentinelRef, reload: () => loadPage(0, true) };
 }

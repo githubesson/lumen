@@ -1,29 +1,119 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/tidal"
 	"github.com/githubesson/lumen/internal/trackref"
+	"github.com/google/uuid"
 )
 
+type searchLibrary interface {
+	FavoriteIDs(context.Context, uuid.UUID) (map[uuid.UUID]struct{}, error)
+	ListTracks(context.Context, library.ListTracksParams) ([]library.TrackListItem, error)
+	ListAlbums(context.Context, uuid.UUID, int, int, string) ([]library.AlbumListItem, error)
+	ListArtists(context.Context, uuid.UUID, int, int, string) ([]library.ArtistListItem, error)
+}
+
 type Search struct {
-	Library *library.Store
+	Library searchLibrary
 	TIDAL   *tidal.Client
 }
 
-type searchResp struct {
-	NextOffsets map[string]int `json:"next_offsets"` // absent source means exhausted
+type searchAlbumResp struct {
+	albumListResp
+	Source   string `json:"source"`
+	SourceID string `json:"source_id,omitempty"`
+	CoverURL string `json:"cover_url,omitempty"`
+}
 
-	Tracks   []trackListItemResp `json:"tracks"`
-	Sources  []string            `json:"sources"`
-	Warnings []string            `json:"warnings,omitempty"`
+type searchArtistResp struct {
+	artistListResp
+	Source   string `json:"source"`
+	SourceID string `json:"source_id,omitempty"`
+	CoverURL string `json:"cover_url,omitempty"`
+}
+
+type searchResp struct {
+	NextOffsets map[string]int      `json:"next_offsets"`
+	Tracks      []trackListItemResp `json:"tracks"`
+	Albums      []searchAlbumResp   `json:"albums"`
+	Artists     []searchArtistResp  `json:"artists"`
+	Sources     []string            `json:"sources"`
+	Warnings    []string            `json:"warnings,omitempty"`
+}
+
+type searchStream struct {
+	key, source, kind string
+	offset            int
+}
+
+// Track-only requests retain the original source cursor keys and default.
+func searchStreams(q url.Values, sources []string, offset int) ([]searchStream, error) {
+	kind := strings.ToLower(strings.TrimSpace(q.Get("type")))
+	switch kind {
+	case "", "song", "songs", "tracks":
+		kind = "track"
+	case "albums":
+		kind = "album"
+	case "artists":
+		kind = "artist"
+	}
+	if kind != "all" && kind != "track" && kind != "album" && kind != "artist" {
+		return nil, fmt.Errorf("invalid search type: use all, track, album, or artist")
+	}
+	allowed := map[string]searchStream{}
+	var keys []string
+	for _, k := range []string{"track", "album", "artist"} {
+		if kind != "all" && kind != k {
+			continue
+		}
+		for _, source := range sources {
+			key := source
+			if k != "track" {
+				key += "_" + k
+			}
+			allowed[key] = searchStream{key: key, source: source, kind: k, offset: offset}
+			keys = append(keys, key)
+		}
+	}
+	// An explicit empty streams value represents an exhausted search.
+	if q.Has("streams") {
+		keys = nil
+		if raw := q.Get("streams"); raw != "" {
+			keys = strings.Split(raw, ",")
+		}
+	}
+	seen := map[string]bool{}
+	streams := make([]searchStream, 0, len(keys))
+	for _, key := range keys {
+		stream, ok := allowed[key]
+		if !ok {
+			return nil, fmt.Errorf("invalid search stream")
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if raw := q.Get(key + "_offset"); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("invalid search offset")
+			}
+			stream.offset = n
+		}
+		streams = append(streams, stream)
+	}
+	return streams, nil
 }
 
 func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
@@ -37,87 +127,121 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 50 {
 		limit = 25
 	}
-	if offset < 0 {
-		offset = 0
-	}
 	sources := parseSources(q.Get("sources"))
-	offsets := map[string]int{}
-	for _, source := range sources {
-		n := offset
-		if raw := q.Get(source + "_offset"); raw != "" {
-			parsed, err := strconv.Atoi(raw)
-			if err != nil || parsed < 0 {
-				http.Error(w, "invalid search offset", http.StatusBadRequest)
-				return
-			}
-			n = parsed
-		}
-		offsets[source] = n
-	}
-	// Not discarded: on error every `_, ok := favs[id]` is false, so every
-	// track would serialize favorited:false with a 200 and the user's next
-	// click would toggle against stale state, unfavoriting a real favorite.
-	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID)
+	streams, err := searchStreams(q, sources, max(0, offset))
 	if err != nil {
-		writeStoreError(w, err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	// Tracks is initialized, not left nil: the TS type declares TrackListItem[],
-	// so an empty result must serialize as [] rather than null.
-	resp := searchResp{Sources: sources, Tracks: []trackListItemResp{}, NextOffsets: map[string]int{}}
-	if hasSource(sources, trackref.SourceLocal) {
-		items, err := h.Library.ListTracks(r.Context(), library.ListTracksParams{
-			ViewerID: u.ID,
-			Limit:    limit,
-			Offset:   offsets[trackref.SourceLocal],
-			Query:    query,
-		})
-		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		if len(items) == limit {
-			resp.NextOffsets[trackref.SourceLocal] = offsets[trackref.SourceLocal] + len(items)
-		}
-		for _, it := range items {
-			_, favorited := favs[it.ID]
-			resp.Tracks = append(resp.Tracks, makeTrackListItemResp(it, favorited, true))
-		}
+	resp := searchResp{Sources: sources, Tracks: []trackListItemResp{}, Albums: []searchAlbumResp{}, Artists: []searchArtistResp{}, NextOffsets: map[string]int{}}
+	type result struct {
+		data  searchResp
+		count int
+		err   error
 	}
-	if hasSource(sources, trackref.SourceTIDAL) && query != "" {
-		if h.TIDAL == nil {
-			resp.Warnings = append(resp.Warnings, "tidal proxy is not configured")
-		} else {
-			items, err := h.TIDAL.SearchTracks(r.Context(), query, limit, offsets[trackref.SourceTIDAL])
-			if err != nil {
-				if errors.Is(err, tidal.ErrNotConfigured) {
-					resp.Warnings = append(resp.Warnings, "tidal proxy is not configured")
-				} else {
-					slog.Warn("tidal search failed", "err", err)
-					resp.Warnings = append(resp.Warnings, fmt.Sprintf("tidal search failed: %s", err))
+	results := make([]result, len(streams))
+	var wg sync.WaitGroup
+	for i, stream := range streams {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i].data, results[i].count, results[i].err = h.searchStream(r.Context(), u.ID, query, limit, stream)
+		}()
+	}
+	wg.Wait()
+	warnedNotConfigured := false
+	for i, result := range results {
+		stream := streams[i]
+		if result.err != nil {
+			if stream.source == trackref.SourceLocal {
+				writeStoreError(w, result.err)
+				return
+			}
+			if errors.Is(result.err, tidal.ErrNotConfigured) {
+				if q.Get("sources") != "" && !warnedNotConfigured {
+					resp.Warnings = append(resp.Warnings, "TIDAL is not configured.")
+					warnedNotConfigured = true
 				}
+				continue
 			}
-			if err == nil && len(items) == limit {
-				resp.NextOffsets[trackref.SourceTIDAL] = offsets[trackref.SourceTIDAL] + len(items)
-			}
-			for _, it := range items {
-				resp.Tracks = append(resp.Tracks, trackListItemResp{
-					ID:            trackref.Remote(trackref.SourceTIDAL, it.ID),
-					Source:        trackref.SourceTIDAL,
-					SourceID:      it.ID,
-					SourceAlbumID: it.AlbumID,
-					Title:         it.Title,
-					AlbumTitle:    it.AlbumTitle,
-					TrackNo:       it.TrackNo,
-					DurationMS:    it.DurationMS,
-					Artist:        strings.Join(it.Artists, ", "),
-					CoverURL:      proxyRemoteCoverURL(it.CoverURL),
-				})
-			}
+			slog.Warn("tidal search failed", "type", stream.kind, "err", result.err)
+			resp.Warnings = append(resp.Warnings, "TIDAL "+stream.kind+" search is unavailable. Try again later.")
+			continue
 		}
+		if result.count == limit {
+			resp.NextOffsets[stream.key] = stream.offset + result.count
+		}
+		resp.Tracks = append(resp.Tracks, result.data.Tracks...)
+		resp.Albums = append(resp.Albums, result.data.Albums...)
+		resp.Artists = append(resp.Artists, result.data.Artists...)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Search) searchStream(ctx context.Context, viewer uuid.UUID, query string, limit int, stream searchStream) (searchResp, int, error) {
+	var out searchResp
+	if stream.source == trackref.SourceLocal {
+		switch stream.kind {
+		case "track":
+			favs, err := h.Library.FavoriteIDs(ctx, viewer)
+			if err != nil {
+				return out, 0, err
+			}
+			items, err := h.Library.ListTracks(ctx, library.ListTracksParams{ViewerID: viewer, Limit: limit, Offset: stream.offset, Query: query})
+			for _, item := range items {
+				_, favorited := favs[item.ID]
+				out.Tracks = append(out.Tracks, makeTrackListItemResp(item, favorited, true))
+			}
+			return out, len(items), err
+		case "album":
+			items, err := h.Library.ListAlbums(ctx, viewer, limit, stream.offset, query)
+			for _, item := range items {
+				out.Albums = append(out.Albums, searchAlbumResp{albumListResp: makeAlbumResp(&library.AlbumDetail{AlbumListItem: item}), Source: trackref.SourceLocal})
+			}
+			return out, len(items), err
+		case "artist":
+			items, err := h.Library.ListArtists(ctx, viewer, limit, stream.offset, query)
+			for _, item := range items {
+				out.Artists = append(out.Artists, searchArtistResp{artistListResp: artistListResp{ID: item.ID.String(), Name: item.Name, TrackCount: item.TrackCount, AlbumCount: item.AlbumCount}, Source: trackref.SourceLocal})
+			}
+			return out, len(items), err
+		}
+	}
+	if query == "" {
+		return out, 0, nil
+	}
+	if h.TIDAL == nil {
+		return out, 0, tidal.ErrNotConfigured
+	}
+	switch stream.kind {
+	case "track":
+		items, err := h.TIDAL.SearchTracks(ctx, query, limit, stream.offset)
+		for _, item := range items {
+			out.Tracks = append(out.Tracks, makeTIDALTrackResp(item))
+		}
+		return out, len(items), err
+	case "album":
+		items, count, err := h.TIDAL.SearchAlbums(ctx, query, limit, stream.offset)
+		for _, item := range items {
+			out.Albums = append(out.Albums, makeSearchTIDALAlbumResp(item))
+		}
+		return out, count, err
+	case "artist":
+		items, count, err := h.TIDAL.SearchArtists(ctx, query, limit, stream.offset)
+		for _, item := range items {
+			out.Artists = append(out.Artists, searchArtistResp{artistListResp: artistListResp{ID: trackref.Remote(trackref.SourceTIDAL, item.ID), Name: item.Name}, Source: trackref.SourceTIDAL, SourceID: item.ID, CoverURL: proxyRemoteCoverURL(item.CoverURL)})
+		}
+		return out, count, err
+	}
+	return out, 0, nil
+}
+
+func makeSearchTIDALAlbumResp(item tidal.Album) searchAlbumResp {
+	return searchAlbumResp{albumListResp: albumListResp{ID: trackref.Remote(trackref.SourceTIDAL, item.ID), Title: item.Title, ArtistName: item.Artist, ReleaseYear: item.ReleaseYear, TrackCount: item.TrackCount, DurationMS: int64(item.DurationMS), HasCover: item.CoverURL != ""}, Source: trackref.SourceTIDAL, SourceID: item.ID, CoverURL: proxyRemoteCoverURL(item.CoverURL)}
+}
+
+func makeTIDALTrackResp(it tidal.Track) trackListItemResp {
+	return trackListItemResp{ID: trackref.Remote(trackref.SourceTIDAL, it.ID), Source: trackref.SourceTIDAL, SourceID: it.ID, SourceAlbumID: it.AlbumID, Title: it.Title, AlbumTitle: it.AlbumTitle, TrackNo: it.TrackNo, DurationMS: it.DurationMS, Artist: strings.Join(it.Artists, ", "), CoverURL: proxyRemoteCoverURL(it.CoverURL)}
 }
 
 func parseSources(raw string) []string {

@@ -5,7 +5,8 @@ import { useSearchParams } from "react-router-dom";
 import { PlayIcon } from "@heroicons/react/16/solid";
 import {
   api,
-  albumCoverUrl,
+  isSearchType,
+  type SearchType,
   trackCoverUrl,
   type Album,
   type Artist,
@@ -13,7 +14,7 @@ import {
   type TrackListItem,
 } from "../api";
 import { useDebouncedValue } from "@music-library/core/use-debounced-value";
-import { displayText, pluralize } from "../lib/format";
+import { displayText } from "../lib/format";
 import TrackList from "../components/TrackList";
 import CoverArt from "../components/CoverArt";
 import ErrorBanner from "../components/ErrorBanner";
@@ -29,6 +30,8 @@ import {
   usePaginatedList,
   type PageRequest,
 } from "../lib/usePaginatedList";
+import { AlbumCard, ArtistCard } from "./library/EntityCards";
+import SearchResults, { TidalArtistResults } from "./library/SearchResults";
 import GridView from "./library/GridView";
 import {
   AlbumDetailView,
@@ -54,7 +57,15 @@ export default function Library() {
   const albumID = params.get("album");
   const tidalAlbumID = params.get("tidalAlbum");
   const artistID = params.get("artist");
+  const tidalArtistID = params.get("tidalArtist");
+  const searchType = isSearchType(params.get("type")) ? params.get("type") as SearchType : "all";
   const query = params.get("q") ?? "";
+
+  const setSearchType = (type: SearchType) => {
+    const next = new URLSearchParams(params);
+    next.set("type", type);
+    setParams(next, { replace: true });
+  };
 
   const setView = (v: View) => {
     const next = new URLSearchParams(params);
@@ -73,22 +84,26 @@ export default function Library() {
   };
 
   const openAlbum = (id: string) => {
-    const next = new URLSearchParams();
-    next.set("view", "albums");
-    next.set("album", id);
+    const next = new URLSearchParams(params);
+    next.delete("tidalArtist");
+    if (id.startsWith("tidal:")) next.set("tidalAlbum", id.slice(6));
+    else next.set("album", id);
     setParams(next);
   };
 
-  const openArtist = (id: string) => {
-    const next = new URLSearchParams();
-    next.set("view", "artists");
-    next.set("artist", id);
+  const openArtist = (id: string, name?: string) => {
+    const next = new URLSearchParams(params);
+    if (id.startsWith("tidal:")) {
+      next.set("tidalArtist", id.slice(6));
+      if (name) next.set("artistName", name);
+    }
+    else next.set("artist", id);
     setParams(next);
   };
 
   const clearDrill = () => {
-    const next = new URLSearchParams();
-    if (view !== "tracks") next.set("view", view);
+    const next = new URLSearchParams(params);
+    for (const key of ["album", "artist", "tidalAlbum", "tidalArtist", "artistName"]) next.delete(key);
     setParams(next, { replace: true });
   };
 
@@ -104,6 +119,9 @@ export default function Library() {
       />
     );
   }
+  if (tidalArtistID) {
+    return <TidalArtistResults key={tidalArtistID} id={tidalArtistID} name={params.get("artistName") ?? "TIDAL artist"} onBack={clearDrill} onOpenAlbum={openAlbum} />;
+  }
   if (artistID) {
     return <ArtistDetailView key={artistID} id={artistID} onBack={clearDrill} />;
   }
@@ -112,6 +130,8 @@ export default function Library() {
     <LibraryBrowse
       view={view}
       query={query}
+      searchType={searchType}
+      onSearchTypeChange={setSearchType}
       onViewChange={setView}
       onQueryChange={setQuery}
       onOpenAlbum={openAlbum}
@@ -123,6 +143,8 @@ export default function Library() {
 function LibraryBrowse({
   view,
   query,
+  searchType,
+  onSearchTypeChange,
   onViewChange,
   onQueryChange,
   onOpenAlbum,
@@ -130,6 +152,8 @@ function LibraryBrowse({
 }: {
   view: View;
   query: string;
+  searchType: SearchType;
+  onSearchTypeChange: (type: SearchType) => void;
   onViewChange: (v: View) => void;
   onQueryChange: (q: string) => void;
   onOpenAlbum: (id: string) => void;
@@ -141,11 +165,13 @@ function LibraryBrowse({
 
   return (
     <div className="view">
-      <PageHeader title="Library" count={labelFor(view)} />
+      <PageHeader title="Library" count={query.trim() ? "Search results" : labelFor(view)} />
 
       <BrowseToolbar
         view={view}
         query={query}
+        searchType={searchType}
+        onSearchTypeChange={onSearchTypeChange}
         onViewChange={onViewChange}
         onQueryChange={onQueryChange}
         displayMode={displayMode}
@@ -155,14 +181,17 @@ function LibraryBrowse({
         selectionControlsHostId={LIBRARY_SELECTION_CONTROLS_ID}
       />
 
-      {view === "tracks" && (
-        <TracksView query={requestQuery} sort={sort} displayMode={displayMode} />
+      {query.trim() && (
+        <SearchResults key={`${searchType}:${requestQuery}`} query={requestQuery} type={searchType} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} />
       )}
-      {view === "albums" && (
-        <AlbumsView query={requestQuery} onOpen={onOpenAlbum} />
+      {!query.trim() && view === "tracks" && (
+        <TracksView query="" sort={sort} displayMode={displayMode} />
       )}
-      {view === "artists" && (
-        <ArtistsView query={requestQuery} onOpen={onOpenArtist} />
+      {!query.trim() && view === "albums" && (
+        <AlbumsView query="" onOpen={onOpenAlbum} />
+      )}
+      {!query.trim() && view === "artists" && (
+        <ArtistsView query="" onOpen={onOpenArtist} />
       )}
     </div>
   );
@@ -325,62 +354,6 @@ function TracksGrid({
         </div>
       ))}
     </div>
-  );
-}
-
-function AlbumCard({
-  album: a,
-  onOpen,
-}: {
-  album: Album;
-  onOpen: (id: string) => void;
-}) {
-  return (
-    <button type="button" className="card" onClick={() => onOpen(a.id)}>
-      <CoverArt
-        className="card-art"
-        src={a.has_cover ? albumCoverUrl(a.id) : null}
-        seed={a.id}
-        label={a.title}
-        forcePlaceholder={!a.has_cover}
-      />
-      <div>
-        <div className="card-title">{displayText(a.title)}</div>
-        <div className="card-sub">
-          {displayText(
-            a.artist_name || (a.is_compilation ? "Various Artists" : "Unknown artist"),
-          )}{" "}
-          · {a.track_count}
-        </div>
-      </div>
-    </button>
-  );
-}
-
-function ArtistCard({
-  artist: a,
-  onOpen,
-}: {
-  artist: Artist;
-  onOpen: (id: string) => void;
-}) {
-  return (
-    <button type="button" className="card" onClick={() => onOpen(a.id)}>
-      <CoverArt
-        className="card-art"
-        seed={a.id}
-        label={a.name}
-        radius={999}
-        forcePlaceholder
-      />
-      <div style={{ textAlign: "center" }}>
-        <div className="card-title">{displayText(a.name)}</div>
-        <div className="card-sub">
-          {pluralize(a.track_count, "track")}
-          {a.album_count > 0 && <> · {pluralize(a.album_count, "album")}</>}
-        </div>
-      </div>
-    </button>
   );
 }
 
