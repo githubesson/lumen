@@ -10,6 +10,8 @@
  * React is shimmed and the hook is called as a plain function.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// React is shimmed below; this factory performs a single render of the hook.
+import { useExpoAudioAdapter as createTestAdapter } from "../adapters/expo-audio-adapter";
 
 const h = vi.hoisted(() => {
   const calls: string[] = [];
@@ -85,18 +87,22 @@ vi.mock("expo-audio/build/AudioModule", () => ({
   },
 }));
 
-import { useExpoAudioAdapter } from "../adapters/expo-audio-adapter";
-
 /** Yield so already-resolved promise chains inside the adapter can run. */
 const flushMicrotasks = () => new Promise<void>((r) => setTimeout(r, 0));
 
-describe("useExpoAudioAdapter seek/play ordering", () => {
-  beforeEach(() => {
-    h.calls.length = 0;
-  });
+beforeEach(() => {
+  vi.restoreAllMocks();
+  h.calls.length = 0;
+  h.fakePlayer.currentTime = 0;
+  h.fakePlayer.duration = 0;
+  h.fakePlayer.currentStatus = {
+    isLoaded: true, playing: false, didJustFinish: false, duration: 0,
+  };
+});
 
+describe("useExpoAudioAdapter seek/play ordering", () => {
   it("holds play() until a pending seek settles (repeat-one restart)", async () => {
-    const adapter = useExpoAudioAdapter();
+    const adapter = createTestAdapter();
 
     adapter.seek(0);
     const playPromise = adapter.play();
@@ -109,14 +115,14 @@ describe("useExpoAudioAdapter seek/play ordering", () => {
   });
 
   it("plays immediately when no seek is pending", async () => {
-    const adapter = useExpoAudioAdapter();
+    const adapter = createTestAdapter();
 
     await adapter.play();
     expect(h.calls).toEqual(["play"]);
   });
 
   it("does not let a stale seek on the outgoing track delay the next one", async () => {
-    const adapter = useExpoAudioAdapter();
+    const adapter = createTestAdapter();
 
     adapter.seek(0);
     adapter.load("https://example.test/next.mp3");
@@ -125,7 +131,7 @@ describe("useExpoAudioAdapter seek/play ordering", () => {
   });
 
   it("clears the pending seek once it settles", async () => {
-    const adapter = useExpoAudioAdapter();
+    const adapter = createTestAdapter();
 
     adapter.seek(0);
     h.finishSeek();
@@ -134,8 +140,22 @@ describe("useExpoAudioAdapter seek/play ordering", () => {
     expect(h.calls).toEqual(["seekTo", "play"]);
   });
 
+  it.each(["load", "pause", "dispose"] as const)(
+    "cancels a waiting restart when %s takes over",
+    async (command) => {
+      const adapter = createTestAdapter();
+      adapter.seek(0);
+      const pendingPlay = adapter.play();
+      if (command === "load") adapter.load("https://example.test/next.mp3");
+      else adapter[command]();
+      h.finishSeek();
+      await pendingPlay;
+      expect(h.calls).not.toContain("play");
+    },
+  );
+
   it("reports seeked only after the native playhead has moved", async () => {
-    const adapter = useExpoAudioAdapter();
+    const adapter = createTestAdapter();
     h.fakePlayer.currentTime = 40;
     const positions: number[] = [];
     adapter.on("seeked", () => positions.push(adapter.currentTime()));
@@ -147,7 +167,7 @@ describe("useExpoAudioAdapter seek/play ordering", () => {
   });
 
   it("does not publish a seek completion for a replaced track", async () => {
-    const adapter = useExpoAudioAdapter();
+    const adapter = createTestAdapter();
     const seeked = vi.fn();
     adapter.on("seeked", seeked);
     adapter.seek(90);
@@ -158,7 +178,7 @@ describe("useExpoAudioAdapter seek/play ordering", () => {
   });
 
   it("ignores superseded and failed seeks", async () => {
-    const adapter = useExpoAudioAdapter();
+    const adapter = createTestAdapter();
     const seeked = vi.fn();
     adapter.on("seeked", seeked);
     adapter.seek(10);
@@ -195,7 +215,7 @@ describe("useExpoAudioAdapter status → event translation", () => {
     status({ playing: true, timeControlStatus: "playing" });
 
   function setup() {
-    const adapter = useExpoAudioAdapter();
+    const adapter = createTestAdapter();
     const events: string[] = [];
     adapter.on("play", () => events.push("play"));
     adapter.on("pause", () => events.push("pause"));
@@ -258,5 +278,120 @@ describe("useExpoAudioAdapter status → event translation", () => {
     h.emitStatus(status({ playing: false, isLoaded: false, duration: 0 }));
     h.emitStatus(playingStatus());
     expect(events).toEqual(["play", "play"]);
+  });
+
+  it("preserves the incoming metadata reset when ended loads the next track", () => {
+    const { adapter } = setup();
+    const metadata = vi.fn();
+    h.emitStatus(playingStatus());
+    adapter.on("loadedmetadata", metadata);
+    adapter.on("ended", () => adapter.load("https://example.test/next.mp3"));
+
+    h.emitStatus(status({ didJustFinish: true }));
+    // Both songs have the same duration and the replacement is already loaded.
+    h.emitStatus(playingStatus());
+    expect(metadata).toHaveBeenCalledOnce();
+  });
+
+  it("ignores an outgoing end immediately after loading another source", () => {
+    const { adapter, events } = setup();
+    h.emitStatus(playingStatus());
+    adapter.load("https://example.test/next.mp3");
+    h.emitStatus(status({ didJustFinish: true }));
+    expect(events).toEqual(["play"]);
+
+    h.emitStatus(playingStatus());
+    h.emitStatus(status({ didJustFinish: true }));
+    expect(events).toEqual(["play", "play", "ended"]);
+  });
+});
+
+describe("useExpoAudioAdapter prepared track handoff", () => {
+  const ready = { isLoaded: true, playing: false, didJustFinish: false, duration: 100 };
+
+  async function prepare(isLoaded = false) {
+    const adapter = createTestAdapter();
+    adapter.prepareNext!("https://example.test/next.mp3");
+    await flushMicrotasks();
+    h.fakePlayer.currentStatus = { ...ready, isLoaded };
+    expect(adapter.activatePrepared!("https://example.test/next.mp3")).toBe(true);
+    return adapter;
+  }
+
+  it("pauses on deferred native play failure without throwing, then allows retry", async () => {
+    const adapter = await prepare();
+    const pause = vi.fn();
+    const play = vi.fn();
+    adapter.on("pause", pause);
+    adapter.on("play", play);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = new Error("audio session activation failed");
+    vi.spyOn(h.fakePlayer, "play").mockImplementationOnce(() => { throw error; });
+
+    // Even a snapshot marked playing must not undo the failed-start pause.
+    expect(() => h.emitStatus({ ...ready, playing: true })).not.toThrow();
+    expect(pause).toHaveBeenCalledOnce();
+    expect(play).not.toHaveBeenCalled();
+    expect(warning).toHaveBeenCalledWith("Could not start prepared audio playback", error);
+
+    await adapter.play();
+    expect(h.calls.at(-1)).toBe("play");
+  });
+
+  it.each([false, true])("ignores outgoing ends after prepared activation (already loaded: %s)", async (isLoaded) => {
+    const adapter = await prepare(isLoaded);
+    const ended = vi.fn();
+    adapter.on("ended", ended);
+
+    h.emitStatus({ ...ready, didJustFinish: true });
+    expect(ended).not.toHaveBeenCalled();
+    expect(h.calls.filter((call) => call === "play")).toHaveLength(isLoaded ? 1 : 0);
+
+    h.emitStatus(ready);
+    expect(h.calls.at(-1)).toBe("play");
+    h.emitStatus({ ...ready, playing: true });
+    h.emitStatus({ ...ready, didJustFinish: true });
+    expect(ended).toHaveBeenCalledOnce();
+  });
+
+  it("publishes the loaded duration even when starting the prepared song fails", async () => {
+    const adapter = await prepare();
+    const durations: number[] = [];
+    adapter.on("loadedmetadata", () => durations.push(adapter.duration()));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(h.fakePlayer, "play").mockImplementationOnce(() => {
+      throw new Error("audio session activation failed");
+    });
+    h.fakePlayer.duration = ready.duration;
+
+    h.emitStatus(ready);
+    expect(durations).toEqual([100]);
+
+    await adapter.play();
+    h.emitStatus({ ...ready, playing: true });
+    expect(durations).toEqual([100]);
+  });
+
+  it("honors pause while the prepared song is loading", async () => {
+    const adapter = await prepare();
+    adapter.pause();
+    h.emitStatus(ready);
+    expect(h.calls).not.toContain("play");
+    await adapter.play();
+    expect(h.calls.at(-1)).toBe("play");
+  });
+
+  it("does not start another song when the outgoing seek completes", async () => {
+    const adapter = createTestAdapter();
+    adapter.seek(0);
+    const pendingPlay = adapter.play();
+    adapter.prepareNext!("https://example.test/next.mp3");
+    await flushMicrotasks();
+    h.fakePlayer.currentStatus = ready;
+    expect(adapter.activatePrepared!("https://example.test/next.mp3")).toBe(true);
+    adapter.pause();
+    h.finishSeek();
+    await pendingPlay;
+    expect(h.calls).toEqual(["seekTo", "replace", "play", "pause"]);
   });
 });
