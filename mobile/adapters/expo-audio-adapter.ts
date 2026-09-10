@@ -133,6 +133,14 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       // the source and reset this diff for the incoming track.
       prevStatusRef.current = { isLoaded, playing, didJustFinish, duration };
 
+      // Loading succeeded even if starting playback fails. Publish metadata
+      // before that attempt so a paused song still has a usable timeline.
+      if (!prev.isLoaded && isLoaded) {
+        dispatch("loadedmetadata");
+      } else if (duration > 0 && prev.duration === 0) {
+        dispatch("loadedmetadata");
+      }
+
       try {
         startPreparedPlaybackIfReady(status);
       } catch (error) {
@@ -143,12 +151,6 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         console.warn("Could not start prepared audio playback", error);
         dispatch("pause");
         return;
-      }
-
-      if (!prev.isLoaded && isLoaded) {
-        dispatch("loadedmetadata");
-      } else if (duration > 0 && prev.duration === 0) {
-        dispatch("loadedmetadata");
       }
 
       if (!prev.playing && playing) dispatch("play");

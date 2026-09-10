@@ -342,6 +342,24 @@ describe("useExpoAudioAdapter prepared track handoff", () => {
     expect(ended).toHaveBeenCalledOnce();
   });
 
+  it("publishes the loaded duration even when starting the prepared song fails", async () => {
+    const adapter = await prepare();
+    const durations: number[] = [];
+    adapter.on("loadedmetadata", () => durations.push(adapter.duration()));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(h.fakePlayer, "play").mockImplementationOnce(() => {
+      throw new Error("audio session activation failed");
+    });
+    h.fakePlayer.duration = ready.duration;
+
+    h.emitStatus(ready);
+    expect(durations).toEqual([100]);
+
+    await adapter.play();
+    h.emitStatus({ ...ready, playing: true });
+    expect(durations).toEqual([100]);
+  });
+
   it("honors pause while the prepared song is loading", async () => {
     const adapter = await prepare();
     adapter.pause();
