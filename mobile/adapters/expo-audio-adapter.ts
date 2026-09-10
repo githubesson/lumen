@@ -62,6 +62,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
   const pendingPreparedPlaybackRef = useRef<{ shouldPlay: boolean } | null>(
     null,
   );
+  const awaitingSourceStatusRef = useRef(false);
   // In-flight seekTo(). expo-audio's seekTo is an async native function while
   // play() is sync, so an unawaited seek(0)+play() pair reaches the native
   // player in reverse order. At a natural track end (repeat-one restart) the
@@ -110,9 +111,14 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
     };
 
     const subscription = player.addListener("playbackStatusUpdate", (status) => {
-      // The prepared replacement has not started yet. An already-queued end
-      // notification belongs to the outgoing item, not this replacement.
-      if (pendingPreparedPlaybackRef.current && status.didJustFinish) return;
+      // A synchronous prepared start can clear the pending-play flag before
+      // queued events arrive. Suppress outgoing ends until an ordinary source
+      // status arrives, and while a prepared source still awaits playback.
+      if (
+        status.didJustFinish &&
+        (awaitingSourceStatusRef.current || pendingPreparedPlaybackRef.current)
+      ) return;
+      awaitingSourceStatusRef.current = false;
       const prev = prevStatusRef.current;
       const isLoaded = status.isLoaded;
       const didJustFinish = status.didJustFinish;
@@ -181,6 +187,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
           prepareGenerationRef.current += 1;
           void clearPreloadedSource(prepared.url).catch(() => {});
         }
+        awaitingSourceStatusRef.current = true;
         player.replace({ uri: url });
         // Reset the status diff so the new track's first loadedmetadata fires.
         prevStatusRef.current.isLoaded = false;
@@ -228,6 +235,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
             shouldPlay: true,
           };
           pendingSeekRef.current = null;
+          awaitingSourceStatusRef.current = true;
           player.replace({ uri: url });
           prevStatusRef.current.isLoaded = false;
           prevStatusRef.current.duration = 0;

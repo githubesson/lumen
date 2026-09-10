@@ -292,16 +292,28 @@ describe("useExpoAudioAdapter status → event translation", () => {
     h.emitStatus(playingStatus());
     expect(metadata).toHaveBeenCalledOnce();
   });
+
+  it("ignores an outgoing end immediately after loading another source", () => {
+    const { adapter, events } = setup();
+    h.emitStatus(playingStatus());
+    adapter.load("https://example.test/next.mp3");
+    h.emitStatus(status({ didJustFinish: true }));
+    expect(events).toEqual(["play"]);
+
+    h.emitStatus(playingStatus());
+    h.emitStatus(status({ didJustFinish: true }));
+    expect(events).toEqual(["play", "play", "ended"]);
+  });
 });
 
 describe("useExpoAudioAdapter prepared track handoff", () => {
   const ready = { isLoaded: true, playing: false, didJustFinish: false, duration: 100 };
 
-  async function prepare() {
+  async function prepare(isLoaded = false) {
     const adapter = createTestAdapter();
     adapter.prepareNext!("https://example.test/next.mp3");
     await flushMicrotasks();
-    h.fakePlayer.currentStatus = { ...ready, isLoaded: false };
+    h.fakePlayer.currentStatus = { ...ready, isLoaded };
     expect(adapter.activatePrepared!("https://example.test/next.mp3")).toBe(true);
     return adapter;
   }
@@ -326,14 +338,14 @@ describe("useExpoAudioAdapter prepared track handoff", () => {
     expect(h.calls.at(-1)).toBe("play");
   });
 
-  it("ignores outgoing end events while the prepared replacement awaits playback", async () => {
-    const adapter = await prepare();
+  it.each([false, true])("ignores outgoing ends after prepared activation (already loaded: %s)", async (isLoaded) => {
+    const adapter = await prepare(isLoaded);
     const ended = vi.fn();
     adapter.on("ended", ended);
 
     h.emitStatus({ ...ready, didJustFinish: true });
     expect(ended).not.toHaveBeenCalled();
-    expect(h.calls).not.toContain("play");
+    expect(h.calls.filter((call) => call === "play")).toHaveLength(isLoaded ? 1 : 0);
 
     h.emitStatus(ready);
     expect(h.calls.at(-1)).toBe("play");
