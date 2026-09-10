@@ -68,6 +68,8 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
   // reversed play() is consumed by the still-ended item and iOS re-pauses,
   // leaving the track stopped at 0:00. play() awaits this to restore ordering.
   const pendingSeekRef = useRef<Promise<void> | null>(null);
+  // Invalidate play() calls waiting on a seek when a newer command takes over.
+  const playbackGenerationRef = useRef(0);
   const prevStatusRef = useRef<{
     isLoaded: boolean;
     playing: boolean;
@@ -108,6 +110,9 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
     };
 
     const subscription = player.addListener("playbackStatusUpdate", (status) => {
+      // The prepared replacement has not started yet. An already-queued end
+      // notification belongs to the outgoing item, not this replacement.
+      if (pendingPreparedPlaybackRef.current && status.didJustFinish) return;
       const prev = prevStatusRef.current;
       const isLoaded = status.isLoaded;
       const didJustFinish = status.didJustFinish;
@@ -124,7 +129,21 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         (status.timeControlStatus === "waitingToPlayAtSpecifiedRate" &&
           status.reasonForWaitingToPlay !== "noItemToPlay");
 
-      startPreparedPlaybackIfReady(status);
+      // Commit before dispatch: an ended listener can synchronously replace
+      // the source and reset this diff for the incoming track.
+      prevStatusRef.current = { isLoaded, playing, didJustFinish, duration };
+
+      try {
+        startPreparedPlaybackIfReady(status);
+      } catch (error) {
+        // Unlike adapter.play(), this native event callback has no promise
+        // for the core to catch. Reflect the failure as paused so it can be
+        // retried, and stop processing the snapshot that preceded the error.
+        prevStatusRef.current.playing = false;
+        console.warn("Could not start prepared audio playback", error);
+        dispatch("pause");
+        return;
+      }
 
       if (!prev.isLoaded && isLoaded) {
         dispatch("loadedmetadata");
@@ -140,8 +159,6 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       if (prev.playing && !playing && !didJustFinish) dispatch("pause");
       if (isLoaded) dispatch("timeupdate");
       if (!prev.didJustFinish && didJustFinish) dispatch("ended");
-
-      prevStatusRef.current = { isLoaded, playing, didJustFinish, duration };
     });
 
     return () => {
@@ -152,6 +169,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
   const adapter = useMemo<ExpoAudioAdapter>(
     () => ({
       load(url) {
+        playbackGenerationRef.current += 1;
         pendingPreparedPlaybackRef.current = null;
         // Seeks against the outgoing item must not delay the new track.
         pendingSeekRef.current = null;
@@ -196,6 +214,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         if (!prepared || prepared.url !== url || !prepared.ready) return false;
         preparedRef.current = null;
         prepareGenerationRef.current += 1;
+        playbackGenerationRef.current += 1;
         try {
           // A preloaded AVPlayerItem can still report loading briefly while it
           // is moved onto the active player. At a natural track end the old
@@ -233,6 +252,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         if (prepared) void clearPreloadedSource(prepared.url).catch(() => {});
       },
       async play() {
+        const generation = playbackGenerationRef.current;
         const pending = pendingPreparedPlaybackRef.current;
         if (pending) {
           pending.shouldPlay = true;
@@ -242,13 +262,19 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         const pendingSeek = pendingSeekRef.current;
         if (pendingSeek) {
           await pendingSeek;
-          // A load()/activatePrepared() while the seek settled owns playback
-          // ordering itself; don't also start the (replaced) item.
-          if (pendingPreparedPlaybackRef.current) return;
+          // A newer source, pause or disposal owns playback now; the old
+          // seek completion must not restart it.
+          if (
+            generation !== playbackGenerationRef.current ||
+            pendingPreparedPlaybackRef.current
+          ) {
+            return;
+          }
         }
         player.play();
       },
       pause() {
+        playbackGenerationRef.current += 1;
         const pending = pendingPreparedPlaybackRef.current;
         if (pending) pending.shouldPlay = false;
         player.pause();
@@ -307,6 +333,8 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         };
       },
       dispose() {
+        playbackGenerationRef.current += 1;
+        pendingSeekRef.current = null;
         pendingPreparedPlaybackRef.current = null;
         const prepared = preparedRef.current;
         preparedRef.current = null;
