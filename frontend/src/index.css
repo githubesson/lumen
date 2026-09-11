@@ -1084,6 +1084,22 @@ textarea { font: inherit; color: inherit; }
   border-spacing: 0;
   font-size: 12.5px;
 }
+/* Windowed rows change on scroll. Size columns from the header so their
+   positions don't depend on the titles/albums in the current slice. */
+.table-tracks {
+  table-layout: fixed;
+}
+.table-tracks .col-album {
+  width: 25%;
+}
+.table-tracks .track-title,
+.table-tracks .track-sub,
+.table-tracks td.col-album,
+.table-tracks td.col-added {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .table thead th {
   font-family: var(--font-mono);
   font-weight: 500;
@@ -4269,9 +4285,7 @@ html[data-mini-player] .window-controls {
 }
 
 .table-scroll-inner {
-  display: inline-block;
-  min-width: 100%;
-  vertical-align: middle;
+  width: 100%;
 }
 
 .table-scroll .table {

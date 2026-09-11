@@ -142,7 +142,7 @@ export default function TrackList({
   // Column count kept in sync with the <thead> below — used for spacer
   // `colSpan` so the spacer row doesn't push the columns out of alignment.
   const columnCount =
-    3 +
+    4 +
     (selectionMode ? 1 : 0) +
     (showCover ? 1 : 0) +
     (showAlbum ? 1 : 0) +
@@ -174,7 +174,7 @@ export default function TrackList({
       <div className="table-scroll" data-horizontal-scroll="">
         <div className="table-scroll-inner">
           <table
-            className={`table${selectionMode ? " table-selecting" : ""}`}
+            className={`table table-tracks${selectionMode ? " table-selecting" : ""}`}
             ref={tableRef}
           >
             <thead>
@@ -189,7 +189,7 @@ export default function TrackList({
                 <th className="col-idx">#</th>
                 {showCover && <th className="col-art" aria-label="Cover" />}
                 <th>Title</th>
-                {showAlbum && <th>Album</th>}
+                {showAlbum && <th className="col-album">Album</th>}
                 {extraColumn && (
                   <th className={extraColumn.className ?? "col-extra"}>
                     {extraColumn.header}
@@ -354,7 +354,7 @@ export const TrackRow = memo(function TrackRow({
           if (!selectionMode) onPlay(track);
         }}
       >
-        <div className="track-title">
+        <div className="track-title" title={displayText(track.title)}>
           {displayText(track.title)}
           {track.source === "tidal" && (
             <span className="badge" style={{ marginLeft: 8 }}>
@@ -392,13 +392,14 @@ export const TrackRow = memo(function TrackRow({
             </Tooltip>
           )}
         </div>
-        <div className="track-sub">
+        <div className="track-sub" title={displayText(track.artist, "Unknown artist")}>
           {displayText(track.artist, "Unknown artist")}
         </div>
       </td>
       {showAlbum && (
         <td
-          className="mono"
+          className="col-album mono"
+          title={track.album_title ? displayText(track.album_title) : undefined}
           style={{ color: "var(--fg-subtle)", fontSize: 11 }}
         >
           {track.album_title ? displayText(track.album_title) : "—"}

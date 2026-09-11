@@ -403,7 +403,7 @@ function TracksTable({
         <div className="table-scroll-inner">
           <table
             ref={tableRef}
-            className={`table${selectionMode ? " table-selecting" : ""}`}
+            className={`table table-tracks${selectionMode ? " table-selecting" : ""}`}
           >
             <thead>
               <tr>
@@ -417,7 +417,7 @@ function TracksTable({
                 <th className="col-idx">#</th>
                 <th className="col-art" />
                 <th>Title</th>
-                <th>Album</th>
+                <th className="col-album">Album</th>
                 <th className="col-added">Added</th>
                 <th className="col-dur">Time</th>
                 <th className="col-acts" />
@@ -586,13 +586,13 @@ const PlaylistRow = memo(function PlaylistRow({
           if (!selectionMode) onPlay(entry);
         }}
       >
-        <div className="track-title">{displayText(entry.title)}</div>
-        <div className="track-sub">
+        <div className="track-title" title={displayText(entry.title)}>{displayText(entry.title)}</div>
+        <div className="track-sub" title={`${displayText(entry.artist, "Unknown artist")}${entry.added_by ? ` · added by ${entry.added_by}` : ""}`}>
           {displayText(entry.artist, "Unknown artist")}
           {entry.added_by ? ` · added by ${entry.added_by}` : ""}
         </div>
       </td>
-      <td className="mono" style={{ color: "var(--fg-subtle)", fontSize: 11 }}>
+      <td className="col-album mono" title={entry.album_title ? displayText(entry.album_title) : undefined} style={{ color: "var(--fg-subtle)", fontSize: 11 }}>
         {entry.album_title ? displayText(entry.album_title) : "—"}
       </td>
       <td className="col-added">{added}</td>
