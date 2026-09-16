@@ -7,13 +7,90 @@
     padding: 0;
     margin: 40px 0 0;
   }
+
+  /* ---------- Reveal on scroll ---------- */
+  /* Items wait invisibly until the grid scrolls into view, then rise in
+     order. `backwards` fill keeps the hidden state through each delay and
+     releases the properties afterwards so hover transforms still apply. */
+  .feature-grid > li {
+    --i: 0;
+  }
+  .feature-grid > li:nth-child(2) {
+    --i: 1;
+  }
+  .feature-grid > li:nth-child(3) {
+    --i: 2;
+  }
+  .feature-grid > li:nth-child(4) {
+    --i: 3;
+  }
+  .feature-grid > li:nth-child(5) {
+    --i: 4;
+  }
+  .feature-grid > li:nth-child(6) {
+    --i: 5;
+  }
+  .feature-grid > li:nth-child(7) {
+    --i: 6;
+  }
+  .feature-grid > li:nth-child(8) {
+    --i: 7;
+  }
+  .feature-grid:not(.is-revealed) > li {
+    opacity: 0;
+  }
+  .feature-grid.is-revealed > li {
+    animation: feature-enter 640ms cubic-bezier(0.2, 0, 0, 1) backwards;
+    animation-delay: calc(var(--i) * 70ms);
+  }
+  @keyframes feature-enter {
+    from {
+      opacity: 0;
+      translate: 0 18px;
+    }
+    to {
+      opacity: 1;
+      translate: 0 0;
+    }
+  }
+
+  /* ---------- Cards ---------- */
   .feature-card {
     display: flex;
     flex-direction: column;
     min-width: 0;
-    overflow: hidden;
     padding: 28px;
     gap: 22px;
+    /* Own stacking context so the spotlight can sit below the content. */
+    isolation: isolate;
+    transition-property: translate, box-shadow, border-color, transform;
+    transition-duration: 260ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+  @media (hover: hover) {
+    .feature-card:hover {
+      translate: 0 -3px;
+      border-color: var(--border-strong);
+      box-shadow: var(--shadow-md);
+    }
+  }
+  /* A soft accent light that follows the pointer across the card. */
+  .feature-spot {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background: radial-gradient(
+      440px circle at var(--mx, 50%) var(--my, 50%),
+      color-mix(in oklch, var(--accent) 11%, transparent),
+      transparent 62%
+    );
+    opacity: 0;
+    transition: opacity 320ms cubic-bezier(0.2, 0, 0, 1);
+    pointer-events: none;
+  }
+  .feature-card:hover .feature-spot {
+    opacity: 1;
   }
   .feature-stream,
   .feature-sync {
@@ -48,6 +125,8 @@
   .feature-copy .body {
     max-width: 46ch;
   }
+
+  /* ---------- Instant playback ---------- */
   .feature-stream {
     background:
       radial-gradient(ellipse at 90% 100%, var(--accent-soft), transparent 65%),
@@ -68,30 +147,82 @@
     letter-spacing: 0.04em;
     font-variant-numeric: tabular-nums;
   }
+  .stream-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 9ch;
+  }
+  .stream-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: signal-pulse 1.6s ease-in-out infinite;
+  }
+  .is-scrubbing .stream-dot {
+    background: var(--fg);
+    animation: none;
+  }
+  .stream-time {
+    color: var(--fg);
+    min-width: 4ch;
+  }
   .feature-wave {
+    --progress: 0.59;
+    --head: 32.5;
+    position: relative;
+    height: 92px;
+    margin-block: 12px;
+    touch-action: pan-y;
+  }
+  @media (hover: hover) {
+    .feature-wave {
+      cursor: ew-resize;
+    }
+  }
+  .wave-layer {
+    position: absolute;
+    inset: 0;
     display: flex;
     align-items: center;
     gap: 4px;
-    height: 92px;
-    position: relative;
-    margin-block: 12px;
   }
-  .feature-wave > span {
+  /* Bars within three positions of the playhead stretch, so a ripple runs
+     with playback and leaps to wherever the pointer scrubs. */
+  .wave-layer > span {
+    --d: calc(var(--i) - var(--head));
+    --near: max(0, 1 - max(var(--d), -1 * var(--d)) / 3);
     flex: 1;
     min-width: 0;
     border-radius: 3px;
     background: color-mix(in oklch, var(--accent) 20%, var(--bg-elev-3));
+    scale: 1 calc(1 + 0.45 * var(--near));
+    transition: background-color 200ms;
   }
-  .feature-wave > .is-played {
+  .is-scrubbing .wave-layer > span {
+    background: color-mix(in oklch, var(--accent) 30%, var(--bg-elev-3));
+  }
+  .wave-played {
+    clip-path: inset(0 calc((1 - var(--progress)) * 100%) 0 0);
+  }
+  .wave-played > span {
+    background: var(--accent);
+    box-shadow: 0 0 10px
+      color-mix(in oklch, var(--accent) calc(55% * var(--near)), transparent);
+  }
+  .is-scrubbing .wave-played > span {
     background: var(--accent);
   }
   .feature-playhead {
     position: absolute;
-    left: 59%;
+    left: calc(var(--progress) * 100%);
     top: 0;
     bottom: 0;
     width: 2px;
+    margin-left: -1px;
     background: var(--fg);
+    box-shadow: 0 0 8px color-mix(in oklch, var(--fg) 40%, transparent);
   }
   .feature-playhead::before {
     content: "";
@@ -102,8 +233,16 @@
     height: 8px;
     border-radius: 50%;
     background: var(--fg);
+    transition: scale 160ms cubic-bezier(0.2, 0, 0, 1);
   }
+  .is-scrubbing .feature-playhead::before {
+    scale: 1.4;
+  }
+
+  /* ---------- Yearly Replay ---------- */
   .feature-replay {
+    --px: 0;
+    --py: 0;
     background:
       radial-gradient(
         ellipse at 100% 0%,
@@ -111,19 +250,28 @@
         transparent 70%
       ),
       var(--bg-elev-1);
+    transform: perspective(900px) rotateX(calc(var(--py) * -7deg))
+      rotateY(calc(var(--px) * 9deg));
   }
   .replay-art {
     position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 144px;
+    height: 156px;
+  }
+  .replay-platter {
+    position: relative;
+    width: 146px;
+    height: 146px;
+    translate: calc(var(--px) * -6px) calc(var(--py) * -6px);
+    transition: translate 200ms ease-out;
   }
   .replay-disc {
     display: grid;
     place-items: center;
-    width: 146px;
-    height: 146px;
+    width: 100%;
+    height: 100%;
     border-radius: 50%;
     background:
       repeating-radial-gradient(
@@ -141,6 +289,12 @@
         var(--bg-inset)
       );
     box-shadow: var(--shadow-md);
+    animation: spin 9s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      rotate: 360deg;
+    }
   }
   .replay-disc-label {
     display: grid;
@@ -151,12 +305,69 @@
     background: var(--brand-gradient);
     color: var(--accent-fg);
   }
+  /* The light source stays put while the record turns under it. */
+  .replay-shine {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: radial-gradient(
+      circle at 30% 24%,
+      oklch(1 0 0 / 0.14),
+      transparent 48%
+    );
+    pointer-events: none;
+  }
+  .replay-arm {
+    position: absolute;
+    top: -10px;
+    left: calc(100% + 18px);
+    width: 14px;
+    height: 108px;
+    transform-origin: 7px 7px;
+    rotate: 27deg;
+    transition: rotate 600ms cubic-bezier(0.2, 0, 0, 1);
+  }
+  .feature-replay:hover .replay-arm {
+    rotate: 34deg;
+  }
+  .replay-arm::before {
+    content: "";
+    position: absolute;
+    top: 7px;
+    left: 5.75px;
+    width: 2.5px;
+    height: 88px;
+    border-radius: 2px;
+    background: linear-gradient(var(--fg-subtle), var(--fg-muted));
+  }
+  .replay-arm-pivot {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elev-3);
+    box-shadow: var(--shadow-sm);
+  }
+  .replay-arm-head {
+    position: absolute;
+    top: 90px;
+    left: 2px;
+    width: 10px;
+    height: 18px;
+    border-radius: 3px;
+    background: var(--fg-muted);
+    box-shadow: var(--shadow-sm);
+  }
   .replay-stamp {
     position: absolute;
     right: 0;
     bottom: 2px;
     padding: 9px 12px;
     rotate: -8deg;
+    translate: calc(var(--px) * 10px) calc(var(--py) * 10px);
     border-radius: var(--r-sm);
     background: var(--accent);
     color: var(--bg-inset);
@@ -165,22 +376,49 @@
     font-weight: 600;
     line-height: 1.4;
     box-shadow: var(--shadow-sm);
+    transition: translate 200ms ease-out;
+  }
+  .feature-replay:hover .replay-stamp {
+    animation: stamp 520ms cubic-bezier(0.2, 0, 0, 1);
+  }
+  @keyframes stamp {
+    from {
+      scale: 1.3;
+      rotate: -14deg;
+      opacity: 0.5;
+    }
+    to {
+      scale: 1;
+      rotate: -8deg;
+      opacity: 1;
+    }
   }
   .feature-replay h3,
   .feature-library h3 {
     font-size: 22px;
   }
+
+  /* ---------- Your collection ---------- */
   .library-preview {
     display: grid;
-    gap: 12px;
-    margin-block: 2px;
+    gap: 4px;
+    margin: -4px -8px -2px;
   }
   .library-row {
     display: flex;
     align-items: center;
     gap: 10px;
+    padding: 6px 8px;
+    border-radius: var(--r-md);
     font-size: 12px;
     font-weight: 500;
+    transition-property: background-color, translate;
+    transition-duration: 220ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+  .library-row.is-active {
+    background: var(--bg-elev-2);
+    translate: 2px 0;
   }
   .playlist-art {
     display: grid;
@@ -191,6 +429,9 @@
     border-radius: var(--r-sm);
     color: var(--accent-text);
     background: var(--accent-soft);
+    transition-property: scale, box-shadow, rotate;
+    transition-duration: 220ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
   }
   .playlist-art-1 {
     background: color-mix(in oklch, var(--glow-c) 16%, var(--bg-elev-2));
@@ -200,12 +441,88 @@
     background: color-mix(in oklch, var(--glow-d) 16%, var(--bg-elev-2));
     color: var(--fg-muted);
   }
-  .library-row-number {
+  .library-row.is-active .playlist-art {
+    scale: 1.08;
+    rotate: -3deg;
+    box-shadow:
+      0 0 0 1px color-mix(in oklch, var(--accent) 55%, transparent),
+      var(--shadow-sm);
+  }
+  .library-row-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .library-row-meta {
+    display: grid;
+    place-items: center;
     margin-left: auto;
+    flex-shrink: 0;
+  }
+  /* Number and equalizer share one cell and swap when the row is active. */
+  .library-row-meta > * {
+    grid-area: 1 / 1;
+    transition-property: opacity, scale;
+    transition-duration: 200ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+  .library-row-number {
     font-family: var(--font-mono);
     font-size: 10px;
     color: var(--fg-subtle);
   }
+  .library-row .eq {
+    opacity: 0;
+    scale: 0.6;
+  }
+  .library-row.is-active .eq {
+    opacity: 1;
+    scale: 1;
+  }
+  .library-row.is-active .library-row-number {
+    opacity: 0;
+    scale: 0.6;
+  }
+
+  /* A three-bar equalizer, bouncing out of phase. */
+  .eq {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    width: 14px;
+    height: 12px;
+  }
+  .eq > span {
+    flex: 1;
+    height: 100%;
+    border-radius: 1px;
+    background: var(--accent);
+    transform-origin: bottom;
+    animation: eq 860ms ease-in-out infinite;
+  }
+  .eq > span:nth-child(2) {
+    animation-duration: 1040ms;
+    animation-delay: -420ms;
+  }
+  .eq > span:nth-child(3) {
+    animation-duration: 760ms;
+    animation-delay: -180ms;
+  }
+  @keyframes eq {
+    0%,
+    100% {
+      scale: 1 0.3;
+    }
+    45% {
+      scale: 1 1;
+    }
+    70% {
+      scale: 1 0.55;
+    }
+  }
+
+  /* ---------- Connected listening ---------- */
   .feature-sync {
     background:
       radial-gradient(
@@ -229,20 +546,80 @@
     gap: 7px;
     width: 128px;
     padding: 16px 10px;
+    border: 1px solid transparent;
     border-radius: var(--r-lg);
     background: var(--bg-elev-1);
     box-shadow: var(--shadow-sm);
     font-size: 12px;
     font-weight: 500;
+    cursor: pointer;
+    transition-property: border-color, box-shadow, translate;
+    transition-duration: 260ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
   }
-  .sync-device svg {
-    color: var(--fg-muted);
+  .sync-device.is-controlling {
+    border-color: color-mix(in oklch, var(--accent) 55%, transparent);
+    box-shadow:
+      var(--shadow-sm),
+      0 0 0 4px var(--accent-soft);
+    translate: 0 -2px;
+  }
+  .sync-device-screen {
+    position: relative;
+    display: grid;
+    place-items: center;
     margin-bottom: 3px;
   }
-  .sync-device small {
+  .sync-device-screen > svg {
+    color: var(--fg-muted);
+    transition: color 260ms;
+  }
+  .sync-device.is-controlling .sync-device-screen > svg {
+    color: var(--fg);
+  }
+  /* The playing device shows the equalizer inside its screen. */
+  .sync-device .eq {
+    --eq-y: 48%;
+    position: absolute;
+    left: 50%;
+    top: var(--eq-y);
+    translate: -50% -50%;
+    width: 11px;
+    height: 8px;
+    gap: 1.5px;
+    opacity: 0;
+    scale: 0.5;
+    transition-property: opacity, scale;
+    transition-duration: 260ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+  .sync-device:first-child .eq {
+    --eq-y: 38%;
+  }
+  .sync-device.is-playing .eq {
+    opacity: 1;
+    scale: 1;
+  }
+  .sync-role {
+    display: grid;
+    place-items: center;
     font-family: var(--font-mono);
     font-size: 9px;
     color: var(--accent-text);
+  }
+  .sync-role > span {
+    grid-area: 1 / 1;
+    transition-property: opacity, translate;
+    transition-duration: 260ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+  .sync-role-playing {
+    color: var(--fg-subtle);
+  }
+  .is-playing .sync-role-control,
+  .is-controlling .sync-role-playing {
+    opacity: 0;
+    translate: 0 6px;
   }
   .sync-connection {
     display: flex;
@@ -251,24 +628,91 @@
     width: 120px;
     color: var(--accent-text);
   }
-  .sync-connection span {
+  /* Dashes travel from the controlling device toward the one playing. */
+  .sync-line {
     flex: 1;
-    height: 1px;
-    background: var(--border-strong);
+    height: 2px;
+    border-radius: 1px;
+    background: repeating-linear-gradient(
+      90deg,
+      var(--accent) 0 5px,
+      transparent 5px 11px
+    );
+    opacity: 0.75;
+    animation: flow 720ms linear infinite;
   }
+  .flow-left .sync-line {
+    animation-direction: reverse;
+  }
+  @keyframes flow {
+    to {
+      background-position: 11px 0;
+    }
+  }
+  .sync-hub {
+    position: relative;
+    display: grid;
+    place-items: center;
+  }
+  .sync-hub > svg {
+    position: relative;
+  }
+  .sync-ping {
+    position: absolute;
+    inset: -6px;
+    border-radius: 50%;
+    border: 1.5px solid var(--accent);
+    animation: ping 700ms cubic-bezier(0.2, 0, 0, 1) forwards;
+  }
+  @keyframes ping {
+    from {
+      opacity: 0.8;
+      scale: 0.5;
+    }
+    to {
+      opacity: 0;
+      scale: 1.8;
+    }
+  }
+
+  /* ---------- Extras ---------- */
   .feature-extra {
     grid-column: span 3;
     min-width: 0;
     padding: 24px 8px 0;
     margin-top: 8px;
     border-top: 1px solid var(--border);
+    transition: border-color 260ms;
+  }
+  .feature-extra:hover {
+    border-top-color: var(--border-strong);
   }
   .feature-extra .tile {
     margin-bottom: 18px;
+    transition-property: background-color, color, scale, box-shadow;
+    transition-duration: 220ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+  .feature-extra:hover .tile {
+    background: var(--accent);
+    color: var(--accent-fg);
+    scale: 1.08;
+    box-shadow: 0 4px 14px
+      color-mix(in oklch, var(--accent) 35%, transparent);
+  }
+  .feature-extra:hover .tile svg {
+    animation: nudge 520ms cubic-bezier(0.2, 0, 0, 1);
+  }
+  @keyframes nudge {
+    35% {
+      translate: 0 -2px;
+    }
   }
   .feature-extra h3 {
     margin-bottom: 8px;
   }
+
+  /* ---------- Layout breakpoints ---------- */
   @media (min-width: 1024px) {
     .feature-sync {
       display: grid;
@@ -286,9 +730,13 @@
     .feature-sync .sync-device {
       width: 104px;
     }
+    /* Fill whatever the column has left so the dashes have room to travel. */
     .feature-sync .sync-connection {
-      width: 52px;
-      gap: 5px;
+      flex: 1 1 52px;
+      width: auto;
+      min-width: 44px;
+      max-width: 88px;
+      gap: 6px;
     }
   }
   @media (max-width: 900px) {
@@ -329,17 +777,59 @@
     .feature-extra .body {
       margin-left: 50px;
     }
-    .feature-wave {
+    .wave-layer {
       gap: 3px;
     }
     .feature-copy h3 {
       font-size: 25px;
     }
     .replay-art {
-      height: 156px;
+      height: 164px;
     }
     .replay-stamp {
       right: calc(50% - 100px);
+    }
+  }
+
+  /* ---------- Reduced motion ---------- */
+  /* Hover states still answer the pointer; nothing moves on its own. */
+  @media (prefers-reduced-motion: reduce) {
+    .feature-grid > li,
+    .stream-dot,
+    .replay-disc,
+    .replay-stamp,
+    .eq > span,
+    .sync-line,
+    .sync-ping,
+    .feature-extra:hover .tile svg {
+      animation: none;
+    }
+    .feature-grid > li {
+      opacity: 1;
+    }
+    .eq > span {
+      scale: 1 0.6;
+    }
+    .feature-replay {
+      transform: none;
+    }
+    .replay-platter,
+    .replay-stamp {
+      translate: 0 0;
+    }
+    .feature-card,
+    .feature-spot,
+    .replay-arm,
+    .replay-platter,
+    .replay-stamp,
+    .library-row,
+    .playlist-art,
+    .library-row-meta > *,
+    .sync-device,
+    .sync-device .eq,
+    .sync-role > span,
+    .feature-extra .tile {
+      transition: none;
     }
   }
 }
