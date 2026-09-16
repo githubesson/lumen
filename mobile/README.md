@@ -108,7 +108,8 @@ variables in the EAS environment used for your builds **and** OTA updates:
 Use sensitive visibility for the upload token in EAS. It must be available both
 to the remote build and the local publisher; EAS secret visibility makes it
 unavailable to local `eas env:exec`. Never place it in app.json, app.local.json,
-or committed files. `SENTRY_URL` optionally selects a self-hosted Sentry server.
+or committed files. `SENTRY_URL` optionally selects a self-hosted Sentry server
+and must use HTTPS when uploads are enabled.
 
 The public variables are compiled into the JS bundle. Locally, copy the desired
 public settings from `.env.example` into `.env.local`. Development reports stay

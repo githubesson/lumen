@@ -6,6 +6,7 @@
 // Without the file, the committed app.json is used as-is.
 const fs = require("fs");
 const path = require("path");
+const { URL } = require("node:url");
 
 function merge(base, override) {
   if (
@@ -35,12 +36,18 @@ module.exports = ({ config }) => {
   // Independent of runtime reporting: ordinary builds need no Sentry account.
   // Never include SENTRY_AUTH_TOKEN in config: Expo embeds config in the app.
   if (process.env.SENTRY_UPLOAD_SOURCEMAPS === "1") {
+    const sentryUrl = process.env.SENTRY_URL || "https://sentry.io/";
+    try {
+      if (new URL(sentryUrl).protocol !== "https:") throw new Error();
+    } catch {
+      throw new Error("SENTRY_URL must be a valid HTTPS URL when Sentry uploads are enabled.");
+    }
     resolved.plugins = [
       ...(resolved.plugins ?? []),
       ["@sentry/react-native/expo", {
         organization: process.env.SENTRY_ORG,
         project: process.env.SENTRY_PROJECT,
-        url: process.env.SENTRY_URL || "https://sentry.io/",
+        url: sentryUrl,
       }],
     ];
   }

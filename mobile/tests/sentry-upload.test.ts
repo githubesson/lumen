@@ -10,11 +10,22 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   vi.stubGlobal("process", { ...process, argv: ["node", "publish-update.mjs", "preview", "test"] });
-  for (const name of ["SENTRY_UPLOAD_SOURCEMAPS", "SENTRY_ORG", "SENTRY_PROJECT", "SENTRY_AUTH_TOKEN"]) {
+  for (const name of ["SENTRY_UPLOAD_SOURCEMAPS", "SENTRY_ORG", "SENTRY_PROJECT", "SENTRY_AUTH_TOKEN", "SENTRY_URL"]) {
     vi.stubEnv(name, "");
   }
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+function loadAppConfig() {
+  const require = createRequire(import.meta.url);
+  const source = readFileSync(new URL("../app.config.js", import.meta.url), "utf8");
+  const module = { exports: undefined as any };
+  vm.runInNewContext(source, {
+    module, __dirname: "/mobile", process,
+    require: (id: string) => id === "fs" ? { existsSync: () => false } : require(id),
+  });
+  return module.exports;
+}
 
 describe("optional release uploads", () => {
   it("publishes normally without any Sentry credentials", async () => {
@@ -43,19 +54,38 @@ describe("optional release uploads", () => {
   });
 
   it("keeps upload hooks out of default config and never embeds the token", () => {
-    const require = createRequire(import.meta.url);
-    const source = readFileSync(new URL("../app.config.js", import.meta.url), "utf8");
-    const module = { exports: undefined as any };
-    vm.runInNewContext(source, {
-      module, __dirname: "/mobile", process,
-      require: (id: string) => id === "fs" ? { existsSync: () => false } : require(id),
-    });
+    const appConfig = loadAppConfig();
     const base = { plugins: ["expo-router"] };
-    expect(module.exports({ config: base }).plugins).toEqual(["expo-router"]);
+    expect(appConfig({ config: base }).plugins).toEqual(["expo-router"]);
     vi.stubEnv("SENTRY_UPLOAD_SOURCEMAPS", "1");
     vi.stubEnv("SENTRY_AUTH_TOKEN", "must-not-be-bundled");
-    const config = module.exports({ config: base });
+    const config = appConfig({ config: base });
     expect(config.plugins[1][0]).toBe("@sentry/react-native/expo");
     expect(JSON.stringify(config)).not.toContain("must-not-be-bundled");
+  });
+
+  it.each(["http://sentry.example.com/", "not-a-url"])(
+    "rejects unsafe upload URL %s before native configuration or OTA publishing",
+    async (url) => {
+      vi.stubEnv("SENTRY_UPLOAD_SOURCEMAPS", "1");
+      vi.stubEnv("SENTRY_ORG", "org");
+      vi.stubEnv("SENTRY_PROJECT", "project");
+      vi.stubEnv("SENTRY_AUTH_TOKEN", "private-token");
+      vi.stubEnv("SENTRY_URL", url);
+      expect(() => loadAppConfig()({ config: {} })).toThrow("valid HTTPS URL");
+      await expect(import("../scripts/publish-update.mjs")).rejects.toThrow("valid HTTPS URL");
+      expect(shell.run).not.toHaveBeenCalled();
+    },
+  );
+
+  it("supports HTTPS self-hosted endpoints for native and OTA uploads", async () => {
+    vi.stubEnv("SENTRY_UPLOAD_SOURCEMAPS", "1");
+    vi.stubEnv("SENTRY_ORG", "org");
+    vi.stubEnv("SENTRY_PROJECT", "project");
+    vi.stubEnv("SENTRY_AUTH_TOKEN", "private-token");
+    vi.stubEnv("SENTRY_URL", "https://sentry.example.com/");
+    expect(loadAppConfig()({ config: {} }).plugins[0][1].url).toBe("https://sentry.example.com/");
+    await import("../scripts/publish-update.mjs");
+    expect(shell.run.mock.calls[2]?.[2].env.SENTRY_URL).toBe("https://sentry.example.com/");
   });
 });
