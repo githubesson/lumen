@@ -2,7 +2,13 @@ import CookieManager from "@preeternal/react-native-cookie-manager";
 import { useEffect, useRef, type ReactNode } from "react";
 import { ActivityIndicator, AppState, View } from "react-native";
 import Constants from "expo-constants";
-import { Stack, useRouter, useSegments } from "expo-router";
+import {
+  ErrorBoundary as RouterErrorBoundary,
+  Stack,
+  useRouter,
+  useSegments,
+  type ErrorBoundaryProps,
+} from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import {
@@ -36,6 +42,17 @@ import {
 import { QUERY_STALE_TIME } from "../lib/query-policy";
 import { offlineStore } from "../lib/offline-mode";
 import { asyncStorageAdapter } from "../adapters/async-storage-adapter";
+import {
+  recordCrashBreadcrumb,
+  reportError,
+  setCrashRoute,
+} from "../lib/crash-reporting";
+
+// Expo Router catches route render errors before the global error handler.
+export function ErrorBoundary(props: ErrorBoundaryProps) {
+  useEffect(() => reportError(props.error), [props.error]);
+  return <RouterErrorBoundary {...props} />;
+}
 
 // Resolve the backend base URL. Prefer a build-time env var (EXPO_PUBLIC_...)
 // for flexibility across dev / staging / prod; fall back to app.json `extra`.
@@ -97,6 +114,7 @@ export default function RootLayout() {
   useEffect(() => {
     focusManager.setFocused(AppState.currentState === "active");
     const subscription = AppState.addEventListener("change", (status) => {
+      recordCrashBreadcrumb("app-state", { status });
       focusManager.setFocused(status === "active");
     });
     return () => {
@@ -168,6 +186,7 @@ function AccountScopedProviders({ children }: { children: ReactNode }) {
     let wasOffline = offlineStore.isOffline();
     return offlineStore.subscribe(() => {
       const off = offlineStore.isOffline();
+      recordCrashBreadcrumb("connectivity", { offline: off });
       if (wasOffline && !off) void refresh();
       wasOffline = off;
     });
@@ -205,6 +224,9 @@ function AuthGate() {
   const { status, me } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  // Segments preserve [id] placeholders instead of recording user data.
+  const route = segments.join("/");
+  useEffect(() => setCrashRoute(route), [route]);
 
   useEffect(() => {
     if (status === "loading") return;

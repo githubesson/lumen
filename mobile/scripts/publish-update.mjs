@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { sentryUploadEnvironment } from "./sentry-upload.mjs";
 
 /**
  * Publish an OTA update.
@@ -64,6 +66,7 @@ function lastCommitSubject() {
 
 const message = rest.join(" ").trim() || lastCommitSubject() || "update";
 const environment = ENVIRONMENTS.includes(branch) ? branch : "production";
+const uploadEnvironment = sentryUploadEnvironment();
 
 run("node", [path.join(projectRoot, "scripts", "sync-core-package.mjs")]);
 
@@ -83,3 +86,20 @@ run(
   ],
   { env: { CI: "1" } },
 );
+
+if (uploadEnvironment) {
+  const require = createRequire(import.meta.url);
+  try {
+    run("node", [
+      require.resolve("@sentry/react-native/scripts/expo-upload-sourcemaps.js"),
+      "dist",
+    ], { env: { ...uploadEnvironment, CI: "1" } });
+  } catch (error) {
+    console.error(
+      "The OTA update was published, but its Sentry source-map upload failed. " +
+      "Retry with the same credentials and existing dist directory: " +
+      "npx sentry-expo-upload-sourcemaps dist",
+    );
+    throw error;
+  }
+}

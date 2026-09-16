@@ -1,8 +1,13 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { getDefaultConfig } = require("expo/metro-config");
+const { getSentryExpoConfig } = require("@sentry/react-native/metro");
 
-const config = getDefaultConfig(__dirname);
+// Debug IDs make source maps usable for builds and OTA updates. This only
+// changes bundling metadata; it does not initialize reporting or upload data.
+const config = getSentryExpoConfig(__dirname, {
+  includeWebReplay: false,
+  enableSourceContextInDevelopment: false,
+});
 
 // The canonical core package is the sibling ../core. `npm run sync:core`
 // vendors a copy into packages/music-library-core so that `file:` resolution

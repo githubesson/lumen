@@ -38,6 +38,7 @@ import { asyncStorageAdapter } from "../adapters/async-storage-adapter";
 import { shouldExposeNowPlayingSession } from "./now-playing-session";
 import { downloadStore } from "../lib/downloads";
 import { isTrackPlayableOffline } from "../lib/offline-mode";
+import { recordCrashBreadcrumb } from "../lib/crash-reporting";
 import {
   addLockScreenCommandListener,
   isLockScreenControlsAvailable,
@@ -147,6 +148,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // next/prev/auto-advance skip over everything else.
     isTrackPlayable: isTrackPlayableOffline,
   });
+  useEffect(() => {
+    recordCrashBreadcrumb("playback", {
+      isPlaying: state.isPlaying,
+      queueIndex: state.index,
+      queueLength: state.queue.length,
+      shuffle: state.shuffle,
+      repeat: state.repeat,
+    });
+  }, [state.isPlaying, state.index, state.queue.length, state.shuffle, state.repeat]);
   usePlaybackActivityPublisher({
     state,
     time,

@@ -86,6 +86,67 @@ tracked (it carries personal project/app IDs) — `npm run configure` creates
 it with the standard development / preview / production profiles, plus an
 `eas submit` block if you provide an App Store Connect app ID.
 
+## Optional crash reporting
+
+Sentry is **disabled by default**. Without `EXPO_PUBLIC_SENTRY_DSN`, the app
+does not initialize Sentry or send reports. The SDK remains an installed native
+dependency, so adding this integration requires a new native build even when
+reporting is disabled. No Sentry account is needed to build or run the app.
+
+To enable it, create a React Native project in Sentry, then configure these
+variables in the EAS environment used for your builds **and** OTA updates:
+
+| Variable | Purpose |
+| --- | --- |
+| `EXPO_PUBLIC_SENTRY_DSN` | Public project ingestion URL; enables reporting. |
+| `EXPO_PUBLIC_SENTRY_ENVIRONMENT` | Report environment, default `production`. |
+| `SENTRY_UPLOAD_SOURCEMAPS=1` | Opt in to native build upload hooks and OTA source-map uploads. |
+| `SENTRY_ORG` | Sentry organization slug. |
+| `SENTRY_PROJECT` | Sentry project slug. |
+| `SENTRY_AUTH_TOKEN` | Build/publishing credential with source-map upload permissions. Never use an `EXPO_PUBLIC_` prefix for this token. |
+
+Use sensitive visibility for the upload token in EAS. It must be available both
+to the remote build and the local publisher; EAS secret visibility makes it
+unavailable to local `eas env:exec`. Never place it in app.json, app.local.json,
+or committed files. `SENTRY_URL` optionally selects a self-hosted Sentry server.
+
+The public variables are compiled into the JS bundle. Locally, copy the desired
+public settings from `.env.example` into `.env.local`. Development reports stay
+disabled unless `EXPO_PUBLIC_SENTRY_DEBUG=1` is also set.
+
+For OTA publishing, run the existing script with the upload variables available
+in its environment. For example, to use your EAS production variables:
+
+```sh
+eas env:exec production 'npm run update:ota -- production "Bug fixes"'
+```
+
+The script validates upload credentials before publishing, then uploads the
+maps from that same `dist` export. If the upload fails after publication, it
+reports that the update is already live. Retry only the upload with the same
+credentials and `dist`, using `npx sentry-expo-upload-sourcemaps dist`.
+Calling `eas update` directly bypasses this upload step.
+
+Keep `SENTRY_UPLOAD_SOURCEMAPS`, `SENTRY_ORG`, `SENTRY_PROJECT`, and `SENTRY_URL`
+consistent between a native build and its updates: the plugin affects native
+configuration and therefore the fingerprint. Changing that configuration needs
+a new native build. Removing the DSN disables reporting on the next launch of a
+bundle published without it; it does not remotely disable older installed bundles.
+
+Reporting captures unhandled errors and root-route render errors, includes the
+build identity and OTA update metadata, and records route patterns, app state,
+connectivity changes, and playback state as breadcrumbs. Replay, performance
+tracing, and Sentry Logs are not enabled. Automatic console/network breadcrumbs
+are excluded; application code should pass only non-sensitive operational state
+to `recordCrashBreadcrumb` and original Error objects to `reportError`.
+
+Before relying on reporting, verify a deliberate error in a test release build
+and again after an OTA update. Confirm the Sentry event has the original message,
+source file/line, correct update ID, and preceding breadcrumbs. This requires
+real Sentry credentials and a device; unit tests only verify the opt-in behavior.
+
+See [Expo's Sentry guide](https://docs.expo.dev/guides/using-sentry/).
+
 ## OTA Updates
 
 The app supports over-the-air updates via `expo-updates`, letting you push JavaScript and asset changes without going through app store review.
