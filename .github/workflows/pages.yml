@@ -1,0 +1,56 @@
+name: pages
+
+# Publishes landing/ to GitHub Pages whenever it changes on main. Pages must
+# be set to the "GitHub Actions" source once in the repository settings; the
+# deploy step fails with a clear message until then.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "landing/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: landing
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: landing/package-lock.json
+      - run: npm ci
+      # Project sites live under /<repo>/; the Vite base defaults to /lumen/.
+      # For a custom domain, set LANDING_BASE=/ and LANDING_SITE_URL here and
+      # add landing/public/CNAME.
+      - run: npm run build
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: landing/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

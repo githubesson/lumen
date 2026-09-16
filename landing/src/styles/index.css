@@ -1,0 +1,791 @@
+@import "tailwindcss";
+@import "./fonts.css";
+
+@custom-variant dark (&:where([data-theme="dark"] *));
+
+/* ============================================================
+   LUMEN landing — tokens shared with the product
+   The theme blocks below are copied from frontend/src/index.css so the
+   page renders in exactly the product's neutrals, accent, and depth.
+   Keep them in sync when the app's tokens change.
+   ============================================================ */
+
+@theme {
+  --font-sans:
+    "Host Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+  --font-mono:
+    "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Drop Tailwind's raw palette so every colour utility resolves to a
+     product token. */
+  --color-*: initial;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-inset: var(--bg-inset);
+  --color-elev-1: var(--bg-elev-1);
+  --color-elev-2: var(--bg-elev-2);
+  --color-elev-3: var(--bg-elev-3);
+  --color-fg: var(--fg);
+  --color-muted: var(--fg-muted);
+  --color-subtle: var(--fg-subtle);
+  --color-faint: var(--fg-faint);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-line-soft: var(--border-soft);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-text: var(--accent-text);
+
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+  --radius-2xl: var(--r-2xl);
+}
+
+/* ---------- Theme tokens ---------- */
+[data-theme="dark"] {
+  --bg: oklch(0.145 0.005 270);
+  --bg-elev-1: oklch(0.175 0.005 270);
+  --bg-elev-2: oklch(0.205 0.005 270);
+  --bg-elev-3: oklch(0.235 0.006 270);
+  --bg-inset: oklch(0.12 0.005 270);
+
+  --fg: oklch(0.985 0 0);
+  --fg-muted: oklch(0.72 0.005 270);
+  --fg-subtle: oklch(0.62 0.005 270);
+  --fg-faint: oklch(0.52 0.005 270);
+
+  --border: oklch(0.28 0.005 270 / 0.7);
+  --border-strong: oklch(0.36 0.005 270);
+  --border-soft: oklch(0.24 0.005 270 / 0.5);
+
+  --highlight: oklch(1 0 0 / 0.06);
+
+  --accent: oklch(0.72 0.17 40);
+  --accent-fg: oklch(0.99 0 0);
+  --accent-soft: oklch(0.72 0.17 40 / 0.12);
+  --accent-text: var(--accent);
+  --ring: oklch(0.72 0.17 40 / 0.65);
+
+  --image-outline: oklch(1 0 0 / 0.1);
+  --glow-strength: 1;
+
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg: oklch(0.985 0.002 270);
+  --bg-elev-1: oklch(1 0 0);
+  --bg-elev-2: oklch(0.965 0.003 270);
+  --bg-elev-3: oklch(0.945 0.004 270);
+  --bg-inset: oklch(0.955 0.003 270);
+
+  --fg: oklch(0.18 0.005 270);
+  --fg-muted: oklch(0.42 0.005 270);
+  --fg-subtle: oklch(0.5 0.005 270);
+  --fg-faint: oklch(0.6 0.005 270);
+
+  --border: oklch(0.9 0.004 270);
+  --border-strong: oklch(0.82 0.005 270);
+  --border-soft: oklch(0.93 0.004 270);
+
+  --highlight: oklch(1 0 0 / 0.8);
+
+  --accent: oklch(0.62 0.18 40);
+  --accent-fg: oklch(0.99 0 0);
+  --accent-soft: oklch(0.62 0.18 40 / 0.12);
+  --accent-text: oklch(0.52 0.18 40);
+  --ring: oklch(0.52 0.18 40 / 0.85);
+
+  --image-outline: oklch(0 0 0 / 0.1);
+  --glow-strength: 0.55;
+
+  color-scheme: light;
+}
+
+/* Depth 2 (the app default) and radius 10, fixed for the landing page. */
+:root {
+  --d: 1;
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-2xl: 24px;
+
+  /* The brand glow from the showcase render and DMG background: the accent
+     orange sweeping through magenta and the app icon's violet into blue. */
+  --glow-a: oklch(0.72 0.17 40);
+  --glow-b: oklch(0.66 0.24 340);
+  --glow-c: oklch(0.55 0.25 300);
+  --glow-d: oklch(0.6 0.2 260);
+  --brand-gradient: linear-gradient(
+    135deg,
+    var(--glow-a),
+    var(--glow-b),
+    var(--glow-c),
+    var(--glow-d)
+  );
+}
+
+[data-theme="dark"] {
+  --shadow-sm:
+    0 1px 0 0 var(--highlight) inset,
+    0 1px 2px calc(var(--d) * 1px) oklch(0 0 0 / calc(0.3 * var(--d))),
+    0 calc(var(--d) * 2px) calc(var(--d) * 6px)
+      oklch(0 0 0 / calc(0.25 * var(--d)));
+  --shadow-md:
+    0 1px 0 0 var(--highlight) inset,
+    0 calc(var(--d) * 2px) calc(var(--d) * 4px)
+      oklch(0 0 0 / calc(0.35 * var(--d))),
+    0 calc(var(--d) * 8px) calc(var(--d) * 22px)
+      oklch(0 0 0 / calc(0.35 * var(--d)));
+  --shadow-lg:
+    0 1px 0 0 var(--highlight) inset,
+    0 calc(var(--d) * 4px) calc(var(--d) * 10px)
+      oklch(0 0 0 / calc(0.4 * var(--d))),
+    0 calc(var(--d) * 18px) calc(var(--d) * 42px)
+      oklch(0 0 0 / calc(0.45 * var(--d)));
+}
+
+[data-theme="light"] {
+  --shadow-sm:
+    0 1px 0 0 var(--highlight) inset,
+    0 1px 1px oklch(0.2 0.01 270 / calc(0.05 * var(--d))),
+    0 calc(var(--d) * 1px) calc(var(--d) * 3px)
+      oklch(0.2 0.01 270 / calc(0.08 * var(--d)));
+  --shadow-md:
+    0 1px 0 0 var(--highlight) inset,
+    0 calc(var(--d) * 2px) calc(var(--d) * 4px)
+      oklch(0.2 0.01 270 / calc(0.08 * var(--d))),
+    0 calc(var(--d) * 6px) calc(var(--d) * 18px)
+      oklch(0.2 0.01 270 / calc(0.1 * var(--d)));
+  --shadow-lg:
+    0 1px 0 0 var(--highlight) inset,
+    0 calc(var(--d) * 4px) calc(var(--d) * 8px)
+      oklch(0.2 0.01 270 / calc(0.1 * var(--d))),
+    0 calc(var(--d) * 14px) calc(var(--d) * 36px)
+      oklch(0.2 0.01 270 / calc(0.12 * var(--d)));
+}
+
+/* ---------- Base ---------- */
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    background: var(--bg);
+  }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    position: relative;
+    isolation: isolate;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "ss01", "cv11";
+    letter-spacing: -0.005em;
+    transition:
+      background 240ms ease,
+      color 240ms ease;
+  }
+  button,
+  input {
+    font: inherit;
+    color: inherit;
+  }
+  ::selection {
+    background: var(--accent-soft);
+    color: var(--fg);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  img {
+    max-width: 100%;
+  }
+}
+
+/* Component classes live below the utilities layer so a Tailwind
+   utility on the same element wins, matching the app's convention. */
+@layer components {
+  /* ---------- Layout ---------- */
+  .wrap {
+    width: 100%;
+    max-width: 1120px;
+    margin-inline: auto;
+    padding-inline: 24px;
+  }
+  .section {
+    padding-block: 88px;
+    scroll-margin-top: 72px;
+  }
+  @media (max-width: 640px) {
+    .section {
+      padding-block: 64px;
+    }
+  }
+
+  /* ---------- Type ---------- */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+  }
+  .display {
+    font-size: clamp(40px, 6.4vw, 68px);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.02;
+    text-wrap: balance;
+    margin: 0;
+  }
+  .section-title {
+    font-size: clamp(28px, 4vw, 40px);
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+    text-wrap: balance;
+    margin: 0;
+  }
+  .card-title {
+    font-size: 15.5px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.3;
+    margin: 0;
+  }
+  .body {
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--fg-muted);
+    text-wrap: pretty;
+    margin: 0;
+  }
+  .mono {
+    font-family: var(--font-mono);
+  }
+  .link {
+    color: var(--fg);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-color: var(--border-strong);
+    text-decoration-thickness: 1px;
+    transition: text-decoration-color 120ms;
+  }
+  .link:hover {
+    text-decoration-color: var(--fg);
+  }
+  .tick {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 8px;
+  }
+  .tick li {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--fg-muted);
+  }
+  .tick li::before {
+    content: "";
+    flex: 0 0 5px;
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
+    background: var(--accent);
+    margin-top: 8px;
+  }
+
+  /* ---------- Buttons ---------- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 36px;
+    padding: 0 14px;
+    border-radius: var(--r-md);
+    font-size: 13.5px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    background: var(--bg-elev-2);
+    color: var(--fg);
+    box-shadow: var(--shadow-sm);
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition-property: scale, background-color, border-color, filter;
+    transition-duration: 120ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+  .btn:hover {
+    background: var(--bg-elev-3);
+  }
+  .btn:active {
+    scale: 0.96;
+  }
+  .btn-lg {
+    height: 44px;
+    padding: 0 20px;
+    font-size: 15px;
+    border-radius: var(--r-lg);
+  }
+  .btn-primary {
+    /* The app's version mixes the accent at 110%, which color-mix() rejects and
+     the whole gradient falls back to the neutral button. Lighten with white
+     instead so the top edge reads as a highlight. */
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--accent) 90%, oklch(1 0 0)),
+      var(--accent)
+    );
+    color: var(--accent-fg);
+    border-color: color-mix(in oklch, var(--accent) 60%, transparent);
+    box-shadow:
+      var(--shadow-sm),
+      inset 0 1px 0 oklch(1 0 0 / 0.25),
+      0 calc(var(--d) * 4px) calc(var(--d) * 16px)
+        color-mix(in oklch, var(--accent) calc(30% * var(--d)), transparent);
+  }
+  .btn-primary:hover {
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--accent) 84%, oklch(1 0 0)),
+      var(--accent)
+    );
+  }
+  .btn-ghost {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+  }
+  .btn-ghost:hover {
+    background: var(--bg-elev-2);
+  }
+  .btn-icon {
+    width: 36px;
+    padding: 0;
+  }
+  .btn svg {
+    flex: 0 0 auto;
+  }
+
+  /* ---------- Surfaces ---------- */
+  .card {
+    position: relative;
+    background: var(--bg-elev-1);
+    border: 1px solid var(--border);
+    border-radius: var(--r-xl);
+    box-shadow: var(--shadow-sm);
+    padding: 22px;
+  }
+  .card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(180deg, var(--highlight), transparent 28%);
+    pointer-events: none;
+  }
+  /* A 1px brand-gradient border that fades in on hover; the mask keeps only
+   the ring so the card's own background stays untouched. */
+  .card-glow::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: calc(var(--r-xl) + 1px);
+    padding: 1px;
+    background: var(--brand-gradient);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 200ms cubic-bezier(0.2, 0, 0, 1);
+    pointer-events: none;
+  }
+  .card-glow:hover::after {
+    opacity: 0.75;
+  }
+  .tile {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--r-md);
+    background: var(--accent-soft);
+    color: var(--accent-text);
+    display: grid;
+    place-items: center;
+    flex: 0 0 36px;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 7px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--fg-muted);
+    background: var(--bg-elev-1);
+    box-shadow: var(--shadow-sm);
+  }
+  .code-frame {
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+  }
+  /* The copy control sits in its own bar so a long command never runs under it. */
+  .code-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px 6px 18px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.75;
+    padding: 16px 20px 18px;
+    overflow-x: auto;
+    color: var(--fg);
+    margin: 0;
+    tab-size: 2;
+  }
+  .code .c {
+    color: var(--fg-subtle);
+  }
+  .code .p {
+    color: var(--fg-faint);
+    user-select: none;
+  }
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--bg-elev-2),
+      var(--bg-elev-3),
+      var(--bg-elev-2)
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s linear infinite;
+    border-radius: var(--r-md);
+  }
+  @keyframes shimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
+  }
+
+  /* ---------- Brand ---------- */
+  .brand-mark {
+    display: inline-grid;
+    place-items: center;
+    border-radius: 27%;
+    background: linear-gradient(
+      180deg,
+      oklch(0.93 0.05 300),
+      oklch(0.55 0.26 300) 72%
+    );
+    color: oklch(1 0 0 / 0.92);
+    box-shadow:
+      0 1px 0 0 oklch(1 0 0 / 0.35) inset,
+      0 1px 2px oklch(0 0 0 / 0.25),
+      0 0 0 1px oklch(0.55 0.26 300 / 0.35);
+    flex: 0 0 auto;
+  }
+  .brand-mark svg {
+    width: 62%;
+    height: 62%;
+    filter: drop-shadow(0 1px 1px oklch(0 0 0 / 0.25));
+  }
+
+  /* ---------- Nav ---------- */
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    height: 60px;
+    background: transparent;
+    border-bottom: 1px solid transparent;
+    transition-property: background-color, border-color;
+    transition-duration: 200ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+  /* Transparent over the hero so the glow runs under it; a backdrop appears
+     once content scrolls beneath. */
+  .nav-solid {
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    background: color-mix(in oklch, var(--bg) 74%, transparent);
+    border-bottom-color: var(--border-soft);
+  }
+  .nav-link {
+    color: var(--fg-muted);
+    font-size: 14px;
+    font-weight: 500;
+    padding: 8px 10px;
+    border-radius: var(--r-md);
+    text-decoration: none;
+    transition-property: color, background-color;
+    transition-duration: 120ms;
+  }
+  .nav-link:hover {
+    color: var(--fg);
+    background: var(--bg-elev-2);
+  }
+
+  /* ---------- Hero ---------- */
+  .glow {
+    position: absolute;
+    top: -160px;
+    left: 0;
+    right: 0;
+    height: 820px;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: -1;
+    opacity: var(--glow-strength);
+  }
+  .glow-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(64px);
+    will-change: transform;
+  }
+  .glow-blob-a {
+    width: 56vw;
+    height: 440px;
+    left: 4%;
+    top: 60px;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in oklch, var(--glow-a) 34%, transparent),
+      transparent
+    );
+    animation: drift-a 22s ease-in-out infinite alternate;
+  }
+  .glow-blob-b {
+    width: 52vw;
+    height: 440px;
+    right: 2%;
+    top: 30px;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in oklch, var(--glow-c) 38%, transparent),
+      transparent
+    );
+    animation: drift-b 27s ease-in-out infinite alternate;
+  }
+  .glow-blob-c {
+    width: 42vw;
+    height: 380px;
+    left: 30%;
+    top: 250px;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in oklch, var(--glow-b) 22%, transparent),
+      transparent
+    );
+    animation: drift-c 31s ease-in-out infinite alternate;
+  }
+  @keyframes drift-a {
+    to {
+      translate: 6vw 50px;
+    }
+  }
+  @keyframes drift-b {
+    to {
+      translate: -7vw 70px;
+    }
+  }
+  @keyframes drift-c {
+    to {
+      translate: -5vw -60px;
+    }
+  }
+
+  .wave-band {
+    position: relative;
+    height: 120px;
+    margin: 8px auto -12px;
+    mask-image: linear-gradient(
+      90deg,
+      transparent,
+      #000 14%,
+      #000 86%,
+      transparent
+    );
+    -webkit-mask-image: linear-gradient(
+      90deg,
+      transparent,
+      #000 14%,
+      #000 86%,
+      transparent
+    );
+    opacity: 0.9;
+  }
+  .wave {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .wave-glow {
+    filter: blur(9px);
+    opacity: 0.55;
+  }
+  @media (max-width: 640px) {
+    .wave-band {
+      height: 80px;
+    }
+  }
+  .device {
+    position: relative;
+    border-radius: var(--r-2xl);
+    overflow: hidden;
+    background: var(--bg-elev-1);
+    box-shadow: var(--shadow-lg);
+    outline: 1px solid var(--image-outline);
+    outline-offset: -1px;
+  }
+  .device img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  /* ---------- Motion ---------- */
+  @keyframes enter {
+    from {
+      opacity: 0;
+      translate: 0 12px;
+    }
+    to {
+      opacity: 1;
+      translate: 0 0;
+    }
+  }
+  .enter {
+    animation: enter 700ms cubic-bezier(0.2, 0, 0, 1) both;
+    animation-delay: var(--delay, 0ms);
+  }
+  @keyframes signal-pulse {
+    0%,
+    100% {
+      opacity: 0.3;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+  .signal-arc {
+    animation: signal-pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes twinkle {
+    0%,
+    100% {
+      opacity: 0.35;
+      scale: 0.85;
+    }
+    50% {
+      opacity: 1;
+      scale: 1;
+    }
+  }
+  .sparkle {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: twinkle 2.8s ease-in-out infinite;
+  }
+  @keyframes wiggle {
+    0%,
+    100% {
+      scale: 1 1;
+    }
+    30% {
+      scale: 1 1.3;
+    }
+    65% {
+      scale: 1 0.85;
+    }
+  }
+  .brand-mark svg path {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  a:hover .brand-mark svg path {
+    animation: wiggle 700ms cubic-bezier(0.2, 0, 0, 1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    .enter,
+    .skeleton,
+    .glow-blob,
+    .signal-arc,
+    .sparkle,
+    a:hover .brand-mark svg path {
+      animation: none;
+    }
+    .btn,
+    .card-glow::after,
+    .nav {
+      transition: none;
+    }
+  }
+
+  /* ---------- Icon cross-fade ---------- */
+  /* Both icons stay in the DOM; the inactive one shrinks, fades, and blurs out. */
+  .icon-swap {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    opacity: 0;
+    scale: 0.25;
+    filter: blur(4px);
+    transition-property: opacity, scale, filter;
+    transition-duration: 200ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+  .icon-swap-on {
+    opacity: 1;
+    scale: 1;
+    filter: blur(0px);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .icon-swap {
+      transition: none;
+    }
+  }
+}

@@ -74,6 +74,7 @@ surface for invites and library management.
 | [`frontend/`](frontend/) | React + Vite + TypeScript web app, also packaged for Windows, macOS, and Linux via Electron. |
 | [`mobile/`](mobile/) | Expo Router / React Native app for iOS and Android. |
 | [`core/`](core/) | Shared TypeScript package (`@music-library/core`) — API client, player state, auth, favorites — consumed by the web and mobile clients. |
+| [`landing/`](landing/) | Public landing page (SolidJS + Vite), published to GitHub Pages from `main`. |
 
 Deployment lives at the repo root: [docker-compose.yml](docker-compose.yml)
 runs Postgres + hifi-api + backend + frontend, with the app images built
@@ -274,6 +275,7 @@ backend/             Go API server (own Dockerfile)
 core/                shared TypeScript core package
 frontend/            web + Electron client (Dockerfile builds with repo root as context)
 mobile/              Expo app
+landing/             SolidJS landing page, deployed to GitHub Pages
 ```
 
 Runtime data (`./pgdata`, `./tidal-hifi`) is created next to the compose file
@@ -284,6 +286,9 @@ container's non-root user can't write to).
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on pull requests
 targeting `main` and on pushes to `main`: backend `gofmt`/`vet`/`build`/`test`,
 `core` lint + typecheck + vitest, `frontend` lint + typecheck + build, and
-`mobile` vitest plus a check that the vendored core copy matches `core/`.
+`mobile` vitest plus a check that the vendored core copy matches `core/`, and
+`landing` typecheck + lint + build.
 Docker images are published to GHCR only on pushes to `main` and on version
 tags.
+The landing page ([.github/workflows/pages.yml](.github/workflows/pages.yml))
+deploys to GitHub Pages on pushes to `main` that touch `landing/`.

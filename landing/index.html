@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+
+    <title>Lumen — the music library you host yourself</title>
+    <meta
+      name="description"
+      content="Lumen is a self-hosted, invite-only music library with web, desktop, and mobile apps. Point it at your folders and stream to every screen, with playlists, Replay, sharing, and live cross-device playback."
+    />
+    <link rel="canonical" href="%SITE_URL%/" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#121214" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Lumen" />
+    <meta property="og:title" content="Lumen — the music library you host yourself" />
+    <meta
+      property="og:description"
+      content="Self-hosted, invite-only music library with web, desktop, and mobile apps. Point it at your folders and stream to every screen."
+    />
+    <meta property="og:url" content="%SITE_URL%/" />
+    <meta property="og:image" content="%SITE_URL%/og.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Lumen — the music library you host yourself" />
+    <meta
+      name="twitter:description"
+      content="Self-hosted, invite-only music library with web, desktop, and mobile apps."
+    />
+    <meta name="twitter:image" content="%SITE_URL%/og.jpg" />
+
+    <link
+      rel="preload"
+      href="/fonts/host-grotesk-latin-wght-normal.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+
+    <script>
+      // Resolve the theme before first paint so there is no flash. Mirrors the
+      // app: an explicit choice wins, otherwise follow the system.
+      (() => {
+        let saved = null;
+        try {
+          saved = localStorage.getItem("lumen-landing.theme");
+        } catch {
+          /* storage unavailable */
+        }
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const theme = saved === "light" || saved === "dark" ? saved : prefersDark ? "dark" : "light";
+        document.documentElement.setAttribute("data-theme", theme);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/index.tsx"></script>
+  </body>
+</html>
