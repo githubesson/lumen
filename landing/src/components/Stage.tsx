@@ -9,8 +9,9 @@ import { theme } from "../lib/theme";
 // The product showcase: a MacBook Pro and an iPhone frame around real app
 // screenshots, one set per theme so the devices match the page. The waveform
 // runs behind them like a horizon and two decorative chips float over the
-// scene. The devices lean back below the fold and settle flat as they scroll
-// up, driven by a single --tilt custom property.
+// scene. Below the fold the devices sit lower with the ribbon and chips
+// faded; they rise and the rest comes in as they scroll up, driven by a
+// single --tilt custom property.
 
 const SCREENS = {
   desktop: { widths: [1280, 800], width: 1280, height: 820 },

@@ -576,6 +576,10 @@
     pointer-events: none;
     z-index: -1;
     opacity: var(--glow-strength);
+    /* Fade out before the box ends so the blobs never stop in a hard line
+       across the showcase below. */
+    -webkit-mask-image: linear-gradient(#000 55%, transparent);
+    mask-image: linear-gradient(#000 55%, transparent);
   }
   .glow-blob {
     position: absolute;
@@ -672,9 +676,16 @@
     }
   }
   /* ---------- Stage ---------- */
-  /* A laptop and a phone drawn in CSS around real app screenshots. Sizes use
-     container units (cqw) so every bezel and radius scales with the stage.
-     --tilt (0..1, set on scroll) leans the whole scene back. */
+  /* A MacBook and an iPhone around real app screenshots, with the waveform
+     behind them. Sizes use container units (cqw) so everything scales with
+     the stage. --tilt (0..1, set on scroll) sits the scene lower below the
+     fold with the ribbon and chips faded; it rises as it scrolls up and they
+     come in. The motion is a whole-pixel translation on purpose: any scale
+     or rotation resamples the screenshots, which are 1x captures with no
+     headroom, and every in-between frame goes soft. Translating by whole
+     pixels never resamples, and the devices stay opaque so nothing behind
+     them bleeds through, so the screens are as crisp mid-scroll as at
+     rest. */
   .stage {
     --tilt: 0;
     position: relative;
@@ -682,39 +693,9 @@
     /* Room for the phone, which hangs below the laptop. */
     padding-bottom: 4%;
     isolation: isolate;
-    perspective: 1400px;
   }
-  /* The brand glow behind the devices. Bleed elements stop at the viewport
-     edge (50% - 50vw) so they never add sideways scroll. */
-  .stage::before {
-    content: "";
-    position: absolute;
-    inset: -14% max(-16%, calc(50% - 50vw));
-    z-index: -1;
-    background:
-      radial-gradient(
-        ellipse 30% 34% at 24% 16%,
-        color-mix(in oklch, var(--glow-a) 42%, transparent),
-        transparent 70%
-      ),
-      radial-gradient(
-        ellipse 34% 40% at 82% 42%,
-        color-mix(in oklch, var(--glow-b) 40%, transparent),
-        transparent 70%
-      ),
-      radial-gradient(
-        ellipse 40% 30% at 60% 92%,
-        color-mix(in oklch, var(--glow-c) 34%, transparent),
-        transparent 70%
-      ),
-      radial-gradient(
-        ellipse 26% 26% at 10% 90%,
-        color-mix(in oklch, var(--glow-d) 30%, transparent),
-        transparent 70%
-      );
-    opacity: var(--glow-strength);
-    pointer-events: none;
-  }
+  /* Runs behind the devices; stops at the viewport edge (50% - 50vw) so it
+     never adds sideways scroll. */
   .stage-wave {
     position: absolute;
     left: max(-16%, calc(50% - 50vw));
@@ -723,7 +704,7 @@
     height: 96px;
     margin: 0;
     z-index: 0;
-    opacity: 0.9;
+    opacity: calc(0.9 - var(--tilt) * 0.6);
     /* Only the ends outside the devices are visible, so fade just the tips. */
     -webkit-mask-image: linear-gradient(
       90deg,
@@ -744,9 +725,7 @@
     position: relative;
     z-index: 1;
     container-type: inline-size;
-    transform: rotateX(calc(var(--tilt) * 14deg))
-      translateY(calc(var(--tilt) * -24px)) scale(calc(1 - var(--tilt) * 0.06));
-    transform-origin: 50% 85%;
+    transform: translateY(round(var(--tilt) * 48px, 1px));
   }
   /* ---------- MacBook mockup ---------- */
   /* The wrapper that places it sets the width; height follows the ratio. */
@@ -865,7 +844,7 @@
     width: 22cqw;
     filter: drop-shadow(0 1.6cqw 3cqw oklch(0 0 0 / 0.45));
     /* Lags a touch behind the laptop as the scene settles. */
-    translate: 0 calc(var(--tilt) * 3cqw);
+    translate: 0 round(var(--tilt) * 28px, 1px);
   }
   [data-theme="light"] .phone {
     filter: drop-shadow(0 1.6cqw 3cqw oklch(0.2 0.01 270 / 0.28));
@@ -884,6 +863,7 @@
     -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
     box-shadow: var(--shadow-md);
+    opacity: calc(1 - var(--tilt));
     animation: bob 6s ease-in-out infinite alternate;
   }
   .stage-chip .tile {
@@ -936,8 +916,10 @@
       height: 64px;
     }
     .stage-scene {
-      transform: rotateX(calc(var(--tilt) * 8deg))
-        scale(calc(1 - var(--tilt) * 0.04));
+      transform: translateY(round(var(--tilt) * 24px, 1px));
+    }
+    .phone {
+      translate: 0 round(var(--tilt) * 12px, 1px);
     }
     .laptop {
       width: 100%;
