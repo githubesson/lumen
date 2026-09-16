@@ -58,8 +58,12 @@ links to the releases page instead.
 `public/` holds generated images that are committed so the Pages build never
 needs `sharp`:
 
-- `showcase-{1672,960}.{avif,webp}` from `docs/SHOWCASE.png`
-- `og.jpg` (1200×630 crop) for link previews
+- `desktop-{dark,light}-{1280,800}` and `mobile-{dark,light}-{780,480}`
+  (`.avif` and `.webp`) from the app screenshots in `assets/screens/`. The
+  hero shows them inside `Macbook.tsx`, generated from
+  `assets/macbook-pro-front.svg`, and `Iphone.tsx`, a Solid port of the
+  Magic UI iPhone mockup, one screen per theme
+- `og.jpg` (1200×630 crop of `docs/SHOWCASE.png`) for link previews
 - `favicon.png` and `apple-touch-icon.png` from the desktop app icon
 
 Regenerate after either source changes:

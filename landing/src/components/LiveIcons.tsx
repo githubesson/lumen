@@ -83,6 +83,17 @@ export function LiveSparkles(props: { size?: number }): JSX.Element {
   );
 }
 
+// Three bars bouncing out of phase; styled by the .eq rules in index.css.
+export function Equalizer(): JSX.Element {
+  return (
+    <span class="eq" aria-hidden="true">
+      <span />
+      <span />
+      <span />
+    </span>
+  );
+}
+
 export const LiveIcons = {
   signal: LiveSignal,
   sparkles: LiveSparkles,

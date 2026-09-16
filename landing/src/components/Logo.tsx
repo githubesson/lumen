@@ -14,11 +14,12 @@ export function Logo(props: { size?: number; class?: string }): JSX.Element {
       aria-hidden="true"
     >
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-        <path
-          transform="matrix(0.6957467047153146, 0, 0, 0.6957467047153146, 0.3367305340399509, 17.699143905421934)"
-          d={WAVEFORM}
-          fill="currentColor"
-        />
+        {/* The fit lives on a group: the path's transform-box is set to its
+            fill box for the hover wiggle, which would otherwise apply this
+            scale about the glyph's centre and push it off centre. */}
+        <g transform="matrix(0.6957467047153146, 0, 0, 0.6957467047153146, 0.3367305340399509, 17.699143905421934)">
+          <path d={WAVEFORM} fill="currentColor" />
+        </g>
       </svg>
     </span>
   );

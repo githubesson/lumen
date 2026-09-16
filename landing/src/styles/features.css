@@ -485,43 +485,6 @@
     scale: 0.6;
   }
 
-  /* A three-bar equalizer, bouncing out of phase. */
-  .eq {
-    display: inline-flex;
-    align-items: flex-end;
-    gap: 2px;
-    width: 14px;
-    height: 12px;
-  }
-  .eq > span {
-    flex: 1;
-    height: 100%;
-    border-radius: 1px;
-    background: var(--accent);
-    transform-origin: bottom;
-    animation: eq 860ms ease-in-out infinite;
-  }
-  .eq > span:nth-child(2) {
-    animation-duration: 1040ms;
-    animation-delay: -420ms;
-  }
-  .eq > span:nth-child(3) {
-    animation-duration: 760ms;
-    animation-delay: -180ms;
-  }
-  @keyframes eq {
-    0%,
-    100% {
-      scale: 1 0.3;
-    }
-    45% {
-      scale: 1 1;
-    }
-    70% {
-      scale: 1 0.55;
-    }
-  }
-
   /* ---------- Connected listening ---------- */
   .feature-sync {
     background:
@@ -798,7 +761,6 @@
     .stream-dot,
     .replay-disc,
     .replay-stamp,
-    .eq > span,
     .sync-line,
     .sync-ping,
     .feature-extra:hover .tile svg {
@@ -806,9 +768,6 @@
     }
     .feature-grid > li {
       opacity: 1;
-    }
-    .eq > span {
-      scale: 1 0.6;
     }
     .feature-replay {
       transform: none;

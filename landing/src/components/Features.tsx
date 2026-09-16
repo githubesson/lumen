@@ -8,7 +8,7 @@ import {
 } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { Icon, type OutlineIconName } from "./Icons";
-import { LiveIcons } from "./LiveIcons";
+import { Equalizer, LiveIcons } from "./LiveIcons";
 import "../styles/features.css";
 
 const EXTRAS: { icon: OutlineIconName; title: string; body: string }[] = [
@@ -261,16 +261,6 @@ const PLAYLISTS: { name: string; icon: OutlineIconName }[] = [
   { name: "After hours", icon: "moon" },
   { name: "The long way home", icon: "signal" },
 ];
-
-function Equalizer(): JSX.Element {
-  return (
-    <span class="eq" aria-hidden="true">
-      <span />
-      <span />
-      <span />
-    </span>
-  );
-}
 
 function LibraryCard(): JSX.Element {
   const [active, setActive] = createSignal(0);

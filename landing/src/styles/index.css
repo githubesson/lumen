@@ -177,6 +177,8 @@
   html {
     scroll-behavior: smooth;
     background: var(--bg);
+    /* The stage's waveform bleeds past the page width on purpose. */
+    overflow-x: clip;
   }
   body {
     margin: 0;
@@ -669,19 +671,281 @@
       height: 80px;
     }
   }
-  .device {
+  /* ---------- Stage ---------- */
+  /* A laptop and a phone drawn in CSS around real app screenshots. Sizes use
+     container units (cqw) so every bezel and radius scales with the stage.
+     --tilt (0..1, set on scroll) leans the whole scene back. */
+  .stage {
+    --tilt: 0;
     position: relative;
-    border-radius: var(--r-2xl);
-    overflow: hidden;
-    background: var(--bg-elev-1);
-    box-shadow: var(--shadow-lg);
-    outline: 1px solid var(--image-outline);
-    outline-offset: -1px;
+    margin-top: 16px;
+    /* Room for the phone, which hangs below the laptop. */
+    padding-bottom: 4%;
+    isolation: isolate;
+    perspective: 1400px;
   }
-  .device img {
+  /* The brand glow behind the devices. Bleed elements stop at the viewport
+     edge (50% - 50vw) so they never add sideways scroll. */
+  .stage::before {
+    content: "";
+    position: absolute;
+    inset: -14% max(-16%, calc(50% - 50vw));
+    z-index: -1;
+    background:
+      radial-gradient(
+        ellipse 30% 34% at 24% 16%,
+        color-mix(in oklch, var(--glow-a) 42%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        ellipse 34% 40% at 82% 42%,
+        color-mix(in oklch, var(--glow-b) 40%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        ellipse 40% 30% at 60% 92%,
+        color-mix(in oklch, var(--glow-c) 34%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        ellipse 26% 26% at 10% 90%,
+        color-mix(in oklch, var(--glow-d) 30%, transparent),
+        transparent 70%
+      );
+    opacity: var(--glow-strength);
+    pointer-events: none;
+  }
+  .stage-wave {
+    position: absolute;
+    left: max(-16%, calc(50% - 50vw));
+    right: max(-16%, calc(50% - 50vw));
+    top: 34%;
+    height: 96px;
+    margin: 0;
+    z-index: 0;
+    opacity: 0.9;
+    /* Only the ends outside the devices are visible, so fade just the tips. */
+    -webkit-mask-image: linear-gradient(
+      90deg,
+      transparent,
+      #000 5%,
+      #000 95%,
+      transparent
+    );
+    mask-image: linear-gradient(
+      90deg,
+      transparent,
+      #000 5%,
+      #000 95%,
+      transparent
+    );
+  }
+  .stage-scene {
+    position: relative;
+    z-index: 1;
+    container-type: inline-size;
+    transform: rotateX(calc(var(--tilt) * 14deg))
+      translateY(calc(var(--tilt) * -24px)) scale(calc(1 - var(--tilt) * 0.06));
+    transform-origin: 50% 85%;
+  }
+  /* ---------- MacBook mockup ---------- */
+  /* The wrapper that places it sets the width; height follows the ratio. */
+  .macbook {
+    position: relative;
+    display: block;
+    line-height: 0;
+  }
+  .macbook-screen {
+    position: absolute;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background: oklch(0.1 0 0);
+  }
+  .macbook-screen img {
     display: block;
     width: 100%;
-    height: auto;
+    height: 100%;
+    object-fit: cover;
+  }
+  .macbook-svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transform: translateZ(0);
+  }
+  .laptop {
+    position: relative;
+    width: 94%;
+  }
+  /* A soft floor shadow grounds the laptop on either background. */
+  .laptop::after {
+    content: "";
+    position: absolute;
+    left: 2%;
+    right: 2%;
+    bottom: -3cqw;
+    height: 5cqw;
+    z-index: -1;
+    background: radial-gradient(
+      ellipse 50% 60% at 50% 0%,
+      oklch(0 0 0 / 0.4),
+      transparent 70%
+    );
+    filter: blur(6px);
+  }
+  /* ---------- iPhone mockup (Magic UI) ---------- */
+  /* The wrapper that places it sets the width; height follows the ratio. */
+  .iphone {
+    position: relative;
+    display: block;
+    line-height: 0;
+  }
+  .iphone-screen {
+    position: absolute;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background: oklch(0.1 0 0);
+  }
+  .iphone-screen img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top;
+  }
+  .iphone-svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transform: translateZ(0);
+  }
+  /* A silver phone with a dark front glass and a black island, so the frame
+     reads against a light page; graphite with the same dark front in dark. */
+  .iphone-frame {
+    fill: #b9bcc2;
+  }
+  .iphone-body {
+    fill: #e2e3e6;
+  }
+  .iphone-bezel {
+    fill: #1b1c1f;
+    stroke: #1b1c1f;
+    stroke-width: 0.5;
+  }
+  .iphone-island {
+    fill: #0a0a0b;
+  }
+  .iphone-cam-ring {
+    fill: #17181b;
+  }
+  .iphone-cam-lens {
+    fill: #2b2e36;
+  }
+  [data-theme="dark"] .iphone-frame {
+    fill: #46474c;
+  }
+  [data-theme="dark"] .iphone-body {
+    fill: #2b2c30;
+  }
+  [data-theme="dark"] .iphone-bezel {
+    fill: #121214;
+    stroke: #121214;
+  }
+  [data-theme="dark"] .iphone-island {
+    fill: #050506;
+  }
+  .phone {
+    position: absolute;
+    right: 1%;
+    bottom: -3cqw;
+    width: 22cqw;
+    filter: drop-shadow(0 1.6cqw 3cqw oklch(0 0 0 / 0.45));
+    /* Lags a touch behind the laptop as the scene settles. */
+    translate: 0 calc(var(--tilt) * 3cqw);
+  }
+  [data-theme="light"] .phone {
+    filter: drop-shadow(0 1.6cqw 3cqw oklch(0.2 0.01 270 / 0.28));
+  }
+
+  .stage-chip {
+    position: absolute;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px 8px 8px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: color-mix(in oklch, var(--bg-elev-1) 82%, transparent);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    box-shadow: var(--shadow-md);
+    animation: bob 6s ease-in-out infinite alternate;
+  }
+  .stage-chip .tile {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
+    border-radius: var(--r-sm);
+  }
+  .stage-chip-text {
+    display: grid;
+    gap: 1px;
+  }
+  .stage-chip-label {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+  }
+  .stage-chip-value {
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 1.25;
+    color: var(--fg);
+    white-space: nowrap;
+  }
+  .stage-chip-playing {
+    left: -1%;
+    top: 6%;
+  }
+  .stage-chip-remote {
+    right: 6%;
+    top: 9%;
+    animation-delay: -3s;
+  }
+  @keyframes bob {
+    from {
+      translate: 0 0;
+    }
+    to {
+      translate: 0 -8px;
+    }
+  }
+  @media (max-width: 640px) {
+    .stage-chip {
+      display: none;
+    }
+    .stage-wave {
+      height: 64px;
+    }
+    .stage-scene {
+      transform: rotateX(calc(var(--tilt) * 8deg))
+        scale(calc(1 - var(--tilt) * 0.04));
+    }
+    .laptop {
+      width: 100%;
+    }
+    .phone {
+      width: 25cqw;
+      right: 0;
+    }
   }
 
   /* ---------- Motion ---------- */
@@ -739,6 +1003,45 @@
       scale: 1 0.85;
     }
   }
+  /* Three-bar equalizer used by the stage chip and the feature cards. */
+  .eq {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    width: 14px;
+    height: 12px;
+  }
+  .eq > span {
+    flex: 1;
+    height: 100%;
+    border-radius: 1px;
+    background: var(--accent);
+    transform-origin: bottom;
+    animation: eq 860ms ease-in-out infinite;
+  }
+  .eq > span:nth-child(2) {
+    animation-duration: 1040ms;
+    animation-delay: -420ms;
+  }
+  .eq > span:nth-child(3) {
+    animation-duration: 760ms;
+    animation-delay: -180ms;
+  }
+  @keyframes eq {
+    0%,
+    100% {
+      scale: 1 0.3;
+    }
+    45% {
+      scale: 1 1;
+    }
+    70% {
+      scale: 1 0.55;
+    }
+  }
+  .stage-chip .eq > span {
+    background: currentColor;
+  }
   .brand-mark svg path {
     transform-box: fill-box;
     transform-origin: center;
@@ -755,8 +1058,19 @@
     .glow-blob,
     .signal-arc,
     .sparkle,
+    .eq > span,
+    .stage-chip,
     a:hover .brand-mark svg path {
       animation: none;
+    }
+    .eq > span {
+      scale: 1 0.6;
+    }
+    .stage-scene {
+      transform: none;
+    }
+    .phone {
+      translate: none;
     }
     .btn,
     .card-glow::after,

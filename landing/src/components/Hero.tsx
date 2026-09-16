@@ -1,9 +1,9 @@
 import type { JSX } from "solid-js";
 import { Button } from "./Button";
 import { Icon } from "./Icons";
-import { Waveform } from "./Waveform";
+import { Stage } from "./Stage";
 import { detectPlatform, PLATFORM_LABEL } from "../lib/platform";
-import { asset, REPO_URL } from "../lib/site";
+import { REPO_URL } from "../lib/site";
 
 export function Hero(): JSX.Element {
   const platform = detectPlatform();
@@ -51,30 +51,7 @@ export function Hero(): JSX.Element {
         </a>
       </div>
       <div class="wrap relative z-10 pb-6 sm:pb-10">
-        <Waveform class="enter" style={{ "--delay": "320ms" }} />
-        <figure class="device enter m-0" style={{ "--delay": "380ms" }}>
-          <picture>
-            <source
-              type="image/avif"
-              srcset={`${asset("showcase-960.avif")} 960w, ${asset("showcase-1672.avif")} 1672w`}
-              sizes="(max-width: 1120px) 100vw, 1072px"
-            />
-            <source
-              type="image/webp"
-              srcset={`${asset("showcase-960.webp")} 960w, ${asset("showcase-1672.webp")} 1672w`}
-              sizes="(max-width: 1120px) 100vw, 1072px"
-            />
-            <img
-              src={asset("showcase-1672.webp")}
-              width="1672"
-              height="941"
-              alt="Lumen's desktop app on a laptop showing the Home screen with recently played albums and the player bar, beside the mobile app showing Good evening, Jump back in, and On repeat lists."
-              loading="eager"
-              fetchpriority="high"
-              decoding="async"
-            />
-          </picture>
-        </figure>
+        <Stage />
       </div>
     </section>
   );
