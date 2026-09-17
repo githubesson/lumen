@@ -137,8 +137,11 @@ export default function TitleTooltips() {
         current.el.setAttribute("title", current.text);
       }
       activeRef.current = null;
+      // Same rule as the rich <Tooltip>: hovering a trigger and leaving before
+      // the open delay elapses must not arm the skip window.
+      const wasShown = shownRef.current;
       shownRef.current = false;
-      markTooltipClosed();
+      if (wasShown) markTooltipClosed();
       setVisible(false);
       setActive(null);
     };

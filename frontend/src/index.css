@@ -3983,7 +3983,11 @@ html[data-mini-player] .np-text {
   .iconbtn:active:not(:disabled),
   .chip:active:not(:disabled),
   .segmented button:active,
-  .card-play:active,
+  /* Must mirror the composed selectors this neutralises: the base rule is
+     `.card:hover .card-play:active` at (0,4,0), which a bare
+     `.card-play:active` at (0,2,0) cannot override. */
+  .card:hover .card-play:active,
+  .card:focus-within .card-play:active,
   .ctx-item:active:not(:disabled) {
     transform: none;
   }

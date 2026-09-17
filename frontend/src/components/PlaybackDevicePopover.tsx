@@ -60,6 +60,9 @@ export default function PlaybackDevicePopover({
       ref={ref}
       className="device-pop"
       data-closed={!visible || undefined}
+      // Mounted only to play its exit: pointer-events alone would still
+      // leave these controls tabbable and exposed to assistive tech.
+      inert={visible ? undefined : ""}
       role="dialog"
       aria-label="Playback device"
       style={{ bottom, right, width }}

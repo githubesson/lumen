@@ -74,7 +74,10 @@ export default function Tooltip({
       timer.current = null;
     }
     setVisible(false);
-    markTooltipClosed();
+    // Only a tooltip that was actually displayed arms the skip window. A brief
+    // sweep across a trigger that never opened must not make the next one
+    // instant -- the delay exists to be paid once, not skipped for free.
+    if (open) markTooltipClosed();
     // Unmount a beat later so the fade-out can play.
     if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
     hideTimer.current = window.setTimeout(() => {

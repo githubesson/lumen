@@ -94,6 +94,9 @@ export default function QueuePopover({
       ref={ref}
       className={"queue-pop" + (miniPlayerMode ? " queue-pop-mini" : "")}
       data-closed={!visible || undefined}
+      // Mounted only to play its exit: pointer-events alone would still
+      // leave these controls tabbable and exposed to assistive tech.
+      inert={visible ? undefined : ""}
       role="dialog"
       aria-label="Play queue"
       style={{ bottom, right, width, maxHeight }}
