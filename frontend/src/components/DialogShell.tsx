@@ -67,7 +67,7 @@ export function DialogShell({
         style={{ background: "var(--scrim)" }}
       />
       <div
-        className="dialog relative grid max-h-[80vh] w-full max-w-lg grid-rows-[auto_1fr_auto] overflow-hidden transition-[opacity,transform] duration-200 ease-out group-data-closed:scale-95 group-data-closed:opacity-0"
+        className="dialog relative grid max-h-[80vh] w-full max-w-lg grid-rows-[auto_1fr_auto] overflow-hidden transition-[opacity,transform] duration-200 ease-out group-data-closed:scale-95 group-data-closed:opacity-0 motion-reduce:transition-none motion-reduce:group-data-closed:scale-100"
         style={maxWidth !== undefined ? { maxWidth } : undefined}
       >
         <div

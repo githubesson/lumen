@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useRemotePlayback } from "../context/Player";
 import { useDismiss } from "../lib/useDismiss";
+import { useTransitionMount } from "../lib/useTransitionMount";
 
 interface Props {
   open: boolean;
@@ -39,7 +40,9 @@ export default function PlaybackDevicePopover({
     ignore: (target) => !!anchor?.contains(target),
   });
 
-  if (!open || !anchor) return null;
+  const { mounted, visible } = useTransitionMount(open, 180);
+
+  if (!mounted || !anchor) return null;
 
   const rect = anchor.getBoundingClientRect();
   const width = miniPlayerMode
@@ -56,6 +59,7 @@ export default function PlaybackDevicePopover({
     <div
       ref={ref}
       className="device-pop"
+      data-closed={!visible || undefined}
       role="dialog"
       aria-label="Playback device"
       style={{ bottom, right, width }}

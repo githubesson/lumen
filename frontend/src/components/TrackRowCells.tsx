@@ -114,43 +114,57 @@ export function FavoriteButton({
   );
 }
 
-/** `.col-select` header cell with the select-all / indeterminate checkbox. */
+/**
+ * `.col-select` header cell with the select-all / indeterminate checkbox.
+ *
+ * `hidden` keeps the cell mounted but collapsed (CSS animates the column
+ * open), so it must also drop out of the a11y tree and the tab order.
+ */
 export function SelectAllHeaderCell({
   allSelected,
   someSelected,
+  hidden,
   onToggle,
 }: {
   allSelected: boolean;
   someSelected: boolean;
+  hidden?: boolean;
   onToggle: () => void;
 }) {
   return (
-    <th className="col-select">
+    <th className="col-select" aria-hidden={hidden || undefined}>
       <TrackCheckbox
         checked={allSelected}
         indeterminate={someSelected && !allSelected}
         ariaLabel={allSelected ? "Deselect all tracks" : "Select all tracks"}
+        tabIndex={hidden ? -1 : undefined}
         onChange={onToggle}
       />
     </th>
   );
 }
 
-/** `.col-select` body cell; `onToggle` receives whether shift was held (range select). */
+/**
+ * `.col-select` body cell; `onToggle` receives whether shift was held (range
+ * select). `hidden` collapses the cell as in `SelectAllHeaderCell`.
+ */
 export function TrackSelectCell({
   selected,
   label,
+  hidden,
   onToggle,
 }: {
   selected: boolean;
   label: string;
+  hidden?: boolean;
   onToggle: (range: boolean) => void;
 }) {
   return (
-    <td className="col-select">
+    <td className="col-select" aria-hidden={hidden || undefined}>
       <TrackCheckbox
         checked={selected}
         ariaLabel={`Select ${label}`}
+        tabIndex={hidden ? -1 : undefined}
         onChange={(e) => onToggle(e.shiftKey)}
       />
     </td>

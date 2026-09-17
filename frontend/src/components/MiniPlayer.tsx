@@ -605,7 +605,10 @@ function SeekBar({
       onPointerDown={onPointerDown}
       onKeyDown={onKeyDown}
     >
-      <div className="bar-fill" style={{ width: `${pctStr}%` }} />
+      <div
+        className="bar-fill"
+        style={{ ["--bar-progress" as string]: (pct / 100).toFixed(5) }}
+      />
       <div className="bar-thumb" style={{ left: `${pctStr}%` }} />
     </div>
   );

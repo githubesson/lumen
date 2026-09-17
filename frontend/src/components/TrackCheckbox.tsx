@@ -7,6 +7,8 @@ interface TrackCheckboxProps {
   ariaLabel: string;
   onChange: (e: ReactMouseEvent<HTMLInputElement>) => void;
   className?: string;
+  /** Set to -1 to keep the input out of the tab order (collapsed columns). */
+  tabIndex?: number;
 }
 
 /**
@@ -20,6 +22,7 @@ export default function TrackCheckbox({
   ariaLabel,
   onChange,
   className,
+  tabIndex,
 }: TrackCheckboxProps) {
   const ref = useRef<HTMLInputElement>(null);
 
@@ -33,6 +36,7 @@ export default function TrackCheckbox({
       type="checkbox"
       className={clsx("track-check", className)}
       checked={checked}
+      tabIndex={tabIndex}
       aria-label={ariaLabel}
       onClick={(e) => {
         e.stopPropagation();

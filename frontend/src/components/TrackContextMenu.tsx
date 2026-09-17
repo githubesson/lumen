@@ -275,7 +275,16 @@ export default function TrackContextMenu({
       ref={ref}
       className="ctx-menu"
       role="menu"
-      style={{ top: coords.y, left: coords.x }}
+      style={{
+        top: coords.y,
+        left: coords.x,
+        // Scale out of the pointer. `coords` is the menu's clamped top-left,
+        // so the origin is the cursor's offset inside the menu box — 0 0 in
+        // the common case, non-zero when the menu was flipped or clamped
+        // against a viewport edge.
+        ["--ctx-origin-x" as string]: `${x - coords.x}px`,
+        ["--ctx-origin-y" as string]: `${y - coords.y}px`,
+      }}
       onContextMenu={(e) => e.preventDefault()}
       // Prevent cmdk / Radix from treating clicks on menu items as "outside"
       // events and dismissing parent dialogs before onClick fires. Stop at

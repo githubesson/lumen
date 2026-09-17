@@ -295,7 +295,11 @@ export default function Replay() {
           }
         />
       ) : data && summary ? (
-        <>
+        <div
+          key={periodKey(period)}
+          className="replay-enter"
+          style={{ display: "grid", gap: 18, minWidth: 0 }}
+        >
           <section className="stat-grid">
             <StatCard
               label="Total plays"
@@ -305,7 +309,12 @@ export default function Replay() {
             />
             <StatCard
               label="Listening time"
-              value={formatListeningTime(summary.total_ms)}
+              value={
+                <AnimatedNumber
+                  format={formatListeningTime}
+                  value={summary.total_ms}
+                />
+              }
               title={
                 summary.total_ms >= 60_000
                   ? `${Math.round(summary.total_ms / 60_000).toLocaleString()} minutes total`
@@ -403,7 +412,7 @@ export default function Replay() {
               </div>
             </Section>
           )}
-        </>
+        </div>
       ) : null}
     </div>
   );

@@ -15,7 +15,6 @@ import {
 } from "react";
 import type Hls from "hls.js";
 import {
-  RefreshCw as ArrowPathIcon,
   Check as CheckIcon,
   ClipboardCopy as ClipboardDocumentIcon,
   Pause as PauseIcon,
@@ -31,6 +30,7 @@ import {
 } from "../api";
 import { Button } from "./Button";
 import CoverArt from "./CoverArt";
+import IosSpinner from "./IosSpinner";
 import DialogFooter from "./DialogFooter";
 import { DialogShell } from "./DialogShell";
 import { fmtDurationMs, fmtDurationSec } from "../lib/format";
@@ -42,6 +42,11 @@ interface Props {
   trackId: string | null;
   onClose: () => void;
 }
+
+/** The copy button's three states, in one list so they can be stacked in a
+ *  single grid cell and keep the button's width stable while they swap. */
+const COPY_LABELS = ["Copy share link", "Generating share link…", "Link copied"] as const;
+type CopyLabel = (typeof COPY_LABELS)[number];
 
 /**
  * Share dialog: pick a variable-length window of a track and copy a link that
@@ -78,6 +83,21 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     [],
   );
   const [copyError, setCopyError] = useState<string | null>(null);
+
+  // The button's label lags the real state by the length of the blur, so the
+  // text changes while it is masked instead of teleporting.
+  const copyLabel: CopyLabel = busy
+    ? "Generating share link…"
+    : copied
+      ? "Link copied"
+      : "Copy share link";
+  const [shownLabel, setShownLabel] = useState<CopyLabel>(copyLabel);
+  const swapping = shownLabel !== copyLabel;
+  useEffect(() => {
+    if (!swapping) return;
+    const t = window.setTimeout(() => setShownLabel(copyLabel), 180);
+    return () => window.clearTimeout(t);
+  }, [swapping, copyLabel]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -388,19 +408,27 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
       </Button>
       <Button
         variant="primary"
+        className="btn-morph"
+        data-swapping={swapping || undefined}
         onClick={() => void onCopy()}
         disabled={!picked || busy || !track}
         leadingIcon={
-          busy ? (
-            <ArrowPathIcon className="size-3.5 animate-spin" />
-          ) : copied ? (
+          shownLabel === "Generating share link…" ? (
+            <IosSpinner className="share-copy-spinner" label="Generating" />
+          ) : shownLabel === "Link copied" ? (
             <CheckIcon className="size-3.5" />
           ) : (
             <ClipboardDocumentIcon className="size-3.5" />
           )
         }
       >
-        {busy ? "Generating share link…" : copied ? "Link copied" : "Copy share link"}
+        <span>
+          {COPY_LABELS.map((l) => (
+            <span key={l} data-hidden={l !== shownLabel || undefined}>
+              {l}
+            </span>
+          ))}
+        </span>
       </Button>
     </DialogFooter>
   );

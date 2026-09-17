@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 /**
  * CoverArt renders artwork for a track / album / artist tile. If no image is
  * available (or the fetch fails), it falls back to a muted placeholder with
@@ -35,6 +35,20 @@ export default function CoverArt({
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const failed = failedSrc === src;
 
+  // Cached images are already complete before React attaches onLoad, so seed
+  // the flag from the element itself — otherwise every cached cover would
+  // re-fade on each mount while scrolling a virtualised list.
+  // Tracked by source, like failedSrc above, so a new source starts unloaded
+  // without resetting state from an effect.
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const loaded = loadedSrc === src;
+
+  useLayoutEffect(() => {
+    const img = imgRef.current;
+    if (img?.complete && img.naturalWidth > 0) setLoadedSrc(src ?? null);
+  }, [src]);
+
   const placeholder = !shouldTry || failed;
 
   // Only set inline styles the CSS class can't already provide. For the common
@@ -65,11 +79,15 @@ export default function CoverArt({
   return (
     <div className={"cover-art " + (className ?? "")} style={extra}>
       <img
+        key={src}
+        ref={imgRef}
         className="cover-art-img"
         src={src!}
         alt=""
         loading="lazy"
         decoding="async"
+        data-loaded={loaded || undefined}
+        onLoad={() => setLoadedSrc(src ?? null)}
         onError={() => setFailedSrc(src ?? null)}
       />
       {children}

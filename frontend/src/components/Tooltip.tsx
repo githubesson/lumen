@@ -6,13 +6,18 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { TooltipBubble } from "./TitleTooltips";
+import {
+  OPEN_DELAY,
+  markTooltipClosed,
+  shouldSkipDelay,
+} from "../lib/tooltipTiming";
 
 interface Props {
   /** Rendered inside the tooltip bubble when visible. */
   content: ReactNode;
   /** The trigger element. Wrapped in a span that listens for hover/focus. */
   children: ReactNode;
-  /** Delay before showing, in ms. Default 300. Pass 0 for instant. */
+  /** Delay before showing, in ms. Defaults to the shared OPEN_DELAY. Pass 0 for instant. */
   delay?: number;
   /** Preferred placement — flips automatically when it would clip off-screen. */
   placement?: "top" | "bottom";
@@ -28,7 +33,7 @@ interface Props {
 export default function Tooltip({
   content,
   children,
-  delay = 300,
+  delay = OPEN_DELAY,
   placement = "top",
   className,
 }: Props) {
@@ -36,16 +41,31 @@ export default function Tooltip({
   const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
   const [visible, setVisible] = useState(false);
+  const [instant, setInstant] = useState(false);
   const timer = useRef<number | null>(null);
+  const hideTimer = useRef<number | null>(null);
 
   const show = () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => {
+    if (hideTimer.current !== null) {
+      window.clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+    const reveal = () => {
       setOpen(true);
       // Defer the "visible" flip to the next frame so the enter transition
       // runs from the initial (data-closed) state rather than snapping in.
       requestAnimationFrame(() => setVisible(true));
-    }, delay);
+    };
+    // A tooltip was up moments ago: the delay has already been paid, so this
+    // one is the same hint moving along the row rather than a new arrival.
+    if (shouldSkipDelay()) {
+      setInstant(true);
+      reveal();
+      return;
+    }
+    setInstant(false);
+    timer.current = window.setTimeout(reveal, delay);
   };
 
   const hide = () => {
@@ -54,13 +74,19 @@ export default function Tooltip({
       timer.current = null;
     }
     setVisible(false);
+    markTooltipClosed();
     // Unmount a beat later so the fade-out can play.
-    window.setTimeout(() => setOpen(false), 120);
+    if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => {
+      hideTimer.current = null;
+      setOpen(false);
+    }, 120);
   };
 
   useEffect(
     () => () => {
       if (timer.current !== null) window.clearTimeout(timer.current);
+      if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
     },
     [],
   );
@@ -85,6 +111,7 @@ export default function Tooltip({
             anchor={anchor}
             side={placement}
             visible={visible}
+            instant={instant}
           >
             {content}
           </TooltipBubble>,

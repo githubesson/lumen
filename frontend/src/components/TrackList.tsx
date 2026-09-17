@@ -150,9 +150,10 @@ export default function TrackList({
 
   // Column count kept in sync with the <thead> below — used for spacer
   // `colSpan` so the spacer row doesn't push the columns out of alignment.
+  // The select column is always rendered (collapsed to zero width when
+  // selection mode is off), so it counts unconditionally.
   const columnCount =
-    4 +
-    (selectionMode ? 1 : 0) +
+    5 +
     (showCover ? 1 : 0) +
     (showAlbum ? 1 : 0) +
     (extraColumn ? 1 : 0);
@@ -192,13 +193,12 @@ export default function TrackList({
                 widths; the class hides the row. */}
             <thead>
               <tr>
-                {selectionMode && (
-                  <SelectAllHeaderCell
-                    allSelected={allSelected}
-                    someSelected={someSelected}
-                    onToggle={selectAll}
-                  />
-                )}
+                <SelectAllHeaderCell
+                  hidden={!selectionMode}
+                  allSelected={allSelected}
+                  someSelected={someSelected}
+                  onToggle={selectAll}
+                />
                 <th className="col-idx">#</th>
                 {showCover && <th className="col-art" aria-label="Cover" />}
                 <th>Title</th>
@@ -347,13 +347,12 @@ export const TrackRow = memo(function TrackRow({
       }}
       onContextMenu={(e) => onContextMenu(track, e)}
     >
-      {selectionMode && (
-        <TrackSelectCell
-          selected={selected}
-          label={displayText(track.title, "track")}
-          onToggle={(range) => onToggleSelect(track, index, range)}
-        />
-      )}
+      <TrackSelectCell
+        hidden={!selectionMode}
+        selected={selected}
+        label={displayText(track.title, "track")}
+        onToggle={(range) => onToggleSelect(track, index, range)}
+      />
       <TrackIndexCell index={index} isPlaying={isNow && isPlaying} onPlay={() => onPlay(track)} playLabel={`Play ${track.title}`} />
       {showCover && (
         <td className="col-art">

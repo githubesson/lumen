@@ -57,6 +57,22 @@
   --radius-2xl: calc(var(--radius) * 1.8);
 }
 
+/* ---------- Motion tokens ----------
+   Shared easing curves and durations. The CSS built-in easings are too weak
+   for deliberate UI motion; these are the strong variants. Entrances and
+   exits use --ease-out, on-screen movement uses --ease-in-out, the mobile
+   sidebar drawer uses --ease-drawer. */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  --dur-press: 160ms;   /* button / press feedback */
+  --dur-tooltip: 150ms; /* tooltips, small popovers */
+  --dur-menu: 180ms;    /* dropdowns, selects, context menus, popovers */
+  --dur-modal: 200ms;   /* modals, drawers */
+}
+
 /* ============================================================
    LUMEN — Music Library
    shadcn/ui "Nova" style: neutral base color, Geist, compact controls
@@ -175,7 +191,8 @@ body {
   font-size: var(--fs);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
-  transition: background 240ms ease, color 240ms ease;
+  /* No colour transition: the theme swap changes every token in one frame,
+     and easing only the body made the backdrop lag its own contents. */
 }
 
 #root { height: 100vh; }
@@ -225,6 +242,16 @@ textarea { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .app {
     transition: none;
+  }
+
+  /* Scoped to .sidebar so this out-ranks the (0,1,0) base rule below, which
+     would otherwise win on document order and keep tweening. */
+  .sidebar .brand-text,
+  .sidebar .nav-label,
+  .sidebar .nav-count,
+  .sidebar .user-text {
+    transition: none;
+    transform: none;
   }
 }
 
@@ -295,10 +322,13 @@ textarea { font: inherit; color: inherit; }
   white-space: nowrap;
   max-width: 240px;
   opacity: 1;
+  transform: translateX(0);
+  /* max-width and margin-left are the end state, not the animation: they snap
+     so the collapsed rail lays out correctly, while the composited transform
+     and opacity carry the visible motion at zero layout cost. */
   transition:
-    max-width 220ms cubic-bezier(0.22, 1, 0.36, 1),
     opacity 160ms ease,
-    margin 200ms ease;
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 [data-layout="compact"] .brand-text,
 [data-layout="compact"] .nav-label,
@@ -307,6 +337,7 @@ textarea { font: inherit; color: inherit; }
 [data-layout="compact"] .user-text {
   max-width: 0;
   opacity: 0;
+  transform: translateX(-8px);
   margin-left: 0;
   pointer-events: none;
 }
@@ -347,8 +378,7 @@ textarea { font: inherit; color: inherit; }
 .nav {
   transition:
     padding 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    gap 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    justify-content 220ms ease;
+    gap 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 [data-layout="compact"] .nav-item,
@@ -627,10 +657,15 @@ textarea { font: inherit; color: inherit; }
   background: transparent;
   cursor: pointer;
   flex: 0 0 32px;
-  transition: background 120ms ease;
+  transition:
+    background 120ms ease,
+    transform var(--dur-press) var(--ease-out);
 }
 .iconbtn:hover {
   background: var(--ghost-hover);
+}
+.iconbtn:active:not(:disabled) {
+  transform: scale(0.95);
 }
 .iconbtn.active {
   background: var(--muted);
@@ -745,7 +780,11 @@ textarea { font: inherit; color: inherit; }
   background: var(--input-bg);
   background-clip: padding-box;
   color: var(--foreground);
-  transition: background 120ms, border-color 120ms, box-shadow 120ms, transform 80ms ease;
+  transition:
+    background 120ms,
+    border-color 120ms,
+    box-shadow 120ms,
+    transform var(--dur-press) var(--ease-out);
   cursor: pointer;
   text-decoration: none;
   white-space: nowrap;
@@ -756,13 +795,56 @@ textarea { font: inherit; color: inherit; }
   background: var(--input-bg-hover);
 }
 .btn:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: scale(0.97);
 }
 /* Disabled buttons stay hit-testable (no pointer-events: none) so a title
    explaining why they're disabled still gets its tooltip. */
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Buttons whose label swaps between states (e.g. the share dialog's
+   copy -> generating -> copied). A short blur bridges the two labels so the
+   swap reads as one element changing rather than two crossfading. Button
+   renders children unwrapped, so the label is wrapped in a span at the call
+   site and that span is what this targets. */
+.btn-morph > span {
+  /* All of the states' labels stack in one grid cell, so the button keeps the
+     width of its longest state and the blur is not fighting a reflow. */
+  display: inline-grid;
+  grid-template-areas: "label";
+  align-items: center;
+  transition:
+    filter 180ms var(--ease-out),
+    opacity 180ms var(--ease-out);
+}
+.btn-morph > span > span {
+  grid-area: label;
+  white-space: nowrap;
+}
+.btn-morph > span > span[data-hidden] {
+  visibility: hidden;
+}
+.btn-morph[data-swapping] > span {
+  filter: blur(2px);
+  opacity: 0.7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-morph > span {
+    transition: opacity 180ms var(--ease-out);
+  }
+  .btn-morph[data-swapping] > span {
+    filter: none;
+  }
+}
+
+/* Matches the 14px (size-3.5) icons the spinner stands in for, and takes the
+   button's own text colour rather than the spinner's default muted one. */
+.share-copy-spinner {
+  --spinner-size: 14px;
+  color: currentColor;
 }
 .btn-primary {
   background: var(--primary);
@@ -877,6 +959,9 @@ textarea { font: inherit; color: inherit; }
 .cover-art {
   position: relative;
   overflow: hidden;
+  /* Every tile shows the muted placeholder surface until its image decodes,
+     so artwork never punches a transparent hole into the layout. */
+  background: var(--muted);
 }
 .cover-art-placeholder {
   background: var(--muted);
@@ -905,6 +990,11 @@ textarea { font: inherit; color: inherit; }
   height: 100%;
   object-fit: cover;
   display: block;
+  opacity: 0;
+  transition: opacity 180ms var(--ease-out);
+}
+.cover-art-img[data-loaded] {
+  opacity: 1;
 }
 .cover-art-letter {
   position: absolute;
@@ -932,12 +1022,19 @@ textarea { font: inherit; color: inherit; }
   box-shadow: var(--shadow-md);
   transform: translateY(4px);
   opacity: 0;
-  transition: opacity 140ms ease, transform 140ms ease;
+  transition: opacity 140ms ease, transform var(--dur-press) var(--ease-out);
 }
 .card:hover .card-play,
 .card:focus-within .card-play {
   opacity: 1;
   transform: translateY(0);
+}
+/* Composes with the hover reveal above rather than replacing it. The reveal
+   selector is (0,3,0) and a press can only happen while the card is hovered or
+   focus-within, so this has to match that specificity or it never renders. */
+.card:hover .card-play:active,
+.card:focus-within .card-play:active {
+  transform: translateY(0) scale(0.95);
 }
 .card-title {
   font-size: 14px;
@@ -1104,9 +1201,41 @@ textarea { font: inherit; color: inherit; }
   font-size: 12px;
   color: var(--muted-foreground);
 }
+/* The select column exists in the DOM at all times so entering selection mode
+   is a transition rather than a re-layout. Collapsed to zero width and
+   uninteractive when selection mode is off. Width/padding are layout
+   properties, but a table column has no transform equivalent and this is a
+   bounded, user-initiated 150ms change — not scroll or playback motion. */
 .table .col-select {
-  width: 34px;
+  width: 0;
+  padding: 0;
+  overflow: hidden;
   text-align: center;
+  transition:
+    width 150ms var(--ease-out),
+    padding 150ms var(--ease-out);
+}
+.table-selecting .col-select {
+  width: 32px;
+  padding: 0 4px;
+}
+.table .col-select > * {
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    opacity 150ms var(--ease-out),
+    transform 150ms var(--ease-out);
+}
+.table-selecting .col-select > * {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .table .col-select,
+  .table .col-select > * {
+    transition: none;
+  }
 }
 .track-check {
   width: 16px;
@@ -1235,20 +1364,27 @@ textarea { font: inherit; color: inherit; }
   width: 2px;
   background: var(--foreground);
   border-radius: 1px;
+  /* scaleY, not height: this runs for as long as music plays, and height
+     would force layout on every frame. Each bar's own height stays as the
+     static fallback for reduced motion. */
+  height: 100%;
+  transform-origin: bottom center;
   animation: barDance 1s ease-in-out infinite;
 }
-.playing-bars span:nth-child(1) { animation-delay: 0s;   height: 40%; }
-.playing-bars span:nth-child(2) { animation-delay: 0.2s; height: 80%; }
-.playing-bars span:nth-child(3) { animation-delay: 0.4s; height: 60%; }
+.playing-bars span:nth-child(1) { animation-delay: 0s;   transform: scaleY(0.4); }
+.playing-bars span:nth-child(2) { animation-delay: 0.2s; transform: scaleY(0.8); }
+.playing-bars span:nth-child(3) { animation-delay: 0.4s; transform: scaleY(0.6); }
 @keyframes barDance {
-  0%, 100% { height: 30%; }
-  50% { height: 90%; }
+  0%, 100% { transform: scaleY(0.3); }
+  50% { transform: scaleY(0.9); }
 }
 
-/* barDance is the only infinite animation in the app, so it needs an explicit
-   opt-out. The per-child heights above stay visible with the animation off,
-   leaving a static staggered glyph -- the now-playing indicator must not
-   disappear, since it is what distinguishes the playing row. */
+/* This animation is decorative and runs for as long as music plays, so it
+   needs an explicit opt-out (the other infinite animations in this file —
+   device-command-pulse and ios-spinner-fade — have their own). The per-child
+   scaleY values above stay visible with the animation off, leaving a static
+   staggered glyph: the now-playing indicator must not disappear, since it is
+   what distinguishes the playing row. */
 @media (prefers-reduced-motion: reduce) {
   .playing-bars span {
     animation: none;
@@ -1265,8 +1401,38 @@ textarea { font: inherit; color: inherit; }
   padding: 3px;
   background: var(--muted);
   border-radius: var(--radius-lg);
+  /* Containing block for the travelling indicator. */
+  position: relative;
+}
+
+/* The travelling pill. Sits behind the buttons; the buttons keep their own
+   colour transition so the label contrast changes in step with it. */
+.segmented-indicator {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  bottom: 3px;
+  border-radius: var(--radius-md);
+  background: var(--background);
+  box-shadow:
+    0 1px 3px 0 oklch(0 0 0 / 0.1),
+    0 1px 2px -1px oklch(0 0 0 / 0.1);
+  transform: translateX(var(--seg-x, 0px));
+  width: var(--seg-w, 0px);
+  transition:
+    transform 200ms var(--ease-in-out),
+    width 200ms var(--ease-in-out);
+  pointer-events: none;
+}
+/* Before the first measurement, and on first paint, the indicator must not
+   fly in from x=0. */
+.segmented-indicator[data-initial] {
+  transition: none;
 }
 .segmented button {
+  /* Sit above the indicator. */
+  position: relative;
+  z-index: 1;
   height: 100%;
   padding: 0 8px;
   border-radius: var(--radius-md);
@@ -1279,20 +1445,31 @@ textarea { font: inherit; color: inherit; }
   background: transparent;
   border: 1px solid transparent;
   cursor: pointer;
-  transition: color 120ms ease, background 120ms ease;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    transform var(--dur-press) var(--ease-out);
 }
 .segmented button:hover { color: var(--foreground); }
+.segmented button:active {
+  transform: scale(0.97);
+}
 [data-theme="dark"] .segmented button { color: var(--muted-foreground); }
 [data-theme="dark"] .segmented button:hover,
 [data-theme="dark"] .segmented button.active { color: var(--foreground); }
-[data-theme="dark"] .segmented button.active {
+[data-theme="dark"] .segmented-indicator {
   background: var(--input-bg);
-  border-color: var(--input);
+  border: 1px solid var(--input);
 }
 .segmented button.active {
-  background: var(--background);
+  /* background and box-shadow live on .segmented-indicator */
   color: var(--foreground);
-  box-shadow: 0 1px 3px 0 oklch(0 0 0 / 0.1), 0 1px 2px -1px oklch(0 0 0 / 0.1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .segmented-indicator {
+    transition: none;
+  }
 }
 
 /* Filter chips */
@@ -1314,6 +1491,10 @@ textarea { font: inherit; color: inherit; }
   align-items: center;
   gap: 6px;
   cursor: pointer;
+  transition: background 120ms ease, transform var(--dur-press) var(--ease-out);
+}
+.chip:active:not(:disabled) {
+  transform: scale(0.97);
 }
 .chip:hover {
   background: var(--muted);
@@ -1572,13 +1753,13 @@ textarea { font: inherit; color: inherit; }
   background: var(--primary);
   color: var(--primary-foreground);
   cursor: pointer;
-  transition: background 120ms ease, transform 80ms ease;
+  transition: background 120ms ease, transform var(--dur-press) var(--ease-out);
 }
 .artist-play:hover {
   background: color-mix(in oklch, var(--primary) 80%, transparent);
 }
 .artist-play:active {
-  transform: translateY(1px);
+  transform: scale(0.97);
 }
 .artist-play:disabled {
   opacity: 0.5;
@@ -2027,9 +2208,32 @@ html[data-mini-player] .app {
   left: 0;
   top: 0;
   bottom: 0;
+  width: 100%;
   border-radius: 999px;
   background: var(--primary);
   pointer-events: none;
+  /* Clipped rather than scaled: scaleX squashes the 999px end caps in
+     proportion to progress, so an early track rendered as a sharp-cornered
+     block. `round` keeps the caps circular at every width. Like transform,
+     clip-path skips layout -- which is the point, since this is the one
+     element that updates for as long as music plays. The `.bar::before` hit
+     area extends outside the bar, so the container cannot use overflow:hidden
+     to do this job. */
+  clip-path: inset(0 calc(100% - var(--bar-progress, 0) * 100%) 0 0 round 999px);
+  /* Position only ever advances in 0.25s quantised steps (see
+     core/src/player/use-player-core.ts:48). A linear transition of exactly
+     that length turns the steps into continuous motion without lagging
+     behind the audio. */
+  transition: clip-path 250ms linear;
+}
+/* A seek is a jump, not playback: follow the pointer with no catch-up. */
+.bar.dragging .bar-fill {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bar-fill {
+    transition: none;
+  }
 }
 .bar-thumb {
   position: absolute;
@@ -2039,14 +2243,31 @@ html[data-mini-player] .app {
   background: var(--background);
   border: 1px solid var(--primary);
   border-radius: 999px;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) scale(1);
   opacity: 0;
-  transition: opacity 120ms;
+  transition:
+    opacity 120ms,
+    transform 120ms var(--ease-out);
   pointer-events: none;
 }
 .bar:hover .bar-thumb,
 .bar:focus-within .bar-thumb,
 .bar.dragging .bar-thumb { opacity: 1; }
+
+/* Grabbed: the handle grows so the user can see the control is theirs.
+   Scale, not width/height -- this must not cost layout mid-drag. */
+.bar.dragging .bar-thumb {
+  transform: translate(-50%, -50%) scale(1.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar-thumb {
+    transition: opacity 120ms;
+  }
+  .bar.dragging .bar-thumb {
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
 
 .utility {
   display: flex;
@@ -2946,7 +3167,6 @@ html[data-mini-player] .np-text {
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   z-index: 79;
-  animation: cmdk-fade 100ms ease-out;
 }
 
 [cmdk-dialog] {
@@ -2957,7 +3177,9 @@ html[data-mini-player] .np-text {
   z-index: 80;
   width: calc(100% - 32px);
   max-width: 640px;
-  animation: cmdk-pop 100ms ease-out;
+  /* No open/close animation on purpose: the palette is keyboard-toggled
+     (Shell.tsx `palette:toggle`) and seen dozens of times a day, where any
+     transition reads as lag. */
   outline: none;
 }
 
@@ -2972,28 +3194,6 @@ html[data-mini-player] .np-text {
   display: flex;
   flex-direction: column;
   max-height: 70vh;
-}
-
-@keyframes cmdk-pop {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -8px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, 0) scale(1);
-  }
-}
-@keyframes cmdk-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  [cmdk-overlay],
-  [cmdk-dialog] {
-    animation: none;
-  }
 }
 
 .cmdk-input-row {
@@ -3028,6 +3228,10 @@ html[data-mini-player] .np-text {
 .cmdk-type .segmented {
   height: 28px;
   padding: 2px;
+}
+.cmdk-type .segmented-indicator {
+  top: 2px;
+  bottom: 2px;
 }
 .cmdk-type .segmented button {
   font-size: 12px;
@@ -3366,7 +3570,11 @@ html[data-mini-player] .np-text {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
   transform-origin: bottom right;
-  animation: queue-pop-in 100ms ease-out;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity var(--dur-menu) var(--ease-out),
+    transform var(--dur-menu) var(--ease-out);
 }
 .device-pop-head {
   min-height: 48px;
@@ -3514,7 +3722,6 @@ html[data-mini-player] .np-text {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .device-pop,
   .device-picker-btn.pending svg {
     animation: none;
   }
@@ -3532,7 +3739,11 @@ html[data-mini-player] .np-text {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
   transform-origin: bottom right;
-  animation: queue-pop-in 100ms ease-out;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity var(--dur-menu) var(--ease-out),
+    transform var(--dur-menu) var(--ease-out);
 }
 .queue-pop > * {
   position: relative;
@@ -3541,7 +3752,7 @@ html[data-mini-player] .np-text {
 
 .queue-pop-mini {
   border-radius: var(--radius-xl);
-  animation: none;
+  transition: none;
 }
 
 .queue-pop-mini .queue-pop-body {
@@ -3565,18 +3776,32 @@ html[data-mini-player] .np-text {
 .queue-pop-mini .queue-pop-artist {
   font-size: 12px;
 }
-@keyframes queue-pop-in {
-  from { opacity: 0; transform: translateY(6px) scale(0.97); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+.queue-pop[data-closed],
+.device-pop[data-closed] {
+  opacity: 0;
+  transform: translateY(6px) scale(0.97);
+  /* The element stays mounted for the exit, so it must stop swallowing clicks
+     the moment it starts leaving -- it used to unmount synchronously. */
+  pointer-events: none;
 }
 
-/* .device-pop shares this animation and is opted out above, next to its own
-   rules. This block has to sit after .queue-pop's declaration rather than
-   joining that one: the selectors have equal specificity, so the later
-   `animation` would otherwise win and the opt-out would silently do nothing. */
+/* .device-pop shares this transition. This block has to sit after both
+   popovers' declarations rather than joining them: the selectors have equal
+   specificity, so the later `transition` would otherwise win and the opt-out
+   would silently do nothing. */
 @media (prefers-reduced-motion: reduce) {
-  .queue-pop {
-    animation: none;
+  .queue-pop,
+  .device-pop {
+    transition: opacity var(--dur-menu) var(--ease-out);
+  }
+  /* Equal specificity to the rule above and declared after it, so the mini
+     player's deliberate opt-out survives reduced motion too. */
+  .queue-pop-mini {
+    transition: none;
+  }
+  .queue-pop[data-closed],
+  .device-pop[data-closed] {
+    transform: none;
   }
 }
 .queue-pop-head {
@@ -3715,11 +3940,12 @@ html[data-mini-player] .np-text {
   box-shadow: var(--shadow-md);
   font-size: 14px;
   color: var(--popover-foreground);
-  animation: ctx-fade 100ms ease-out;
+  transform-origin: var(--ctx-origin-x, 0) var(--ctx-origin-y, 0);
+  animation: ctx-fade 120ms var(--ease-out);
 }
 @keyframes ctx-fade {
-  from { opacity: 0; transform: translateY(-2px) scale(0.98); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3741,6 +3967,26 @@ html[data-mini-player] .np-text {
   cursor: default;
   font: inherit;
   text-align: left;
+  transition: background 120ms ease, transform var(--dur-press) var(--ease-out);
+}
+.ctx-item:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* Press feedback is movement, so reduced motion drops the scale; the
+   background/colour change on :hover and :active stays. This block must sit
+   after every rule it overrides -- the selectors have equal specificity, so
+   only document order decides. */
+@media (prefers-reduced-motion: reduce) {
+  .btn:active:not(:disabled),
+  .artist-play:active,
+  .iconbtn:active:not(:disabled),
+  .chip:active:not(:disabled),
+  .segmented button:active,
+  .card-play:active,
+  .ctx-item:active:not(:disabled) {
+    transform: none;
+  }
 }
 .ctx-item:hover:not(:disabled),
 .ctx-item:focus-visible {
@@ -3805,6 +4051,11 @@ html[data-mini-player] .np-text {
   opacity: 1;
   transform: none;
   transition: opacity 100ms ease-out, transform 100ms ease-out;
+}
+/* A tooltip opening inside the skip-delay window is the same tooltip moving
+   along a row of controls, not a new one arriving — it should not animate. */
+.tooltip[data-instant] {
+  transition-duration: 0ms;
 }
 /* Arrow: a rotated square in the bubble color, centered on the anchor via
    --tooltip-arrow (offset along the bubble edge that faces the trigger). */
@@ -4104,6 +4355,38 @@ html[data-mini-player] .window-controls {
   color: var(--foreground);
 }
 
+/* Replay is a rare, read-through summary — the one surface in this app with a
+   delight budget. A short stagger lets the sections arrive rather than appear.
+   Decorative: it must never gate interaction: no pointer-events changes. */
+/* `backwards` rather than the plan's `forwards`: the sections contain non-portaled
+   `position: fixed` dialogs (EditTrackDialog / MoveToAlbumDialog inside
+   TrackList), and a retained end-state transform would make each section their
+   containing block forever. Filling backwards holds the offset through the
+   delay and then hands the element back to its normal styles. */
+.replay-enter > * {
+  animation: replay-enter 300ms var(--ease-out) backwards;
+}
+.replay-enter > *:nth-child(1) { animation-delay: 0ms; }
+.replay-enter > *:nth-child(2) { animation-delay: 40ms; }
+.replay-enter > *:nth-child(3) { animation-delay: 80ms; }
+.replay-enter > *:nth-child(4) { animation-delay: 120ms; }
+/* Clamp: without this a page with many sections keeps adding delay and the
+   last section arrives noticeably late. */
+.replay-enter > *:nth-child(n + 5) { animation-delay: 160ms; }
+
+@keyframes replay-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .replay-enter > * {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}
+
 .activity-chart {
   height: 140px;
   padding: 8px 0 28px;
@@ -4383,6 +4666,7 @@ html[data-mini-player] .window-controls {
     max-width: 240px;
     margin-left: initial;
     opacity: 1;
+    transform: none;
     pointer-events: auto;
   }
 
@@ -4813,22 +5097,23 @@ html[data-mini-player] .window-controls {
 
 .player-lyrics-scroll-line.upcoming {
   opacity: 0.42;
-  transform: scale(0.985);
+  transform: scale(1); /* was 0.985, relative to a 1.0 active */
   filter: blur(0.2px);
 }
 
 .player-lyrics-scroll-line.past {
   opacity: 0.28;
-  transform: scale(0.97);
+  transform: scale(0.985); /* was 0.97 */
   filter: blur(0.35px);
 }
 
 .player-lyrics-scroll-line.active {
   opacity: 1;
   color: var(--foreground);
-  font-size: 15px;
   font-weight: 500;
-  transform: scale(1);
+  /* 15/14 -- the old `font-size: 15px` expressed as a composited transform so
+     it tweens with the rest of the tier and does not reflow the scroller. */
+  transform: scale(1.0714);
   filter: none;
 }
 
@@ -4941,6 +5226,11 @@ html[data-mini-player] .window-controls {
     transform: none;
     filter: none;
   }
+
+  /* The tier scales stay: they are a static size distinction, not motion, and
+     they are what replaced the active line's old `font-size: 15px`. Dropping
+     them would leave reduced-motion users with less emphasis than before.
+     Only the tween above is removed. */
 
   .player-lyrics-scroll-line.active .player-lyric-word-active {
     transform: none;
