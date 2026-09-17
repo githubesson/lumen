@@ -1,11 +1,11 @@
 import {
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { TooltipBubble } from "./TitleTooltips";
 
 interface Props {
   /** Rendered inside the tooltip bubble when visible. */
@@ -21,10 +21,9 @@ interface Props {
 }
 
 /**
- * Tooltip renders `content` in a portaled bubble above (or below) its trigger
- * on hover and keyboard focus. Replaces the native `title=` attribute, which
- * has a long OS-controlled delay and no styling hook. Positioned in viewport
- * coordinates and nudges itself back on-screen if it would clip an edge.
+ * Tooltip renders rich `content` in a portaled bubble above (or below) its
+ * trigger on hover and keyboard focus. Plain-text hints can just use `title=`;
+ * the app-wide `TitleTooltips` layer styles those the same way.
  */
 export default function Tooltip({
   content,
@@ -33,11 +32,10 @@ export default function Tooltip({
   placement = "top",
   className,
 }: Props) {
-  const anchorRef = useRef<HTMLSpanElement>(null);
-  const tipRef = useRef<HTMLDivElement>(null);
+  // Held in state, not a ref: the bubble reads the anchor during render.
+  const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
   const [visible, setVisible] = useState(false);
-  const [coords, setCoords] = useState({ x: 0, y: 0 });
   const timer = useRef<number | null>(null);
 
   const show = () => {
@@ -67,28 +65,10 @@ export default function Tooltip({
     [],
   );
 
-  useLayoutEffect(() => {
-    if (!open) return;
-    const anchor = anchorRef.current;
-    const tip = tipRef.current;
-    if (!anchor || !tip) return;
-    const ar = anchor.getBoundingClientRect();
-    const tr = tip.getBoundingClientRect();
-    const pad = 8;
-    const gap = 6;
-    let x = ar.left + ar.width / 2 - tr.width / 2;
-    let y = placement === "top" ? ar.top - tr.height - gap : ar.bottom + gap;
-    if (y < pad) y = ar.bottom + gap;
-    if (y + tr.height > window.innerHeight - pad) y = ar.top - tr.height - gap;
-    if (x < pad) x = pad;
-    if (x + tr.width > window.innerWidth - pad) x = window.innerWidth - tr.width - pad;
-    if (x !== coords.x || y !== coords.y) setCoords({ x, y });
-  }, [open, placement, content, coords.x, coords.y]);
-
   return (
     <>
       <span
-        ref={anchorRef}
+        ref={setAnchor}
         className={className}
         onMouseEnter={show}
         onMouseLeave={hide}
@@ -98,16 +78,15 @@ export default function Tooltip({
         {children}
       </span>
       {open &&
+        anchor &&
         createPortal(
-          <div
-            ref={tipRef}
-            role="tooltip"
-            className="tooltip"
-            data-closed={!visible || undefined}
-            style={{ top: coords.y, left: coords.x }}
+          <TooltipBubble
+            anchor={anchor}
+            side={placement}
+            visible={visible}
           >
             {content}
-          </div>,
+          </TooltipBubble>,
           document.body,
         )}
     </>

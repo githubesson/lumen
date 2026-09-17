@@ -263,6 +263,7 @@ export default function Shell() {
               key={p.id}
               to={`/playlists/${p.id}`}
               title={layout === "compact" ? p.name : undefined}
+              data-tooltip-side="right"
               className={({ isActive }) =>
                 "sidebar-playlist" + (isActive ? " active" : "")
               }
@@ -563,6 +564,7 @@ function NavItem({
       to={to}
       end={end}
       title={layout === "compact" ? label : undefined}
+      data-tooltip-side="right"
       className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}
     >
       {icon}

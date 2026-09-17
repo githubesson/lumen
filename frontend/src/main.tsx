@@ -10,6 +10,7 @@ import { ShareProvider } from "./context/Share";
 import { TrackInfoProvider } from "./context/TrackInfo";
 import { LyricsPanelProvider } from "./context/LyricsPanel";
 import { KeyBindingsProvider } from "./lib/keybindings";
+import TitleTooltips from "./components/TitleTooltips";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -32,6 +33,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           </AuthProvider>
         </BrowserRouter>
       </KeyBindingsProvider>
+      <TitleTooltips />
     </ThemeProvider>
   </React.StrictMode>,
 );
