@@ -18,6 +18,7 @@ interface Active {
 }
 
 const TARGETS = "[title], button[aria-label], a[aria-label]";
+const DESCRIPTION_ID = "title-tooltip-description";
 
 const OPEN_DELAY = 500;
 /** After a tooltip closes, neighbours open instantly for this long. */
@@ -40,6 +41,11 @@ const EDGE = 8;
  * collapsed sidebar rail). On non-interactive text, a title that repeats the
  * element's leading text is a truncation hint and shows only when clipped.
  * Hover inside a rich <Tooltip> trigger is left to that component.
+ *
+ * Blanking a title also drops what assistive tech derived from it, so while
+ * engaged the text is kept available: via a hidden description element
+ * referenced from aria-describedby, or, when the title was the element's only
+ * accessible name, a temporary aria-label.
  */
 export default function TitleTooltips() {
   const [active, setActive] = useState<Active | null>(null);
@@ -52,6 +58,56 @@ export default function TitleTooltips() {
 
   useEffect(() => {
     let observer: MutationObserver | null = null;
+
+    // Written synchronously (not via React state) so the description is in
+    // place when focus lands, before the visual bubble's open delay.
+    const description = document.createElement("span");
+    description.id = DESCRIPTION_ID;
+    description.hidden = true;
+    document.body.appendChild(description);
+    /** Attributes we changed on the engaged element, restored on release. */
+    let a11y: { el: HTMLElement; describedBy: string | null; addedLabel: boolean } | null = null;
+
+    const attachA11y = (el: HTMLElement, text: string) => {
+      detachA11y();
+      const hasName =
+        el.hasAttribute("aria-label") ||
+        el.hasAttribute("aria-labelledby") ||
+        !!(el.textContent ?? "").trim();
+      if (!hasName) {
+        // The title was the accessible name itself; keep it as the name.
+        el.setAttribute("aria-label", text);
+        a11y = { el, describedBy: null, addedLabel: true };
+        return;
+      }
+      description.textContent = text;
+      const describedBy = el.getAttribute("aria-describedby");
+      el.setAttribute(
+        "aria-describedby",
+        describedBy ? `${describedBy} ${DESCRIPTION_ID}` : DESCRIPTION_ID,
+      );
+      a11y = { el, describedBy, addedLabel: false };
+    };
+
+    const updateA11y = (text: string) => {
+      if (!a11y) return;
+      if (a11y.addedLabel) a11y.el.setAttribute("aria-label", text);
+      else description.textContent = text;
+    };
+
+    const detachA11y = () => {
+      if (!a11y) return;
+      const { el, describedBy, addedLabel } = a11y;
+      a11y = null;
+      if (addedLabel) {
+        el.removeAttribute("aria-label");
+      } else if (describedBy == null) {
+        el.removeAttribute("aria-describedby");
+      } else {
+        el.setAttribute("aria-describedby", describedBy);
+      }
+      description.textContent = "";
+    };
 
     const clearTimer = () => {
       if (openTimer.current !== null) {
@@ -66,6 +122,7 @@ export default function TitleTooltips() {
       observer = null;
       const current = activeRef.current;
       if (!current) return;
+      detachA11y();
       // Restore the blanked title unless React changed or removed it meanwhile.
       if (current.fromTitle && current.el.getAttribute("title") === "") {
         current.el.setAttribute("title", current.text);
@@ -103,7 +160,10 @@ export default function TitleTooltips() {
       const unclippedHint =
         fromTitle && isRedundantTruncationTitle(el, text) && !isTruncated(el);
 
-      if (fromTitle) el.setAttribute("title", "");
+      if (fromTitle) {
+        el.setAttribute("title", "");
+        attachA11y(el, text);
+      }
       const side = (el.dataset.tooltipSide as Side | undefined) ?? "top";
       const next: Active = { el, text, side, fromTitle, userHidden: unclippedHint };
       activeRef.current = next;
@@ -115,13 +175,26 @@ export default function TitleTooltips() {
         const current = activeRef.current;
         if (!current || current.el !== el) return;
         const title = el.getAttribute("title");
-        if (title === "") return; // our own blanking
         if (title != null) {
-          el.setAttribute("title", "");
-          activeRef.current = { ...current, text: title.trim(), fromTitle: true };
+          const text = title.trim();
+          if (!text) {
+            // Our own blanking, or our aria-label/describedby bookkeeping.
+            if (!current.fromTitle) {
+              const label = iconOnlyLabel(el);
+              if (!label || label === current.text) return;
+              activeRef.current = { ...current, text: label };
+            } else return;
+          } else {
+            el.setAttribute("title", "");
+            if (current.fromTitle) updateA11y(text);
+            else attachA11y(el, text);
+            activeRef.current = { ...current, text, fromTitle: true };
+          }
         } else if (current.fromTitle) {
           // React removed the title prop: never restore it, and fall back to
-          // an icon-only aria-label or dismiss.
+          // an icon-only aria-label or dismiss. Undo our a11y attributes first
+          // so a temporary aria-label isn't mistaken for the element's own.
+          detachA11y();
           const label = iconOnlyLabel(el);
           activeRef.current = { ...current, text: label, fromTitle: false };
           if (!label) {
@@ -212,6 +285,7 @@ export default function TitleTooltips() {
     document.documentElement.addEventListener("pointerleave", onDismiss);
     return () => {
       release();
+      description.remove();
       document.removeEventListener("pointerover", onPointerOver);
       document.removeEventListener("pointerdown", onHide, true);
       document.removeEventListener("focusin", onFocusIn);
