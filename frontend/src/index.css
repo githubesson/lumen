@@ -3414,9 +3414,12 @@ html[data-mini-player] .np-text {
 .device-pop-row.active {
   background: var(--accent);
 }
+/* Menu-style rows can't show the global outline without it clipping against
+   the popover edge, so draw the contrast-safe ring inset instead. */
 .device-pop-row:focus-visible {
   outline: none;
   background: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
 }
 .device-pop-icon {
   position: relative;
@@ -3615,6 +3618,7 @@ html[data-mini-player] .np-text {
 .queue-pop-row:focus-visible {
   outline: none;
   background: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
 }
 .queue-pop-row.active {
   background: var(--accent);
@@ -3721,7 +3725,10 @@ html[data-mini-player] .np-text {
 .ctx-item:focus-visible {
   background: var(--accent);
   color: var(--accent-foreground);
+}
+.ctx-item:focus-visible {
   outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
 }
 .ctx-item:disabled {
   opacity: 0.5;
@@ -3761,8 +3768,12 @@ html[data-mini-player] .np-text {
   position: fixed;
   z-index: 10000;
   pointer-events: none;
+  box-sizing: border-box;
   width: max-content;
-  max-width: 320px;
+  /* Never wider than the viewport minus TooltipBubble's 8px edge margin on
+     each side, or the placement clamp goes negative at narrow/zoomed widths. */
+  max-width: min(320px, calc(100vw - 16px));
+  overflow-wrap: anywhere;
   padding: 6px 12px;
   background: var(--foreground);
   color: var(--background);
@@ -3818,8 +3829,7 @@ html[data-mini-player] .np-text {
 }
 .track-aka-hint:hover,
 .track-aka-hint:focus-visible {
-  color: var(--muted-foreground);
-  outline: none;
+  color: var(--foreground);
 }
 
 /* ============================================================

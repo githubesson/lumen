@@ -378,7 +378,9 @@ export function TooltipBubble({
     const tip = ref.current;
     if (!tip) return;
     const ar = anchor.getBoundingClientRect();
-    const tr = tip.getBoundingClientRect();
+    // Layout size, not getBoundingClientRect(): the closed state's scale
+    // transform would under-measure the bubble and let it overflow the edge.
+    const tr = { width: tip.offsetWidth, height: tip.offsetHeight };
     let resolved = side;
     let x: number;
     let y: number;
