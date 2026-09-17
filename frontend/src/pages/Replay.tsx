@@ -102,6 +102,13 @@ export default function Replay() {
     api
       .getReplay(request.range, { signal: ac.signal })
       .then((d) => {
+        // Aborting after the response headers arrive does not reject this
+        // promise: the transport drops the caller's abort listener as soon as
+        // `fetch` resolves, before it parses the body. A superseded request
+        // would otherwise clear `loading` while the current one is still in
+        // flight, and the keyed derivation would correctly reject its data --
+        // leaving a blank results area until the real response landed.
+        if (ac.signal.aborted) return;
         setLoaded({ key: request.key, data: d });
         setYears(d.available_years ?? []);
         setLoading(false);
