@@ -9,6 +9,8 @@ interface Active {
   side: Side;
   /** Whether `text` came from a `title` that was lifted off the element. */
   fromTitle: boolean;
+  /** Closed by a click, scroll, or Escape; stays closed until re-hovered. */
+  userHidden?: boolean;
 }
 
 const TARGETS = "[title], button[aria-label], a[aria-label]";
@@ -41,6 +43,8 @@ export default function TitleTooltips() {
   const activeRef = useRef<Active | null>(null);
   const openTimer = useRef<number | null>(null);
   const lastClosedAt = useRef(0);
+  /** Whether the bubble for activeRef is currently rendered. */
+  const shownRef = useRef(false);
 
   useEffect(() => {
     let observer: MutationObserver | null = null;
@@ -63,9 +67,26 @@ export default function TitleTooltips() {
         current.el.setAttribute("title", current.text);
       }
       activeRef.current = null;
+      shownRef.current = false;
       lastClosedAt.current = Date.now();
       setVisible(false);
       setActive(null);
+    };
+
+    const scheduleOpen = (el: HTMLElement) => {
+      const open = () => {
+        openTimer.current = null;
+        // Compare by element: a label update may have replaced the object.
+        if (activeRef.current?.el !== el) return;
+        shownRef.current = true;
+        setActive(activeRef.current);
+        requestAnimationFrame(() => {
+          if (activeRef.current?.el === el) setVisible(true);
+        });
+      };
+      clearTimer();
+      if (Date.now() - lastClosedAt.current < SKIP_DELAY_WINDOW) open();
+      else openTimer.current = window.setTimeout(open, OPEN_DELAY);
     };
 
     const engage = (el: HTMLElement) => {
@@ -100,6 +121,7 @@ export default function TitleTooltips() {
           activeRef.current = { ...current, text: label, fromTitle: false };
           if (!label) {
             clearTimer();
+            shownRef.current = false;
             setVisible(false);
             setActive(null);
             return;
@@ -109,25 +131,21 @@ export default function TitleTooltips() {
           if (!label || label === current.text) return;
           activeRef.current = { ...current, text: label };
         }
-        // Keep state in sync only if the bubble is already showing.
-        setActive((shown) => (shown ? activeRef.current : shown));
+        const updated = activeRef.current;
+        if (shownRef.current) {
+          setActive(updated);
+        } else if (openTimer.current === null && !updated.userHidden) {
+          // A label came back (e.g. the title returned after a layout
+          // toggle) while still hovered: re-arm the tooltip.
+          scheduleOpen(el);
+        }
       });
       observer.observe(el, {
         attributes: true,
         attributeFilter: ["title", "aria-label"],
       });
 
-      const open = () => {
-        openTimer.current = null;
-        // Compare by element: a label update may have replaced the object.
-        if (activeRef.current?.el !== el) return;
-        setActive(activeRef.current);
-        requestAnimationFrame(() => {
-          if (activeRef.current?.el === el) setVisible(true);
-        });
-      };
-      if (Date.now() - lastClosedAt.current < SKIP_DELAY_WINDOW) open();
-      else openTimer.current = window.setTimeout(open, OPEN_DELAY);
+      scheduleOpen(el);
     };
 
     const onPointerOver = (e: PointerEvent) => {
@@ -169,6 +187,8 @@ export default function TitleTooltips() {
     const onHide = () => {
       clearTimer();
       if (!activeRef.current) return;
+      activeRef.current = { ...activeRef.current, userHidden: true };
+      shownRef.current = false;
       lastClosedAt.current = 0;
       setVisible(false);
       setActive(null);
