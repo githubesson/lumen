@@ -4,7 +4,7 @@ import { BottomDock } from "../../components/dock/bottom-dock";
 import { OfflineBanner } from "../../components/offline-banner";
 
 /**
- * Four-tab root with a fully custom floating dock instead of the native tab
+ * Five-tab root with a fully custom floating dock instead of the native tab
  * bar: an Instagram-style pill tab bar plus the mini-player (stacked above it
  * on iPhone, beside it on iPad). `DockProvider` wraps the navigator so the
  * dock and the screens (scroll wiring) share the collapse state. Nested
@@ -19,6 +19,7 @@ export default function TabsLayout() {
       >
         <Tabs.Screen name="(library)" options={{ title: "Library" }} />
         <Tabs.Screen name="(playlists)" options={{ title: "Playlists" }} />
+        <Tabs.Screen name="(browse)" options={{ title: "Browse" }} />
         <Tabs.Screen name="(favorites)" options={{ title: "Favorites" }} />
         <Tabs.Screen name="(settings)" options={{ title: "Settings" }} />
       </Tabs>

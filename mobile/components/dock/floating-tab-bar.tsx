@@ -24,6 +24,7 @@ type SymbolName = Parameters<typeof SymbolView>[0]["name"];
 const TAB_ICONS: Record<string, SymbolName> = {
   "(library)": "music.note.list",
   "(playlists)": "music.note",
+  "(browse)": "magnifyingglass",
   "(favorites)": "heart.fill",
   "(settings)": "gearshape",
 };

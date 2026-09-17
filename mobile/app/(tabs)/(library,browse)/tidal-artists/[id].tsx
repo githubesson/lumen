@@ -83,7 +83,7 @@ export default function TidalArtistScreen() {
   const openRelease = useCallback(
     (release: ArtistRelease) =>
       router.push({
-        pathname: "/(tabs)/(library)/tidal-albums/[id]",
+        pathname: "/(tabs)/tidal-albums/[id]",
         params: { id: release.id.replace(/^tidal:/, "") },
       }),
     [router],

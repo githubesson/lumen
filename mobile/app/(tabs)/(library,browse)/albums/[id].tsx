@@ -107,7 +107,7 @@ export default function AlbumDetailScreen() {
     if (!id) return;
     void Haptics.selectionAsync();
     router.push({
-      pathname: "/(tabs)/(library)/albums/edit",
+      pathname: "/(tabs)/albums/edit",
       params: { id },
     });
   }, [router, id]);

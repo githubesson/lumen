@@ -1,7 +1,7 @@
 import React, { type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
-import TidalArtistScreen from "../app/(tabs)/(library)/tidal-artists/[id]";
+import TidalArtistScreen from "../app/(tabs)/(library,browse)/tidal-artists/[id]";
 import { SearchResults } from "../components/library/search-results";
 
 const mock = vi.hoisted(() => ({

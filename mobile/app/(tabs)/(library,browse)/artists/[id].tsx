@@ -78,7 +78,7 @@ export default function ArtistDetailScreen() {
       router.push({
         pathname: inSettings
           ? "/(tabs)/(settings)/albums/[id]"
-          : "/(tabs)/(library)/albums/[id]",
+          : "/(tabs)/albums/[id]",
         params: { id: release.id },
       }),
     [router, inSettings],

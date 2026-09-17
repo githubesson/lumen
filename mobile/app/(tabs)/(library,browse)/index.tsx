@@ -16,7 +16,6 @@ import {
   useDockScrollHandler,
 } from "../../../components/dock/dock-context";
 import { BrowseLinksCard } from "../../../components/library/browse-links-card";
-import { HeaderCapsule } from "../../../components/library/header-capsule";
 import { HorizontalShelf } from "../../../components/horizontal-shelf";
 import { Section } from "../../../components/section";
 import { RankedTrackRow } from "../../../components/library/ranked-track-row";
@@ -196,7 +195,7 @@ export default function HomeScreen() {
     (id: string) => {
       void Haptics.selectionAsync();
       router.push({
-        pathname: "/(tabs)/(library)/albums/[id]",
+        pathname: "/(tabs)/albums/[id]",
         params: { id },
       });
     },
@@ -209,13 +208,13 @@ export default function HomeScreen() {
       const target = replayAlbumTarget(album);
       if (target.kind === "tidal") {
         router.push({
-          pathname: "/(tabs)/(library)/tidal-albums/[id]" as never,
+          pathname: "/(tabs)/tidal-albums/[id]" as never,
           params: { id: target.id },
         });
         return;
       }
       router.push({
-        pathname: "/(tabs)/(library)/albums/[id]",
+        pathname: "/(tabs)/albums/[id]",
         params: { id: target.id },
       });
     },
@@ -226,24 +225,16 @@ export default function HomeScreen() {
     (mode: "tracks" | "albums" | "artists") => {
       void Haptics.selectionAsync();
       router.push({
-        pathname: "/(tabs)/(library)/browse",
+        pathname: "/(tabs)/browse",
         params: { mode },
       });
     },
     [router],
   );
 
-  const onSearchPress = useCallback(() => {
-    void Haptics.selectionAsync();
-    router.push({
-      pathname: "/(tabs)/(library)/browse",
-      params: { focusSearch: "1" },
-    });
-  }, [router]);
-
   const onUploadPress = useCallback(() => {
     void Haptics.selectionAsync();
-    router.push("/(tabs)/(library)/upload");
+    router.push("/(tabs)/upload");
   }, [router]);
 
   const { refetch: refetchRecent } = recentQuery;
@@ -279,17 +270,7 @@ export default function HomeScreen() {
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          title: greeting,
-          headerRight: () => (
-            <HeaderCapsule
-              onSearchPress={onSearchPress}
-              onUploadPress={onUploadPress}
-            />
-          ),
-        }}
-      />
+      <Stack.Screen options={{ title: greeting }} />
       <ScrollView
         {...dockScroll}
         style={{ flex: 1, backgroundColor: theme.color.bg }}

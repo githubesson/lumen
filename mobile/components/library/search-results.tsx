@@ -77,8 +77,8 @@ export function SearchResults({ search }: { search: string }) {
               router.push({
                 pathname:
                   result.item.source === "tidal"
-                    ? "/(tabs)/(library)/tidal-albums/[id]"
-                    : "/(tabs)/(library)/albums/[id]",
+                    ? "/(tabs)/tidal-albums/[id]"
+                    : "/(tabs)/albums/[id]",
                 params: { id: searchEntityID(result.item) },
               })
             }
@@ -92,8 +92,8 @@ export function SearchResults({ search }: { search: string }) {
               router.push({
                 pathname:
                   result.item.source === "tidal"
-                    ? "/(tabs)/(library)/tidal-artists/[id]"
-                    : "/(tabs)/(library)/artists/[id]",
+                    ? "/(tabs)/tidal-artists/[id]"
+                    : "/(tabs)/artists/[id]",
                 params: {
                   id: searchEntityID(result.item),
                   name: result.item.name,

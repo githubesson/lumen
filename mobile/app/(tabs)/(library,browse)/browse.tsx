@@ -12,10 +12,10 @@ import {
   Alert,
   Platform,
   RefreshControl,
-  TextInput,
   StyleSheet,
   View,
 } from "react-native";
+import type { SearchBarCommands } from "react-native-screens";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import { useInfiniteQuery, type QueryKey } from "@tanstack/react-query";
@@ -31,7 +31,6 @@ import {
 } from "@music-library/core";
 import { EmptyState } from "../../../components/empty-state";
 import { GlassSegmentedControl } from "../../../components/glass-segmented-control";
-import { HeaderCapsule } from "../../../components/library/header-capsule";
 import { TRACK_FLASH_LIST_PERFORMANCE_PROPS } from "../../../components/list-performance";
 import { TrackRow } from "../../../components/track-row";
 import { AlbumRow } from "../../../components/album-row";
@@ -93,7 +92,7 @@ function useLibraryListQuery<T>({
 export default function BrowseScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const params = useLocalSearchParams<{ mode?: string; focusSearch?: string }>();
+  const params = useLocalSearchParams<{ mode?: string }>();
   const headerHeight = useHeaderHeight();
   const dockInset = useBottomDockInset();
   const dockScroll = useDockScrollHandler();
@@ -103,35 +102,29 @@ export default function BrowseScreen() {
       : "tracks",
   );
   const [search, setSearch] = useState("");
-  const [searchOpen, setSearchOpen] = useState(params.focusSearch === "1");
   const offline = useIsOffline();
-  const searchInputRef = useRef<TextInput>(null);
+  const searchBarRef = useRef<SearchBarCommands>(null);
   const debouncedSearch = useDebouncedValue(search.trim(), SEARCH_DEBOUNCE_MS);
   const deferredSearch = useDeferredValue(debouncedSearch);
-
-  useEffect(() => {
-    if (!searchOpen) return;
-    const frame = requestAnimationFrame(() => {
-      searchInputRef.current?.focus();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [searchOpen]);
+  // The browse list stays on screen until there is something to search for;
+  // an empty field is just browse with the keyboard up.
+  const searching = deferredSearch.length > 0;
 
   const tracksQuery = useLibraryListQuery({
     queryKey: qk.tracksList(""),
-    enabled: !searchOpen && mode === "tracks",
+    enabled: !searching && mode === "tracks",
     fetchPage: (args) => api.listTracksPage(args),
   });
 
   const albumsQuery = useLibraryListQuery({
     queryKey: qk.albumsList(""),
-    enabled: !searchOpen && mode === "albums",
+    enabled: !searching && mode === "albums",
     fetchPage: (args) => api.listAlbumsPage(args),
   });
 
   const artistsQuery = useLibraryListQuery({
     queryKey: qk.artistsList(""),
-    enabled: !searchOpen && mode === "artists",
+    enabled: !searching && mode === "artists",
     fetchPage: (args) => api.listArtistsPage(args),
   });
 
@@ -162,13 +155,13 @@ export default function BrowseScreen() {
   const onTrackPress = usePlayQueue(tracks);
 
   const onAlbumPress = useCallback(
-    (album: Album) => router.push({ pathname: "/(tabs)/(library)/albums/[id]", params: { id: album.id } }),
+    (album: Album) => router.push({ pathname: "/(tabs)/albums/[id]", params: { id: album.id } }),
     [router],
   );
 
   const onArtistPress = useCallback(
     (artist: Artist) =>
-      router.push({ pathname: "/(tabs)/(library)/artists/[id]", params: { id: artist.id } }),
+      router.push({ pathname: "/(tabs)/artists/[id]", params: { id: artist.id } }),
     [router],
   );
 
@@ -203,29 +196,9 @@ export default function BrowseScreen() {
   }, [activeFetchNextPage, activeHasNextPage, activeIsFetchingNextPage]);
 
   const closeSearch = useCallback(() => {
-    searchInputRef.current?.blur();
+    searchBarRef.current?.cancelSearch();
     setSearch("");
-    setSearchOpen(false);
   }, []);
-
-  const onSearchPress = useCallback(() => {
-    void Haptics.selectionAsync();
-    if (searchOpen) {
-      closeSearch();
-      return;
-    }
-    // Searched lists are never persisted, so offline search could only hang
-    // on paused queries — refuse up front instead.
-    if (offline) {
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      Alert.alert(
-        "Search unavailable offline",
-        "Reconnect to search your library.",
-      );
-      return;
-    }
-    setSearchOpen(true);
-  }, [closeSearch, offline, searchOpen]);
 
   // Connectivity dropping mid-search would strand a spinner on paused
   // queries — close the search UI instead.
@@ -233,12 +206,24 @@ export default function BrowseScreen() {
     // Connectivity is an external subscription; offline mode closes the
     // server-backed search surface.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (offline && searchOpen) closeSearch();
-  }, [offline, searchOpen, closeSearch]);
+    if (offline && search.length > 0) closeSearch();
+  }, [offline, search, closeSearch]);
+
+  const onSearchFocus = useCallback(() => {
+    // Searched lists are never persisted, so offline search could only hang
+    // on paused queries — refuse up front instead.
+    if (!offline) return;
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    Alert.alert(
+      "Search unavailable offline",
+      "Reconnect to search your library.",
+    );
+    searchBarRef.current?.cancelSearch();
+  }, [offline]);
 
   const onUploadPress = useCallback(() => {
     void Haptics.selectionAsync();
-    router.push("/(tabs)/(library)/upload");
+    router.push("/(tabs)/upload");
   }, [router]);
 
   const header = useMemo(
@@ -252,7 +237,7 @@ export default function BrowseScreen() {
       >
         <GlassSegmentedControl<Mode>
           options={[
-            { label: "Tracks", value: "tracks" },
+            { label: "Songs", value: "tracks" },
             { label: "Albums", value: "albums" },
             { label: "Artists", value: "artists" },
           ]}
@@ -308,32 +293,32 @@ export default function BrowseScreen() {
   };
 
   const stackBits = (
-    <Stack.Screen
-      options={{
-        headerRight: () => (
-          <HeaderCapsule
-            search={{
-              open: searchOpen,
-              value: search,
-              inputRef: searchInputRef,
-              onChangeText: setSearch,
-              onClear: () => {
-                if ((search?.length ?? 0) > 0) {
-                  setSearch("");
-                  return;
-                }
-                closeSearch();
-              },
-            }}
-            onSearchPress={onSearchPress}
-            onUploadPress={onUploadPress}
-          />
-        ),
-      }}
-    />
+    <>
+      <Stack.SearchBar
+        ref={searchBarRef}
+        placeholder="Songs, albums, and artists"
+        // Lives in the navigation bar itself (iOS 26 collapses it to a glass
+        // button beside the add action; earlier iOS shows it inline). Kept
+        // out of the bottom toolbar, which would fight the floating dock.
+        placement="integratedCentered"
+        allowToolbarIntegration={false}
+        autoCapitalize="none"
+        tintColor={theme.color.accent}
+        onChangeText={(e) => setSearch(e.nativeEvent.text)}
+        onCancelButtonPress={() => setSearch("")}
+        onFocus={onSearchFocus}
+      />
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Button
+          icon="plus"
+          accessibilityLabel="Upload music"
+          onPress={onUploadPress}
+        />
+      </Stack.Toolbar>
+    </>
   );
 
-  if (searchOpen) return <>{stackBits}<SearchResults search={deferredSearch} /></>;
+  if (searching) return <>{stackBits}<SearchResults search={deferredSearch} /></>;
 
   if (mode === "tracks") {
     const fx = emptyOrFooter(tracksQuery, "tracks");
