@@ -745,22 +745,24 @@ textarea { font: inherit; color: inherit; }
   outline: none;
   user-select: none;
 }
-.btn:hover {
+.btn:hover:not(:disabled) {
   background: var(--input-bg-hover);
 }
-.btn:active {
+.btn:active:not(:disabled) {
   transform: translateY(1px);
 }
+/* Disabled buttons stay hit-testable (no pointer-events: none) so a title
+   explaining why they're disabled still gets its tooltip. */
 .btn:disabled {
   opacity: 0.5;
-  pointer-events: none;
+  cursor: not-allowed;
 }
 .btn-primary {
   background: var(--primary);
   color: var(--primary-foreground);
   border-color: transparent;
 }
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   background: color-mix(in oklch, var(--primary) 80%, transparent);
 }
 
@@ -769,7 +771,7 @@ textarea { font: inherit; color: inherit; }
   border-color: transparent;
   color: var(--foreground);
 }
-.btn-ghost:hover {
+.btn-ghost:hover:not(:disabled) {
   background: var(--ghost-hover);
 }
 .btn-danger {
@@ -777,7 +779,7 @@ textarea { font: inherit; color: inherit; }
   border-color: transparent;
   color: var(--destructive);
 }
-.btn-danger:hover {
+.btn-danger:hover:not(:disabled) {
   background: color-mix(in oklch, var(--destructive) 20%, transparent);
 }
 .btn-sm {

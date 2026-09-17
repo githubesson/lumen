@@ -79,23 +79,41 @@ export default function TitleTooltips() {
       const next: Active = { el, text, side, fromTitle };
       activeRef.current = next;
 
-      // React may update the title while the tooltip is showing (e.g. a
-      // toggle button's label). Lift it again and show the new text.
+      // React may update the label while the tooltip is showing (e.g. a
+      // toggle button switching Play/Pause). Lift a new title again, or re-read
+      // the aria-label, and show the new text.
       observer = new MutationObserver(() => {
-        const updated = el.getAttribute("title");
-        if (updated == null || !activeRef.current) return;
-        el.removeAttribute("title");
-        activeRef.current = { ...activeRef.current, text: updated.trim() };
-        setActive(activeRef.current);
+        const current = activeRef.current;
+        if (!current || current.el !== el) return;
+        const title = el.getAttribute("title");
+        let text: string;
+        if (title != null) {
+          el.removeAttribute("title");
+          text = title.trim();
+          if (!text) return;
+          activeRef.current = { ...current, text, fromTitle: true };
+        } else if (current.fromTitle) {
+          return;
+        } else {
+          text = iconOnlyLabel(el);
+          if (!text || text === current.text) return;
+          activeRef.current = { ...current, text };
+        }
+        // Keep state in sync only if the bubble is already showing.
+        setActive((shown) => (shown ? activeRef.current : shown));
       });
-      observer.observe(el, { attributes: true, attributeFilter: ["title"] });
+      observer.observe(el, {
+        attributes: true,
+        attributeFilter: ["title", "aria-label"],
+      });
 
       const open = () => {
         openTimer.current = null;
-        if (activeRef.current !== next) return;
-        setActive(next);
+        // Compare by element: a label update may have replaced the object.
+        if (activeRef.current?.el !== el) return;
+        setActive(activeRef.current);
         requestAnimationFrame(() => {
-          if (activeRef.current === next) setVisible(true);
+          if (activeRef.current?.el === el) setVisible(true);
         });
       };
       if (Date.now() - lastClosedAt.current < SKIP_DELAY_WINDOW) open();
