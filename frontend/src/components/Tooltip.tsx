@@ -48,6 +48,10 @@ export default function Tooltip({
   // cancel it -- otherwise the callback flips `visible` back on after hide()
   // turned it off and the exit transition never runs.
   const revealFrame = useRef<number | null>(null);
+  // `open` only means "mounted": it commits a frame before the bubble is made
+  // visible. Arming the shared skip window off it would credit a tooltip the
+  // user never saw, so track the reveal actually completing.
+  const revealed = useRef(false);
 
   const show = () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
@@ -55,12 +59,14 @@ export default function Tooltip({
       window.clearTimeout(hideTimer.current);
       hideTimer.current = null;
     }
+    revealed.current = false;
     const reveal = () => {
       setOpen(true);
       // Defer the "visible" flip to the next frame so the enter transition
       // runs from the initial (data-closed) state rather than snapping in.
       revealFrame.current = requestAnimationFrame(() => {
         revealFrame.current = null;
+        revealed.current = true;
         setVisible(true);
       });
     };
@@ -88,7 +94,8 @@ export default function Tooltip({
     // Only a tooltip that was actually displayed arms the skip window. A brief
     // sweep across a trigger that never opened must not make the next one
     // instant -- the delay exists to be paid once, not skipped for free.
-    if (open) markTooltipClosed();
+    if (revealed.current) markTooltipClosed();
+    revealed.current = false;
     // Unmount a beat later so the fade-out can play.
     if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
     hideTimer.current = window.setTimeout(() => {

@@ -66,7 +66,15 @@ export default function Replay() {
   const { play } = usePlayer();
 
   const [period, setPeriod] = useState<Period>({ kind: "this-year" });
-  const [data, setData] = useState<ReplayData | null>(null);
+  // The response is stored with the period it answers, and read back only when
+  // the two still match. A period switch therefore drops to `data === null` on
+  // the very first render -- before the fetch effect has even run -- so the
+  // previous window's results can never be rendered, animated, or acted on
+  // under the new period's title.
+  const [loaded, setLoaded] = useState<{ key: string; data: ReplayData } | null>(null);
+  // Sticky: the year pills are navigation, not results, and must survive the
+  // gap where `data` is null or the selector would collapse mid-load.
+  const [years, setYears] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
@@ -78,7 +86,12 @@ export default function Replay() {
   // depend on a stable value. `period` only changes identity when the user
   // picks a new pill, so depending on it directly is both correct and
   // exhaustive-deps clean (the old code keyed on a fresh periodKey string).
-  const range = useMemo(() => periodRange(period), [period]);
+  const request = useMemo(
+    () => ({ key: periodKey(period), range: periodRange(period) }),
+    [period],
+  );
+  const range = request.range;
+  const data = loaded?.key === request.key ? loaded.data : null;
 
   useEffect(() => {
     const ac = new AbortController();
@@ -87,9 +100,10 @@ export default function Replay() {
     setLoading(true);
     setError(null);
     api
-      .getReplay(range, { signal: ac.signal })
+      .getReplay(request.range, { signal: ac.signal })
       .then((d) => {
-        setData(d);
+        setLoaded({ key: request.key, data: d });
+        setYears(d.available_years ?? []);
         setLoading(false);
       })
       .catch((err) => {
@@ -98,12 +112,9 @@ export default function Replay() {
         setLoading(false);
       });
     return () => ac.abort();
-  }, [range]);
+  }, [request]);
 
-  const options = useMemo(
-    () => buildOptions(data?.available_years ?? []),
-    [data?.available_years],
-  );
+  const options = useMemo(() => buildOptions(years), [years]);
 
   const queue = useMemo<TrackListItem[]>(
     () => (data?.top_tracks ?? []) as TrackListItem[],
