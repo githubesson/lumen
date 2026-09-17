@@ -9,13 +9,16 @@ interface Active {
   side: Side;
   /** Whether `text` came from a `title` that was lifted off the element. */
   fromTitle: boolean;
+  /** Closed by a click, scroll, or Escape; stays closed until re-hovered. */
+  dismissed?: boolean;
   /**
-   * Never open the bubble while this element stays hovered: the user closed it
-   * (click, scroll, Escape), or it is a truncation hint on text that isn't
-   * clipped. The title stays blanked so the native tooltip can't show either.
+   * A truncation hint on text that isn't clipped. Recomputed whenever the
+   * text changes. The title stays blanked so the native tooltip can't show.
    */
-  userHidden?: boolean;
+  unclippedHint?: boolean;
 }
+
+const canOpen = (a: Active) => !a.dismissed && !a.unclippedHint;
 
 const TARGETS = "[title], button[aria-label], a[aria-label]";
 const DESCRIPTION_ID = "title-tooltip-description";
@@ -165,7 +168,7 @@ export default function TitleTooltips() {
         attachA11y(el, text);
       }
       const side = (el.dataset.tooltipSide as Side | undefined) ?? "top";
-      const next: Active = { el, text, side, fromTitle, userHidden: unclippedHint };
+      const next: Active = { el, text, side, fromTitle, unclippedHint };
       activeRef.current = next;
 
       // React may update the label while the tooltip is showing (e.g. a
@@ -188,7 +191,14 @@ export default function TitleTooltips() {
             el.setAttribute("title", "");
             if (current.fromTitle) updateA11y(text);
             else attachA11y(el, text);
-            activeRef.current = { ...current, text, fromTitle: true };
+            // The element's text usually changed in the same commit (e.g. the
+            // player advancing to a new track), so re-check clipping.
+            activeRef.current = {
+              ...current,
+              text,
+              fromTitle: true,
+              unclippedHint: isRedundantTruncationTitle(el, text) && !isTruncated(el),
+            };
           }
         } else if (current.fromTitle) {
           // React removed the title prop: never restore it, and fall back to
@@ -196,7 +206,12 @@ export default function TitleTooltips() {
           // so a temporary aria-label isn't mistaken for the element's own.
           detachA11y();
           const label = iconOnlyLabel(el);
-          activeRef.current = { ...current, text: label, fromTitle: false };
+          activeRef.current = {
+            ...current,
+            text: label,
+            fromTitle: false,
+            unclippedHint: false,
+          };
           if (!label) {
             clearTimer();
             shownRef.current = false;
@@ -210,9 +225,17 @@ export default function TitleTooltips() {
           activeRef.current = { ...current, text: label };
         }
         const updated = activeRef.current;
-        if (shownRef.current) {
+        if (!canOpen(updated)) {
+          // e.g. the new text fits: close a bubble that is now redundant.
+          clearTimer();
+          if (shownRef.current) {
+            shownRef.current = false;
+            setVisible(false);
+            setActive(null);
+          }
+        } else if (shownRef.current) {
           setActive(updated);
-        } else if (openTimer.current === null && !updated.userHidden) {
+        } else if (openTimer.current === null) {
           // A label came back (e.g. the title returned after a layout
           // toggle) while still hovered: re-arm the tooltip.
           scheduleOpen(el);
@@ -265,7 +288,7 @@ export default function TitleTooltips() {
     const onHide = () => {
       clearTimer();
       if (!activeRef.current) return;
-      activeRef.current = { ...activeRef.current, userHidden: true };
+      activeRef.current = { ...activeRef.current, dismissed: true };
       shownRef.current = false;
       lastClosedAt.current = 0;
       setVisible(false);
