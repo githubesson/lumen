@@ -37,7 +37,7 @@ const TRIGGER: Record<Variant, string> = {
   outlined:
     "flex w-full items-center justify-between gap-x-2 input text-left",
   minimal:
-    "inline-flex items-center gap-x-1 text-sm text-muted-foreground hover:text-foreground focus:outline-none focus-visible:outline-3 focus-visible:outline-ring/50 focus-visible:outline-offset-1 rounded-md disabled:cursor-not-allowed disabled:opacity-50",
+    "inline-flex items-center gap-x-1 text-sm text-muted-foreground hover:text-foreground focus:outline-none focus-visible:outline-2 focus-visible:outline-focus-ring focus-visible:outline-offset-2 rounded-md disabled:cursor-not-allowed disabled:opacity-50",
 };
 
 const POPUP_BASE =

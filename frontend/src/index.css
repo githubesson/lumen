@@ -45,6 +45,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-focus-ring: var(--focus-ring);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
@@ -81,6 +82,10 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
+  /* Solid keyboard-focus indicator. Nova's ring at 50% alpha falls below the
+     3:1 non-text contrast minimum; neutral-500 clears 4.3:1 on every light
+     surface (background, muted, sidebar). */
+  --focus-ring: oklch(0.556 0 0);
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-accent: oklch(0.97 0 0);
@@ -121,6 +126,8 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
+  /* neutral-400: at least 5.8:1 on every dark surface up to muted. */
+  --focus-ring: oklch(0.708 0 0);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.269 0 0);
@@ -581,8 +588,8 @@ textarea { font: inherit; color: inherit; }
 .search:focus-within,
 .search:focus-visible {
   outline: none;
-  border-color: var(--ring);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 50%, transparent);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 4px color-mix(in oklch, var(--ring) 30%, transparent);
 }
 .search input {
   flex: 1;
@@ -1110,8 +1117,8 @@ textarea { font: inherit; color: inherit; }
   vertical-align: middle;
 }
 .track-check:focus-visible {
-  outline: 3px solid color-mix(in oklch, var(--ring) 50%, transparent);
-  outline-offset: 1px;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 .table .col-art { width: 44px; }
 .table .col-dur {
@@ -1199,8 +1206,8 @@ textarea { font: inherit; color: inherit; }
   border-radius: var(--radius-sm);
 }
 .idx-play:focus-visible {
-  outline: 3px solid color-mix(in oklch, var(--ring) 50%, transparent);
-  outline-offset: 1px;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 .table tbody tr .idx-play { display: none; }
 .table tbody tr:hover .idx-play,
@@ -1622,8 +1629,8 @@ textarea { font: inherit; color: inherit; }
 .artist-play:focus-visible,
 .artist-shuffle:focus-visible,
 .artist-more:focus-visible {
-  outline: 3px solid color-mix(in oklch, var(--ring) 50%, transparent);
-  outline-offset: 1px;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 @media (max-width: 900px) {
   .artist-actions-end {
@@ -2012,7 +2019,7 @@ html[data-mini-player] .app {
   inset: -10px 0;
 }
 .bar:focus-visible {
-  outline: 3px solid color-mix(in oklch, var(--ring) 50%, transparent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 3px;
 }
 .bar-fill {
@@ -2629,8 +2636,8 @@ html[data-mini-player] .np-text {
   font-size: 12px;
 }
 .tweak-input:focus {
-  border-color: var(--ring);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 50%, transparent);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 4px color-mix(in oklch, var(--ring) 30%, transparent);
 }
 .tweak-input:disabled {
   opacity: 0.6;
@@ -2654,7 +2661,7 @@ html[data-mini-player] .np-text {
   outline: none;
 }
 .tweak-slider:focus-visible {
-  outline: 2px solid var(--ring);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .tweak-select {
@@ -2670,8 +2677,8 @@ html[data-mini-player] .np-text {
   cursor: pointer;
 }
 .tweak-select:focus {
-  border-color: var(--ring);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 50%, transparent);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 4px color-mix(in oklch, var(--ring) 30%, transparent);
 }
 .tweak-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -2758,8 +2765,8 @@ html[data-mini-player] .np-text {
 
 /* Focus visible ring */
 :focus-visible {
-  outline: 3px solid color-mix(in oklch, var(--ring) 50%, transparent);
-  outline-offset: 1px;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 /* ============================================================
@@ -2804,8 +2811,8 @@ html[data-mini-player] .np-text {
 }
 .input:focus,
 .select-trigger:focus-within {
-  border-color: var(--ring);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 50%, transparent);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 4px color-mix(in oklch, var(--ring) 30%, transparent);
 }
 .input::placeholder {
   color: var(--muted-foreground);
@@ -3692,20 +3699,8 @@ html[data-mini-player] .np-text {
 
 @media (prefers-reduced-motion: reduce) {
   .ctx-menu {
-  position: fixed;
-  z-index: 9999;
-  pointer-events: auto;
-  min-width: 220px;
-  max-width: 280px;
-  padding: 4px;
-  background: var(--popover);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
-  font-size: 14px;
-  color: var(--popover-foreground);
-  animation: ctx-fade 100ms ease-out;
-}
+    animation: none;
+  }
 }
 .ctx-item {
   width: 100%;
@@ -3993,8 +3988,8 @@ html[data-mini-player] .window-controls {
   box-shadow: 0 1px 3px 0 oklch(0 0 0 / 0.1), 0 1px 2px -1px oklch(0 0 0 / 0.1);
 }
 .period-pill:focus-visible {
-  outline: 3px solid color-mix(in oklch, var(--ring) 50%, transparent);
-  outline-offset: 1px;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 /* One unified panel; the 1px gap over a --border background reveals as a
