@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  ArrowDownTrayIcon,
-  PlayIcon,
-  QueueListIcon,
-  SparklesIcon,
-} from "@heroicons/react/16/solid";
+  Download as ArrowDownTrayIcon,
+  Play as PlayIcon,
+  ListMusic as QueueListIcon,
+  Sparkles as SparklesIcon,
+} from "lucide-react";
 import {
   albumCoverUrl,
   api,
@@ -211,7 +211,7 @@ export default function Replay() {
             ) : (
               <SparklesIcon
                 className="size-12"
-                style={{ color: "var(--accent-fg)" }}
+                style={{ color: "var(--muted-foreground)" }}
               />
             )}
           </div>
@@ -287,7 +287,7 @@ export default function Replay() {
           title="No plays in this window yet."
           hint={
             <>
-              <Link to="/library" style={{ color: "var(--accent-fg)" }}>
+              <Link to="/library" style={{ color: "var(--foreground)", textDecoration: "underline", textUnderlineOffset: 4 }}>
                 Listen to some music
               </Link>{" "}
               and check back here.
@@ -338,7 +338,6 @@ export default function Replay() {
                 {data.top_artists.map((a, i) => (
                   <MediaCard
                     key={a.id}
-                    swatchSeed={a.id}
                     title={displayText(a.name)}
                     subtitle={pluralize(a.plays, "play")}
                     rankBadge={<span className="replay-rank">{i + 1}</span>}

@@ -1,9 +1,9 @@
 import { createPortal } from "react-dom";
 import {
-  ArrowDownTrayIcon,
-  CheckIcon,
-  XMarkIcon,
-} from "@heroicons/react/16/solid";
+  Download as ArrowDownTrayIcon,
+  Check as CheckIcon,
+  X as XMarkIcon,
+} from "lucide-react";
 import clsx from "clsx";
 
 interface TrackSelectionToolbarProps {

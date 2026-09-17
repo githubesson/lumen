@@ -9,17 +9,17 @@ import {
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import {
-  ArrowDownTrayIcon,
-  CheckIcon,
-  HeartIcon,
-  InformationCircleIcon,
-  PencilSquareIcon,
-  PlayIcon,
-  PlusIcon,
-  RectangleStackIcon,
-  ShareIcon,
-  TrashIcon,
-} from "@heroicons/react/16/solid";
+  Download as ArrowDownTrayIcon,
+  Check as CheckIcon,
+  Heart as HeartIcon,
+  Info as InformationCircleIcon,
+  SquarePen as PencilSquareIcon,
+  Play as PlayIcon,
+  Plus as PlusIcon,
+  ListPlus as RectangleStackIcon,
+  Share2 as ShareIcon,
+  Trash2 as TrashIcon,
+} from "lucide-react";
 import {
   api,
   errorMessage,
@@ -385,9 +385,9 @@ export default function TrackContextMenu({
         >
           <TrashIcon
             className="size-3.5"
-            style={{ color: "var(--danger-fg)" }}
+            style={{ color: "var(--destructive)" }}
           />
-          <span style={{ color: "var(--danger-fg)" }}>
+          <span style={{ color: "var(--destructive)" }}>
             {deleting ? "Deleting…" : "Delete from my library"}
           </span>
         </button>
@@ -402,9 +402,9 @@ export default function TrackContextMenu({
         >
           <TrashIcon
             className="size-3.5"
-            style={{ color: "var(--danger-fg)" }}
+            style={{ color: "var(--destructive)" }}
           />
-          <span style={{ color: "var(--danger-fg)" }}>
+          <span style={{ color: "var(--destructive)" }}>
             {deleting ? "Removing…" : "Remove from library"}
           </span>
         </button>
@@ -447,7 +447,7 @@ export default function TrackContextMenu({
                   {p.name}
                 </span>
                 {busy && (
-                  <span className="mono" style={{ fontSize: 10, color: "var(--fg-subtle)" }}>
+                  <span className="mono" style={{ fontSize: 12, color: "var(--muted-foreground)" }}>
                     …
                   </span>
                 )}
@@ -459,7 +459,7 @@ export default function TrackContextMenu({
       {error && (
         <div
           className="ctx-hint"
-          style={{ color: "var(--danger-fg)" }}
+          style={{ color: "var(--destructive)" }}
           role="alert"
         >
           {error}

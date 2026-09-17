@@ -1,5 +1,5 @@
 import { SEARCH_TYPE_OPTIONS, type SearchType } from "../../api";
-import { Bars3BottomLeftIcon, Squares2X2Icon } from "@heroicons/react/16/solid";
+import { List as Bars3BottomLeftIcon, LayoutGrid as Squares2X2Icon } from "lucide-react";
 import { NativeSelect } from "../Field";
 import SearchInput from "../SearchInput";
 import SegmentedControl from "../SegmentedControl";

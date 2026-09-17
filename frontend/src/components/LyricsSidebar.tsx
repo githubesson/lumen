@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BookOpenIcon, XMarkIcon } from "@heroicons/react/16/solid";
+import { MicVocal as BookOpenIcon, X as XMarkIcon } from "lucide-react";
 import { trackCoverUrl, type LyricsResult } from "../api";
 import { useLyricsPanel } from "../context/LyricsPanel";
 import { usePlayer, usePlayerTime } from "../context/Player";
@@ -94,10 +94,6 @@ export default function LyricsSidebar() {
       aria-hidden={!open}
       data-open={open ? "true" : "false"}
     >
-      <div className="lyrics-sidebar-bloom" aria-hidden="true">
-        {coverSrc ? <img src={coverSrc} alt="" decoding="async" /> : null}
-      </div>
-      <div className="lyrics-sidebar-scrim" aria-hidden="true" />
       <div className="lyrics-sidebar-head">
         <div className="lyrics-sidebar-title">
           <BookOpenIcon className="size-4" aria-hidden="true" />
@@ -119,7 +115,6 @@ export default function LyricsSidebar() {
           <CoverArt
             className="lyrics-sidebar-art"
             src={coverSrc}
-            seed={current.album_id ?? current.id}
             label={displayText(current.album_title || current.title, "·")}
             size={44}
           />

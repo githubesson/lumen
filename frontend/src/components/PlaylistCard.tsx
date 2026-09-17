@@ -1,7 +1,10 @@
 import { Link } from "react-router-dom";
-import { LockClosedIcon, UsersIcon } from "@heroicons/react/16/solid";
+import {
+  ListMusic as QueueListIcon,
+  Lock as LockClosedIcon,
+  Users as UsersIcon,
+} from "lucide-react";
 import { type Playlist } from "../api";
-import { swatchFor } from "../lib/swatch";
 
 /**
  * One canonical playlist tile so a playlist looks identical on Home and the
@@ -11,11 +14,9 @@ export default function PlaylistCard({ playlist }: { playlist: Playlist }) {
   const isCollab = playlist.visibility === "collaborative";
   return (
     <Link to={`/playlists/${playlist.id}`} className="card">
-      <div
-        className="card-art"
-        style={{ background: swatchFor(playlist.id) }}
-        aria-hidden="true"
-      />
+      <div className="card-art card-art-icon" aria-hidden="true">
+        <QueueListIcon className="size-8" />
+      </div>
       <div>
         <div
           className="card-title"
@@ -27,12 +28,12 @@ export default function PlaylistCard({ playlist }: { playlist: Playlist }) {
           {isCollab ? (
             <UsersIcon
               className="size-3"
-              style={{ color: "var(--fg-subtle)", flex: "0 0 12px" }}
+              style={{ color: "var(--muted-foreground)", flex: "0 0 12px" }}
             />
           ) : (
             <LockClosedIcon
               className="size-3"
-              style={{ color: "var(--fg-subtle)", flex: "0 0 12px" }}
+              style={{ color: "var(--muted-foreground)", flex: "0 0 12px" }}
             />
           )}
         </div>

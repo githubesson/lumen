@@ -28,19 +28,19 @@ export function TrackInfoDialog({
   const body = error ? (
     <div
       className="dialog-scroll"
-      style={{ padding: 16, color: "var(--danger-fg)" }}
+      style={{ padding: 16, color: "var(--destructive)" }}
     >
       {error}
     </div>
   ) : !track ? (
     <div
       className="dialog-scroll"
-      style={{ padding: 16, color: "var(--fg-subtle)", fontSize: 12.5 }}
+      style={{ padding: 16, color: "var(--muted-foreground)", fontSize: 14 }}
     >
       Loading…
     </div>
   ) : (
-    <div className="dialog-scroll" style={{ padding: 16, fontSize: 12.5 }}>
+    <div className="dialog-scroll" style={{ padding: 16, fontSize: 14 }}>
       <HeaderBlock track={track} />
 
       <Section label="Identity">
@@ -114,7 +114,7 @@ function HeaderBlock({ track }: { track: TrackDetail }) {
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{ fontSize: 16, fontWeight: 600 }}>{track.title}</div>
-      <div style={{ color: "var(--fg-muted)" }}>
+      <div style={{ color: "var(--muted-foreground)" }}>
         {primary ?? "Unknown artist"}
         {track.album_title ? ` · ${track.album_title}` : ""}
       </div>
@@ -143,12 +143,8 @@ function Section({
   return (
     <div style={{ marginBottom: 14 }}>
       <div
-        className="mono"
+        className="eyebrow"
         style={{
-          fontSize: 10,
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-          color: "var(--fg-subtle)",
           marginBottom: 6,
         }}
       >
@@ -169,11 +165,11 @@ function Field({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
         alignItems: "baseline",
       }}
     >
-      <div style={{ color: "var(--fg-subtle)", fontSize: 11 }}>{k}</div>
+      <div style={{ color: "var(--muted-foreground)", fontSize: 12 }}>{k}</div>
       <div
         className={mono ? "mono" : undefined}
         style={{
-          color: "var(--fg)",
+          color: "var(--foreground)",
           wordBreak: "break-all",
           fontSize: mono ? 11 : undefined,
         }}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowPathIcon, UserGroupIcon } from "@heroicons/react/16/solid";
+import { RefreshCw as ArrowPathIcon, Users as UserGroupIcon } from "lucide-react";
 import { api, errorMessage, type AdminUser } from "../api";
 import { Button } from "../components/Button";
 import EmptyState from "../components/EmptyState";
@@ -70,8 +70,8 @@ export function UsersAdminSection() {
       >
         <p
           style={{
-            color: "var(--fg-muted)",
-            fontSize: 13,
+            color: "var(--muted-foreground)",
+            fontSize: 14,
             margin: 0,
             maxWidth: "62ch",
           }}
@@ -139,7 +139,7 @@ export function UsersAdminSection() {
                   <td
                     colSpan={6}
                     className="mono"
-                    style={{ color: "var(--fg-subtle)" }}
+                    style={{ color: "var(--muted-foreground)" }}
                   >
                     Loading...
                   </td>
@@ -147,7 +147,7 @@ export function UsersAdminSection() {
               )}
               {users?.map((user) => (
                 <tr key={user.id}>
-                  <td style={{ color: "var(--fg)" }}>
+                  <td style={{ color: "var(--foreground)" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span>{user.username}</span>
                       {user.id === me?.id && (
@@ -183,10 +183,10 @@ export function UsersAdminSection() {
                       {user.must_reset_password ? "reset required" : "set"}
                     </span>
                   </td>
-                  <td className="mono" style={{ color: "var(--fg-subtle)" }}>
+                  <td className="mono" style={{ color: "var(--muted-foreground)" }}>
                     {formatDateTime(user.created_at)}
                   </td>
-                  <td className="mono" style={{ color: "var(--fg-subtle)" }}>
+                  <td className="mono" style={{ color: "var(--muted-foreground)" }}>
                     {formatDateTime(user.last_login_at)}
                   </td>
                 </tr>

@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from "react";
-import { LinkIcon } from "@heroicons/react/16/solid";
+import { Link as LinkIcon } from "lucide-react";
 import { errorMessage } from "../../api";
 import { Button } from "../../components/Button";
 import { Field, TextInput } from "../../components/Field";

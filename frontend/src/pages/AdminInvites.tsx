@@ -1,10 +1,10 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
-  CheckIcon,
-  ClipboardIcon,
-  PlusIcon,
-  TrashIcon,
-} from "@heroicons/react/16/solid";
+  Check as CheckIcon,
+  Clipboard as ClipboardIcon,
+  Plus as PlusIcon,
+  Trash2 as TrashIcon,
+} from "lucide-react";
 import { api, errorMessage, type Invite, type Role } from "../api";
 import { Button } from "../components/Button";
 import ErrorBanner from "../components/ErrorBanner";
@@ -93,8 +93,8 @@ export function InvitesAdminSection() {
     <AdminPanel>
       <p
         style={{
-          color: "var(--fg-muted)",
-          fontSize: 13,
+          color: "var(--muted-foreground)",
+          fontSize: 14,
           margin: 0,
           maxWidth: "60ch",
         }}
@@ -170,27 +170,25 @@ export function InvitesAdminSection() {
           className="surface"
           style={{
             padding: 16,
-            borderColor: "color-mix(in oklch, var(--accent) 40%, var(--border))",
-            background:
-              "color-mix(in oklch, var(--accent) 10%, var(--bg-elev-2))",
+            background: "var(--muted)",
           }}
         >
           <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
             <CheckIcon
               className="size-4 shrink-0"
-              style={{ color: "var(--accent)", marginTop: 2 }}
+              style={{ color: "var(--primary)", marginTop: 2 }}
               aria-hidden="true"
             />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontSize: 13, fontWeight: 500, margin: 0 }}>
+              <p style={{ fontSize: 14, fontWeight: 500, margin: 0 }}>
                 Invite ready — copy this link now. It won't be shown again.
               </p>
               <p
-                className="surface-inset mono"
+                className="surface-inset font-mono"
                 style={{
                   marginTop: 8,
                   padding: "8px 10px",
-                  fontSize: 11,
+                  fontSize: 12,
                   wordBreak: "break-all",
                 }}
               >
@@ -231,14 +229,14 @@ export function InvitesAdminSection() {
           <tbody>
             {rows === null && (
               <tr>
-                <td colSpan={6} className="mono" style={{ color: "var(--fg-subtle)" }}>
+                <td colSpan={6} className="mono" style={{ color: "var(--muted-foreground)" }}>
                   Loading…
                 </td>
               </tr>
             )}
             {rows?.length === 0 && (
               <tr>
-                <td colSpan={6} style={{ color: "var(--fg-muted)" }}>
+                <td colSpan={6} style={{ color: "var(--muted-foreground)" }}>
                   No invites yet. Create one above to get started.
                 </td>
               </tr>
@@ -247,11 +245,11 @@ export function InvitesAdminSection() {
               const s = statusOf(inv);
               return (
                 <tr key={inv.id}>
-                  <td style={{ color: "var(--fg)" }}>{inv.target_role}</td>
-                  <td className="mono" style={{ color: "var(--fg-muted)" }}>
+                  <td style={{ color: "var(--foreground)" }}>{inv.target_role}</td>
+                  <td className="mono" style={{ color: "var(--muted-foreground)" }}>
                     {inv.uses} / {inv.max_uses}
                   </td>
-                  <td className="mono" style={{ color: "var(--fg-subtle)" }}>
+                  <td className="mono" style={{ color: "var(--muted-foreground)" }}>
                     {inv.expires_at
                       ? new Date(inv.expires_at).toLocaleString()
                       : "—"}
@@ -263,7 +261,7 @@ export function InvitesAdminSection() {
                       {s}
                     </span>
                   </td>
-                  <td className="mono" style={{ color: "var(--fg-subtle)" }}>
+                  <td className="mono" style={{ color: "var(--muted-foreground)" }}>
                     {new Date(inv.created_at).toLocaleDateString()}
                   </td>
                   <td className="col-acts">

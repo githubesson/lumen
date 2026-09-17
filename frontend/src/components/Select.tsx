@@ -7,7 +7,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import { CheckIcon, ChevronUpDownIcon } from "@heroicons/react/16/solid";
+import { Check as CheckIcon, ChevronsUpDown as ChevronUpDownIcon } from "lucide-react";
 import { useDismiss } from "../lib/useDismiss";
 import { useTransitionMount } from "../lib/useTransitionMount";
 
@@ -37,7 +37,7 @@ const TRIGGER: Record<Variant, string> = {
   outlined:
     "flex w-full items-center justify-between gap-x-2 input text-left",
   minimal:
-    "inline-flex items-center gap-x-1 text-[12.5px] mono text-muted hover:text-fg focus:outline-none focus-visible:outline-2 focus-visible:outline-[var(--ring)] focus-visible:outline-offset-2 rounded-[var(--r-sm)] disabled:cursor-not-allowed disabled:opacity-50",
+    "inline-flex items-center gap-x-1 text-sm text-muted-foreground hover:text-foreground focus:outline-none focus-visible:outline-3 focus-visible:outline-ring/50 focus-visible:outline-offset-1 rounded-md disabled:cursor-not-allowed disabled:opacity-50",
 };
 
 const POPUP_BASE =
@@ -195,7 +195,7 @@ export function Select<V extends string = string>({
         <span
           className="truncate"
           style={{
-            color: selected ? "var(--fg)" : "var(--fg-subtle)",
+            color: selected ? "var(--foreground)" : "var(--muted-foreground)",
             flex: 1,
             textAlign: "left",
           }}
@@ -204,7 +204,7 @@ export function Select<V extends string = string>({
         </span>
         <ChevronUpDownIcon
           className="size-3.5 shrink-0"
-          style={{ color: "var(--fg-subtle)" }}
+          style={{ color: "var(--muted-foreground)" }}
           aria-hidden="true"
         />
       </button>
@@ -239,7 +239,7 @@ export function Select<V extends string = string>({
                 style={{
                   cursor: o.disabled ? "not-allowed" : "pointer",
                   opacity: o.disabled ? 0.5 : 1,
-                  background: isActive ? "var(--bg-elev-3)" : "transparent",
+                  background: isActive ? "var(--accent)" : "transparent",
                   fontWeight: isSelected ? 500 : 400,
                 }}
               >
@@ -256,7 +256,7 @@ export function Select<V extends string = string>({
                 {isSelected && (
                   <CheckIcon
                     className="size-3.5 shrink-0"
-                    style={{ color: "var(--accent)" }}
+                    style={{ color: "var(--primary)" }}
                     aria-hidden="true"
                   />
                 )}

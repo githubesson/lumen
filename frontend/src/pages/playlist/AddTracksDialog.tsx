@@ -112,13 +112,13 @@ export default function AddTracksDialog({
           style={{ padding: "14px 18px", gap: 12 }}
           start={
             <>
-              <span className="mono" style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
+              <span className="mono" style={{ fontSize: 12, color: "var(--muted-foreground)" }}>
                 {selected.size} selected
               </span>
               {error && (
                 <span
                   role="alert"
-                  style={{ fontSize: 12, color: "var(--danger-fg)", flex: 1, textAlign: "right" }}
+                  style={{ fontSize: 12, color: "var(--destructive)", flex: 1, textAlign: "right" }}
                 >
                   {error}
                 </span>
@@ -159,7 +159,7 @@ export default function AddTracksDialog({
                     alignItems: "center",
                     gap: 12,
                     padding: "8px 4px",
-                    borderBottom: "1px solid var(--border-soft)",
+                    borderBottom: "1px solid var(--border)",
                     cursor: disabled ? "not-allowed" : "pointer",
                     opacity: disabled ? 0.5 : 1,
                   }}
@@ -169,7 +169,7 @@ export default function AddTracksDialog({
                     checked={sel}
                     disabled={disabled}
                     onChange={() => toggle(t.id)}
-                    style={{ accentColor: "var(--accent)" }}
+                    style={{ accentColor: "var(--primary)" }}
                   />
                   <div
                     className="mini-art"
@@ -182,7 +182,7 @@ export default function AddTracksDialog({
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div
                       style={{
-                        fontSize: 13,
+                        fontSize: 14,
                         fontWeight: 500,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
@@ -194,8 +194,8 @@ export default function AddTracksDialog({
                     <div
                       className="mono"
                       style={{
-                        fontSize: 10.5,
-                        color: "var(--fg-subtle)",
+                        fontSize: 12,
+                        color: "var(--muted-foreground)",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
@@ -209,7 +209,7 @@ export default function AddTracksDialog({
                   </div>
                   <span
                     className="mono"
-                    style={{ color: "var(--fg-subtle)", fontSize: 10.5 }}
+                    style={{ color: "var(--muted-foreground)", fontSize: 12 }}
                   >
                     {fmtDurationMs(t.duration_ms)}
                   </span>

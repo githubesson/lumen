@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
-  ArrowTopRightOnSquareIcon,
-  ClipboardDocumentIcon,
-  PauseIcon,
-  PlayIcon,
-} from "@heroicons/react/16/solid";
+  ExternalLink as ArrowTopRightOnSquareIcon,
+  ClipboardCopy as ClipboardDocumentIcon,
+  Pause as PauseIcon,
+  Play as PlayIcon,
+} from "lucide-react";
 import {
   MAX_SHARE_SNIPPET_DURATION_SEC,
   errorMessage,
@@ -16,7 +16,6 @@ import { Button } from "../components/Button";
 import CoverArt from "../components/CoverArt";
 import ErrorBanner from "../components/ErrorBanner";
 import LoadingState from "../components/LoadingState";
-import { useAccentFromCover } from "../lib/accent";
 import { fmtDurationSec } from "../lib/format";
 
 export default function SharePreview() {
@@ -38,8 +37,6 @@ export default function SharePreview() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [mediaDuration, setMediaDuration] = useState(0);
-
-  useAccentFromCover(share?.cover_url);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,7 +159,6 @@ export default function SharePreview() {
               <CoverArt
                 className="share-preview-art"
                 src={share.cover_url}
-                seed={share.album_id || share.track_id}
                 label={share.title}
               />
             </div>

@@ -6,13 +6,9 @@ export type Layout = "compact" | "sidebar" | "wide";
 
 export interface Tweaks {
   theme: Theme;
-  depth: number;
   radius: number;
   density: Density;
   layout: Layout;
-  /** Ambient accent glow — the album-cover-driven color wash on the app
-   *  background, detail headers, mini-player, etc. Turn off for a flat look. */
-  glow: boolean;
 }
 
 export interface DiscordActivityPayload {

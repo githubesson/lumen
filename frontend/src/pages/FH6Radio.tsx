@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  ArrowPathIcon,
-  CheckCircleIcon,
-  FolderOpenIcon,
-  PowerIcon,
-  WrenchScrewdriverIcon,
-} from "@heroicons/react/16/solid";
+  RefreshCw as ArrowPathIcon,
+  CircleCheck as CheckCircleIcon,
+  FolderOpen as FolderOpenIcon,
+  Power as PowerIcon,
+  Wrench as WrenchScrewdriverIcon,
+} from "lucide-react";
 import { Button } from "../components/Button";
 import ErrorBanner from "../components/ErrorBanner";
 import { TextInput } from "../components/Field";

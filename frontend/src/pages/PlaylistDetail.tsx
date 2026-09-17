@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  LockClosedIcon,
-  MusicalNoteIcon,
-  PencilSquareIcon,
-  PlayIcon,
-  PlusIcon,
-  TrashIcon,
-  UsersIcon,
-} from "@heroicons/react/16/solid";
+  ArrowDown as ArrowDownIcon,
+  ArrowUp as ArrowUpIcon,
+  Lock as LockClosedIcon,
+  Music as MusicalNoteIcon,
+  SquarePen as PencilSquareIcon,
+  Play as PlayIcon,
+  Plus as PlusIcon,
+  Trash2 as TrashIcon,
+  Users as UsersIcon,
+} from "lucide-react";
 import {
   api,
   errorMessage,
@@ -32,7 +32,6 @@ import LoadingState from "../components/LoadingState";
 import { useFavorites } from "../context/Favorites";
 import { useKey } from "../lib/keybindings";
 import { fmtTotalMs } from "../lib/format";
-import { swatchFor } from "../lib/swatch";
 import CollaboratorsPanel from "./playlist/CollaboratorsPanel";
 import AddTracksDialog from "./playlist/AddTracksDialog";
 import EditPlaylistDialog from "./playlist/EditPlaylistDialog";
@@ -235,11 +234,10 @@ export default function PlaylistDetail() {
         title={playlist.name}
         description={playlist.description || undefined}
         heroTrack={firstCoverTrack}
-        fallbackGradient={swatchFor(playlist.id)}
         fallbackIcon={
           <MusicalNoteIcon
             className="size-12"
-            style={{ color: "var(--accent-fg)" }}
+            style={{ color: "var(--muted-foreground)" }}
           />
         }
         meta={
@@ -313,7 +311,7 @@ export default function PlaylistDetail() {
                         {collabs.length > 0 && (
                           <span
                             className="mono"
-                            style={{ color: "var(--fg-subtle)", marginLeft: 4 }}
+                            style={{ color: "var(--muted-foreground)", marginLeft: 4 }}
                           >
                             {collabs.length}
                           </span>

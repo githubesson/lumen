@@ -1,6 +1,6 @@
 import { buildAlbumPatch } from "@music-library/core/metadata-edit";
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
-import { PhotoIcon, TrashIcon } from "@heroicons/react/16/solid";
+import { Image as PhotoIcon, Trash2 as TrashIcon } from "lucide-react";
 import { api, albumCoverUrl, errorMessage, type Album } from "../../api";
 import { Button } from "../Button";
 import CoverArt from "../CoverArt";
@@ -128,7 +128,6 @@ export function EditAlbumDialog({
             {album && (
               <CoverArt
                 src={coverPreviewSrc}
-                seed={album.id}
                 label={title || album.title}
                 size={72}
                 radius={8}
@@ -202,9 +201,9 @@ export function EditAlbumDialog({
               type="checkbox"
               checked={isCompilation}
               onChange={(e) => setIsCompilation(e.target.checked)}
-              style={{ accentColor: "var(--accent)" }}
+              style={{ accentColor: "var(--primary)" }}
             />
-            <span style={{ fontSize: 13 }}>Compilation</span>
+            <span style={{ fontSize: 14 }}>Compilation</span>
           </label>
         </FieldRow>
         {error && <ErrorBanner message={error} />}

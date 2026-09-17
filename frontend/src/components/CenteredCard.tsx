@@ -34,7 +34,7 @@ export default function CenteredCard({ title, intro, children }: Props) {
                 fontWeight: 600,
                 letterSpacing: "-0.02em",
                 margin: 0,
-                color: "var(--fg)",
+                color: "var(--foreground)",
               }}
             >
               {title}
@@ -43,8 +43,8 @@ export default function CenteredCard({ title, intro, children }: Props) {
               <p
                 style={{
                   marginTop: 6,
-                  fontSize: 13,
-                  color: "var(--fg-muted)",
+                  fontSize: 14,
+                  color: "var(--muted-foreground)",
                 }}
               >
                 {intro}

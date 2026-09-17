@@ -15,12 +15,12 @@ import {
 } from "react";
 import type Hls from "hls.js";
 import {
-  ArrowPathIcon,
-  CheckIcon,
-  ClipboardDocumentIcon,
-  PauseIcon,
-  PlayIcon,
-} from "@heroicons/react/16/solid";
+  RefreshCw as ArrowPathIcon,
+  Check as CheckIcon,
+  ClipboardCopy as ClipboardDocumentIcon,
+  Pause as PauseIcon,
+  Play as PlayIcon,
+} from "lucide-react";
 import {
   DEFAULT_SHARE_SNIPPET_DURATION_SEC,
   createTrackShareLink,
@@ -256,16 +256,16 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
   };
 
   const body = loadError ? (
-    <div style={{ padding: 16, color: "var(--danger-fg)" }}>{loadError}</div>
+    <div style={{ padding: 16, color: "var(--destructive)" }}>{loadError}</div>
   ) : !track ? (
     <div
       className="mono"
-      style={{ padding: 16, color: "var(--fg-subtle)", fontSize: 11 }}
+      style={{ padding: 16, color: "var(--muted-foreground)", fontSize: 12 }}
     >
       Loading…
     </div>
   ) : (
-    <div style={{ padding: 16, display: "grid", gap: 14, fontSize: 12.5 }}>
+    <div style={{ padding: 16, display: "grid", gap: 14, fontSize: 14 }}>
       <HeaderBlock track={track} />
 
       <div style={{ display: "grid", gap: 7 }}>
@@ -276,7 +276,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
             alignItems: "center",
           }}
         >
-          <span style={{ color: "var(--fg-muted)" }}>Clip window</span>
+          <span style={{ color: "var(--muted-foreground)" }}>Clip window</span>
           <span
             className="mono"
             style={{ fontVariantNumeric: "tabular-nums" }}
@@ -300,8 +300,8 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
             justifyContent: "space-between",
             alignItems: "center",
             gap: 12,
-            color: "var(--fg-subtle)",
-            fontSize: 10.5,
+            color: "var(--muted-foreground)",
+            fontSize: 12,
           }}
           className="mono"
         >
@@ -330,7 +330,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
         </Button>
         <span
           className="mono"
-          style={{ color: "var(--fg-subtle)", fontSize: 11 }}
+          style={{ color: "var(--muted-foreground)", fontSize: 12 }}
         >
           {picked
             ? "Happy with the window? Copy the link."
@@ -343,23 +343,15 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
           className="surface-inset"
           style={{ padding: 10, display: "grid", gap: 6 }}
         >
-          <div
-            className="mono"
-            style={{
-              fontSize: 10,
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
-              color: "var(--fg-subtle)",
-            }}
-          >
+          <div className="eyebrow">
             Share link
           </div>
           <div
-            className="mono"
+            className="font-mono"
             style={{
-              fontSize: 11,
+              fontSize: 12,
               wordBreak: "break-all",
-              color: "var(--fg)",
+              color: "var(--foreground)",
             }}
           >
             {shareUrl}
@@ -370,7 +362,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
       {copyError && (
         <div
           role="alert"
-          style={{ color: "var(--danger-fg)", fontSize: 12 }}
+          style={{ color: "var(--destructive)", fontSize: 12 }}
         >
           {copyError}
         </div>
@@ -439,7 +431,6 @@ function HeaderBlock({ track }: { track: TrackDetail }) {
     <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
       <CoverArt
         src={track.has_cover ? trackCoverUrl(track) : undefined}
-        seed={track.album_id ?? track.id}
         label={track.title}
         size={64}
         radius={10}
@@ -458,7 +449,7 @@ function HeaderBlock({ track }: { track: TrackDetail }) {
         </div>
         <div
           style={{
-            color: "var(--fg-muted)",
+            color: "var(--muted-foreground)",
             fontSize: 12,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -470,7 +461,7 @@ function HeaderBlock({ track }: { track: TrackDetail }) {
         </div>
         <div
           className="mono"
-          style={{ color: "var(--fg-subtle)", fontSize: 10.5, marginTop: 2 }}
+          style={{ color: "var(--muted-foreground)", fontSize: 12, marginTop: 2 }}
         >
           {fmtDurationMs(track.duration_ms)}
         </div>
@@ -663,8 +654,8 @@ function PreviewStrip({
         position: "relative",
         height: 44,
         borderRadius: 6,
-        background: "var(--bg-elev-1)",
-        border: "1px solid var(--border-soft)",
+        background: "var(--card)",
+        border: "1px solid var(--border)",
         cursor: durationSec > 0 ? "pointer" : "not-allowed",
         touchAction: "none",
         userSelect: "none",
@@ -696,11 +687,11 @@ function PreviewStrip({
           bottom: 0,
           left: `${startPct}%`,
           width: `${Math.max(0, endPct - startPct)}%`,
-          background: "color-mix(in oklch, var(--accent) 30%, transparent)",
+          background: "color-mix(in oklch, var(--primary) 30%, transparent)",
           borderTop:
-            "1px solid color-mix(in oklch, var(--accent) 65%, transparent)",
+            "1px solid color-mix(in oklch, var(--primary) 65%, transparent)",
           borderBottom:
-            "1px solid color-mix(in oklch, var(--accent) 65%, transparent)",
+            "1px solid color-mix(in oklch, var(--primary) 65%, transparent)",
           cursor: "grab",
         }}
       />
@@ -728,7 +719,7 @@ function PreviewStrip({
           bottom: -2,
           left: `${playheadPct}%`,
           width: 2,
-          background: "var(--fg)",
+          background: "var(--foreground)",
           opacity: 0.7,
           pointerEvents: "none",
         }}
@@ -773,9 +764,9 @@ function TrimHandle({
         display: "grid",
         placeItems: "center",
         background:
-          "color-mix(in oklch, var(--accent) 22%, var(--bg-elev-1))",
-        borderLeft: "2px solid var(--accent)",
-        borderRight: "2px solid var(--accent)",
+          "color-mix(in oklch, var(--primary) 22%, var(--card))",
+        borderLeft: "2px solid var(--primary)",
+        borderRight: "2px solid var(--primary)",
         cursor: "ew-resize",
         touchAction: "none",
       }}
@@ -786,7 +777,7 @@ function TrimHandle({
           width: 2,
           height: 14,
           borderRadius: 999,
-          background: "color-mix(in oklch, var(--accent) 70%, var(--fg))",
+          background: "color-mix(in oklch, var(--primary) 70%, var(--foreground))",
           opacity: 0.8,
           pointerEvents: "none",
         }}

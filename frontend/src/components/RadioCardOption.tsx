@@ -30,10 +30,10 @@ export default function RadioCardOption({
         alignItems: "flex-start",
         gap: 12,
         padding: 12,
-        borderRadius: "var(--r-md)",
-        border: `1px solid ${checked ? "color-mix(in oklch, var(--accent) 40%, var(--border))" : "var(--border)"}`,
+        borderRadius: "var(--radius-lg)",
+        border: `1px solid ${checked ? "var(--primary)" : "var(--border)"}`,
         background: checked
-          ? "color-mix(in oklch, var(--accent) 10%, var(--bg-elev-2))"
+          ? "color-mix(in oklch, var(--primary) 5%, transparent)"
           : "transparent",
         cursor: "pointer",
       }}
@@ -44,11 +44,11 @@ export default function RadioCardOption({
         value={value}
         checked={checked}
         onChange={onChange}
-        style={{ accentColor: "var(--accent)", marginTop: 2 }}
+        style={{ accentColor: "var(--primary)", marginTop: 2 }}
       />
       <span style={{ flex: 1 }}>
         <span
-          style={{ display: "block", fontSize: 13, fontWeight: 500, color: "var(--fg)" }}
+          style={{ display: "block", fontSize: 14, fontWeight: 500, color: "var(--foreground)" }}
         >
           {label}
         </span>
@@ -56,7 +56,7 @@ export default function RadioCardOption({
           style={{
             display: "block",
             fontSize: 12,
-            color: "var(--fg-muted)",
+            color: "var(--muted-foreground)",
             marginTop: 2,
           }}
         >

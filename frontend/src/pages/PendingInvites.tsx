@@ -48,7 +48,7 @@ export default function PendingInvites() {
         count={rows ? `${rows.length} pending` : "—"}
       />
 
-      <p style={{ color: "var(--fg-muted)", fontSize: 13, marginTop: 8, maxWidth: "60ch" }}>
+      <p style={{ color: "var(--muted-foreground)", fontSize: 14, marginTop: 8, maxWidth: "60ch" }}>
         Other users can invite you to their collaborative playlists. Accepted
         playlists show up in your sidebar; declined invites are dismissed silently.
       </p>
@@ -58,7 +58,7 @@ export default function PendingInvites() {
         error={error}
         empty={(data) => data.length === 0}
         emptyState={
-          <p style={{ marginTop: 20, color: "var(--fg-muted)", fontSize: 13 }}>
+          <p style={{ marginTop: 20, color: "var(--muted-foreground)", fontSize: 14 }}>
             No pending invites.
           </p>
         }
@@ -97,17 +97,17 @@ function PendingInviteRow({
         alignItems: "center",
         gap: 16,
         padding: "14px 18px",
-        borderTop: "1px solid var(--border-soft)",
+        borderTop: "1px solid var(--border)",
         flexWrap: "wrap",
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)" }}>
+        <div style={{ fontSize: 14, fontWeight: 500, color: "var(--foreground)" }}>
           {invite.playlist_name}
         </div>
         <div
           className="mono"
-          style={{ fontSize: 10.5, color: "var(--fg-subtle)" }}
+          style={{ fontSize: 12, color: "var(--muted-foreground)" }}
         >
           {invite.owner_name} invited you as {invite.role} ·{" "}
           {new Date(invite.invited_at).toLocaleDateString()}

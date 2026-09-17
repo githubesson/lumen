@@ -29,8 +29,8 @@ const PageFallback = () => (
       display: "grid",
       placeItems: "center",
       height: "100%",
-      color: "var(--fg-subtle)",
-      fontSize: 11,
+      color: "var(--muted-foreground)",
+      fontSize: 12,
     }}
   >
     Loading...

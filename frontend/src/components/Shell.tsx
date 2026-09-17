@@ -8,30 +8,30 @@ import {
   useParams,
 } from "react-router-dom";
 import {
-  AdjustmentsHorizontalIcon,
-  ArrowDownTrayIcon,
-  ArrowLeftEndOnRectangleIcon,
-  ArrowUpTrayIcon,
-  Bars3Icon,
-  BookOpenIcon,
-  ChevronDoubleLeftIcon,
-  ChevronDoubleRightIcon,
-  ChevronRightIcon,
-  ClockIcon,
-  Cog6ToothIcon,
-  EnvelopeIcon,
-  HeartIcon,
-  MagnifyingGlassIcon,
-  MoonIcon,
-  MusicalNoteIcon,
-  PlusIcon,
-  QueueListIcon,
-  RadioIcon,
-  ServerStackIcon,
-  SparklesIcon,
-  SunIcon,
-  XMarkIcon,
-} from "@heroicons/react/16/solid";
+  SlidersHorizontal as AdjustmentsHorizontalIcon,
+  Download as ArrowDownTrayIcon,
+  LogOut as ArrowLeftEndOnRectangleIcon,
+  Upload as ArrowUpTrayIcon,
+  Menu as Bars3Icon,
+  MicVocal as BookOpenIcon,
+  PanelLeftClose as ChevronDoubleLeftIcon,
+  PanelLeftOpen as ChevronDoubleRightIcon,
+  ChevronRight as ChevronRightIcon,
+  Clock as ClockIcon,
+  Settings as Cog6ToothIcon,
+  Mail as EnvelopeIcon,
+  Heart as HeartIcon,
+  Search as MagnifyingGlassIcon,
+  Moon as MoonIcon,
+  Music as MusicalNoteIcon,
+  Plus as PlusIcon,
+  ListMusic as QueueListIcon,
+  Radio as RadioIcon,
+  Server as ServerStackIcon,
+  Sparkles as SparklesIcon,
+  Sun as SunIcon,
+  X as XMarkIcon,
+} from "lucide-react";
 import { api, type Playlist } from "../api";
 import { useAuth } from "../context/Auth";
 import { usePlaylists } from "../context/Playlists";
@@ -39,7 +39,6 @@ import { useTheme } from "../context/Theme";
 import { useKey } from "../lib/keybindings";
 import { useDiscordPresence } from "../lib/discordPresence";
 import { startDesktopDownload } from "../lib/downloads";
-import { swatchFor } from "../lib/swatch";
 import { electron, getDesktopConfig, isElectron } from "../lib/platform";
 import { useLyricsPanel } from "../context/LyricsPanel";
 import MiniPlayer from "./MiniPlayer";
@@ -252,8 +251,8 @@ export default function Shell() {
               className="mono"
               style={{
                 padding: "4px 10px",
-                fontSize: 10,
-                color: "var(--fg-subtle)",
+                fontSize: 12,
+                color: "var(--muted-foreground)",
               }}
             >
               None yet
@@ -267,9 +266,8 @@ export default function Shell() {
                 "sidebar-playlist" + (isActive ? " active" : "")
               }
             >
-              <div
-                className="sidebar-playlist-swatch"
-                style={{ background: swatchFor(p.id) }}
+              <QueueListIcon
+                className="sidebar-playlist-icon"
                 aria-hidden="true"
               />
               <span className="sidebar-playlist-name">{p.name}</span>

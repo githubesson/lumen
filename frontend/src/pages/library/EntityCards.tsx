@@ -27,7 +27,6 @@ export function AlbumCard({
               ? albumCoverUrl(a.id)
               : null
         }
-        seed={a.id}
         label={a.title}
         forcePlaceholder={!("cover_url" in a && a.cover_url) && !a.has_cover}
       />
@@ -60,7 +59,6 @@ export function ArtistCard({
         src={
           "cover_url" in a && a.cover_url ? resolveCoverUrl(a.cover_url) : null
         }
-        seed={a.id}
         label={a.name}
         radius={999}
         forcePlaceholder={!("cover_url" in a && a.cover_url)}

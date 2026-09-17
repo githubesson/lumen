@@ -57,7 +57,7 @@ export default function Register() {
   if (checking) {
     return (
       <CenteredCard title="Checking invite">
-        <p className="text-center text-sm/5 text-(--fg-subtle)">
+        <p className="text-center text-sm/5 text-(--muted-foreground)">
           One moment…
         </p>
       </CenteredCard>
@@ -70,7 +70,7 @@ export default function Register() {
         title="Invite unavailable"
         intro="This link is missing, expired, or already used."
       >
-        <p className="text-center text-sm/5 text-(--fg-subtle)">
+        <p className="text-center text-sm/5 text-(--muted-foreground)">
           Ask an admin for a fresh invite.
         </p>
       </CenteredCard>
@@ -83,7 +83,7 @@ export default function Register() {
       intro={
         <>
           Registering as{" "}
-          <span className="inline-flex items-center gap-x-1 rounded-full bg-(--fg) px-2 py-0.5 font-medium text-(--bg)">
+          <span className="inline-flex items-center gap-x-1 rounded-full bg-(--foreground) px-2 py-0.5 font-medium text-(--background)">
             {check.target_role}
           </span>
           .

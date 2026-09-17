@@ -1,10 +1,10 @@
 import { ReactNode } from "react";
 import {
-  ArrowPathIcon,
-  CloudArrowDownIcon,
-  PlayIcon,
-  TrashIcon,
-} from "@heroicons/react/16/solid";
+  RefreshCw as ArrowPathIcon,
+  CloudDownload as CloudArrowDownIcon,
+  Play as PlayIcon,
+  Trash2 as TrashIcon,
+} from "lucide-react";
 import { isValidPinID } from "../../api";
 import { Button } from "../../components/Button";
 import { AdminSectionTitle } from "./AdminSectionTitle";
@@ -32,17 +32,17 @@ function PinStatusCell({
         {pin.enabled ? "active" : "paused"}
       </span>
       {!hasPinID ? (
-        <span style={{ color: "var(--danger-fg)", fontSize: 11 }}>
+        <span style={{ color: "var(--destructive)", fontSize: 12 }}>
           missing pin id
         </span>
       ) : pin.last_error ? (
-        <span style={{ color: "var(--danger-fg)", fontSize: 11 }}>
+        <span style={{ color: "var(--destructive)", fontSize: 12 }}>
           {pin.last_error}
         </span>
       ) : counts ? (
         <span
           className="mono"
-          style={{ color: "var(--fg-subtle)", fontSize: 10.5 }}
+          style={{ color: "var(--muted-foreground)", fontSize: 12 }}
         >
           {counts}
         </span>
@@ -137,14 +137,14 @@ export function PinTable<Pin extends PinLike, Download extends DownloadLike>({
       <tbody>
         {pins === null && (
           <tr>
-            <td colSpan={6} className="mono" style={{ color: "var(--fg-subtle)" }}>
+            <td colSpan={6} className="mono" style={{ color: "var(--muted-foreground)" }}>
               Loading...
             </td>
           </tr>
         )}
         {pins?.length === 0 && (
           <tr>
-            <td colSpan={6} style={{ color: "var(--fg-muted)" }}>
+            <td colSpan={6} style={{ color: "var(--muted-foreground)" }}>
               {emptyLabel}
             </td>
           </tr>
@@ -216,7 +216,7 @@ export function DownloadHistoryTable<Download extends DownloadLike & {
       >
         <div>
           <AdminSectionTitle as="div">Recent downloads</AdminSectionTitle>
-          <div style={{ fontSize: 12.5, color: "var(--fg-muted)" }}>{title}</div>
+          <div style={{ fontSize: 14, color: "var(--muted-foreground)" }}>{title}</div>
         </div>
         <Button
           size="sm"
@@ -238,14 +238,14 @@ export function DownloadHistoryTable<Download extends DownloadLike & {
         <tbody>
           {!rows && (
             <tr>
-              <td colSpan={4} className="mono" style={{ color: "var(--fg-subtle)" }}>
+              <td colSpan={4} className="mono" style={{ color: "var(--muted-foreground)" }}>
                 Loading...
               </td>
             </tr>
           )}
           {rows?.length === 0 && (
             <tr>
-              <td colSpan={4} style={{ color: "var(--fg-muted)" }}>
+              <td colSpan={4} style={{ color: "var(--muted-foreground)" }}>
                 No download records yet.
               </td>
             </tr>
@@ -266,8 +266,8 @@ export function DownloadHistoryTable<Download extends DownloadLike & {
                 {row.error && (
                   <div
                     style={{
-                      color: "var(--danger-fg)",
-                      fontSize: 11,
+                      color: "var(--destructive)",
+                      fontSize: 12,
                       marginTop: 4,
                     }}
                   >
@@ -275,10 +275,10 @@ export function DownloadHistoryTable<Download extends DownloadLike & {
                   </div>
                 )}
               </td>
-              <td className="mono" style={{ wordBreak: "break-all" }}>
+              <td className="font-mono" style={{ wordBreak: "break-all" }}>
                 {row.file_path || "-"}
               </td>
-              <td className="mono" style={{ wordBreak: "break-all" }}>
+              <td className="font-mono" style={{ wordBreak: "break-all" }}>
                 {row[sourceField]}
               </td>
               <td className="mono">{formatDate(row.updated_at)}</td>
@@ -292,11 +292,11 @@ export function DownloadHistoryTable<Download extends DownloadLike & {
 
 export function PinDestinationCell({ path, rootExists }: { path: string; rootExists: boolean }) {
   return (
-    <td className="mono" style={{ wordBreak: "break-all" }}>
+    <td className="font-mono" style={{ wordBreak: "break-all" }}>
       {path}
       {!rootExists && (
         <span title="The pinned source root does not exist on the server"
-          style={{ marginLeft: 8, color: "var(--warning-fg)", fontSize: 11 }}>
+          style={{ marginLeft: 8, color: "var(--warning)", fontSize: 12 }}>
           missing
         </span>
       )}

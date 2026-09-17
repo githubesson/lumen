@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { PlayIcon, SparklesIcon } from "@heroicons/react/16/solid";
+import { Play as PlayIcon, Sparkles as SparklesIcon } from "lucide-react";
 import {
   api,
   albumCoverUrl,

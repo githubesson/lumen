@@ -3,7 +3,7 @@ import {
   type CSSProperties,
   type InputHTMLAttributes,
 } from "react";
-import { MagnifyingGlassIcon } from "@heroicons/react/16/solid";
+import { Search as MagnifyingGlassIcon } from "lucide-react";
 
 interface SearchInputProps
   extends Omit<InputHTMLAttributes<HTMLInputElement>, "className" | "style" | "type"> {

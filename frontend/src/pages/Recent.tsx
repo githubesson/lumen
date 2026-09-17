@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { ClockIcon, PlayIcon } from "@heroicons/react/16/solid";
+import { Clock as ClockIcon, Play as PlayIcon } from "lucide-react";
 import { api, type TrackListItem } from "../api";
 import { Button } from "../components/Button";
 import TrackList from "../components/TrackList";
@@ -26,7 +26,7 @@ export default function Recent() {
         title="Recently played"
         heroTrack={hero}
         fallbackIcon={
-          <ClockIcon className="size-12" style={{ color: "var(--accent-fg)" }} />
+          <ClockIcon className="size-12" style={{ color: "var(--muted-foreground)" }} />
         }
         meta={
           <>

@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { HeartIcon, PlayIcon } from "@heroicons/react/16/solid";
+import { Heart as HeartIcon, Play as PlayIcon } from "lucide-react";
 import { usePopKey } from "../lib/useTransitionMount";
 import TrackCheckbox from "./TrackCheckbox";
 
@@ -56,7 +56,7 @@ export function TrackIndexCell({
                 style={{
                   background: "transparent",
                   border: 0,
-                  color: "var(--fg)",
+                  color: "var(--foreground)",
                   cursor: "pointer",
                 }}
               >

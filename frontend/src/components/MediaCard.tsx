@@ -1,17 +1,15 @@
 import { Link } from "react-router-dom";
-import { PlayIcon } from "@heroicons/react/16/solid";
+import { Play as PlayIcon } from "lucide-react";
 import type { MouseEventHandler, ReactNode } from "react";
-import { swatchFor } from "../lib/swatch";
 
 /**
- * Generic cover-art tile (the `.card` pattern): cover or hashed swatch, title,
+ * Generic cover-art tile (the `.card` pattern): cover or muted placeholder, title,
  * subtitle, optional play-on-hover button and rank badge. Replaces the
  * copy-pasted track/album tile markup across Home and Replay.
  */
 export default function MediaCard({
   to,
   coverUrl,
-  swatchSeed,
   title,
   subtitle,
   rankBadge,
@@ -21,8 +19,6 @@ export default function MediaCard({
 }: {
   to?: string;
   coverUrl?: string | null;
-  /** Seed for the placeholder gradient when there is no coverUrl. */
-  swatchSeed?: string;
   title: ReactNode;
   subtitle?: ReactNode;
   rankBadge?: ReactNode;
@@ -33,13 +29,7 @@ export default function MediaCard({
   const art = (
     <div
       className="card-art"
-      style={
-        coverUrl
-          ? { backgroundImage: `url(${coverUrl})` }
-          : swatchSeed
-            ? { background: swatchFor(swatchSeed) }
-            : undefined
-      }
+      style={coverUrl ? { backgroundImage: `url(${coverUrl})` } : undefined}
       aria-hidden="true"
     >
       {rankBadge}

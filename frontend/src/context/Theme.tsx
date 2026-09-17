@@ -22,12 +22,22 @@ const STORAGE_KEY = "lumen.tweaks";
 
 const DEFAULTS: Tweaks = {
   theme: "dark",
-  depth: 2,
   radius: 10,
   density: "balanced",
   layout: "sidebar",
-  glow: true,
 };
+
+// Older builds persisted depth/glow tweaks; keep only the fields this build
+// still understands so retired keys are not written back.
+function knownTweaks(raw: Partial<Tweaks> | null | undefined): Partial<Tweaks> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Partial<Tweaks> = {};
+  if (raw.theme !== undefined) out.theme = raw.theme;
+  if (raw.radius !== undefined) out.radius = raw.radius;
+  if (raw.density !== undefined) out.density = raw.density;
+  if (raw.layout !== undefined) out.layout = raw.layout;
+  return out;
+}
 
 function readInitial(): Tweaks {
   try {
@@ -37,7 +47,7 @@ function readInitial(): Tweaks {
       return { ...DEFAULTS, theme: prefersDark ? "dark" : "light" };
     }
     const parsed = JSON.parse(raw);
-    return { ...DEFAULTS, ...parsed };
+    return { ...DEFAULTS, ...knownTweaks(parsed) };
   } catch {
     return DEFAULTS;
   }
@@ -46,13 +56,9 @@ function readInitial(): Tweaks {
 interface ThemeState extends Tweaks {
   toggle: () => void;
   setTheme: (t: Theme) => void;
-  setDepth: (d: number) => void;
   setRadius: (r: number) => void;
   setDensity: (d: Density) => void;
   setLayout: (l: Layout) => void;
-  setGlow: (g: boolean) => void;
-  setAccent: (l: number, c: number, h: number) => void;
-  resetAccent: () => void;
 }
 
 const Ctx = createContext<ThemeState | null>(null);
@@ -64,11 +70,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const el = document.documentElement;
     el.setAttribute("data-theme", tweaks.theme);
-    el.setAttribute("data-depth", String(tweaks.depth));
     el.setAttribute("data-radius", String(tweaks.radius));
     el.setAttribute("data-density", tweaks.density);
     el.setAttribute("data-layout", tweaks.layout);
-    el.setAttribute("data-glow", tweaks.glow ? "on" : "off");
     localStorage.setItem(STORAGE_KEY, JSON.stringify(tweaks));
     if (isElectron() && electronLoadedRef.current) {
       void saveTweaks({ tweaks });
@@ -85,7 +89,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       .then(({ tweaks: electronTweaks }) => {
         if (cancelled) return;
         electronLoadedRef.current = true;
-        setTweaks((prev) => ({ ...prev, ...electronTweaks }));
+        setTweaks((prev) => ({ ...prev, ...knownTweaks(electronTweaks) }));
       })
       .catch(() => {
         electronLoadedRef.current = true;
@@ -99,8 +103,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (!isElectron()) return;
     const isDark = tweaks.theme === "dark";
     void setTitleBarTheme({
-      color: isDark ? "#1a1a1e" : "#ffffff",
-      symbolColor: isDark ? "#f2f2f2" : "#1a1a1e",
+      // shadcn neutral --sidebar in each theme.
+      color: isDark ? "#171717" : "#fafafa",
+      symbolColor: isDark ? "#fafafa" : "#0a0a0a",
     });
   }, [tweaks.theme]);
 
@@ -113,7 +118,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       })),
     [],
   );
-  const setDepth = useCallback((d: number) => setTweaks((v) => ({ ...v, depth: d })), []);
   const setRadius = useCallback(
     (r: number) => setTweaks((v) => ({ ...v, radius: r })),
     [],
@@ -126,52 +130,23 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     (l: Layout) => setTweaks((v) => ({ ...v, layout: l })),
     [],
   );
-  const setGlow = useCallback(
-    (g: boolean) => setTweaks((v) => ({ ...v, glow: g })),
-    [],
-  );
-
-  const setAccent = useCallback((l: number, c: number, h: number) => {
-    const root = document.documentElement;
-    root.style.setProperty("--accent", `oklch(${l} ${c} ${h})`);
-    root.style.setProperty(
-      "--accent-soft",
-      `oklch(${l} ${c} ${h} / 0.14)`,
-    );
-    root.style.setProperty("--ring", `oklch(${l} ${c} ${h} / 0.55)`);
-  }, []);
-
-  const resetAccent = useCallback(() => {
-    const root = document.documentElement;
-    root.style.removeProperty("--accent");
-    root.style.removeProperty("--accent-soft");
-    root.style.removeProperty("--ring");
-  }, []);
 
   const value = useMemo<ThemeState>(
     () => ({
       ...tweaks,
       toggle,
       setTheme,
-      setDepth,
       setRadius,
       setDensity,
       setLayout,
-      setGlow,
-      setAccent,
-      resetAccent,
     }),
     [
       tweaks,
       toggle,
       setTheme,
-      setDepth,
       setRadius,
       setDensity,
       setLayout,
-      setGlow,
-      setAccent,
-      resetAccent,
     ],
   );
 

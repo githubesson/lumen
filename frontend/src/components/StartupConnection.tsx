@@ -17,7 +17,7 @@ export default function StartupConnection() {
 
   return (
     <CenteredCard title={connecting ? "Connecting to your library" : "Your server is unavailable"}>
-      <p role="status" aria-live="polite" className="text-sm text-[var(--fg-muted)]">
+      <p role="status" aria-live="polite" className="text-sm text-[var(--muted-foreground)]">
         {connecting
           ? slow ? "This is taking longer than usual. Check your connection or server settings." : "Checking your session…"
           : refreshError}

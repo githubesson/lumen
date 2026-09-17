@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { ArrowUpTrayIcon, CheckIcon } from "@heroicons/react/16/solid";
+import { Upload as ArrowUpTrayIcon, Check as CheckIcon } from "lucide-react";
 import { api, errorMessage, type UploadResult } from "../api";
 import { Button } from "./Button";
 import DialogFooter from "./DialogFooter";
@@ -130,12 +130,9 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
             style={{
               display: "grid",
               placeItems: "center",
-              borderRadius: "var(--r-md)",
-              border: `1px dashed ${dragActive ? "color-mix(in oklch, var(--accent) 60%, var(--border))" : "var(--border)"}`,
-              background: dragActive
-                ? "color-mix(in oklch, var(--accent) 10%, var(--bg-inset))"
-                : "var(--bg-inset)",
-              boxShadow: "var(--shadow-inset)",
+              borderRadius: "var(--radius-lg)",
+              border: `1px dashed ${dragActive ? "var(--ring)" : "var(--input)"}`,
+              background: dragActive ? "var(--muted)" : "transparent",
               padding: "28px 16px",
               textAlign: "center",
               cursor: "pointer",
@@ -144,17 +141,17 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
           >
             <ArrowUpTrayIcon
               className="size-4 shrink-0"
-              style={{ color: "var(--fg-muted)" }}
+              style={{ color: "var(--muted-foreground)" }}
               aria-hidden="true"
             />
-            <p style={{ marginTop: 10, fontSize: 13, color: "var(--fg)" }}>
+            <p style={{ marginTop: 10, fontSize: 14, color: "var(--foreground)" }}>
               {dragActive
                 ? "Drop to add"
                 : "Drop files here, or click to choose"}
             </p>
             <p
               className="mono"
-              style={{ marginTop: 4, fontSize: 11, color: "var(--fg-subtle)" }}
+              style={{ marginTop: 4, fontSize: 12, color: "var(--muted-foreground)" }}
             >
               MP3, FLAC, M4A, OGG, Opus, or WAV
             </p>
@@ -171,7 +168,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
           />
 
           {files.length > 0 && !results && (
-            <div style={{ marginTop: 12, fontSize: 12.5, color: "var(--fg)" }}>
+            <div style={{ marginTop: 12, fontSize: 14, color: "var(--foreground)" }}>
               {files.length} {files.length === 1 ? "file" : "files"} selected
               <ul
                 className="mono"
@@ -179,8 +176,8 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
                   marginTop: 4,
                   maxHeight: 128,
                   overflowY: "auto",
-                  fontSize: 10.5,
-                  color: "var(--fg-subtle)",
+                  fontSize: 12,
+                  color: "var(--muted-foreground)",
                   listStyle: "none",
                   padding: 0,
                 }}
@@ -207,15 +204,15 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
                     alignItems: "flex-start",
                     gap: 8,
                     padding: "6px 0",
-                    borderBottom: "1px solid var(--border-soft)",
+                    borderBottom: "1px solid var(--border)",
                   }}
                 >
                   <StatusDot result={r} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p
                       style={{
-                        fontSize: 12.5,
-                        color: "var(--fg)",
+                        fontSize: 14,
+                        color: "var(--foreground)",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
@@ -227,8 +224,8 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
                     <p
                       className="mono"
                       style={{
-                        fontSize: 10.5,
-                        color: "var(--fg-subtle)",
+                        fontSize: 12,
+                        color: "var(--muted-foreground)",
                         margin: "2px 0 0",
                       }}
                     >
@@ -268,7 +265,7 @@ function StatusDot({ result }: { result: UploadResult }) {
           placeItems: "center",
           width: 16,
           height: 16,
-          color: "var(--danger-fg)",
+          color: "var(--destructive)",
           marginTop: 1,
         }}
       >
@@ -282,7 +279,7 @@ function StatusDot({ result }: { result: UploadResult }) {
     return (
       <CheckIcon
         className="size-4 shrink-0"
-        style={{ color: "var(--accent)", marginTop: 1 }}
+        style={{ color: "var(--primary)", marginTop: 1 }}
         aria-hidden="true"
       />
     );
@@ -294,7 +291,7 @@ function StatusDot({ result }: { result: UploadResult }) {
         placeItems: "center",
         width: 16,
         height: 16,
-        color: "var(--fg-subtle)",
+        color: "var(--muted-foreground)",
         marginTop: 1,
       }}
     >

@@ -24,8 +24,8 @@ export default function ListMeta({
       className="mono"
       style={{
         marginTop: 14,
-        color: "var(--fg-subtle)",
-        fontSize: 11,
+        color: "var(--muted-foreground)",
+        fontSize: 12,
       }}
     >
       {text}

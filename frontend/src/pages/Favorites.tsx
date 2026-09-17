@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { HeartIcon, PlayIcon } from "@heroicons/react/16/solid";
+import { Heart as HeartIcon, Play as PlayIcon } from "lucide-react";
 import { api, type TrackListItem } from "../api";
 import { Button } from "../components/Button";
 import TrackList from "../components/TrackList";
@@ -25,9 +25,8 @@ export default function Favorites() {
         kind="Collection"
         title="Favorites"
         heroTrack={hero}
-        fallbackGradient="linear-gradient(135deg, color-mix(in oklch, var(--accent) 40%, var(--bg-elev-2)), var(--bg-elev-3))"
         fallbackIcon={
-          <HeartIcon className="size-12" style={{ color: "var(--accent-fg)" }} />
+          <HeartIcon className="size-12" style={{ color: "var(--muted-foreground)" }} />
         }
         meta={
           <>

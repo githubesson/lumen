@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { createPortal } from "react-dom";
-import { MusicalNoteIcon, XMarkIcon } from "@heroicons/react/16/solid";
+import { Music as MusicalNoteIcon, X as XMarkIcon } from "lucide-react";
 import { trackCoverUrl } from "../api";
 import { usePlayer, useRemotePlayback } from "../context/Player";
 import { useDismiss } from "../lib/useDismiss";
@@ -127,7 +127,6 @@ export default function QueuePopover({
                   <QueueRow
                     title={externalCurrent.title}
                     artist={externalCurrent.artist ?? externalCurrent.album}
-                    seed={externalCurrent.id}
                     active
                   />
                 ) : current ? (
@@ -135,7 +134,6 @@ export default function QueuePopover({
                     title={current.title}
                     artist={current.artist}
                     coverUrl={trackCoverUrl(current)}
-                    seed={current.album_id ?? current.id}
                     active
                   />
                 ) : null}
@@ -153,7 +151,6 @@ export default function QueuePopover({
                       key={`${t.id}-${externalIndex + 1 + i}`}
                       title={t.title}
                       artist={t.artist ?? t.album}
-                      seed={t.id}
                       onClick={
                         externalQueue?.onJump
                           ? () => {
@@ -170,7 +167,6 @@ export default function QueuePopover({
                       title={t.title}
                       artist={t.artist}
                       coverUrl={trackCoverUrl(t)}
-                      seed={t.album_id ?? t.id}
                       onClick={() => {
                         jumpTo(index + 1 + i);
                         onClose();
@@ -215,20 +211,18 @@ function QueueRow({
   title,
   artist,
   coverUrl,
-  seed,
   active,
   onClick,
 }: {
   title: string;
   artist?: string;
   coverUrl?: string;
-  seed: string;
   active?: boolean;
   onClick?: () => void;
 }) {
   const content = (
     <>
-      <CoverArt className="queue-pop-art" src={coverUrl} seed={seed} label={title} />
+      <CoverArt className="queue-pop-art" src={coverUrl} label={title} />
       <div className="queue-pop-text">
         <div className="queue-pop-title">{title}</div>
         <div className="queue-pop-artist">{artist ?? "Unknown artist"}</div>

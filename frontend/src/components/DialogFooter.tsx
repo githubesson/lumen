@@ -30,7 +30,7 @@ export default function DialogFooter({
         justifyContent: start != null ? "space-between" : "flex-end",
         gap: 8,
         ...(bordered
-          ? { padding: "10px 16px", borderTop: "1px solid var(--border-soft)" }
+          ? { padding: "10px 16px", borderTop: "1px solid var(--border)" }
           : null),
         ...style,
       }}

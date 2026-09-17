@@ -9,7 +9,7 @@ interface FieldsetProps {
 }
 
 /**
- * Borderless fieldset with the project's standard uppercase-mono legend.
+ * Borderless fieldset with the project's standard eyebrow legend.
  * Used for grouped radio/card options like visibility or upload scope.
  */
 export default function Fieldset({
@@ -31,12 +31,8 @@ export default function Fieldset({
       }}
     >
       <legend
-        className="mono"
+        className="eyebrow"
         style={{
-          fontSize: 10,
-          color: "var(--fg-subtle)",
-          textTransform: "uppercase",
-          letterSpacing: "0.08em",
           padding: 0,
           marginBottom: 4,
         }}

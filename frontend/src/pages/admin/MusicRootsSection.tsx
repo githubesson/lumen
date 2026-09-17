@@ -1,10 +1,10 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
-  ArrowPathIcon,
-  ExclamationTriangleIcon,
-  FolderPlusIcon,
-  TrashIcon,
-} from "@heroicons/react/16/solid";
+  RefreshCw as ArrowPathIcon,
+  TriangleAlert as ExclamationTriangleIcon,
+  FolderPlus as FolderPlusIcon,
+  Trash2 as TrashIcon,
+} from "lucide-react";
 import {
   api,
   errorMessage,
@@ -22,11 +22,11 @@ function Stat({ label, value }: { label: string; value: number }) {
     <div>
       <div
         className="mono"
-        style={{ fontSize: 10, color: "var(--fg-subtle)", marginBottom: 2 }}
+        style={{ fontSize: 12, color: "var(--muted-foreground)", marginBottom: 2 }}
       >
         {label}
       </div>
-      <div style={{ fontSize: 18, fontWeight: 600, color: "var(--fg)" }}>
+      <div style={{ fontSize: 18, fontWeight: 600, color: "var(--foreground)" }}>
         {value}
       </div>
     </div>
@@ -163,8 +163,8 @@ export function MusicRootsSection({
     <>
       <p
         style={{
-          color: "var(--fg-muted)",
-          fontSize: 13,
+          color: "var(--muted-foreground)",
+          fontSize: 14,
           margin: 0,
           maxWidth: "70ch",
         }}
@@ -261,21 +261,21 @@ export function MusicRootsSection({
           <tbody>
             {roots === null && (
               <tr>
-                <td colSpan={4} className="mono" style={{ color: "var(--fg-subtle)" }}>
+                <td colSpan={4} className="mono" style={{ color: "var(--muted-foreground)" }}>
                   Loading…
                 </td>
               </tr>
             )}
             {roots?.length === 0 && (
               <tr>
-                <td colSpan={4} style={{ color: "var(--fg-muted)" }}>
+                <td colSpan={4} style={{ color: "var(--muted-foreground)" }}>
                   No folders yet. Add one above.
                 </td>
               </tr>
             )}
             {roots?.map((r) => (
               <tr key={r.id || "primary"}>
-                <td className="mono" style={{ color: "var(--fg)", wordBreak: "break-all" }}>
+                <td className="font-mono" style={{ color: "var(--foreground)", wordBreak: "break-all" }}>
                   {r.path}
                   {!r.exists && (
                     <span
@@ -285,8 +285,8 @@ export function MusicRootsSection({
                         display: "inline-flex",
                         alignItems: "center",
                         gap: 4,
-                        color: "var(--warning-fg)",
-                        fontSize: 11,
+                        color: "var(--warning)",
+                        fontSize: 12,
                       }}
                     >
                       <ExclamationTriangleIcon className="size-3" aria-hidden="true" />
@@ -294,7 +294,7 @@ export function MusicRootsSection({
                     </span>
                   )}
                 </td>
-                <td style={{ color: "var(--fg-muted)" }}>
+                <td style={{ color: "var(--muted-foreground)" }}>
                   {r.primary ? <em>Primary (MUSIC_PATH)</em> : r.label || "—"}
                 </td>
                 <td>
@@ -328,7 +328,7 @@ export function MusicRootsSection({
       {rescan && !rescan.running && (rescan.processed ?? 0) > 0 && (
         <section
           className="surface"
-          style={{ padding: 16, fontSize: 12.5, color: "var(--fg-muted)" }}
+          style={{ padding: 16, fontSize: 14, color: "var(--muted-foreground)" }}
         >
           <AdminSectionTitle as="div" style={{ marginBottom: 8 }}>
             Last scan

@@ -2,7 +2,7 @@ import UploadDialog from "../components/UploadDialog";
 import { useAuth } from "../context/Auth";
 import { useCallback, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { PlayIcon } from "@heroicons/react/16/solid";
+import { Play as PlayIcon } from "lucide-react";
 import {
   api,
   isSearchType,
@@ -333,7 +333,6 @@ function TracksGrid({
           <CoverArt
             className="card-art"
             src={trackCoverUrl(t)}
-            seed={t.album_id ?? t.id}
             label={t.album_title || t.title}
           >
             <button
@@ -368,7 +367,7 @@ function LibraryEmptyState() {
       <EmptyState title="Your library is empty." hint={
         <>
           Drop audio files into a watched folder on the server, or{" "}
-          <button type="button" className="section-link" style={{ color: "var(--accent)" }} onClick={() => setUploadOpen(true)}>
+          <button type="button" className="section-link" style={{ color: "var(--primary)" }} onClick={() => setUploadOpen(true)}>
             upload them
           </button>. New files are ingested automatically.
         </>

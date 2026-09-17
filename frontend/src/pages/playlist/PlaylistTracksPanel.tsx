@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { TrashIcon } from "@heroicons/react/16/solid";
+import { Trash2 as TrashIcon } from "lucide-react";
 import {
   albumCoverUrl,
   coverUrl,
@@ -139,7 +139,7 @@ export default function PlaylistTracksPanel({
       {searchActive && (
         <div
           className="mono"
-          style={{ fontSize: 11, color: "var(--fg-subtle)" }}
+          style={{ fontSize: 12, color: "var(--muted-foreground)" }}
         >
           {tracks.length} of {totalCount} match
         </div>
@@ -577,7 +577,6 @@ const PlaylistRow = memo(function PlaylistRow({
               ? albumCoverUrl(entry.album_id)
               : coverUrl(entry.track_id)
           }
-          seed={entry.album_id ?? entry.track_id}
           label={entry.album_title || entry.title}
         />
       </td>
@@ -592,7 +591,7 @@ const PlaylistRow = memo(function PlaylistRow({
           {entry.added_by ? ` · added by ${entry.added_by}` : ""}
         </div>
       </td>
-      <td className="col-album mono" title={entry.album_title ? displayText(entry.album_title) : undefined} style={{ color: "var(--fg-subtle)", fontSize: 11 }}>
+      <td className="col-album mono" title={entry.album_title ? displayText(entry.album_title) : undefined} style={{ color: "var(--muted-foreground)", fontSize: 12 }}>
         {entry.album_title ? displayText(entry.album_title) : "—"}
       </td>
       <td className="col-added">{added}</td>

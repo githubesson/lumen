@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { PencilSquareIcon } from "@heroicons/react/16/solid";
+import { SquarePen as PencilSquareIcon } from "lucide-react";
 import { trackCoverUrl, type TrackListItem } from "../api";
 import { displayText, fmtDurationMs } from "../lib/format";
 import { isLocalTrack } from "../lib/track";
@@ -360,7 +360,6 @@ export const TrackRow = memo(function TrackRow({
           <CoverArt
             className="mini-art"
             src={trackCoverUrl(track)}
-            seed={track.album_id ?? track.id}
             label={track.album_title || track.title}
           />
         </td>
@@ -381,15 +380,7 @@ export const TrackRow = memo(function TrackRow({
             <Tooltip
               content={
                 <div style={{ display: "grid", gap: 2 }}>
-                  <div
-                    className="mono"
-                    style={{
-                      fontSize: 9,
-                      letterSpacing: "0.12em",
-                      textTransform: "uppercase",
-                      color: "var(--fg-subtle)",
-                    }}
-                  >
+                  <div className="eyebrow">
                     Also known as
                   </div>
                   {akaParts.map((t) => (
@@ -416,7 +407,7 @@ export const TrackRow = memo(function TrackRow({
         <td
           className="col-album mono"
           title={track.album_title ? displayText(track.album_title) : undefined}
-          style={{ color: "var(--fg-subtle)", fontSize: 11 }}
+          style={{ color: "var(--muted-foreground)", fontSize: 12 }}
         >
           {track.album_title ? displayText(track.album_title) : "—"}
         </td>

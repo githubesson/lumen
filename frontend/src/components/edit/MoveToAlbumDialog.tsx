@@ -100,9 +100,9 @@ export function MoveToAlbumDialog({
     <DialogShell open={open} title="Move to album" onClose={onClose}>
       <div className="px-4 py-4" style={{ display: "grid", gap: 12 }}>
         {track && (
-          <div style={{ fontSize: 12.5, color: "var(--fg-muted)" }}>
+          <div style={{ fontSize: 14, color: "var(--muted-foreground)" }}>
             Moving{" "}
-            <span style={{ color: "var(--fg)", fontWeight: 500 }}>
+            <span style={{ color: "var(--foreground)", fontWeight: 500 }}>
               {track.title}
             </span>
             {track.album_title
@@ -130,7 +130,7 @@ export function MoveToAlbumDialog({
           {albums === null && (
             <div
               className="mono"
-              style={{ color: "var(--fg-subtle)", fontSize: 11, padding: 8 }}
+              style={{ color: "var(--muted-foreground)", fontSize: 12, padding: 8 }}
             >
               Loading…
             </div>
@@ -138,7 +138,7 @@ export function MoveToAlbumDialog({
           {albums && albums.length === 0 && (
             <div
               className="mono"
-              style={{ color: "var(--fg-subtle)", fontSize: 11, padding: 8 }}
+              style={{ color: "var(--muted-foreground)", fontSize: 12, padding: 8 }}
             >
               No albums match.
             </div>
@@ -158,7 +158,7 @@ export function MoveToAlbumDialog({
                   gap: 10,
                   width: "100%",
                   padding: 6,
-                  borderRadius: "var(--r-md)",
+                  borderRadius: "var(--radius-lg)",
                   border: "1px solid transparent",
                   background: "transparent",
                   textAlign: "left",
@@ -168,7 +168,6 @@ export function MoveToAlbumDialog({
               >
                 <CoverArt
                   src={a.has_cover ? albumCoverUrl(a.id, 80) : null}
-                  seed={a.id}
                   label={a.title}
                   size={40}
                   radius={6}
@@ -177,7 +176,7 @@ export function MoveToAlbumDialog({
                 <div style={{ flex: 1, overflow: "hidden" }}>
                   <div
                     style={{
-                      fontSize: 13,
+                      fontSize: 14,
                       fontWeight: 500,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -189,8 +188,8 @@ export function MoveToAlbumDialog({
                   <div
                     className="mono"
                     style={{
-                      fontSize: 10.5,
-                      color: "var(--fg-subtle)",
+                      fontSize: 12,
+                      color: "var(--muted-foreground)",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
@@ -205,7 +204,7 @@ export function MoveToAlbumDialog({
                 {isCurrent && (
                   <span
                     className="mono"
-                    style={{ fontSize: 10, color: "var(--fg-subtle)" }}
+                    style={{ fontSize: 12, color: "var(--muted-foreground)" }}
                   >
                     Current
                   </span>
@@ -213,7 +212,7 @@ export function MoveToAlbumDialog({
                 {busy && (
                   <span
                     className="mono"
-                    style={{ fontSize: 10, color: "var(--fg-subtle)" }}
+                    style={{ fontSize: 12, color: "var(--muted-foreground)" }}
                   >
                     …
                   </span>

@@ -1,12 +1,12 @@
 import { useRef } from "react";
 import { createPortal } from "react-dom";
 import {
-  CheckIcon,
-  ComputerDesktopIcon,
-  SignalIcon,
-  WindowIcon,
-  XMarkIcon,
-} from "@heroicons/react/16/solid";
+  Check as CheckIcon,
+  Monitor as ComputerDesktopIcon,
+  Cast as SignalIcon,
+  PictureInPicture2 as WindowIcon,
+  X as XMarkIcon,
+} from "lucide-react";
 import { useRemotePlayback } from "../context/Player";
 import { useDismiss } from "../lib/useDismiss";
 

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
-  ArrowLeftIcon,
-  PencilSquareIcon,
-  PlayIcon,
-} from "@heroicons/react/16/solid";
+  ArrowLeft as ArrowLeftIcon,
+  SquarePen as PencilSquareIcon,
+  Play as PlayIcon,
+} from "lucide-react";
 import {
   api,
   albumCoverUrl,
@@ -75,7 +75,6 @@ export function AlbumDetailView({
                 ? `${albumCoverUrl(album.id)}${coverNonce ? `?v=${coverNonce}` : ""}`
                 : null
             }
-            seed={album.id}
             label={album.title}
           />
         }
@@ -206,7 +205,6 @@ export function TidalAlbumDetailView({
               <CoverArt
                 className="detail-art"
                 src={album.cover_url ?? null}
-                seed={`tidal:${album.id}`}
                 label={album.title}
                 forcePlaceholder={!album.cover_url}
               />
@@ -270,12 +268,12 @@ export function TidalAlbumDetailView({
           style={{
             padding: 40,
             textAlign: "center",
-            color: "var(--fg-muted)",
-            fontSize: 13,
+            color: "var(--muted-foreground)",
+            fontSize: 14,
           }}
         >
           {error && <ErrorBanner message={error} />}
-          <p style={{ color: "var(--fg)", fontWeight: 500, fontSize: 14 }}>
+          <p style={{ color: "var(--foreground)", fontWeight: 500, fontSize: 14 }}>
             TIDAL album unavailable.
           </p>
         </div>
@@ -399,11 +397,11 @@ export function NotFound({
         style={{
           padding: 40,
           textAlign: "center",
-          color: "var(--fg-muted)",
-          fontSize: 13,
+          color: "var(--muted-foreground)",
+          fontSize: 14,
         }}
       >
-        <p style={{ color: "var(--fg)", fontWeight: 500, fontSize: 14, margin: 0 }}>
+        <p style={{ color: "var(--foreground)", fontWeight: 500, fontSize: 14, margin: 0 }}>
           {kind} not found.
         </p>
         <p style={{ marginTop: 8 }}>It may have been removed or renamed.</p>

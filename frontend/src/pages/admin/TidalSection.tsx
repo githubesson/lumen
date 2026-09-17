@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  ArrowPathIcon,
-  ArrowTopRightOnSquareIcon,
-  CheckCircleIcon,
-  LinkIcon,
-  TrashIcon,
-} from "@heroicons/react/16/solid";
+  RefreshCw as ArrowPathIcon,
+  ExternalLink as ArrowTopRightOnSquareIcon,
+  CircleCheck as CheckCircleIcon,
+  Link as LinkIcon,
+  Trash2 as TrashIcon,
+} from "lucide-react";
 import {
   api,
   errorMessage,
@@ -185,11 +185,11 @@ export function TidalSection() {
             display: "flex",
             alignItems: "center",
             gap: 8,
-            border: "1px solid var(--border-strong)",
-            background: "var(--accent-soft)",
+            border: "1px solid var(--input)",
+            background: "var(--accent)",
             borderRadius: 8,
             padding: "10px 12px",
-            fontSize: 12.5,
+            fontSize: 14,
             marginBottom: 14,
           }}
         >
@@ -227,13 +227,13 @@ export function TidalSection() {
                   gap: 12,
                   padding: "9px 0",
                   borderBottom:
-                    i < details.length - 1 ? "1px solid var(--border-soft)" : "none",
+                    i < details.length - 1 ? "1px solid var(--border)" : "none",
                 }}
               >
-                <span style={{ color: "var(--fg-muted)", fontSize: 12.5 }}>{label}</span>
+                <span style={{ color: "var(--muted-foreground)", fontSize: 14 }}>{label}</span>
                 <span
                   className={mono ? "mono" : undefined}
-                  style={{ fontSize: 13, textAlign: "right", overflowWrap: "anywhere" }}
+                  style={{ fontSize: 14, textAlign: "right", overflowWrap: "anywhere" }}
                 >
                   {value}
                 </span>
@@ -267,24 +267,24 @@ export function TidalSection() {
             </Button>
           </div>
 
-          <p style={{ color: "var(--fg-muted)", fontSize: 12.5, margin: 0 }}>
+          <p style={{ color: "var(--muted-foreground)", fontSize: 14, margin: 0 }}>
             Subscribed accounts used for live TIDAL search and streaming.
             Credentials stay inside the private hifi-api service.
           </p>
 
           {!status?.management_supported && !loading ? (
-            <div style={{ color: "var(--fg-muted)", fontSize: 12.5 }}>
+            <div style={{ color: "var(--muted-foreground)", fontSize: 14 }}>
               Account controls require the Lumen hifi-api extension. Recreate the
               hifi-api container after updating the server.
             </div>
           ) : accounts.length === 0 ? (
             <div
               style={{
-                border: "1px dashed var(--border-strong)",
+                border: "1px dashed var(--input)",
                 borderRadius: 8,
                 padding: 14,
-                color: "var(--fg-muted)",
-                fontSize: 13,
+                color: "var(--muted-foreground)",
+                fontSize: 14,
               }}
             >
               No TIDAL account is linked. Link a subscribed account to enable full playback.
@@ -299,16 +299,16 @@ export function TidalSection() {
                   justifyContent: "space-between",
                   gap: 12,
                   border: "1px solid var(--border)",
-                  background: "var(--bg-elev-3)",
+                  background: "var(--accent)",
                   borderRadius: 8,
                   padding: "10px 12px",
                 }}
               >
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>
                     Account {account.user_id || "unknown"}
                   </div>
-                  <div className="mono" style={{ color: "var(--fg-muted)", fontSize: 11 }}>
+                  <div className="mono" style={{ color: "var(--muted-foreground)", fontSize: 12 }}>
                     {account.removable ? "Managed by Lumen" : "Configured by environment"}
                   </div>
                 </div>
@@ -332,21 +332,21 @@ export function TidalSection() {
               style={{
                 display: "grid",
                 gap: 10,
-                border: "1px solid var(--border-strong)",
-                background: "var(--accent-soft)",
+                border: "1px solid var(--input)",
+                background: "var(--accent)",
                 borderRadius: 8,
                 padding: 14,
               }}
             >
               <div>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>Finish signing in to TIDAL</div>
-                <div style={{ color: "var(--fg-muted)", fontSize: 12, marginTop: 3 }}>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Finish signing in to TIDAL</div>
+                <div style={{ color: "var(--muted-foreground)", fontSize: 12, marginTop: 3 }}>
                   This page will update automatically after TIDAL approves the account.
                 </div>
               </div>
               {flow.user_code && (
                 <div>
-                  <div style={{ color: "var(--fg-muted)", fontSize: 12, marginBottom: 4 }}>
+                  <div style={{ color: "var(--muted-foreground)", fontSize: 12, marginBottom: 4 }}>
                     Code
                   </div>
                   <code style={{ fontSize: 18, letterSpacing: 1 }}>{flow.user_code}</code>

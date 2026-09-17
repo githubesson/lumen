@@ -2,26 +2,26 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Command } from "cmdk";
 import { useNavigate } from "react-router-dom";
 import {
-  AdjustmentsHorizontalIcon,
-  ArrowLeftEndOnRectangleIcon,
-  ArrowPathRoundedSquareIcon,
-  ArrowUpTrayIcon,
-  ArrowsRightLeftIcon,
-  BackwardIcon,
-  ClockIcon,
-  Cog6ToothIcon,
-  EnvelopeIcon,
-  ForwardIcon,
-  HeartIcon,
-  MagnifyingGlassIcon,
-  MoonIcon,
-  MusicalNoteIcon,
-  PauseIcon,
-  PlayIcon,
-  PlusIcon,
-  QueueListIcon,
-  SunIcon,
-} from "@heroicons/react/16/solid";
+  SlidersHorizontal as AdjustmentsHorizontalIcon,
+  LogOut as ArrowLeftEndOnRectangleIcon,
+  Repeat as ArrowPathRoundedSquareIcon,
+  Upload as ArrowUpTrayIcon,
+  Shuffle as ArrowsRightLeftIcon,
+  SkipBack as BackwardIcon,
+  Clock as ClockIcon,
+  Settings as Cog6ToothIcon,
+  Mail as EnvelopeIcon,
+  SkipForward as ForwardIcon,
+  Heart as HeartIcon,
+  Search as MagnifyingGlassIcon,
+  Moon as MoonIcon,
+  Music as MusicalNoteIcon,
+  Pause as PauseIcon,
+  Play as PlayIcon,
+  Plus as PlusIcon,
+  ListMusic as QueueListIcon,
+  Sun as SunIcon,
+} from "lucide-react";
 import {
   albumCoverUrl,
   api,
@@ -273,7 +273,7 @@ export default function CommandPalette({
       loop
     >
       <div className="cmdk-input-row">
-        <MagnifyingGlassIcon className="size-4 shrink-0 text-subtle" />
+        <MagnifyingGlassIcon className="size-4 shrink-0 text-muted-foreground" />
         <Command.Input
           autoFocus
           ref={inputRef}
@@ -335,7 +335,6 @@ export default function CommandPalette({
                   <CoverArt
                     className="cmdk-art"
                     src={a.cover_url ? resolveCoverUrl(a.cover_url) : a.has_cover ? albumCoverUrl(a.id) : null}
-                    seed={a.id}
                     label={a.title}
                     forcePlaceholder={!a.cover_url && !a.has_cover}
                   />
@@ -371,7 +370,6 @@ export default function CommandPalette({
                 >
                   <CoverArt
                     className="cmdk-art"
-                    seed={a.id}
                     label={a.name}
                     src={a.cover_url ? resolveCoverUrl(a.cover_url) : null}
                     radius={999}
@@ -410,7 +408,6 @@ export default function CommandPalette({
                   <CoverArt
                     className="cmdk-art"
                     src={trackCoverUrl(t)}
-                    seed={t.album_id ?? t.id}
                     label={t.album_title || t.title}
                   />
                   <span className="cmdk-item-main">
@@ -464,7 +461,7 @@ export default function CommandPalette({
                   value={`playlist ${p.name}`}
                   onSelect={() => run(() => navigate(`/playlists/${p.id}`))}
                 >
-                  <QueueListIcon className="size-4 shrink-0 text-muted" />
+                  <QueueListIcon className="size-4 shrink-0 text-muted-foreground" />
                   <span className="cmdk-item-main">
                     <span className="cmdk-item-title">{p.name}</span>
                     <span className="cmdk-item-sub">
@@ -486,7 +483,7 @@ export default function CommandPalette({
                 onSelect={() => !a.disabled && run(a.perform)}
                 disabled={a.disabled}
               >
-                <a.icon className="size-4 shrink-0 text-muted" />
+                <a.icon className="size-4 shrink-0 text-muted-foreground" />
                 <span className="cmdk-item-main">
                   <span className="cmdk-item-title">{a.label}</span>
                 </span>
@@ -501,7 +498,7 @@ export default function CommandPalette({
                 value={`action ${a.label} ${a.keywords}`}
                 onSelect={() => run(a.perform)}
               >
-                <a.icon className="size-4 shrink-0 text-muted" />
+                <a.icon className="size-4 shrink-0 text-muted-foreground" />
                 <span className="cmdk-item-main">
                   <span className="cmdk-item-title">{a.label}</span>
                 </span>
@@ -540,7 +537,7 @@ function NavItem({
 }) {
   return (
     <Command.Item value={`navigate ${label}`} onSelect={onSelect}>
-      <Icon className="size-4 shrink-0 text-muted" />
+      <Icon className="size-4 shrink-0 text-muted-foreground" />
       <span className="cmdk-item-main">
         <span className="cmdk-item-title">{label}</span>
       </span>

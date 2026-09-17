@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { PlusIcon } from "@heroicons/react/16/solid";
+import { Plus as PlusIcon } from "lucide-react";
 import { api, type Playlist } from "../api";
 import PageHeader from "../components/PageHeader";
 import PlaylistCard from "../components/PlaylistCard";

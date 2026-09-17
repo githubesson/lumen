@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { DevicePhoneMobileIcon } from "@heroicons/react/16/solid";
+import { Smartphone as DevicePhoneMobileIcon } from "lucide-react";
 import {
   subscribeRemotePlaybackControl,
   type RemotePlaybackControlEvent,

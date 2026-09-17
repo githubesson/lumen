@@ -21,12 +21,8 @@ export function AdminSectionTitle({
   return (
     <Tag
       id={id}
-      className={`mono ${className ?? ""}`.trim()}
+      className={`eyebrow ${className ?? ""}`.trim()}
       style={{
-        fontSize: 10,
-        letterSpacing: "0.12em",
-        textTransform: "uppercase",
-        color: "var(--fg-subtle)",
         margin: 0,
         ...style,
       }}
@@ -56,8 +52,8 @@ export function AdminSectionIntro({
       </AdminSectionTitle>
       <p
         style={{
-          color: "var(--fg-muted)",
-          fontSize: 12.5,
+          color: "var(--muted-foreground)",
+          fontSize: 14,
           margin: 0,
           maxWidth: "72ch",
         }}

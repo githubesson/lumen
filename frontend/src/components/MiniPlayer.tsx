@@ -4,20 +4,20 @@ import QueuePopover from "./QueuePopover";
 import PlaybackDevicePopover from "./PlaybackDevicePopover";
 import RemoteControlIndicator from "./RemoteControlIndicator";
 import {
-  ArrowPathRoundedSquareIcon,
-  ArrowsPointingInIcon,
-  ArrowsPointingOutIcon,
-  ArrowsRightLeftIcon,
-  BackwardIcon,
-  BookOpenIcon,
-  ComputerDesktopIcon,
-  ForwardIcon,
-  PauseIcon,
-  PlayIcon,
-  QueueListIcon,
-  SpeakerWaveIcon,
-  SpeakerXMarkIcon,
-} from "@heroicons/react/16/solid";
+  Repeat as ArrowPathRoundedSquareIcon,
+  Minimize2 as ArrowsPointingInIcon,
+  Maximize2 as ArrowsPointingOutIcon,
+  Shuffle as ArrowsRightLeftIcon,
+  SkipBack as BackwardIcon,
+  MicVocal as BookOpenIcon,
+  Monitor as ComputerDesktopIcon,
+  SkipForward as ForwardIcon,
+  Pause as PauseIcon,
+  Play as PlayIcon,
+  ListMusic as QueueListIcon,
+  Volume2 as SpeakerWaveIcon,
+  VolumeX as SpeakerXMarkIcon,
+} from "lucide-react";
 import type { TrackListItem } from "@music-library/core";
 import { trackCoverUrl } from "../api";
 import CoverArt from "./CoverArt";
@@ -30,7 +30,6 @@ import {
   usePlayerTime,
   useRemotePlayback,
 } from "../context/Player";
-import { useAccentFromCover } from "../lib/accent";
 import { displayText, fmtDurationSec } from "../lib/format";
 import {
   canSetMiniPlayer,
@@ -123,7 +122,6 @@ export default function MiniPlayer() {
 
   const fav = displayCurrent ? isFavorite(displayCurrent.id) : false;
   const coverSrc = displayCurrent ? trackCoverUrl(displayCurrent) : null;
-  useAccentFromCover(coverSrc);
   const { bind: bindCtx, menu: trackCtxMenu } = useTrackContextMenu();
   // Popover anchors are held in state, not refs: the popovers read the element
   // during render, and a ref's `.current` is not readable during render under
@@ -187,7 +185,6 @@ export default function MiniPlayer() {
         <CoverArt
           className="np-art"
           src={coverSrc}
-          seed={displayCurrent?.album_id ?? displayCurrent?.id ?? "fh6-radio"}
           label={
             isFH6Mode
               ? "Lumen Radio"
@@ -289,8 +286,8 @@ export default function MiniPlayer() {
                 aria-hidden="true"
                 style={{
                   position: "absolute",
-                  fontSize: 8,
-                  fontWeight: 700,
+                  fontSize: 12,
+                  fontWeight: 600,
                   transform: "translate(8px, 8px)",
                 }}
               >

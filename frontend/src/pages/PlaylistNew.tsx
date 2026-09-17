@@ -32,7 +32,7 @@ export default function PlaylistNew() {
   return (
     <div className="view">
       <PageHeader title="New playlist" />
-      <p style={{ color: "var(--fg-muted)", fontSize: 13, margin: "0 0 28px", maxWidth: "60ch" }}>
+      <p style={{ color: "var(--muted-foreground)", fontSize: 14, margin: "0 0 28px", maxWidth: "60ch" }}>
         Playlists are private by default. Collaborative ones let you invite other
         users as viewers or editors.
       </p>
@@ -59,12 +59,8 @@ export default function PlaylistNew() {
         </Field>
         <fieldset style={{ border: 0, padding: 0, margin: 0, display: "grid", gap: 8 }}>
           <legend
-            className="mono"
+            className="eyebrow"
             style={{
-              fontSize: 10,
-              color: "var(--fg-subtle)",
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
               padding: 0,
               marginBottom: 4,
             }}

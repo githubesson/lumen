@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { UserMinusIcon, UserPlusIcon } from "@heroicons/react/16/solid";
+import { UserMinus as UserMinusIcon, UserPlus as UserPlusIcon } from "lucide-react";
 import {
   api,
   errorMessage,
@@ -120,16 +120,16 @@ export default function CollaboratorsPanel({
                 display: "flex",
                 alignItems: "center",
                 gap: 16,
-                borderTop: i === 0 ? "0" : "1px solid var(--border-soft)",
+                borderTop: i === 0 ? "0" : "1px solid var(--border)",
               }}
             >
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)" }}>
+                <div style={{ fontSize: 14, fontWeight: 500, color: "var(--foreground)" }}>
                   {c.username}
                 </div>
                 <div
                   className="mono"
-                  style={{ fontSize: 10.5, color: "var(--fg-subtle)" }}
+                  style={{ fontSize: 12, color: "var(--muted-foreground)" }}
                 >
                   {c.status === "pending" ? "Invite pending" : "Accepted"} ·{" "}
                   {new Date(c.invited_at).toLocaleDateString()}

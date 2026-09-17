@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 import { trackCoverUrl, type TrackListItem } from "../api";
 
-const DEFAULT_GRADIENT =
-  "linear-gradient(135deg, color-mix(in oklch, var(--accent) 30%, var(--bg-elev-2)), var(--bg-elev-3))";
+const DEFAULT_FALLBACK_BACKGROUND = "var(--muted)";
 
 /**
  * The `.detail-header` hero used by the list pages (Recent / Favorites, and
@@ -15,7 +14,7 @@ export default function ListPageHeader({
   description,
   heroTrack,
   fallbackIcon,
-  fallbackGradient,
+  fallbackBackground,
   art,
   meta,
   actions,
@@ -28,7 +27,7 @@ export default function ListPageHeader({
   description?: ReactNode;
   heroTrack?: TrackListItem | null;
   fallbackIcon?: ReactNode;
-  fallbackGradient?: string;
+  fallbackBackground?: string;
   /** Custom art node; overrides the heroTrack/fallback art when provided. */
   art?: ReactNode;
   meta?: ReactNode;
@@ -52,7 +51,7 @@ export default function ListPageHeader({
           style={
             cover
               ? { backgroundImage: `url(${cover})` }
-              : { background: fallbackGradient ?? DEFAULT_GRADIENT }
+              : { background: fallbackBackground ?? DEFAULT_FALLBACK_BACKGROUND }
           }
         >
           {!cover && fallbackIcon}
@@ -64,8 +63,8 @@ export default function ListPageHeader({
         {description != null && (
           <p
             style={{
-              color: "var(--fg-muted)",
-              fontSize: 13,
+              color: "var(--muted-foreground)",
+              fontSize: 14,
               margin: "0 0 10px",
               maxWidth: "60ch",
             }}

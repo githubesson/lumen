@@ -1,8 +1,8 @@
 import {
-  MinusIcon,
-  Square2StackIcon,
-  XMarkIcon,
-} from "@heroicons/react/16/solid";
+  Minus as MinusIcon,
+  Copy as Square2StackIcon,
+  X as XMarkIcon,
+} from "lucide-react";
 
 export default function WindowControls({ className = "" }: { className?: string }) {
   if (!window.electron?.isElectron) return null;

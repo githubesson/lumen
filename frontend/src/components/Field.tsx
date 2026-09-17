@@ -43,18 +43,18 @@ export function Field({ label, hint, error, children }: FieldProps) {
 
   return (
     <div style={{ display: "grid", gap: 6 }}>
-      <label htmlFor={id} className="eyebrow">
+      <label htmlFor={id} className="field-label">
         {label}
       </label>
       {control}
       {hint && !error && (
-        <p id={hintId} style={{ fontSize: 11, color: "var(--fg-subtle)", margin: 0 }}>{hint}</p>
+        <p id={hintId} style={{ fontSize: 12, color: "var(--muted-foreground)", margin: 0 }}>{hint}</p>
       )}
       {error && (
         <p
           id={errorId}
           role="alert"
-          style={{ fontSize: 11, color: "var(--danger-fg)", margin: 0 }}
+          style={{ fontSize: 12, color: "var(--destructive)", margin: 0 }}
         >
           {error}
         </p>

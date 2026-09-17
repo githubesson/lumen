@@ -19,17 +19,13 @@ const THEMES: Theme[] = ["light", "dark"];
 export default function TweaksPanel({ open, onClose }: Props) {
   const {
     theme,
-    depth,
     radius,
     density,
     layout,
-    glow,
     setTheme,
-    setDepth,
     setRadius,
     setDensity,
     setLayout,
-    setGlow,
   } = useTheme();
   const audioOut = useAudioOutput();
   const ref = useRef<HTMLDivElement>(null);
@@ -82,35 +78,6 @@ export default function TweaksPanel({ open, onClose }: Props) {
               {t}
             </button>
           ))}
-        </div>
-      </div>
-
-      <div className="tweak-row">
-        <div className="tweak-label">
-          <span>Depth intensity</span>
-          <span>{depth}</span>
-        </div>
-        <input
-          className="tweak-slider"
-          type="range"
-          min={0}
-          max={4}
-          step={1}
-          value={depth}
-          onChange={(e) => setDepth(+e.target.value)}
-          aria-label="Depth intensity"
-        />
-        <div
-          className="mono"
-          style={{
-            fontSize: 10,
-            display: "flex",
-            justifyContent: "space-between",
-            color: "var(--fg-subtle)",
-          }}
-        >
-          <span>flat</span>
-          <span>heavy</span>
         </div>
       </div>
 
@@ -171,29 +138,6 @@ export default function TweaksPanel({ open, onClose }: Props) {
         </div>
       </div>
 
-      <div className="tweak-row">
-        <div className="tweak-label">
-          <span>Ambient glow</span>
-          <span>{glow ? "on" : "off"}</span>
-        </div>
-        <div className="tweak-seg">
-          <button
-            type="button"
-            className={glow ? "active" : ""}
-            onClick={() => setGlow(true)}
-          >
-            on
-          </button>
-          <button
-            type="button"
-            className={!glow ? "active" : ""}
-            onClick={() => setGlow(false)}
-          >
-            off
-          </button>
-        </div>
-      </div>
-
       {audioOut.supported && (
         <div className="tweak-row">
           <div className="tweak-label">
@@ -219,7 +163,7 @@ export default function TweaksPanel({ open, onClose }: Props) {
           {audioOut.error && (
             <div
               className="mono"
-              style={{ fontSize: 10, color: "var(--fg-subtle)" }}
+              style={{ fontSize: 12, color: "var(--muted-foreground)" }}
             >
               {audioOut.error}
             </div>
@@ -265,7 +209,7 @@ export default function TweaksPanel({ open, onClose }: Props) {
           </div>
         ) : null}
         {(lastFMError || lastFM?.last_error) && (
-          <div className="mono" style={{ fontSize: 10, color: "var(--danger-fg)" }}>
+          <div className="mono" style={{ fontSize: 12, color: "var(--destructive)" }}>
             {lastFMError || lastFM?.last_error}
           </div>
         )}

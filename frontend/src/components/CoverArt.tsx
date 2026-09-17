@@ -1,19 +1,13 @@
 import { useState } from "react";
-import { swatchFor } from "../lib/swatch";
-
-export { swatchFor };
-
 /**
  * CoverArt renders artwork for a track / album / artist tile. If no image is
- * available (or the fetch fails), it falls back to a hash-tinted gradient with
+ * available (or the fetch fails), it falls back to a muted placeholder with
  * the entity's initial — so every tile still looks intentional instead of
  * "broken image" blank.
  */
 interface Props {
   /** Image URL to try. If omitted, the placeholder renders immediately. */
   src?: string | null;
-  /** Used to generate a stable color for the placeholder. */
-  seed: string;
   /** First letter shown on the placeholder. */
   label: string;
   /** Corner radius. Defaults to the card radius; pass 999 for circular. */
@@ -28,7 +22,6 @@ interface Props {
 
 export default function CoverArt({
   src,
-  seed,
   label,
   radius,
   size,
@@ -59,8 +52,8 @@ export default function CoverArt({
   if (placeholder) {
     return (
       <div
-        className={"cover-art " + (className ?? "")}
-        style={{ ...extra, background: swatchFor(seed) }}
+        className={"cover-art cover-art-placeholder " + (className ?? "")}
+        style={extra}
         aria-hidden="true"
       >
         <span className="cover-art-letter">{firstLetter(label)}</span>

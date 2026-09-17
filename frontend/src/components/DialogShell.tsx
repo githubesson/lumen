@@ -1,5 +1,5 @@
 import { useEffect, useId, type ReactNode } from "react";
-import { XMarkIcon } from "@heroicons/react/16/solid";
+import { X as XMarkIcon } from "lucide-react";
 import { useTransitionMount } from "../lib/useTransitionMount";
 
 /**
@@ -72,7 +72,7 @@ export function DialogShell({
       >
         <div
           className="flex items-center justify-between px-4 py-3"
-          style={{ borderBottom: "1px solid var(--border-soft)" }}
+          style={{ borderBottom: "1px solid var(--border)" }}
         >
           <h2 id={titleId} style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>{title}</h2>
           <button

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  ArrowLeftIcon,
-  ArrowsRightLeftIcon,
-  PauseIcon,
-  PlayIcon,
-} from "@heroicons/react/16/solid";
+  ArrowLeft as ArrowLeftIcon,
+  Shuffle as ArrowsRightLeftIcon,
+  Pause as PauseIcon,
+  Play as PlayIcon,
+} from "lucide-react";
 import {
   albumCoverUrl,
   api,
@@ -26,7 +26,6 @@ import {
   type ReleaseFilter,
 } from "@music-library/core/artist-releases";
 import { displayText, pluralize } from "../../lib/format";
-import { swatchFor } from "../../lib/swatch";
 import { useEntityDetail } from "../../lib/useEntityDetail";
 import { usePlayer, useRemotePlayback } from "../../context/Player";
 import { Button } from "../../components/Button";
@@ -102,7 +101,6 @@ export function ArtistDetailView({
     <div className="view artist-page">
       <ArtistHero
         name={artist.name}
-        seed={artist.id}
         imageUrl={tracks[0] ? trackCoverUrl(tracks[0]) : null}
         kind="Artist"
         meta={[
@@ -195,7 +193,6 @@ export function TidalArtistDetailView({
     <div className="view artist-page">
       <ArtistHero
         name={artistName}
-        seed={`tidal:${id}`}
         imageUrl={imageUrl}
         kind={
           <>
@@ -252,7 +249,6 @@ export function TidalArtistDetailView({
 
 function ArtistHero({
   name,
-  seed,
   imageUrl,
   kind,
   meta,
@@ -260,7 +256,6 @@ function ArtistHero({
   onBack,
 }: {
   name: string;
-  seed: string;
   imageUrl: string | null;
   kind: ReactNode;
   meta?: (string | false)[];
@@ -268,18 +263,8 @@ function ArtistHero({
   onBack: () => void;
 }) {
   const metaItems = meta?.filter((item): item is string => Boolean(item));
-  // The swatch stays underneath the photo so a failed load still reads as a
-  // tinted banner instead of a flat card.
-  const backdrop = imageUrl
-    ? `url("${imageUrl}") center / cover no-repeat, ${swatchFor(seed)}`
-    : swatchFor(seed);
   return (
     <header className="artist-hero">
-      <div
-        className="artist-hero-backdrop"
-        style={{ background: backdrop }}
-        aria-hidden="true"
-      />
       <div>
         <Button
           variant="ghost"
@@ -295,7 +280,6 @@ function ArtistHero({
         <CoverArt
           className="artist-hero-avatar"
           src={imageUrl}
-          seed={seed}
           label={name}
           radius={999}
           forcePlaceholder={!imageUrl}
@@ -472,7 +456,6 @@ function ReleaseCard({
       <CoverArt
         className="card-art"
         src={src}
-        seed={release.id}
         label={release.title}
         forcePlaceholder={!src}
       />
