@@ -23,9 +23,12 @@ const EDGE = 8;
  * App-wide replacement for native `title=` tooltips. Hovering (or keyboard
  * focusing) any element with a `title` shows a styled bubble instead of the OS
  * tooltip. Icon-only buttons and links without a title use their
- * `aria-label`, so every icon control gets a hint. The attribute is lifted off the element while it is active, so the
- * native tooltip never appears, and put back afterwards so React's view of the
- * DOM stays accurate.
+ * `aria-label`, so every icon control gets a hint.
+ *
+ * While a tooltip is active its element's title is blanked to "" (an empty
+ * title suppresses the native tooltip) and restored afterwards. Blanking
+ * rather than removing keeps React's updates observable: if React changes or
+ * removes the title meanwhile, that shows up as a mutation instead of a no-op.
  *
  * Elements can opt into a side with `data-tooltip-side="right"` (e.g. the
  * collapsed sidebar rail). On non-interactive text, a title that repeats the
@@ -55,8 +58,8 @@ export default function TitleTooltips() {
       observer = null;
       const current = activeRef.current;
       if (!current) return;
-      // Restore the lifted title unless React set a newer one meanwhile.
-      if (current.fromTitle && !current.el.hasAttribute("title")) {
+      // Restore the blanked title unless React changed or removed it meanwhile.
+      if (current.fromTitle && current.el.getAttribute("title") === "") {
         current.el.setAttribute("title", current.text);
       }
       activeRef.current = null;
@@ -74,7 +77,7 @@ export default function TitleTooltips() {
       if (!text) return;
       if (fromTitle && isRedundantTruncationTitle(el, text) && !isTruncated(el)) return;
 
-      if (fromTitle) el.removeAttribute("title");
+      if (fromTitle) el.setAttribute("title", "");
       const side = (el.dataset.tooltipSide as Side | undefined) ?? "top";
       const next: Active = { el, text, side, fromTitle };
       activeRef.current = next;
@@ -86,18 +89,25 @@ export default function TitleTooltips() {
         const current = activeRef.current;
         if (!current || current.el !== el) return;
         const title = el.getAttribute("title");
-        let text: string;
+        if (title === "") return; // our own blanking
         if (title != null) {
-          el.removeAttribute("title");
-          text = title.trim();
-          if (!text) return;
-          activeRef.current = { ...current, text, fromTitle: true };
+          el.setAttribute("title", "");
+          activeRef.current = { ...current, text: title.trim(), fromTitle: true };
         } else if (current.fromTitle) {
-          return;
+          // React removed the title prop: never restore it, and fall back to
+          // an icon-only aria-label or dismiss.
+          const label = iconOnlyLabel(el);
+          activeRef.current = { ...current, text: label, fromTitle: false };
+          if (!label) {
+            clearTimer();
+            setVisible(false);
+            setActive(null);
+            return;
+          }
         } else {
-          text = iconOnlyLabel(el);
-          if (!text || text === current.text) return;
-          activeRef.current = { ...current, text };
+          const label = iconOnlyLabel(el);
+          if (!label || label === current.text) return;
+          activeRef.current = { ...current, text: label };
         }
         // Keep state in sync only if the bubble is already showing.
         setActive((shown) => (shown ? activeRef.current : shown));
