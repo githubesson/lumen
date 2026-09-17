@@ -44,6 +44,10 @@ export default function Tooltip({
   const [instant, setInstant] = useState(false);
   const timer = useRef<number | null>(null);
   const hideTimer = useRef<number | null>(null);
+  // The reveal is deferred by a frame, so hiding within that frame has to
+  // cancel it -- otherwise the callback flips `visible` back on after hide()
+  // turned it off and the exit transition never runs.
+  const revealFrame = useRef<number | null>(null);
 
   const show = () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
@@ -55,7 +59,10 @@ export default function Tooltip({
       setOpen(true);
       // Defer the "visible" flip to the next frame so the enter transition
       // runs from the initial (data-closed) state rather than snapping in.
-      requestAnimationFrame(() => setVisible(true));
+      revealFrame.current = requestAnimationFrame(() => {
+        revealFrame.current = null;
+        setVisible(true);
+      });
     };
     // A tooltip was up moments ago: the delay has already been paid, so this
     // one is the same hint moving along the row rather than a new arrival.
@@ -72,6 +79,10 @@ export default function Tooltip({
     if (timer.current !== null) {
       window.clearTimeout(timer.current);
       timer.current = null;
+    }
+    if (revealFrame.current !== null) {
+      cancelAnimationFrame(revealFrame.current);
+      revealFrame.current = null;
     }
     setVisible(false);
     // Only a tooltip that was actually displayed arms the skip window. A brief
@@ -90,6 +101,7 @@ export default function Tooltip({
     () => () => {
       if (timer.current !== null) window.clearTimeout(timer.current);
       if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
+      if (revealFrame.current !== null) cancelAnimationFrame(revealFrame.current);
     },
     [],
   );

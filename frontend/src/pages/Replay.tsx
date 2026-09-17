@@ -279,7 +279,12 @@ export default function Replay() {
       {createError && <ErrorBanner>{createError}</ErrorBanner>}
       {imageError && <ErrorBanner>{imageError}</ErrorBanner>}
 
-      {loading && !data ? (
+      {/* Any in-flight request shows the loading state, not just the first.
+          Rendering retained data while a new period loads put the previous
+          window's numbers under the new label -- and since the block below is
+          keyed on the period, the key change remounted that stale subtree and
+          replayed its entrance, presenting old results as freshly arrived. */}
+      {loading ? (
         <LoadingState />
       ) : summary && summary.total_plays === 0 ? (
         <EmptyState
