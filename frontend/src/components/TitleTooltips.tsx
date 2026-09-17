@@ -9,7 +9,11 @@ interface Active {
   side: Side;
   /** Whether `text` came from a `title` that was lifted off the element. */
   fromTitle: boolean;
-  /** Closed by a click, scroll, or Escape; stays closed until re-hovered. */
+  /**
+   * Never open the bubble while this element stays hovered: the user closed it
+   * (click, scroll, Escape), or it is a truncation hint on text that isn't
+   * clipped. The title stays blanked so the native tooltip can't show either.
+   */
   userHidden?: boolean;
 }
 
@@ -96,11 +100,12 @@ export default function TitleTooltips() {
       const fromTitle = !!title;
       const text = title || iconOnlyLabel(el);
       if (!text) return;
-      if (fromTitle && isRedundantTruncationTitle(el, text) && !isTruncated(el)) return;
+      const unclippedHint =
+        fromTitle && isRedundantTruncationTitle(el, text) && !isTruncated(el);
 
       if (fromTitle) el.setAttribute("title", "");
       const side = (el.dataset.tooltipSide as Side | undefined) ?? "top";
-      const next: Active = { el, text, side, fromTitle };
+      const next: Active = { el, text, side, fromTitle, userHidden: unclippedHint };
       activeRef.current = next;
 
       // React may update the label while the tooltip is showing (e.g. a
@@ -145,7 +150,7 @@ export default function TitleTooltips() {
         attributeFilter: ["title", "aria-label"],
       });
 
-      scheduleOpen(el);
+      if (!unclippedHint) scheduleOpen(el);
     };
 
     const onPointerOver = (e: PointerEvent) => {
