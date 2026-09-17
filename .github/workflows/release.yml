@@ -72,19 +72,9 @@ jobs:
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
           printf 'prerelease=%s\n' "$prerelease" >> "$GITHUB_OUTPUT"
 
-  desktop:
+  desktop-macos:
     needs: prepare
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            args: --win
-          - os: macos-latest
-            args: --mac
-          - os: ubuntu-latest
-            args: --linux
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-latest
     defaults:
       run:
         shell: bash
@@ -133,5 +123,31 @@ jobs:
       # needs Xcode 26, which hosted runners don't have. The optional radio
       # add-on is skipped automatically (no _local/ in CI); see
       # electron-builder.cjs.
-      - run: npx electron-builder ${{ matrix.args }} --publish always --config electron-builder.cjs
+      - run: npx electron-builder --mac --publish always --config electron-builder.cjs
         working-directory: frontend
+
+  desktop-self-hosted:
+    name: desktop-${{ matrix.target }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        target: [win, linux]
+    runs-on: [self-hosted, Linux, X64, lumen]
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Build and publish desktop artifacts with Docker
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LUMEN_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+          DISCORD_CLIENT_ID: ${{ vars.DISCORD_CLIENT_ID }}
+          UPDATE_REPO_URL: ${{ vars.UPDATE_REPO_URL || 'https://github.com/githubesson/lumen' }}
+          EP_PRE_RELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: bash scripts/build-desktop-docker.sh "${{ matrix.target }}" always
