@@ -159,9 +159,7 @@ export default function CommandPalette({
   const searching = query.trim().length >= 2;
   // The palette mounts on open, so a one-time read is enough. Next to the
   // type switcher a phone-width input only fits the short placeholder.
-  const [compact] = useState(
-    () => window.matchMedia?.("(max-width: 480px)").matches ?? false,
-  );
+  const [compact] = useState(() => window.matchMedia("(max-width: 480px)").matches);
 
   const close = () => onOpenChange(false);
 
