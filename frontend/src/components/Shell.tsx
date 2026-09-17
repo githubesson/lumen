@@ -248,7 +248,7 @@ export default function Shell() {
           />
           {playlists.length === 0 && (
             <div
-              className="mono"
+              className="mono sidebar-playlists-empty"
               style={{
                 padding: "4px 10px",
                 fontSize: 12,
@@ -262,6 +262,7 @@ export default function Shell() {
             <NavLink
               key={p.id}
               to={`/playlists/${p.id}`}
+              title={layout === "compact" ? p.name : undefined}
               className={({ isActive }) =>
                 "sidebar-playlist" + (isActive ? " active" : "")
               }
@@ -555,10 +556,13 @@ function NavItem({
   end?: boolean;
   badge?: number;
 }) {
+  // Collapsed rail rows show only an icon, so surface the label on hover.
+  const { layout } = useTheme();
   return (
     <NavLink
       to={to}
       end={end}
+      title={layout === "compact" ? label : undefined}
       className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}
     >
       {icon}

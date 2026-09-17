@@ -296,19 +296,46 @@ textarea { font: inherit; color: inherit; }
 [data-layout="compact"] .brand-text,
 [data-layout="compact"] .nav-label,
 [data-layout="compact"] .nav-count,
+[data-layout="compact"] .sidebar-playlist-name,
 [data-layout="compact"] .user-text {
   max-width: 0;
   opacity: 0;
   margin-left: 0;
   pointer-events: none;
 }
-[data-layout="compact"] .nav-section-title,
-[data-layout="compact"] .sidebar-playlists {
+/* The collapsed rail mirrors the expanded sidebar row for row: every section,
+   label slot, and playlist keeps its height so icons stay where they were.
+   Section labels become a short rule; the Playlists label keeps its + button. */
+[data-layout="compact"] .nav-section-title {
+  justify-content: center;
+  padding: 0;
+  font-size: 0;
+}
+[data-layout="compact"] .nav-section-title::before {
+  content: "";
+  width: 16px;
+  height: 1px;
+  background: var(--sidebar-border);
+}
+[data-layout="compact"] .nav-section-title:has(.iconbtn)::before {
   display: none;
+}
+[data-layout="compact"] .sidebar-playlists-empty {
+  display: none;
+}
+[data-layout="compact"] .nav-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  font-size: 10px;
 }
 
 .brand,
 .nav-item,
+.sidebar-playlist,
 .sidebar-footer,
 .nav {
   transition:
@@ -317,7 +344,8 @@ textarea { font: inherit; color: inherit; }
     justify-content 220ms ease;
 }
 
-[data-layout="compact"] .nav-item { justify-content: center; padding: 0; gap: 0; }
+[data-layout="compact"] .nav-item,
+[data-layout="compact"] .sidebar-playlist { justify-content: center; padding: 0; gap: 0; }
 [data-layout="compact"] .brand {
   justify-content: center;
   padding: 0 8px;
@@ -327,7 +355,12 @@ textarea { font: inherit; color: inherit; }
   flex-direction: column;
   align-items: center;
   padding: 8px;
-  gap: 6px;
+  gap: 4px;
+}
+/* Stacked vertically, the zero-width user text would still take two lines of
+   height between the avatar and the footer buttons. */
+[data-layout="compact"] .sidebar-footer .user-text {
+  display: none;
 }
 [data-layout="compact"] .nav {
   padding: 8px;
@@ -4245,6 +4278,12 @@ html[data-mini-player] .window-controls {
     position: fixed;
     inset: 4px auto 4px 4px;
     z-index: 72;
+    /* On desktop the sidebar sits on the app's --sidebar backdrop; as a
+       floating drawer it needs its own surface. */
+    background: var(--sidebar);
+    border: 1px solid var(--sidebar-border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-md);
     width: min(296px, calc(100vw - 48px));
     transform: translateX(calc(-100% - 12px));
     visibility: hidden;
@@ -4279,6 +4318,7 @@ html[data-mini-player] .window-controls {
   [data-layout="compact"] .sidebar .brand-text,
   [data-layout="compact"] .sidebar .nav-label,
   [data-layout="compact"] .sidebar .nav-count,
+  [data-layout="compact"] .sidebar .sidebar-playlist-name,
   [data-layout="compact"] .sidebar .user-text {
     max-width: 240px;
     margin-left: initial;
@@ -4287,36 +4327,49 @@ html[data-mini-player] .window-controls {
   }
 
   [data-layout="compact"] .sidebar .nav-section-title {
-    display: flex;
+    justify-content: space-between;
+    padding: 0 8px;
+    font-size: 12px;
   }
 
-  [data-layout="compact"] .sidebar .sidebar-playlists {
+  [data-layout="compact"] .sidebar .nav-section-title::before {
+    display: none;
+  }
+
+  [data-layout="compact"] .sidebar .sidebar-playlists-empty {
+    display: block;
+  }
+
+  [data-layout="compact"] .sidebar .nav-badge {
+    position: static;
+  }
+
+  [data-layout="compact"] .sidebar .sidebar-footer .user-text {
     display: block;
   }
 
   [data-layout="compact"] .sidebar .brand,
-  [data-layout="compact"] .sidebar .nav-item {
+  [data-layout="compact"] .sidebar .nav-item,
+  [data-layout="compact"] .sidebar .sidebar-playlist {
     justify-content: flex-start;
-    gap: 10px;
+    gap: 8px;
   }
 
-  [data-layout="compact"] .sidebar .brand {
-    padding: 0 16px;
-  }
-
-  [data-layout="compact"] .sidebar .nav-item {
-    padding: 0 10px;
+  [data-layout="compact"] .sidebar .brand,
+  [data-layout="compact"] .sidebar .nav-item,
+  [data-layout="compact"] .sidebar .sidebar-playlist {
+    padding: 0 8px;
   }
 
   [data-layout="compact"] .sidebar .nav {
-    padding: 10px 8px;
+    padding: 8px;
   }
 
   [data-layout="compact"] .sidebar .sidebar-footer {
     flex-direction: row;
     align-items: center;
-    padding: 10px 12px;
-    gap: 10px;
+    padding: 8px;
+    gap: 8px;
   }
 
   .mobile-sidebar-actions {
