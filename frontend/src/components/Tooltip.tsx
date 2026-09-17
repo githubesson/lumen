@@ -70,6 +70,7 @@ export default function Tooltip({
       <span
         ref={setAnchor}
         className={className}
+        data-tooltip-trigger=""
         onMouseEnter={show}
         onMouseLeave={hide}
         onFocus={show}

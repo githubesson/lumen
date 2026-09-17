@@ -28,8 +28,9 @@ const EDGE = 8;
  * DOM stays accurate.
  *
  * Elements can opt into a side with `data-tooltip-side="right"` (e.g. the
- * collapsed sidebar rail). On non-interactive text, a title that only repeats
- * the element's own text is a truncation hint and shows only when clipped.
+ * collapsed sidebar rail). On non-interactive text, a title that repeats the
+ * element's leading text is a truncation hint and shows only when clipped.
+ * Hover inside a rich <Tooltip> trigger is left to that component.
  */
 export default function TitleTooltips() {
   const [active, setActive] = useState<Active | null>(null);
@@ -104,6 +105,12 @@ export default function TitleTooltips() {
     const onPointerOver = (e: PointerEvent) => {
       if (e.pointerType === "touch") return;
       const target = e.target instanceof Element ? e.target : null;
+      // Rich <Tooltip> triggers own their hint; don't also surface a titled
+      // ancestor's tooltip underneath them.
+      if (target?.closest("[data-tooltip-trigger]")) {
+        release();
+        return;
+      }
       const current = activeRef.current;
       if (current && target && current.el.contains(target)) {
         // Still inside the active element, unless a nested titled child
@@ -190,7 +197,9 @@ function isRedundantTruncationTitle(el: HTMLElement, text: string) {
   // Controls (e.g. a collapsed nav link whose label is visually hidden) use
   // their title as the label itself, so it is never just a truncation hint.
   if (el.closest("a, button, [role='button'], input, select, textarea")) return false;
-  return (el.textContent ?? "").trim() === text;
+  // Leading text plus trailing adornments (a "TIDAL" badge, a "+2" alias
+  // hint) still makes the title a copy of what's already on screen.
+  return (el.textContent ?? "").trim().startsWith(text);
 }
 
 function isTruncated(el: HTMLElement) {
