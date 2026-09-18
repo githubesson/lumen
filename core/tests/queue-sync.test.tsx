@@ -172,6 +172,7 @@ it("applies queue jumps by absolute index and rejects stale queue revisions", as
 
 it("adopts queues from device snapshots and reconciles shuffle and repeat", async () => {
   const { socket, result } = await setup();
+  expect(result.current.devicesReady).toBe(false);
   const queue = { ...socket.queue(), shuffle: true, repeat: "all" as const };
   const activity = {
     device_id: "desktop", device_name: "Desktop", track_id: "t70", title: "Track 70",
@@ -181,6 +182,7 @@ it("adopts queues from device snapshots and reconciles shuffle and repeat", asyn
     device_id: "desktop", device_name: "Desktop", online: true, control_enabled: true,
     capabilities: ["queue"], connected_at: "", activity, queue,
   }] }));
+  expect(result.current.devicesReady).toBe(true);
   const device = result.current.devices[0];
   expect(device.queue).toEqual(queue);
   const { result: remote } = renderHook(() => useRemotePlaybackCommands({
@@ -193,6 +195,7 @@ it("adopts queues from device snapshots and reconciles shuffle and repeat", asyn
   });
   act(() => socket.close());
   expect(result.current.devices).toEqual([]);
+  expect(result.current.devicesReady).toBe(false);
 });
 
 it("republishes its queue after a socket reconnect", async () => {

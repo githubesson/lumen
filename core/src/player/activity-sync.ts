@@ -88,6 +88,8 @@ export interface RemotePlaybackCommandResult {
 export interface PlaybackRemoteSessionSnapshot {
   deviceId: string | null;
   connected: boolean;
+  /** Whether this connection has received an authoritative device list. */
+  devicesReady: boolean;
   devices: PlaybackDevice[];
 }
 
@@ -201,6 +203,7 @@ let hasRemoteSnapshot = false;
 let remoteSessionSnapshot: PlaybackRemoteSessionSnapshot = {
   deviceId: null,
   connected: false,
+  devicesReady: false,
   devices: [],
 };
 let commandTransport: {
@@ -467,7 +470,7 @@ export function usePlaybackActivityPublisher({
         }
         attempt = 0;
         commandTransport = { socket, deviceId, revision: revisionRef };
-        updateRemoteSession({ connected: true });
+        updateRemoteSession({ connected: true, devicesReady: false });
         if (controlsRef.current) {
           sendSocketMessage(socket, {
             type: "device.hello",
@@ -513,7 +516,7 @@ export function usePlaybackActivityPublisher({
           return;
         }
         if (message.type === "devices.snapshot") {
-          updateRemoteSession({ devices: normalizeDevices(message.devices) });
+          updateRemoteSession({ devices: normalizeDevices(message.devices), devicesReady: true });
           return;
         }
         if (message.type === "playback.command_result") {
@@ -528,7 +531,7 @@ export function usePlaybackActivityPublisher({
         if (socketRef.current === socket) socketRef.current = null;
         if (commandTransport?.socket === socket) {
           commandTransport = null;
-          updateRemoteSession({ connected: false, devices: [] });
+          updateRemoteSession({ connected: false, devicesReady: false, devices: [] });
           failPendingCommands("playback socket disconnected");
         }
         if (disposed) return;
@@ -553,7 +556,7 @@ export function usePlaybackActivityPublisher({
       hasRemoteSnapshot = false;
       if (commandTransport?.deviceId === deviceId) {
         commandTransport = null;
-        updateRemoteSession({ connected: false, devices: [] });
+        updateRemoteSession({ connected: false, devicesReady: false, devices: [] });
         failPendingCommands("playback socket disconnected");
       }
     };

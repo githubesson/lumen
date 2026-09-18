@@ -18,7 +18,7 @@ import * as Haptics from "expo-haptics";
 import {
   remotePlayerState,
   controlledStateForDevice,
-  filterRemoteDevices,
+  useRemotePlaybackTarget,
   trackCoverUrl,
   useRemoteActivityClock,
   useRemotePlaybackCommands,
@@ -167,26 +167,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     controlEnabled: true,
   });
   const remoteSession = usePlaybackRemoteSession();
-  const [targetDeviceId, setTargetDeviceId] = useState<string | null>(null);
-  const [targetDeviceSnapshot, setTargetDeviceSnapshot] =
-    useState<PlaybackDevice | null>(null);
-  const remoteDevices = useMemo(
-    () => filterRemoteDevices(remoteSession.devices, remoteSession.deviceId),
-    [remoteSession.deviceId, remoteSession.devices],
-  );
-  const liveTargetDevice = useMemo(
-    () =>
-      remoteDevices.find((device) => device.deviceId === targetDeviceId) ??
-      null,
-    [remoteDevices, targetDeviceId],
-  );
-  // Fall back to the last known snapshot: a device that briefly drops out of
-  // the presence list should not eject the user from the cast session.
-  const targetDevice =
-    liveTargetDevice ??
-    (targetDeviceSnapshot?.deviceId === targetDeviceId
-      ? targetDeviceSnapshot
-      : null);
+  const { remoteDevices, targetDevice, targetDeviceId, setTargetDeviceId } =
+    useRemotePlaybackTarget(remoteSession);
   const {
     controlled,
     commandPending,
@@ -206,10 +188,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  useEffect(() => {
-    if (liveTargetDevice) setTargetDeviceSnapshot(liveTargetDevice);
-  }, [liveTargetDevice]);
-
   // Destructured so this callback's identity tracks only the fields it reads.
   // Depending on `state` wholesale would also rebuild it on every queue change,
   // and it is handed to consumers through the remote-playback context.
@@ -221,7 +199,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         remoteDevices.find((device) => device.deviceId === nextDeviceId) ??
         null;
       setTargetDeviceId(nextDeviceId);
-      setTargetDeviceSnapshot(nextDevice);
       seedControlled(
         controlledStateForDevice(nextDevice, {
           volume,
@@ -238,6 +215,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       remoteDevices,
       repeat,
       seedControlled,
+      setTargetDeviceId,
       shuffle,
       volume,
     ],

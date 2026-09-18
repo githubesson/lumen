@@ -4,13 +4,12 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useState,
   type ReactNode,
 } from "react";
 import {
   asyncifySyncStorage,
   controlledStateForDevice,
-  filterRemoteDevices,
+  useRemotePlaybackTarget,
   remotePlayerState,
   useRemoteActivityClock,
   useRemotePlaybackCommands,
@@ -93,17 +92,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     controlEnabled: true,
   });
   const remoteSession = usePlaybackRemoteSession();
-  const [targetDeviceId, setTargetDeviceId] = useState<string | null>(null);
-  const remoteDevices = useMemo(
-    () => filterRemoteDevices(remoteSession.devices, remoteSession.deviceId),
-    [remoteSession.deviceId, remoteSession.devices],
-  );
-  const targetDevice = useMemo(
-    () =>
-      remoteDevices.find((device) => device.deviceId === targetDeviceId) ??
-      null,
-    [remoteDevices, targetDeviceId],
-  );
+  const { remoteDevices, targetDevice, targetDeviceId, setTargetDeviceId } =
+    useRemotePlaybackTarget(remoteSession);
   // While controlling another device, `usePlayerTime` consumers (lyrics, most
   // visibly) need the target's clock, not the paused local one — and ticking,
   // since heartbeats only arrive every ~10s.
@@ -128,15 +118,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  useEffect(() => {
-    if (targetDeviceId && remoteSession.connected && !targetDevice) {
-      // The remote device list is an external subscription; clear a selected
-      // target when that source confirms it disappeared.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setTargetDeviceId(null);
-    }
-  }, [remoteSession.connected, targetDevice, targetDeviceId]);
-
   // Destructured so this callback's identity tracks only the fields it reads.
   // Depending on `state` wholesale would also rebuild it on every queue change,
   // and it is handed to consumers through the remote-playback context.
@@ -159,6 +140,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       remoteDevices,
       repeat,
       seedControlled,
+      setTargetDeviceId,
       shuffle,
       volume,
     ],

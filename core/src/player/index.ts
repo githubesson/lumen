@@ -19,6 +19,7 @@ export {
   remotePlayerState,
   useRemoteActivityClock,
   useRemotePlaybackCommands,
+  useRemotePlaybackTarget,
   type ControlledPlaybackState,
   type UseRemotePlaybackCommandsOptions,
   type UseRemotePlaybackCommandsReturn,

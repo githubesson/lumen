@@ -8,19 +8,18 @@
  * drifted were both in playback state — a web-local `nextRepeat` shadowing
  * core's `nextRepeatMode`, and two spellings of the position extrapolation.
  *
- * What stays in the platform providers is what genuinely differs: how a target
- * device is *resolved* (the phone keeps a snapshot so a transient dropout does
- * not eject you from the session; the web tracks the live list only), and how
- * commands are triggered (keyboard shortcuts vs. lock-screen controls).
+ * Target selection and offline fallback are shared here too. Platform providers
+ * handle how commands are triggered (keyboard shortcuts vs. lock-screen controls).
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PlaybackQueueSnapshot } from "./queue-sync";
 import type { PlaybackActivity, TrackListItem } from "../api";
 import { clampVolume, type PlayerState, type RepeatMode, type TimeState } from "./player-core";
 import {
   sendRemotePlaybackCommand,
   type PlaybackDevice,
+  type PlaybackRemoteSessionSnapshot,
   type RemotePlaybackCommandAction,
   type RemotePlaybackCommandResult,
 } from "./activity-sync";
@@ -53,6 +52,40 @@ export function filterRemoteDevices(
       device.online &&
       device.controlEnabled,
   );
+}
+
+/**
+ * Return to local controls when fresh presence data removes the selected target.
+ * Preserve the last snapshot while our own connection is down or awaiting its
+ * first device list: neither condition confirms that the target went offline.
+ */
+export function useRemotePlaybackTarget(session: PlaybackRemoteSessionSnapshot) {
+  const remoteDevices = useMemo(
+    () => filterRemoteDevices(session.devices, session.deviceId),
+    [session.devices, session.deviceId],
+  );
+  const [selectedDevice, setSelectedDevice] = useState<PlaybackDevice | null>(null);
+  const targetDevice = session.connected && session.devicesReady
+    ? remoteDevices.find((device) => device.deviceId === selectedDevice?.deviceId) ?? null
+    : selectedDevice;
+
+  // Reconcile before children render so controls cannot route to a vanished
+  // target for one extra render. Clearing selection also prevents an automatic
+  // switch back to remote if that device later reconnects.
+  if (selectedDevice !== targetDevice) {
+    setSelectedDevice(targetDevice);
+  }
+
+  const setTargetDeviceId = useCallback((deviceId: string | null) => {
+    setSelectedDevice(remoteDevices.find((device) => device.deviceId === deviceId) ?? null);
+  }, [remoteDevices]);
+
+  return {
+    remoteDevices,
+    targetDevice,
+    targetDeviceId: targetDevice?.deviceId ?? null,
+    setTargetDeviceId,
+  };
 }
 
 /**
