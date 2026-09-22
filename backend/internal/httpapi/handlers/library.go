@@ -30,6 +30,13 @@ type Library struct {
 
 	mu     sync.Mutex
 	rescan *ingest.RescanProgress
+
+	// uploadLocks holds one single-slot channel per user. A quota-limited upload
+	// holds its user's lock from the usage check through ingest, so
+	// concurrent requests cannot all pass the check against the same usage.
+	// In-process only: run one backend replica, or put the check behind a
+	// shared lock, if you scale out.
+	uploadLocks sync.Map
 }
 
 const (
@@ -120,6 +127,19 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	results := make([]result, 0, len(files))
 
+	enforceQuota := ownerID != nil && u.Role != models.RoleAdmin && h.UploadQuotaBytes > 0
+	if enforceQuota {
+		v, _ := h.uploadLocks.LoadOrStore(u.ID, make(chan struct{}, 1))
+		lock := v.(chan struct{})
+		select {
+		case lock <- struct{}{}:
+			defer func() { <-lock }()
+		case <-r.Context().Done():
+			http.Error(w, "upload cancelled", http.StatusServiceUnavailable)
+			return
+		}
+	}
+
 	for _, fh := range files {
 		name := filepath.Base(fh.Filename)
 		if !ingest.IsSupported(name) {
@@ -130,7 +150,7 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 			results = append(results, result{File: fh.Filename, Error: "file too large"})
 			continue
 		}
-		if ownerID != nil && u.Role != models.RoleAdmin && h.UploadQuotaBytes > 0 {
+		if enforceQuota {
 			used, err := h.Library.PersonalUploadBytes(r.Context(), u.ID)
 			if err != nil {
 				h.log().Error("upload: quota lookup failed", "user", u.ID, "err", err)

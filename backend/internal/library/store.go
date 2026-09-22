@@ -70,10 +70,10 @@ const albumHasGlobalTrack = `SELECT 1 FROM tracks g
 //
 // ownerID is the uploading user for personal ingests (nil for global ingest,
 // remote tracks and admin edits). Albums are shared across users, so a
-// personal ingest may only fill metadata on albums that have no global tracks,
-// and a cover it supplies is recorded in cover_owner_id so reads show it to
-// that user alone. Global ingest replaces personal covers and, for the first
-// global track of an album, personal release years.
+// personal ingest never writes albums.cover_art_path — its cover goes to
+// album_personal_covers and is only shown to that user — and it may only fill
+// year / compilation on albums that have no global tracks. For the first
+// global track of an album, global metadata wins over personal uploads'.
 func UpsertAlbum(ctx context.Context, q pgx.Tx, title string, albumArtistID *uuid.UUID, year int, isCompilation bool, coverPath string, ownerID *uuid.UUID) (uuid.UUID, error) {
 	title = dbtext.Clean(title)
 	coverPath = dbtext.Clean(coverPath)
@@ -81,21 +81,20 @@ func UpsertAlbum(ctx context.Context, q pgx.Tx, title string, albumArtistID *uui
 	if year > 0 {
 		ptrYear = &year
 	}
-	var ptrCover *string
-	if coverPath != "" {
-		ptrCover = &coverPath
+	var globalCover *string
+	if coverPath != "" && ownerID == nil {
+		globalCover = &coverPath
 	}
 	var id uuid.UUID
 	// DO UPDATE rather than DO NOTHING: DO NOTHING suppresses the RETURNING row
 	// on conflict, and the SET list is the same opportunistic fill the old
 	// read path did — never overwriting a value we already have.
 	//
-	// has_global: whether the album already has a live global track. The row
-	// being ingested is not inserted yet, so for the first global track of an
-	// album this is false and its metadata wins over personal uploads'.
+	// albumHasGlobalTrack is evaluated before the track being ingested is
+	// inserted, so it is false for an album's first global track.
 	err := q.QueryRow(ctx, `
-		INSERT INTO albums (title, album_artist_id, release_year, is_compilation, cover_art_path, cover_owner_id)
-		VALUES ($1, $2, $3, $4, $5, CASE WHEN $5::text IS NULL THEN NULL ELSE $6::uuid END)
+		INSERT INTO albums (title, album_artist_id, release_year, is_compilation, cover_art_path)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (title, COALESCE(album_artist_id, '00000000-0000-0000-0000-000000000000'::uuid))
 		DO UPDATE SET
 			release_year = CASE
@@ -110,22 +109,21 @@ func UpsertAlbum(ctx context.Context, q pgx.Tx, title string, albumArtistID *uui
 					THEN albums.is_compilation OR EXCLUDED.is_compilation
 				ELSE albums.is_compilation
 			END,
-			cover_art_path = CASE
-				WHEN $6::uuid IS NULL AND albums.cover_owner_id IS NOT NULL AND EXCLUDED.cover_art_path IS NOT NULL
-					THEN EXCLUDED.cover_art_path
-				ELSE COALESCE(albums.cover_art_path, EXCLUDED.cover_art_path)
-			END,
-			cover_owner_id = CASE
-				WHEN $6::uuid IS NULL AND albums.cover_owner_id IS NOT NULL AND EXCLUDED.cover_art_path IS NOT NULL
-					THEN NULL
-				WHEN albums.cover_art_path IS NULL
-					THEN EXCLUDED.cover_owner_id
-				ELSE albums.cover_owner_id
-			END,
+			cover_art_path = COALESCE(albums.cover_art_path, EXCLUDED.cover_art_path),
 			updated_at = NOW()
-		RETURNING id`, title, albumArtistID, ptrYear, isCompilation, ptrCover, ownerID).Scan(&id)
+		RETURNING id`, title, albumArtistID, ptrYear, isCompilation, globalCover, ownerID).Scan(&id)
 	if err != nil {
 		return uuid.Nil, err
+	}
+	if ownerID != nil && coverPath != "" {
+		// First cover a user uploads for an album sticks, mirroring the
+		// COALESCE fill on the shared row.
+		if _, err := q.Exec(ctx, `
+			INSERT INTO album_personal_covers (album_id, user_id, cover_art_path)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (album_id, user_id) DO NOTHING`, id, *ownerID, coverPath); err != nil {
+			return uuid.Nil, err
+		}
 	}
 	return id, nil
 }
@@ -769,7 +767,7 @@ func (s *Store) UpdateAlbum(ctx context.Context, id uuid.UUID, p AlbumPatch) err
 func (s *Store) SetAlbumCover(ctx context.Context, albumID uuid.UUID, coverPath string) error {
 	coverPath = dbtext.Clean(coverPath)
 	tag, err := s.db.Exec(ctx, `
-		UPDATE albums SET cover_art_path = $2, cover_owner_id = NULL, updated_at = NOW()
+		UPDATE albums SET cover_art_path = $2, updated_at = NOW()
 		WHERE id = $1`, albumID, coverPath)
 	if err != nil {
 		return err
@@ -791,12 +789,12 @@ func (s *Store) SetTrackAlbumCover(ctx context.Context, trackID uuid.UUID, cover
 	}
 	_, err := s.db.Exec(ctx, `
 		UPDATE albums a
-		SET cover_art_path = $2, cover_owner_id = NULL, updated_at = NOW()
+		SET cover_art_path = $2, updated_at = NOW()
 		FROM tracks t
 		WHERE t.id = $1
 		  AND t.album_id = a.id
 		  AND t.owner_id IS NULL
-		  AND (NULLIF(a.cover_art_path, '') IS NULL OR a.cover_owner_id IS NOT NULL)`,
+		  AND NULLIF(a.cover_art_path, '') IS NULL`,
 		trackID, coverPath)
 	return err
 }
@@ -808,7 +806,7 @@ func (s *Store) SetTrackAlbumCover(ctx context.Context, trackID uuid.UUID, cover
 // the album row is missing.
 func (s *Store) ClearAlbumCover(ctx context.Context, albumID uuid.UUID) error {
 	tag, err := s.db.Exec(ctx, `
-		UPDATE albums SET cover_art_path = NULL, cover_owner_id = NULL, updated_at = NOW()
+		UPDATE albums SET cover_art_path = NULL, updated_at = NOW()
 		WHERE id = $1`, albumID)
 	if err != nil {
 		return err

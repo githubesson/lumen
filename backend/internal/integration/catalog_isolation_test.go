@@ -35,8 +35,8 @@ func TestPersonalUploadsCannotAlterSharedCatalog(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	attacker, victim := uuid.New(), uuid.New()
-	for _, id := range []uuid.UUID{attacker, victim} {
+	attacker, victim, bystander := uuid.New(), uuid.New(), uuid.New()
+	for _, id := range []uuid.UUID{attacker, victim, bystander} {
 		exec(t, `INSERT INTO users(id, username, password_hash, role) VALUES($1,$2,'test','user')`, id, "catalog-"+id.String())
 		defer pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, id)
 	}
@@ -92,10 +92,13 @@ func TestPersonalUploadsCannotAlterSharedCatalog(t *testing.T) {
 		return p
 	}
 
-	t.Run("personal cover is only shown to its uploader until global art replaces it", func(t *testing.T) {
+	t.Run("personal covers are per user and never shown to others", func(t *testing.T) {
 		title := "catalog-album-" + uuid.NewString()
 		albumID := upsertAlbum(t, title, 0, "covers/attacker.jpg", &attacker)
 		defer pool.Exec(ctx, `DELETE FROM albums WHERE id=$1`, albumID)
+		if again := upsertAlbum(t, title, 0, "covers/victim.jpg", &victim); again != albumID {
+			t.Fatalf("same album resolved to %s and %s", albumID, again)
+		}
 		sha := sha256.Sum256([]byte(title + "global"))
 		trackID, _, _ := insertTrack(t, library.TrackInsert{
 			AlbumID: &albumID, Title: "Global", DurationMS: 1000,
@@ -103,30 +106,39 @@ func TestPersonalUploadsCannotAlterSharedCatalog(t *testing.T) {
 		})
 		defer pool.Exec(ctx, `DELETE FROM tracks WHERE id=$1`, trackID)
 
-		if got := coverFor(t, albumID, victim); got != "" {
-			t.Fatalf("victim sees attacker cover %q", got)
+		for viewer, want := range map[uuid.UUID]string{
+			attacker:  "covers/attacker.jpg",
+			victim:    "covers/victim.jpg",
+			bystander: "",
+		} {
+			if got := coverFor(t, albumID, viewer); got != want {
+				t.Fatalf("viewer %s sees cover %q, want %q", viewer, got, want)
+			}
+			album, err := lib.GetAlbum(ctx, albumID, viewer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if album.HasCover != (want != "") {
+				t.Fatalf("viewer %s HasCover = %v", viewer, album.HasCover)
+			}
 		}
-		if got := coverFor(t, albumID, attacker); got != "covers/attacker.jpg" {
-			t.Fatalf("attacker cover = %q", got)
-		}
-		album, err := lib.GetAlbum(ctx, albumID, victim)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if album.HasCover {
-			t.Fatal("album reports a cover to a viewer who may not see it")
-		}
-		detail, err := lib.GetTrack(ctx, trackID, victim)
+		detail, err := lib.GetTrack(ctx, trackID, bystander)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if detail.CoverArtPath != "" {
-			t.Fatalf("global track exposes personal cover %q", detail.CoverArtPath)
+			t.Fatalf("global track exposes a personal cover %q", detail.CoverArtPath)
+		}
+		if got, err := lib.AlbumCoverPathForUser(ctx, albumID, attacker); err != nil || got != "covers/attacker.jpg" {
+			t.Fatalf("signed per-user cover = %q, %v", got, err)
+		}
+		if _, err := lib.AlbumCoverPath(ctx, albumID); !errors.Is(err, library.ErrNotFound) {
+			t.Fatalf("shared cover lookup err = %v, want ErrNotFound", err)
 		}
 
 		// A personal upload can no longer fill metadata on an album that
 		// has global tracks.
-		upsertAlbum(t, title, 1337, "covers/attacker2.jpg", &attacker)
+		upsertAlbum(t, title, 1337, "", &attacker)
 		var year *int
 		if err := pool.QueryRow(ctx, `SELECT release_year FROM albums WHERE id=$1`, albumID).Scan(&year); err != nil {
 			t.Fatal(err)
@@ -136,12 +148,10 @@ func TestPersonalUploadsCannotAlterSharedCatalog(t *testing.T) {
 		}
 
 		upsertAlbum(t, title, 2001, "covers/global.jpg", nil)
-		if got := coverFor(t, albumID, victim); got != "covers/global.jpg" {
-			t.Fatalf("global ingest did not replace personal cover: %q", got)
-		}
-		upsertAlbum(t, title, 0, "covers/attacker3.jpg", &attacker)
-		if got := coverFor(t, albumID, victim); got != "covers/global.jpg" {
-			t.Fatalf("personal upload replaced global cover: %q", got)
+		for _, viewer := range []uuid.UUID{attacker, victim, bystander} {
+			if got := coverFor(t, albumID, viewer); got != "covers/global.jpg" {
+				t.Fatalf("viewer %s sees %q after global art arrived", viewer, got)
+			}
 		}
 	})
 

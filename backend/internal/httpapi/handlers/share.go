@@ -420,9 +420,8 @@ func (h *Share) Page(w http.ResponseWriter, r *http.Request) {
 	var accentColor string
 	now := time.Now()
 	if t.AlbumID != nil {
-		cExp, cSig := auth.SignCoverURL(h.ShareSignKey, "album", t.AlbumID.String(), now)
-		coverURL = base + "/api/public/covers/album/" + t.AlbumID.String() +
-			"?exp=" + auth.FormatExp(cExp) + "&sig=" + cSig
+		coverPath, _ := signedAlbumCoverPath(h.ShareSignKey, *t.AlbumID, t.OwnerID, now)
+		coverURL = base + coverPath
 		accentColor = h.accentColorForTrack(r.Context(), t)
 	}
 
@@ -512,9 +511,8 @@ func (h *Share) PublicInfo(w http.ResponseWriter, r *http.Request) {
 	var albumID string
 	if t.AlbumID != nil {
 		albumID = t.AlbumID.String()
-		cExp, cSig := auth.SignCoverURL(h.ShareSignKey, "album", albumID, now)
-		coverURL = base + "/api/public/covers/album/" + albumID +
-			"?exp=" + auth.FormatExp(cExp) + "&sig=" + cSig
+		coverPath, _ := signedAlbumCoverPath(h.ShareSignKey, *t.AlbumID, t.OwnerID, now)
+		coverURL = base + coverPath
 		accentColor = h.accentColorForTrack(r.Context(), t)
 	}
 
@@ -812,9 +810,8 @@ func (h *Share) Embed(w http.ResponseWriter, r *http.Request) {
 	var coverURL string
 	var accentColor string
 	if t.AlbumID != nil {
-		cExp, cSig := auth.SignCoverURL(h.ShareSignKey, "album", t.AlbumID.String(), now)
-		coverURL = base + "/api/public/covers/album/" + t.AlbumID.String() +
-			"?exp=" + auth.FormatExp(cExp) + "&sig=" + cSig
+		coverPath, _ := signedAlbumCoverPath(h.ShareSignKey, *t.AlbumID, t.OwnerID, now)
+		coverURL = base + coverPath
 		accentColor = h.accentColorForTrack(r.Context(), t)
 	}
 
