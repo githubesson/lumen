@@ -43,8 +43,8 @@ export interface ExpoAudioAdapter extends AudioAdapter {
  * `expo-audio` doesn't emit a discrete event for it. `pause` is dispatched
  * only for genuine pauses (user or system — e.g. headphones disconnecting or
  * an audio interruption): buffering stalls, source swaps and natural track
- * end all pass through `playing: false` natively but fire no `pause` in the
- * web event model, and the core mirrors `pause` straight into `isPlaying`.
+ * end all pass through `playing: false` natively but must not be forwarded
+ * as pauses, since the core mirrors `pause` straight into `isPlaying`.
  */
 export function useExpoAudioAdapter(): ExpoAudioAdapter {
   // We only need coarse native ticks because the UI smooths progress locally.
@@ -123,6 +123,15 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       const isLoaded = status.isLoaded;
       const didJustFinish = status.didJustFinish;
       const duration = status.duration;
+      // iOS's periodic observer can see the stopped playhead before its
+      // separate end notification arrives. That ordinary snapshot still has
+      // didJustFinish=false. Treat it as an end transition, or the core's
+      // pause effect can cancel the seek/play that restarts a loop.
+      const atEnd =
+        isLoaded &&
+        Number.isFinite(duration) &&
+        duration > 0 &&
+        status.currentTime >= duration;
       // iOS reports `playing: false` while the player is merely rebuffering
       // (timeControlStatus "waitingToPlayAtSpecifiedRate"), but a stall is
       // not a pause — the web event model this adapter translates to fires
@@ -160,11 +169,11 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       }
 
       if (!prev.playing && playing) dispatch("play");
-      // Natural track end also passes through playing=false, but the web
+      // Natural track end also passes through playing=false, but our adapter
       // contract fires only `ended` there; dispatching `pause` too would
       // flip the core's isPlaying off while its own `ended` handler is
       // advancing to the next track.
-      if (prev.playing && !playing && !didJustFinish) dispatch("pause");
+      if (prev.playing && !playing && !didJustFinish && !atEnd) dispatch("pause");
       if (isLoaded) dispatch("timeupdate");
       if (!prev.didJustFinish && didJustFinish) dispatch("ended");
     });

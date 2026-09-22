@@ -117,6 +117,7 @@ export function usePlayerCore({
   const listeningTickRef = useRef<number | null>(null);
   const loadedTrackIdRef = useRef<string | null>(null);
   const preparedNextRef = useRef<{ trackId: string; uri: string } | null>(null);
+  const playbackAttemptRef = useRef(0);
   // Anchor used to interpolate currentTime against the wall clock between the
   // adapter's (infrequent) timeupdate pings.
   const anchorRef = useRef<{ audioTime: number; wallTime: number }>({
@@ -214,6 +215,15 @@ export function usePlayerCore({
     adapter.clearPrepared?.();
   }, [adapter]);
 
+  const startPlayback = useCallback(() => {
+    const attempt = ++playbackAttemptRef.current;
+    void adapter.play().catch(() => {
+      // Replacing a source can reject its pending play promise. Only the
+      // latest attempt is allowed to change the current playback state.
+      if (attempt === playbackAttemptRef.current) setIsPlaying(false);
+    });
+  }, [adapter]);
+
   const next = useCallback<PlayerControls["next"]>(() => {
     if (!queue.length) return;
     // Guard the empty forward range explicitly: firstPlayableIndex infers
@@ -263,6 +273,8 @@ export function usePlayerCore({
 
     const prepared = preparedNextRef.current;
     const nextUri = resolvePlayableUri(nextTrack.id);
+    const sameTrack = loadedTrackIdRef.current === nextTrack.id;
+    playbackAttemptRef.current += 1;
     const activated =
       prepared?.trackId === nextTrack.id &&
       prepared.uri === nextUri &&
@@ -274,12 +286,25 @@ export function usePlayerCore({
     }
     preparedNextRef.current = null;
 
+    if (!activated && sameTrack) {
+      // A one-song wrap (or duplicate queue entry) changes neither the id
+      // nor necessarily the React state. No source/play effect will restart it.
+      adapter.seek(0);
+      startPlayback();
+    }
+    if (sameTrack) {
+      lastFMScrobbledRef.current = null;
+      trackStartedAtRef.current = Math.floor(Date.now() / 1000);
+      listenedSecondsRef.current = 0;
+      listeningTickRef.current = performance.now();
+    }
+
     if (nextQueue) setQueue(nextQueue);
     setIndex(nextIndex);
     setCurrent(nextTrack);
     setIsPlaying(true);
     setCurrentTime(0);
-    setDuration(activated ? adapter.duration() || 0 : 0);
+    setDuration(activated || sameTrack ? adapter.duration() || 0 : 0);
     anchorRef.current = { audioTime: 0, wallTime: performance.now() };
     playbackReportedRef.current = null;
   }, [
@@ -292,6 +317,7 @@ export function usePlayerCore({
     resolvePlayableUri,
     shuffle,
     sourceQueue,
+    startPlayback,
   ]);
 
   const prev = useCallback<PlayerControls["prev"]>(() => {
@@ -421,17 +447,14 @@ export function usePlayerCore({
     }
   }, [clearPreparedNext, nextTrackToPrepare?.id]);
 
-  // When the track changes, replace the adapter's source and (optionally)
-  // kick off playback.
+  // Load before the playback effect below. Keeping play() in one effect
+  // avoids issuing competing requests for every source change.
   useEffect(() => {
     if (!current) return;
     if (loadedTrackIdRef.current === current.id) return;
     loadedTrackIdRef.current = current.id;
     adapter.load(resolvePlayableUri(current.id));
-    if (isPlaying) {
-      adapter.play().catch(() => setIsPlaying(false));
-    }
-  }, [adapter, current, isPlaying, resolvePlayableUri]);
+  }, [adapter, current, resolvePlayableUri]);
 
   const currentId = current?.id;
 
@@ -457,11 +480,13 @@ export function usePlayerCore({
   useEffect(() => {
     if (!current) return;
     if (isPlaying) {
-      adapter.play().catch(() => setIsPlaying(false));
+      startPlayback();
     } else {
+      playbackAttemptRef.current += 1;
       adapter.pause();
     }
-  }, [adapter, isPlaying, current]);
+    return () => { playbackAttemptRef.current += 1; };
+  }, [adapter, isPlaying, current, startPlayback]);
 
   // Values the adapter event handlers read at fire time. Held in a ref so the
   // subscription effect below can depend on `[adapter]` alone: it previously
@@ -574,7 +599,7 @@ export function usePlayerCore({
         // Mirror the other play() sites: if the platform refuses to restart
         // (e.g. audio-session activation failed mid-interruption), reflect the
         // pause in state instead of showing a playing UI over silence.
-        void adapter.play().catch(() => setIsPlaying(false));
+        startPlayback();
         return;
       }
       eventStateRef.current.next();
@@ -598,9 +623,9 @@ export function usePlayerCore({
       // System-originated pauses (headphones disconnecting, an audio
       // interruption, lock-screen pause) surface only as this event; without
       // mirroring it the UI keeps showing a playing state over silence.
-      // Adapters must only emit `pause` for genuine pauses — buffering
-      // stalls, source swaps and natural track end are not pauses in the
-      // web event model this contract follows.
+      // Adapters filter buffering, source swaps and natural track end so
+      // only genuine pauses reach this handler.
+      playbackAttemptRef.current += 1;
       setIsPlaying(false);
     });
     return () => {
@@ -611,7 +636,7 @@ export function usePlayerCore({
       offPlay();
       offPause();
     };
-  }, [adapter]);
+  }, [adapter, startPlayback]);
 
   useEffect(() => () => adapter.clearPrepared?.(), [adapter]);
 

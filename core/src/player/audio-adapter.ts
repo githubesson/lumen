@@ -4,11 +4,12 @@
  * wraps `expo-audio`'s `useAudioPlayer`. As long as events fire and the state
  * queries return sensible numbers, the shared hook behaves identically.
  *
- * Event semantics (matched to the web audio element's native events):
+ * Event semantics (normalized across platforms):
  *   - `loadedmetadata`: duration is now available.
  *   - `timeupdate`:     periodic (platform-defined cadence) position ping.
  *   - `play`:           started (or resumed after a stall).
- *   - `pause`:          paused (programmatically or by the user).
+ *   - `pause`:          genuine pause (programmatic, user or system); excludes
+ *                       buffering, source changes and natural track end.
  *   - `seeked`:         seek completed and position settled.
  *   - `ended`:          reached end of source.
  *

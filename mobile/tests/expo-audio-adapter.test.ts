@@ -269,6 +269,35 @@ describe("useExpoAudioAdapter status → event translation", () => {
     expect(events).toEqual(["play", "ended"]);
   });
 
+  it("does not cancel a loop when a paused tick arrives before the finish notification", async () => {
+    const { adapter, events } = setup();
+    // Match the core: a pause becomes a pause command; an end seeks and plays.
+    adapter.on("pause", () => adapter.pause());
+    let restart: Promise<void> | undefined;
+    adapter.on("ended", () => {
+      adapter.seek(0);
+      restart = adapter.play();
+    });
+    h.emitStatus(playingStatus());
+    // iOS's periodic observer and end observer are independent. Ordinary
+    // snapshots always contain didJustFinish=false, even at the end.
+    h.emitStatus(status({ currentTime: 100 }));
+    h.emitStatus(status({ currentTime: 100, didJustFinish: true }));
+    h.emitStatus(status({ currentTime: 0 }));
+    h.finishSeek();
+    await restart;
+
+    expect(events).toEqual(["play", "ended"]);
+    expect(h.calls).toEqual(["seekTo", "play"]);
+  });
+
+  it("still reports a system pause just before the end", () => {
+    const { events } = setup();
+    h.emitStatus(playingStatus());
+    h.emitStatus(status({ currentTime: 99.9 }));
+    expect(events).toEqual(["play", "pause"]);
+  });
+
   it("does not dispatch pause for the source swap in load()", () => {
     const { adapter, events } = setup();
 

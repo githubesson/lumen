@@ -204,6 +204,49 @@ describe("usePlayerCore", () => {
     expect(result.current.state.isPlaying).toBe(true);
   });
 
+  it.each([false, true])("restarts a single-track repeat-all queue without a ready preload (shuffle: %s)", async (shuffle) => {
+    const { result, adapter, state, emit } = await setup();
+    const track = t("a");
+    act(() => result.current.controls.play(track, [track]));
+    act(() => {
+      result.current.controls.setRepeat("all");
+      result.current.controls.setShuffle(shuffle);
+    });
+    state.dur = 180;
+    act(() => emit("loadedmetadata"));
+
+    for (let loop = 0; loop < 3; loop++) {
+      state.time = 180;
+      state.playing = false;
+      act(() => emit("ended"));
+      expect(state.time).toBe(0);
+      expect(state.playing).toBe(true);
+      expect(result.current.time.duration).toBe(180);
+    }
+    expect(adapter.load).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not pause a new song when the previous play request rejects late", async () => {
+    const { result, adapter, state } = await setup();
+    let rejectOldPlay!: (error: Error) => void;
+    const pending = new Promise<void>((_, reject) => { rejectOldPlay = reject; });
+    vi.mocked(adapter.play).mockReturnValueOnce(pending);
+    act(() => result.current.controls.play(t("a"), [t("a"), t("b")]));
+    act(() => result.current.controls.next());
+    await act(async () => rejectOldPlay(new Error("source replaced")));
+    expect(result.current.state.isPlaying).toBe(true);
+    expect(state.playing).toBe(true);
+  });
+
+  it("reflects a failed loop restart as paused", async () => {
+    const { result, adapter, emit } = await setup();
+    act(() => result.current.controls.play(t("a")));
+    act(() => result.current.controls.setRepeat("one"));
+    vi.mocked(adapter.play).mockRejectedValueOnce(new Error("playback refused"));
+    await act(async () => emit("ended"));
+    expect(result.current.state.isPlaying).toBe(false);
+  });
+
   it("the playable gate skips blocked tracks when advancing", async () => {
     const { result } = await setup({
       isTrackPlayable: (id) => id !== "b",
