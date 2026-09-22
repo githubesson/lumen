@@ -1,10 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   RefreshCw as ArrowPathIcon,
   CircleCheck as CheckCircleIcon,
-  FolderOpen as FolderOpenIcon,
   Power as PowerIcon,
-  Wrench as WrenchScrewdriverIcon,
 } from "lucide-react";
 import { Button } from "../components/Button";
 import ErrorBanner from "../components/ErrorBanner";
@@ -12,59 +10,25 @@ import { TextInput } from "../components/Field";
 import { Select } from "../components/Select";
 import { api, type Playlist } from "../api";
 import {
-  chooseFH6GameDir,
-  chooseFH6MediaSource,
   electron,
   getDesktopConfig,
   getFH6Status,
-  installFH6Radio,
   isElectron,
   syncFH6Session,
 } from "../lib/platform";
 import {
   FH6_DEFAULT_BRIDGE_URL,
-  bridgeGet,
   bridgePost,
   bridgePut,
   publishFH6Snapshot,
-  type FH6BridgeState,
-  type FH6QueueTrack,
 } from "../lib/fh6";
 import type { FH6StatusPayload } from "../electron";
-
-type QueueMode = "tracks" | "favorites" | "recent" | "playlist";
-
-interface BridgeConfig {
-  lumen?: {
-    queue_mode?: QueueMode;
-    playlist_id?: string;
-    search?: string;
-    shuffle?: boolean;
-    limit?: number;
-  };
-  audio?: {
-    output_gain?: number;
-  };
-}
-
-interface BridgeQueue {
-  tracks: FH6QueueTrack[];
-  current_index?: number;
-}
-
-interface SourceDraft {
-  queue_mode: QueueMode;
-  playlist_id: string;
-  search: string;
-  limit: number;
-}
-
-const DEFAULT_SOURCE_DRAFT: SourceDraft = {
-  queue_mode: "tracks",
-  playlist_id: "",
-  search: "",
-  limit: 500,
-};
+import FH6InstallPanel from "./fh6/FH6InstallPanel";
+import {
+  useFH6Bridge,
+  type BridgeConfig,
+  type QueueMode,
+} from "./fh6/useFH6Bridge";
 
 const MODE_OPTIONS = [
   { value: "tracks", label: "Tracks" },
@@ -76,20 +40,23 @@ const MODE_OPTIONS = [
 export default function FH6Radio() {
   const [enabled, setEnabled] = useState(false);
   const [status, setStatus] = useState<FH6StatusPayload | null>(null);
-  const [mediaSource, setMediaSource] = useState("");
-  const [state, setState] = useState<FH6BridgeState | null>(null);
-  const [config, setConfig] = useState<BridgeConfig | null>(null);
-  const [sourceDraft, setSourceDraft] = useState<SourceDraft>(DEFAULT_SOURCE_DRAFT);
-  const [sourceDirty, setSourceDirty] = useState(false);
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [playlistsLoading, setPlaylistsLoading] = useState(false);
-  const [queue, setQueue] = useState<FH6QueueTrack[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [installNote, setInstallNote] = useState<string | null>(null);
-  const sourceDirtyRef = useRef(false);
 
   const bridgeUrl = status?.bridgeUrl ?? FH6_DEFAULT_BRIDGE_URL;
+  const {
+    state,
+    config,
+    queue,
+    refreshBridge,
+    sourceDraft,
+    sourceDirty,
+    updateSourceDraft,
+    markSourceApplied,
+    hasUnappliedSource,
+  } = useFH6Bridge(bridgeUrl, setError);
+  const { playlists, playlistsLoading, refreshPlaylists } = usePlaylistOptions();
+
   const lumen = state?.sources?.available?.find((s) => s.name === "lumen");
   const installed =
     !!status?.exeFound &&
@@ -119,57 +86,15 @@ export default function FH6Radio() {
     };
   }, []);
 
+  // refreshBridge is memoized on bridgeUrl, so a new bridge URL restarts this
+  // polling lifecycle; refreshPlaylists is stable.
   useEffect(() => {
     if (!enabled) return;
     void refreshBridge();
     void refreshPlaylists();
     const timer = window.setInterval(() => void refreshBridge(false), 2500);
     return () => window.clearInterval(timer);
-    // refreshBridge is recreated from bridgeUrl, which is already the scalar
-    // dependency that should restart this polling lifecycle.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, bridgeUrl]);
-
-  async function refreshPlaylists() {
-    setPlaylistsLoading(true);
-    try {
-      setPlaylists(await api.listPlaylists());
-    } catch {
-      setPlaylists([]);
-    } finally {
-      setPlaylistsLoading(false);
-    }
-  }
-
-  async function refreshStatus() {
-    const next = await getFH6Status?.();
-    if (next) setStatus(next);
-  }
-
-  async function refreshBridge(showError = true) {
-    try {
-      const [nextState, nextConfig, nextQueue] = await Promise.all([
-        bridgeGet<FH6BridgeState>(bridgeUrl, "/api/state"),
-        bridgeGet<BridgeConfig>(bridgeUrl, "/api/config"),
-        bridgeGet<BridgeQueue>(bridgeUrl, "/api/source/lumen/queue"),
-      ]);
-      setState(nextState);
-      publishFH6Snapshot({
-        bridgeUrl,
-        state: nextState,
-        queue: nextQueue.tracks ?? [],
-        currentIndex: nextQueue.current_index ?? 0,
-      });
-      setConfig(nextConfig);
-      if (!sourceDirtyRef.current) setSourceDraft(configToSourceDraft(nextConfig));
-      setQueue(nextQueue.tracks ?? []);
-      if (showError) setError(null);
-    } catch (e) {
-      setState(null);
-      publishFH6Snapshot({ bridgeUrl, state: null });
-      if (showError) setError((e as Error).message);
-    }
-  }
+  }, [enabled, refreshBridge, refreshPlaylists]);
 
   async function run(label: string, fn: () => Promise<void>) {
     setBusy(label);
@@ -181,35 +106,6 @@ export default function FH6Radio() {
     } finally {
       setBusy(null);
     }
-  }
-
-  async function chooseGameDir() {
-    await run("game-dir", async () => {
-      const res = await chooseFH6GameDir?.();
-      if (res?.status) setStatus(res.status);
-    });
-  }
-
-  async function chooseMedia() {
-    await run("media", async () => {
-      const res = await chooseFH6MediaSource?.();
-      if (res?.path) setMediaSource(res.path);
-    });
-  }
-
-  async function install() {
-    await run("install", async () => {
-      const res = await installFH6Radio?.({
-        gameDir: status?.gameDir,
-        mediaSource,
-        skipMedia: !mediaSource && status?.mediaInstalled === true,
-      });
-      if (!res?.ok) throw new Error(res?.error ?? "Install failed");
-      if (res.status) setStatus(res.status);
-      setInstallNote(
-        `${res.copiedFiles ?? 0} files installed, ${res.brandedFiles ?? 0} branded`,
-      );
-    });
   }
 
   async function syncSession() {
@@ -228,14 +124,6 @@ export default function FH6Radio() {
     });
   }
 
-  function updateSourceDraft(patch: Partial<SourceDraft>): SourceDraft {
-    const next = { ...sourceDraft, ...patch };
-    sourceDirtyRef.current = true;
-    setSourceDirty(true);
-    setSourceDraft(next);
-    return next;
-  }
-
   async function applySourceDraft(next = sourceDraft) {
     await run("config", async () => {
       if (!connected) throw new Error("Launch FH6 and sync the bridge before applying source changes.");
@@ -248,8 +136,7 @@ export default function FH6Radio() {
       };
       await bridgePut(bridgeUrl, "/api/config", { lumen: lumenPatch });
       await bridgePost(bridgeUrl, "/api/source/lumen/refresh");
-      sourceDirtyRef.current = false;
-      setSourceDirty(false);
+      markSourceApplied();
       await refreshBridge(false);
     });
   }
@@ -307,70 +194,12 @@ export default function FH6Radio() {
         </Button>
       </section>
 
-      <section className="fh6-grid fh6-grid-single">
-        <div className="fh6-panel">
-          <div className="fh6-panel-head">
-            <div>
-              <h2>Install</h2>
-              <p>{status?.gameDir || "No game folder selected"}</p>
-            </div>
-            <Button
-              size="sm"
-              leadingIcon={<ArrowPathIcon className="size-4" />}
-              onClick={() => void refreshStatus()}
-            >
-              Scan
-            </Button>
-          </div>
-
-          {status?.candidates && status.candidates.length > 0 && (
-            <div className="fh6-candidates">
-              {status.candidates.slice(0, 3).map((candidate) => (
-                <button
-                  key={candidate}
-                  type="button"
-                  onClick={() => setStatus((s) => (s ? { ...s, gameDir: candidate } : s))}
-                >
-                  {candidate}
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div className="fh6-field-row">
-            <Button
-              leadingIcon={<FolderOpenIcon className="size-4" />}
-              onClick={() => void chooseGameDir()}
-              disabled={busy != null}
-            >
-              Game folder
-            </Button>
-            <Button
-              leadingIcon={<FolderOpenIcon className="size-4" />}
-              onClick={() => void chooseMedia()}
-              disabled={busy != null}
-            >
-              Media ZIP/folder
-            </Button>
-          </div>
-
-          <div className="fh6-path">{mediaSource || "No station media selected"}</div>
-
-          <Button
-            variant="primary"
-            leadingIcon={<WrenchScrewdriverIcon className="size-4" />}
-            onClick={() => void install()}
-            disabled={
-              busy != null ||
-              !status?.gameDir ||
-              (!mediaSource && status?.mediaInstalled !== true)
-            }
-          >
-            Install Lumen Radio
-          </Button>
-          {installNote && <p className="fh6-note">{installNote}</p>}
-        </div>
-      </section>
+      <FH6InstallPanel
+        status={status}
+        setStatus={setStatus}
+        busy={busy}
+        run={run}
+      />
 
       <section className="fh6-panel">
         <div className="fh6-panel-head">
@@ -416,7 +245,7 @@ export default function FH6Radio() {
               placeholder="Optional"
               onChange={(e) => updateSourceDraft({ search: e.currentTarget.value })}
               onBlur={() => {
-                if (connected && sourceDirtyRef.current) void applySourceDraft();
+                if (connected && hasUnappliedSource()) void applySourceDraft();
               }}
               disabled={busy != null}
             />
@@ -451,7 +280,7 @@ export default function FH6Radio() {
                 updateSourceDraft({ limit: Number(e.currentTarget.value || 500) })
               }
               onBlur={() => {
-                if (connected && sourceDirtyRef.current) void applySourceDraft();
+                if (connected && hasUnappliedSource()) void applySourceDraft();
               }}
               disabled={busy != null}
             />
@@ -481,15 +310,6 @@ export default function FH6Radio() {
   );
 }
 
-function configToSourceDraft(config: BridgeConfig | null): SourceDraft {
-  return {
-    queue_mode: config?.lumen?.queue_mode ?? DEFAULT_SOURCE_DRAFT.queue_mode,
-    playlist_id: config?.lumen?.playlist_id ?? DEFAULT_SOURCE_DRAFT.playlist_id,
-    search: config?.lumen?.search ?? DEFAULT_SOURCE_DRAFT.search,
-    limit: config?.lumen?.limit ?? DEFAULT_SOURCE_DRAFT.limit,
-  };
-}
-
 function PageTitle() {
   return (
     <header className="page-header">
@@ -503,4 +323,23 @@ function PageTitle() {
 
 function StatusPill({ ok, label }: { ok: boolean; label: string }) {
   return <span className={`fh6-status-pill${ok ? " ok" : ""}`}>{label}</span>;
+}
+
+/** Playlists offered as a Lumen Radio source. */
+function usePlaylistOptions() {
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [playlistsLoading, setPlaylistsLoading] = useState(false);
+
+  const refreshPlaylists = useCallback(async () => {
+    setPlaylistsLoading(true);
+    try {
+      setPlaylists(await api.listPlaylists());
+    } catch {
+      setPlaylists([]);
+    } finally {
+      setPlaylistsLoading(false);
+    }
+  }, []);
+
+  return { playlists, playlistsLoading, refreshPlaylists };
 }
