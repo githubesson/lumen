@@ -16,7 +16,7 @@ export default function PendingInvites() {
   const accept = async (id: string) => {
     try {
       await api.acceptInvite(id);
-      reload();
+      await reload();
     } catch (err) {
       setActionError(errorMessage(err, "Failed to accept."));
     }
@@ -24,7 +24,7 @@ export default function PendingInvites() {
   const decline = async (id: string) => {
     try {
       await api.declineInvite(id);
-      reload();
+      await reload();
     } catch (err) {
       setActionError(errorMessage(err, "Failed to decline."));
     }

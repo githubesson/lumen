@@ -59,7 +59,7 @@ export function InvitesAdminSection() {
       });
       setJustCreated(created);
       resetCopied();
-      reload();
+      await reload();
     } catch (err) {
       setActionError(errorMessage(err, "Failed to create invite."));
     }
@@ -69,7 +69,7 @@ export function InvitesAdminSection() {
     if (!window.confirm("Revoke this invite?")) return;
     try {
       await api.revokeInvite(id);
-      reload();
+      await reload();
     } catch (err) {
       setActionError(errorMessage(err, "Failed to revoke."));
     }

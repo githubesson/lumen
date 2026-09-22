@@ -155,7 +155,8 @@ export function TidalSection() {
     try {
       await api.removeTidalAccount(accountID);
       setNotice("TIDAL account unlinked.");
-      reload();
+      // Keep the row busy until the refreshed list drops the unlinked account.
+      await reload();
     } catch (err) {
       setActionError(errorMessage(err, "Could not unlink the TIDAL account."));
     } finally {

@@ -44,7 +44,7 @@ export function MusicRootsSection({
   onError,
 }: {
   roots: MusicRoot[] | null;
-  reloadRoots: () => void;
+  reloadRoots: () => Promise<void>;
   error: string | null;
   onError: (message: string) => void;
 }) {
@@ -105,7 +105,7 @@ export function MusicRootsSection({
       await api.addMusicRoot({ path: path.trim(), label: label.trim() });
       setPath("");
       setLabel("");
-      reloadRoots();
+      await reloadRoots();
     } catch (err) {
       onError(errorMessage(err, "Failed to add root."));
     } finally {
@@ -117,7 +117,7 @@ export function MusicRootsSection({
     onError("");
     try {
       await api.setMusicRootEnabled(r.id, !r.enabled);
-      reloadRoots();
+      await reloadRoots();
     } catch (err) {
       onError(errorMessage(err, "Failed to update root."));
     }
@@ -136,7 +136,7 @@ export function MusicRootsSection({
     onError("");
     try {
       const res = await api.deleteMusicRoot(r.id, { purge });
-      reloadRoots();
+      await reloadRoots();
       if (purge && res?.deleted_tracks) {
         libraryChanged.emit();
       }
