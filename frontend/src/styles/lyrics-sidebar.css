@@ -1,0 +1,114 @@
+/* ============================================================
+   Lyrics sidebar
+   ============================================================ */
+.lyrics-sidebar {
+  grid-area: lyrics;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+  isolation: isolate;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(12px);
+  transition: opacity 240ms ease, transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.app[data-lyrics-open="true"] .lyrics-sidebar {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.lyrics-sidebar-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 12px 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.lyrics-sidebar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.lyrics-sidebar-track {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.lyrics-sidebar-art {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: var(--radius-md);
+}
+
+.lyrics-sidebar-track-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.lyrics-sidebar-track-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lyrics-sidebar-track-artist {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lyrics-sidebar-empty {
+  flex: 0 0 auto;
+  padding: 0 14px 12px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  position: relative;
+  z-index: 1;
+}
+
+.lyrics-sidebar-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 8px 0 12px;
+  position: relative;
+  z-index: 1;
+}
+
+html[data-mini-player] .lyrics-sidebar {
+  display: none;
+}
+
+html[data-mini-player] .app {
+  --lyrics-panel-w: 0px !important;
+}

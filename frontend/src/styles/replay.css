@@ -1,0 +1,291 @@
+/* ---------- Replay ---------- */
+.replay-hero {
+  background: var(--card);
+}
+.replay-hero-art {
+  background: var(--muted);
+  display: grid;
+  place-items: center;
+}
+.replay-collage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+  background: var(--border);
+}
+.replay-collage-cell {
+  background-size: cover;
+  background-position: center;
+  background-color: var(--muted);
+}
+
+.period-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0;
+  padding: 3px;
+  background: var(--muted);
+  border-radius: var(--radius-lg);
+  width: fit-content;
+}
+.period-pill {
+  appearance: none;
+  height: 26px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.period-pill:hover {
+  color: var(--foreground);
+}
+[data-theme="dark"] .period-pill.active {
+  background: var(--input-bg);
+  border-color: var(--input);
+}
+.period-pill.active {
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: 0 1px 3px 0 oklch(0 0 0 / 0.1), 0 1px 2px -1px oklch(0 0 0 / 0.1);
+}
+.period-pill:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* One unified panel; the 1px gap over a --border background reveals as a
+   thin divider between cells, so wrapping rows pick up horizontal dividers
+   for free. Non-interactive metric rows shouldn't be standalone cards
+   (see Surfaces guideline). */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+@media (max-width: 900px) {
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 420px) {
+  .stat-grid { grid-template-columns: 1fr; }
+}
+.stat-card {
+  background: var(--card);
+  padding: 16px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.stat-card-label {
+  font-size: 14px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stat-card-value {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.stat-card-sub {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Override .shelf's horizontal-scroll layout: on Replay we want top artists
+   and albums to wrap into a responsive grid so wide screens get more cards
+   in view instead of a thin scroll strip. */
+.replay-shelf {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-auto-flow: row;
+  grid-auto-columns: initial;
+  overflow: visible;
+  padding-bottom: 0;
+  scroll-snap-type: none;
+}
+.replay-shelf .card { cursor: default; }
+.replay-rank {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Replay is a rare, read-through summary — the one surface in this app with a
+   delight budget. A short stagger lets the sections arrive rather than appear.
+   Decorative: it must never gate interaction: no pointer-events changes. */
+/* `backwards` rather than the plan's `forwards`: the sections contain non-portaled
+   `position: fixed` dialogs (EditTrackDialog / MoveToAlbumDialog inside
+   TrackList), and a retained end-state transform would make each section their
+   containing block forever. Filling backwards holds the offset through the
+   delay and then hands the element back to its normal styles. */
+.replay-enter > * {
+  animation: replay-enter 300ms var(--ease-out) backwards;
+}
+.replay-enter > *:nth-child(1) { animation-delay: 0ms; }
+.replay-enter > *:nth-child(2) { animation-delay: 40ms; }
+.replay-enter > *:nth-child(3) { animation-delay: 80ms; }
+.replay-enter > *:nth-child(4) { animation-delay: 120ms; }
+/* Clamp: without this a page with many sections keeps adding delay and the
+   last section arrives noticeably late. */
+.replay-enter > *:nth-child(n + 5) { animation-delay: 160ms; }
+
+@keyframes replay-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .replay-enter > * {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}
+
+.activity-chart {
+  height: 140px;
+  padding: 8px 0 28px;
+  position: relative;
+}
+.activity-bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 100%;
+  gap: 3px;
+}
+.activity-col {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 4px;
+  /* Cap each bar so a small bucket count (e.g. 12 months) doesn't stretch
+     them into bloated slabs on wide screens. */
+  max-width: 56px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+}
+.activity-bar {
+  background: var(--primary);
+  opacity: 0.85;
+  border-radius: 4px 4px 0 0;
+  min-height: 2px;
+}
+.activity-col:hover .activity-bar {
+  opacity: 1;
+}
+.activity-chart::after {
+  /* baseline rule grounds the chart so empty buckets aren't lost in space. */
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 28px;
+  height: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+.activity-tick {
+  position: absolute;
+  bottom: -22px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.activity-empty {
+  padding: 28px;
+  text-align: center;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  background: var(--card);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border);
+}
+
+.genre-list {
+  display: grid;
+  gap: 8px;
+  /* Cap the bar length so it doesn't sprawl across ultra-wide displays. */
+  max-width: 880px;
+}
+.genre-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 180px) 1fr minmax(80px, 120px);
+  align-items: center;
+  gap: 12px;
+}
+.genre-label {
+  font-size: 14px;
+  color: var(--foreground);
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.genre-bar-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--muted);
+  overflow: hidden;
+}
+.genre-bar-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 999px;
+}
+.genre-count {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.table .col-extra,
+.table .col-plays {
+  width: 64px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.table thead .col-extra,
+.table thead .col-plays {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}

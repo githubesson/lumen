@@ -1,0 +1,20 @@
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--secondary);
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--secondary-foreground);
+}
+.badge-accent {
+  background: var(--primary);
+  border-color: transparent;
+  color: var(--primary-foreground);
+}

@@ -1,0 +1,113 @@
+/* ============================================================
+   Segmented control
+   ============================================================ */
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 3px;
+  background: var(--muted);
+  border-radius: var(--radius-lg);
+  /* Containing block for the travelling indicator. */
+  position: relative;
+}
+
+/* The travelling pill. Sits behind the buttons; the buttons keep their own
+   colour transition so the label contrast changes in step with it. */
+.segmented-indicator {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  bottom: 3px;
+  border-radius: var(--radius-md);
+  background: var(--background);
+  box-shadow:
+    0 1px 3px 0 oklch(0 0 0 / 0.1),
+    0 1px 2px -1px oklch(0 0 0 / 0.1);
+  transform: translateX(var(--seg-x, 0px));
+  width: var(--seg-w, 0px);
+  transition:
+    transform 200ms var(--ease-in-out),
+    width 200ms var(--ease-in-out);
+  pointer-events: none;
+}
+/* Before the first measurement, and on first paint, the indicator must not
+   fly in from x=0. */
+.segmented-indicator[data-initial] {
+  transition: none;
+}
+.segmented button {
+  /* Sit above the indicator. */
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  color: color-mix(in oklch, var(--foreground) 60%, transparent);
+  font-size: 14px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    transform var(--dur-press) var(--ease-out);
+}
+.segmented button:hover { color: var(--foreground); }
+.segmented button:active {
+  transform: scale(0.97);
+}
+[data-theme="dark"] .segmented button { color: var(--muted-foreground); }
+[data-theme="dark"] .segmented button:hover,
+[data-theme="dark"] .segmented button.active { color: var(--foreground); }
+[data-theme="dark"] .segmented-indicator {
+  background: var(--input-bg);
+  border: 1px solid var(--input);
+}
+.segmented button.active {
+  /* background and box-shadow live on .segmented-indicator */
+  color: var(--foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .segmented-indicator {
+    transition: none;
+  }
+}
+
+/* Filter chips */
+.chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.chip {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  border: 1px solid var(--input);
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: background 120ms ease, transform var(--dur-press) var(--ease-out);
+}
+.chip:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.chip:hover {
+  background: var(--muted);
+}
+.chip.active {
+  background: var(--muted);
+  border-color: var(--input);
+  color: var(--foreground);
+}

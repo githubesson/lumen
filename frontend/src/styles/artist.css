@@ -1,0 +1,242 @@
+/* ============================================================
+   Artist page
+   ============================================================ */
+.artist-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.artist-page > .artist-section {
+  margin-top: 16px;
+}
+
+.artist-hero {
+  position: relative;
+  isolation: isolate;
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 280px;
+  padding: 12px 24px 24px;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.btn.artist-hero-back {
+  color: var(--foreground);
+  background: transparent;
+  border-color: transparent;
+}
+.btn.artist-hero-back:hover {
+  background: var(--ghost-hover);
+}
+.artist-hero-main {
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+  min-width: 0;
+}
+.artist-hero-avatar {
+  flex: 0 0 auto;
+  width: clamp(120px, 22cqi, 192px);
+  aspect-ratio: 1 / 1;
+  background: var(--muted);
+}
+.artist-hero-body {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 4px;
+}
+.artist-hero-kind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+
+.artist-hero-name {
+  margin: 8px 0 12px;
+  font-size: clamp(32px, 7cqi, 56px);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.artist-hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+/* The separator leads its item so a wrapped line never ends on a dot. */
+.artist-hero-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.artist-hero-meta > span + span::before {
+  content: "";
+  width: 3px;
+  height: 3px;
+  border-radius: 99px;
+  background: currentColor;
+}
+@container (max-width: 560px) {
+  .artist-hero-main {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 18px;
+  }
+  .artist-hero-avatar {
+    width: 132px;
+  }
+}
+
+.artist-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 4px 0;
+}
+.artist-play {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  cursor: pointer;
+  transition: background 120ms ease, transform var(--dur-press) var(--ease-out);
+}
+.artist-play:hover {
+  background: color-mix(in oklch, var(--primary) 80%, transparent);
+}
+.artist-play:active {
+  transform: scale(0.97);
+}
+.artist-play:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+.artist-shuffle {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+.artist-shuffle:hover {
+  color: var(--foreground);
+  background: var(--ghost-hover);
+}
+.artist-shuffle.active {
+  color: var(--foreground);
+}
+/* Active-state dot, so "on" doesn't rely on colour alone. */
+.artist-shuffle.active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 99px;
+  background: currentColor;
+}
+.artist-shuffle:disabled {
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
+}
+.artist-actions-end {
+  margin-left: auto;
+  min-width: 0;
+}
+.artist-play:focus-visible,
+.artist-shuffle:focus-visible,
+.artist-more:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+@media (max-width: 900px) {
+  .artist-actions-end {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+}
+
+.artist-status {
+  display: grid;
+  gap: 10px;
+}
+
+.artist-section .section-head {
+  align-items: center;
+  margin-bottom: 10px;
+}
+.artist-section .section-title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.artist-more {
+  padding: 0 10px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.artist-more:hover { color: var(--foreground); }
+.artist-section > .artist-more { margin-top: 6px; }
+.artist-chips { margin-bottom: 12px; }
+
+/* Curated track lists (popular tracks): no column header, no row rules, and
+   rounded hover rows. The header row stays in the DOM at zero height because
+   the fixed table layout sizes its columns from it, and so screen readers
+   still get the column names. */
+.table-headless thead th {
+  height: 0;
+  padding-block: 0;
+  border-bottom: 0;
+  font-size: 0;
+  line-height: 0;
+}
+.table-headless tbody td {
+  border-bottom-color: transparent;
+}
+.table-headless tbody td:first-child {
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+}
+.table-headless tbody td:last-child {
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+}
+.table-headless .col-art { width: 56px; }
+.table-headless .mini-art {
+  width: 40px;
+  height: 40px;
+}

@@ -1,0 +1,135 @@
+/* ============================================================
+   Album / Card
+   ============================================================ */
+.card {
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px;
+  border-radius: var(--radius-xl);
+  cursor: pointer;
+  transition: background 140ms ease;
+  position: relative;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  text-decoration: none;
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+}
+.card:hover {
+  background: var(--ghost-hover);
+}
+.card-art {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--muted);
+  background-size: cover;
+  background-position: center;
+}
+
+/* CoverArt shared styles — the class is always added alongside a caller
+   class (.card-art, .mini-art, .detail-art, .np-art, …) which still
+   controls size/shape. These just wire up the inner image + placeholder
+   letter. */
+.cover-art {
+  position: relative;
+  overflow: hidden;
+  /* Every tile shows the muted placeholder surface until its image decodes,
+     so artwork never punches a transparent hole into the layout. */
+  background: var(--muted);
+}
+.cover-art-placeholder {
+  background: var(--muted);
+}
+.card-art-icon {
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+}
+/* Lucide glyphs are stroke-only. Transport controls and a set favorite read
+   as solid shapes, matching shadcn's filled media buttons. */
+.lucide-play,
+.lucide-pause,
+.lucide-skip-back,
+.lucide-skip-forward {
+  fill: currentColor;
+}
+.active > .lucide-heart,
+[aria-pressed="true"] > .lucide-heart {
+  fill: currentColor;
+}
+.cover-art-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity 180ms var(--ease-out);
+}
+.cover-art-img[data-loaded] {
+  opacity: 1;
+}
+.cover-art-letter {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+  font-weight: 500;
+  font-size: clamp(16px, 32%, 40px);
+}
+
+.card-play {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  display: grid;
+  place-items: center;
+  border: 0;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transform: translateY(4px);
+  opacity: 0;
+  transition: opacity 140ms ease, transform var(--dur-press) var(--ease-out);
+}
+.card:hover .card-play,
+.card:focus-within .card-play {
+  opacity: 1;
+  transform: translateY(0);
+}
+/* Composes with the hover reveal above rather than replacing it. The reveal
+   selector is (0,3,0) and a press can only happen while the card is hovered or
+   focus-within, so this has to match that specificity or it never renders. */
+.card:hover .card-play:active,
+.card:focus-within .card-play:active {
+  transform: translateY(0) scale(0.95);
+}
+.card-title {
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground);
+}
+.card-sub {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

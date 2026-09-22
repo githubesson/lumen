@@ -1,0 +1,144 @@
+/* ============================================================
+   Main content
+   ============================================================ */
+.main {
+  grid-area: main;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+}
+
+.topbar {
+  flex: 0 0 auto;
+  height: 48px;
+  padding: 0 var(--pad);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  position: relative;
+  z-index: 2;
+}
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--muted-foreground);
+}
+.crumbs b {
+  color: var(--foreground);
+  font-weight: 400;
+}
+.crumbs a {
+  color: inherit;
+  text-decoration: none;
+}
+.crumbs a:hover { color: var(--foreground); }
+
+.topbar-spacer { flex: 1; }
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 320px;
+  max-width: 40vw;
+  height: 32px;
+  padding: 0 6px 0 10px;
+  background: var(--input-bg);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  color: var(--muted-foreground);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+  min-width: 0;
+}
+.search:hover {
+  background: var(--input-bg);
+}
+.search:focus-within,
+.search:focus-visible {
+  outline: none;
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 4px color-mix(in oklch, var(--ring) 30%, transparent);
+}
+.search input {
+  flex: 1;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--foreground);
+  font-size: 14px;
+  min-width: 0;
+  width: 100%;
+}
+.search input::placeholder { color: var(--muted-foreground); }
+.search kbd {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  height: 20px;
+  min-width: 20px;
+  padding: 0 4px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.iconbtn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  display: grid;
+  place-items: center;
+  color: var(--foreground);
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  flex: 0 0 32px;
+  transition:
+    background 120ms ease,
+    transform var(--dur-press) var(--ease-out);
+}
+.iconbtn:hover {
+  background: var(--ghost-hover);
+}
+.iconbtn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+.iconbtn.active {
+  background: var(--muted);
+}
+
+.content {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+  z-index: 1;
+  scrollbar-gutter: stable;
+}
+
+.view {
+  padding: var(--pad);
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+/* Admin sections contain wide tables/forms that must scroll horizontally
+   instead of forcing the whole app shell to grow. */
+.admin-section-wrap {
+  min-width: 0;
+  overflow-x: auto;
+}
+.admin-section-wrap > * {
+  min-width: 720px;
+}

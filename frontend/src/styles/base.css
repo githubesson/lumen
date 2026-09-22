@@ -1,0 +1,44 @@
+/* ---------- Base ---------- */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--fs);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  /* No colour transition: the theme swap changes every token in one frame,
+     and easing only the body made the backdrop lag its own contents. */
+}
+
+#root { height: 100vh; }
+
+button,
+input,
+select,
+textarea { font: inherit; color: inherit; }
+
+::selection {
+  background: color-mix(in oklch, var(--foreground) 15%, transparent);
+  color: var(--foreground);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--input);
+  background-clip: padding-box;
+}

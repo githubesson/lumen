@@ -1,0 +1,28 @@
+/* Dialogs / overlays */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  z-index: 40;
+}
+
+.dialog-layer {
+  z-index: 120;
+  pointer-events: auto;
+}
+
+.dialog {
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  color: var(--popover-foreground);
+  min-height: 0;
+}
+
+.dialog-scroll {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}

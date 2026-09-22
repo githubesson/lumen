@@ -1,0 +1,220 @@
+/* ── Player lyrics panel ───────────────────────────────────────────────────── */
+
+.player-lyric-sidebar.player-lyric-status {
+  font-size: 14px;
+  text-align: center;
+  white-space: normal;
+  padding: 0 16px;
+}
+
+.player-lyrics-spinner-wrap {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+}
+
+.ios-spinner {
+  --spinner-size: 28px;
+  width: var(--spinner-size);
+  height: var(--spinner-size);
+  position: relative;
+  color: var(--muted-foreground);
+}
+
+.ios-spinner span {
+  position: absolute;
+  left: calc(50% - 1.1px);
+  top: 1px;
+  width: 2.2px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  transform-origin: 1.1px calc(var(--spinner-size) / 2 - 1px);
+  transform: rotate(calc(var(--i) * 30deg));
+  animation: ios-spinner-fade 1s linear infinite;
+  animation-delay: calc(var(--i) * -1s / 12);
+}
+
+@keyframes ios-spinner-fade {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.18;
+  }
+}
+
+.player-lyrics-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: clamp(48px, 10vh, 120px) 18px 24vh;
+  scroll-behavior: smooth;
+  scroll-padding: 42% 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black 12%,
+    black 88%,
+    transparent
+  );
+}
+
+.player-lyrics-scroll-plain {
+  padding-top: 36px;
+}
+
+.player-lyrics-scroll-line {
+  margin: 0 0 18px;
+  font-size: 14px;
+  line-height: 1.6;
+  letter-spacing: -0.01em;
+  color: color-mix(in oklch, var(--muted-foreground) 75%, transparent);
+  transform-origin: left center;
+  transition:
+    color 260ms ease,
+    opacity 320ms ease,
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 320ms ease;
+}
+
+.player-lyrics-scroll-line.upcoming {
+  opacity: 0.42;
+  transform: scale(1); /* was 0.985, relative to a 1.0 active */
+  filter: blur(0.2px);
+}
+
+.player-lyrics-scroll-line.past {
+  opacity: 0.28;
+  transform: scale(0.985); /* was 0.97 */
+  filter: blur(0.35px);
+}
+
+.player-lyrics-scroll-line.active {
+  opacity: 1;
+  color: var(--foreground);
+  font-weight: 500;
+  /* 15/14 -- the old `font-size: 15px` expressed as a composited transform so
+     it tweens with the rest of the tier and does not reflow the scroller. */
+  transform: scale(1.0714);
+  filter: none;
+}
+
+.player-lyrics-scroll-plain .player-lyrics-scroll-line {
+  opacity: 1;
+  color: var(--muted-foreground);
+  transform: none;
+  filter: none;
+}
+
+.player-lyrics-scroll .player-lyrics-section {
+  margin: 6px 0 12px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.player-lyrics-scroll-line .player-lyric-word {
+  display: inline-block;
+  transition:
+    color 220ms ease,
+    opacity 220ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.player-lyrics-scroll-line.active .player-lyric-word-past {
+  color: color-mix(in oklch, var(--foreground) 68%, transparent);
+  opacity: 0.88;
+}
+
+.player-lyrics-scroll-line.active .player-lyric-word-upcoming {
+  color: color-mix(in oklch, var(--foreground) 38%, transparent);
+  opacity: 0.72;
+}
+
+.player-lyrics-scroll-line.active .player-lyric-word-active {
+  color: var(--foreground);
+  font-weight: 600;
+  opacity: 1;
+  transform: scale(1.04);
+}
+
+.player-lyric-word {
+  color: color-mix(in oklch, var(--muted-foreground) 88%, transparent);
+  transition:
+    color 220ms ease,
+    opacity 220ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    text-shadow 220ms ease;
+}
+
+.player-lyric-word-active {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.player-lyric-status {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-lyric-status-error {
+  color: var(--muted-foreground);
+}
+
+@keyframes player-lyric-line-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.player-lyrics-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lyrics-sidebar {
+    transition: none;
+  }
+
+  .player-lyrics-scroll {
+    scroll-behavior: auto;
+  }
+
+  .player-lyrics-scroll-line {
+    transition: none;
+    transform: none;
+    filter: none;
+  }
+
+  /* The tier scales stay: they are a static size distinction, not motion, and
+     they are what replaced the active line's old `font-size: 15px`. Dropping
+     them would leave reduced-motion users with less emphasis than before.
+     Only the tween above is removed. */
+
+  .player-lyrics-scroll-line.active .player-lyric-word-active {
+    transform: none;
+  }
+
+  .ios-spinner span {
+    animation: none;
+    opacity: 0.45;
+  }
+
+  .player-lyric-word {
+    transition: none;
+  }
+}

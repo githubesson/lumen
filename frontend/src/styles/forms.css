@@ -1,0 +1,30 @@
+/* ============================================================
+   Form inputs — unify with design
+   ============================================================ */
+.input {
+  background: var(--input-bg);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  color: var(--foreground);
+  height: 32px;
+  padding: 0 10px;
+  font-size: 14px;
+  width: 100%;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.input:focus {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 4px color-mix(in oklch, var(--ring) 30%, transparent);
+}
+.input::placeholder {
+  color: var(--muted-foreground);
+}
+
+/* Dark-mode native select dropdown */
+[data-theme="dark"] select.input option,
+[data-theme="dark"] select option {
+  color: var(--popover-foreground);
+  background: var(--popover);
+}

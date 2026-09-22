@@ -1,0 +1,123 @@
+/* ============================================================
+   Playlist / Album detail
+   ============================================================ */
+/* Matches the Home hero card so detail pages share one surface recipe. */
+.detail-header {
+  position: relative;
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  min-height: 200px;
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+}
+.detail-art {
+  width: 200px;
+  height: 200px;
+  border-radius: var(--radius-lg);
+  flex: 0 0 200px;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+  background: var(--muted);
+  background-size: cover;
+  background-position: center;
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+}
+.detail-body {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.detail-kind {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.detail-title {
+  font-size: 36px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  margin: 6px 0 10px;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.detail-meta {
+  color: var(--muted-foreground);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.detail-meta .dot {
+  width: 3px;
+  height: 3px;
+  background: currentColor;
+  border-radius: 99px;
+}
+.detail-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.detail-corner {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  z-index: 2;
+  max-width: calc(100% - 48px);
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: auto;
+}
+.detail-track-search {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  max-width: 100%;
+}
+.detail-track-search .search {
+  width: 260px;
+  max-width: min(260px, 40vw);
+  background: var(--background);
+}
+.detail-track-search-count {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .detail-header.has-corner {
+    flex-wrap: wrap;
+  }
+  .detail-corner {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    width: 100%;
+    max-width: none;
+    margin-top: 4px;
+  }
+  .detail-track-search {
+    width: 100%;
+  }
+  .detail-track-search .search {
+    width: 100%;
+    max-width: none;
+  }
+}

@@ -1,0 +1,117 @@
+/* ---------- Motion tokens ----------
+   Shared easing curves and durations. The CSS built-in easings are too weak
+   for deliberate UI motion; these are the strong variants. Entrances and
+   exits use --ease-out, on-screen movement uses --ease-in-out, the mobile
+   sidebar drawer uses --ease-drawer. */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  --dur-press: 160ms;   /* button / press feedback */
+  --dur-tooltip: 150ms; /* tooltips, small popovers */
+  --dur-menu: 180ms;    /* dropdowns, selects, context menus, popovers */
+  --dur-modal: 200ms;   /* modals, drawers */
+}
+
+/* ============================================================
+   LUMEN — Music Library
+   shadcn/ui "Nova" style: neutral base color, Geist, compact controls
+   ============================================================ */
+
+/* ---------- Theme tokens (shadcn neutral) ---------- */
+[data-theme="light"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  /* Solid keyboard-focus indicator. Nova's ring at 50% alpha falls below the
+     3:1 non-text contrast minimum; neutral-500 clears 4.3:1 on every light
+     surface (background, muted, sidebar). */
+  --focus-ring: oklch(0.556 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+
+  /* Lumen additions, kept neutral except where a status needs a hue. */
+  --destructive-soft: color-mix(in oklch, var(--destructive) 10%, transparent);
+  --destructive-border: color-mix(in oklch, var(--destructive) 30%, var(--border));
+  --warning: oklch(0.55 0.13 70);
+  --success: oklch(0.6 0.13 155);
+  --scrim: oklch(0 0 0 / 0.1);
+  /* Nova's light/dark control fills: outline controls sit on the page in
+     light mode and on a faint input tint in dark mode. */
+  --input-bg: transparent;
+  --input-bg-hover: var(--muted);
+  --ghost-hover: var(--muted);
+  --shadow-md: 0 4px 6px -1px oklch(0 0 0 / 0.1), 0 2px 4px -2px oklch(0 0 0 / 0.1);
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  /* neutral-400: at least 5.8:1 on every dark surface up to muted. */
+  --focus-ring: oklch(0.708 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+
+  --destructive-soft: color-mix(in oklch, var(--destructive) 20%, transparent);
+  --destructive-border: color-mix(in oklch, var(--destructive) 40%, var(--border));
+  --warning: oklch(0.8 0.13 80);
+  --success: oklch(0.72 0.13 155);
+  --scrim: oklch(0 0 0 / 0.5);
+  --input-bg: color-mix(in oklch, var(--input) 30%, transparent);
+  --input-bg-hover: color-mix(in oklch, var(--input) 50%, transparent);
+  --ghost-hover: color-mix(in oklch, var(--muted) 50%, transparent);
+  --shadow-md: 0 4px 6px -1px oklch(0 0 0 / 0.3), 0 2px 4px -2px oklch(0 0 0 / 0.3);
+
+  color-scheme: dark;
+}
+
+/* ---------- Radius (shadcn --radius; 10px is Nova's 0.625rem default) ---------- */
+[data-radius="0"]  { --radius: 0px; }
+[data-radius="4"]  { --radius: 0.25rem; }
+[data-radius="6"]  { --radius: 0.45rem; }
+[data-radius="10"] { --radius: 0.625rem; }
+[data-radius="14"] { --radius: 0.875rem; }
+[data-radius="20"] { --radius: 1.25rem; }
+
+/* ---------- Density ---------- */
+[data-density="airy"]     { --row-h: 52px; --gap: 20px; --pad: 24px; --fs: 14px; }
+[data-density="balanced"] { --row-h: 44px; --gap: 16px; --pad: 20px; --fs: 14px; }
+[data-density="dense"]    { --row-h: 36px; --gap: 12px; --pad: 16px; --fs: 13px; }

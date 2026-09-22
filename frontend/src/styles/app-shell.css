@@ -1,0 +1,44 @@
+/* ============================================================
+   App shell
+   ============================================================ */
+.app {
+  display: grid;
+  /* Explicit gutters let the lyrics gap collapse with its panel. A column-gap
+     would still reserve space beside a zero-width track. */
+  grid-template-columns: var(--sidebar-w, 248px) 8px minmax(0, 1fr) var(--lyrics-panel-gap, 0px) var(--lyrics-panel-w, 0px);
+  grid-template-rows: 1fr auto;
+  grid-template-areas: "sidebar . main . lyrics" "player player player player player";
+  height: 100vh;
+  row-gap: 8px;
+  padding: 8px;
+  background: var(--sidebar);
+  transition: grid-template-columns 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* The sidebar/lyrics-panel width transition reflows the whole grid, which is
+   the kind of large-area motion reduced-motion is meant to suppress. Widths
+   still change -- only the tweening is dropped, so layout stays correct. */
+@media (prefers-reduced-motion: reduce) {
+  .app {
+    transition: none;
+  }
+
+  /* Scoped to .sidebar so this out-ranks the (0,1,0) base rule below, which
+     would otherwise win on document order and keep tweening. */
+  .sidebar .brand-text,
+  .sidebar .nav-label,
+  .sidebar .user-text {
+    transition: none;
+    transform: none;
+  }
+}
+
+[data-layout="compact"] .app { --sidebar-w: 64px; }
+[data-layout="wide"] .app { --sidebar-w: 296px; }
+
+.app[data-lyrics-open="true"] {
+  --lyrics-panel-gap: 8px;
+  --lyrics-panel-w: 280px;
+}
+[data-layout="wide"] .app[data-lyrics-open="true"] {
+  --lyrics-panel-w: 320px;
+}

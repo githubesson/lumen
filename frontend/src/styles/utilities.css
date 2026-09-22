@@ -1,0 +1,24 @@
+/* ============================================================
+   Surfaces / utilities
+   ============================================================ */
+.surface {
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+}
+.surface-inset {
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.divider { border-top: 1px solid var(--border); }
+.mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Focus visible ring */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}

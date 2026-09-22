@@ -1,0 +1,111 @@
+/* ============================================================
+   Track context menu (right-click on a row)
+   ============================================================ */
+.ctx-menu {
+  position: fixed;
+  /* Needs to float above the mini-player, tweaks panel, and cmdk overlay
+     (all in the 79–100 range). Portaled to <body> so ancestor stacking
+     contexts can't trap it. */
+  z-index: 9999;
+  /* Radix's dismissable-layer (used by cmdk's Command.Dialog) sets
+     pointer-events: none on body while open, which the portaled menu
+     would otherwise inherit — making every item unclickable. */
+  pointer-events: auto;
+  min-width: 220px;
+  max-width: 280px;
+  padding: 4px;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  font-size: 14px;
+  color: var(--popover-foreground);
+  transform-origin: var(--ctx-origin-x, 0) var(--ctx-origin-y, 0);
+  animation: ctx-fade 120ms var(--ease-out);
+}
+@keyframes ctx-fade {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ctx-menu {
+    animation: none;
+  }
+}
+.ctx-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  min-height: 28px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: default;
+  font: inherit;
+  text-align: left;
+  transition: background 120ms ease, transform var(--dur-press) var(--ease-out);
+}
+.ctx-item:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* Press feedback is movement, so reduced motion drops the scale; the
+   background/colour change on :hover and :active stays. This block must sit
+   after every rule it overrides -- the selectors have equal specificity, so
+   only document order decides. */
+@media (prefers-reduced-motion: reduce) {
+  .btn:active:not(:disabled),
+  .artist-play:active,
+  .iconbtn:active:not(:disabled),
+  .chip:active:not(:disabled),
+  .segmented button:active,
+  /* Must mirror the composed selectors this neutralises: the base rule is
+     `.card:hover .card-play:active` at (0,4,0), which a bare
+     `.card-play:active` at (0,2,0) cannot override. */
+  .card:hover .card-play:active,
+  .card:focus-within .card-play:active,
+  .ctx-item:active:not(:disabled) {
+    transform: none;
+  }
+}
+.ctx-item:hover:not(:disabled),
+.ctx-item:focus-visible {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.ctx-item:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+.ctx-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ctx-item-active {
+  color: var(--foreground);
+  font-weight: 500;
+}
+.ctx-sep {
+  height: 1px;
+  margin: 4px -4px;
+  background: var(--border);
+}
+.ctx-heading {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  padding: 4px 6px;
+}
+.ctx-hint {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  padding: 4px 6px;
+}
+.ctx-scroll {
+  max-height: 220px;
+  overflow-y: auto;
+}

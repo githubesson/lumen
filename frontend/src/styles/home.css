@@ -1,0 +1,219 @@
+/* ============================================================
+   Home / Discover
+   ============================================================ */
+.hero {
+  position: relative;
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  min-height: 200px;
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+}
+.hero-art {
+  width: 168px;
+  height: 168px;
+  border-radius: var(--radius-lg);
+  flex: 0 0 168px;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+  background: var(--muted);
+  background-size: cover;
+  background-position: center;
+}
+.hero-body {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-width: 0;
+}
+.hero-eyebrow {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  margin-bottom: 6px;
+}
+.hero-title {
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  margin: 0 0 6px;
+  line-height: 1.15;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.hero-meta {
+  color: var(--muted-foreground);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.hero-meta .dot {
+  width: 3px;
+  height: 3px;
+  background: currentColor;
+  border-radius: 99px;
+}
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-lg);
+  font-size: 14px;
+  font-weight: 500;
+  border: 1px solid var(--input);
+  background: var(--input-bg);
+  background-clip: padding-box;
+  color: var(--foreground);
+  transition:
+    background 120ms,
+    border-color 120ms,
+    box-shadow 120ms,
+    transform var(--dur-press) var(--ease-out);
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  outline: none;
+  user-select: none;
+}
+.btn:hover:not(:disabled) {
+  background: var(--input-bg-hover);
+}
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+/* Disabled buttons stay hit-testable (no pointer-events: none) so a title
+   explaining why they're disabled still gets its tooltip. */
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Buttons whose label swaps between states (e.g. the share dialog's
+   copy -> generating -> copied). A short blur bridges the two labels so the
+   swap reads as one element changing rather than two crossfading. Button
+   renders children unwrapped, so the label is wrapped in a span at the call
+   site and that span is what this targets. */
+.btn-morph > span {
+  /* All of the states' labels stack in one grid cell, so the button keeps the
+     width of its longest state and the blur is not fighting a reflow. */
+  display: inline-grid;
+  grid-template-areas: "label";
+  align-items: center;
+  transition:
+    filter 180ms var(--ease-out),
+    opacity 180ms var(--ease-out);
+}
+.btn-morph > span > span {
+  grid-area: label;
+  white-space: nowrap;
+}
+.btn-morph > span > span[data-hidden] {
+  visibility: hidden;
+}
+.btn-morph[data-swapping] > span {
+  filter: blur(2px);
+  opacity: 0.7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-morph > span {
+    transition: opacity 180ms var(--ease-out);
+  }
+  .btn-morph[data-swapping] > span {
+    filter: none;
+  }
+}
+
+/* Matches the 14px (size-3.5) icons the spinner stands in for, and takes the
+   button's own text colour rather than the spinner's default muted one. */
+.share-copy-spinner {
+  --spinner-size: 14px;
+  color: currentColor;
+}
+.btn-primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: transparent;
+}
+.btn-primary:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--primary) 80%, transparent);
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--foreground);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--ghost-hover);
+}
+.btn-danger {
+  background: var(--destructive-soft);
+  border-color: transparent;
+  color: var(--destructive);
+}
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--destructive) 20%, transparent);
+}
+.btn-sm {
+  height: 28px;
+  padding: 0 10px;
+  gap: 4px;
+  font-size: 0.8rem;
+  border-radius: min(var(--radius-md), 12px);
+}
+
+.section { margin-top: 28px; }
+.section:first-child { margin-top: 0; }
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.section-sub {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.section-link {
+  font-size: 14px;
+  color: var(--muted-foreground);
+  text-decoration: none;
+}
+.section-link:hover { color: var(--foreground); }
+
+.shelf {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 168px;
+  gap: var(--gap);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 8px;
+  scroll-snap-type: x proximity;
+}
+.shelf::-webkit-scrollbar { height: 6px; }

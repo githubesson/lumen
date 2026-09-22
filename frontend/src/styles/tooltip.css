@@ -1,0 +1,77 @@
+/* ============================================================
+   Tooltip — custom hover bubble used in place of the native title= attribute
+   where we want styled, multi-line content (e.g. the aka "+N" hint). Portaled
+   to body; position is set inline in viewport coords.
+   ============================================================ */
+.tooltip {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  box-sizing: border-box;
+  width: max-content;
+  /* Never wider than the viewport minus TooltipBubble's 8px edge margin on
+     each side, or the placement clamp goes negative at narrow/zoomed widths. */
+  max-width: min(320px, calc(100vw - 16px));
+  overflow-wrap: anywhere;
+  padding: 6px 12px;
+  background: var(--foreground);
+  color: var(--background);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  line-height: 1.35;
+  text-wrap: balance;
+  opacity: 1;
+  transform: none;
+  transition: opacity 100ms ease-out, transform 100ms ease-out;
+}
+/* A tooltip opening inside the skip-delay window is the same tooltip moving
+   along a row of controls, not a new one arriving — it should not animate. */
+.tooltip[data-instant] {
+  transition-duration: 0ms;
+}
+/* Arrow: a rotated square in the bubble color, centered on the anchor via
+   --tooltip-arrow (offset along the bubble edge that faces the trigger). */
+.tooltip::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: inherit;
+  border-radius: 2px;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+.tooltip[data-side="top"]::after {
+  top: 100%;
+  left: clamp(10px, var(--tooltip-arrow), calc(100% - 10px));
+  margin-top: -1px;
+}
+.tooltip[data-side="bottom"]::after {
+  top: 0;
+  left: clamp(10px, var(--tooltip-arrow), calc(100% - 10px));
+  margin-top: 1px;
+}
+.tooltip[data-side="right"]::after {
+  top: clamp(10px, var(--tooltip-arrow), calc(100% - 10px));
+  left: 0;
+  margin-left: 1px;
+}
+.tooltip[data-closed] { opacity: 0; }
+.tooltip[data-closed][data-side="top"] { transform: translateY(2px) scale(0.97); }
+.tooltip[data-closed][data-side="bottom"] { transform: translateY(-2px) scale(0.97); }
+.tooltip[data-closed][data-side="right"] { transform: translateX(-2px) scale(0.97); }
+@media (prefers-reduced-motion: reduce) {
+  .tooltip { transition: opacity 100ms ease-out; }
+  .tooltip[data-closed] { transform: none; }
+}
+
+.track-aka-hint {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+  cursor: help;
+}
+.track-aka-hint:hover,
+.track-aka-hint:focus-visible {
+  color: var(--foreground);
+}

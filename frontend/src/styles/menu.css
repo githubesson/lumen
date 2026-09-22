@@ -1,0 +1,32 @@
+/* ============================================================
+   Menu / popover
+   ============================================================ */
+.menu {
+  min-width: 220px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  overflow: hidden;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  min-height: 28px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  color: var(--popover-foreground);
+  cursor: default;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  text-align: left;
+}
+.menu-item:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}

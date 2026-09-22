@@ -1,0 +1,81 @@
+/* ---------- Shared status / placeholder primitives ---------- */
+.error-banner {
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--destructive-soft);
+  border: 1px solid var(--destructive-border);
+  color: var(--destructive);
+  font-size: 14px;
+}
+
+.empty-state {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 8px;
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+.empty-state-icon {
+  color: var(--foreground);
+  background: var(--muted);
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-lg);
+  display: grid;
+  place-items: center;
+  margin-bottom: 4px;
+}
+.empty-state-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.empty-state-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.empty-state-hint {
+  font-size: 14px;
+  color: var(--muted-foreground);
+}
+
+.loading-state {
+  padding: 20px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+
+/* Mono uppercase eyebrow/label utility (Field, section labels, etc.). */
+.eyebrow {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+
+/* shadcn Label: form labels read as text, not as eyebrows. */
+.field-label {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--foreground);
+}
+
+/* Top-level page header (PageHeader component). */
+.page-header {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.page-title {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  margin: 0;
+}
+.page-count {
+  color: var(--muted-foreground);
+  font-size: 14px;
+}

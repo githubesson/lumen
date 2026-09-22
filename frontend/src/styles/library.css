@@ -1,0 +1,349 @@
+/* ============================================================
+   Library grid
+   ============================================================ */
+.grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: var(--gap);
+}
+[data-density="airy"] .grid-cards { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+[data-density="dense"] .grid-cards { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); }
+
+[data-density="dense"] .card { gap: 8px; padding: 6px; }
+[data-density="dense"] .card-title { font-size: 12px; }
+[data-density="dense"] .card-sub { font-size: 12px; }
+
+/* Library table */
+.track-selectbar {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 8px;
+}
+.track-selectbar-host {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+}
+.track-selectbar-attached {
+  min-height: 30px;
+  padding: 0;
+  gap: 6px;
+}
+.track-selectbar-attached[data-selecting="false"] .track-selectbar-status {
+  display: none;
+}
+.track-selectbar-attached .track-selectbar-status {
+  flex: 0 1 auto;
+  max-width: 220px;
+}
+.track-selectbar-status {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+}
+.track-selectbar-status span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+}
+.track-selectbar .btn {
+  height: 30px;
+  padding: 0 10px;
+}
+.track-selectbar-close {
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 14px;
+}
+/* Windowed rows change on scroll. Size columns from the header so their
+   positions don't depend on the titles/albums in the current slice. */
+.table-tracks {
+  table-layout: fixed;
+}
+.table-tracks .col-album {
+  width: 25%;
+}
+.table-tracks .track-title,
+.table-tracks .track-sub,
+.table-tracks td.col-album,
+.table-tracks td.col-added {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.table thead th {
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  text-align: left;
+  height: 40px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--background);
+  z-index: 2;
+  white-space: nowrap;
+}
+.table tbody tr { cursor: pointer; }
+.table tbody tr:hover td {
+  background: var(--ghost-hover);
+}
+.table tbody tr.selected td {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.table tbody tr.selected:hover td {
+  background: var(--muted);
+}
+.table tbody tr.playing td { color: var(--foreground); }
+.table tbody tr.playing td:first-child {
+  color: var(--foreground);
+}
+.table tbody td {
+  height: var(--row-h);
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  vertical-align: middle;
+  transition: background 100ms;
+}
+/* Virtualization spacer rows hold the scrollbar in the right place for the
+   rows that aren't currently rendered. They must not inherit hover styling,
+   borders, or the row-height floor or they'd visually break the list. */
+.table tbody tr.vt-spacer,
+.table tbody tr.vt-spacer:hover {
+  cursor: default;
+  background: transparent;
+}
+.table tbody tr.vt-spacer td {
+  height: 0;
+  padding: 0;
+  border-bottom: 0;
+  background: transparent;
+  transition: none;
+}
+.table .col-idx {
+  width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+/* The select column exists in the DOM at all times so entering selection mode
+   is a transition rather than a re-layout. Collapsed to zero width and
+   uninteractive when selection mode is off. Width/padding are layout
+   properties, but a table column has no transform equivalent and this is a
+   bounded, user-initiated 150ms change — not scroll or playback motion. */
+.table .col-select {
+  width: 0;
+  padding: 0;
+  overflow: hidden;
+  text-align: center;
+  transition:
+    width 150ms var(--ease-out),
+    padding 150ms var(--ease-out);
+}
+.table-selecting .col-select {
+  width: 32px;
+  padding: 0 4px;
+}
+.table .col-select > * {
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    opacity 150ms var(--ease-out),
+    transform 150ms var(--ease-out);
+}
+.table-selecting .col-select > * {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .table .col-select,
+  .table .col-select > * {
+    transition: none;
+  }
+}
+.track-check {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.track-check:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.table .col-art { width: 44px; }
+.table .col-dur {
+  width: 64px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.table .col-added {
+  width: 130px;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.table .col-acts {
+  width: 80px;
+  text-align: right;
+}
+.table .track-title {
+  font-weight: 500;
+  color: var(--foreground);
+  font-size: 14px;
+}
+.table .track-sub {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+/* Playlist drag-reorder: the dragged row dims; the insertion gap draws an
+   accent line on the row edge it would land against. */
+.table tbody tr.drag-source td { opacity: 0.4; }
+.table tbody tr.drop-above td { box-shadow: inset 0 2px 0 var(--primary); }
+.table tbody tr.drop-below td { box-shadow: inset 0 -2px 0 var(--primary); }
+.table .mini-art {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--muted);
+  background-size: cover;
+  background-position: center;
+}
+.row-actions {
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.table tbody tr:hover .row-actions,
+.table tbody tr:focus-within .row-actions { opacity: 1; }
+.row-actions button {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.row-actions button:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.row-actions button.active {
+  color: var(--foreground);
+  opacity: 1;
+}
+
+.play-cell {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: inherit;
+}
+.play-cell > * {
+  grid-area: 1 / 1;
+}
+.idx-play {
+  all: unset;
+  /* `all: unset` above also resets the `grid-area` set by `.play-cell > *`,
+     so restate it here or the button lands in a second grid row below the
+     number/bars instead of on top of them. */
+  grid-area: 1 / 1;
+  /* The faded number/bars get `opacity: 0`, which makes them a stacking
+     context painted above a plain grid item. Without this the invisible
+     sibling still sits on top of the button and swallows the click. */
+  z-index: 1;
+  display: inline-flex;
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  color: var(--foreground);
+  border-radius: var(--radius-sm);
+}
+.idx-play:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.table tbody tr:hover .idx-play,
+.table tbody tr:focus-within .idx-play {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Keep the bars rendered so hovering never restarts their animation. */
+.table tbody tr:hover .play-cell-interactive > :not(.idx-play),
+.table tbody tr:focus-within .play-cell-interactive > :not(.idx-play) {
+  opacity: 0;
+}
+
+/* Bar visualizer for playing track */
+.playing-bars {
+  display: inline-flex;
+  gap: 2px;
+  width: 14px;
+  height: 14px;
+  align-items: flex-end;
+}
+.playing-bars span {
+  display: block;
+  width: 2px;
+  background: var(--foreground);
+  border-radius: 1px;
+  /* scaleY, not height: this runs for as long as music plays, and height
+     would force layout on every frame. Each bar's own height stays as the
+     static fallback for reduced motion. */
+  height: 100%;
+  transform-origin: bottom center;
+  animation: barDance 1s ease-in-out infinite;
+}
+.playing-bars span:nth-child(1) { animation-delay: 0s;   transform: scaleY(0.4); }
+.playing-bars span:nth-child(2) { animation-delay: 0.2s; transform: scaleY(0.8); }
+.playing-bars span:nth-child(3) { animation-delay: 0.4s; transform: scaleY(0.6); }
+@keyframes barDance {
+  0%, 100% { transform: scaleY(0.3); }
+  50% { transform: scaleY(0.9); }
+}
+
+/* This animation is decorative and runs for as long as music plays, so it
+   needs an explicit opt-out (the other infinite animations in this file —
+   device-command-pulse and ios-spinner-fade — have their own). The per-child
+   scaleY values above stay visible with the animation off, leaving a static
+   staggered glyph: the now-playing indicator must not disappear, since it is
+   what distinguishes the playing row. */
+@media (prefers-reduced-motion: reduce) {
+  .playing-bars span {
+    animation: none;
+  }
+}

@@ -1,0 +1,22 @@
+/* ============================================================
+   Auth / centered pages (Login, Register, etc.)
+   ============================================================ */
+[data-theme="dark"] .auth-wrap { background: var(--background); }
+.auth-wrap {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--muted);
+  overflow-y: auto;
+}
+.auth-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  position: relative;
+}

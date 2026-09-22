@@ -1,0 +1,105 @@
+/* ============================================================
+   Electron — native title bar hidden, topbar used as drag region.
+   Native window controls (min/maximize/close) are rendered by
+   Windows Controls Overlay in the top-right ~138px; reserve space
+   and mark interactive elements as no-drag so clicks still land.
+   ============================================================ */
+html[data-electron="true"] body {
+  background: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+html[data-electron="true"],
+html[data-electron="true"] #root {
+  background: transparent;
+}
+
+html[data-electron="true"] .app {
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+
+html[data-electron="true"] .topbar {
+  -webkit-app-region: drag;
+}
+html[data-electron="true"] .topbar button,
+html[data-electron="true"] .topbar a,
+html[data-electron="true"] .topbar input,
+html[data-electron="true"] .topbar kbd,
+html[data-electron="true"] .topbar .search,
+html[data-electron="true"] .window-controls {
+  -webkit-app-region: no-drag;
+}
+html[data-electron="true"] .app::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  -webkit-app-region: drag;
+  z-index: 100;
+}
+
+html[data-electron="true"] body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 118px;
+  height: 8px;
+  -webkit-app-region: drag;
+  z-index: 999;
+}
+
+html[data-mini-player] body::before {
+  display: none;
+}
+
+.window-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--background);
+  -webkit-app-region: no-drag;
+}
+
+.root-window-controls {
+  position: fixed;
+  top: 6px;
+  right: 6px;
+  z-index: 1000;
+}
+
+.window-control {
+  width: 34px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.window-control:hover {
+  color: var(--foreground);
+  background: var(--muted);
+}
+
+.window-control.close:hover {
+  color: oklch(1 0 0);
+  background: var(--destructive);
+}
+
+html[data-mini-player] .window-controls {
+  display: none;
+}

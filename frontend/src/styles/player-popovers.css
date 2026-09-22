@@ -1,0 +1,360 @@
+/* ============================================================
+   Queue popover (anchored above the mini-player queue button)
+   ============================================================ */
+.device-pop {
+  z-index: 96;
+  position: fixed;
+  overflow: hidden;
+  color: var(--popover-foreground);
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  transform-origin: bottom right;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity var(--dur-menu) var(--ease-out),
+    transform var(--dur-menu) var(--ease-out);
+}
+.device-pop-head {
+  min-height: 48px;
+  padding: 8px 8px 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.device-pop-eyebrow,
+.device-pop-section {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.device-pop-title {
+  margin-top: 2px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.device-pop-socket {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.device-pop-socket svg {
+  width: 11px;
+  height: 11px;
+}
+.device-pop-socket.online {
+  color: var(--success);
+}
+.device-pop-close {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+}
+.device-pop-body {
+  padding: 4px;
+}
+.device-pop-section {
+  padding: 6px 8px;
+}
+.device-pop-row {
+  position: relative;
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--popover-foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.device-pop-row:hover {
+  background: var(--accent);
+}
+.device-pop-row.active {
+  background: var(--accent);
+}
+/* Menu-style rows can't show the global outline without it clipping against
+   the popover edge, so draw the contrast-safe ring inset instead. */
+.device-pop-row:focus-visible {
+  outline: none;
+  background: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+.device-pop-icon {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+  background: var(--background);
+}
+.device-pop-icon.remote {
+  color: var(--foreground);
+}
+.device-pop-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.device-pop-online {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--popover);
+  border-radius: 999px;
+  background: var(--success);
+}
+.device-pop-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.device-pop-name {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.device-pop-meta {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.device-pop-check {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  color: var(--foreground);
+}
+.device-pop-empty {
+  padding: 16px 12px 18px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+}
+.device-pop-error {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--destructive-soft);
+  color: var(--destructive);
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .device-picker-btn.pending svg {
+    animation: none;
+  }
+}
+
+.queue-pop {
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  overflow: hidden;
+  color: var(--popover-foreground);
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  transform-origin: bottom right;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity var(--dur-menu) var(--ease-out),
+    transform var(--dur-menu) var(--ease-out);
+}
+.queue-pop > * {
+  position: relative;
+  z-index: 1;
+}
+
+.queue-pop-mini {
+  border-radius: var(--radius-xl);
+  transition: none;
+}
+
+.queue-pop-mini .queue-pop-body {
+  padding-bottom: 6px;
+}
+
+.queue-pop-mini .queue-pop-row {
+  padding: 5px 8px;
+}
+
+.queue-pop-mini .queue-pop-art {
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+}
+
+.queue-pop-mini .queue-pop-title {
+  font-size: 12px;
+}
+
+.queue-pop-mini .queue-pop-artist {
+  font-size: 12px;
+}
+.queue-pop[data-closed],
+.device-pop[data-closed] {
+  opacity: 0;
+  transform: translateY(6px) scale(0.97);
+  /* The element stays mounted for the exit, so it must stop swallowing clicks
+     the moment it starts leaving -- it used to unmount synchronously. */
+  pointer-events: none;
+}
+
+/* .device-pop shares this transition. This block has to sit after both
+   popovers' declarations rather than joining them: the selectors have equal
+   specificity, so the later `transition` would otherwise win and the opt-out
+   would silently do nothing. */
+@media (prefers-reduced-motion: reduce) {
+  .queue-pop,
+  .device-pop {
+    transition: opacity var(--dur-menu) var(--ease-out);
+  }
+  /* Equal specificity to the rule above and declared after it, so the mini
+     player's deliberate opt-out survives reduced motion too. */
+  .queue-pop-mini {
+    transition: none;
+  }
+  .queue-pop[data-closed],
+  .device-pop[data-closed] {
+    transform: none;
+  }
+}
+.queue-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.queue-pop-title-h {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.queue-pop-pos {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  height: 20px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--muted);
+}
+.queue-pop-close { width: 28px; height: 28px; flex: 0 0 28px; }
+.queue-pop-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px;
+}
+.queue-pop-heading {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  padding: 6px 8px;
+}
+.queue-pop-row {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  color: var(--popover-foreground);
+  font: inherit;
+  transition: background 120ms ease;
+}
+.queue-pop-row:hover:not(.active) {
+  background: var(--accent);
+}
+.queue-pop-row:focus-visible {
+  outline: none;
+  background: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+.queue-pop-row.active {
+  background: var(--accent);
+  cursor: default;
+}
+
+.queue-pop-row.active .queue-pop-title {
+  color: var(--accent-foreground);
+}
+.queue-pop-hint {
+  padding: 8px 12px 12px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.queue-pop-art {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  flex: 0 0 36px;
+  overflow: hidden;
+}
+.queue-pop-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.queue-pop-title {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.queue-pop-artist {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.queue-pop-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}

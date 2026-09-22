@@ -1,0 +1,174 @@
+/* FH6 Lumen Radio */
+.fh6-radio-view {
+  display: grid;
+  gap: 16px;
+}
+
+.fh6-status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fh6-status-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.fh6-status-pill.ok {
+  color: var(--secondary-foreground);
+  border-color: transparent;
+  background: var(--secondary);
+}
+
+.fh6-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.8fr);
+  gap: 14px;
+}
+
+.fh6-grid-single {
+  grid-template-columns: 1fr;
+}
+
+.fh6-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--card);
+  padding: 16px;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.fh6-panel h2 {
+  margin: 0;
+  color: var(--foreground);
+}
+
+.fh6-panel h2 {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.fh6-panel p,
+.fh6-note {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.fh6-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fh6-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fh6-path {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+}
+
+.fh6-candidates {
+  display: grid;
+  gap: 6px;
+}
+
+.fh6-candidates button {
+  min-height: 32px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  font-size: 14px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.fh6-candidates button:hover {
+  background: var(--muted);
+}
+
+.fh6-source-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.fh6-source-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.fh6-queue {
+  display: grid;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.fh6-queue-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 0.4fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  font-size: 14px;
+}
+
+.fh6-queue-row:first-child {
+  border-top: 0;
+}
+
+.fh6-queue-row span,
+.fh6-queue-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fh6-queue-row small {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+@media (max-width: 920px) {
+  .fh6-grid,
+  .fh6-source-grid {
+    grid-template-columns: 1fr;
+  }
+}
