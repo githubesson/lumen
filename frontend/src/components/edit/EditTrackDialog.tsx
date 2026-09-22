@@ -12,7 +12,21 @@ import ErrorBanner from "../ErrorBanner";
 import LoadingState from "../LoadingState";
 import { Field, FieldRow, TextInput } from "../Field";
 import { libraryChanged } from "../../lib/events";
+import { useFormDraft } from "../../lib/useFormDraft";
 import { useTrackDetail } from "../../lib/useTrackDetail";
+
+type TrackDraft = Parameters<typeof buildTrackPatch>[1];
+
+const EMPTY_TRACK_DRAFT: TrackDraft = {
+  title: "",
+  artists: "",
+  albumTitle: "",
+  albumArtist: "",
+  year: "",
+  genre: "",
+  trackNo: "",
+  discNo: "",
+};
 
 interface EditTrackProps {
   open: boolean;
@@ -31,15 +45,7 @@ export function EditTrackDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // form state
-  const [title, setTitle] = useState("");
-  const [artists, setArtists] = useState("");
-  const [albumTitle, setAlbumTitle] = useState("");
-  const [albumArtist, setAlbumArtist] = useState("");
-  const [year, setYear] = useState("");
-  const [genre, setGenre] = useState("");
-  const [trackNo, setTrackNo] = useState("");
-  const [discNo, setDiscNo] = useState("");
+  const { draft, setField, resetDraft } = useFormDraft(EMPTY_TRACK_DRAFT);
 
   // Seed the form once the track loads.
   useEffect(() => {
@@ -47,17 +53,19 @@ export function EditTrackDialog({
     // The form draft intentionally snapshots the selected track.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setError(null);
-    setTitle(track.title);
-    setArtists(displayArtists(track));
-    // album_artist isn't on TrackDetail — default to empty (compilations
-    // stay "Various Artists"; otherwise the server keeps the primary artist).
-    setAlbumArtist("");
-    setAlbumTitle(track.album_title ?? "");
-    setYear(track.year ? String(track.year) : "");
-    setGenre(track.genre ?? "");
-    setTrackNo(track.track_no ? String(track.track_no) : "");
-    setDiscNo(track.disc_no ? String(track.disc_no) : "");
-  }, [track]);
+    resetDraft({
+      title: track.title,
+      artists: displayArtists(track),
+      albumTitle: track.album_title ?? "",
+      // album_artist isn't on TrackDetail — default to empty (compilations
+      // stay "Various Artists"; otherwise the server keeps the primary artist).
+      albumArtist: "",
+      year: track.year ? String(track.year) : "",
+      genre: track.genre ?? "",
+      trackNo: track.track_no ? String(track.track_no) : "",
+      discNo: track.disc_no ? String(track.disc_no) : "",
+    });
+  }, [track, resetDraft]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -68,7 +76,7 @@ export function EditTrackDialog({
       // Only send fields the user actually touched — detect by comparing to
       // initial values. Simpler: just always send fields that changed from
       // the loaded value.
-      const patch = buildTrackPatch(track, { title, artists, albumTitle, albumArtist, year, genre, trackNo, discNo });
+      const patch = buildTrackPatch(track, draft);
       const updated = await api.updateTrack(trackId, patch);
       libraryChanged.emit();
       onSaved?.(updated);
@@ -89,8 +97,8 @@ export function EditTrackDialog({
           <>
             <Field label="Title">
               <TextInput
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                value={draft.title}
+                onChange={(e) => setField("title", e.target.value)}
                 required
               />
             </Field>
@@ -99,16 +107,16 @@ export function EditTrackDialog({
               hint="Comma-separated. First is the primary, rest are featured."
             >
               <TextInput
-                value={artists}
-                onChange={(e) => setArtists(e.target.value)}
+                value={draft.artists}
+                onChange={(e) => setField("artists", e.target.value)}
                 placeholder="Alice, Bob"
               />
             </Field>
             <FieldRow>
               <Field label="Album">
                 <TextInput
-                  value={albumTitle}
-                  onChange={(e) => setAlbumTitle(e.target.value)}
+                  value={draft.albumTitle}
+                  onChange={(e) => setField("albumTitle", e.target.value)}
                   placeholder="Blank to detach"
                 />
               </Field>
@@ -117,8 +125,8 @@ export function EditTrackDialog({
                 hint="Leave blank for compilations (Various Artists)."
               >
                 <TextInput
-                  value={albumArtist}
-                  onChange={(e) => setAlbumArtist(e.target.value)}
+                  value={draft.albumArtist}
+                  onChange={(e) => setField("albumArtist", e.target.value)}
                 />
               </Field>
             </FieldRow>
@@ -127,30 +135,30 @@ export function EditTrackDialog({
                 <TextInput
                   type="number"
                   min={0}
-                  value={year}
-                  onChange={(e) => setYear(e.target.value)}
+                  value={draft.year}
+                  onChange={(e) => setField("year", e.target.value)}
                 />
               </Field>
               <Field label="Genre">
                 <TextInput
-                  value={genre}
-                  onChange={(e) => setGenre(e.target.value)}
+                  value={draft.genre}
+                  onChange={(e) => setField("genre", e.target.value)}
                 />
               </Field>
               <Field label="Track #">
                 <TextInput
                   type="number"
                   min={0}
-                  value={trackNo}
-                  onChange={(e) => setTrackNo(e.target.value)}
+                  value={draft.trackNo}
+                  onChange={(e) => setField("trackNo", e.target.value)}
                 />
               </Field>
               <Field label="Disc #">
                 <TextInput
                   type="number"
                   min={0}
-                  value={discNo}
-                  onChange={(e) => setDiscNo(e.target.value)}
+                  value={draft.discNo}
+                  onChange={(e) => setField("discNo", e.target.value)}
                 />
               </Field>
             </FieldRow>

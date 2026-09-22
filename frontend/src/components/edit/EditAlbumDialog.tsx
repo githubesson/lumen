@@ -9,6 +9,16 @@ import { DialogShell } from "../DialogShell";
 import ErrorBanner from "../ErrorBanner";
 import { Field, FieldRow, TextInput } from "../Field";
 import { libraryChanged } from "../../lib/events";
+import { useFormDraft } from "../../lib/useFormDraft";
+
+type AlbumDraft = Parameters<typeof buildAlbumPatch>[1];
+
+const EMPTY_ALBUM_DRAFT: AlbumDraft = {
+  title: "",
+  albumArtist: "",
+  year: "",
+  isCompilation: false,
+};
 
 interface EditAlbumProps {
   open: boolean;
@@ -25,10 +35,7 @@ export function EditAlbumDialog({
 }: EditAlbumProps) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [title, setTitle] = useState("");
-  const [albumArtist, setAlbumArtist] = useState("");
-  const [year, setYear] = useState("");
-  const [isCompilation, setIsCompilation] = useState(false);
+  const { draft, setField, resetDraft } = useFormDraft(EMPTY_ALBUM_DRAFT);
 
   // Cover art is handled separately from the metadata form: it's a multipart
   // upload that applies immediately, so it gets its own busy flag. `hasCover`
@@ -44,10 +51,12 @@ export function EditAlbumDialog({
     // The form draft intentionally snapshots the selected album on open.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setError(null);
-    setTitle(album.title);
-    setAlbumArtist(album.artist_name ?? "");
-    setYear(album.release_year ? String(album.release_year) : "");
-    setIsCompilation(album.is_compilation);
+    resetDraft({
+      title: album.title,
+      albumArtist: album.artist_name ?? "",
+      year: album.release_year ? String(album.release_year) : "",
+      isCompilation: album.is_compilation,
+    });
     setHasCover(album.has_cover);
     setCoverNonce(0);
     // Re-init only when the dialog opens or switches to a different album —
@@ -104,7 +113,7 @@ export function EditAlbumDialog({
     setBusy(true);
     setError(null);
     try {
-      const patch = buildAlbumPatch(album, { title, albumArtist, year, isCompilation });
+      const patch = buildAlbumPatch(album, draft);
       const updated = await api.updateAlbum(album.id, patch);
       libraryChanged.emit();
       onSaved?.(updated);
@@ -128,7 +137,7 @@ export function EditAlbumDialog({
             {album && (
               <CoverArt
                 src={coverPreviewSrc}
-                label={title || album.title}
+                label={draft.title || album.title}
                 size={72}
                 radius={8}
                 forcePlaceholder={!coverPreviewSrc}
@@ -165,8 +174,8 @@ export function EditAlbumDialog({
         </Field>
         <Field label="Title">
           <TextInput
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            value={draft.title}
+            onChange={(e) => setField("title", e.target.value)}
             required
           />
         </Field>
@@ -175,8 +184,8 @@ export function EditAlbumDialog({
           hint="Leave blank and check Compilation for Various Artists."
         >
           <TextInput
-            value={albumArtist}
-            onChange={(e) => setAlbumArtist(e.target.value)}
+            value={draft.albumArtist}
+            onChange={(e) => setField("albumArtist", e.target.value)}
           />
         </Field>
         <FieldRow>
@@ -184,8 +193,8 @@ export function EditAlbumDialog({
             <TextInput
               type="number"
               min={0}
-              value={year}
-              onChange={(e) => setYear(e.target.value)}
+              value={draft.year}
+              onChange={(e) => setField("year", e.target.value)}
             />
           </Field>
           <label
@@ -199,8 +208,8 @@ export function EditAlbumDialog({
           >
             <input
               type="checkbox"
-              checked={isCompilation}
-              onChange={(e) => setIsCompilation(e.target.checked)}
+              checked={draft.isCompilation}
+              onChange={(e) => setField("isCompilation", e.target.checked)}
               style={{ accentColor: "var(--primary)" }}
             />
             <span style={{ fontSize: 14 }}>Compilation</span>
