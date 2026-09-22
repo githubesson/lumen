@@ -73,6 +73,14 @@ vi.mock("expo-audio", () => ({
   preload: async () => {},
 }));
 
+vi.mock("react-native", () => ({
+  AppState: { currentState: "active", addEventListener: () => ({ remove() {} }) },
+}));
+vi.mock("expo-updates", () => ({ updateId: "test-update", runtimeVersion: "test-runtime" }));
+vi.mock("../lib/diagnostics/playback", () => ({
+  createPlaybackDiagnostics: () => ({ record() {}, source() {}, observe() {} }),
+}));
+
 vi.mock("expo-modules-core", () => ({
   useReleasingSharedObject: (factory: () => unknown) => factory(),
 }));

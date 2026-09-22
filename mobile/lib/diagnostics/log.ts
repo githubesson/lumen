@@ -47,6 +47,7 @@ export type LogScope =
   | "cover"
   | "store"
   | "session"
+  | "playback"
   | "siri";
 export type LogLevel = "info" | "warn" | "error";
 

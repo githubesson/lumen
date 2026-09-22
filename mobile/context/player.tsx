@@ -39,6 +39,7 @@ import { shouldExposeNowPlayingSession } from "./now-playing-session";
 import { downloadStore } from "../lib/downloads";
 import { isTrackPlayableOffline } from "../lib/offline-mode";
 import { recordCrashBreadcrumb } from "../lib/crash-reporting";
+import { recordPlaybackDiagnostic } from "../lib/diagnostics/playback";
 import {
   addLockScreenCommandListener,
   isLockScreenControlsAvailable,
@@ -149,6 +150,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     isTrackPlayable: isTrackPlayableOffline,
   });
   useEffect(() => {
+    recordPlaybackDiagnostic("audio-core-state", {
+      isPlaying: state.isPlaying,
+      queueIndex: state.index,
+      queueLength: state.queue.length,
+      repeat: state.repeat,
+      currentPlayable: state.current ? isTrackPlayableOffline(state.current.id) : false,
+    });
     recordCrashBreadcrumb("playback", {
       isPlaying: state.isPlaying,
       queueIndex: state.index,
@@ -156,7 +164,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       shuffle: state.shuffle,
       repeat: state.repeat,
     });
-  }, [state.isPlaying, state.index, state.queue.length, state.shuffle, state.repeat]);
+  }, [state.isPlaying, state.index, state.queue.length, state.shuffle, state.repeat, state.current?.id]);
   usePlaybackActivityPublisher({
     state,
     time,

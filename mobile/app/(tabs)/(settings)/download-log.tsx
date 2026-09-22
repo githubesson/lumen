@@ -16,6 +16,7 @@ import { EmptyState } from "../../../components/empty-state";
 import { Card } from "../../../components/primitives";
 import { SegmentedControl } from "../../../components/segmented-control";
 import { diagnosticsLog, type LogEntry } from "../../../lib/diagnostics/log";
+import { formatPlaybackTrace } from "../../../lib/diagnostics/playback";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
 
 /**
@@ -93,13 +94,13 @@ export default function DownloadLogScreen() {
     });
   }, []);
 
-  const onCopy = useCallback(async () => {
+  const onCopy = useCallback(async (playbackOnly = false) => {
     // Copies the raw file contents, not the current filter — the whole point
     // is to paste the unabridged log somewhere else.
-    const text = diagnosticsLog
-      .read()
-      .map((entry) => JSON.stringify(entry))
-      .join("\n");
+    const entries = diagnosticsLog.read();
+    const text = playbackOnly
+      ? formatPlaybackTrace(entries)
+      : entries.map((entry) => JSON.stringify(entry)).join("\n");
     await Clipboard.setStringAsync(text || "(empty)");
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   }, []);
@@ -162,6 +163,13 @@ export default function DownloadLogScreen() {
                 icon="doc.on.doc"
                 theme={theme}
                 onPress={() => void onCopy()}
+              />
+              <ActionRow
+                label="Copy playback log"
+                icon="waveform"
+                theme={theme}
+                border
+                onPress={() => void onCopy(true)}
               />
               <ActionRow
                 label="Clear log"
