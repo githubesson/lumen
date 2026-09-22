@@ -49,6 +49,13 @@ const PLAYLIST_SELECTION_CONTROLS_ID = "playlist-track-selection-controls";
 
 export default function PlaylistDetail() {
   const { id } = useParams<{ id: string }>();
+  // Keyed on the route id so switching playlists remounts with fresh state
+  // (tracks, collaborators, search, sort, tab) and drops in-flight responses
+  // for the previous playlist instead of letting them overwrite the new one.
+  return <PlaylistDetailView key={id} id={id} />;
+}
+
+function PlaylistDetailView({ id }: { id: string | undefined }) {
   const navigate = useNavigate();
   const { play, current, isPlaying } = usePlayer();
   const { isFavorite, toggle: toggleFav } = useFavorites();
@@ -84,9 +91,11 @@ export default function PlaylistDetail() {
   const load = useCallback(async () => {
     if (!id) return;
     try {
-      const p = await api.getPlaylist(id);
+      const [p, t] = await Promise.all([
+        api.getPlaylist(id),
+        api.listPlaylistTracks(id),
+      ]);
       setPlaylist(p);
-      const t = await api.listPlaylistTracks(id);
       setTracks(t.tracks);
       if (p.effective_role === "owner" || p.visibility === "collaborative") {
         const c = await api.listCollaborators(id).catch(() => []);

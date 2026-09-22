@@ -16,7 +16,9 @@ import { Button } from "../components/Button";
 import CoverArt from "../components/CoverArt";
 import ErrorBanner from "../components/ErrorBanner";
 import LoadingState from "../components/LoadingState";
+import { copyText } from "../lib/clipboard";
 import { fmtDurationSec } from "../lib/format";
+import { useCopiedFlag } from "../lib/useCopiedFlag";
 
 export default function SharePreview() {
   const { id = "" } = useParams();
@@ -31,7 +33,7 @@ export default function SharePreview() {
   const [share, setShare] = useState<PublicTrackShare | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [copied, setCopied] = useState(false);
+  const { copied, flash: flashCopied } = useCopiedFlag(1600);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -121,13 +123,9 @@ export default function SharePreview() {
 
   const copy = async () => {
     if (!share) return;
-    try {
-      await navigator.clipboard.writeText(share.canonical_url);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      setCopied(false);
-    }
+    // copyText falls back to execCommand when the Clipboard API is missing
+    // (e.g. the page is served over plain HTTP on the LAN).
+    if (await copyText(share.canonical_url)) flashCopied();
   };
 
   return (

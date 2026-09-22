@@ -248,7 +248,6 @@ textarea { font: inherit; color: inherit; }
      would otherwise win on document order and keep tweening. */
   .sidebar .brand-text,
   .sidebar .nav-label,
-  .sidebar .nav-count,
   .sidebar .user-text {
     transition: none;
     transform: none;
@@ -308,15 +307,9 @@ textarea { font: inherit; color: inherit; }
   font-size: 14px;
   line-height: 1.2;
 }
-.brand-sub {
-  font-size: 12px;
-  color: var(--muted-foreground);
-  line-height: 1.2;
-}
 
 .brand-text,
 .nav-label,
-.nav-count,
 .user-text {
   overflow: hidden;
   white-space: nowrap;
@@ -332,7 +325,6 @@ textarea { font: inherit; color: inherit; }
 }
 [data-layout="compact"] .brand-text,
 [data-layout="compact"] .nav-label,
-[data-layout="compact"] .nav-count,
 [data-layout="compact"] .sidebar-playlist-name,
 [data-layout="compact"] .user-text {
   max-width: 0;
@@ -451,12 +443,6 @@ textarea { font: inherit; color: inherit; }
   width: 16px;
   height: 16px;
   flex: 0 0 16px;
-}
-.nav-count {
-  margin-left: auto;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted-foreground);
 }
 .nav-badge {
   margin-left: auto;
@@ -1533,9 +1519,6 @@ textarea { font: inherit; color: inherit; }
   align-items: flex-end;
   gap: 24px;
 }
-.detail-header-main {
-  display: contents;
-}
 .detail-art {
   width: 200px;
   height: 200px;
@@ -2123,7 +2106,6 @@ html[data-mini-player] .app {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.np-like { margin-left: 4px; }
 
 .transport {
   display: flex;
@@ -2883,19 +2865,6 @@ html[data-mini-player] .np-text {
 .tweak-status[data-error] {
   color: var(--destructive);
 }
-.tweak-slider {
-  width: 100%;
-  -webkit-appearance: none;
-  appearance: none;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--muted);
-  outline: none;
-}
-.tweak-slider:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
 .tweak-select {
   width: 100%;
   height: 32px;
@@ -2912,24 +2881,6 @@ html[data-mini-player] .np-text {
   border-color: var(--focus-ring);
   box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 4px color-mix(in oklch, var(--ring) 30%, transparent);
 }
-.tweak-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  background: var(--background);
-  border: 1px solid var(--primary);
-  cursor: pointer;
-}
-.tweak-slider::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
-  border: 1px solid var(--primary);
-  border-radius: 999px;
-  background: var(--background);
-  cursor: pointer;
-}
 
 /* ============================================================
    Menu / popover
@@ -2943,12 +2894,6 @@ html[data-mini-player] .np-text {
   box-shadow: var(--shadow-md);
   padding: 4px;
   overflow: hidden;
-}
-.menu-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--muted-foreground);
-  padding: 4px 6px;
 }
 .menu-item {
   display: flex;
@@ -2969,11 +2914,6 @@ html[data-mini-player] .np-text {
   background: var(--accent);
   color: var(--accent-foreground);
 }
-.menu-sep {
-  height: 1px;
-  background: var(--border);
-  margin: 4px -4px;
-}
 
 /* ============================================================
    Surfaces / utilities
@@ -2993,7 +2933,6 @@ html[data-mini-player] .np-text {
 .mono {
   font-variant-numeric: tabular-nums;
 }
-.h-full-view { height: 100%; }
 
 /* Focus visible ring */
 :focus-visible {
@@ -3027,8 +2966,7 @@ html[data-mini-player] .np-text {
 /* ============================================================
    Form inputs — unify with design
    ============================================================ */
-.input,
-.select-trigger {
+.input {
   background: var(--input-bg);
   border: 1px solid var(--input);
   border-radius: var(--radius-lg);
@@ -3041,8 +2979,7 @@ html[data-mini-player] .np-text {
   box-sizing: border-box;
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-.input:focus,
-.select-trigger:focus-within {
+.input:focus {
   border-color: var(--focus-ring);
   box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 4px color-mix(in oklch, var(--ring) 30%, transparent);
 }
@@ -3442,8 +3379,7 @@ html[data-mini-player] .np-text {
   min-width: 0;
 }
 
-.fh6-panel h2,
-.fh6-track h3 {
+.fh6-panel h2 {
   margin: 0;
   color: var(--foreground);
 }
@@ -3454,7 +3390,6 @@ html[data-mini-player] .np-text {
 }
 
 .fh6-panel p,
-.fh6-track p,
 .fh6-note {
   margin: 4px 0 0;
   color: var(--muted-foreground);
@@ -4675,7 +4610,6 @@ html[data-mini-player] .window-controls {
 
   [data-layout="compact"] .sidebar .brand-text,
   [data-layout="compact"] .sidebar .nav-label,
-  [data-layout="compact"] .sidebar .nav-count,
   [data-layout="compact"] .sidebar .sidebar-playlist-name,
   [data-layout="compact"] .sidebar .user-text {
     max-width: 240px;
@@ -4999,35 +4933,6 @@ html[data-mini-player] .window-controls {
 
 /* ── Player lyrics panel ───────────────────────────────────────────────────── */
 
-.player-lyric-viewport {
-  overflow: hidden;
-  width: 100%;
-  min-width: 0;
-}
-
-.player-lyric-panel.player-lyric-viewport {
-  max-width: min(960px, 100%);
-}
-
-.player-lyric-line-wrap {
-  animation: player-lyric-line-in 280ms ease-out;
-}
-
-.player-lyric-track {
-  margin: 0;
-  white-space: nowrap;
-  font-size: 12px;
-  line-height: 1.35;
-  color: var(--muted-foreground);
-  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.player-lyric-panel .player-lyric-track {
-  font-size: clamp(18px, 2.4vw, 28px);
-  line-height: 1.4;
-  font-weight: 400;
-}
-
 .player-lyric-sidebar.player-lyric-status {
   font-size: 14px;
   text-align: center;
@@ -5181,17 +5086,9 @@ html[data-mini-player] .window-controls {
     text-shadow 220ms ease;
 }
 
-.player-lyric-panel .player-lyric-word {
-  color: color-mix(in oklch, var(--muted-foreground) 62%, transparent);
-}
-
 .player-lyric-word-active {
   color: var(--foreground);
   font-weight: 500;
-}
-
-.player-lyric-panel .player-lyric-word-active {
-  font-weight: 600;
 }
 
 .player-lyric-status {
@@ -5202,12 +5099,6 @@ html[data-mini-player] .window-controls {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.player-lyric-panel.player-lyric-status {
-  font-size: 15px;
-  text-align: center;
-  white-space: normal;
 }
 
 .player-lyric-status-error {
@@ -5254,14 +5145,6 @@ html[data-mini-player] .window-controls {
   .ios-spinner span {
     animation: none;
     opacity: 0.45;
-  }
-
-  .player-lyric-line-wrap {
-    animation: none;
-  }
-
-  .player-lyric-track {
-    transition: none;
   }
 
   .player-lyric-word {

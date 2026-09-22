@@ -1,43 +1,32 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { api, errorMessage, type PendingInvite } from "../api";
 import { Button } from "../components/Button";
 import DataState from "../components/DataState";
 import PageHeader from "../components/PageHeader";
+import { useApiResource } from "../lib/useApiResource";
 
 export default function PendingInvites() {
-  const [rows, setRows] = useState<PendingInvite[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const d = await api.listPendingInvites();
-      setRows(d ?? []);
-    } catch (err) {
-      setError(errorMessage(err, "Failed to load invites."));
-      setRows([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    // Initial load synchronizes this screen with the API resource.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load();
-  }, [load]);
+  const { data: rows, error: loadError, reload } = useApiResource<PendingInvite[]>(
+    async () => (await api.listPendingInvites()) ?? [],
+    "Failed to load invites.",
+  );
+  const [actionError, setActionError] = useState<string | null>(null);
+  const error = actionError ?? loadError;
 
   const accept = async (id: string) => {
     try {
       await api.acceptInvite(id);
-      await load();
+      reload();
     } catch (err) {
-      setError(errorMessage(err, "Failed to accept."));
+      setActionError(errorMessage(err, "Failed to accept."));
     }
   };
   const decline = async (id: string) => {
     try {
       await api.declineInvite(id);
-      await load();
+      reload();
     } catch (err) {
-      setError(errorMessage(err, "Failed to decline."));
+      setActionError(errorMessage(err, "Failed to decline."));
     }
   };
 

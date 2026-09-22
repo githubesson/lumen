@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { RefreshCw as ArrowPathIcon, Users as UserGroupIcon } from "lucide-react";
-import { api, errorMessage, type AdminUser } from "../api";
+import { api, type AdminUser } from "../api";
 import { Button } from "../components/Button";
 import EmptyState from "../components/EmptyState";
 import ErrorBanner from "../components/ErrorBanner";
@@ -8,13 +8,8 @@ import StatCard from "../components/StatCard";
 import { useAuth } from "../context/Auth";
 import AdminPanel from "../components/admin/AdminPanel";
 import AdminSection from "../components/admin/AdminSection";
-
-function formatDateTime(value?: string) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString();
-}
+import { useApiResource } from "../lib/useApiResource";
+import { formatDateTime } from "./admin/format";
 
 function countActiveUsers(users: AdminUser[]) {
   return users.filter((u) => !u.disabled).length;
@@ -26,27 +21,15 @@ function countActiveUsers(users: AdminUser[]) {
  */
 export function UsersAdminSection() {
   const { me } = useAuth();
-  const [users, setUsers] = useState<AdminUser[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-
-  const load = useCallback(async () => {
-    setRefreshing(true);
-    setError(null);
-    try {
-      setUsers(await api.listAdminUsers());
-    } catch (err) {
-      setError(errorMessage(err, "Failed to load users."));
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    // Initial load synchronizes this screen with the API resource.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load();
-  }, [load]);
+  const {
+    data: users,
+    error,
+    loading: refreshing,
+    reload,
+  } = useApiResource<AdminUser[]>(
+    () => api.listAdminUsers(),
+    "Failed to load users.",
+  );
 
   const summary = useMemo(() => {
     const rows = users ?? [];
@@ -81,7 +64,7 @@ export function UsersAdminSection() {
         </p>
         <Button
           size="sm"
-          onClick={() => void load()}
+          onClick={reload}
           disabled={refreshing}
           leadingIcon={<ArrowPathIcon className="size-3.5" />}
         >

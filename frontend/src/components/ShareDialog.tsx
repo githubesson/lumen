@@ -35,6 +35,7 @@ import DialogFooter from "./DialogFooter";
 import { DialogShell } from "./DialogShell";
 import { fmtDurationMs, fmtDurationSec } from "../lib/format";
 import { copyText } from "../lib/clipboard";
+import { useCopiedFlag } from "../lib/useCopiedFlag";
 import { useTrackDetail } from "../lib/useTrackDetail";
 
 interface Props {
@@ -72,16 +73,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
 
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const copiedTimerRef = useRef<number | null>(null);
-  useEffect(
-    () => () => {
-      if (copiedTimerRef.current !== null) {
-        window.clearTimeout(copiedTimerRef.current);
-      }
-    },
-    [],
-  );
+  const { copied, flash: flashCopied, reset: resetCopied } = useCopiedFlag(1800);
   const [copyError, setCopyError] = useState<string | null>(null);
 
   // The button's label lags the real state by the length of the blur, so the
@@ -166,9 +158,9 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     setCurrentSec(0);
     setShareUrl(null);
     setBusy(false);
-    setCopied(false);
+    resetCopied();
     setCopyError(null);
-  }, [open, trackId]);
+  }, [open, trackId, resetCopied]);
 
   // Pause any in-flight audio when the dialog unmounts so playback doesn't
   // continue in the background after closing.
@@ -236,7 +228,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     // Invalidate any previously-generated share URL — it's tied to the
     // old window. User needs to confirm the new selection.
     setShareUrl(null);
-    setCopied(false);
+    resetCopied();
   };
 
   const onCopy = async () => {
@@ -252,17 +244,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
       }
       const copiedOk = await copyText(url);
       if (!copiedOk) throw new Error("copy failed");
-      setCopied(true);
-      // Reset the "copied!" indicator after a moment so repeat copies
-      // still feel snappy. Tracked so closing the dialog inside the window
-      // doesn't leave a setState firing after unmount.
-      if (copiedTimerRef.current !== null) {
-        window.clearTimeout(copiedTimerRef.current);
-      }
-      copiedTimerRef.current = window.setTimeout(() => {
-        copiedTimerRef.current = null;
-        setCopied(false);
-      }, 1800);
+      flashCopied();
     } catch (err) {
       setCopyError(
         errorMessage(

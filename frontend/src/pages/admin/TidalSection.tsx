@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   RefreshCw as ArrowPathIcon,
   ExternalLink as ArrowTopRightOnSquareIcon,
@@ -19,6 +19,7 @@ import {
   openExternal,
   reserveExternalWindow,
 } from "../../lib/platform";
+import { useApiResource } from "../../lib/useApiResource";
 
 function normalizeTidalVerificationURL(rawURL: string): string {
   const trimmed = rawURL.trim();
@@ -57,30 +58,20 @@ const cardTitleStyle = {
 } as const;
 
 export function TidalSection() {
-  const [status, setStatus] = useState<TidalStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  const {
+    data: status,
+    error: loadError,
+    loading,
+    reload,
+  } = useApiResource<TidalStatus>(
+    () => api.tidalStatus(),
+    "Failed to load TIDAL status.",
+  );
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const error = actionError ?? loadError;
   const [notice, setNotice] = useState<string | null>(null);
   const [flow, setFlow] = useState<TidalAuthStart | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setStatus(await api.tidalStatus());
-    } catch (err) {
-      setError(errorMessage(err, "Failed to load TIDAL status."));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    // Initial load synchronizes this section with the TIDAL sidecar status.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load();
-  }, [load]);
 
   useEffect(() => {
     if (!flow) return;
@@ -93,7 +84,7 @@ export function TidalSection() {
           ? Math.max(2500, expiresIn + 5000)
           : undefined,
       })
-      .then(async (result) => {
+      .then((result) => {
         setFlow(null);
         if (result.state === "linked") {
           setNotice(
@@ -101,19 +92,19 @@ export function TidalSection() {
               ? `TIDAL account ${result.account.user_id} linked.`
               : "TIDAL account linked.",
           );
-          await load();
+          reload();
           return;
         }
-        setError(result.message || `TIDAL sign-in ${result.state}.`);
+        setActionError(result.message || `TIDAL sign-in ${result.state}.`);
       })
       .catch((err) => {
         if (err instanceof Error && err.name === "AbortError") return;
         setFlow(null);
-        setError(errorMessage(err, "Could not complete TIDAL sign-in."));
+        setActionError(errorMessage(err, "Could not complete TIDAL sign-in."));
       });
 
     return () => controller.abort();
-  }, [flow, load]);
+  }, [flow, reload]);
 
   const details: Array<[string, string, boolean]> = [
     ["Proxy", status?.proxy_url || "not configured", true],
@@ -131,10 +122,10 @@ export function TidalSection() {
       reservedWindow,
     );
     if (!opened.ok) {
-      setError(opened.error || "Could not open the TIDAL sign-in page.");
+      setActionError(opened.error || "Could not open the TIDAL sign-in page.");
       return;
     }
-    setError(null);
+    setActionError(null);
   };
 
   const startAuth = async () => {
@@ -142,14 +133,14 @@ export function TidalSection() {
     // Reserve the tab now, then navigate it when the API returns the TIDAL URL.
     const reservedWindow = reserveExternalWindow();
     setBusy("link");
-    setError(null);
+    setActionError(null);
     setNotice(null);
     try {
       const started = await api.startTidalAuth();
       setFlow(started);
       await openVerification(started.verification_url, reservedWindow);
     } catch (err) {
-      setError(errorMessage(err, "Could not start TIDAL sign-in."));
+      setActionError(errorMessage(err, "Could not start TIDAL sign-in."));
       closeExternalWindow(reservedWindow);
     } finally {
       setBusy(null);
@@ -159,14 +150,14 @@ export function TidalSection() {
   const removeAccount = async (accountID: string, userID: string) => {
     if (!window.confirm(`Unlink TIDAL account ${userID || accountID}?`)) return;
     setBusy(accountID);
-    setError(null);
+    setActionError(null);
     setNotice(null);
     try {
       await api.removeTidalAccount(accountID);
       setNotice("TIDAL account unlinked.");
-      await load();
+      reload();
     } catch (err) {
-      setError(errorMessage(err, "Could not unlink the TIDAL account."));
+      setActionError(errorMessage(err, "Could not unlink the TIDAL account."));
     } finally {
       setBusy(null);
     }
@@ -244,7 +235,10 @@ export function TidalSection() {
           <div style={{ marginTop: "auto", display: "flex", justifyContent: "flex-end" }}>
             <Button
               size="sm"
-              onClick={() => void load()}
+              onClick={() => {
+                setActionError(null);
+                reload();
+              }}
               disabled={loading}
               leadingIcon={<ArrowPathIcon className="size-3.5" />}
             >

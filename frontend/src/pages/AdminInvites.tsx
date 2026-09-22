@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 import {
   Check as CheckIcon,
   Clipboard as ClipboardIcon,
@@ -13,6 +13,8 @@ import { Select } from "../components/Select";
 import AdminPanel from "../components/admin/AdminPanel";
 import AdminSection from "../components/admin/AdminSection";
 import { copyText } from "../lib/clipboard";
+import { useApiResource } from "../lib/useApiResource";
+import { useCopiedFlag } from "../lib/useCopiedFlag";
 
 type Status = "active" | "revoked" | "exhausted" | "expired";
 
@@ -29,32 +31,26 @@ function statusOf(inv: Invite): Status {
  * owns the `.view` wrapper and page title.
  */
 export function InvitesAdminSection() {
-  const [rows, setRows] = useState<Invite[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    data: rows,
+    error: loadError,
+    reload,
+  } = useApiResource<Invite[]>(
+    () => api.listInvites(),
+    "Failed to load invites.",
+  );
+  const [actionError, setActionError] = useState<string | null>(null);
+  const error = actionError ?? loadError;
 
   const [role, setRole] = useState<Role>("user");
   const [maxUses, setMaxUses] = useState(1);
   const [expiresAt, setExpiresAt] = useState("");
   const [justCreated, setJustCreated] = useState<Invite | null>(null);
-  const [copied, setCopied] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      setRows(await api.listInvites());
-    } catch (err) {
-      setError(errorMessage(err, "Failed to load invites."));
-    }
-  }, []);
-
-  useEffect(() => {
-    // Initial load synchronizes this screen with the API resource.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load();
-  }, [load]);
+  const { copied, flash: flashCopied, reset: resetCopied } = useCopiedFlag(2000);
 
   const create = async (e: FormEvent) => {
     e.preventDefault();
-    setError(null);
+    setActionError(null);
     try {
       const created = await api.createInvite({
         target_role: role,
@@ -62,10 +58,10 @@ export function InvitesAdminSection() {
         expires_at: expiresAt ? new Date(expiresAt).toISOString() : undefined,
       });
       setJustCreated(created);
-      setCopied(false);
-      await load();
+      resetCopied();
+      reload();
     } catch (err) {
-      setError(errorMessage(err, "Failed to create invite."));
+      setActionError(errorMessage(err, "Failed to create invite."));
     }
   };
 
@@ -73,9 +69,9 @@ export function InvitesAdminSection() {
     if (!window.confirm("Revoke this invite?")) return;
     try {
       await api.revokeInvite(id);
-      await load();
+      reload();
     } catch (err) {
-      setError(errorMessage(err, "Failed to revoke."));
+      setActionError(errorMessage(err, "Failed to revoke."));
     }
   };
 
@@ -83,10 +79,7 @@ export function InvitesAdminSection() {
     `${window.location.origin}/register?token=${encodeURIComponent(token)}`;
 
   const copy = async (text: string) => {
-    if (await copyText(text)) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+    if (await copyText(text)) flashCopied();
   };
 
   return (

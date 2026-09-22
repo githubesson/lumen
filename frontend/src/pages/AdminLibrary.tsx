@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, errorMessage, type MusicRoot } from "../api";
+import { useCallback, useMemo, useState } from "react";
+import { api, type MusicRoot } from "../api";
 import AdminPanel from "../components/admin/AdminPanel";
+import { useApiResource } from "../lib/useApiResource";
 import { APITrackerPinsSection } from "./admin/APITrackerPinsSection";
 import { ArtistGridPinsSection } from "./admin/ArtistGridPinsSection";
 import { FilenPinsSection } from "./admin/FilenPinsSection";
@@ -15,26 +16,20 @@ import { TidalSection } from "./admin/TidalSection";
  * pickers).
  */
 export function LibraryAdminSection() {
-  const [roots, setRoots] = useState<MusicRoot[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    data: roots,
+    error: loadError,
+    reload: reloadRoots,
+  } = useApiResource<MusicRoot[]>(
+    () => api.listMusicRoots(),
+    "Failed to load roots.",
+  );
+  const [actionError, setActionError] = useState<string | null>(null);
+  const error = actionError ?? loadError;
 
   const onError = useCallback((message: string) => {
-    setError(message || null);
+    setActionError(message || null);
   }, []);
-
-  const loadRoots = useCallback(async () => {
-    try {
-      setRoots(await api.listMusicRoots());
-    } catch (err) {
-      setError(errorMessage(err, "Failed to load roots."));
-    }
-  }, []);
-
-  useEffect(() => {
-    // Initial load synchronizes this screen with the API resource.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadRoots();
-  }, [loadRoots]);
 
   const rootOptions = useMemo(
     () =>
@@ -54,7 +49,7 @@ export function LibraryAdminSection() {
     <AdminPanel>
       <MusicRootsSection
         roots={roots}
-        reloadRoots={loadRoots}
+        reloadRoots={reloadRoots}
         error={error}
         onError={onError}
       />

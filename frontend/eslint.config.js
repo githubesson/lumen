@@ -67,10 +67,11 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
-      // Mount-time data loading (`void refresh()`) legitimately kicks off a
-      // setState from an effect. Kept visible as a warning rather than an
-      // error so the rule still surfaces new occurrences.
-      "react-hooks/set-state-in-effect": "warn",
+      // Resetting local state when a dependency changes legitimately calls
+      // setState from an effect; suppress those inline with a reason. Prefer
+      // `useApiResource` for plain data loading. (`lint` runs with
+      // --max-warnings=0, so a "warn" here would fail CI just the same.)
+      "react-hooks/set-state-in-effect": "error",
     },
   },
   {
