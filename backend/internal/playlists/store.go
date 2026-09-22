@@ -108,12 +108,18 @@ func (s *Store) Get(ctx context.Context, id uuid.UUID) (*Playlist, error) {
 	return p, nil
 }
 
-// ListForUser returns playlists the user owns or is an accepted collaborator on.
+type PlaylistForUser struct {
+	Playlist
+	EffectiveRole string
+}
+
+// ListForUser returns playlists and roles for the user who owns them or is an accepted collaborator on.
 // Private playlists are owner-only; collaborator access only applies while the
 // playlist is collaborative.
-func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]*Playlist, error) {
+func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]PlaylistForUser, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT p.id, p.owner_id, p.name, COALESCE(p.description, ''), p.visibility, p.is_smart, p.created_at, p.updated_at
+		SELECT p.id, p.owner_id, p.name, COALESCE(p.description, ''), p.visibility, p.is_smart, p.created_at, p.updated_at,
+		       CASE WHEN p.owner_id = $1 THEN 'owner' ELSE pc.role END
 		FROM playlists p
 		LEFT JOIN playlist_collaborators pc
 		  ON pc.playlist_id = p.id
@@ -127,10 +133,10 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]*Playlist,
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*Playlist
+	var out []PlaylistForUser
 	for rows.Next() {
-		p := &Playlist{}
-		if err := rows.Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		var p PlaylistForUser
+		if err := rows.Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.CreatedAt, &p.UpdatedAt, &p.EffectiveRole); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -243,14 +249,12 @@ func (s *Store) TracksDetailed(ctx context.Context, id, viewerID uuid.UUID) ([]T
 			pt.added_by,
 			COALESCE(u.username, ''),
 			pt.added_at,
-			COALESCE(
-				(SELECT COUNT(*) FROM play_history ph
-				 WHERE ph.track_id = t.id AND ph.user_id = $2),
-				0)::int
+			COALESCE(uts.play_count, 0)
 		FROM playlist_tracks pt
 		JOIN tracks t ON t.id = pt.track_id AND t.deleted_at IS NULL
 		LEFT JOIN albums a ON a.id = t.album_id
 		LEFT JOIN users u ON u.id = pt.added_by
+		LEFT JOIN user_track_stats uts ON uts.track_id = t.id AND uts.user_id = $2
 		WHERE pt.playlist_id = $1
 		  AND (t.owner_id IS NULL OR t.owner_id = $2)
 		ORDER BY pt.position ASC

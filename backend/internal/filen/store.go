@@ -266,6 +266,39 @@ func (s *Store) DownloadForSource(ctx context.Context, pinID uuid.UUID, sourcePa
 	return d, err
 }
 
+// retainedFile distinguishes the remote file's size from the canonical file's
+// size: audio deduplication can match files with different tags and byte sizes.
+type retainedFile struct {
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	FileSize int64  `json:"fileSize"`
+}
+
+func (s *Store) retainedFiles(ctx context.Context, pinID uuid.UUID) (map[string]retainedFile, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT d.source_path, t.file_path, d.size_bytes, t.file_size
+		FROM filen_downloads d
+		JOIN tracks t ON t.id = d.track_id
+		WHERE d.pin_id = $1 AND d.status IN ('downloaded', 'existing')
+		  AND t.deleted_at IS NULL AND t.source = 'local'`, pinID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]retainedFile)
+	for rows.Next() {
+		var source string
+		var file retainedFile
+		if err := rows.Scan(&source, &file.Path, &file.Size, &file.FileSize); err != nil {
+			return nil, err
+		}
+		if validateCompleteFile(file.Path, file.FileSize) == nil {
+			out[source] = file
+		}
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) RecordDownload(ctx context.Context, in DownloadInput) error {
 	if len(in.Metadata) == 0 {
 		in.Metadata = json.RawMessage(`{}`)

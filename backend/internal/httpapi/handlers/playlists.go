@@ -94,11 +94,7 @@ func (h *Playlists) List(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]playlistResp, 0, len(ps))
 	for _, p := range ps {
-		role := "owner"
-		if p.OwnerID != u.ID {
-			role, _ = h.Store.EffectiveRole(r.Context(), p.ID, u.ID)
-		}
-		out = append(out, toPlaylistResp(p, role))
+		out = append(out, toPlaylistResp(&p.Playlist, p.EffectiveRole))
 	}
 	writeJSON(w, http.StatusOK, out)
 }

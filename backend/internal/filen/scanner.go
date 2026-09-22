@@ -148,7 +148,16 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(runCtx, node, script, "--json", "--password-env", "FILEN_SHARE_PASSWORD", "--", shareURL, destBase)
+	retained, err := s.Store.retainedFiles(runCtx, pin.ID)
+	if err != nil {
+		return fmt.Errorf("load filen download history: %w", err)
+	}
+	manifest, err := json.Marshal(retained)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(runCtx, node, script, "--json", "--retained-stdin", "--password-env", "FILEN_SHARE_PASSWORD", "--", shareURL, destBase)
+	cmd.Stdin = bytes.NewReader(manifest)
 	cmd.Env = append(
 		os.Environ(),
 		"FILEN_SHARE_PASSWORD="+pin.Password,
@@ -177,7 +186,12 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 	// runCtx, not ctx: the helper process is bounded by runCtx, so ingesting
 	// its events under the wider context would outlive the process producing
 	// them.
-	readErr := s.readEvents(runCtx, pin, destBase, stdout, summary)
+	readErr := s.readEvents(runCtx, pin, destBase, stdout, summary, retained)
+	if readErr != nil {
+		// Stop the helper when event validation fails; nobody is draining
+		// stdout now, so waiting for normal completion could block.
+		cancel()
+	}
 	waitErr := cmd.Wait()
 	<-stderrDone
 	if readErr != nil {
@@ -203,15 +217,16 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 }
 
 type helperEvent struct {
-	Event   string `json:"event"`
-	Status  string `json:"status"`
-	RelPath string `json:"relPath"`
-	Path    string `json:"path"`
-	Size    int64  `json:"size"`
-	Error   string `json:"error"`
+	Retained bool   `json:"retained"`
+	Event    string `json:"event"`
+	Status   string `json:"status"`
+	RelPath  string `json:"relPath"`
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	Error    string `json:"error"`
 }
 
-func (s *Scanner) readEvents(ctx context.Context, pin Pin, destBase string, r io.Reader, summary *ScanSummary) error {
+func (s *Scanner) readEvents(ctx context.Context, pin Pin, destBase string, r io.Reader, summary *ScanSummary, retained map[string]retainedFile) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
@@ -232,6 +247,20 @@ func (s *Scanner) readEvents(ctx context.Context, pin Pin, destBase string, r io
 			sourcePath = filepath.Base(ev.Path)
 		}
 		status := normalizeStatus(ev.Status)
+		if ev.Retained {
+			// Only trust paths supplied by our database manifest. A canonical
+			// file can live outside this pin's destination; never ingest it
+			// again or replace its metadata with this source's metadata.
+			file, ok := retained[sourcePath]
+			if !ok || status != StatusExisting || file.Size != ev.Size {
+				return fmt.Errorf("invalid retained file event for %q", sourcePath)
+			}
+			if err := validateCompleteFile(file.Path, file.FileSize); err != nil {
+				return err
+			}
+			summary.Existing++
+			continue
+		}
 		if strings.TrimSpace(ev.Path) != "" {
 			safePath, ok := helperPathInDestination(destBase, ev.Path)
 			if !ok {

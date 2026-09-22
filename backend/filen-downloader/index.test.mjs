@@ -117,3 +117,68 @@ test("rejects truncated downloads and removes partial files", async t => {
   )
   assert.deepEqual(await readdir(outDir), [])
 })
+
+for (const kind of ["file", "folder"]) {
+  test(`${kind} links reuse deduplicated audio and recover when it goes missing`, async t => {
+    const outDir = await temporaryDirectory(t)
+    const canonicalDir = await temporaryDirectory(t)
+    const canonical = path.join(canonicalDir, "canonical.mp3")
+    // Same audio can have a different total size because of tags.
+    await writeFile(canonical, "audio with different tags")
+    const retained = {
+      "song.mp3": { path: canonical, size: 5, fileSize: 25 }
+    }
+    let downloads = 0
+    const cloud = {
+      async filePublicLinkInfo() {
+        return { name: "song.mp3", size: 5, uuid: "file-id" }
+      },
+      async directoryPublicLinkInfo() {
+        return { metadata: { name: "Album" }, parent: "root" }
+      },
+      async directoryPublicLinkContent() {
+        return {
+          files: [{ uuid: "file-id", size: 5, metadata: { name: "song.mp3", key: "key" } }],
+          folders: []
+        }
+      },
+      async downloadFileToLocal({ to }) {
+        downloads++
+        await writeFile(to, "audio")
+      }
+    }
+    const download = kind === "file" ? downloadSingleFile : downloadFolderLink
+    for (let i = 0; i < 2; i++) {
+      await download(cloud, "link", "key", "", outDir, retained)
+    }
+    assert.equal(downloads, 0)
+    assert.deepEqual(await readdir(outDir), [])
+    await rm(canonical)
+    await download(cloud, "link", "key", "", outDir, retained)
+    assert.equal(downloads, 1)
+  })
+}
+
+for (const scenario of ["changed source size", "empty canonical", "truncated canonical", "directory canonical"]) {
+  test(`does not reuse a retained file with ${scenario}`, async t => {
+    const outDir = await temporaryDirectory(t)
+    const canonicalDir = await temporaryDirectory(t)
+    let canonical = path.join(canonicalDir, "canonical.mp3")
+    await writeFile(canonical, scenario === "empty canonical" ? "" : "audio")
+    if (scenario === "directory canonical") canonical = canonicalDir
+    const retained = {
+      "song.mp3": {
+        path: canonical,
+        size: scenario === "changed source size" ? 10 : 5,
+        fileSize: scenario === "truncated canonical" ? 10 : 5
+      }
+    }
+    let downloads = 0
+    const cloud = {
+      async filePublicLinkInfo() { return { name: "song.mp3", size: 5, uuid: "file-id" } },
+      async downloadFileToLocal({ to }) { downloads++; await writeFile(to, "audio") }
+    }
+    await downloadSingleFile(cloud, "link", "key", "", outDir, retained)
+    assert.equal(downloads, 1)
+  })
+}

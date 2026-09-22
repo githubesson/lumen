@@ -168,7 +168,7 @@ func (h *Tracks) List(w http.ResponseWriter, r *http.Request) {
 	// Not discarded: on error every `_, ok := favs[id]` is false, so every
 	// track would serialize favorited:false with a 200 and the user's next
 	// click would toggle against stale state, unfavoriting a real favorite.
-	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID)
+	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID, trackListIDs(items))
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -265,7 +265,7 @@ func (h *Tracks) ListRecent(w http.ResponseWriter, r *http.Request) {
 	// Not discarded: on error every `_, ok := favs[id]` is false, so every
 	// track would serialize favorited:false with a 200 and the user's next
 	// click would toggle against stale state, unfavoriting a real favorite.
-	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID)
+	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID, trackListIDs(items))
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -303,7 +303,7 @@ func (h *Tracks) Get(w http.ResponseWriter, r *http.Request) {
 	// Not discarded: on error every `_, ok := favs[id]` is false, so every
 	// track would serialize favorited:false with a 200 and the user's next
 	// click would toggle against stale state, unfavoriting a real favorite.
-	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID)
+	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID, []uuid.UUID{t.ID})
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -430,7 +430,7 @@ func (h *Tracks) Patch(w http.ResponseWriter, r *http.Request) {
 	// Not discarded: on error every `_, ok := favs[id]` is false, so every
 	// track would serialize favorited:false with a 200 and the user's next
 	// click would toggle against stale state, unfavoriting a real favorite.
-	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID)
+	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID, []uuid.UUID{t.ID})
 	if err != nil {
 		writeStoreError(w, err)
 		return

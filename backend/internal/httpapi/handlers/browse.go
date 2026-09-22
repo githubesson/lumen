@@ -129,7 +129,7 @@ func (h *Browse) ListAlbumTracks(w http.ResponseWriter, r *http.Request) {
 	// Not discarded: on error every `_, ok := favs[id]` is false, so every
 	// track would serialize favorited:false with a 200 and the user's next
 	// click would toggle against stale state, unfavoriting a real favorite.
-	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID)
+	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID, trackListIDs(items))
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -247,7 +247,7 @@ func (h *Browse) ListArtistTracks(w http.ResponseWriter, r *http.Request) {
 	// Not discarded: on error every `_, ok := favs[id]` is false, so every
 	// track would serialize favorited:false with a 200 and the user's next
 	// click would toggle against stale state, unfavoriting a real favorite.
-	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID)
+	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID, trackListIDs(items))
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -265,4 +265,13 @@ func trackListItems(items []library.TrackListItem, favs map[uuid.UUID]struct{}) 
 		out = append(out, makeTrackListItemResp(it, favorited, false))
 	}
 	return out
+}
+
+// trackListIDs scopes favorite lookups to the tracks being returned.
+func trackListIDs(items []library.TrackListItem) []uuid.UUID {
+	ids := make([]uuid.UUID, len(items))
+	for i, item := range items {
+		ids[i] = item.ID
+	}
+	return ids
 }

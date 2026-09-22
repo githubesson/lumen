@@ -24,6 +24,8 @@ type searchTestLibrary struct {
 	calls       []string
 	viewer      uuid.UUID
 	favoriteErr error
+	trackID     uuid.UUID
+	favoriteIDs []uuid.UUID
 }
 
 func (s *searchTestLibrary) record(kind string, viewer uuid.UUID, offset int, query string) {
@@ -34,12 +36,39 @@ func (s *searchTestLibrary) record(kind string, viewer uuid.UUID, offset int, qu
 		panic("search lost the viewer scope")
 	}
 }
-func (s *searchTestLibrary) FavoriteIDs(context.Context, uuid.UUID) (map[uuid.UUID]struct{}, error) {
-	return nil, s.favoriteErr
+func (s *searchTestLibrary) FavoriteIDs(_ context.Context, viewer uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]struct{}, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if viewer != s.viewer {
+		panic("favorite lookup lost the viewer scope")
+	}
+	s.favoriteIDs = append([]uuid.UUID(nil), ids...)
+	return map[uuid.UUID]struct{}{s.trackID: {}}, s.favoriteErr
 }
 func (s *searchTestLibrary) ListTracks(_ context.Context, p library.ListTracksParams) ([]library.TrackListItem, error) {
 	s.record("track", p.ViewerID, p.Offset, p.Query)
+	if s.trackID != uuid.Nil {
+		return []library.TrackListItem{{ID: s.trackID, Title: "Song"}}, nil
+	}
 	return []library.TrackListItem{{ID: uuid.New(), Title: "Song"}}, nil
+}
+
+func TestSearchFavoritesAreScopedToReturnedTracks(t *testing.T) {
+	store := &searchTestLibrary{viewer: uuid.New(), trackID: uuid.New()}
+	w := runSearch(t, &Search{Library: store}, store.viewer, "q=song&type=track&sources=local")
+	if w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+	if !reflect.DeepEqual(store.favoriteIDs, []uuid.UUID{store.trackID}) {
+		t.Fatalf("favorite lookup IDs = %v", store.favoriteIDs)
+	}
+	var resp searchResp
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Tracks) != 1 || !resp.Tracks[0].Favorited {
+		t.Fatalf("lost favorite status: %s", w.Body.String())
+	}
 }
 func (s *searchTestLibrary) ListAlbums(_ context.Context, viewer uuid.UUID, _, offset int, query string) ([]library.AlbumListItem, error) {
 	s.record("album", viewer, offset, query)

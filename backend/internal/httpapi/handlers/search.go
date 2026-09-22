@@ -18,7 +18,7 @@ import (
 )
 
 type searchLibrary interface {
-	FavoriteIDs(context.Context, uuid.UUID) (map[uuid.UUID]struct{}, error)
+	FavoriteIDs(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]struct{}, error)
 	ListTracks(context.Context, library.ListTracksParams) ([]library.TrackListItem, error)
 	ListAlbums(context.Context, uuid.UUID, int, int, string) ([]library.AlbumListItem, error)
 	ListArtists(context.Context, uuid.UUID, int, int, string) ([]library.ArtistListItem, error)
@@ -183,11 +183,14 @@ func (h *Search) searchStream(ctx context.Context, viewer uuid.UUID, query strin
 	if stream.source == trackref.SourceLocal {
 		switch stream.kind {
 		case "track":
-			favs, err := h.Library.FavoriteIDs(ctx, viewer)
+			items, err := h.Library.ListTracks(ctx, library.ListTracksParams{ViewerID: viewer, Limit: limit, Offset: stream.offset, Query: query})
 			if err != nil {
 				return out, 0, err
 			}
-			items, err := h.Library.ListTracks(ctx, library.ListTracksParams{ViewerID: viewer, Limit: limit, Offset: stream.offset, Query: query})
+			favs, err := h.Library.FavoriteIDs(ctx, viewer, trackListIDs(items))
+			if err != nil {
+				return out, 0, err
+			}
 			for _, item := range items {
 				_, favorited := favs[item.ID]
 				out.Tracks = append(out.Tracks, makeTrackListItemResp(item, favorited, true))

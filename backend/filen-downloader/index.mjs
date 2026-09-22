@@ -7,12 +7,12 @@ import { randomUUID } from "node:crypto"
 import { pathToFileURL } from "node:url"
 
 function usage() {
-  console.error("Usage: node index.mjs [--json] [--password <pw> | --password-env <name>] [--] <filen-share-url> <outDir>")
+  console.error("Usage: node index.mjs [--json] [--retained-stdin] [--password <pw> | --password-env <name>] [--] <filen-share-url> <outDir>")
   process.exit(1)
 }
 
 function parseArgs(argv) {
-  const args = { json: false, password: "", passwordEnv: "", url: "", outDir: "" }
+  const args = { json: false, retainedStdin: false, password: "", passwordEnv: "", url: "", outDir: "" }
   const rest = []
   // Everything after a bare `--` is positional, so a share URL that happens to
   // start with a dash can never be read as an option.
@@ -22,6 +22,7 @@ function parseArgs(argv) {
     if (positionalOnly) rest.push(a)
     else if (a === "--") positionalOnly = true
     else if (a === "--json") args.json = true
+    else if (a === "--retained-stdin") args.retainedStdin = true
     else if (a === "--password" || a === "-p") args.password = argv[++i] ?? ""
     else if (a === "--password-env") args.passwordEnv = argv[++i] ?? ""
     else if (a === "-h" || a === "--help") usage()
@@ -200,7 +201,7 @@ function readOnlyError(err) {
   return err?.code === "EROFS" || err?.code === "EACCES" || msg.includes("read-only file system")
 }
 
-export async function downloadSingleFile(cloud, linkUuid, linkKey, password, outDir) {
+export async function downloadSingleFile(cloud, linkUuid, linkKey, password, outDir, retained = {}) {
   let info
   try {
     info = await cloud.filePublicLinkInfo({
@@ -228,6 +229,7 @@ export async function downloadSingleFile(cloud, linkUuid, linkKey, password, out
     })
     return
   }
+  if (await reuseRetained(retained, relPath, info.size)) return
   const target = await prepareTarget(outDir, initial, info.size)
   if (target.status === "existing") {
     emit({ event: "file", status: "existing", relPath, path: target.path, size: info.size })
@@ -323,7 +325,7 @@ async function walkFolder(cloud, linkUuid, linkKey, password, salt, folderUuid, 
   )
 }
 
-export async function downloadFolderLink(cloud, linkUuid, linkKey, password, outDir) {
+export async function downloadFolderLink(cloud, linkUuid, linkKey, password, outDir, retained = {}) {
   let info
   try {
     info = await cloud.directoryPublicLinkInfo({ uuid: linkUuid, key: linkKey })
@@ -350,6 +352,7 @@ export async function downloadFolderLink(cloud, linkUuid, linkKey, password, out
       })
       continue
     }
+    if (await reuseRetained(retained, job.relPath, job.size)) continue
     const target = await prepareTarget(outDir, job.localPath, job.size)
     if (target.status === "existing") {
       emit({ event: "file", status: "existing", relPath: job.relPath, path: target.path, size: job.size })
@@ -393,14 +396,36 @@ export async function downloadFolderLink(cloud, linkUuid, linkKey, password, out
   if (failed > 0) throw new Error(`${failed} file(s) failed`)
 }
 
+// The backend supplies this manifest from successful downloads joined to live
+// canonical tracks. Recheck the file immediately before skipping the transfer.
+async function reuseRetained(retained, relPath, size) {
+  const sourcePath = relPath.trim()
+  if (!Object.hasOwn(retained, sourcePath)) return false
+  const file = retained[sourcePath]
+  if (file.size !== size) return false
+  try {
+    await assertCompleteDownload(file.path, file.fileSize)
+  } catch {
+    return false
+  }
+  emit({ event: "file", status: "existing", retained: true, relPath, size })
+  return true
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2))
+  let retained = {}
+  if (args.retainedStdin) {
+    const chunks = []
+    for await (const chunk of process.stdin) chunks.push(chunk)
+    retained = JSON.parse(Buffer.concat(chunks).toString("utf8"))
+  }
   const { uuid, key, typeHint } = parseShareUrl(args.url)
   const sdk = anonymousSdk()
   const cloud = sdk.cloud()
   const outDir = path.resolve(args.outDir)
-  const tryFolder = () => downloadFolderLink(cloud, uuid, key, args.password, outDir)
-  const tryFile = () => downloadSingleFile(cloud, uuid, key, args.password, outDir)
+  const tryFolder = () => downloadFolderLink(cloud, uuid, key, args.password, outDir, retained)
+  const tryFile = () => downloadSingleFile(cloud, uuid, key, args.password, outDir, retained)
   const [first, second] = typeHint === "d" ? [tryFile, tryFolder] : [tryFolder, tryFile]
   let firstErr
   try {

@@ -313,7 +313,7 @@ func (s *Scanner) previousStillPresent(ctx context.Context, pinID uuid.UUID, sou
 			return true
 		}
 	case StatusDownloaded, StatusExisting:
-		if prev.FilePath != "" && downloadfile.NonEmpty(prev.FilePath) {
+		if pinscan.DownloadPresent(ctx, s.Store.db, prev.FilePath, prev.TrackID) {
 			if prev.TrackID == nil {
 				trackID, inserted := s.ingestPath(ctx, prev.FilePath, TrackContext{}, false)
 				_ = s.Store.RecordDownload(ctx, DownloadInput{

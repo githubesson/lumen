@@ -69,6 +69,12 @@ Go's `strconv.ParseBool`, durations must parse and be greater than zero, and
 stop startup with the variable name instead of silently falling back. Check
 existing deployment environment files before upgrading.
 
+Enabled music-root paths are cached per backend process and refreshed when
+roots are added, enabled, disabled, or removed through that process's API.
+Changes made directly in Postgres or through another backend process require
+a restart of this process to refresh its snapshot. Playback still checks track
+access in Postgres and opens and stats the original file on each request.
+
 ## Test / lint
 
 ```sh

@@ -43,6 +43,34 @@ type TrackArtist struct {
 	Role string
 }
 
+// TrackPlayback contains only the fields needed to open a local file or route
+// a materialized remote track to its source.
+type TrackPlayback struct {
+	FilePath   string
+	Format     string
+	Source     string
+	ExternalID string
+}
+
+// GetTrackPlayback applies the same access checks as GetTrack without loading
+// album or artist metadata. Hidden remote tracks remain playable.
+func (s *Store) GetTrackPlayback(ctx context.Context, id, viewerID uuid.UUID) (*TrackPlayback, error) {
+	t := &TrackPlayback{}
+	err := s.db.QueryRow(ctx, `
+		SELECT t.file_path, t.format, t.source, t.external_id
+		FROM tracks t
+		WHERE t.id = $1 AND t.deleted_at IS NULL
+		  AND `+trackVisibleP2, id, viewerID).
+		Scan(&t.FilePath, &t.Format, &t.Source, &t.ExternalID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
 // TrackAlias is alternate metadata captured from a file that was deduplicated
 // into an existing track. It is retained for admin/internal use only; normal
 // read endpoints deliberately do not populate or serialize it.
@@ -425,7 +453,6 @@ func (s *Store) GetAlbum(ctx context.Context, albumID, viewerID uuid.UUID) (*Alb
 // corrupted row set cannot be materialized into memory unbounded.
 const (
 	maxUnpagedTrackRows  = 5000
-	maxFavoriteIDRows    = 200000
 	maxReplayBuckets     = 4000
 	maxReplayYearBuckets = 200
 )
@@ -806,13 +833,16 @@ func (s *Store) ListFavorites(ctx context.Context, userID uuid.UUID, limit, offs
 	return out, rows.Err()
 }
 
-// FavoriteIDs returns just the set of track IDs the user has favorited. Used
-// to annotate list rows in bulk.
-func (s *Store) FavoriteIDs(ctx context.Context, userID uuid.UUID) (map[uuid.UUID]struct{}, error) {
+// FavoriteIDs returns the user's favorites among the supplied track IDs.
+// Callers supply only tracks visible in their response. Empty input skips the DB.
+func (s *Store) FavoriteIDs(ctx context.Context, userID uuid.UUID, trackIDs []uuid.UUID) (map[uuid.UUID]struct{}, error) {
+	if len(trackIDs) == 0 {
+		return map[uuid.UUID]struct{}{}, nil
+	}
 	rows, err := s.db.Query(ctx, `
 		SELECT track_id FROM user_track_stats
 		WHERE user_id = $1 AND favorited = TRUE
-		LIMIT $2`, userID, maxFavoriteIDRows)
+		  AND track_id = ANY($2::uuid[])`, userID, trackIDs)
 	if err != nil {
 		return nil, err
 	}

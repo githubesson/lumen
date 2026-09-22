@@ -6,6 +6,8 @@ package musicroots
 import (
 	"context"
 	"errors"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +27,11 @@ type Root struct {
 
 type Store struct {
 	db *pgxpool.Pool
+
+	// Serialize cache loads with root writes so an in-flight load cannot
+	// republish paths from before a disable/delete. Nil means not loaded.
+	pathsMu      sync.Mutex
+	enabledPaths []string
 }
 
 func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
@@ -49,8 +56,14 @@ func (s *Store) List(ctx context.Context) ([]Root, error) {
 }
 
 // EnabledPaths returns just the paths of enabled rows. Used to extend the
-// primary root when scanning/watching.
+// primary root when scanning/watching and validating playback paths. The
+// process-local snapshot is invalidated by every root mutation in this store.
 func (s *Store) EnabledPaths(ctx context.Context) ([]string, error) {
+	s.pathsMu.Lock()
+	defer s.pathsMu.Unlock()
+	if s.enabledPaths != nil {
+		return slices.Clone(s.enabledPaths), nil
+	}
 	rows, err := s.db.Query(ctx, `SELECT path FROM music_roots WHERE enabled = TRUE ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
@@ -64,10 +77,17 @@ func (s *Store) EnabledPaths(ctx context.Context) ([]string, error) {
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	s.enabledPaths = out
+	return slices.Clone(out), nil
 }
 
 func (s *Store) Add(ctx context.Context, path, label string) (Root, error) {
+	s.pathsMu.Lock()
+	defer s.pathsMu.Unlock()
+	s.enabledPaths = nil
 	var r Root
 	err := s.db.QueryRow(ctx, `
 		INSERT INTO music_roots (path, label) VALUES ($1, $2)
@@ -77,6 +97,9 @@ func (s *Store) Add(ctx context.Context, path, label string) (Root, error) {
 }
 
 func (s *Store) Delete(ctx context.Context, id uuid.UUID) error {
+	s.pathsMu.Lock()
+	defer s.pathsMu.Unlock()
+	s.enabledPaths = nil
 	tag, err := s.db.Exec(ctx, `DELETE FROM music_roots WHERE id = $1`, id)
 	if err != nil {
 		return err
@@ -101,6 +124,9 @@ func (s *Store) Get(ctx context.Context, id uuid.UUID) (Root, error) {
 }
 
 func (s *Store) SetEnabled(ctx context.Context, id uuid.UUID, enabled bool) (Root, error) {
+	s.pathsMu.Lock()
+	defer s.pathsMu.Unlock()
+	s.enabledPaths = nil
 	var r Root
 	err := s.db.QueryRow(ctx, `
 		UPDATE music_roots SET enabled = $2 WHERE id = $1

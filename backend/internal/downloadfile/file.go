@@ -28,7 +28,7 @@ func nextAvailablePath(target string) string {
 
 func NonEmpty(p string) bool {
 	info, err := os.Stat(p)
-	return err == nil && !info.IsDir() && info.Size() > 0
+	return err == nil && info.Mode().IsRegular() && info.Size() > 0
 }
 
 func pathExists(p string) bool {

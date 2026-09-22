@@ -126,6 +126,9 @@ func main() {
 		},
 		Logger: logger,
 	}
+	// Prime the configured paths so the first playback request needs no root
+	// query. Failed loads are logged by the provider and retried on next use.
+	ingestSvc.AllRoots(ctx)
 
 	var watcher *ingest.Watcher
 	if _, err := os.Stat(cfg.MusicPath); err == nil {
@@ -140,6 +143,9 @@ func main() {
 	}
 
 	refresh := func() {
+		// Root writes invalidate the store snapshot. Reload even if filesystem
+		// watching is disabled so playback sees admin changes immediately.
+		ingestSvc.AllRoots(ctx)
 		if watcher != nil {
 			watcher.Refresh(ctx)
 		}

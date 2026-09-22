@@ -59,7 +59,7 @@ func (h *Tracks) Stream(w http.ResponseWriter, r *http.Request) {
 	// from the DB row and reroute to the TIDAL path using the row's
 	// external_id. Playback uses the rewritten HLS playlist; ?download=1
 	// assembles a single file instead.
-	t, err := h.Library.GetTrack(r.Context(), id, u.ID)
+	t, err := h.Library.GetTrackPlayback(r.Context(), id, u.ID)
 	if err != nil {
 		if errors.Is(err, library.ErrNotFound) {
 			h.log().Warn("stream: track not found or not visible to this user",
