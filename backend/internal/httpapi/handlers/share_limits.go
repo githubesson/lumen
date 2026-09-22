@@ -50,7 +50,14 @@ func buildPublicMedia(r *http.Request, key string, build func(context.Context) (
 	if publicBuildFails.recent(key) {
 		return "", errRecentBuildFailure
 	}
-	v, err, _ := publicBuilds.Do(key, func() (any, error) {
+	ch := publicBuilds.DoChan(key, func() (any, error) {
+		// A caller that passed the check above may only reach DoChan after
+		// another caller's build failed; don't start a fresh one then.
+		if publicBuildFails.recent(key) {
+			return "", errRecentBuildFailure
+		}
+		// Detached so one client disconnecting can't fail the build for the
+		// others waiting on it.
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), publicBuildTimeout)
 		defer cancel()
 		out, err := build(ctx)
@@ -60,10 +67,16 @@ func buildPublicMedia(r *http.Request, key string, build func(context.Context) (
 		}
 		return out, nil
 	})
-	if err != nil {
-		return "", err
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return "", res.Err
+		}
+		return res.Val.(string), nil
+	case <-r.Context().Done():
+		// Stop waiting; the shared build keeps running for other callers.
+		return "", r.Context().Err()
 	}
-	return v.(string), nil
 }
 
 func publicBuildKey(kind, trackID string, startSec, durationSec int) string {

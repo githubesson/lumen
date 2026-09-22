@@ -242,9 +242,9 @@ func (h *Tracks) SignCover(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: exp,
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	// Same-hour sign calls return identical URLs; let intermediaries cache
-	// briefly so the renderer's per-track calls stay cheap.
-	w.Header().Set("Cache-Control", "private, max-age=60")
+	// The URL is bound to the signed-in viewer; a cached copy could hand it
+	// to the next account using the same browser.
+	w.Header().Set("Cache-Control", "private, no-store")
 	_ = json.NewEncoder(w).Encode(resp)
 }
 

@@ -1,6 +1,4 @@
-UPDATE albums a
-SET cover_art_path = pc.cover_art_path
-FROM album_personal_covers pc
-WHERE pc.album_id = a.id AND NULLIF(a.cover_art_path, '') IS NULL;
-
+-- Personal covers are dropped rather than copied into albums.cover_art_path:
+-- that column is shared, and nothing identifies a personal cover as safe to
+-- show every viewer.
 DROP TABLE album_personal_covers;

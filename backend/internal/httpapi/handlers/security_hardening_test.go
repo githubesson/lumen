@@ -115,3 +115,50 @@ func TestFailureCacheExpiresAndStaysBounded(t *testing.T) {
 		t.Fatal("expired entry still reported")
 	}
 }
+
+func TestBuildPublicMediaCanceledWaiterLeavesBuildRunning(t *testing.T) {
+	key := publicBuildKey("test", t.Name(), 0, 30)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	build := func(ctx context.Context) (string, error) {
+		close(started)
+		<-release
+		defer close(finished)
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "/cache/out.mp4", nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := buildPublicMedia(req, key, build)
+		errCh <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("waiter err = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("canceled waiter kept blocking on the shared build")
+	}
+
+	// A second caller joins the still-running build and gets its result.
+	resCh := make(chan string, 1)
+	go func() {
+		out, _ := buildPublicMedia(httptest.NewRequest(http.MethodGet, "/", nil), key, build)
+		resCh <- out
+	}()
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	<-finished
+	if out := <-resCh; out != "/cache/out.mp4" {
+		t.Fatalf("joined build result = %q", out)
+	}
+}
