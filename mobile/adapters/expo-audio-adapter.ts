@@ -25,6 +25,12 @@ function isReleasedSharedObjectError(error: unknown) {
   );
 }
 
+function isPlaybackActive(status: AudioStatus): boolean {
+  return status.playing ||
+    (status.timeControlStatus === "waitingToPlayAtSpecifiedRate" &&
+      status.reasonForWaitingToPlay !== "noItemToPlay");
+}
+
 export interface ExpoAudioAdapter extends AudioAdapter {
   setActiveForLockScreen(
     active: boolean,
@@ -173,10 +179,21 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       // isPlaying. Fold stalls back into "playing" the way Android's native
       // side already does. `noItemToPlay` is excluded: a queue waiting on a
       // source is not playback.
-      const playing =
-        status.playing ||
-        (status.timeControlStatus === "waitingToPlayAtSpecifiedRate" &&
-          status.reasonForWaitingToPlay !== "noItemToPlay");
+      let playing = isPlaybackActive(status);
+      if (!didJustFinish && playing !== prev.playing) {
+        // Events cross the native/JS boundary asynchronously. A source swap
+        // can deliver an old noItemToPlay/paused snapshot after the native
+        // player has already begun buffering or playing the new song. If we
+        // publish that stale pause, the core sends pause() and cancels it.
+        // Confirm state transitions against the live getter in BOTH directions
+        // so a queued play also cannot undo a newer lock-screen/system pause.
+        // didJustFinish is an event-only flag; the live getter cannot replace it.
+        const livePlaying = isPlaybackActive(player.currentStatus);
+        if (playing !== livePlaying) {
+          diagnostics.record("audio-stale-status-ignored", { observedPlaying: playing, livePlaying }, status);
+          playing = livePlaying;
+        }
+      }
 
       // Commit before dispatch: an ended listener can synchronously replace
       // the source and reset this diff for the incoming track.
