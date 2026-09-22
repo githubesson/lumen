@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/githubesson/lumen/internal/imagesafe"
 	"github.com/githubesson/lumen/internal/preview"
 )
 
@@ -89,6 +91,24 @@ func (h *Share) CustomStoryBackground(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "no image file", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	// Reject oversized or undecodable images before materializing audio (a
+	// full TIDAL download) or handing the file to the decoder.
+	if _, _, err := imagesafe.DecodeConfig(file); err != nil {
+		http.Error(w, "file is not a supported image or is too large", http.StatusBadRequest)
+		return
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	audioPath, cleanupAudio, err := h.audioPathForBuild(r.Context(), t)
 	if err != nil {
 		slog.Error("custom story background: audio materialize failed",
@@ -97,13 +117,6 @@ func (h *Share) CustomStoryBackground(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanupAudio()
-
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, "no image file", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
 
 	ext := filepath.Ext(header.Filename)
 	if ext == "" {
@@ -178,47 +191,57 @@ func (h *Share) servePublicStory(w http.ResponseWriter, r *http.Request, backgro
 	if !ok {
 		return
 	}
-	audioPath, cleanupAudio, err := h.audioPathForBuild(r.Context(), t)
-	if err != nil {
-		slog.Error("story serve: audio materialize failed",
-			"track_id", req.id.String(), "source", t.Source, "err", err)
-		writeAudioResolveError(w, err)
-		return
-	}
-	defer cleanupAudio()
-	coverFSPath, cleanupCover := h.coverPathWithFallback(r, t, req.id,
-		"story serve: cover materialize failed; falling back to no-cover card")
-	defer cleanupCover()
-
-	title := t.Title
-	if title == "" {
-		title = "Untitled track"
-	}
-	input := preview.Input{
-		TrackID:     req.id.String(),
-		AudioPath:   audioPath,
-		CoverPath:   coverFSPath,
-		StartSec:    req.startSec,
-		DurationSec: req.durationSec,
-		Title:       title,
-		Artist:      primaryArtistName(t),
-	}
-	var outPath string
+	kind := "story"
 	if backgroundOnly {
-		outPath, err = h.Preview.EnsureStoryBackgroundBuilt(r.Context(), input)
-	} else {
-		outPath, err = h.Preview.EnsureStoryBuilt(r.Context(), input)
+		kind = "story-bg"
 	}
+	key := publicBuildKey(kind, req.id.String(), req.startSec, req.durationSec)
+	outPath, err := buildPublicMedia(r, key, func(ctx context.Context) (string, error) {
+		audioPath, cleanupAudio, err := h.audioPathForBuild(ctx, t)
+		if err != nil {
+			slog.Error("story serve: audio materialize failed",
+				"track_id", req.id.String(), "source", t.Source, "err", err)
+			return "", audioResolveError{err}
+		}
+		defer cleanupAudio()
+		coverFSPath, cleanupCover := h.coverPathWithFallback(ctx, t, req.id,
+			"story serve: cover materialize failed; falling back to no-cover card")
+		defer cleanupCover()
+
+		title := t.Title
+		if title == "" {
+			title = "Untitled track"
+		}
+		input := preview.Input{
+			TrackID:     req.id.String(),
+			AudioPath:   audioPath,
+			CoverPath:   coverFSPath,
+			StartSec:    req.startSec,
+			DurationSec: req.durationSec,
+			Title:       title,
+			Artist:      primaryArtistName(t),
+		}
+		var outPath string
+		if backgroundOnly {
+			outPath, err = h.Preview.EnsureStoryBackgroundBuilt(ctx, input)
+		} else {
+			outPath, err = h.Preview.EnsureStoryBuilt(ctx, input)
+		}
+		if err != nil {
+			slog.Error("story serve: EnsureStoryBuilt failed",
+				"track_id", req.id.String(),
+				"start_sec", req.startSec,
+				"duration_sec", req.durationSec,
+				"background_only", backgroundOnly,
+				"audio_path", audioPath,
+				"cover_path", coverFSPath,
+				"err", err)
+			return "", err
+		}
+		return outPath, nil
+	})
 	if err != nil {
-		slog.Error("story serve: EnsureStoryBuilt failed",
-			"track_id", req.id.String(),
-			"start_sec", req.startSec,
-			"duration_sec", req.durationSec,
-			"background_only", backgroundOnly,
-			"audio_path", audioPath,
-			"cover_path", coverFSPath,
-			"err", err)
-		http.Error(w, "story generation failed", http.StatusInternalServerError)
+		writePublicBuildError(w, err, "story generation failed")
 		return
 	}
 	serveMediaFile(w, r, outPath, "story missing", immutableCacheControl(req.exp))

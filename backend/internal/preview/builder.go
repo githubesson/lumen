@@ -31,6 +31,8 @@ import (
 	_ "golang.org/x/image/webp"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
+
+	"github.com/githubesson/lumen/internal/imagesafe"
 )
 
 const (
@@ -231,6 +233,38 @@ func (b *Builder) ensureBuilt(
 		}
 		return res.Val.(string), nil
 	}
+}
+
+// PruneCache deletes cached renders last written more than maxAge ago.
+// Outputs are keyed by (track, start, duration) and any user can mint new
+// share links, so without pruning the directory only ever grows; a pruned
+// entry is rebuilt on its next request.
+func (b *Builder) PruneCache(maxAge time.Duration) (int, error) {
+	if b == nil || b.CacheDir == "" || maxAge <= 0 {
+		return 0, nil
+	}
+	entries, err := os.ReadDir(b.CacheDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	cutoff := time.Now().Add(-maxAge)
+	removed := 0
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || !info.ModTime().Before(cutoff) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(b.CacheDir, e.Name())); err == nil {
+			removed++
+		}
+	}
+	return removed, nil
 }
 
 func (b *Builder) ensureCacheDir() error {
@@ -950,7 +984,7 @@ func decodeImageFile(path string) (image.Image, error) {
 		return nil, err
 	}
 	defer f.Close()
-	img, _, err := image.Decode(f)
+	img, _, err := imagesafe.Decode(f)
 	return img, err
 }
 

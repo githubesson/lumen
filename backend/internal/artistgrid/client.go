@@ -88,7 +88,8 @@ func (c *Client) Fetch(ctx context.Context, trackerID, tab string) (TrackerData,
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return TrackerData{}, fmt.Errorf("artistgrid fetch %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
-	dec := json.NewDecoder(resp.Body)
+	// Third-party response: cap it so a huge body can't exhaust memory.
+	dec := json.NewDecoder(io.LimitReader(resp.Body, 64<<20))
 	dec.UseNumber()
 	var raw map[string]any
 	if err := dec.Decode(&raw); err != nil {

@@ -53,6 +53,11 @@ func UpsertArtist(ctx context.Context, q pgx.Tx, name string) (uuid.UUID, error)
 	return id, err
 }
 
+// albumHasGlobalTrack is used inside UpsertAlbum's ON CONFLICT clause, where
+// "albums" names the existing row.
+const albumHasGlobalTrack = `SELECT 1 FROM tracks g
+	WHERE g.album_id = albums.id AND g.owner_id IS NULL AND g.deleted_at IS NULL`
+
 // UpsertAlbum finds or creates an album by (title, album_artist_id). When
 // albumArtistID is nil the album is treated as a compilation candidate.
 //
@@ -62,7 +67,14 @@ func UpsertArtist(ctx context.Context, q pgx.Tx, name string) (uuid.UUID, error)
 // two rows. The index COALESCEs a NULL album_artist_id to the nil UUID so
 // compilations collide too, and the ON CONFLICT target has to name the same
 // expression.
-func UpsertAlbum(ctx context.Context, q pgx.Tx, title string, albumArtistID *uuid.UUID, year int, isCompilation bool, coverPath string) (uuid.UUID, error) {
+//
+// ownerID is the uploading user for personal ingests (nil for global ingest,
+// remote tracks and admin edits). Albums are shared across users, so a
+// personal ingest may only fill metadata on albums that have no global tracks,
+// and a cover it supplies is recorded in cover_owner_id so reads show it to
+// that user alone. Global ingest replaces personal covers and, for the first
+// global track of an album, personal release years.
+func UpsertAlbum(ctx context.Context, q pgx.Tx, title string, albumArtistID *uuid.UUID, year int, isCompilation bool, coverPath string, ownerID *uuid.UUID) (uuid.UUID, error) {
 	title = dbtext.Clean(title)
 	coverPath = dbtext.Clean(coverPath)
 	var ptrYear *int
@@ -77,16 +89,41 @@ func UpsertAlbum(ctx context.Context, q pgx.Tx, title string, albumArtistID *uui
 	// DO UPDATE rather than DO NOTHING: DO NOTHING suppresses the RETURNING row
 	// on conflict, and the SET list is the same opportunistic fill the old
 	// read path did — never overwriting a value we already have.
+	//
+	// has_global: whether the album already has a live global track. The row
+	// being ingested is not inserted yet, so for the first global track of an
+	// album this is false and its metadata wins over personal uploads'.
 	err := q.QueryRow(ctx, `
-		INSERT INTO albums (title, album_artist_id, release_year, is_compilation, cover_art_path)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO albums (title, album_artist_id, release_year, is_compilation, cover_art_path, cover_owner_id)
+		VALUES ($1, $2, $3, $4, $5, CASE WHEN $5::text IS NULL THEN NULL ELSE $6::uuid END)
 		ON CONFLICT (title, COALESCE(album_artist_id, '00000000-0000-0000-0000-000000000000'::uuid))
 		DO UPDATE SET
-			release_year = COALESCE(NULLIF(albums.release_year, 0), NULLIF(EXCLUDED.release_year, 0)),
-			is_compilation = albums.is_compilation OR EXCLUDED.is_compilation,
-			cover_art_path = COALESCE(albums.cover_art_path, EXCLUDED.cover_art_path),
+			release_year = CASE
+				WHEN $6::uuid IS NULL AND NOT EXISTS (`+albumHasGlobalTrack+`)
+					THEN COALESCE(NULLIF(EXCLUDED.release_year, 0), NULLIF(albums.release_year, 0))
+				WHEN $6::uuid IS NULL OR NOT EXISTS (`+albumHasGlobalTrack+`)
+					THEN COALESCE(NULLIF(albums.release_year, 0), NULLIF(EXCLUDED.release_year, 0))
+				ELSE albums.release_year
+			END,
+			is_compilation = CASE
+				WHEN $6::uuid IS NULL OR NOT EXISTS (`+albumHasGlobalTrack+`)
+					THEN albums.is_compilation OR EXCLUDED.is_compilation
+				ELSE albums.is_compilation
+			END,
+			cover_art_path = CASE
+				WHEN $6::uuid IS NULL AND albums.cover_owner_id IS NOT NULL AND EXCLUDED.cover_art_path IS NOT NULL
+					THEN EXCLUDED.cover_art_path
+				ELSE COALESCE(albums.cover_art_path, EXCLUDED.cover_art_path)
+			END,
+			cover_owner_id = CASE
+				WHEN $6::uuid IS NULL AND albums.cover_owner_id IS NOT NULL AND EXCLUDED.cover_art_path IS NOT NULL
+					THEN NULL
+				WHEN albums.cover_art_path IS NULL
+					THEN EXCLUDED.cover_owner_id
+				ELSE albums.cover_owner_id
+			END,
 			updated_at = NOW()
-		RETURNING id`, title, albumArtistID, ptrYear, isCompilation, ptrCover).Scan(&id)
+		RETURNING id`, title, albumArtistID, ptrYear, isCompilation, ptrCover, ownerID).Scan(&id)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -183,7 +220,7 @@ func (s *Store) UpsertRemoteTrack(ctx context.Context, in RemoteTrackInput) (uui
 			}
 			albumArtistID = &aid
 		}
-		aid, err := UpsertAlbum(ctx, tx, albumTitle, albumArtistID, in.Year, isCompilation, "")
+		aid, err := UpsertAlbum(ctx, tx, albumTitle, albumArtistID, in.Year, isCompilation, "", nil)
 		if err != nil {
 			return uuid.Nil, fmt.Errorf("upsert remote album: %w", err)
 		}
@@ -253,15 +290,20 @@ func (s *Store) TrackIDForExternal(ctx context.Context, source, externalID strin
 // InsertTrack inserts a track honoring the ownership rules:
 //
 //   - Ingest with OwnerID=nil (global): if a global row already exists for the
-//     SHA, return that row (no-op). If only personal rows exist, promote one
-//     of them to global by setting owner_id=NULL (admin is "adopting" the
-//     content). Otherwise insert new global.
+//     SHA, return that row (no-op). If only personal rows exist, promote the
+//     oldest one to global (keeping its id, so favorites and playlists
+//     survive) and overwrite its metadata and file_path with the incoming
+//     global file. The personal copy must not win: its tags, artists and
+//     aliases are uploader-controlled and would become visible to everyone.
+//     The superseded personal path is returned as replacedPath so the caller
+//     can remove it. Otherwise insert new global.
 //   - Ingest with OwnerID=user: if a global row exists for the SHA, return
 //     it (user already "sees" it through global). If the user already has a
 //     personal row for the SHA, return that. Otherwise insert new personal.
 //
-// `inserted` is true only when a brand-new row was written.
-func InsertTrack(ctx context.Context, q pgx.Tx, t TrackInsert) (id uuid.UUID, inserted bool, err error) {
+// `inserted` is true when a brand-new row was written or a personal row was
+// promoted and rewritten; either way the caller must link artists.
+func InsertTrack(ctx context.Context, q pgx.Tx, t TrackInsert) (id uuid.UUID, inserted bool, replacedPath string, err error) {
 	t.Title = dbtext.Clean(t.Title)
 	t.Genre = dbtext.Clean(t.Genre)
 	t.Composer = dbtext.Clean(t.Composer)
@@ -270,7 +312,7 @@ func InsertTrack(ctx context.Context, q pgx.Tx, t TrackInsert) (id uuid.UUID, in
 	t.Format = dbtext.Clean(t.Format)
 
 	if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea, 'hex'), 0))`, t.AudioSHA256); err != nil {
-		return uuid.Nil, false, err
+		return uuid.Nil, false, "", err
 	}
 
 	// 1. Is there already a global row with this SHA?
@@ -278,36 +320,63 @@ func InsertTrack(ctx context.Context, q pgx.Tx, t TrackInsert) (id uuid.UUID, in
 	err = q.QueryRow(ctx, `SELECT id FROM tracks WHERE audio_sha256 = $1 AND owner_id IS NULL AND deleted_at IS NULL`, t.AudioSHA256).Scan(&globalID)
 	switch {
 	case err == nil:
-		return globalID, false, nil
+		return globalID, false, "", nil
 	case errors.Is(err, pgx.ErrNoRows):
 		// fall through
 	default:
-		return uuid.Nil, false, err
+		return uuid.Nil, false, "", err
 	}
 
 	// 2a. Admin uploading: promote any personal row to global, else insert new global.
 	if t.OwnerID == nil {
-		var personalID uuid.UUID
+		var (
+			personalID   uuid.UUID
+			personalPath string
+		)
 		// ORDER BY created_at: without it the promoted row was whichever the
 		// planner happened to return. The partial indexes in
 		// 0013_track_sha_ignore_deleted permit several live personal rows for the
 		// same audio, and the ones left behind stay personal — so those users see
 		// the track twice, forever.
 		err = q.QueryRow(ctx, `
-			SELECT id FROM tracks
+			SELECT id, file_path FROM tracks
 			WHERE audio_sha256 = $1 AND deleted_at IS NULL
 			ORDER BY created_at ASC, id ASC
-			LIMIT 1`, t.AudioSHA256).Scan(&personalID)
+			LIMIT 1`, t.AudioSHA256).Scan(&personalID, &personalPath)
 		switch {
 		case err == nil:
-			if _, err := q.Exec(ctx, `UPDATE tracks SET owner_id = NULL, updated_at = NOW() WHERE id = $1`, personalID); err != nil {
-				return uuid.Nil, false, err
+			if err := cleanTrackFilePath(&t); err != nil {
+				return uuid.Nil, false, "", err
 			}
-			return personalID, false, nil
+			if _, err := q.Exec(ctx, `
+				UPDATE tracks SET
+					owner_id = NULL, album_id = $2, title = $3,
+					track_no = NULLIF($4,0), disc_no = NULLIF($5,0), duration_ms = $6,
+					genre = NULLIF($7,''), year = NULLIF($8,0), composer = NULLIF($9,''),
+					bpm = NULLIF($10,0), isrc = NULLIF($11,''), comments = NULLIF($12,''),
+					file_path = $13, file_size = $14, format = $15, bitrate = NULLIF($16,0),
+					sample_rate = NULLIF($17,0), channels = NULLIF($18,0)::smallint,
+					updated_at = NOW()
+				WHERE id = $1`,
+				personalID, t.AlbumID, t.Title, t.TrackNo, t.DiscNo, t.DurationMS, t.Genre, t.Year, t.Composer,
+				t.BPM, t.ISRC, t.Comments, t.FilePath, t.FileSize, t.Format, t.Bitrate, t.SampleRate,
+				t.Channels,
+			); err != nil {
+				return uuid.Nil, false, "", err
+			}
+			// Artists and aliases came from the uploader's tags; the caller
+			// relinks artists from the global file.
+			if _, err := q.Exec(ctx, `DELETE FROM track_artists WHERE track_id = $1`, personalID); err != nil {
+				return uuid.Nil, false, "", err
+			}
+			if _, err := q.Exec(ctx, `DELETE FROM track_aliases WHERE track_id = $1`, personalID); err != nil {
+				return uuid.Nil, false, "", err
+			}
+			return personalID, true, personalPath, nil
 		case errors.Is(err, pgx.ErrNoRows):
 			// fall through to insert
 		default:
-			return uuid.Nil, false, err
+			return uuid.Nil, false, "", err
 		}
 	} else {
 		// 2b. User uploading: do they already have a personal row for this SHA?
@@ -315,18 +384,17 @@ func InsertTrack(ctx context.Context, q pgx.Tx, t TrackInsert) (id uuid.UUID, in
 		err = q.QueryRow(ctx, `SELECT id FROM tracks WHERE audio_sha256 = $1 AND owner_id = $2 AND deleted_at IS NULL`, t.AudioSHA256, *t.OwnerID).Scan(&existing)
 		switch {
 		case err == nil:
-			return existing, false, nil
+			return existing, false, "", nil
 		case errors.Is(err, pgx.ErrNoRows):
 			// fall through to insert
 		default:
-			return uuid.Nil, false, err
+			return uuid.Nil, false, "", err
 		}
 	}
 
-	if !dbtext.Valid(t.FilePath) {
-		return uuid.Nil, false, fmt.Errorf("file path is not valid UTF-8; rename file: %q", dbtext.Clean(t.FilePath))
+	if err := cleanTrackFilePath(&t); err != nil {
+		return uuid.Nil, false, "", err
 	}
-	t.FilePath = dbtext.Clean(t.FilePath)
 
 	// 3. Insert fresh row.
 	err = q.QueryRow(ctx, `
@@ -345,9 +413,29 @@ func InsertTrack(ctx context.Context, q pgx.Tx, t TrackInsert) (id uuid.UUID, in
 		t.Channels, t.AudioSHA256,
 	).Scan(&id)
 	if err != nil {
-		return uuid.Nil, false, err
+		return uuid.Nil, false, "", err
 	}
-	return id, true, nil
+	return id, true, "", nil
+}
+
+// PersonalUploadBytes returns the total size of a user's live personal
+// uploads, which is what the per-user upload quota is measured against.
+func (s *Store) PersonalUploadBytes(ctx context.Context, userID uuid.UUID) (int64, error) {
+	var total int64
+	err := s.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(file_size), 0)::bigint
+		FROM tracks
+		WHERE owner_id = $1 AND deleted_at IS NULL AND source = 'local'`, userID).Scan(&total)
+	return total, err
+}
+
+// cleanTrackFilePath rejects non-UTF-8 paths before they are written to a row.
+func cleanTrackFilePath(t *TrackInsert) error {
+	if !dbtext.Valid(t.FilePath) {
+		return fmt.Errorf("file path is not valid UTF-8; rename file: %q", dbtext.Clean(t.FilePath))
+	}
+	t.FilePath = dbtext.Clean(t.FilePath)
+	return nil
 }
 
 // UpdateTrackAudioInfoIfMissing fills in duration_ms / bitrate / sample_rate
@@ -581,7 +669,7 @@ func (s *Store) UpdateTrack(ctx context.Context, id uuid.UUID, p TrackPatch) err
 				}
 				albumArtistID = &aid
 			}
-			aid, err := UpsertAlbum(ctx, tx, *p.AlbumTitle, albumArtistID, 0, isComp, "")
+			aid, err := UpsertAlbum(ctx, tx, *p.AlbumTitle, albumArtistID, 0, isComp, "", nil)
 			if err != nil {
 				return fmt.Errorf("upsert album: %w", err)
 			}
@@ -681,7 +769,7 @@ func (s *Store) UpdateAlbum(ctx context.Context, id uuid.UUID, p AlbumPatch) err
 func (s *Store) SetAlbumCover(ctx context.Context, albumID uuid.UUID, coverPath string) error {
 	coverPath = dbtext.Clean(coverPath)
 	tag, err := s.db.Exec(ctx, `
-		UPDATE albums SET cover_art_path = $2, updated_at = NOW()
+		UPDATE albums SET cover_art_path = $2, cover_owner_id = NULL, updated_at = NOW()
 		WHERE id = $1`, albumID, coverPath)
 	if err != nil {
 		return err
@@ -703,11 +791,12 @@ func (s *Store) SetTrackAlbumCover(ctx context.Context, trackID uuid.UUID, cover
 	}
 	_, err := s.db.Exec(ctx, `
 		UPDATE albums a
-		SET cover_art_path = $2, updated_at = NOW()
+		SET cover_art_path = $2, cover_owner_id = NULL, updated_at = NOW()
 		FROM tracks t
 		WHERE t.id = $1
 		  AND t.album_id = a.id
-		  AND NULLIF(a.cover_art_path, '') IS NULL`,
+		  AND t.owner_id IS NULL
+		  AND (NULLIF(a.cover_art_path, '') IS NULL OR a.cover_owner_id IS NOT NULL)`,
 		trackID, coverPath)
 	return err
 }
@@ -719,7 +808,7 @@ func (s *Store) SetTrackAlbumCover(ctx context.Context, trackID uuid.UUID, cover
 // the album row is missing.
 func (s *Store) ClearAlbumCover(ctx context.Context, albumID uuid.UUID) error {
 	tag, err := s.db.Exec(ctx, `
-		UPDATE albums SET cover_art_path = NULL, updated_at = NOW()
+		UPDATE albums SET cover_art_path = NULL, cover_owner_id = NULL, updated_at = NOW()
 		WHERE id = $1`, albumID)
 	if err != nil {
 		return err

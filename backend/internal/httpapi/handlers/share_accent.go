@@ -10,6 +10,7 @@ import (
 	xdraw "golang.org/x/image/draw"
 
 	"github.com/githubesson/lumen/internal/colormath"
+	"github.com/githubesson/lumen/internal/imagesafe"
 	"github.com/githubesson/lumen/internal/library"
 )
 
@@ -37,7 +38,7 @@ func (h *Share) accentColorForTrack(ctx context.Context, t *library.TrackDetail)
 	if err != nil {
 		return ""
 	}
-	src, _, err := image.Decode(bytes.NewReader(data))
+	src, _, err := imagesafe.Decode(bytes.NewReader(data))
 	if err != nil {
 		return ""
 	}
@@ -58,7 +59,7 @@ func (h *Share) accentColorForCover(ctx context.Context, coverKey string) string
 	}
 	defer body.Close()
 
-	src, _, err := image.Decode(body)
+	src, _, err := imagesafe.Decode(body)
 	if err != nil {
 		return ""
 	}

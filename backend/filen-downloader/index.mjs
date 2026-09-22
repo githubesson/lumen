@@ -54,6 +54,25 @@ function allowedExtensions() {
 
 const ALLOWED_EXTENSIONS = allowedExtensions()
 
+// Filen stores files in 1 MiB chunks; bound both the declared size and the
+// chunk count so a share can't stream an arbitrarily large file to disk.
+const FILEN_CHUNK_BYTES = 1024 * 1024
+
+function maxFileBytes() {
+  const n = Number(process.env.FILEN_MAX_FILE_BYTES)
+  return Number.isFinite(n) && n > 0 ? n : 4 * 1024 * 1024 * 1024
+}
+
+const MAX_FILE_BYTES = maxFileBytes()
+
+export function exceedsSizeLimit(size, chunks, limit = MAX_FILE_BYTES) {
+  const declared = Number(size)
+  const chunkCount = Number(chunks)
+  if (!Number.isFinite(declared) || declared > limit) return true
+  if (Number.isFinite(chunkCount) && chunkCount * FILEN_CHUNK_BYTES > limit + FILEN_CHUNK_BYTES) return true
+  return false
+}
+
 function isAllowedFile(name) {
   return ALLOWED_EXTENSIONS.has(path.extname(name).toLowerCase())
 }
@@ -229,6 +248,17 @@ export async function downloadSingleFile(cloud, linkUuid, linkKey, password, out
     })
     return
   }
+  if (exceedsSizeLimit(info.size, info.chunks)) {
+    emit({
+      event: "file",
+      status: "skipped",
+      relPath,
+      path: initial,
+      size: info.size,
+      error: "file exceeds size limit"
+    })
+    return
+  }
   if (await reuseRetained(retained, relPath, info.size)) return
   const target = await prepareTarget(outDir, initial, info.size)
   if (target.status === "existing") {
@@ -349,6 +379,17 @@ export async function downloadFolderLink(cloud, linkUuid, linkKey, password, out
         path: job.localPath,
         size: job.size,
         error: "unsupported file extension"
+      })
+      continue
+    }
+    if (exceedsSizeLimit(job.size, job.params.chunks)) {
+      emit({
+        event: "file",
+        status: "skipped",
+        relPath: job.relPath,
+        path: job.localPath,
+        size: job.size,
+        error: "file exceeds size limit"
       })
       continue
     }

@@ -111,6 +111,8 @@ services:
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       PUBLIC_HOSTS: ${PUBLIC_HOSTS:-}
       GENIUS_PROXY_URL: ${GENIUS_PROXY_URL:-}
+      # Per-user cap on personal uploads, in MiB (0 disables).
+      PERSONAL_UPLOAD_QUOTA_MB: ${PERSONAL_UPLOAD_QUOTA_MB:-20480}
       # Overrides the tracker-API instance for all scans (including per-pin
       # api_base_url values). Blank keeps each pin's stored URL.
       API_TRACKER_BASE_URL: ${API_TRACKER_BASE_URL:-}

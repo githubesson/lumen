@@ -21,6 +21,7 @@ import (
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
+	"github.com/githubesson/lumen/internal/imagesafe"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/storage"
@@ -207,7 +208,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 			isCompilation = true
 		}
 
-		aid, err := library.UpsertAlbum(ctx, tx, md.Album, albumArtistID, md.Year, isCompilation, coverPath)
+		aid, err := library.UpsertAlbum(ctx, tx, md.Album, albumArtistID, md.Year, isCompilation, coverPath, ownerID)
 		if err != nil {
 			out.Err = fmt.Errorf("upsert album: %w", err)
 			s.recordErr(ctx, path, out.Err)
@@ -216,7 +217,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		albumID = &aid
 	}
 
-	trackID, inserted, err := library.InsertTrack(ctx, tx, library.TrackInsert{
+	trackID, inserted, replacedPath, err := library.InsertTrack(ctx, tx, library.TrackInsert{
 		OwnerID:     ownerID,
 		AlbumID:     albumID,
 		Title:       md.Title,
@@ -251,23 +252,28 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	}
 
 	if !inserted {
-		if err := tx.QueryRow(ctx, `SELECT file_path FROM tracks WHERE id = $1`, trackID).Scan(&canonicalPath); err != nil {
+		var canonicalOwner *uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT file_path, owner_id FROM tracks WHERE id = $1`, trackID).Scan(&canonicalPath, &canonicalOwner); err != nil {
 			out.Err = fmt.Errorf("lookup canonical track path: %w", err)
 			s.recordErr(ctx, path, out.Err)
 			return out
 		}
 		// A dedup hit folded this file into an existing track. Keep the
 		// dupe's filename / title / artists / album searchable by recording
-		// them as an alias; the canonical row stays untouched.
-		if err := library.RecordAlias(ctx, tx, trackID, library.AliasInput{
-			FilePath:    path,
-			Title:       md.Title,
-			ArtistNames: joinArtistNames(md.Artists),
-			AlbumTitle:  md.Album,
-		}); err != nil {
-			out.Err = fmt.Errorf("record alias: %w", err)
-			s.recordErr(ctx, path, out.Err)
-			return out
+		// them as an alias; the canonical row stays untouched. Aliases are
+		// shown to everyone who can see the track, so a personal upload only
+		// records one on its owner's own track — never on a global one.
+		if ownerID == nil || (canonicalOwner != nil && *canonicalOwner == *ownerID) {
+			if err := library.RecordAlias(ctx, tx, trackID, library.AliasInput{
+				FilePath:    path,
+				Title:       md.Title,
+				ArtistNames: joinArtistNames(md.Artists),
+				AlbumTitle:  md.Album,
+			}); err != nil {
+				out.Err = fmt.Errorf("record alias: %w", err)
+				s.recordErr(ctx, path, out.Err)
+				return out
+			}
 		}
 		// Backfill audio info on the canonical row if it's still missing
 		// (e.g. the row was first written before native probing landed).
@@ -287,6 +293,11 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 
 	if !inserted {
 		s.removeDedupFile(ctx, path, canonicalPath, trackID)
+	}
+	if replacedPath != "" {
+		// A personal upload was promoted to global and now points at this
+		// file; its old copy under .users/ is redundant.
+		s.removeDedupFile(ctx, replacedPath, path, trackID)
 	}
 
 	out.TrackID = trackID
@@ -404,6 +415,11 @@ func (s *Service) StoreCoverImage(ctx context.Context, data []byte, fallbackType
 		return "", nil
 	}
 	coverBytes, coverType, err := normalizeCoverBytes(data)
+	if errors.Is(err, imagesafe.ErrTooLarge) {
+		// Storing it verbatim would hand the pixel bomb to ffmpeg when a
+		// share preview is rendered.
+		return "", err
+	}
 	if err != nil {
 		coverBytes = data
 		coverType = fallbackType
@@ -424,7 +440,7 @@ func (s *Service) StoreCoverImage(ctx context.Context, data []byte, fallbackType
 }
 
 func normalizeCoverBytes(data []byte) ([]byte, string, error) {
-	src, _, err := image.Decode(bytes.NewReader(data))
+	src, _, err := imagesafe.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, "", err
 	}

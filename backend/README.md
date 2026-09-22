@@ -69,6 +69,9 @@ Go's `strconv.ParseBool`, durations must parse and be greater than zero, and
 stop startup with the variable name instead of silently falling back. Check
 existing deployment environment files before upgrading.
 
+Non-admin personal uploads are capped per user by `PERSONAL_UPLOAD_QUOTA_MB`
+(default 20480, i.e. 20 GiB; `0` disables the cap).
+
 Enabled music-root paths are cached per backend process and refreshed when
 roots are added, enabled, disabled, or removed through that process's API.
 Changes made directly in Postgres or through another backend process require

@@ -21,6 +21,7 @@ import (
 
 	"github.com/githubesson/lumen/internal/auth"
 	"github.com/githubesson/lumen/internal/httpx"
+	"github.com/githubesson/lumen/internal/imagesafe"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/tidal"
 	"github.com/githubesson/lumen/internal/trackref"
@@ -138,7 +139,7 @@ func (h *Tracks) PutAlbumCover(w http.ResponseWriter, r *http.Request) {
 	}
 	// Decode once up front to reject anything that isn't a real, supported
 	// image before it ever reaches storage.
-	if _, _, err := image.Decode(bytes.NewReader(data)); err != nil {
+	if _, _, err := imagesafe.Decode(bytes.NewReader(data)); err != nil {
 		http.Error(w, "file is not a supported image (jpeg, png, webp)", http.StatusBadRequest)
 		return
 	}
@@ -534,7 +535,7 @@ func (h *Tracks) serveResizedImage(
 		http.ServeContent(w, r, path.Base(thumbKey), zeroTime(), cached)
 		return true
 	}
-	src, _, err := image.Decode(body)
+	src, _, err := imagesafe.Decode(body)
 	if err != nil {
 		return false
 	}

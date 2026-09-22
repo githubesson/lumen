@@ -97,3 +97,26 @@ func TestSaveCleansPartialDownloadOnReadError(t *testing.T) {
 		t.Fatalf("failed download left files behind: %v", files)
 	}
 }
+
+func TestSaveRejectsOversizedBodyWithoutLeavingFiles(t *testing.T) {
+	prev := MaxFileBytes
+	MaxFileBytes = 8
+	defer func() { MaxFileBytes = prev }()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "huge.mp3")
+	if _, _, err := Save(strings.NewReader("0123456789"), target); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("Save err = %v, want ErrTooLarge", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("oversized download left files behind: %v", entries)
+	}
+
+	if _, _, err := Save(strings.NewReader("01234567"), target); err != nil {
+		t.Fatalf("Save at limit: %v", err)
+	}
+}

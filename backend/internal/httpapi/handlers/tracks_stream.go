@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -339,19 +340,40 @@ func (h *Tracks) TIDALHLS(w http.ResponseWriter, r *http.Request) {
 func writeTIDALProxyResponse(w http.ResponseWriter, resp *http.Response) {
 	defer resp.Body.Close()
 	for _, name := range []string{
-		"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges",
+		"Content-Length", "Content-Range", "Accept-Ranges",
 		"ETag", "Last-Modified",
 	} {
 		if v := resp.Header.Get(name); v != "" {
 			w.Header().Set(name, v)
 		}
 	}
-	if w.Header().Get("Content-Type") == "" {
-		w.Header().Set("Content-Type", "audio/mp4")
-	}
+	// The body is served from our own origin, so never echo an upstream type
+	// a browser would render (HTML, SVG, ...).
+	w.Header().Set("Content-Type", tidalProxyContentType(resp.Header.Get("Content-Type")))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "private, max-age=0")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// tidalProxyContentType passes through media and HLS playlist types and maps
+// everything else to a non-renderable type. An empty upstream type keeps the
+// historical audio/mp4 default.
+func tidalProxyContentType(upstream string) string {
+	if strings.TrimSpace(upstream) == "" {
+		return "audio/mp4"
+	}
+	mt, _, err := mime.ParseMediaType(upstream)
+	if err != nil {
+		return "application/octet-stream"
+	}
+	switch {
+	case strings.HasPrefix(mt, "audio/"),
+		mt == "video/mp4", mt == "video/mp2t",
+		mt == "application/vnd.apple.mpegurl", mt == "application/x-mpegurl":
+		return upstream
+	}
+	return "application/octet-stream"
 }
 
 func tidalHLSProxyURL(tidalID, rawURL string) string {

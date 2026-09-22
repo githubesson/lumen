@@ -36,3 +36,20 @@ func TestProxyenvValidatesEveryEntry(t *testing.T) {
 		t.Fatalf("proxyenv invalid error = %v", err)
 	}
 }
+
+func TestNonnegintenv(t *testing.T) {
+	t.Setenv("TEST_QUOTA", "")
+	if n, err := nonnegintenv("TEST_QUOTA", 7); err != nil || n != 7 {
+		t.Fatalf("default = %d, %v", n, err)
+	}
+	t.Setenv("TEST_QUOTA", "0")
+	if n, err := nonnegintenv("TEST_QUOTA", 7); err != nil || n != 0 {
+		t.Fatalf("zero = %d, %v", n, err)
+	}
+	for _, value := range []string{"-1", "lots", "1099511627777"} {
+		t.Setenv("TEST_QUOTA", value)
+		if _, err := nonnegintenv("TEST_QUOTA", 7); err == nil || !strings.Contains(err.Error(), "TEST_QUOTA") {
+			t.Fatalf("nonnegintenv(%q) error = %v, want named validation error", value, err)
+		}
+	}
+}

@@ -118,11 +118,22 @@ func (c *Client) FetchTracker(ctx context.Context, id int64) (Tracker, error) {
 	return tracker, nil
 }
 
+// maxTrackerEntries bounds FetchEntries. The tracker API is third-party; a
+// server that keeps returning full pages (with total=0) would otherwise be
+// paged forever while every entry accumulates in memory.
+const maxTrackerEntries = 100_000
+
+// maxTrackerJSONBytes caps a single decoded API response.
+const maxTrackerJSONBytes = 64 << 20
+
 func (c *Client) FetchEntries(ctx context.Context, trackerID int64) ([]Entry, error) {
 	const limit = 500
 	offset := 0
 	out := []Entry{}
 	for {
+		if offset >= maxTrackerEntries {
+			return nil, fmt.Errorf("api tracker %d: more than %d entries", trackerID, maxTrackerEntries)
+		}
 		page, err := c.fetchEntriesPage(ctx, trackerID, limit, offset)
 		if err != nil {
 			return nil, err
@@ -327,7 +338,7 @@ func ExtractTrackerID(raw string) int64 {
 }
 
 func decodeJSON(r io.Reader, out any) error {
-	dec := json.NewDecoder(r)
+	dec := json.NewDecoder(io.LimitReader(r, maxTrackerJSONBytes))
 	dec.UseNumber()
 	return dec.Decode(out)
 }

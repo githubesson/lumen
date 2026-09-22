@@ -156,6 +156,7 @@ func main() {
 	}
 
 	previewBuilder := &preview.Builder{CacheDir: cfg.PreviewCacheDir}
+	startWorker(func() { runPreviewCachePrune(ctx, logger, previewBuilder) })
 	if cfg.APITrackerBaseURL != "" {
 		updated, skipped, err := apiTrackerStore.MigrateBaseURL(ctx, cfg.APITrackerBaseURL)
 		switch {
@@ -204,32 +205,33 @@ func main() {
 	startWorker(func() { filenScanner.Run(ctx) })
 
 	handler := httpapi.NewRouter(httpapi.Deps{
-		DB:             pool,
-		Users:          usersStore,
-		Invites:        invitesStore,
-		Sessions:       sessions,
-		Ingest:         ingestSvc,
-		Library:        libraryStore,
-		Playlists:      playlistsStore,
-		Activity:       activityStore,
-		TIDAL:          tidalClient,
-		LastFM:         lastFMService,
-		Storage:        store,
-		MusicRoots:     musicRootsStore,
-		APITracker:     apiTrackerStore,
-		APITrackerScan: apiTrackerScanner,
-		ArtistGrid:     artistGridStore,
-		ArtistGridScan: artistGridScanner,
-		Filen:          filenStore,
-		FilenScan:      filenScanner,
-		Preview:        previewBuilder,
-		MusicRoot:      cfg.MusicPath,
-		Background:     ctx,
-		StartJob:       startWorker,
-		RefreshScan:    refresh,
-		CoverSignKey:   cfg.CoverSignKey,
-		TrustedProxies: cfg.TrustedProxies,
-		PublicHosts:    cfg.PublicHosts,
+		DB:               pool,
+		Users:            usersStore,
+		Invites:          invitesStore,
+		Sessions:         sessions,
+		Ingest:           ingestSvc,
+		Library:          libraryStore,
+		Playlists:        playlistsStore,
+		Activity:         activityStore,
+		TIDAL:            tidalClient,
+		LastFM:           lastFMService,
+		Storage:          store,
+		MusicRoots:       musicRootsStore,
+		APITracker:       apiTrackerStore,
+		APITrackerScan:   apiTrackerScanner,
+		ArtistGrid:       artistGridStore,
+		ArtistGridScan:   artistGridScanner,
+		Filen:            filenStore,
+		FilenScan:        filenScanner,
+		Preview:          previewBuilder,
+		MusicRoot:        cfg.MusicPath,
+		Background:       ctx,
+		StartJob:         startWorker,
+		RefreshScan:      refresh,
+		CoverSignKey:     cfg.CoverSignKey,
+		TrustedProxies:   cfg.TrustedProxies,
+		PublicHosts:      cfg.PublicHosts,
+		UploadQuotaBytes: cfg.PersonalUploadQuotaBytes,
 	})
 
 	srv := &http.Server{
@@ -291,6 +293,34 @@ func runSessionCleanup(ctx context.Context, logger *slog.Logger, sessions *auth.
 			return
 		case <-ticker.C:
 			cleanup()
+		}
+	}
+}
+
+// previewCacheMaxAge is how long a rendered share preview is kept on disk
+// before it is pruned and lazily rebuilt on its next request.
+const previewCacheMaxAge = 30 * 24 * time.Hour
+
+func runPreviewCachePrune(ctx context.Context, logger *slog.Logger, builder *preview.Builder) {
+	prune := func() {
+		removed, err := builder.PruneCache(previewCacheMaxAge)
+		if err != nil {
+			logger.Warn("preview cache prune failed", "err", err)
+			return
+		}
+		if removed > 0 {
+			logger.Info("stale preview renders removed", "count", removed)
+		}
+	}
+	prune()
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
 		}
 	}
 }

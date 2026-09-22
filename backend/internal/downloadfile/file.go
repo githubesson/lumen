@@ -89,6 +89,15 @@ func InstallNoOverwrite(tmpPath, target string) (string, error) {
 	return target, fmt.Errorf("could not find an available target path")
 }
 
+// MaxFileBytes caps a single downloaded file. Remote sources (tracker links,
+// ArtistGrid) are third-party controlled; without a cap one link serving an
+// endless body fills the music volume before the per-file timeout fires.
+// It is a variable only so tests can lower it.
+var MaxFileBytes int64 = 4 << 30
+
+// ErrTooLarge reports a download that exceeded MaxFileBytes.
+var ErrTooLarge = errors.New("download exceeds size limit")
+
 // SkipError marks an input or destination that should be recorded as skipped.
 type SkipError struct{ Reason string }
 
@@ -113,9 +122,14 @@ func Save(body io.Reader, target string) (filePath string, existing bool, err er
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
-	if _, err := io.Copy(tmp, body); err != nil {
+	n, err := io.Copy(tmp, io.LimitReader(body, MaxFileBytes+1))
+	if err != nil {
 		tmp.Close()
 		return target, false, err
+	}
+	if n > MaxFileBytes {
+		tmp.Close()
+		return target, false, ErrTooLarge
 	}
 	if err := tmp.Close(); err != nil {
 		return target, false, err

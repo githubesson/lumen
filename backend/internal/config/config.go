@@ -61,6 +61,9 @@ type Config struct {
 	// Defaults to {TranscodeCache}/previews so both transcode artifacts
 	// live under a single mounted cache volume.
 	PreviewCacheDir string
+	// PersonalUploadQuotaBytes caps the total size of one non-admin user's
+	// personal uploads. Set via PERSONAL_UPLOAD_QUOTA_MB; 0 disables the cap.
+	PersonalUploadQuotaBytes int64
 }
 
 func FromEnv() (*Config, error) {
@@ -100,6 +103,10 @@ func FromEnv() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	uploadQuotaMB, err := nonnegintenv("PERSONAL_UPLOAD_QUOTA_MB", defaultPersonalUploadQuotaMB)
+	if err != nil {
+		return nil, err
+	}
 	c := &Config{
 		HTTPAddr:                   getenv("HTTP_ADDR", ":8080"),
 		DatabaseURL:                os.Getenv("DATABASE_URL"),
@@ -126,6 +133,7 @@ func FromEnv() (*Config, error) {
 		LastFMSharedSecret:         getenv("LASTFM_SHARED_SECRET", ""),
 		TrustedProxies:             trustedProxies,
 		PublicHosts:                splitenv("PUBLIC_HOSTS"),
+		PersonalUploadQuotaBytes:   uploadQuotaMB << 20,
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
@@ -176,6 +184,21 @@ func boolenv(k string, def bool) (bool, error) {
 		return false, fmt.Errorf("%s must be a boolean, got %q: %w", k, v, err)
 	}
 	return b, nil
+}
+
+// defaultPersonalUploadQuotaMB is 20 GiB per user.
+const defaultPersonalUploadQuotaMB = 20 << 10
+
+func nonnegintenv(k string, def int64) (int64, error) {
+	v := strings.TrimSpace(os.Getenv(k))
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n < 0 || n > 1<<40 {
+		return 0, fmt.Errorf("%s must be a non-negative integer, got %q", k, v)
+	}
+	return n, nil
 }
 
 func durenv(k string, def time.Duration) (time.Duration, error) {

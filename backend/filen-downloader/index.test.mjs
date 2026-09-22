@@ -7,6 +7,7 @@ import test from "node:test"
 import {
   downloadFolderLink,
   downloadSingleFile,
+  exceedsSizeLimit,
   parseShareUrl
 } from "./index.mjs"
 
@@ -182,3 +183,12 @@ for (const scenario of ["changed source size", "empty canonical", "truncated can
     assert.equal(downloads, 1)
   })
 }
+
+test("exceedsSizeLimit rejects oversized declared sizes and chunk counts", () => {
+  const MiB = 1024 * 1024
+  assert.equal(exceedsSizeLimit(10 * MiB, 10, 100 * MiB), false)
+  assert.equal(exceedsSizeLimit(101 * MiB, 101, 100 * MiB), true)
+  // A small declared size cannot hide a huge chunk count.
+  assert.equal(exceedsSizeLimit(1 * MiB, 5000, 100 * MiB), true)
+  assert.equal(exceedsSizeLimit("not a number", 1, 100 * MiB), true)
+})

@@ -81,13 +81,18 @@ type TrackAlias struct {
 	AlbumTitle  string
 }
 
+// albumCoverForTrackOwner hides a cover supplied by one user's personal upload
+// unless the track itself belongs to that user (see albums.cover_owner_id).
+const albumCoverForTrackOwner = `CASE WHEN a.cover_owner_id IS NULL OR a.cover_owner_id = t.owner_id
+		THEN a.cover_art_path END`
+
 // trackDetailSelect is the shared single-track projection used by GetTrack and
 // GetTrackPublic; the two differ only in whether the viewer-visibility
 // predicate is appended.
 const trackDetailSelect = `
 	SELECT
 		t.id, t.title, t.album_id,
-		a.title, a.cover_art_path,
+		a.title, ` + albumCoverForTrackOwner + `,
 		COALESCE(t.track_no, 0), COALESCE(t.disc_no, 0),
 		t.duration_ms,
 		COALESCE(t.genre, ''), COALESCE(t.year, 0),
@@ -195,6 +200,7 @@ func (s *Store) AlbumCoverPathForViewer(ctx context.Context, albumID, viewerID u
 		SELECT a.cover_art_path
 		FROM albums a
 		WHERE a.id = $1
+		  AND (a.cover_owner_id IS NULL OR a.cover_owner_id = $2)
 		  AND EXISTS (
 		    SELECT 1
 		    FROM tracks t
@@ -367,7 +373,8 @@ func (s *Store) ListAlbums(ctx context.Context, viewerID uuid.UUID, limit, offse
 		SELECT a.id, a.title, a.album_artist_id, COALESCE(aa.name, ''),
 		       a.is_compilation, COALESCE(a.release_year, 0),
 		       COUNT(t.id)::int, COALESCE(SUM(t.duration_ms), 0)::bigint,
-		       (a.cover_art_path IS NOT NULL AND a.cover_art_path <> '') AS has_cover
+		       (a.cover_art_path IS NOT NULL AND a.cover_art_path <> ''
+		        AND (a.cover_owner_id IS NULL OR a.cover_owner_id = $1)) AS has_cover
 		FROM albums a
 		LEFT JOIN artists aa ON aa.id = a.album_artist_id
 		INNER JOIN tracks t ON t.album_id = a.id
@@ -423,8 +430,9 @@ func (s *Store) GetAlbum(ctx context.Context, albumID, viewerID uuid.UUID) (*Alb
 		SELECT a.id, a.title, a.album_artist_id, COALESCE(aa.name, ''),
 		       a.is_compilation, COALESCE(a.release_year, 0),
 		       COUNT(t.id)::int, COALESCE(SUM(t.duration_ms), 0)::bigint,
-		       (a.cover_art_path IS NOT NULL AND a.cover_art_path <> '') AS has_cover,
-		       a.cover_art_path
+		       (a.cover_art_path IS NOT NULL AND a.cover_art_path <> ''
+		        AND (a.cover_owner_id IS NULL OR a.cover_owner_id = $2)) AS has_cover,
+		       CASE WHEN a.cover_owner_id IS NULL OR a.cover_owner_id = $2 THEN a.cover_art_path END
 		FROM albums a
 		LEFT JOIN artists aa ON aa.id = a.album_artist_id
 		INNER JOIN tracks t ON t.album_id = a.id

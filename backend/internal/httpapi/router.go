@@ -56,6 +56,8 @@ type Deps struct {
 	CoverSignKey   []byte          // HMAC secret for public signed cover URLs (Discord RPC) + share/preview URLs
 	TrustedProxies []string        // CIDR or IP literals; only these peers may set X-Forwarded-For
 	PublicHosts    []string        // optional allowlist of hostnames permitted in generated absolute URLs
+	// UploadQuotaBytes caps each non-admin user's personal uploads (0 = off).
+	UploadQuotaBytes int64
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -68,6 +70,7 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(appmw.RealIP(appmw.ParseTrustedProxies(d.TrustedProxies)))
 	r.Use(chimw.RequestID)
 	r.Use(chimw.Recoverer)
+	r.Use(appmw.NoSniff)
 	r.Use(appmw.Authenticate(d.Sessions))
 
 	authH := &handlers.Auth{
@@ -82,6 +85,8 @@ func NewRouter(d Deps) http.Handler {
 		Library:    d.Library,
 		Background: d.Background,
 		StartJob:   d.StartJob,
+
+		UploadQuotaBytes: d.UploadQuotaBytes,
 	}
 	plH := &handlers.Playlists{Store: d.Playlists, Users: d.Users, Library: d.Library, TIDAL: d.TIDAL}
 	activityH := &handlers.Activity{
@@ -229,8 +234,12 @@ func NewRouter(d Deps) http.Handler {
 			ordinary.Post("/tracks/{id}/now-playing", tracksH.NowPlaying)
 			ordinary.Post("/tracks/{id}/favorite", tracksH.Favorite)
 			ordinary.Delete("/tracks/{id}/favorite", tracksH.Unfavorite)
-			ordinary.Post("/tracks/{id}/share", shareH.Create)
-			r.With(appmw.Timeout(previewRequestTimeout)).
+			// Each call may queue a background render (and a full TIDAL
+			// download) for a new (track, start, duration) key.
+			ordinary.With(appmw.RateLimitByIP(30, time.Minute)).Post("/tracks/{id}/share", shareH.Create)
+			// Decodes an uploaded image and may download a full TIDAL track
+			// before running ffmpeg; keep a single client from stacking these.
+			r.With(appmw.Timeout(previewRequestTimeout), appmw.RateLimitByIP(10, time.Minute)).
 				Post("/tracks/{id}/story-background", shareH.CustomStoryBackground)
 			ordinary.Get("/favorites", tracksH.ListFavorites)
 			ordinary.Get("/recent", tracksH.ListRecent)
@@ -252,7 +261,8 @@ func NewRouter(d Deps) http.Handler {
 			ordinary.Get("/artists/{id}", browseH.GetArtist)
 			ordinary.Get("/artists/{id}/tracks", browseH.ListArtistTracks)
 
-			r.With(appmw.Timeout(uploadRequestTimeout)).Post("/library/upload", libH.Upload)
+			r.With(appmw.Timeout(uploadRequestTimeout), appmw.RateLimitByIP(30, time.Minute)).
+				Post("/library/upload", libH.Upload)
 
 			ordinary.Get("/playlists", plH.List)
 			ordinary.Post("/playlists", plH.Create)

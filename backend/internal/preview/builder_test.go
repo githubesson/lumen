@@ -1,9 +1,11 @@
 package preview
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestBuildArgsUseSelectedDuration(t *testing.T) {
@@ -45,5 +47,31 @@ func TestNormalizeDurationDefaultsAndCaps(t *testing.T) {
 	}
 	if got := normalizeDurationSec(3); got != 3 {
 		t.Fatalf("short-track duration = %d, want 3", got)
+	}
+}
+
+func TestPruneCacheRemovesOnlyStaleFiles(t *testing.T) {
+	dir := t.TempDir()
+	b := &Builder{CacheDir: dir}
+	stale := filepath.Join(dir, "stale.mp4")
+	fresh := filepath.Join(dir, "fresh.mp4")
+	for _, p := range []string{stale, fresh} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := b.PruneCache(24 * time.Hour)
+	if err != nil || removed != 1 {
+		t.Fatalf("PruneCache = %d, %v; want 1, nil", removed, err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale file still present: %v", err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatalf("fresh file removed: %v", err)
 	}
 }

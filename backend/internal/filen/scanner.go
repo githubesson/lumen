@@ -11,11 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/githubesson/lumen/internal/downloadfile"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/pathsafe"
@@ -159,9 +161,10 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 	cmd := exec.CommandContext(runCtx, node, script, "--json", "--retained-stdin", "--password-env", "FILEN_SHARE_PASSWORD", "--", shareURL, destBase)
 	cmd.Stdin = bytes.NewReader(manifest)
 	cmd.Env = append(
-		os.Environ(),
+		helperEnv(os.Environ()),
 		"FILEN_SHARE_PASSWORD="+pin.Password,
 		"FILEN_ALLOWED_EXTENSIONS="+strings.Join(ingest.SupportedExtensions(), ","),
+		"FILEN_MAX_FILE_BYTES="+strconv.FormatInt(downloadfile.MaxFileBytes, 10),
 	)
 
 	stdout, err := cmd.StdoutPipe()

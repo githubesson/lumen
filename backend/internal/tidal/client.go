@@ -323,7 +323,35 @@ func (c *Client) openStream(ctx context.Context, streamURL string, incoming *htt
 			}
 		}
 	}
-	return c.stream.Do(req)
+	return tidalMediaClient(c.stream).Do(req)
+}
+
+// maxTIDALMediaRedirects mirrors net/http's default, which a custom
+// CheckRedirect replaces.
+const maxTIDALMediaRedirects = 10
+
+// tidalMediaClient returns a shallow copy of base whose redirects must also
+// stay on a TIDAL media host. Callers validate the first URL; without this a
+// *.tidal.com redirect could hand the HLS proxy — which streams upstream bodies
+// back from our origin — content from any public host.
+func tidalMediaClient(base *http.Client) *http.Client {
+	client := *base
+	next := base.CheckRedirect
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxTIDALMediaRedirects {
+			return fmt.Errorf("stopped after %d redirects", maxTIDALMediaRedirects)
+		}
+		if next != nil {
+			if err := next(req, via); err != nil {
+				return err
+			}
+		}
+		if !mediaHostAllowed(req.URL.Hostname()) {
+			return fmt.Errorf("tidal media redirect host is not allowed")
+		}
+		return nil
+	}
+	return &client
 }
 
 // FileResponse resolves a TIDAL track to a single, contiguous audio file
