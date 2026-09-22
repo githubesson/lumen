@@ -1,78 +1,27 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Link,
-  NavLink,
-  Outlet,
-  useLocation,
-  useNavigate,
-  useParams,
-} from "react-router-dom";
-import {
-  SlidersHorizontal as AdjustmentsHorizontalIcon,
-  Download as ArrowDownTrayIcon,
-  LogOut as ArrowLeftEndOnRectangleIcon,
-  Upload as ArrowUpTrayIcon,
-  Menu as Bars3Icon,
-  MicVocal as BookOpenIcon,
-  PanelLeftClose as ChevronDoubleLeftIcon,
-  PanelLeftOpen as ChevronDoubleRightIcon,
-  ChevronRight as ChevronRightIcon,
-  Clock as ClockIcon,
-  Settings as Cog6ToothIcon,
-  Mail as EnvelopeIcon,
-  Heart as HeartIcon,
-  Search as MagnifyingGlassIcon,
-  Moon as MoonIcon,
-  Music as MusicalNoteIcon,
-  Plus as PlusIcon,
-  ListMusic as QueueListIcon,
-  Radio as RadioIcon,
-  Server as ServerStackIcon,
-  Sparkles as SparklesIcon,
-  Sun as SunIcon,
-  X as XMarkIcon,
-} from "lucide-react";
+import { Suspense, lazy, useEffect, useState } from "react";
+import { Outlet } from "react-router-dom";
 import { api, type Playlist } from "../api";
 import { useAuth } from "../context/Auth";
 import { usePlaylists } from "../context/Playlists";
-import { useTheme } from "../context/Theme";
 import { useKey } from "../lib/keybindings";
 import { useDiscordPresence } from "../lib/discordPresence";
-import { startDesktopDownload } from "../lib/downloads";
-import { electron, getDesktopConfig, isElectron } from "../lib/platform";
+import { getDesktopConfig, isElectron } from "../lib/platform";
 import { useLyricsPanel } from "../context/LyricsPanel";
 import MiniPlayer from "./MiniPlayer";
 import LyricsSidebar from "./LyricsSidebar";
 import UploadDialog from "./UploadDialog";
 import TweaksPanel from "./TweaksPanel";
-import WindowControls from "./WindowControls";
+import Sidebar from "./shell/Sidebar";
+import Topbar from "./shell/Topbar";
+import { useMobileNav } from "./shell/useMobileNav";
+import { useSidebarToggle } from "./shell/useSidebarToggle";
 
 const CommandPalette = lazy(() => import("./CommandPalette"));
 const EMPTY_PLAYLISTS: Playlist[] = [];
 
-type NavItemCfg = {
-  label: string;
-  to: string;
-  icon: typeof QueueListIcon;
-};
-
-const BROWSE: NavItemCfg[] = [
-  { label: "Tracks", to: "/library", icon: QueueListIcon },
-];
-
-const LIBRARY: NavItemCfg[] = [
-  { label: "Favorites", to: "/favorites", icon: HeartIcon },
-  { label: "Recent", to: "/recent", icon: ClockIcon },
-  { label: "Replay", to: "/replay", icon: SparklesIcon },
-];
-
 export default function Shell() {
-  const { me, logout } = useAuth();
-  const { theme, toggle: toggleTheme, layout, setLayout } = useTheme();
-  const { open: lyricsOpen, toggle: toggleLyrics } = useLyricsPanel();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const params = useParams();
+  const { me } = useAuth();
+  const { open: lyricsOpen } = useLyricsPanel();
   const { data: playlistRows } = usePlaylists();
   const playlists = playlistRows ?? EMPTY_PLAYLISTS;
   const [pendingCount, setPendingCount] = useState(0);
@@ -80,7 +29,7 @@ export default function Shell() {
   const [tweaksOpen, setTweaksOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [fh6RadioEnabled, setFh6RadioEnabled] = useState(false);
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const { mobileNavOpen, setMobileNavOpen } = useMobileNav();
 
   useDiscordPresence();
 
@@ -102,43 +51,7 @@ export default function Shell() {
       .catch(() => setFh6RadioEnabled(false));
   }, []);
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMobileNavOpen(false);
-  }, [location.pathname]);
-
-  const onLogout = async () => {
-    await logout();
-    navigate("/login", { replace: true });
-  };
-
-  const crumbs = useMemo(
-    () => buildCrumbs(location.pathname, params, playlists),
-    [location.pathname, params, playlists],
-  );
-
-  const lastExpandedRef = useRef<"sidebar" | "wide">(
-    layout === "wide" ? "wide" : "sidebar",
-  );
-  useEffect(() => {
-    if (layout === "sidebar" || layout === "wide") {
-      lastExpandedRef.current = layout;
-    }
-  }, [layout]);
-  const toggleSidebar = () =>
-    setLayout(layout === "compact" ? lastExpandedRef.current : "compact");
-
-  useEffect(() => {
-    if (!mobileNavOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setMobileNavOpen(false);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [mobileNavOpen]);
+  const toggleSidebar = useSidebarToggle();
 
   useKey(
     "mod+k",
@@ -160,206 +73,23 @@ export default function Shell() {
     { id: "sidebar:toggle" },
   );
 
-  const initial = (me?.username ?? "?").slice(0, 2).toUpperCase();
-
   return (
     <div className="app" data-lyrics-open={lyricsOpen ? "true" : undefined}>
       {/* Sidebar */}
-      <aside
-        id="app-sidebar"
-        className={`sidebar${mobileNavOpen ? " mobile-open" : ""}`}
-        aria-label="Sidebar"
-      >
-        <Link to="/" className="brand">
-          <div className="brand-mark">L</div>
-          <div className="brand-text">
-            <div className="brand-name">Lumen</div>
-          </div>
-        </Link>
-
-        <div className="nav">
-          <div className="nav-section-title">Browse</div>
-          <NavItem
-            to="/"
-            icon={<MusicalNoteIcon className="nav-icon" />}
-            label="Home"
-            end
-          />
-          {BROWSE.map((i) => (
-            <NavItem
-              key={i.to}
-              to={i.to}
-              icon={<i.icon className="nav-icon" />}
-              label={i.label}
-            />
-          ))}
-          {fh6RadioEnabled && (
-            <NavItem
-              to="/fh6-radio"
-              icon={<RadioIcon className="nav-icon" />}
-              label="Lumen Radio"
-            />
-          )}
-
-          <div className="nav-section-title">Library</div>
-          {LIBRARY.map((i) => (
-            <NavItem
-              key={i.to}
-              to={i.to}
-              icon={<i.icon className="nav-icon" />}
-              label={i.label}
-            />
-          ))}
-          {pendingCount > 0 && (
-            <NavItem
-              to="/invites"
-              icon={<EnvelopeIcon className="nav-icon" />}
-              label="Invites"
-              badge={pendingCount}
-            />
-          )}
-          {me?.role === "admin" && (
-            <NavItem
-              to="/admin"
-              icon={<Cog6ToothIcon className="nav-icon" />}
-              label="Admin"
-            />
-          )}
-        </div>
-
-        <div className="sidebar-playlists">
-          <div className="nav-section-title">
-            <span>Playlists</span>
-            <Link
-              to="/playlists/new"
-              className="iconbtn"
-              style={{ width: 22, height: 22 }}
-              aria-label="New playlist"
-              title="New playlist"
-            >
-              <PlusIcon className="size-3" />
-            </Link>
-          </div>
-          <NavItem
-            to="/playlists"
-            end
-            icon={<QueueListIcon className="nav-icon" />}
-            label="All playlists"
-          />
-          {playlists.length === 0 && (
-            <div
-              className="mono sidebar-playlists-empty"
-              style={{
-                padding: "4px 10px",
-                fontSize: 12,
-                color: "var(--muted-foreground)",
-              }}
-            >
-              None yet
-            </div>
-          )}
-          {playlists.map((p) => (
-            <NavLink
-              key={p.id}
-              to={`/playlists/${p.id}`}
-              title={layout === "compact" ? p.name : undefined}
-              data-tooltip-side="right"
-              className={({ isActive }) =>
-                "sidebar-playlist" + (isActive ? " active" : "")
-              }
-            >
-              <QueueListIcon
-                className="sidebar-playlist-icon"
-                aria-hidden="true"
-              />
-              <span className="sidebar-playlist-name">{p.name}</span>
-            </NavLink>
-          ))}
-        </div>
-
-        <div
-          className="mobile-sidebar-actions"
-          aria-label="Application actions"
-        >
-          <button
-            className="nav-item mobile-sidebar-action"
-            type="button"
-            onClick={() => {
-              setMobileNavOpen(false);
-              setUploadOpen(true);
-            }}
-          >
-            <ArrowUpTrayIcon className="nav-icon" aria-hidden="true" />
-            <span className="nav-label">Add music</span>
-          </button>
-          <button
-            className="nav-item mobile-sidebar-action"
-            type="button"
-            onClick={toggleTheme}
-          >
-            {theme === "dark" ? (
-              <SunIcon className="nav-icon" aria-hidden="true" />
-            ) : (
-              <MoonIcon className="nav-icon" aria-hidden="true" />
-            )}
-            <span className="nav-label">
-              {theme === "dark" ? "Light mode" : "Dark mode"}
-            </span>
-          </button>
-          <button
-            className="nav-item mobile-sidebar-action"
-            type="button"
-            onClick={() => {
-              setMobileNavOpen(false);
-              setTweaksOpen(true);
-            }}
-          >
-            <AdjustmentsHorizontalIcon
-              className="nav-icon"
-              aria-hidden="true"
-            />
-            <span className="nav-label">Tweaks</span>
-          </button>
-          {isElectron() && (
-            <button
-              className="nav-item mobile-sidebar-action"
-              type="button"
-              onClick={() => void electron()?.openSettings()}
-            >
-              <ServerStackIcon className="nav-icon" aria-hidden="true" />
-              <span className="nav-label">Server settings</span>
-            </button>
-          )}
-        </div>
-
-        <div className="sidebar-footer">
-          <div className="avatar">{initial}</div>
-          <div className="user-text" style={{ flex: 1, minWidth: 0 }}>
-            <div className="user-name">{me?.username}</div>
-            <div className="user-plan">
-              {me?.role === "admin" ? "admin" : "local library"}
-            </div>
-          </div>
-          {!isElectron() && (
-            <button
-              className="iconbtn"
-              title="Download desktop app"
-              aria-label="Download desktop app"
-              onClick={() => void startDesktopDownload()}
-            >
-              <ArrowDownTrayIcon className="size-4" />
-            </button>
-          )}
-          <button
-            className="iconbtn"
-            title="Sign out"
-            aria-label="Sign out"
-            onClick={onLogout}
-          >
-            <ArrowLeftEndOnRectangleIcon className="size-4" />
-          </button>
-        </div>
-      </aside>
+      <Sidebar
+        mobileOpen={mobileNavOpen}
+        playlists={playlists}
+        pendingCount={pendingCount}
+        fh6RadioEnabled={fh6RadioEnabled}
+        onAddMusic={() => {
+          setMobileNavOpen(false);
+          setUploadOpen(true);
+        }}
+        onOpenTweaks={() => {
+          setMobileNavOpen(false);
+          setTweaksOpen(true);
+        }}
+      />
       <button
         type="button"
         className={`mobile-nav-backdrop${mobileNavOpen ? " visible" : ""}`}
@@ -371,138 +101,16 @@ export default function Shell() {
 
       {/* Main */}
       <main className="main">
-        <div className="topbar">
-          <button
-            type="button"
-            className="iconbtn sidebar-toggle-mobile"
-            onClick={() => setMobileNavOpen((open) => !open)}
-            aria-controls="app-sidebar"
-            aria-expanded={mobileNavOpen}
-            aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
-            title={mobileNavOpen ? "Close navigation" : "Open navigation"}
-          >
-            {mobileNavOpen ? (
-              <XMarkIcon className="size-4" aria-hidden="true" />
-            ) : (
-              <Bars3Icon className="size-4" aria-hidden="true" />
-            )}
-          </button>
-          <button
-            type="button"
-            className="iconbtn sidebar-toggle-desktop"
-            onClick={toggleSidebar}
-            aria-label={
-              layout === "compact" ? "Expand sidebar" : "Collapse sidebar"
-            }
-            title={layout === "compact" ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {layout === "compact" ? (
-              <ChevronDoubleRightIcon className="size-4" aria-hidden="true" />
-            ) : (
-              <ChevronDoubleLeftIcon className="size-4" aria-hidden="true" />
-            )}
-          </button>
-          <div className="crumbs">
-            {crumbs.map((c, i) => (
-              <span key={`${c.label}-${i}`} className="crumb">
-                {i > 0 && (
-                  <ChevronRightIcon className="size-3" aria-hidden="true" />
-                )}
-                {c.current ? (
-                  <b>{c.label}</b>
-                ) : c.to ? (
-                  <Link to={c.to}>{c.label}</Link>
-                ) : (
-                  <span>{c.label}</span>
-                )}
-              </span>
-            ))}
-          </div>
-
-          <div className="topbar-spacer" />
-
-          <button
-            type="button"
-            className="search topbar-search"
-            onClick={() => setPaletteOpen(true)}
-            aria-label="Open command palette"
-            style={{
-              cursor: "pointer",
-              textAlign: "left",
-              font: "inherit",
-            }}
-          >
-            <MagnifyingGlassIcon className="size-3.5" aria-hidden="true" />
-            <span className="topbar-search-label">
-              Search library, albums, tracks…
-            </span>
-            <kbd>⌘K</kbd>
-          </button>
-
-          <button
-            className={"iconbtn" + (lyricsOpen ? " active" : "")}
-            type="button"
-            title="Lyrics"
-            aria-label="Toggle lyrics panel"
-            aria-pressed={lyricsOpen}
-            onClick={toggleLyrics}
-          >
-            <BookOpenIcon className="size-4" aria-hidden="true" />
-          </button>
-
-          <button
-            className="iconbtn topbar-secondary"
-            type="button"
-            title="Add music"
-            aria-label="Add music"
-            onClick={() => setUploadOpen(true)}
-          >
-            <ArrowUpTrayIcon className="size-4" aria-hidden="true" />
-          </button>
-
-          <button
-            className="iconbtn topbar-secondary"
-            type="button"
-            title={
-              theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
-            }
-            aria-label="Toggle theme"
-            onClick={toggleTheme}
-          >
-            {theme === "dark" ? (
-              <SunIcon className="size-4" aria-hidden="true" />
-            ) : (
-              <MoonIcon className="size-4" aria-hidden="true" />
-            )}
-          </button>
-
-          <button
-            className={
-              "iconbtn topbar-secondary" + (tweaksOpen ? " active" : "")
-            }
-            type="button"
-            title="Tweaks"
-            aria-label="Tweaks"
-            data-tweaks-trigger=""
-            onClick={() => setTweaksOpen((v) => !v)}
-          >
-            <AdjustmentsHorizontalIcon className="size-4" aria-hidden="true" />
-          </button>
-
-          {isElectron() && (
-            <button
-              className="iconbtn topbar-secondary"
-              type="button"
-              title="Change server URL"
-              aria-label="Change server URL"
-              onClick={() => void electron()?.openSettings()}
-            >
-              <ServerStackIcon className="size-4" aria-hidden="true" />
-            </button>
-          )}
-
-          <WindowControls />
-        </div>
+        <Topbar
+          playlists={playlists}
+          mobileNavOpen={mobileNavOpen}
+          tweaksOpen={tweaksOpen}
+          onToggleMobileNav={() => setMobileNavOpen((open) => !open)}
+          onToggleSidebar={toggleSidebar}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onOpenUpload={() => setUploadOpen(true)}
+          onToggleTweaks={() => setTweaksOpen((v) => !v)}
+        />
 
         <div className="content">
           <Outlet />
@@ -542,92 +150,4 @@ export default function Shell() {
       )}
     </div>
   );
-}
-
-function NavItem({
-  to,
-  icon,
-  label,
-  end,
-  badge,
-}: {
-  to: string;
-  icon: React.ReactNode;
-  label: string;
-  end?: boolean;
-  badge?: number;
-}) {
-  // Collapsed rail rows show only an icon, so surface the label on hover.
-  const { layout } = useTheme();
-  return (
-    <NavLink
-      to={to}
-      end={end}
-      title={layout === "compact" ? label : undefined}
-      data-tooltip-side="right"
-      className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}
-    >
-      {icon}
-      <span className="nav-label">{label}</span>
-      {badge != null && <span className="nav-badge">{badge}</span>}
-    </NavLink>
-  );
-}
-
-function buildCrumbs(
-  pathname: string,
-  params: Record<string, string | undefined>,
-  playlists: Playlist[],
-): { label: string; to?: string; current?: boolean }[] {
-  if (pathname === "/") return [{ label: "Home", current: true }];
-  if (pathname.startsWith("/library")) {
-    return [{ label: "Library", current: true }];
-  }
-  if (pathname.startsWith("/favorites")) {
-    return [
-      { label: "Library", to: "/library" },
-      { label: "Favorites", current: true },
-    ];
-  }
-  if (pathname.startsWith("/recent")) {
-    return [
-      { label: "Library", to: "/library" },
-      { label: "Recent", current: true },
-    ];
-  }
-  if (pathname.startsWith("/replay")) {
-    return [
-      { label: "Library", to: "/library" },
-      { label: "Replay", current: true },
-    ];
-  }
-  if (pathname.startsWith("/fh6-radio")) {
-    return [{ label: "Lumen Radio", current: true }];
-  }
-  if (pathname === "/playlists") {
-    return [{ label: "Playlists", current: true }];
-  }
-  if (pathname === "/playlists/new") {
-    return [
-      { label: "Playlists", to: "/playlists" },
-      { label: "New", current: true },
-    ];
-  }
-  if (pathname.startsWith("/playlists/") && params.id) {
-    const p = playlists.find((x) => x.id === params.id);
-    return [
-      { label: "Playlists", to: "/playlists" },
-      { label: p?.name ?? "…", current: true },
-    ];
-  }
-  if (pathname.startsWith("/invites")) {
-    return [{ label: "Invites", current: true }];
-  }
-  if (pathname.startsWith("/admin")) {
-    return [{ label: "Admin", current: true }];
-  }
-  if (pathname.startsWith("/reset-password")) {
-    return [{ label: "Reset password", current: true }];
-  }
-  return [{ label: "Home", current: true }];
 }
