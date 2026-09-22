@@ -1,41 +1,23 @@
 import {
-  snippetHandleBounds,
   normalizeSnippetSelection,
   snippetWindow,
-  adjustSnippetWindow,
 } from "@music-library/core/share-snippet";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
-import type Hls from "hls.js";
-import {
-  Check as CheckIcon,
-  ClipboardCopy as ClipboardDocumentIcon,
-  Pause as PauseIcon,
-  Play as PlayIcon,
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Pause as PauseIcon, Play as PlayIcon } from "lucide-react";
 import {
   DEFAULT_SHARE_SNIPPET_DURATION_SEC,
-  createTrackShareLink,
-  errorMessage,
-  streamUrl,
   trackCoverUrl,
   type TrackDetail,
 } from "../api";
 import { Button } from "./Button";
 import CoverArt from "./CoverArt";
-import IosSpinner from "./IosSpinner";
 import DialogFooter from "./DialogFooter";
 import { DialogShell } from "./DialogShell";
+import CopyLinkButton, { useCopyLabel } from "./share/CopyLinkButton";
+import PreviewStrip from "./share/PreviewStrip";
+import { useShareLink } from "./share/useShareLink";
+import { useSnippetPreview } from "./share/useSnippetPreview";
 import { fmtDurationMs, fmtDurationSec } from "../lib/format";
-import { copyText } from "../lib/clipboard";
-import { useCopiedFlag } from "../lib/useCopiedFlag";
 import { useTrackDetail } from "../lib/useTrackDetail";
 
 interface Props {
@@ -44,10 +26,19 @@ interface Props {
   onClose: () => void;
 }
 
-/** The copy button's three states, in one list so they can be stacked in a
- *  single grid cell and keep the button's width stable while they swap. */
-const COPY_LABELS = ["Copy share link", "Generating share link…", "Link copied"] as const;
-type CopyLabel = (typeof COPY_LABELS)[number];
+/** The clip window. Its fields only ever change together: on reset and when
+ *  the user drags or keys the window. */
+interface Selection {
+  startSec: number;
+  durationSec: number;
+  picked: boolean; // user has moved the window
+}
+
+const INITIAL_SELECTION: Selection = {
+  startSec: 0,
+  durationSec: DEFAULT_SHARE_SNIPPET_DURATION_SEC,
+  picked: false,
+};
 
 /**
  * Share dialog: pick a variable-length window of a track and copy a link that
@@ -63,75 +54,19 @@ type CopyLabel = (typeof COPY_LABELS)[number];
 export function ShareDialog({ open, trackId, onClose }: Props) {
   const { track, error: loadError } = useTrackDetail(open, trackId);
 
-  const [startSec, setStartSec] = useState(0);
-  const [selectedDurationSec, setSelectedDurationSec] = useState(
-    DEFAULT_SHARE_SNIPPET_DURATION_SEC,
-  );
-  const [picked, setPicked] = useState(false); // user has moved the window
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentSec, setCurrentSec] = useState(0);
+  const [selection, setSelection] = useState(INITIAL_SELECTION);
+  const { startSec, durationSec: selectedDurationSec, picked } = selection;
 
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const { copied, flash: flashCopied, reset: resetCopied } = useCopiedFlag(1800);
-  const [copyError, setCopyError] = useState<string | null>(null);
-
-  // The button's label lags the real state by the length of the blur, so the
-  // text changes while it is masked instead of teleporting.
-  const copyLabel: CopyLabel = busy
-    ? "Generating share link…"
-    : copied
-      ? "Link copied"
-      : "Copy share link";
-  const [shownLabel, setShownLabel] = useState<CopyLabel>(copyLabel);
-  const swapping = shownLabel !== copyLabel;
-  useEffect(() => {
-    if (!swapping) return;
-    const t = window.setTimeout(() => setShownLabel(copyLabel), 180);
-    return () => window.clearTimeout(t);
-  }, [swapping, copyLabel]);
-
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const hlsRef = useRef<Hls | null>(null);
-
-  // Attach the preview source. Local tracks are a plain progressive stream;
-  // TIDAL tracks stream as HLS, which Chrome/Firefox only play through
-  // hls.js (lazy-imported, same as the main player adapter). Safari falls
-  // back to native HLS via a direct src assignment.
-  const previewUrl = track ? streamUrl(track.id) : null;
-  const previewIsHls = track?.source === "tidal";
-  useEffect(() => {
-    const a = audioRef.current;
-    if (!a || !previewUrl || !open) return;
-    let cancelled = false;
-    if (previewIsHls) {
-      void import("hls.js")
-        .then(({ default: HlsRuntime }) => {
-          if (cancelled) return;
-          if (HlsRuntime.isSupported()) {
-            const hls = new HlsRuntime();
-            hlsRef.current = hls;
-            hls.attachMedia(a);
-            hls.loadSource(previewUrl);
-          } else {
-            a.src = previewUrl;
-          }
-        })
-        .catch(() => {
-          if (!cancelled) a.src = previewUrl;
-        });
-    } else {
-      a.src = previewUrl;
-    }
-    return () => {
-      cancelled = true;
-      hlsRef.current?.destroy();
-      hlsRef.current = null;
-      a.pause();
-      a.removeAttribute("src");
-      a.load();
-    };
-  }, [previewUrl, previewIsHls, open]);
+  const {
+    shareUrl,
+    busy,
+    copied,
+    copyError,
+    copy: copyShareLink,
+    invalidate: invalidateShareLink,
+    reset: resetShareLink,
+  } = useShareLink();
+  const { shownLabel, swapping } = useCopyLabel(busy, copied);
 
   const durationSec = useMemo(
     () => (track ? Math.max(0, track.duration_ms / 1000) : 0),
@@ -145,116 +80,48 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     endSec,
     displayDurationSec: displayPreviewSec,
   } = snippetWindow(durationSec, selectedDurationSec, startSec);
+
+  const {
+    audioRef,
+    isPlaying,
+    currentSec,
+    onTimeUpdate,
+    onEnded,
+    togglePlay,
+    reset: resetPreview,
+  } = useSnippetPreview({ open, track, startSec, endSec });
+
   // Reset picker state on open / track changes so reopening on a different row
   // starts clean. Track metadata itself is loaded by useTrackDetail, which
   // guards against stale slow responses from a previous track.
   useEffect(() => {
     if (!open || !trackId) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setStartSec(0);
-    setSelectedDurationSec(DEFAULT_SHARE_SNIPPET_DURATION_SEC);
-    setPicked(false);
-    setIsPlaying(false);
-    setCurrentSec(0);
-    setShareUrl(null);
-    setBusy(false);
-    resetCopied();
-    setCopyError(null);
-  }, [open, trackId, resetCopied]);
-
-  // Pause any in-flight audio when the dialog unmounts so playback doesn't
-  // continue in the background after closing.
-  useEffect(() => {
-    if (!open) {
-      const a = audioRef.current;
-      if (a) {
-        a.pause();
-        a.currentTime = 0;
-      }
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setIsPlaying(false);
-    }
-  }, [open]);
-
-  // When the selected window moves while the preview is playing, snap playback
-  // to the new start. Without this the preview would keep running through
-  // audio the user has already excluded from the window.
-  useEffect(() => {
-    const a = audioRef.current;
-    if (!a || !isPlaying) return;
-    if (a.currentTime < startSec || a.currentTime >= endSec) {
-      a.currentTime = startSec;
-    }
-  }, [startSec, endSec, isPlaying]);
-
-  // Auto-stop when the preview window ends. timeupdate fires ~4×/sec which
-  // is plenty precise for ending the clip exactly at endSec.
-  const onTimeUpdate = useCallback(() => {
-    const a = audioRef.current;
-    if (!a) return;
-    setCurrentSec(a.currentTime);
-    if (a.currentTime >= endSec) {
-      a.pause();
-      a.currentTime = startSec;
-      setIsPlaying(false);
-    }
-  }, [endSec, startSec]);
-
-  const togglePlay = async () => {
-    const a = audioRef.current;
-    if (!a) return;
-    if (isPlaying) {
-      a.pause();
-      setIsPlaying(false);
-      return;
-    }
-    // Start from the window's beginning every time — hearing exactly what
-    // the embed will play is the whole point of the preview button.
-    a.currentTime = startSec;
-    try {
-      await a.play();
-      setIsPlaying(true);
-    } catch {
-      setIsPlaying(false);
-    }
-  };
+    setSelection(INITIAL_SELECTION);
+    resetPreview();
+    resetShareLink();
+  }, [open, trackId, resetPreview, resetShareLink]);
 
   const onWindowChange = (nextStartSec: number, nextDurationSec: number) => {
     const { startSec: nextStart, durationSec: nextDuration } =
       normalizeSnippetSelection(durationSec, nextStartSec, nextDurationSec);
-    setSelectedDurationSec(nextDuration);
-    setStartSec(nextStart);
-    setPicked(true);
+    // Keep the same object when a drag is clamped in place, so it doesn't
+    // re-render the dialog for nothing.
+    setSelection((prev) =>
+      prev.picked &&
+      prev.startSec === nextStart &&
+      prev.durationSec === nextDuration
+        ? prev
+        : { startSec: nextStart, durationSec: nextDuration, picked: true },
+    );
     // Invalidate any previously-generated share URL — it's tied to the
     // old window. User needs to confirm the new selection.
-    setShareUrl(null);
-    resetCopied();
+    invalidateShareLink();
   };
 
   const onCopy = async () => {
     if (!trackId || !picked) return;
-    setBusy(true);
-    setCopyError(null);
-    try {
-      let url = shareUrl;
-      if (!url) {
-        const res = await createTrackShareLink(trackId, startSec, effectivePreviewSec);
-        url = res.url;
-        setShareUrl(url);
-      }
-      const copiedOk = await copyText(url);
-      if (!copiedOk) throw new Error("copy failed");
-      flashCopied();
-    } catch (err) {
-      setCopyError(
-        errorMessage(
-          err,
-          "Couldn't copy link — try again or copy the URL manually.",
-        ),
-      );
-    } finally {
-      setBusy(false);
-    }
+    await copyShareLink(trackId, startSec, effectivePreviewSec);
   };
 
   const body = loadError ? (
@@ -377,7 +244,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
         ref={audioRef}
         preload="metadata"
         onTimeUpdate={onTimeUpdate}
-        onEnded={() => setIsPlaying(false)}
+        onEnded={onEnded}
         style={{ display: "none" }}
       />
     </div>
@@ -388,30 +255,12 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
       <Button variant="ghost" onClick={onClose} disabled={busy}>
         Close
       </Button>
-      <Button
-        variant="primary"
-        className="btn-morph"
-        data-swapping={swapping || undefined}
+      <CopyLinkButton
+        shownLabel={shownLabel}
+        swapping={swapping}
         onClick={() => void onCopy()}
         disabled={!picked || busy || !track}
-        leadingIcon={
-          shownLabel === "Generating share link…" ? (
-            <IosSpinner className="share-copy-spinner" label="Generating" />
-          ) : shownLabel === "Link copied" ? (
-            <CheckIcon className="size-3.5" />
-          ) : (
-            <ClipboardDocumentIcon className="size-3.5" />
-          )
-        }
-      >
-        <span>
-          {COPY_LABELS.map((l) => (
-            <span key={l} data-hidden={l !== shownLabel || undefined}>
-              {l}
-            </span>
-          ))}
-        </span>
-      </Button>
+      />
     </DialogFooter>
   );
 
@@ -476,322 +325,6 @@ function HeaderBlock({ track }: { track: TrackDetail }) {
           {fmtDurationMs(track.duration_ms)}
         </div>
       </div>
-    </div>
-  );
-}
-
-/**
- * PreviewStrip renders the scrubber: drag either edge of the highlighted
- * window to trim the clip, or drag its middle to move the selection without
- * changing its duration. Pointer Events are captured on the strip so the drag
- * stays live even if the user's cursor leaves the element.
- */
-function PreviewStrip({
-  durationSec,
-  startSec,
-  endSec,
-  currentSec,
-  minPreviewDurationSec,
-  maxPreviewDurationSec,
-  maxStartSec,
-  onWindowChange,
-}: {
-  durationSec: number;
-  startSec: number;
-  endSec: number;
-  currentSec: number;
-  minPreviewDurationSec: number;
-  maxPreviewDurationSec: number;
-  maxStartSec: number;
-  onWindowChange: (startSec: number, durationSec: number) => void;
-}) {
-  const stripRef = useRef<HTMLDivElement | null>(null);
-  const dragRef = useRef<{
-    kind: "start" | "end" | "window";
-    grabOffsetSec: number;
-  } | null>(null);
-  const {
-    minStartSec,
-    maxStartSec: maxResizeStartSec,
-    minEndSec,
-    maxEndSec,
-  } = snippetHandleBounds({
-    durationSec,
-    startSec,
-    endSec,
-    minDurationSec: minPreviewDurationSec,
-    maxDurationSec: maxPreviewDurationSec,
-  });
-
-  const pointerSec = useCallback(
-    (clientX: number) => {
-      const el = stripRef.current;
-      if (!el || durationSec <= 0) return 0;
-      const rect = el.getBoundingClientRect();
-      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      return ratio * durationSec;
-    },
-    [durationSec],
-  );
-
-  const setFromPointer = useCallback(
-    (clientX: number) => {
-      const drag = dragRef.current;
-      if (!drag || durationSec <= 0) return;
-
-      const atSec = pointerSec(clientX) - drag.grabOffsetSec;
-      const next = adjustSnippetWindow({
-        kind: drag.kind,
-        atSec,
-        startSec,
-        endSec,
-        durationSec,
-        minDurationSec: minPreviewDurationSec,
-        maxDurationSec: maxPreviewDurationSec,
-        maxStartSec,
-      });
-      onWindowChange(next.startSec, next.durationSec);
-    },
-    [
-      durationSec,
-      endSec,
-      maxPreviewDurationSec,
-      maxStartSec,
-      minPreviewDurationSec,
-      onWindowChange,
-      pointerSec,
-      startSec,
-    ],
-  );
-
-  const beginDrag = (
-    kind: "start" | "end" | "window",
-    event: ReactPointerEvent<HTMLDivElement>,
-    grabOffsetSec = 0,
-  ) => {
-    if (
-      durationSec <= 0 ||
-      (event.pointerType === "mouse" && event.button !== 0)
-    ) {
-      return;
-    }
-    event.stopPropagation();
-    dragRef.current = { kind, grabOffsetSec };
-    stripRef.current?.setPointerCapture(event.pointerId);
-    setFromPointer(event.clientX);
-  };
-
-  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const el = stripRef.current;
-    if (!el || durationSec <= 0) return;
-    const atSec = pointerSec(event.clientX);
-    const edgeHitSec = (14 / el.getBoundingClientRect().width) * durationSec;
-    const startDistance = Math.abs(atSec - startSec);
-    const endDistance = Math.abs(atSec - endSec);
-
-    if (Math.min(startDistance, endDistance) <= edgeHitSec) {
-      if (startDistance <= endDistance) {
-        beginDrag("start", event, atSec - startSec);
-      } else {
-        beginDrag("end", event, atSec - endSec);
-      }
-      return;
-    }
-
-    if (atSec >= startSec && atSec <= endSec) {
-      beginDrag("window", event, atSec - startSec);
-      return;
-    }
-
-    beginDrag("window", event, (endSec - startSec) / 2);
-  };
-  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragRef.current) return;
-    setFromPointer(event.clientX);
-  };
-  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
-    dragRef.current = null;
-    const el = stripRef.current;
-    if (el?.hasPointerCapture(event.pointerId)) {
-      el.releasePointerCapture(event.pointerId);
-    }
-  };
-
-  const resizeFromKeyboard = (
-    edge: "start" | "end",
-    event: ReactKeyboardEvent<HTMLDivElement>,
-  ) => {
-    const step = event.shiftKey ? 5 : 1;
-    const value = edge === "start" ? startSec : endSec;
-    let atSec: number | null = null;
-    if (event.key === "ArrowLeft") atSec = value - step;
-    if (event.key === "ArrowRight") atSec = value + step;
-    if (event.key === "Home") atSec = edge === "start" ? minStartSec : minEndSec;
-    if (event.key === "End") atSec = edge === "start" ? maxResizeStartSec : maxEndSec;
-    if (atSec === null) return;
-    event.preventDefault();
-    const next = adjustSnippetWindow({
-      kind: edge,
-      atSec,
-      startSec,
-      endSec,
-      durationSec,
-      maxStartSec,
-      minDurationSec: minPreviewDurationSec,
-      maxDurationSec: maxPreviewDurationSec,
-    });
-    onWindowChange(next.startSec, next.durationSec);
-  };
-
-  const pct = (sec: number) =>
-    durationSec > 0
-      ? (Math.max(0, Math.min(durationSec, sec)) / durationSec) * 100
-      : 0;
-  const startPct = pct(startSec);
-  const endPct = pct(endSec);
-  const playheadPct = pct(currentSec);
-
-  return (
-    <div
-      ref={stripRef}
-      role="group"
-      aria-label="Clip window"
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-      style={{
-        position: "relative",
-        height: 44,
-        borderRadius: 6,
-        background: "var(--card)",
-        border: "1px solid var(--border)",
-        cursor: durationSec > 0 ? "pointer" : "not-allowed",
-        touchAction: "none",
-        userSelect: "none",
-      }}
-    >
-      {/* Highlighted share window */}
-      <div
-        role="slider"
-        aria-label="Move clip window"
-        aria-valuemin={0}
-        aria-valuemax={Math.max(0, maxStartSec)}
-        aria-valuenow={startSec}
-        aria-valuetext={`${fmtDurationSec(startSec)} to ${fmtDurationSec(endSec)}`}
-        tabIndex={0}
-        onKeyDown={(event) => {
-          const step = event.shiftKey ? 5 : 1;
-          let nextStart: number | null = null;
-          if (event.key === "ArrowLeft") nextStart = startSec - step;
-          if (event.key === "ArrowRight") nextStart = startSec + step;
-          if (event.key === "Home") nextStart = 0;
-          if (event.key === "End") nextStart = maxStartSec;
-          if (nextStart === null) return;
-          event.preventDefault();
-          onWindowChange(nextStart, endSec - startSec);
-        }}
-        style={{
-          position: "absolute",
-          top: 0,
-          bottom: 0,
-          left: `${startPct}%`,
-          width: `${Math.max(0, endPct - startPct)}%`,
-          background: "color-mix(in oklch, var(--primary) 30%, transparent)",
-          borderTop:
-            "1px solid color-mix(in oklch, var(--primary) 65%, transparent)",
-          borderBottom:
-            "1px solid color-mix(in oklch, var(--primary) 65%, transparent)",
-          cursor: "grab",
-        }}
-      />
-      <TrimHandle
-        edge="start"
-        positionPct={startPct}
-        valueSec={startSec}
-        minSec={minStartSec}
-        maxSec={maxResizeStartSec}
-        onKeyDown={(event) => resizeFromKeyboard("start", event)}
-      />
-      <TrimHandle
-        edge="end"
-        positionPct={endPct}
-        valueSec={endSec}
-        minSec={minEndSec}
-        maxSec={maxEndSec}
-        onKeyDown={(event) => resizeFromKeyboard("end", event)}
-      />
-      {/* Playhead while previewing */}
-      <div
-        style={{
-          position: "absolute",
-          top: -2,
-          bottom: -2,
-          left: `${playheadPct}%`,
-          width: 2,
-          background: "var(--foreground)",
-          opacity: 0.7,
-          pointerEvents: "none",
-        }}
-      />
-    </div>
-  );
-}
-
-function TrimHandle({
-  edge,
-  positionPct,
-  valueSec,
-  minSec,
-  maxSec,
-  onKeyDown,
-}: {
-  edge: "start" | "end";
-  positionPct: number;
-  valueSec: number;
-  minSec: number;
-  maxSec: number;
-  onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
-}) {
-  return (
-    <div
-      role="slider"
-      aria-label={`Clip ${edge}`}
-      aria-valuemin={Math.round(minSec)}
-      aria-valuemax={Math.round(maxSec)}
-      aria-valuenow={Math.round(valueSec)}
-      aria-valuetext={fmtDurationSec(valueSec)}
-      tabIndex={0}
-      onKeyDown={onKeyDown}
-      style={{
-        position: "absolute",
-        zIndex: 2,
-        top: 0,
-        bottom: 0,
-        left: `${positionPct}%`,
-        width: 8,
-        transform: edge === "start" ? "translateX(0)" : "translateX(-100%)",
-        display: "grid",
-        placeItems: "center",
-        background:
-          "color-mix(in oklch, var(--primary) 22%, var(--card))",
-        borderLeft: "2px solid var(--primary)",
-        borderRight: "2px solid var(--primary)",
-        cursor: "ew-resize",
-        touchAction: "none",
-      }}
-    >
-      <span
-        aria-hidden="true"
-        style={{
-          width: 2,
-          height: 14,
-          borderRadius: 999,
-          background: "color-mix(in oklch, var(--primary) 70%, var(--foreground))",
-          opacity: 0.8,
-          pointerEvents: "none",
-        }}
-      />
     </div>
   );
 }
