@@ -118,6 +118,7 @@ export function usePlayerCore({
   const loadedTrackIdRef = useRef<string | null>(null);
   const preparedNextRef = useRef<{ trackId: string; uri: string } | null>(null);
   const playbackAttemptRef = useRef(0);
+  const handoffRef = useRef<{ track: TrackListItem; attempt: number } | null>(null);
   // Anchor used to interpolate currentTime against the wall clock between the
   // adapter's (infrequent) timeupdate pings.
   const anchorRef = useRef<{ audioTime: number; wallTime: number }>({
@@ -286,12 +287,20 @@ export function usePlayerCore({
     }
     preparedNextRef.current = null;
 
-    if (!activated && sameTrack) {
-      // A one-song wrap (or duplicate queue entry) changes neither the id
-      // nor necessarily the React state. No source/play effect will restart it.
-      adapter.seek(0);
+    if (!activated) {
+      // Start within the native ended callback. A backgrounded iOS app may
+      // suspend before React commits the selection and runs playback effects.
+      // A failed/unready preload must be just as independent of React as a
+      // successful prepared handoff.
+      if (sameTrack) {
+        adapter.seek(0);
+      } else {
+        loadedTrackIdRef.current = nextTrack.id;
+        adapter.load(nextUri);
+      }
       startPlayback();
     }
+    handoffRef.current = { track: nextTrack, attempt: playbackAttemptRef.current };
     if (sameTrack) {
       lastFMScrobbledRef.current = null;
       trackStartedAtRef.current = Math.floor(Date.now() / 1000);
@@ -479,14 +488,20 @@ export function usePlayerCore({
   // When isPlaying toggles without a track change, sync the adapter.
   useEffect(() => {
     if (!current) return;
+    const handoff = handoffRef.current;
+    handoffRef.current = null;
     if (isPlaying) {
+      // next() has already started this selection synchronously. Do not
+      // restart the native player or supersede its pending failure handler.
+      if (handoff?.track === current && handoff.attempt === playbackAttemptRef.current) return;
       startPlayback();
     } else {
       playbackAttemptRef.current += 1;
       adapter.pause();
     }
-    return () => { playbackAttemptRef.current += 1; };
   }, [adapter, isPlaying, current, startPlayback]);
+
+  useEffect(() => () => { playbackAttemptRef.current += 1; }, [adapter]);
 
   // Values the adapter event handlers read at fire time. Held in a ref so the
   // subscription effect below can depend on `[adapter]` alone: it previously

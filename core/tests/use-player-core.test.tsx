@@ -204,6 +204,69 @@ describe("usePlayerCore", () => {
     expect(result.current.state.isPlaying).toBe(true);
   });
 
+  it("starts every album handoff before React effects, including an unready preload and wrap", async () => {
+    const { result, adapter, state, emit } = await setup();
+    const album = queue4();
+    adapter.activatePrepared = vi.fn(() => false);
+    act(() => result.current.controls.play(album[0], album));
+    act(() => result.current.controls.setRepeat("all"));
+    state.dur = 180;
+
+    for (let i = 1; i <= 12; i++) {
+      state.time = 150;
+      act(() => emit("timeupdate"));
+      state.time = 180;
+      state.playing = false;
+      vi.mocked(adapter.play).mockClear();
+      act(() => {
+        emit("ended");
+        // Assert inside the callback, before act flushes React's effects.
+        // Background iOS playback cannot depend on that later render.
+        expect(state.url).toBe(`test://stream/${album[i % album.length].id}`);
+        expect(state.playing).toBe(true);
+      });
+      expect(adapter.play).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("does not issue a second play after a prepared album handoff", async () => {
+    const { result, adapter, state, emit } = await setup();
+    const album = queue4();
+    adapter.activatePrepared = vi.fn((url) => {
+      state.url = url;
+      state.time = 0;
+      state.playing = true;
+      return true;
+    });
+    act(() => result.current.controls.play(album[0], album));
+    state.dur = 180;
+    state.time = 150;
+    act(() => emit("timeupdate"));
+    vi.mocked(adapter.play).mockClear();
+    state.playing = false;
+    act(() => {
+      emit("ended");
+      expect(state.url).toBe("test://stream/b");
+      expect(state.playing).toBe(true);
+    });
+    expect(adapter.activatePrepared).toHaveBeenCalledWith("test://stream/b");
+    expect(adapter.play).not.toHaveBeenCalled();
+    expect(adapter.load).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a failed synchronous handoff even after React commits the next track", async () => {
+    const { result, adapter, emit } = await setup();
+    act(() => result.current.controls.play(t("a"), queue4()));
+    let rejectHandoff!: (error: Error) => void;
+    vi.mocked(adapter.play).mockReturnValueOnce(new Promise<void>((_, reject) => {
+      rejectHandoff = reject;
+    }));
+    act(() => emit("ended"));
+    expect(result.current.state.current?.id).toBe("b");
+    await act(async () => rejectHandoff(new Error("native playback failed")));
+    expect(result.current.state.isPlaying).toBe(false);
+  });
+
   it.each([false, true])("restarts a single-track repeat-all queue without a ready preload (shuffle: %s)", async (shuffle) => {
     const { result, adapter, state, emit } = await setup();
     const track = t("a");
