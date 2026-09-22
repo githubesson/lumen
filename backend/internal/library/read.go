@@ -98,18 +98,15 @@ func albumHasCoverFor(userExpr string) string {
 		WHERE pc.album_id = a.id AND pc.user_id = ` + userExpr + `))`
 }
 
-// albumCoverForTrackOwner resolves a track's album cover for the track's own
-// owner, so a personal track shows its uploader's art and a global track only
-// shared art.
-var albumCoverForTrackOwner = albumCoverFor("t.owner_id")
-
 // trackDetailSelect is the shared single-track projection used by GetTrack and
-// GetTrackPublic; the two differ only in whether the viewer-visibility
-// predicate is appended.
-var trackDetailSelect = `
+// GetTrackPublic. coverUser is the SQL expression whose personal album cover
+// may be used: the viewer for GetTrack, the track's owner for public reads
+// (so a global track never carries anyone's personal art to the public).
+func trackDetailSelect(coverUser string) string {
+	return `
 	SELECT
 		t.id, t.title, t.album_id,
-		a.title, ` + albumCoverForTrackOwner + `,
+		a.title, ` + albumCoverFor(coverUser) + `,
 		COALESCE(t.track_no, 0), COALESCE(t.disc_no, 0),
 		t.duration_ms,
 		COALESCE(t.genre, ''), COALESCE(t.year, 0),
@@ -123,19 +120,20 @@ var trackDetailSelect = `
 	FROM tracks t
 	LEFT JOIN albums a ON a.id = t.album_id
 	WHERE t.id = $1 AND t.deleted_at IS NULL`
+}
 
 // GetTrack returns the full metadata for a single track by id, including
 // joined artists and album info. Returns ErrNotFound if missing, soft-deleted,
 // or not visible to viewerID (not global and not owned by viewerID).
 func (s *Store) GetTrack(ctx context.Context, id, viewerID uuid.UUID) (*TrackDetail, error) {
-	return s.getTrackDetail(ctx, trackDetailSelect+` AND `+trackVisibleP2, id, viewerID)
+	return s.getTrackDetail(ctx, trackDetailSelect("$2")+` AND `+trackVisibleP2, id, viewerID)
 }
 
 // GetTrackPublic returns the full metadata for a single track without the
 // per-viewer owner filter — callers gate access via some other mechanism
 // (today: the HMAC signature on a share URL). Skips the favorite join.
 func (s *Store) GetTrackPublic(ctx context.Context, id uuid.UUID) (*TrackDetail, error) {
-	return s.getTrackDetail(ctx, trackDetailSelect, id)
+	return s.getTrackDetail(ctx, trackDetailSelect("t.owner_id"), id)
 }
 
 // getTrackDetail runs a trackDetailSelect-shaped query (args[0] must be the

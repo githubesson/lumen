@@ -11,23 +11,22 @@ CREATE TABLE album_personal_covers (
     PRIMARY KEY (album_id, user_id)
 );
 
--- Best-effort backfill: a cover on an album with no global tracks can only
--- have come from a personal upload. Attribute it to the album's earliest
--- uploader, then drop it from the shared row.
+-- Backfill only where it changes nothing anyone sees: an album whose tracks
+-- (live or deleted) all belong to one user has only ever been visible to that
+-- user, so its cover moves to that user's personal slot. Anything else keeps
+-- its shared cover, since its origin (global ingest, admin) can't be told apart.
 INSERT INTO album_personal_covers (album_id, user_id, cover_art_path)
-SELECT a.id, first_owner.owner_id, a.cover_art_path
+SELECT a.id, sole.owner_id, a.cover_art_path
 FROM albums a
 JOIN (
-    SELECT DISTINCT ON (t.album_id) t.album_id, t.owner_id
+    SELECT t.album_id, MIN(t.owner_id::text)::uuid AS owner_id
     FROM tracks t
-    WHERE t.owner_id IS NOT NULL AND t.album_id IS NOT NULL
-    ORDER BY t.album_id, t.created_at ASC, t.id ASC
-) first_owner ON first_owner.album_id = a.id
-WHERE NULLIF(a.cover_art_path, '') IS NOT NULL
-  AND NOT EXISTS (
-      SELECT 1 FROM tracks g
-      WHERE g.album_id = a.id AND g.owner_id IS NULL AND g.deleted_at IS NULL
-  );
+    WHERE t.album_id IS NOT NULL
+    GROUP BY t.album_id
+    HAVING COUNT(*) FILTER (WHERE t.owner_id IS NULL) = 0
+       AND COUNT(DISTINCT t.owner_id) = 1
+) sole ON sole.album_id = a.id
+WHERE NULLIF(a.cover_art_path, '') IS NOT NULL;
 
 UPDATE albums a
 SET cover_art_path = NULL

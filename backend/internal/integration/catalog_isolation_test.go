@@ -122,12 +122,21 @@ func TestPersonalUploadsCannotAlterSharedCatalog(t *testing.T) {
 				t.Fatalf("viewer %s HasCover = %v", viewer, album.HasCover)
 			}
 		}
-		detail, err := lib.GetTrack(ctx, trackID, bystander)
+		for viewer, want := range map[uuid.UUID]string{attacker: "covers/attacker.jpg", bystander: ""} {
+			detail, err := lib.GetTrack(ctx, trackID, viewer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if detail.CoverArtPath != want {
+				t.Fatalf("GetTrack cover for %s = %q, want %q", viewer, detail.CoverArtPath, want)
+			}
+		}
+		public, err := lib.GetTrackPublic(ctx, trackID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if detail.CoverArtPath != "" {
-			t.Fatalf("global track exposes a personal cover %q", detail.CoverArtPath)
+		if public.CoverArtPath != "" {
+			t.Fatalf("public global track exposes a personal cover %q", public.CoverArtPath)
 		}
 		if got, err := lib.AlbumCoverPathForUser(ctx, albumID, attacker); err != nil || got != "covers/attacker.jpg" {
 			t.Fatalf("signed per-user cover = %q, %v", got, err)

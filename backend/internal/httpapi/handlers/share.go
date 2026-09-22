@@ -290,7 +290,16 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 			Title:       t.Title,
 			Artist:      primaryArtistName(t),
 		}
-		job := func() { h.prewarmPreview(t, in) }
+		// Renders are cached per (track, start, duration) and served to anyone
+		// with a share link, so build from the public view of the track: a
+		// global track must not carry the sharer's personal album art.
+		pub, err := h.Library.GetTrackPublic(r.Context(), id)
+		if err != nil {
+			slog.Warn("preview prewarm skipped: public track lookup failed",
+				"track_id", id.String(), "err", err)
+			break
+		}
+		job := func() { h.prewarmPreview(pub, in) }
 		if h.StartJob != nil {
 			h.StartJob(job)
 		} else {
