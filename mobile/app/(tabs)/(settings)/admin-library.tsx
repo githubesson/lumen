@@ -48,22 +48,32 @@ export default function AdminLibraryScreen() {
   });
 
   // Fire a library-wide refresh when a rescan finishes so other screens pull
-  // updated lists. Only on the running → idle transition: every idle status
+  // updated lists. Only when a scan is known to have run: every idle status
   // fetch (mount, focus) would otherwise invalidate the whole library cache.
+  // A scan counts as run once it was seen running, or once this screen started
+  // it (a small library can finish before the first status poll sees it).
   const rescanRunning = rescanQuery.data?.running;
-  const wasRunningRef = useRef(false);
+  const scanPendingRef = useRef(false);
   useEffect(() => {
     if (rescanRunning === undefined) return;
-    if (wasRunningRef.current && !rescanRunning) libraryChanged.emit();
-    wasRunningRef.current = rescanRunning;
-  }, [rescanRunning]);
+    if (rescanRunning) {
+      scanPendingRef.current = true;
+      return;
+    }
+    if (scanPendingRef.current) {
+      scanPendingRef.current = false;
+      libraryChanged.emit();
+    }
+  }, [rescanRunning, rescanQuery.dataUpdatedAt]);
 
   const startRescan = useMutation({
     mutationFn: () => api.startRescan(),
-    onSuccess: () =>
+    onSuccess: () => {
+      scanPendingRef.current = true;
       void queryClient.invalidateQueries({
         queryKey: qk.adminRescanStatus,
-      }),
+      });
+    },
     onError: (error) =>
       Alert.alert("Couldn't start rescan", errorMessage(error, "Please try again.")),
   });

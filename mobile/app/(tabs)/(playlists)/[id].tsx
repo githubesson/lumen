@@ -99,7 +99,10 @@ export default function PlaylistDetailScreen() {
   const { me } = useAuth();
   const userId = me?.id;
   const playlistQueryKey = qk.playlist(userId, id);
-  const playlistTracksQueryKey = qk.playlistTracks(userId, id);
+  const playlistTracksQueryKey = useMemo(
+    () => qk.playlistTracks(userId, id),
+    [userId, id],
+  );
   const playlistsQueryKey = qk.playlists(userId);
 
   const playlistQuery = useQuery({
@@ -153,21 +156,33 @@ export default function PlaylistDetailScreen() {
     if (serverData) downloadStore.noteTracks(serverData.tracks.map(entryToTrack));
   }, [serverData]);
 
+  // Both edits resolve only after the refetch, so their per-call onSuccess
+  // runs once fresh server data is in the cache.
   const reorderMutation = useMutation({
     mutationFn: (trackIds: string[]) => api.reorderPlaylist(id!, trackIds),
     onSuccess: () =>
-      void queryClient.invalidateQueries({
-        queryKey: playlistTracksQueryKey,
-      }),
+      queryClient.invalidateQueries({ queryKey: playlistTracksQueryKey }),
   });
 
   const removeMutation = useMutation({
     mutationFn: (position: number) => api.removePlaylistTrack(id!, position),
     onSuccess: () =>
-      void queryClient.invalidateQueries({
-        queryKey: playlistTracksQueryKey,
-      }),
+      queryClient.invalidateQueries({ queryKey: playlistTracksQueryKey }),
   });
+
+  // A changed snapshot retires an override on its own, but an edit the server
+  // can't tell apart (swapping two copies of one track) refetches identical
+  // data, which structural sharing keeps as the same object. Drop the edit's
+  // override once a refetch has succeeded; after a failed one, keep showing it.
+  const retireOverride = useCallback(
+    (edit: TracksOverride) => {
+      if (queryClient.getQueryState(playlistTracksQueryKey)?.status !== "success") {
+        return;
+      }
+      setOverride((current) => (current === edit ? null : current));
+    },
+    [queryClient, playlistTracksQueryKey],
+  );
 
   const deleteMutation = useMutation({
     mutationFn: () => api.deletePlaylist(id!),
@@ -275,10 +290,12 @@ export default function PlaylistDetailScreen() {
       if (!serverData) return;
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       const next = reorderItems(localTracks, from, to);
-      setOverride({ base: serverData, tracks: next });
+      const edit = { base: serverData, tracks: next };
+      setOverride(edit);
       reorderTracks(
         next.map((t) => t.track_id),
         {
+          onSuccess: () => retireOverride(edit),
           // Restore the pre-drag order on failure. Nothing refetches after a
           // failed reorder, so without this the UI would keep an order the
           // server never saved.
@@ -292,18 +309,20 @@ export default function PlaylistDetailScreen() {
         },
       );
     },
-    [activeOverride, localTracks, reorderTracks, serverData],
+    [activeOverride, localTracks, reorderTracks, retireOverride, serverData],
   );
 
   const onRemove = useCallback(
     (position: number) => {
       if (!serverData) return;
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      setOverride({
+      const edit = {
         base: serverData,
         tracks: localTracks.filter((t) => t.position !== position),
-      });
+      };
+      setOverride(edit);
       removeTrack(position, {
+        onSuccess: () => retireOverride(edit),
         onError: (error) => {
           setOverride(activeOverride);
           Alert.alert(
@@ -313,7 +332,7 @@ export default function PlaylistDetailScreen() {
         },
       });
     },
-    [activeOverride, localTracks, removeTrack, serverData],
+    [activeOverride, localTracks, removeTrack, retireOverride, serverData],
   );
 
   const onDelete = () => {
