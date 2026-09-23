@@ -103,12 +103,11 @@ onlineManager.setEventListener((setOnline) => {
  * Root layout. Composes every provider the tree needs and renders a small
  * auth gate that redirects between (auth) and (tabs) based on session.
  *
- * Note on cookies: we rely on the platform's native cookie jar
- * (NSHTTPCookieStorage on iOS) which `fetch()` uses automatically. No
- * explicit cookie library is needed for MVP — that would require a native
- * module that's not available in Expo Go. If we later need programmatic
- * cookie control (e.g. to purge on sign-out), it can live behind a dev
- * client build.
+ * Note on cookies: requests use the platform's native cookie jar
+ * (NSHTTPCookieStorage on iOS), which `fetch()` reads automatically.
+ * `@preeternal/react-native-cookie-manager` is only for the cases fetch can't
+ * cover: clearing the jar on sign-out (`clearSessionCookies` below) and
+ * reading the session cookie for native background downloads.
  */
 export default function RootLayout() {
   useEffect(() => {

@@ -1,7 +1,6 @@
 export {
   addSiriPlayMediaRequestListener,
   completeSiriMediaPlayback,
-  completeSiriMediaResolution,
   donateSiriPlayback,
   getPendingSiriMediaRequests,
   isSiriMediaAvailable,

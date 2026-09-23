@@ -66,10 +66,7 @@ const instagramAppId =
 export default function ShareTrackScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const { trackId } = useLocalSearchParams<{
-    trackId?: string;
-    trackTitle?: string;
-  }>();
+  const { trackId } = useLocalSearchParams<{ trackId?: string }>();
   const [startSec, setStartSec] = useState(0);
   const [selectedDurationSec, setSelectedDurationSec] = useState(
     DEFAULT_SHARE_SNIPPET_DURATION_SEC,

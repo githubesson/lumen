@@ -369,16 +369,16 @@ export function useTrackActionModel(track: TrackListItem) {
   const openPlaylistPicker = useCallback(() => {
     router.push({
       pathname: "/playlist-picker",
-      params: { trackId: track.id, trackTitle: track.title },
+      params: { trackId: track.id },
     });
-  }, [router, track.id, track.title]);
+  }, [router, track.id]);
 
   const openShare = useCallback(() => {
     router.push({
       pathname: "/share-track",
-      params: { trackId: track.id, trackTitle: track.title },
+      params: { trackId: track.id },
     });
-  }, [router, track.id, track.title]);
+  }, [router, track.id]);
 
   const download = useCallback(async () => {
     if (downloading) return;

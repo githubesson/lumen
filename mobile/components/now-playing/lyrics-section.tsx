@@ -51,7 +51,7 @@ export interface LyricsTranslationState extends LyricsTranslationRequest {
   visible: boolean;
 }
 
-export type LyricsTranslationResult =
+type LyricsTranslationResult =
   | { success: true; detectedSourceLanguage: string | null }
   | { success: false; message: string };
 

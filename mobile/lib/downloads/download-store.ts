@@ -78,12 +78,6 @@ export interface DownloadRecord {
   track?: TrackListItem;
 }
 
-export type DownloadPhase =
-  | "idle"
-  | "downloading"
-  | "downloaded"
-  | "error";
-
 type Listener = () => void;
 
 interface PersistShape {
@@ -112,7 +106,6 @@ export class DownloadStore {
     this.coverRequests.clear();
     this.active.clear();
     this.pendingOwners.clear();
-    this.errors.clear();
     downloadLiveActivity.clearOrphaned();
     this.emit();
   }
@@ -129,7 +122,6 @@ export class DownloadStore {
   private active = new Set<string>();
   /** Owners requested for a track while its download is in flight. */
   private pendingOwners = new Map<string, Set<DownloadOwner>>();
-  private errors = new Map<string, string>();
   private listeners = new Set<Listener>();
   private hydrated = false;
   private hydrating: Promise<void> | null = null;
@@ -227,17 +219,6 @@ export class DownloadStore {
 
   isActive(trackId: string): boolean {
     return this.active.has(trackId);
-  }
-
-  phaseFor(trackId: string): DownloadPhase {
-    if (this.records.has(trackId)) return "downloaded";
-    if (this.active.has(trackId)) return "downloading";
-    if (this.errors.has(trackId)) return "error";
-    return "idle";
-  }
-
-  errorFor(trackId: string): string | undefined {
-    return this.errors.get(trackId);
   }
 
   // ── hydration ─────────────────────────────────────────────────────────────
@@ -410,7 +391,7 @@ export class DownloadStore {
   /**
    * Enqueue a background download for a single track (idempotent) and attach
    * `owner`. Resolves when the native task is ENQUEUED, not completed —
-   * completion is observed via store subscription (`phaseFor`). If the track
+   * completion is observed via store subscription (`isActive`). If the track
    * is already stored, the owner is simply registered; if a download is in
    * flight, the owner is queued so it lands when the download settles.
    */
@@ -433,7 +414,6 @@ export class DownloadStore {
     }
 
     this.active.add(track.id);
-    this.errors.delete(track.id);
     this.queueOwner(track.id, owner);
     this.emit();
 
@@ -647,7 +627,6 @@ export class DownloadStore {
       await this.persist();
       this.active.delete(trackId);
       this.pendingOwners.delete(trackId);
-      this.errors.delete(trackId);
       this.emit();
       // A success line per track is the baseline a failure is read against —
       // it happens once per track, not once per sync, so it stays cheap.
@@ -675,13 +654,11 @@ export class DownloadStore {
 
   /**
    * Record a per-track failure. Task callbacks have no awaiter to reject, so
-   * this is the only funnel every failure passes through — and the in-memory
-   * `errors` map dies with the process, which is why each one is also written
-   * to the on-disk diagnostics log.
+   * this is the only funnel every failure passes through, and the on-disk
+   * diagnostics log is where each one is kept.
    */
   private fail(trackId: string, message: string, details?: FailDetails): void {
     if (!this.enabled) return;
-    this.errors.set(trackId, message);
     this.active.delete(trackId);
     this.pendingOwners.delete(trackId);
     this.emit();
@@ -722,7 +699,6 @@ export class DownloadStore {
       // A failed filesystem deletion must not retain an ownerless record.
     }
     this.records.delete(trackId);
-    this.errors.delete(trackId);
     if (record.coverFilename) {
       this.releaseCover(record.coverFilename.slice(0, record.coverFilename.lastIndexOf(".")));
     }
@@ -797,7 +773,6 @@ export class DownloadStore {
         changed = this.queueOwner(track.id, owner) || changed;
         if (!this.active.has(track.id)) {
           this.active.add(track.id);
-          this.errors.delete(track.id);
           toStart.push(track);
           changed = true;
         }

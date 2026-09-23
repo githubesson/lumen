@@ -12,8 +12,6 @@ export {
   downloadStore,
   playlistOwner,
   sessionCookieHeader,
-  type DownloadRecord,
-  type DownloadPhase,
 } from "./download-store";
 
 export { autoDownloadStore, useAutoDownload } from "./auto-download";

@@ -1,4 +1,4 @@
-const { createRunOncePlugin, withPodfile } = require("@expo/config-plugins");
+const { createRunOncePlugin, withPodfile } = require("expo/config-plugins");
 
 const PLUGIN_NAME = "withMMKVCoreAnnexKWorkaround";
 const PLUGIN_VERSION = "1.0.0";

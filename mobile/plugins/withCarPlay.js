@@ -4,7 +4,7 @@ const {
   withEntitlementsPlist,
   withInfoPlist,
   withPodfileProperties,
-} = require("@expo/config-plugins");
+} = require("expo/config-plugins");
 
 const PLUGIN_NAME = "withCarPlay";
 const PLUGIN_VERSION = "2.0.0";

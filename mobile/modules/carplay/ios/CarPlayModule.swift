@@ -323,16 +323,6 @@ public class CarPlayModule: Module {
       self.applyEmptyState(spec, to: template)
     }.runOnQueue(.main)
 
-    AsyncFunction("popTemplate") { (animated: Bool) in
-      CarPlaySceneManager.shared.interfaceController?
-        .popTemplate(animated: animated, completion: nil)
-    }.runOnQueue(.main)
-
-    AsyncFunction("popToRoot") { (animated: Bool) in
-      CarPlaySceneManager.shared.interfaceController?
-        .popToRootTemplate(animated: animated, completion: nil)
-    }.runOnQueue(.main)
-
     /// The now-playing screen is a system template: it reads
     /// `MPNowPlayingInfoCenter` and `MPRemoteCommandCenter`, which the player
     /// already feeds, so there is nothing to pass in here.

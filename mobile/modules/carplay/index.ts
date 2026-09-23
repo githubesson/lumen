@@ -13,8 +13,6 @@ export {
   isCarPlayConnected,
   isCarPlayProtectedDataAvailable,
   isCarPlayTabsSupported,
-  popCarPlayTemplate,
-  popCarPlayToRoot,
   pushCarPlayList,
   pushCarPlayNowPlaying,
   setCarPlayRootList,

@@ -67,7 +67,7 @@ export function dockBottom(insetBottom: number): number {
   );
 }
 
-export interface DockColors {
+interface DockColors {
   /** Translucent overlay drawn ON TOP of the glass (Liquid Glass ignores a
    * backgroundColor beneath it and auto-adapts to the content behind, which
    * made the two pills render different shades). Matches the theme bg so
@@ -108,7 +108,7 @@ export const DOCK_COLLAPSE_TIMING = {
 // Near-critically-damped spring for the expand/collapse morph: settles fast
 // with a fluid deceleration and no visible bounce — the Instagram feel a
 // fixed-duration bezier can't match.
-export const DOCK_COLLAPSE_SPRING = {
+const DOCK_COLLAPSE_SPRING = {
   stiffness: 250,
   damping: 32,
   mass: 1,

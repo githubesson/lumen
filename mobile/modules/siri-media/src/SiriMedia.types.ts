@@ -24,7 +24,6 @@ export type SiriMediaItem = {
 
 export type SiriPlayMediaRequest = {
   requestId: string;
-  phase: "play" | "resolve";
   mediaName?: string;
   artistName?: string;
   albumName?: string;
@@ -45,10 +44,6 @@ export type SiriPlaybackResult =
 
 export type SiriMediaNativeModule = {
   getPendingRequests(): Promise<SiriPlayMediaRequest[]>;
-  completeResolution(
-    requestId: string,
-    items: SiriMediaItem[],
-  ): Promise<void>;
   completePlayback(
     requestId: string,
     result: SiriPlaybackResult,

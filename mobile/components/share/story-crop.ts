@@ -1,7 +1,7 @@
 import { type StoryBackgroundCrop } from "@music-library/core";
 
 /** Instagram story canvas aspect ratio (portrait 9:16). */
-export const STORY_ASPECT = 9 / 16;
+const STORY_ASPECT = 9 / 16;
 
 /** A photo picked from the library to use as a story background. */
 export interface PickedStoryBackground {

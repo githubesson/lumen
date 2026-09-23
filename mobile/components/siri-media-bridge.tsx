@@ -24,7 +24,6 @@ import { QUERY_STALE_TIME } from "../lib/query-policy";
 import {
   addSiriPlayMediaRequestListener,
   completeSiriMediaPlayback,
-  completeSiriMediaResolution,
   donateSiriPlayback,
   getPendingSiriMediaRequests,
   isSiriMediaAvailable,
@@ -32,7 +31,6 @@ import {
   setSiriPlaylistVocabulary,
   siriAuthorizationStatus,
   type SiriAuthorizationStatus,
-  type SiriPlaybackResult,
   type SiriPlayMediaRequest,
 } from "../modules/siri-media";
 
@@ -116,7 +114,7 @@ export function SiriMediaBridge() {
         scope: "siri",
         level: "info",
         event: "siri-request",
-        message: `${request.phase} request received (${request.mediaType})`,
+        message: `Play request received (${request.mediaType})`,
         title: requestedTitle,
       });
 
@@ -128,14 +126,7 @@ export function SiriMediaBridge() {
           message: "Siri playback reached Lumen without an authenticated session.",
           title: requestedTitle,
         });
-        if (request.phase === "resolve") {
-          await completeSiriMediaResolution(request.requestId, []);
-        } else {
-          await completeSiriMediaPlayback(
-            request.requestId,
-            "requiresAppLaunch",
-          );
-        }
+        await completeSiriMediaPlayback(request.requestId, "requiresAppLaunch");
         return;
       }
 
@@ -146,22 +137,6 @@ export function SiriMediaBridge() {
       );
 
       try {
-        if (request.phase === "resolve") {
-          const matches = await resolveSiriMediaRequest(
-            request,
-            controller.signal,
-          );
-          diagnosticsLog.append({
-            scope: "siri",
-            level: matches.length ? "info" : "warn",
-            event: matches.length ? "siri-resolved" : "siri-no-match",
-            message: `Siri resolution returned ${matches.length} match${matches.length === 1 ? "" : "es"}.`,
-            title: requestedTitle,
-          });
-          await completeSiriMediaResolution(request.requestId, matches);
-          return;
-        }
-
         const hasRequestedMedia = Boolean(
           request.mediaName ||
             request.mediaIdentifier ||
@@ -169,7 +144,6 @@ export function SiriMediaBridge() {
             request.mediaContainer,
         );
         if (!hasRequestedMedia && current && !request.playShuffled) {
-          const result: SiriPlaybackResult = current ? "success" : "noContent";
           controls.resume();
           await waitForPlayerHandoff();
           diagnosticsLog.append({
@@ -180,7 +154,7 @@ export function SiriMediaBridge() {
             trackId: current.id,
             title: current.title,
           });
-          await completeSiriMediaPlayback(request.requestId, result);
+          await completeSiriMediaPlayback(request.requestId, "success");
           return;
         }
 
@@ -255,11 +229,7 @@ export function SiriMediaBridge() {
               : "Unknown Siri playback failure.",
           title: requestedTitle,
         });
-        if (request.phase === "resolve") {
-          await completeSiriMediaResolution(request.requestId, []);
-        } else {
-          await completeSiriMediaPlayback(request.requestId, "failure");
-        }
+        await completeSiriMediaPlayback(request.requestId, "failure");
       } finally {
         clearTimeout(timeout);
       }

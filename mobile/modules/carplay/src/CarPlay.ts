@@ -129,14 +129,6 @@ export function updateCarPlayList(template: CarPlayListTemplate) {
   return nativeModule?.updateList(template) ?? Promise.resolve();
 }
 
-export function popCarPlayTemplate(animated = true) {
-  return nativeModule?.popTemplate(animated) ?? Promise.resolve();
-}
-
-export function popCarPlayToRoot(animated = true) {
-  return nativeModule?.popToRoot(animated) ?? Promise.resolve();
-}
-
 export function pushCarPlayNowPlaying(animated = true) {
   return nativeModule?.pushNowPlaying(animated) ?? Promise.resolve();
 }

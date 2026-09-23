@@ -24,13 +24,6 @@ export function getPendingSiriMediaRequests() {
   return nativeModule?.getPendingRequests() ?? Promise.resolve([]);
 }
 
-export function completeSiriMediaResolution(
-  requestId: string,
-  items: SiriMediaItem[],
-) {
-  return nativeModule?.completeResolution(requestId, items) ?? Promise.resolve();
-}
-
 export function completeSiriMediaPlayback(
   requestId: string,
   result: SiriPlaybackResult,

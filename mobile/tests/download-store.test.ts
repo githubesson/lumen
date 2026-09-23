@@ -280,7 +280,7 @@ describe("downloadStore", () => {
     const store = await freshStore();
     await store.downloadTrack(t("a"), "playlist:p1");
     expect(createDownloadTask).toHaveBeenCalledTimes(1);
-    expect(store.phaseFor("a")).toBe("downloading");
+    expect(store.isActive("a")).toBe(true);
 
     await finishTask(store, "a", MP3_HEAD);
     expect(store.isDownloaded("a")).toBe(true);
@@ -343,7 +343,7 @@ describe("downloadStore", () => {
     await finishTask(store, "a", HTML_BODY, "text/html");
 
     expect(store.isDownloaded("a")).toBe(false);
-    expect(store.phaseFor("a")).toBe("error");
+    expect(store.isActive("a")).toBe(false);
     expect(h.files.has(partUri("a"))).toBe(false);
   });
 

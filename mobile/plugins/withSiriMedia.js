@@ -3,7 +3,7 @@ const {
   withAppDelegate,
   withEntitlementsPlist,
   withInfoPlist,
-} = require("@expo/config-plugins");
+} = require("expo/config-plugins");
 
 const PLUGIN_NAME = "withSiriMedia";
 const PLUGIN_VERSION = "1.0.0";

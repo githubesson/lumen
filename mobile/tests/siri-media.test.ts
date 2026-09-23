@@ -14,7 +14,6 @@ function request(
 ): SiriPlayMediaRequest {
   return {
     requestId: "request-1",
-    phase: "resolve",
     mediaType: "unknown",
     mediaItems: [],
     ...input,
@@ -86,7 +85,6 @@ describe("Siri catalog matching", () => {
     const listPlaylists = vi.fn();
     const result = await resolveSiriMediaRequest(
       request({
-        phase: "play",
         mediaType: "playlist",
         mediaContainer: {
           identifier: siriMediaIdentifier("playlist", "p-container"),
@@ -124,7 +122,6 @@ describe("Siri catalog matching", () => {
 
     const result = await resolveSiriMediaRequest(
       request({
-        phase: "play",
         mediaType: "playlist",
         mediaContainer: {
           identifier: "",

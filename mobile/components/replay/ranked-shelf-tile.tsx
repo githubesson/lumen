@@ -17,7 +17,7 @@ const TILE_SIZE = 128;
  * Artwork for a shelf tile: either a real album cover or a deterministic
  * two-tone gradient seeded by a string (for artists without cover art).
  */
-export type ShelfTileArt =
+type ShelfTileArt =
   | { kind: "album"; albumId: string }
   | { kind: "gradient"; seed: string };
 

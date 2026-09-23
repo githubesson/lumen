@@ -25,7 +25,6 @@ struct SiriMediaItemSpec: Record {
 
 struct SiriPlayMediaRequestSpec: Record {
   @Field var requestId: String = ""
-  @Field var phase: String = "resolve"
   @Field var mediaName: String?
   @Field var artistName: String?
   @Field var albumName: String?
@@ -38,14 +37,13 @@ struct SiriPlayMediaRequestSpec: Record {
 
   init() {}
 
-  init(intent: INPlayMediaIntent, phase: String) {
+  init(intent: INPlayMediaIntent) {
     let search = intent.mediaSearch
     let items = (intent.mediaItems ?? []).map(SiriMediaItemSpec.init)
     let container = intent.mediaContainer.map(SiriMediaItemSpec.init)
     let hasMediaItems = !items.isEmpty
 
     self.requestId = UUID().uuidString
-    self.phase = phase
     self.mediaName = hasMediaItems
       ? search?.mediaName ?? items.first?.title
       : container?.title ?? search?.mediaName
@@ -70,7 +68,6 @@ struct SiriPlayMediaRequestSpec: Record {
   var eventPayload: [String: Any?] {
     [
       "requestId": requestId,
-      "phase": phase,
       "mediaName": mediaName,
       "artistName": artistName,
       "albumName": albumName,
@@ -221,24 +218,24 @@ private func immediateMediaResolution(
   return INPlayMediaMediaItemResolutionResult.successes(with: [item])
 }
 
-private enum PendingSiriCompletion {
-  case resolution(([INPlayMediaMediaItemResolutionResult]) -> Void)
-  case playback((INPlayMediaIntentResponse) -> Void)
-}
-
 private final class PendingSiriRequest {
   let spec: SiriPlayMediaRequestSpec
-  let completion: PendingSiriCompletion
+  /// Arrival order. Request ids are random UUIDs, so they can't order the
+  /// backlog a cold launch hands to JavaScript.
+  let sequence: Int
+  let completion: (INPlayMediaIntentResponse) -> Void
   let timeout: DispatchWorkItem
   var progressResponse: DispatchWorkItem?
   var responded = false
 
   init(
     spec: SiriPlayMediaRequestSpec,
-    completion: PendingSiriCompletion,
+    sequence: Int,
+    completion: @escaping (INPlayMediaIntentResponse) -> Void,
     timeout: DispatchWorkItem
   ) {
     self.spec = spec
+    self.sequence = sequence
     self.completion = completion
     self.timeout = timeout
   }
@@ -249,53 +246,29 @@ private final class SiriMediaCoordinator {
 
   var onRequest: ((SiriPlayMediaRequestSpec) -> Void)?
   private var requests: [String: PendingSiriRequest] = [:]
+  private var nextSequence = 0
 
   private init() {}
-
-  func enqueueResolution(
-    intent: INPlayMediaIntent,
-    completion: @escaping ([INPlayMediaMediaItemResolutionResult]) -> Void
-  ) {
-    enqueue(
-      spec: SiriPlayMediaRequestSpec(intent: intent, phase: "resolve"),
-      completion: .resolution(completion)
-    )
-  }
 
   func enqueuePlayback(
     intent: INPlayMediaIntent,
     completion: @escaping (INPlayMediaIntentResponse) -> Void
   ) {
     enqueue(
-      spec: SiriPlayMediaRequestSpec(intent: intent, phase: "play"),
-      completion: .playback(completion),
+      spec: SiriPlayMediaRequestSpec(intent: intent),
+      completion: completion,
       progressAfter: siriProgressResponseDelay
     )
   }
 
   func pendingRequests() -> [SiriPlayMediaRequestSpec] {
     requests.values
+      .sorted { $0.sequence < $1.sequence }
       .map(\.spec)
-      .sorted { $0.requestId < $1.requestId }
-  }
-
-  func completeResolution(requestId: String, items: [SiriMediaItemSpec]) {
-    guard let pending = take(requestId: requestId) else { return }
-    guard case .resolution(let completion) = pending.completion else { return }
-
-    let mediaItems = items
-      .filter { !$0.identifier.isEmpty && !$0.title.isEmpty }
-      .map(\.mediaItem)
-    if mediaItems.isEmpty {
-      completion([INPlayMediaMediaItemResolutionResult.unsupported()])
-      return
-    }
-    completion(INPlayMediaMediaItemResolutionResult.successes(with: mediaItems))
   }
 
   func completePlayback(requestId: String, result: String) {
     guard let pending = take(requestId: requestId) else { return }
-    guard case .playback(let completion) = pending.completion else { return }
 
     NSLog("LUMENSIRI: completed playback request result=%@", result)
 
@@ -318,13 +291,13 @@ private final class SiriMediaCoordinator {
     default:
       code = .failure
     }
-    completion(INPlayMediaIntentResponse(code: code, userActivity: nil))
+    pending.completion(INPlayMediaIntentResponse(code: code, userActivity: nil))
   }
 
   private func enqueue(
     spec: SiriPlayMediaRequestSpec,
-    completion: PendingSiriCompletion,
-    progressAfter: TimeInterval? = nil
+    completion: @escaping (INPlayMediaIntentResponse) -> Void,
+    progressAfter: TimeInterval
   ) {
     DispatchQueue.main.async {
       let requestId = spec.requestId
@@ -333,19 +306,19 @@ private final class SiriMediaCoordinator {
       }
       let pending = PendingSiriRequest(
         spec: spec,
+        sequence: self.nextSequence,
         completion: completion,
         timeout: timeout
       )
-      if let progressAfter {
-        let progressResponse = DispatchWorkItem { [weak self] in
-          self?.respondInProgress(requestId: requestId)
-        }
-        pending.progressResponse = progressResponse
-        DispatchQueue.main.asyncAfter(
-          deadline: .now() + progressAfter,
-          execute: progressResponse
-        )
+      self.nextSequence += 1
+      let progressResponse = DispatchWorkItem { [weak self] in
+        self?.respondInProgress(requestId: requestId)
       }
+      pending.progressResponse = progressResponse
+      DispatchQueue.main.asyncAfter(
+        deadline: .now() + progressAfter,
+        execute: progressResponse
+      )
       self.requests[requestId] = pending
       self.onRequest?(spec)
       DispatchQueue.main.asyncAfter(
@@ -364,23 +337,15 @@ private final class SiriMediaCoordinator {
 
   private func respondInProgress(requestId: String) {
     guard let pending = requests[requestId], !pending.responded else { return }
-    guard case .playback(let completion) = pending.completion else { return }
     pending.responded = true
     NSLog("LUMENSIRI: playback still loading; responding inProgress")
-    completion(INPlayMediaIntentResponse(code: .inProgress, userActivity: nil))
+    pending.completion(INPlayMediaIntentResponse(code: .inProgress, userActivity: nil))
   }
 
   private func timeout(requestId: String) {
-    guard let pending = take(requestId: requestId) else { return }
-    switch pending.completion {
-    case .resolution(let completion):
-      completion([INPlayMediaMediaItemResolutionResult.unsupported()])
-    case .playback(let completion):
-      if !pending.responded {
-        pending.responded = true
-        completion(INPlayMediaIntentResponse(code: .failure, userActivity: nil))
-      }
-    }
+    guard let pending = take(requestId: requestId), !pending.responded else { return }
+    pending.responded = true
+    pending.completion(INPlayMediaIntentResponse(code: .failure, userActivity: nil))
   }
 }
 
@@ -443,11 +408,6 @@ public final class SiriMediaModule: Module {
 
     AsyncFunction("getPendingRequests") { () -> [SiriPlayMediaRequestSpec] in
       self.coordinator.pendingRequests()
-    }.runOnQueue(.main)
-
-    AsyncFunction("completeResolution") {
-      (requestId: String, items: [SiriMediaItemSpec]) in
-      self.coordinator.completeResolution(requestId: requestId, items: items)
     }.runOnQueue(.main)
 
     AsyncFunction("completePlayback") { (requestId: String, result: String) in

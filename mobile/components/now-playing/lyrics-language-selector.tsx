@@ -13,13 +13,13 @@ import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { AdaptiveGlass } from "../adaptive-glass";
 import { useTheme } from "../../theme/theme";
 
-export interface TranslationLanguage {
+interface TranslationLanguage {
   code: string;
   label: string;
 }
 
 /** Languages currently offered by Apple's system translation experience. */
-export const TRANSLATION_LANGUAGES: readonly TranslationLanguage[] = [
+const TRANSLATION_LANGUAGES: readonly TranslationLanguage[] = [
   { code: "ar", label: "Arabic" },
   { code: "zh-Hans", label: "Chinese, Simplified" },
   { code: "zh-Hant", label: "Chinese, Traditional" },
@@ -44,7 +44,7 @@ export const TRANSLATION_LANGUAGES: readonly TranslationLanguage[] = [
 
 type ExpandedSelector = "source" | "target" | null;
 
-export function languageLabel(code: string | null): string {
+function languageLabel(code: string | null): string {
   if (code === null) return "Auto Detect";
   return (
     TRANSLATION_LANGUAGES.find((language) => language.code === code)?.label ??

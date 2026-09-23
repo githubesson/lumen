@@ -115,8 +115,6 @@ export type CarPlayNativeModule = CarPlayListLimits & {
   selectTab(templateId: string): Promise<void>;
   pushList(template: CarPlayListTemplate, animated: boolean): Promise<void>;
   updateList(template: CarPlayListTemplate): Promise<void>;
-  popTemplate(animated: boolean): Promise<void>;
-  popToRoot(animated: boolean): Promise<void>;
   pushNowPlaying(animated: boolean): Promise<void>;
   configureNowPlaying(config: CarPlayNowPlayingConfig): Promise<void>;
   finishSelection(selectionId: string): Promise<void>;

@@ -1,7 +1,7 @@
 const {
   createRunOncePlugin,
   withInfoPlist,
-} = require("@expo/config-plugins");
+} = require("expo/config-plugins");
 
 const PLUGIN_NAME = "withInstagramStorySharing";
 const PLUGIN_VERSION = "1.0.0";

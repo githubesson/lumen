@@ -66,38 +66,32 @@ if (useSiblingCore) {
 config.resolver.disableHierarchicalLookup = true;
 config.resolver.nodeModulesPaths = [appNodeModules];
 
-// Mirror core/package.json "exports" — Metro's resolver does not read the
-// subpath map for a source-only package aliased outside the project root.
 config.resolver.extraNodeModules = {
   ...config.resolver.extraNodeModules,
   "@music-library/core": coreRoot,
 };
 
-const coreSubpathAliases = {
-  "@music-library/core": path.join(coreRoot, "src", "index.ts"),
-  "@music-library/core/api": path.join(coreRoot, "src", "api.ts"),
-  "@music-library/core/storage": path.join(coreRoot, "src", "storage.ts"),
-  "@music-library/core/events": path.join(coreRoot, "src", "events.ts"),
-  "@music-library/core/format": path.join(coreRoot, "src", "format.ts"),
-  "@music-library/core/auth": path.join(
-    coreRoot,
-    "src",
-    "auth",
-    "auth-core.tsx",
-  ),
-  "@music-library/core/favorites": path.join(
-    coreRoot,
-    "src",
-    "favorites",
-    "favorites-core.tsx",
-  ),
-  "@music-library/core/player": path.join(
-    coreRoot,
-    "src",
-    "player",
-    "index.ts",
-  ),
-};
+// Resolve core imports from core's own package.json "exports" map, read at
+// startup, so a new core subpath works here without a matching edit. This
+// used to be a hand-kept copy that listed 7 of the 20 subpaths.
+const coreExports = JSON.parse(
+  fs.readFileSync(path.join(coreRoot, "package.json"), "utf8"),
+).exports;
+const coreSubpathAliases = {};
+const coreWildcardAliases = [];
+for (const [subpath, target] of Object.entries(coreExports)) {
+  if (typeof target !== "string") continue;
+  const name =
+    subpath === "."
+      ? "@music-library/core"
+      : `@music-library/core/${subpath.slice(2)}`;
+  const star = name.indexOf("*");
+  if (star === -1) {
+    coreSubpathAliases[name] = path.join(coreRoot, target);
+  } else {
+    coreWildcardAliases.push({ prefix: name.slice(0, star), target });
+  }
+}
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 
@@ -106,12 +100,14 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (alias) {
     return { type: "sourceFile", filePath: alias };
   }
-  if (moduleName.startsWith("@music-library/core/player/")) {
-    const sub = moduleName.slice("@music-library/core/player/".length);
-    return {
-      type: "sourceFile",
-      filePath: path.join(coreRoot, "src", "player", `${sub}.ts`),
-    };
+  for (const { prefix, target } of coreWildcardAliases) {
+    if (moduleName.startsWith(prefix)) {
+      const match = moduleName.slice(prefix.length);
+      return {
+        type: "sourceFile",
+        filePath: path.join(coreRoot, target.replace("*", match)),
+      };
+    }
   }
   if (defaultResolveRequest) {
     return defaultResolveRequest(context, moduleName, platform);

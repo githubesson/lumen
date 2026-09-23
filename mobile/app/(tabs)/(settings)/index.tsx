@@ -63,9 +63,8 @@ export default function SettingsScreen() {
   const onSignOut = async () => {
     setSigningOut(true);
     try {
-      // `api.logout()` clears the backend session and the native cookie jar
-      // drops the stale cookie on the next request. No manual cookie purge
-      // needed (avoiding the native `@react-native-cookies/cookies` dep).
+      // `api.logout()` clears the backend session; the auth provider's
+      // sign-out hook in the root layout clears the native cookie jar.
       await logout();
     } finally {
       setSigningOut(false);

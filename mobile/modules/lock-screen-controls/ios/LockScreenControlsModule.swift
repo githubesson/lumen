@@ -11,16 +11,26 @@ public class LockScreenControlsModule: Module {
 
     Events("onCommand")
 
+    // Sync functions run on the JS thread and OnDestroy on another, while
+    // expo-audio configures the same command center on the main thread. Hop to
+    // main so the targets and `isEnabled` are only ever touched from one
+    // thread; the serial queue keeps calls in order.
     Function("setEnabled") { (enabled: Bool) in
-      if enabled {
-        self.enable()
-      } else {
-        self.disable()
+      DispatchQueue.main.async { [weak self] in
+        if enabled {
+          self?.enable()
+        } else {
+          self?.disable()
+        }
       }
     }
 
     OnDestroy {
-      self.disable()
+      // Strong capture: the module must outlive this block, or the targets
+      // it registered would never be removed.
+      DispatchQueue.main.async {
+        self.disable()
+      }
     }
   }
 

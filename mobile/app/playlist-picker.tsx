@@ -33,10 +33,7 @@ export default function PlaylistPickerScreen() {
   const theme = useTheme();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { trackId } = useLocalSearchParams<{
-    trackId?: string;
-    trackTitle?: string;
-  }>();
+  const { trackId } = useLocalSearchParams<{ trackId?: string }>();
   const { me } = useAuth();
   const userId = me?.id;
   const playlistsQueryKey = qk.playlists(userId);
