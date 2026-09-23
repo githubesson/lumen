@@ -1,3 +1,5 @@
+import { formatDurationMs as sharedFormatDurationMs } from "@music-library/core/format";
+
 // Re-export of the shared formatters. The implementation lives in
 // `core/src/format.ts` so the web and mobile clients cannot drift apart again —
 // this file and `frontend/src/lib/format.ts` were two independent copies that
@@ -8,8 +10,6 @@ export {
   formatTotalMs,
   pluralize,
 } from "@music-library/core/format";
-
-import { formatDurationMs as sharedFormatDurationMs } from "@music-library/core/format";
 
 /**
  * mm:ss for a duration given in MILLISECONDS. Unknown/zero durations format as

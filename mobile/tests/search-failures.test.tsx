@@ -10,7 +10,13 @@ const mock = vi.hoisted(() => ({
       | undefined
       | {
           artist?: { name: string; cover_url?: string };
-          albums: { id: string; title: string }[];
+          albums: {
+            id: string;
+            title: string;
+            release_year?: number;
+            track_count?: number;
+            duration_ms?: number;
+          }[];
           tracks: { id: string; title: string }[];
           warnings?: string[];
         },
@@ -238,7 +244,7 @@ it("ranks the first five popular tracks and files releases by kind", () => {
     albums: [
       { id: "tidal:1", title: "Older", release_year: 2020, track_count: 12, duration_ms: 2_700_000 },
       { id: "tidal:2", title: "Newer single", release_year: 2024, track_count: 1, duration_ms: 180_000 },
-    ] as { id: string; title: string }[],
+    ],
     tracks: Array.from({ length: 7 }, (_, i) => ({ id: `t${i + 1}`, title: `Track ${i + 1}` })),
   };
   const collapsed = markup();

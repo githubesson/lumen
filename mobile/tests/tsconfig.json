@@ -1,0 +1,11 @@
+{
+  // The app tsconfig excludes tests so the app build never pulls in Node
+  // types; this one checks the tests (and, through their imports, the code
+  // under test) with the Node globals vitest runs under.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["**/*.ts", "**/*.tsx", "../.expo/types/**/*.ts", "../expo-env.d.ts"],
+  "exclude": []
+}

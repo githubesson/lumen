@@ -4,6 +4,9 @@
  * faked in-memory; the store itself is the real module under test.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { TrackListItem } from "@music-library/core";
+import { createDownloadTask, getExistingDownloadTasks } from "@kesha-antonov/react-native-background-downloader";
+import type { downloadStore as storeType } from "../lib/downloads/download-store";
 
 // ── Shared fake state (hoisted so vi.mock factories can read it) ────────────
 const h = vi.hoisted(() => {
@@ -28,7 +31,8 @@ const h = vi.hoisted(() => {
     listPlaylistTracks: vi.fn(),
     baseUrl: "https://api.test",
     cookieRead: async () => ({}),
-    fetchImpl: async () => new Response(null, { status: 404 }),
+    fetchImpl: async (..._args: unknown[]): Promise<Response> =>
+      new Response(null, { status: 404 }),
     DOC: "file:///docs",
   };
 });
@@ -121,7 +125,7 @@ vi.mock("@kesha-antonov/react-native-background-downloader", () => ({
       destination: options.destination,
       stop: vi.fn(async () => {}),
       metadata: options.metadata as { owners?: string[]; track?: unknown },
-      cbs: {} as Record<string, never>,
+      cbs: {} as Record<string, (...args: never[]) => void>,
       begin(cb: (args: { headers: Record<string, string> }) => void) {
         this.cbs.begin = cb;
         return this;
@@ -180,10 +184,6 @@ vi.mock("../lib/downloads/live-activity", () => ({
 
 // fetch is only used for cover downloads.
 vi.stubGlobal("fetch", (...args: unknown[]) => h.fetchImpl(...args));
-
-import type { TrackListItem } from "@music-library/core";
-import { createDownloadTask, getExistingDownloadTasks } from "@kesha-antonov/react-native-background-downloader";
-import type { downloadStore as storeType } from "../lib/downloads/download-store";
 
 const t = (id: string, albumId = "album1"): TrackListItem => ({
   id,

@@ -30,6 +30,10 @@ export function DownloadsProvider({ children, accountId }: { children: ReactNode
   useEffect(() => {
     const downloads = setDownloadAccount(accountId);
     const autoDownloads = setAutoDownloadAccount(downloads);
+    // Children must not render until the module-level stores point at this
+    // account, and that switch happens here, so readiness can only be
+    // recorded after it.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setReadyAccount(accountId);
     // The log deliberately depends on nothing but the filesystem, so the app
     // hands it the ambient context here. `appState` is what identifies a
@@ -151,10 +155,10 @@ export function useDownloadedPlaylistTracks(playlistId: string): TrackListItem[]
     downloadStore.getVersion,
     downloadStore.getVersion,
   );
-  // `version` is the external-store snapshot: recompute on every mutation.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   return useMemo(
     () => downloadStore.tracksForOwner(playlistOwner(playlistId)),
+    // `version` is the external-store snapshot: recompute on every mutation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [playlistId, version],
   );
 }

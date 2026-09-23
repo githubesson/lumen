@@ -149,22 +149,28 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // next/prev/auto-advance skip over everything else.
     isTrackPlayable: isTrackPlayableOffline,
   });
+  // Destructured so hooks below depend only on the fields they read. Depending
+  // on `state` wholesale would rebuild them on every queue change, and
+  // `selectTarget` is handed to consumers through the remote-playback context.
+  const { current, index, isPlaying, muted, repeat, shuffle, volume } = state;
+  const queueLength = state.queue.length;
+  const currentId = current?.id;
   useEffect(() => {
     recordPlaybackDiagnostic("audio-core-state", {
-      isPlaying: state.isPlaying,
-      queueIndex: state.index,
-      queueLength: state.queue.length,
-      repeat: state.repeat,
-      currentPlayable: state.current ? isTrackPlayableOffline(state.current.id) : false,
+      isPlaying,
+      queueIndex: index,
+      queueLength,
+      repeat,
+      currentPlayable: currentId ? isTrackPlayableOffline(currentId) : false,
     });
     recordCrashBreadcrumb("playback", {
-      isPlaying: state.isPlaying,
-      queueIndex: state.index,
-      queueLength: state.queue.length,
-      shuffle: state.shuffle,
-      repeat: state.repeat,
+      isPlaying,
+      queueIndex: index,
+      queueLength,
+      shuffle,
+      repeat,
     });
-  }, [state.isPlaying, state.index, state.queue.length, state.shuffle, state.repeat, state.current?.id]);
+  }, [isPlaying, index, queueLength, shuffle, repeat, currentId]);
   usePlaybackActivityPublisher({
     state,
     time,
@@ -189,17 +195,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     targetActivity: targetDevice?.activity,
     targetQueue: targetDevice?.queue,
     initialState: {
-      volume: state.volume,
-      muted: state.muted,
-      shuffle: state.shuffle,
-      repeat: state.repeat,
+      volume,
+      muted,
+      shuffle,
+      repeat,
     },
   });
 
-  // Destructured so this callback's identity tracks only the fields it reads.
-  // Depending on `state` wholesale would also rebuild it on every queue change,
-  // and it is handed to consumers through the remote-playback context.
-  const { isPlaying, muted, repeat, shuffle, volume } = state;
   const selectTarget = useCallback(
     (nextDeviceId: string | null) => {
       if (nextDeviceId && isPlaying) controls.pause();
@@ -231,8 +233,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const lockScreenActiveRef = useRef(false);
   const nowPlayingMetadata = useMemo(
-    () => buildNowPlayingMetadata(state.current),
-    [state.current],
+    () => buildNowPlayingMetadata(current),
+    [current],
   );
 
   useEffect(() => {
@@ -254,19 +256,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const { next: playNext, prev: playPrev } = controls;
   useEffect(() => {
     if (Platform.OS !== "ios") return;
     if (!isLockScreenControlsAvailable()) return;
 
     const subscription = addLockScreenCommandListener((event) => {
-      if (event.action === "next") controls.next();
-      if (event.action === "previous") controls.prev();
+      if (event.action === "next") playNext();
+      if (event.action === "previous") playPrev();
     });
 
     return () => {
       subscription.remove();
     };
-  }, [controls.next, controls.prev]);
+  }, [playNext, playPrev]);
 
   useEffect(() => {
     if (Platform.OS !== "ios") return;
@@ -312,7 +315,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setLockScreenTrackControlsEnabled(true);
     adapter.updateLockScreenMetadata(nowPlayingMetadata);
     // isPlaying stays in the deps so pause/resume refresh playbackRate.
-  }, [adapter, nowPlayingMetadata, state.isPlaying, targetDevice]);
+  }, [adapter, nowPlayingMetadata, isPlaying, targetDevice]);
 
   const displayedState = useMemo<PlayerState>(
     () => targetDevice ? remotePlayerState(targetDevice, controlled) : state,

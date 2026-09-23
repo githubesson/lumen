@@ -9,7 +9,8 @@
     "android": "npm run sync:core && expo run:android",
     "ios": "npm run sync:core && expo run:ios",
     "web": "npm run sync:core && expo start --web",
-    "lint": "expo lint --max-warnings=0",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tests",
     "update:ota": "node ./scripts/publish-update.mjs",
     "postinstall": "npm run sync:core && patch-package",
     "test": "vitest run"
@@ -67,7 +68,9 @@
   },
   "devDependencies": {
     "@expo/ngrok": "^4.1.3",
+    "@types/node": "~25.6.0",
     "@types/react": "~19.2.4",
+    "@types/react-dom": "~19.2.3",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~57.0.0",
     "patch-package": "^8.0.1",

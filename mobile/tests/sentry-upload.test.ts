@@ -3,7 +3,12 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import vm from "node:vm";
 
-const shell = vi.hoisted(() => ({ run: vi.fn(() => "test commit") }));
+const shell = vi.hoisted(() => ({
+  run: vi.fn(
+    (_command: string, _args: string[], _options?: { env?: Record<string, string> }) =>
+      "test commit",
+  ),
+}));
 vi.mock("node:child_process", () => ({ execFileSync: shell.run }));
 
 beforeEach(() => {
@@ -50,7 +55,7 @@ describe("optional release uploads", () => {
     expect(shell.run.mock.calls[2]?.[1]).toEqual([
       expect.stringContaining("expo-upload-sourcemaps.js"), "dist",
     ]);
-    expect(shell.run.mock.calls[2]?.[2].env.SENTRY_URL).toBe("https://sentry.io/");
+    expect(shell.run.mock.calls[2]?.[2]?.env?.SENTRY_URL).toBe("https://sentry.io/");
   });
 
   it("keeps upload hooks out of default config and never embeds the token", () => {
@@ -86,6 +91,6 @@ describe("optional release uploads", () => {
     vi.stubEnv("SENTRY_URL", "https://sentry.example.com/");
     expect(loadAppConfig()({ config: {} }).plugins[0][1].url).toBe("https://sentry.example.com/");
     await import("../scripts/publish-update.mjs");
-    expect(shell.run.mock.calls[2]?.[2].env.SENTRY_URL).toBe("https://sentry.example.com/");
+    expect(shell.run.mock.calls[2]?.[2]?.env?.SENTRY_URL).toBe("https://sentry.example.com/");
   });
 });

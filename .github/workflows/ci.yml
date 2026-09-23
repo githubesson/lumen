@@ -116,15 +116,14 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: mobile/package-lock.json
-      # `npm ci`'s postinstall runs sync:core, so the vendored
-      # mobile/packages/music-library-core is always regenerated from ../core
-      # here — CI can never bundle a stale copy. (A `sync:core --check` step
-      # after this would be vacuous: it would compare the copy against the
-      # source it was just generated from. The check exists for EAS and local
-      # use, where install and bundle can be separated.)
+      # `npm ci`'s postinstall runs sync:core, which regenerates the vendored
+      # mobile/packages/music-library-core from ../core. The --check step then
+      # fails the job if that postinstall was skipped or the copy is missing.
       - run: npm ci
       - name: core vendored copy is present and current
         run: npm run sync:core -- --check
+      - run: npm run lint
+      - run: npm run typecheck
       - run: npm test
 
   backend-image:
