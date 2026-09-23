@@ -3,14 +3,15 @@ import { type Album, type SearchAlbum } from "@music-library/core";
 import { CoverArt } from "./cover-art";
 import { ListRow } from "./list-row";
 
-interface Props {
-  album: Album | SearchAlbum;
-  onPress: (album: Album) => void;
+interface Props<T extends Album | SearchAlbum> {
+  album: T;
+  /** Receives the same object that was passed in as `album`. */
+  onPress: (album: T) => void;
 }
 
 const ART_SIZE = 40;
 
-function AlbumRowImpl({ album, onPress }: Props) {
+function AlbumRowImpl<T extends Album | SearchAlbum>({ album, onPress }: Props<T>) {
   return (
     <ListRow
       onPress={() => onPress(album)}
@@ -35,4 +36,6 @@ function AlbumRowImpl({ album, onPress }: Props) {
   );
 }
 
-export const AlbumRow = memo(AlbumRowImpl);
+// memo() drops the type parameter; restore it so `onPress` stays typed to the
+// row's own album type.
+export const AlbumRow = memo(AlbumRowImpl) as typeof AlbumRowImpl;

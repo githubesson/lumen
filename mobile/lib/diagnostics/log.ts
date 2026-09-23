@@ -37,6 +37,12 @@ const MAX_BYTES = 512 * 1024;
 const DUPLICATE_WINDOW_MS = 5 * 60_000;
 /** Keeps the suppression map from growing with a large library. */
 const SUPPRESS_PRUNE_AT = 400;
+/**
+ * Scopes whose entries are one-off records rather than retried failures.
+ * Every playback line carries a fresh state snapshot, so it would never match
+ * a duplicate and would only fill the suppression map.
+ */
+const UNSUPPRESSED_SCOPES: ReadonlySet<LogScope> = new Set(["playback", "session"]);
 /** Server error bodies are captured to diagnose, not to archive. */
 export const BODY_PROBE_BYTES = 512;
 const ENTRY_VERSION = 1;
@@ -105,6 +111,13 @@ class DiagnosticsLog {
   /** key -> when the window closes, and how many hits it swallowed. */
   private suppressed = new Map<string, { until: number; count: number }>();
   private sessionLogged = false;
+  /**
+   * The open log file and its size, kept in memory so an append is one native
+   * call rather than four (directory check, file check, size, append).
+   * Playback logs from the JS thread on every state change, so this matters.
+   * Null until the first write, and after rotation, clearing or a failure.
+   */
+  private current: { file: File; bytes: number } | null = null;
   private context: (() => LogContext) | null = null;
   private describeBuild: (() => string) | null = null;
 
@@ -138,15 +151,18 @@ class DiagnosticsLog {
   append(input: LogInput): void {
     try {
       const now = Date.now();
-      const key = `${input.event}|${input.trackId ?? ""}|${input.message}`;
-      const seen = this.suppressed.get(key);
-      if (seen && now < seen.until) {
-        seen.count += 1;
-        return;
+      let attempt: number | undefined;
+      if (!UNSUPPRESSED_SCOPES.has(input.scope)) {
+        const key = `${input.event}|${input.trackId ?? ""}|${input.message}`;
+        const seen = this.suppressed.get(key);
+        if (seen && now < seen.until) {
+          seen.count += 1;
+          return;
+        }
+        attempt = seen && seen.count > 0 ? seen.count + 1 : undefined;
+        this.suppressed.set(key, { until: now + DUPLICATE_WINDOW_MS, count: 0 });
+        if (this.suppressed.size > SUPPRESS_PRUNE_AT) this.prune(now);
       }
-      const attempt = seen && seen.count > 0 ? seen.count + 1 : undefined;
-      this.suppressed.set(key, { until: now + DUPLICATE_WINDOW_MS, count: 0 });
-      if (this.suppressed.size > SUPPRESS_PRUNE_AT) this.prune(now);
 
       this.writeSessionHeader();
       this.write({
@@ -223,6 +239,7 @@ class DiagnosticsLog {
   /** Drop everything. The next entry re-writes the session header, so a
    *  cleared log still identifies the build it came from. */
   clear(): void {
+    this.current = null;
     for (const name of [CURRENT, ARCHIVE]) {
       try {
         const file = new File(this.dir, name);
@@ -250,13 +267,30 @@ class DiagnosticsLog {
   }
 
   private write(entry: LogEntry): void {
-    let file = this.currentFile();
-    if (file.size > MAX_BYTES) {
-      this.rotate();
-      file = this.currentFile();
+    const line = `${JSON.stringify(entry)}\n`;
+    try {
+      this.appendLine(line);
+    } catch {
+      // The cached handle may be stale (file removed underneath us); retry
+      // once from scratch, and let a second failure reach append()'s catch.
+      this.current = null;
+      this.appendLine(line);
     }
-    file.write(`${JSON.stringify(entry)}\n`, { append: true });
     this.emit();
+  }
+
+  private appendLine(line: string): void {
+    if (!this.current) {
+      const file = this.currentFile();
+      this.current = { file, bytes: file.size };
+    }
+    if (this.current.bytes > MAX_BYTES) {
+      this.current = null;
+      this.rotate();
+      this.current = { file: this.currentFile(), bytes: 0 };
+    }
+    this.current.file.write(line, { append: true });
+    this.current.bytes += utf8Length(line);
   }
 
   private rotate(): void {
@@ -306,6 +340,22 @@ class DiagnosticsLog {
 }
 
 export const diagnosticsLog = new DiagnosticsLog();
+
+/** UTF-8 encoded length, so the rotation cap tracks bytes on disk. */
+function utf8Length(text: string): number {
+  let bytes = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      // Surrogate pair: one 4-byte code point.
+      bytes += 4;
+      i += 1;
+    } else bytes += 3;
+  }
+  return bytes;
+}
 
 function occurrences(haystack: string, needle: string): number {
   let count = 0;

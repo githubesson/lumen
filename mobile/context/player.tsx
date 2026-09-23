@@ -90,6 +90,10 @@ const [PlayerTimeCtx, usePlayerTimeCtx] =
   createRequiredContext<TimeState>("usePlayerTime");
 const [PlayerCurrentCtx, useCurrentTrackCtx] =
   createRequiredContext<PlayerState["current"]>("useCurrentTrack");
+// Layout that only cares whether anything is loaded (the dock inset on every
+// list screen) reads this, so it doesn't re-render on each track change.
+const [PlayerHasTrackCtx, useHasCurrentTrackCtx] =
+  createRequiredContext<boolean>("useHasCurrentTrack");
 const [PlayerIsPlayingCtx, useIsPlayingCtx] =
   createRequiredContext<boolean>("useIsPlaying");
 const [PlayerQueueCtx, usePlayerQueueCtx] =
@@ -105,6 +109,7 @@ export const usePlayerControls = usePlayerControlsCtx;
 export const usePlayTrack = usePlayTrackCtx;
 export const usePlayerTime = usePlayerTimeCtx;
 export const useCurrentTrack = useCurrentTrackCtx;
+export const useHasCurrentTrack = useHasCurrentTrackCtx;
 export const useIsPlaying = useIsPlayingCtx;
 export const usePlayerQueue = usePlayerQueueCtx;
 export const usePlayerPlayback = usePlayerPlaybackCtx;
@@ -379,21 +384,23 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   return (
     <RemotePlaybackCtx.Provider value={remoteValue}>
       <PlayerCurrentCtx.Provider value={displayedState.current}>
-        <PlayerIsPlayingCtx.Provider value={displayedState.isPlaying}>
-          <PlayerQueueCtx.Provider value={queueValue}>
-            <PlayerPlaybackCtx.Provider value={playbackValue}>
-              <PlayerVolumeCtx.Provider value={volumeValue}>
-                <PlayerPlayCtx.Provider value={routedControls.play}>
-                  <PlayerControlsCtx.Provider value={routedControls}>
-                    <PlayerTimeCtx.Provider value={displayedTime}>
-                      {children}
-                    </PlayerTimeCtx.Provider>
-                  </PlayerControlsCtx.Provider>
-                </PlayerPlayCtx.Provider>
-              </PlayerVolumeCtx.Provider>
-            </PlayerPlaybackCtx.Provider>
-          </PlayerQueueCtx.Provider>
-        </PlayerIsPlayingCtx.Provider>
+        <PlayerHasTrackCtx.Provider value={displayedState.current !== null}>
+          <PlayerIsPlayingCtx.Provider value={displayedState.isPlaying}>
+            <PlayerQueueCtx.Provider value={queueValue}>
+              <PlayerPlaybackCtx.Provider value={playbackValue}>
+                <PlayerVolumeCtx.Provider value={volumeValue}>
+                  <PlayerPlayCtx.Provider value={routedControls.play}>
+                    <PlayerControlsCtx.Provider value={routedControls}>
+                      <PlayerTimeCtx.Provider value={displayedTime}>
+                        {children}
+                      </PlayerTimeCtx.Provider>
+                    </PlayerControlsCtx.Provider>
+                  </PlayerPlayCtx.Provider>
+                </PlayerVolumeCtx.Provider>
+              </PlayerPlaybackCtx.Provider>
+            </PlayerQueueCtx.Provider>
+          </PlayerIsPlayingCtx.Provider>
+        </PlayerHasTrackCtx.Provider>
       </PlayerCurrentCtx.Provider>
     </RemotePlaybackCtx.Provider>
   );

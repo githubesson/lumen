@@ -5,12 +5,13 @@ import type { Artist, SearchArtist } from "@music-library/core";
 import { ListRow } from "./list-row";
 import { useTheme } from "../theme/theme";
 
-interface Props {
-  artist: Artist | SearchArtist;
-  onPress: (artist: Artist) => void;
+interface Props<T extends Artist | SearchArtist> {
+  artist: T;
+  /** Receives the same object that was passed in as `artist`. */
+  onPress: (artist: T) => void;
 }
 
-function ArtistRowImpl({ artist, onPress }: Props) {
+function ArtistRowImpl<T extends Artist | SearchArtist>({ artist, onPress }: Props<T>) {
   const theme = useTheme();
   return (
     <ListRow
@@ -45,4 +46,6 @@ function ArtistRowImpl({ artist, onPress }: Props) {
   );
 }
 
-export const ArtistRow = memo(ArtistRowImpl);
+// memo() drops the type parameter; restore it so `onPress` stays typed to the
+// row's own artist type.
+export const ArtistRow = memo(ArtistRowImpl) as typeof ArtistRowImpl;

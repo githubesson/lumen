@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { FlashList } from "@shopify/flash-list";
 import { useInfiniteQuery } from "@tanstack/react-query";
@@ -9,6 +9,8 @@ import {
   searchEntityID,
   SEARCH_TYPE_OPTIONS,
   useAuth,
+  type SearchAlbum,
+  type SearchArtist,
   type SearchOffsets,
   type SearchResult,
   type SearchType,
@@ -65,53 +67,51 @@ export function SearchResults({ search }: { search: string }) {
   const warnings = [
     ...new Set(query.data?.pages.flatMap((page) => page.warnings ?? []) ?? []),
   ];
-  const renderItem = ({ item: result }: { item: SearchResult }) => {
-    switch (result.type) {
-      case "track":
-        return <TrackRow track={result.item} onPress={onTrackPress} />;
-      case "album":
-        return (
-          <AlbumRow
-            album={result.item}
-            onPress={() =>
-              router.push({
-                pathname:
-                  result.item.source === "tidal"
-                    ? "/(tabs)/tidal-albums/[id]"
-                    : "/(tabs)/albums/[id]",
-                params: { id: searchEntityID(result.item) },
-              })
-            }
-          />
-        );
-      case "artist":
-        return (
-          <ArtistRow
-            artist={result.item}
-            onPress={() =>
-              router.push({
-                pathname:
-                  result.item.source === "tidal"
-                    ? "/(tabs)/tidal-artists/[id]"
-                    : "/(tabs)/artists/[id]",
-                params: {
-                  id: searchEntityID(result.item),
-                  name: result.item.name,
-                },
-              })
-            }
-          />
-        );
-    }
-  };
+  // Stable handlers and render callback: rows are memoized, and new closures
+  // every render re-rendered every visible row on each query or state change.
+  const openAlbum = useCallback(
+    (album: SearchAlbum) =>
+      router.push({
+        pathname:
+          album.source === "tidal"
+            ? "/(tabs)/tidal-albums/[id]"
+            : "/(tabs)/albums/[id]",
+        params: { id: searchEntityID(album) },
+      }),
+    [router],
+  );
+  const openArtist = useCallback(
+    (artist: SearchArtist) =>
+      router.push({
+        pathname:
+          artist.source === "tidal"
+            ? "/(tabs)/tidal-artists/[id]"
+            : "/(tabs)/artists/[id]",
+        params: { id: searchEntityID(artist), name: artist.name },
+      }),
+    [router],
+  );
+  const renderItem = useCallback(
+    ({ item: result }: { item: SearchResult }) => {
+      switch (result.type) {
+        case "track":
+          return <TrackRow track={result.item} onPress={onTrackPress} />;
+        case "album":
+          return <AlbumRow album={result.item} onPress={openAlbum} />;
+        case "artist":
+          return <ArtistRow artist={result.item} onPress={openArtist} />;
+      }
+    },
+    [onTrackPress, openAlbum, openArtist],
+  );
   return (
     <FlashList
       {...dockScroll}
       key={`${type}:${search}`}
       data={results}
       renderItem={renderItem}
-      keyExtractor={(result) => `${result.type}:${result.item.id}`}
-      getItemType={(result) => result.type}
+      keyExtractor={searchResultKey}
+      getItemType={searchResultType}
       keyboardShouldPersistTaps="handled"
       contentInsetAdjustmentBehavior="automatic"
       contentOffset={
@@ -183,4 +183,12 @@ export function SearchResults({ search }: { search: string }) {
       onEndReachedThreshold={0.6}
     />
   );
+}
+
+function searchResultKey(result: SearchResult): string {
+  return `${result.type}:${result.item.id}`;
+}
+
+function searchResultType(result: SearchResult): SearchResult["type"] {
+  return result.type;
 }

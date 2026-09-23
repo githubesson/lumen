@@ -7,6 +7,7 @@ import {
 } from "@music-library/core/lyrics";
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -152,7 +153,6 @@ export const LyricsSection = forwardRef<
   ref,
 ) {
   const theme = useTheme();
-  const time = usePlayerTime();
   const scrollRef = useRef<ScrollView>(null);
   const lineOffsets = useRef(new Map<number, number>());
   const lineHeights = useRef(new Map<number, number>());
@@ -185,10 +185,6 @@ export const LyricsSection = forwardRef<
     () => parsePlainLyrics(lyricsQuery.data?.plainLyrics),
     [lyricsQuery.data?.plainLyrics],
   );
-  const activeIndex = useMemo(
-    () => activeLineIndex(syncedLines, time.currentTime),
-    [syncedLines, time.currentTime],
-  );
   const displayedLines = useMemo(
     () => (syncedLines.length ? syncedLines : plainLines),
     [plainLines, syncedLines],
@@ -199,7 +195,6 @@ export const LyricsSection = forwardRef<
     displayedLines.length > 0;
   const activeTranslation =
     translation?.trackId === track.id ? translation : null;
-  const translationVisible = activeTranslation?.visible ?? false;
   const translationBusy = translatingTrackId !== null;
 
   useEffect(() => {
@@ -327,21 +322,32 @@ export const LyricsSection = forwardRef<
     translate,
   ]);
 
-  useEffect(() => {
-    if (activeIndex < 0) return;
-    const frame = requestAnimationFrame(() => {
-      const offset = lineOffsets.current.get(activeIndex);
-      if (offset === undefined) return;
-      const lineHeight = lineHeights.current.get(activeIndex) ?? 0;
-      // Match frontend: center the active line in the viewport. Waiting one
-      // frame also lets translated rows report their new layout first.
-      scrollRef.current?.scrollTo({
-        y: Math.max(0, offset - viewportHeight / 2 + lineHeight / 2),
-        animated: true,
+  /** Centers a line; returns a cleanup that cancels the pending scroll. */
+  const scrollToLine = useCallback(
+    (index: number) => {
+      const frame = requestAnimationFrame(() => {
+        const offset = lineOffsets.current.get(index);
+        if (offset === undefined) return;
+        const lineHeight = lineHeights.current.get(index) ?? 0;
+        // Match frontend: center the active line in the viewport. Waiting one
+        // frame also lets translated rows report their new layout first.
+        scrollRef.current?.scrollTo({
+          y: Math.max(0, offset - viewportHeight / 2 + lineHeight / 2),
+          animated: true,
+        });
       });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [activeIndex, translationVisible, viewportHeight]);
+      return () => cancelAnimationFrame(frame);
+    },
+    [viewportHeight],
+  );
+
+  const onLineLayout = useCallback(
+    (index: number, event: LayoutChangeEvent) => {
+      lineOffsets.current.set(index, event.nativeEvent.layout.y);
+      lineHeights.current.set(index, event.nativeEvent.layout.height);
+    },
+    [],
+  );
 
   useEffect(() => {
     lineOffsets.current.clear();
@@ -401,41 +407,14 @@ export const LyricsSection = forwardRef<
         }}
       >
         {syncedLines.length
-          ? syncedLines.map((line, index) => (
-              <SyncedLyricLine
-                key={`${line.time}-${index}`}
-                line={line}
-                translatedText={
-                  activeTranslation?.visible
-                    ? activeTranslation.lines[index]
-                    : undefined
-                }
-                state={
-                  index === activeIndex
-                    ? "active"
-                    : index < activeIndex
-                      ? "past"
-                      : "upcoming"
-                }
-                activeWordIndex={
-                  index === activeIndex && !line.section
-                    ? activeWordIndexForLine(
-                        line,
-                        syncedLines[index + 1],
-                        time.currentTime,
-                        Math.max(1, time.duration),
-                      )
-                    : null
-                }
-                onLayout={(event) => {
-                  lineOffsets.current.set(index, event.nativeEvent.layout.y);
-                  lineHeights.current.set(
-                    index,
-                    event.nativeEvent.layout.height,
-                  );
-                }}
+          ? (
+              <SyncedLyricLines
+                lines={syncedLines}
+                translatedLines={activeTranslation?.visible ? activeTranslation.lines : null}
+                onLineLayout={onLineLayout}
+                scrollToLine={scrollToLine}
               />
-            ))
+            )
           : plainLines.map((line, index) => (
               <Animated.View
                 key={`${index}-${line.text}`}
@@ -497,18 +476,80 @@ function LyricsMessage({ text }: { text: string }) {
   );
 }
 
-function SyncedLyricLine({
+/**
+ * The only part of the lyrics view that reads the player clock. Time ticks
+ * every 250ms, but each memoized line re-renders only when its own props
+ * change, which in practice is the active line (word progress) plus the two
+ * lines that change state when the active line moves on.
+ */
+function SyncedLyricLines({
+  lines,
+  translatedLines,
+  onLineLayout,
+  scrollToLine,
+}: {
+  lines: SyncedLine[];
+  translatedLines: Record<number, string> | null;
+  onLineLayout: (index: number, event: LayoutChangeEvent) => void;
+  scrollToLine: (index: number) => () => void;
+}) {
+  const time = usePlayerTime();
+  const activeIndex = useMemo(
+    () => activeLineIndex(lines, time.currentTime),
+    [lines, time.currentTime],
+  );
+
+  useEffect(() => {
+    if (activeIndex < 0) return;
+    return scrollToLine(activeIndex);
+    // translatedLines: showing or hiding translations moves every line, so the
+    // active one has to be re-centered.
+  }, [activeIndex, scrollToLine, translatedLines]);
+
+  const activeLine = lines[activeIndex];
+  const activeWordIndex =
+    activeLine && !activeLine.section
+      ? activeWordIndexForLine(
+          activeLine,
+          lines[activeIndex + 1],
+          time.currentTime,
+          Math.max(1, time.duration),
+        )
+      : null;
+
+  return lines.map((line, index) => (
+    <SyncedLyricLine
+      key={`${line.time}-${index}`}
+      index={index}
+      line={line}
+      translatedText={translatedLines?.[index]}
+      state={
+        index === activeIndex
+          ? "active"
+          : index < activeIndex
+            ? "past"
+            : "upcoming"
+      }
+      activeWordIndex={index === activeIndex ? activeWordIndex : null}
+      onLineLayout={onLineLayout}
+    />
+  ));
+}
+
+const SyncedLyricLine = memo(function SyncedLyricLine({
+  index,
   line,
   translatedText,
   state,
   activeWordIndex,
-  onLayout,
+  onLineLayout,
 }: {
+  index: number;
   line: SyncedLine;
   translatedText?: string;
   state: "active" | "past" | "upcoming";
   activeWordIndex: number | null;
-  onLayout: (event: LayoutChangeEvent) => void;
+  onLineLayout: (index: number, event: LayoutChangeEvent) => void;
 }) {
   const theme = useTheme();
   const active = useSharedValue(state === "active" ? 1 : 0);
@@ -545,10 +586,15 @@ function SyncedLyricLine({
         ),
   }));
 
-  const words =
-    state === "active" && !line.section
-      ? line.text.trim().split(/\s+/).filter(Boolean)
-      : null;
+  const isActiveBody = state === "active" && !line.section;
+  const words = useMemo(
+    () => (isActiveBody ? line.text.trim().split(/\s+/).filter(Boolean) : null),
+    [isActiveBody, line.text],
+  );
+  const onLayout = useCallback(
+    (event: LayoutChangeEvent) => onLineLayout(index, event),
+    [index, onLineLayout],
+  );
 
   const baseLineText: TextStyle = {
     fontSize: line.section ? 12 : state === "active" ? 19 : 18,
@@ -606,7 +652,7 @@ function SyncedLyricLine({
       ) : null}
     </Animated.View>
   );
-}
+});
 
 function AnimatedLyricWord({
   children,

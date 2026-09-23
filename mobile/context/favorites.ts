@@ -24,6 +24,21 @@ import { qk } from "../lib/query-keys";
 
 const pendingToggles = new Set<string>();
 
+/**
+ * Id set per favorites snapshot. Every mounted row runs its own `select` when
+ * the list changes; building the set once per snapshot makes each of those an
+ * O(1) lookup instead of a scan of the whole list.
+ */
+const favoriteIdSets = new WeakMap<TrackListItem[], Set<string>>();
+function favoriteIds(tracks: TrackListItem[]): Set<string> {
+  let ids = favoriteIdSets.get(tracks);
+  if (!ids) {
+    ids = new Set(tracks.map((track) => track.id));
+    favoriteIdSets.set(tracks, ids);
+  }
+  return ids;
+}
+
 function favoritesQueryOptions(userId: string | undefined) {
   return queryOptions({
     queryKey: qk.favorites(userId),
@@ -48,7 +63,7 @@ export function useFavoritesQuery(enabled = true) {
 export function useFavorite(id: string): boolean {
   const { status, me } = useAuth();
   const selectFavorite = useCallback(
-    (tracks: TrackListItem[]) => tracks.some((track) => track.id === id),
+    (tracks: TrackListItem[]) => favoriteIds(tracks).has(id),
     [id],
   );
   const query = useQuery({

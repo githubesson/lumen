@@ -28,7 +28,9 @@ import { TABLET_BREAKPOINT, TABLET_CONTENT_MAX_WIDTH } from "./constants";
 /**
  * The pinned lower half of Now Playing: scrubber, transport, volume, and the
  * AirPlay/queue toolbar. Reads the player contexts itself and is memoized so
- * the 250ms time ticks re-render only this block, never the hero above it.
+ * the hero above it never re-renders for playback changes. The 250ms time
+ * ticks go to the scrubber alone (`ConnectedProgressScrubber`); reading time
+ * here would re-render the transport, volume and native device menu 4×/s.
  */
 export const NowPlayingBottomControls = memo(function NowPlayingBottomControls({
   queueOpen,
@@ -44,10 +46,8 @@ export const NowPlayingBottomControls = memo(function NowPlayingBottomControls({
   style?: StyleProp<ViewStyle>;
 }) {
   const controls = usePlayerControls();
-  const current = useCurrentTrack();
   const { isPlaying, shuffle } = usePlayerPlayback();
   const { volume, muted } = usePlayerVolume();
-  const time = usePlayerTime();
   const { width, height } = useWindowDimensions();
   const isTabletLayout = Math.min(width, height) >= TABLET_BREAKPOINT;
 
@@ -62,12 +62,7 @@ export const NowPlayingBottomControls = memo(function NowPlayingBottomControls({
 
   return (
     <View style={style}>
-      <ProgressScrubber
-        trackKey={current?.id ?? null}
-        time={time}
-        isPlaying={isPlaying}
-        onSeek={controls.seek}
-      />
+      <ConnectedProgressScrubber isPlaying={isPlaying} onSeek={controls.seek} />
 
       <TransportControls
         isPlaying={isPlaying}
@@ -96,6 +91,25 @@ export const NowPlayingBottomControls = memo(function NowPlayingBottomControls({
     </View>
   );
 });
+
+function ConnectedProgressScrubber({
+  isPlaying,
+  onSeek,
+}: {
+  isPlaying: boolean;
+  onSeek: (seconds: number) => void;
+}) {
+  const current = useCurrentTrack();
+  const time = usePlayerTime();
+  return (
+    <ProgressScrubber
+      trackKey={current?.id ?? null}
+      time={time}
+      isPlaying={isPlaying}
+      onSeek={onSeek}
+    />
+  );
+}
 
 const styles = StyleSheet.create({
   transport: {

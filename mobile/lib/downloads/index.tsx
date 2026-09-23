@@ -46,8 +46,16 @@ export function DownloadsProvider({ children, accountId }: { children: ReactNode
     void downloads.hydrate();
     if (accountId) void autoDownloads.syncAll();
 
+    // Only a return from the background counts as coming back to the app.
+    // iOS also reports inactive → active for Control Center, Notification
+    // Center and system alerts, and each of those used to re-fetch every
+    // opted-in playlist.
+    let backgrounded = false;
     const appStateSub = AppState.addEventListener("change", (state) => {
-      if (state === "active" && accountId) void autoDownloads.syncAll();
+      if (state === "background") backgrounded = true;
+      if (state !== "active" || !backgrounded) return;
+      backgrounded = false;
+      if (accountId) void autoDownloads.syncAll();
     });
 
     // The offline store already owns the NetInfo subscription and the user's

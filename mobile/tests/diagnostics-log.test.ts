@@ -176,6 +176,16 @@ describe("diagnosticsLog", () => {
     expect(written[1]?.attempt).toBeUndefined();
   });
 
+  it("writes every playback record without collapsing", () => {
+    const entry = { scope: "playback", level: "info", event: "state", message: "{}" } as const;
+    log.append(entry);
+    log.append(entry);
+
+    const written = events(log.read()).filter((e) => e.scope === "playback");
+    expect(written).toHaveLength(2);
+    expect(written.every((e) => e.attempt === undefined)).toBe(true);
+  });
+
   it("keeps distinct failures separate while collapsing", () => {
     const base = { scope: "download", level: "error", event: "not-audio" } as const;
     log.append({ ...base, message: "m", trackId: "a" });

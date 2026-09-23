@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -545,44 +546,41 @@ export function CarPlayBridge() {
     };
   }, [handleSelect]);
 
+  // Effect events read the latest track and queue when a button fires, so the
+  // native listeners are installed once instead of on every track change.
+  const onNowPlayingButton = useEffectEvent((buttonId: string) => {
+    if (buttonId === "shuffle") controls.toggleShuffle();
+    if (buttonId === "repeat") controls.cycleRepeat();
+    if (buttonId === "favorite" && currentTrack) {
+      void toggleFavorite(currentTrack);
+    }
+  });
+  const onUpNext = useEffectEvent(() => {
+    void pushCarPlayList(buildQueueTemplate({ limits, coverFor, queue, index }));
+  });
+  const onAlbumArtist = useEffectEvent(() => {
+    const albumId = currentTrack?.album_id;
+    if (!albumId) return;
+    void templateFor({ kind: "album", id: albumId }).then((template) => {
+      if (template) void pushCarPlayList(template);
+    });
+  });
+
   useEffect(() => {
     if (!isCarPlayAvailable()) return;
 
     const subscriptions = [
-      addCarPlayNowPlayingButtonListener(({ buttonId }) => {
-        if (buttonId === "shuffle") controls.toggleShuffle();
-        if (buttonId === "repeat") controls.cycleRepeat();
-        if (buttonId === "favorite" && currentTrack) {
-          void toggleFavorite(currentTrack);
-        }
-      }),
-      addCarPlayUpNextListener(() => {
-        void pushCarPlayList(
-          buildQueueTemplate({ limits, coverFor, queue, index }),
-        );
-      }),
-      addCarPlayAlbumArtistListener(() => {
-        const albumId = currentTrack?.album_id;
-        if (!albumId) return;
-        void templateFor({ kind: "album", id: albumId }).then((template) => {
-          if (template) void pushCarPlayList(template);
-        });
-      }),
+      addCarPlayNowPlayingButtonListener(({ buttonId }) =>
+        onNowPlayingButton(buttonId),
+      ),
+      addCarPlayUpNextListener(() => onUpNext()),
+      addCarPlayAlbumArtistListener(() => onAlbumArtist()),
     ];
 
     return () => {
       for (const subscription of subscriptions) subscription.remove();
     };
-  }, [
-    controls,
-    coverFor,
-    currentTrack,
-    index,
-    limits,
-    queue,
-    templateFor,
-    toggleFavorite,
-  ]);
+  }, []);
 
   return null;
 }

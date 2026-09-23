@@ -127,6 +127,7 @@ export class DownloadStore {
   private hydrating: Promise<void> | null = null;
   /** Bumped on every mutation; used as the external-store snapshot. */
   private version = 0;
+  private ownerIndex: { version: number; owners: Set<DownloadOwner> } | null = null;
 
   // ── subscription (useSyncExternalStore) ───────────────────────────────────
   subscribe = (listener: Listener): (() => void) => {
@@ -199,10 +200,17 @@ export class DownloadStore {
 
   /** Whether any downloaded track is owned by `owner` (e.g. a playlist). */
   hasOwner(owner: DownloadOwner): boolean {
-    for (const record of this.records.values()) {
-      if (record.owners.includes(owner)) return true;
+    // Every mounted playlist row calls this on every store change, so the
+    // owner set is built once per version instead of scanned per call. Like
+    // every other read here it reflects the store as of its last emit.
+    if (this.ownerIndex?.version !== this.version) {
+      const owners = new Set<DownloadOwner>();
+      for (const record of this.records.values()) {
+        for (const recordOwner of record.owners) owners.add(recordOwner);
+      }
+      this.ownerIndex = { version: this.version, owners };
     }
-    return false;
+    return this.ownerIndex.owners.has(owner);
   }
 
   /** Snapshots of `owner`'s downloaded tracks, in stored order. Only records
@@ -420,7 +428,7 @@ export class DownloadStore {
     try {
       await this.persist();
       if (!this.enabled) return;
-      await this.startTask(track);
+      await this.startTask(track, await this.authHeaders());
     } catch (error) {
       this.fail(track.id, describe(error, "Download failed"), {
         event: "enqueue-failed",
@@ -437,7 +445,27 @@ export class DownloadStore {
    * app suspension and screen lock). Resolves on ENQUEUE; completion runs
    * through `finalize`, failure through `fail`, whenever JS resumes.
    */
-  private async startTask(track: TrackListItem): Promise<void> {
+  /** Session cookie for the stream endpoint; warns once per call if missing. */
+  private async authHeaders(): Promise<Record<string, string>> {
+    const headers = await sessionCookieHeader();
+    if (this.enabled && !headers.Cookie) {
+      // Without the session cookie the stream endpoint 401s and the error page
+      // lands in the file — the single most common cause of "not a valid audio
+      // file" below.
+      diagnosticsLog.append({
+        scope: "download",
+        level: "warn",
+        event: "no-session-cookie",
+        message: "Starting downloads with no session cookie — expect a 401.",
+      });
+    }
+    return headers;
+  }
+
+  private async startTask(
+    track: TrackListItem,
+    headers: Record<string, string>,
+  ): Promise<void> {
     this.ensureDir();
     const partName = `${sanitizeId(track.id)}.part`;
     try {
@@ -447,21 +475,7 @@ export class DownloadStore {
       // A stale temp file only risks a failed rename; finalize re-checks.
     }
 
-    const headers = await sessionCookieHeader();
     if (!this.enabled) return;
-    if (!headers.Cookie) {
-      // Without the session cookie the stream endpoint 401s and the error page
-      // lands in the file — the single most common cause of "not a valid audio
-      // file" below.
-      diagnosticsLog.append({
-        scope: "download",
-        level: "warn",
-        event: "no-session-cookie",
-        message: "Starting a download with no session cookie — expect a 401.",
-        trackId: track.id,
-        title: trackLabel(track),
-      });
-    }
     const meta: TaskMeta = {
       accountKey: this.accountKey,
       // queueOwner ran before startTask, so pendingOwners holds the owner.
@@ -788,6 +802,8 @@ export class DownloadStore {
       await this.persist();
       this.emit();
     }
+    // One cookie-jar read for the whole batch, not one native call per track.
+    const headers = toStart.length ? await this.authHeaders() : {};
     for (const track of toStart) {
       if (!this.enabled) return;
       if (this.pendingOwners.get(track.id)?.size === 0) {
@@ -797,7 +813,7 @@ export class DownloadStore {
         continue;
       }
       try {
-        await this.startTask(track);
+        await this.startTask(track, headers);
       } catch (error) {
         this.fail(track.id, describe(error, "Download failed"), {
           event: "enqueue-failed", title: trackLabel(track), source: track.source, owner,

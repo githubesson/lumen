@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   api,
@@ -237,18 +237,26 @@ export function SiriMediaBridge() {
     [controls, current, rememberRequest, shuffle, status],
   );
 
+  // Reads the latest player state when a request arrives, so the listener
+  // isn't reinstalled (and the pending queue re-read) on every track change.
+  const onRequest = useEffectEvent((request: SiriPlayMediaRequest) => {
+    void handleRequest(request);
+  });
+
   useEffect(() => {
     if (!available) return;
-    const subscription = addSiriPlayMediaRequestListener((request) => {
-      void handleRequest(request);
-    });
+    const subscription = addSiriPlayMediaRequestListener((request) =>
+      onRequest(request),
+    );
+    // Also re-run when auth settles: requests that arrived while it was
+    // loading were left in the native queue for this drain.
     void getPendingSiriMediaRequests().then((requests) => {
-      for (const request of requests) void handleRequest(request);
+      for (const request of requests) onRequest(request);
     });
     return () => {
       subscription.remove();
     };
-  }, [available, handleRequest]);
+  }, [available, status]);
 
   useEffect(() => {
     if (authorization !== "authorized" || !current || !isPlaying) return;

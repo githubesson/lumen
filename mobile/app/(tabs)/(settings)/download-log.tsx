@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   Alert,
   FlatList,
@@ -50,6 +50,7 @@ export default function DownloadLogScreen() {
   const theme = useTheme();
   const [mode, setMode] = useState<Mode>("recent");
   const [entries, setEntries] = useState<LogEntry[] | null>(null);
+  const [sizeBytes, setSizeBytes] = useState(0);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const version = useSyncExternalStore(
     diagnosticsLog.subscribe,
@@ -60,10 +61,10 @@ export default function DownloadLogScreen() {
   // Parsing is synchronous and blocks the JS thread, so it stays off the
   // render path and out of the write burst.
   useEffect(() => {
-    const timer = setTimeout(
-      () => setEntries(diagnosticsLog.read()),
-      RELOAD_DEBOUNCE_MS,
-    );
+    const timer = setTimeout(() => {
+      setEntries(diagnosticsLog.read());
+      setSizeBytes(diagnosticsLog.sizeBytes());
+    }, RELOAD_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [version]);
 
@@ -119,13 +120,16 @@ export default function DownloadLogScreen() {
     ]);
   }, []);
 
-  const renderItem = ({ item }: ListRenderItemInfo<Row>) => (
-    <EntryRow
-      row={item}
-      theme={theme}
-      expanded={expanded.has(item.key)}
-      onPress={() => toggle(item.key)}
-    />
+  const renderItem = useCallback(
+    ({ item }: ListRenderItemInfo<Row>) => (
+      <EntryRow
+        row={item}
+        theme={theme}
+        expanded={expanded.has(item.key)}
+        onToggle={toggle}
+      />
+    ),
+    [expanded, theme, toggle],
   );
 
   return (
@@ -134,7 +138,7 @@ export default function DownloadLogScreen() {
       <FlatList
         data={rows}
         renderItem={renderItem}
-        keyExtractor={(row) => row.key}
+        keyExtractor={rowKey}
         contentInsetAdjustmentBehavior="automatic"
         style={{ backgroundColor: theme.color.bg }}
         contentContainerStyle={{
@@ -155,7 +159,7 @@ export default function DownloadLogScreen() {
             <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>
               {entries === null
                 ? "Reading…"
-                : `${entries.length} entr${entries.length === 1 ? "y" : "ies"} · ${problemCount} problem${problemCount === 1 ? "" : "s"} · ${formatBytes(diagnosticsLog.sizeBytes())}`}
+                : `${entries.length} entr${entries.length === 1 ? "y" : "ies"} · ${problemCount} problem${problemCount === 1 ? "" : "s"} · ${formatBytes(sizeBytes)}`}
             </Text>
             <Card style={{ overflow: "hidden" }}>
               <ActionRow
@@ -201,18 +205,24 @@ export default function DownloadLogScreen() {
   );
 }
 
-function EntryRow({
+function rowKey(row: Row): string {
+  return row.key;
+}
+
+/** Memoized with a key-taking toggle, so expanding one row re-renders one row. */
+const EntryRow = memo(function EntryRow({
   row,
   theme,
   expanded,
-  onPress,
+  onToggle,
 }: {
   row: Row;
   theme: ThemeTokens;
   expanded: boolean;
-  onPress: () => void;
+  onToggle: (key: string) => void;
 }) {
   const { entry } = row;
+  const onPress = useCallback(() => onToggle(row.key), [onToggle, row.key]);
   const tone =
     entry.level === "error"
       ? theme.color.danger
@@ -267,7 +277,7 @@ function EntryRow({
       </Pressable>
     </Card>
   );
-}
+});
 
 function Detail({
   entry,

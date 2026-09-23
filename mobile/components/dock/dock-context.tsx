@@ -21,7 +21,7 @@ import {
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useCurrentTrack } from "../../context/player";
+import { useHasCurrentTrack } from "../../context/player";
 import { useTheme } from "../../theme/theme";
 
 /**
@@ -257,7 +257,7 @@ export function useDockScrollHandler(): {
 export function useBottomDockInset(): number {
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
-  const current = useCurrentTrack();
+  const hasTrack = useHasCurrentTrack();
 
   // May be negative when the dock sits inside the safe area; the scroll views
   // add `insets.bottom` separately, so the sum still lands on the dock top.
@@ -266,6 +266,6 @@ export function useBottomDockInset(): number {
   return (
     lift +
     DOCK.tabBarHeight +
-    (current ? DOCK.gap + DOCK.miniHeight : 0)
+    (hasTrack ? DOCK.gap + DOCK.miniHeight : 0)
   );
 }
