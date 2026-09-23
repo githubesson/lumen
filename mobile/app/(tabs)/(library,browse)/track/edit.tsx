@@ -1,10 +1,7 @@
 import { buildTrackPatch } from "@music-library/core/metadata-edit";
 import { useEffect, useState } from "react";
 import {
-  ActivityIndicator,
   ScrollView,
-  StyleSheet,
-  Text,
   View,
 } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
@@ -25,6 +22,7 @@ import {
 import { HeaderSaveButton } from "../../../../components/header-buttons";
 import { qk } from "../../../../lib/query-keys";
 import { useTheme } from "../../../../theme/theme";
+import { EmptyState, retryAction } from "../../../../components/empty-state";
 
 /**
  * Admin-only track metadata editor. Reached from the track context menu's
@@ -115,20 +113,15 @@ export default function TrackEditScreen() {
     }
   };
 
-  if (trackQuery.isLoading) {
-    return (
-      <View style={[styles.center, { backgroundColor: theme.color.bg }]}>
-        <ActivityIndicator color={theme.color.fgMuted} />
-      </View>
-    );
-  }
+  if (trackQuery.isLoading) return <EmptyState fill loading />;
   if (trackQuery.isError || !track) {
     return (
-      <View style={[styles.center, { backgroundColor: theme.color.bg }]}>
-        <Text style={{ color: theme.color.fgMuted }}>
-          Couldn&apos;t load track.
-        </Text>
-      </View>
+      <EmptyState
+        fill
+        selectable
+        message="Couldn't load track."
+        action={retryAction(trackQuery)}
+      />
     );
   }
 
@@ -243,11 +236,3 @@ export default function TrackEditScreen() {
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});

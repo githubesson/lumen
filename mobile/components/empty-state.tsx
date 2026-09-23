@@ -69,3 +69,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 });
+
+/**
+ * "Try again" action for an error `EmptyState` that refetches every query the
+ * screen needs, and shows it busy while any of them is fetching.
+ */
+export function retryAction(
+  ...queries: { refetch: () => unknown; isFetching: boolean }[]
+): { label: string; onPress: () => void; disabled: boolean } {
+  const fetching = queries.some((query) => query.isFetching);
+  return {
+    label: fetching ? "Retrying…" : "Try again",
+    disabled: fetching,
+    onPress: () => {
+      for (const query of queries) void query.refetch();
+    },
+  };
+}

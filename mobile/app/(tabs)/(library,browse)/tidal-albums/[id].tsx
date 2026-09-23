@@ -1,11 +1,5 @@
 import { useCallback, useMemo } from "react";
-import {
-  ActivityIndicator,
-  PixelRatio,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { PixelRatio } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import { useQuery } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams } from "expo-router";
@@ -25,6 +19,7 @@ import { qk } from "../../../../lib/query-keys";
 import { usePlayQueue } from "../../../../lib/use-play-queue";
 import { useTheme } from "../../../../theme/theme";
 import { AlbumHeader, ALBUM_ART_SIZE } from "../../../../components/album-header";
+import { EmptyState, retryAction } from "../../../../components/empty-state";
 
 export default function TidalAlbumDetailScreen() {
   const theme = useTheme();
@@ -75,21 +70,15 @@ export default function TidalAlbumDetailScreen() {
     );
   }, [albumQuery.data, onTrackPress, tracks]);
 
-  if (albumQuery.isLoading) {
-    return (
-      <View style={[styles.center, { backgroundColor: theme.color.bg }]}>
-        <ActivityIndicator color={theme.color.fgMuted} />
-      </View>
-    );
-  }
-
+  if (albumQuery.isLoading) return <EmptyState fill loading />;
   if (albumQuery.isError || !albumQuery.data) {
     return (
-      <View style={[styles.center, { backgroundColor: theme.color.bg }]}>
-        <Text style={{ color: theme.color.fgMuted }}>
-          Couldn&apos;t load TIDAL album.
-        </Text>
-      </View>
+      <EmptyState
+        fill
+        selectable
+        message="Couldn't load TIDAL album."
+        action={retryAction(albumQuery)}
+      />
     );
   }
 
@@ -115,11 +104,3 @@ export default function TidalAlbumDetailScreen() {
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});

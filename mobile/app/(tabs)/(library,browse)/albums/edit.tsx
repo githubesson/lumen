@@ -35,6 +35,7 @@ import { Card } from "../../../../components/primitives";
 import { HeaderSaveButton } from "../../../../components/header-buttons";
 import { qk } from "../../../../lib/query-keys";
 import { useTheme } from "../../../../theme/theme";
+import { EmptyState, retryAction } from "../../../../components/empty-state";
 
 const COVER_PREVIEW_SIZE = 120;
 
@@ -191,20 +192,15 @@ export default function AlbumEditScreen() {
     }
   };
 
-  if (albumQuery.isLoading) {
-    return (
-      <View style={[styles.center, { backgroundColor: theme.color.bg }]}>
-        <ActivityIndicator color={theme.color.fgMuted} />
-      </View>
-    );
-  }
+  if (albumQuery.isLoading) return <EmptyState fill loading />;
   if (albumQuery.isError || !album) {
     return (
-      <View style={[styles.center, { backgroundColor: theme.color.bg }]}>
-        <Text style={{ color: theme.color.fgMuted }}>
-          Couldn&apos;t load album.
-        </Text>
-      </View>
+      <EmptyState
+        fill
+        selectable
+        message="Couldn't load album."
+        action={retryAction(albumQuery)}
+      />
     );
   }
 
@@ -363,11 +359,3 @@ export default function AlbumEditScreen() {
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});

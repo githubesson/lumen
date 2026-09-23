@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSyncExternalStore } from "react";
 import { api, playlistEntryToTrack, type TrackListItem } from "@music-library/core";
 import { downloadStore, type DownloadStore } from "./download-store";
-import { diagnosticsLog } from "../diagnostics/log";
+import { describeError, diagnosticsLog } from "../diagnostics/log";
 import { offlineStore } from "../offline-mode";
 
 /**
@@ -83,9 +83,7 @@ class AutoDownloadStore {
         scope: "auto-sync",
         level: "error",
         event: "flags-unreadable",
-        message: `Could not read auto-download settings: ${
-          error instanceof Error ? error.message || error.name : "unknown error"
-        }`,
+        message: `Could not read auto-download settings: ${describeError(error)}`,
       });
     }
     this.hydrated = true;
@@ -202,9 +200,7 @@ class AutoDownloadStore {
         scope: "auto-sync",
         level: "error",
         event: "sync-failed",
-        message: `Could not list tracks for ${options?.playlistName ?? playlistId}: ${
-          error instanceof Error ? error.message || error.name : "unknown error"
-        }`,
+        message: `Could not list tracks for ${options?.playlistName ?? playlistId}: ${describeError(error)}`,
         playlistId,
       });
     } finally {

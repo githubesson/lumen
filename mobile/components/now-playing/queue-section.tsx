@@ -31,6 +31,7 @@ import { useTheme } from "../../theme/theme";
 import { sessionCookieHeader } from "../../lib/downloads";
 import { ModePill } from "./mode-pill";
 import { QUEUE_ROW_HEIGHT, QueueRow } from "./queue-row";
+import { repeatModeAccessibilityLabel, repeatModeIcon } from "./repeat-mode";
 
 const QUEUE_EAGER_ROWS = 6;
 const QUEUE_ADVANCE_ANIMATION_MS = 260;
@@ -266,15 +267,9 @@ export const QueueSection = memo(function QueueSection({
           />
           <ModePill
             style={styles.modePill}
-            icon={repeat === "one" ? "repeat.1" : "repeat"}
+            icon={repeatModeIcon(repeat)}
             selected={repeat !== "off"}
-            accessibilityLabel={
-              repeat === "off"
-                ? "Repeat off. Turn on repeat"
-                : repeat === "all"
-                  ? "Repeat all. Turn on repeat one"
-                  : "Repeat one. Turn repeat off"
-            }
+            accessibilityLabel={repeatModeAccessibilityLabel(repeat)}
             onPress={onCycleRepeat}
           />
         </View>

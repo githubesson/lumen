@@ -23,6 +23,7 @@ import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useHasCurrentTrack } from "../../context/player";
 import { useTheme } from "../../theme/theme";
+import { isTabletLayout } from "../../lib/layout";
 
 /**
  * Sizing for the floating bottom dock (Instagram-style pill tab bar plus the
@@ -121,11 +122,7 @@ export const DOCK_CAPSULE_TIMING = {
   easing: Easing.out(Easing.cubic),
 } as const;
 
-const TABLET_BREAKPOINT = 600;
-
-export function isTabletLayout(width: number, height: number): boolean {
-  return Math.min(width, height) >= TABLET_BREAKPOINT;
-}
+export { isTabletLayout };
 
 interface DockControls {
   /** 0 = expanded, 1 = compact. Drives every dock animation. */

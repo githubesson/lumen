@@ -22,6 +22,7 @@ import {
   SORT_DEFAULT_ASC,
   api,
   compareSortableTracks,
+  fisherYatesWithAnchor,
   playlistEntryToTrack as entryToTrack,
   useAuth,
   type Playlist,
@@ -263,11 +264,7 @@ export default function PlaylistDetailScreen() {
   const onShuffle = useCallback(() => {
     if (tracks.length === 0) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const shuffled = [...tracks];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
+    const shuffled = fisherYatesWithAnchor(tracks, null);
     play(shuffled[0], shuffled);
   }, [tracks, play]);
 

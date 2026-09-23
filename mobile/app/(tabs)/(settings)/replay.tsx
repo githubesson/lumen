@@ -47,6 +47,7 @@ import { replayAlbumTarget } from "../../../lib/replay-album-target";
 import { usePlayQueue } from "../../../lib/use-play-queue";
 import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme } from "../../../theme/theme";
+import { isShareDismissal } from "../../../lib/share-dismissal";
 
 export default function ReplayScreen() {
   const theme = useTheme();
@@ -311,12 +312,3 @@ export default function ReplayScreen() {
 
 // The native share sheet rejects with a "dismissed" error when the user
 // simply closes it; that's not a failure worth an alert.
-function isShareDismissal(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const message = err.message.toLowerCase();
-  return (
-    message.includes("cancel") ||
-    message.includes("dismiss") ||
-    message.includes("did not share")
-  );
-}

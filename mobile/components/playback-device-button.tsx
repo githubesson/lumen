@@ -158,35 +158,13 @@ export function PlaybackDeviceButton({
         !glass ? style : null,
       ]}
     >
-      <SymbolView
-        name={targetDevice ? "hifispeaker.2.fill" : "hifispeaker.2"}
-        size={Math.round(size * 0.52)}
-        tintColor={
-          commandError
-            ? theme.color.danger
-            : targetDevice
-              ? theme.color.accent
-              : tintColor ?? theme.color.fgMuted
-        }
+      <TriggerGlyph
+        size={size}
+        tintColor={tintColor}
+        targetSelected={!!targetDevice}
+        commandPending={commandPending}
+        commandError={!!commandError}
       />
-      {targetDevice ? (
-        <View
-          style={[
-            styles.liveDot,
-            {
-              backgroundColor: commandError
-                ? theme.color.danger
-                : theme.color.success,
-              borderColor: theme.color.bgElev1,
-            },
-          ]}
-        />
-      ) : null}
-      {commandPending ? (
-        <View
-          style={[styles.pendingRing, { borderColor: theme.color.accent }]}
-        />
-      ) : null}
     </Pressable>
   );
 
@@ -369,9 +347,57 @@ function PlaybackDeviceTriggerVisual({
   commandPending: boolean;
   commandError: boolean;
 }) {
-  const theme = useTheme();
   const content = (
     <View style={[styles.trigger, { width: size, height: size }]}>
+      <TriggerGlyph
+        size={size}
+        tintColor={tintColor}
+        targetSelected={targetSelected}
+        commandPending={commandPending}
+        commandError={commandError}
+      />
+    </View>
+  );
+
+  if (!glass) {
+    return <View style={style}>{content}</View>;
+  }
+
+  return (
+    <AdaptiveGlass
+      interactive
+      style={[
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          overflow: "hidden",
+        },
+        style,
+      ]}
+    >
+      {content}
+    </AdaptiveGlass>
+  );
+}
+
+/** Speaker icon plus the live dot and pending ring, shared by both triggers. */
+function TriggerGlyph({
+  size,
+  tintColor,
+  targetSelected,
+  commandPending,
+  commandError,
+}: {
+  size: number;
+  tintColor?: string;
+  targetSelected: boolean;
+  commandPending: boolean;
+  commandError: boolean;
+}) {
+  const theme = useTheme();
+  return (
+    <>
       <SymbolView
         name={targetSelected ? "hifispeaker.2.fill" : "hifispeaker.2"}
         size={Math.round(size * 0.52)}
@@ -401,28 +427,7 @@ function PlaybackDeviceTriggerVisual({
           style={[styles.pendingRing, { borderColor: theme.color.accent }]}
         />
       ) : null}
-    </View>
-  );
-
-  if (!glass) {
-    return <View style={style}>{content}</View>;
-  }
-
-  return (
-    <AdaptiveGlass
-      interactive
-      style={[
-        {
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          overflow: "hidden",
-        },
-        style,
-      ]}
-    >
-      {content}
-    </AdaptiveGlass>
+    </>
   );
 }
 

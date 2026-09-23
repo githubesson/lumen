@@ -1,9 +1,6 @@
 import { useCallback, useMemo } from "react";
 import {
-  ActivityIndicator,
   PixelRatio,
-  StyleSheet,
-  Text,
   View,
 } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
@@ -41,6 +38,7 @@ import { TrackRow } from "../../../../components/track-row";
 import { qk } from "../../../../lib/query-keys";
 import { usePlayQueue } from "../../../../lib/use-play-queue";
 import { useTheme } from "../../../../theme/theme";
+import { EmptyState, retryAction } from "../../../../components/empty-state";
 
 export default function ArtistDetailScreen() {
   const theme = useTheme();
@@ -126,20 +124,15 @@ export default function ArtistDetailScreen() {
     );
   }, [artistQuery.data, tracks, releases, openRelease, theme]);
 
-  if (artistQuery.isLoading || tracksQuery.isLoading) {
-    return (
-      <View style={[styles.center, { backgroundColor: theme.color.bg }]}>
-        <ActivityIndicator color={theme.color.fgMuted} />
-      </View>
-    );
-  }
+  if (artistQuery.isLoading || tracksQuery.isLoading) return <EmptyState fill loading />;
   if (artistQuery.isError || !artistQuery.data) {
     return (
-      <View style={[styles.center, { backgroundColor: theme.color.bg }]}>
-        <Text style={{ color: theme.color.fgMuted }}>
-          Couldn&apos;t load artist.
-        </Text>
-      </View>
+      <EmptyState
+        fill
+        selectable
+        message="Couldn't load artist."
+        action={retryAction(artistQuery, tracksQuery)}
+      />
     );
   }
 
@@ -160,11 +153,3 @@ export default function ArtistDetailScreen() {
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});

@@ -1,13 +1,12 @@
 import { useCallback } from "react";
 import {
-  ActionSheetIOS,
-  Alert,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { useTheme } from "../../theme/theme";
 import { ShareActionButton } from "./share-action-button";
+import { showActionMenu } from "../../lib/action-menu";
 
 /**
  * The featured "Instagram Story" button. Tapping opens a background chooser
@@ -42,43 +41,19 @@ export function StoryShareMenuButton({
       ? "Use Custom Image"
       : "Choose Custom Image";
 
-    if (process.env.EXPO_OS === "ios") {
-      const options = ["Use Generated Colors", customLabel];
-      if (hasCustomBackground) {
-        options.push("Choose Different Image");
-      }
-      options.push("Cancel");
-
-      const cancelButtonIndex = options.length - 1;
-      ActionSheetIOS.showActionSheetWithOptions(
-        {
-          options,
-          cancelButtonIndex,
-          tintColor: theme.color.accent,
-          userInterfaceStyle: theme.scheme,
-        },
-        (selectedIndex) => {
-          if (selectedIndex === cancelButtonIndex) return;
-          if (selectedIndex === 0) {
-            onGenerated();
-          } else if (selectedIndex === 1) {
-            onCustom();
-          } else if (hasCustomBackground && selectedIndex === 2) {
-            onPickCustom();
-          }
-        },
-      );
-      return;
-    }
-
-    Alert.alert("Instagram Story Background", undefined, [
-      { text: "Use Generated Colors", onPress: onGenerated },
-      { text: customLabel, onPress: onCustom },
-      ...(hasCustomBackground
-        ? [{ text: "Choose Different Image", onPress: onPickCustom }]
-        : []),
-      { text: "Cancel", style: "cancel" },
-    ]);
+    showActionMenu({
+      // The Alert fallback needs a title; the iOS sheet reads fine without.
+      title: process.env.EXPO_OS === "ios" ? undefined : "Instagram Story Background",
+      items: [
+        { label: "Use Generated Colors", onPress: onGenerated },
+        { label: customLabel, onPress: onCustom },
+        ...(hasCustomBackground
+          ? [{ label: "Choose Different Image", onPress: onPickCustom }]
+          : []),
+      ],
+      tintColor: theme.color.accent,
+      userInterfaceStyle: theme.scheme,
+    });
   }, [
     disabled,
     hasCustomBackground,

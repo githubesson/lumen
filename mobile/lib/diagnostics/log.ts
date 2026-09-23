@@ -385,6 +385,13 @@ export function asciiSnippet(
   return out.trim();
 }
 
+/** One-line description of a thrown value, for log messages. */
+export function describeError(error: unknown, fallback = "unknown error"): string {
+  if (error instanceof Error) return error.message || error.name;
+  if (typeof error === "string" && error) return error;
+  return fallback;
+}
+
 /** Short human label for a track, for log lines and the viewer. */
 export function trackLabel(track?: {
   title?: string;

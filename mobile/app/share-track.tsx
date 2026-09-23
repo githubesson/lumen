@@ -50,6 +50,7 @@ import {
 import { TrackHeader } from "../components/share/track-header";
 import { qk } from "../lib/query-keys";
 import { useTheme } from "../theme/theme";
+import { isShareDismissal } from "../lib/share-dismissal";
 
 /** How long to wait for the offscreen sticker (cover image) before capturing anyway. */
 const STORY_RENDER_TIMEOUT_MS = 1800;
@@ -634,15 +635,6 @@ async function responseToFile(response: Response, destination: File) {
   return destination;
 }
 
-function isShareDismissal(error: unknown) {
-  if (!(error instanceof Error)) return false;
-  const message = error.message.toLowerCase();
-  return (
-    message.includes("cancel") ||
-    message.includes("dismiss") ||
-    message.includes("did not share")
-  );
-}
 
 const styles = StyleSheet.create({
   // RN 0.86 moved `userSelect` to TextStyle; it still reaches the DOM on web,

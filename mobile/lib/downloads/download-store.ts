@@ -21,6 +21,7 @@ import {
   looksLikeMediaBytes,
 } from "../track-download";
 import {
+  describeError,
   asciiSnippet,
   diagnosticsLog,
   trackLabel,
@@ -264,7 +265,7 @@ export class DownloadStore {
           scope: "store",
           level: "error",
           event: "index-corrupt",
-          message: `Discarding an unparseable download index: ${describe(error)}`,
+          message: `Discarding an unparseable download index: ${describeError(error)}`,
         });
       }
       const restoredOwners = new Map(parsed?.pendingOwners ?? []);
@@ -359,7 +360,7 @@ export class DownloadStore {
           scope: "store",
           level: "warn",
           event: "reattach-failed",
-          message: `Could not re-attach native download tasks: ${describe(error)}`,
+          message: `Could not re-attach native download tasks: ${describeError(error)}`,
         });
       }
       if (mutated) await this.persist();
@@ -371,7 +372,7 @@ export class DownloadStore {
         scope: "store",
         level: "error",
         event: "hydrate-failed",
-        message: `Could not read the download index: ${describe(error)}`,
+        message: `Could not read the download index: ${describeError(error)}`,
       });
     } finally {
       this.hydrated = true;
@@ -430,7 +431,7 @@ export class DownloadStore {
         scope: "store",
         level: "warn",
         event: "persist-failed",
-        message: `Could not persist the download index: ${describe(error)}`,
+        message: `Could not persist the download index: ${describeError(error)}`,
       });
     }
   }
@@ -470,7 +471,7 @@ export class DownloadStore {
       if (!this.enabled) return;
       await this.startTask(track, await this.authHeaders());
     } catch (error) {
-      this.fail(track.id, describe(error, "Download failed"), {
+      this.fail(track.id, describeError(error, "Download failed"), {
         event: "enqueue-failed",
         title: trackLabel(track),
         source: track.source,
@@ -702,7 +703,7 @@ export class DownloadStore {
       // update beat while the app is suspended.
       downloadLiveActivity.noteDone(trackId);
     } catch (error) {
-      this.fail(trackId, describe(error, "Download failed"), {
+      this.fail(trackId, describeError(error, "Download failed"), {
         event: "finalize-failed",
         ...context,
       });
@@ -859,7 +860,7 @@ export class DownloadStore {
       try {
         await this.startTask(track, headers);
       } catch (error) {
-        this.fail(track.id, describe(error, "Download failed"), {
+        this.fail(track.id, describeError(error, "Download failed"), {
           event: "enqueue-failed", title: trackLabel(track), source: track.source, owner,
         });
       }
@@ -1000,7 +1001,7 @@ export class DownloadStore {
         scope: "cover",
         level: "warn",
         event: "cover-failed",
-        message: `Cover download failed: ${describe(error)}`,
+        message: `Cover download failed: ${describeError(error)}`,
         trackId: track.id,
         title: trackLabel(track),
       });
@@ -1031,12 +1032,6 @@ type FailDetails = Partial<
 >;
 
 /** Readable one-liner for an unknown thrown value. */
-function describe(error: unknown, fallback = "unknown error"): string {
-  if (error instanceof Error) return error.message || error.name;
-  if (typeof error === "string" && error) return error;
-  return fallback;
-}
-
 function sanitizeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
@@ -1070,7 +1065,7 @@ export async function sessionCookieHeader(): Promise<Record<string, string>> {
       scope: "download",
       level: "warn",
       event: "cookie-read-failed",
-      message: `Could not read the session cookie: ${describe(error)}`,
+      message: `Could not read the session cookie: ${describeError(error)}`,
     });
     return {};
   }

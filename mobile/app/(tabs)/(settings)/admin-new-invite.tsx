@@ -27,6 +27,7 @@ import {
 } from "../../../lib/invite-registration";
 import { qk } from "../../../lib/query-keys";
 import { useTheme } from "../../../theme/theme";
+import { isShareDismissal } from "../../../lib/share-dismissal";
 
 export default function AdminNewInviteScreen() {
   const theme = useTheme();
@@ -328,12 +329,3 @@ function InviteValue({ value }: { value: string }) {
   );
 }
 
-function isShareDismissal(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const message = err.message.toLowerCase();
-  return (
-    message.includes("cancel") ||
-    message.includes("dismiss") ||
-    message.includes("did not share")
-  );
-}

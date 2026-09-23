@@ -18,6 +18,7 @@ import { SegmentedControl } from "../../../components/segmented-control";
 import { diagnosticsLog, type LogEntry } from "../../../lib/diagnostics/log";
 import { formatPlaybackTrace } from "../../../lib/diagnostics/playback";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
+import { formatBytes } from "../../../lib/format";
 
 /**
  * Viewer for the on-disk diagnostics log — why a download failed, when, and
@@ -440,12 +441,6 @@ function formatWhen(at: number): string {
     day: "numeric",
   });
   return `${day} ${time}`;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 const styles = StyleSheet.create({

@@ -1,8 +1,5 @@
 import { useCallback, useRef } from "react";
 import {
-  ActionSheetIOS,
-  Alert,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -35,6 +32,11 @@ import {
   useDockControls,
 } from "./dock-context";
 import { DockSurface } from "./dock-surface";
+import { showActionMenu, type ActionMenuItem } from "../../lib/action-menu";
+import {
+  repeatModeAccessibilityLabel,
+  repeatModeIcon,
+} from "../now-playing/repeat-mode";
 
 let nowPlayingNavigationLockedUntil = 0;
 const NOW_PLAYING_NAVIGATION_LOCK_MS = 700;
@@ -330,15 +332,9 @@ export function PadMiniPlayer() {
           />
           {compact ? null : (
             <PadIconButton
-              icon={playback.repeat === "one" ? "repeat.1" : "repeat"}
+              icon={repeatModeIcon(playback.repeat)}
               selected={playback.repeat !== "off"}
-              accessibilityLabel={
-                playback.repeat === "off"
-                  ? "Repeat off. Turn on repeat"
-                  : playback.repeat === "all"
-                    ? "Repeat all. Turn on repeat one"
-                    : "Repeat one. Turn repeat off"
-              }
+              accessibilityLabel={repeatModeAccessibilityLabel(playback.repeat)}
               onPress={() => {
                 void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 player.cycleRepeat();
@@ -446,13 +442,6 @@ function PadIconButton({
   );
 }
 
-type PadActionItem = {
-  label: string;
-  onPress: () => void;
-  destructive?: boolean;
-  disabled?: boolean;
-};
-
 function PadTrackActionsButton({ track }: { track: TrackListItem }) {
   const theme = useTheme();
   const colors = useDockColors();
@@ -462,7 +451,7 @@ function PadTrackActionsButton({ track }: { track: TrackListItem }) {
   const openActions = useCallback(() => {
     void Haptics.selectionAsync();
 
-    const items: PadActionItem[] = [
+    const items: ActionMenuItem[] = [
       { label: "Play", onPress: actions.play },
       {
         label: actions.favorite
@@ -504,46 +493,14 @@ function PadTrackActionsButton({ track }: { track: TrackListItem }) {
       });
     }
 
-    if (Platform.OS !== "ios") {
-      Alert.alert(
-        track.title,
-        track.artist ?? undefined,
-        [
-          ...items
-            .filter((item) => !item.disabled)
-            .map((item) => ({
-              text: item.label,
-              onPress: item.onPress,
-              style: item.destructive ? ("destructive" as const) : undefined,
-            })),
-          { text: "Cancel", style: "cancel" as const },
-        ],
-      );
-      return;
-    }
-
-    const cancelButtonIndex = items.length;
-    ActionSheetIOS.showActionSheetWithOptions(
-      {
-        title: track.title,
-        message: track.artist ?? undefined,
-        options: [...items.map((item) => item.label), "Cancel"],
-        cancelButtonIndex,
-        destructiveButtonIndex: items
-          .map((item, index) => (item.destructive ? index : -1))
-          .filter((index) => index >= 0),
-        disabledButtonIndices: items
-          .map((item, index) => (item.disabled ? index : -1))
-          .filter((index) => index >= 0),
-        tintColor: theme.color.accent,
-        userInterfaceStyle: theme.scheme,
-        anchor: findNodeHandle(buttonRef.current) ?? undefined,
-      },
-      (selectedIndex) => {
-        if (selectedIndex === cancelButtonIndex) return;
-        items[selectedIndex]?.onPress();
-      },
-    );
+    showActionMenu({
+      title: track.title,
+      message: track.artist ?? undefined,
+      items,
+      tintColor: theme.color.accent,
+      userInterfaceStyle: theme.scheme,
+      anchor: findNodeHandle(buttonRef.current) ?? undefined,
+    });
   }, [actions, theme.color.accent, theme.scheme, track.artist, track.title]);
 
   return (

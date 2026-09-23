@@ -1,11 +1,7 @@
 import { useCallback, useMemo } from "react";
 import {
-  ActivityIndicator,
   PixelRatio,
   Pressable,
-  StyleSheet,
-  Text,
-  View,
 } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import { useQuery } from "@tanstack/react-query";
@@ -29,6 +25,7 @@ import { qk } from "../../../../lib/query-keys";
 import { usePlayQueue } from "../../../../lib/use-play-queue";
 import { useTheme } from "../../../../theme/theme";
 import { AlbumHeader, ALBUM_ART_SIZE } from "../../../../components/album-header";
+import { EmptyState, retryAction } from "../../../../components/empty-state";
 
 export default function AlbumDetailScreen() {
   const theme = useTheme();
@@ -112,20 +109,15 @@ export default function AlbumDetailScreen() {
     });
   }, [router, id]);
 
-  if (albumQuery.isLoading || tracksQuery.isLoading) {
-    return (
-      <View style={[styles.center, { backgroundColor: theme.color.bg }]}>
-        <ActivityIndicator color={theme.color.fgMuted} />
-      </View>
-    );
-  }
+  if (albumQuery.isLoading || tracksQuery.isLoading) return <EmptyState fill loading />;
   if (albumQuery.isError || !albumQuery.data) {
     return (
-      <View style={[styles.center, { backgroundColor: theme.color.bg }]}>
-        <Text style={{ color: theme.color.fgMuted }}>
-          Couldn&apos;t load album.
-        </Text>
-      </View>
+      <EmptyState
+        fill
+        selectable
+        message="Couldn't load album."
+        action={retryAction(albumQuery, tracksQuery)}
+      />
     );
   }
 
@@ -169,11 +161,3 @@ export default function AlbumDetailScreen() {
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});
