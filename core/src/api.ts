@@ -378,10 +378,12 @@ export const api = {
       method: "DELETE",
     }),
 
-  uploadMusic: (files: File[], scope: "personal" | "global") => {
+  // Files are browser `File`s or React Native `{ uri, name, type }` parts.
+  // `append`, not `set`: React Native's FormData has no `set`.
+  uploadMusic: (files: CoverUploadFile[], scope: "personal" | "global") => {
     const fd = new FormData();
-    fd.set("scope", scope);
-    for (const f of files) fd.append("files", f);
+    fd.append("scope", scope);
+    for (const f of files) fd.append("files", f as unknown as Blob);
     return request<UploadResult[]>("/api/library/upload", {
       method: "POST",
       body: fd,

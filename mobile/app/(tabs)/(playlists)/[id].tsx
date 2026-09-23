@@ -26,6 +26,7 @@ import {
   useAuth,
   type Playlist,
   type PlaylistTrackEntry,
+  type PlaylistTracks,
   type SortKey,
   type TrackListItem,
 } from "@music-library/core";
@@ -64,6 +65,12 @@ import { useTheme, type ThemeTokens } from "../../../theme/theme";
 
 const TRACK_ART_SIZE = 40;
 const noop = () => {};
+
+type TracksOverride = {
+  /** The server snapshot the edit was made against. */
+  base: PlaylistTracks;
+  tracks: PlaylistTrackEntry[];
+};
 
 type PlaylistTrackRowModel = {
   key: string;
@@ -121,29 +128,30 @@ export default function PlaylistDetailScreen() {
   );
   const playlist = playlistQuery.data ?? playlistFromList;
 
-  // Local copy of tracks so drag-reorder updates feel instant; we commit the
-  // order via `api.reorderPlaylist` and invalidate on success.
-  const [localTracks, setLocalTracks] = useState<PlaylistTrackEntry[]>([]);
+  // Optimistic reorders and removals show up instantly as an override of the
+  // server list. The override is tied to the snapshot it was made from, so the
+  // next fetched snapshot replaces it without an effect having to reset it.
+  const [override, setOverride] = useState<TracksOverride | null>(null);
   const [reorderMode, setReorderMode] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("custom");
   const [sortAsc, setSortAsc] = useState(true);
-  useEffect(() => {
-    if (tracksQuery.data) {
-      // Query data is the authoritative external playlist snapshot.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setLocalTracks(tracksQuery.data.tracks);
-      // Fresh server data is the cheapest moment to backfill offline
-      // snapshots onto download records that predate them.
-      downloadStore.noteTracks(tracksQuery.data.tracks.map(entryToTrack));
-      return;
-    }
+  const serverData = tracksQuery.data;
+  const activeOverride =
+    override && override.base === serverData ? override : null;
+  const localTracks = useMemo<PlaylistTrackEntry[]>(() => {
+    if (activeOverride) return activeOverride.tracks;
+    if (serverData) return serverData.tracks;
     // No cached track list (evicted or never fetched while online): fall
     // back to the downloaded subset so stored tracks stay browsable and
     // playable offline — a partially downloaded playlist shows its parts.
-    if (offline) {
-      setLocalTracks(downloadedTracks.map(trackToEntry));
-    }
-  }, [tracksQuery.data, offline, downloadedTracks]);
+    return offline ? downloadedTracks.map(trackToEntry) : [];
+  }, [activeOverride, serverData, offline, downloadedTracks]);
+
+  useEffect(() => {
+    // Fresh server data is the cheapest moment to backfill offline snapshots
+    // onto download records that predate them.
+    if (serverData) downloadStore.noteTracks(serverData.tracks.map(entryToTrack));
+  }, [serverData]);
 
   const reorderMutation = useMutation({
     mutationFn: (trackIds: string[]) => api.reorderPlaylist(id!, trackIds),
@@ -178,6 +186,10 @@ export default function PlaylistDetailScreen() {
     (!role || role === "owner" || role === "editor") && !!tracksQuery.data;
   const canDelete = (!role || role === "owner") && !!playlistQuery.data;
   const showReorderMode = canEdit && reorderMode;
+  // Removal is addressed by position, and the server renumbers positions after
+  // every remove and reorder. Until the refetch after a local edit lands, the
+  // positions on screen may point at a different track.
+  const canRemove = canEdit && !activeOverride;
 
   useEffect(() => {
     // Permission changes from the external playlist snapshot terminate a local
@@ -255,20 +267,23 @@ export default function PlaylistDetailScreen() {
     setReorderMode((value) => !value);
   }, [expandDock]);
 
+  const { mutate: reorderTracks } = reorderMutation;
+  const { mutate: removeTrack } = removeMutation;
+
   const onReorder = useCallback(
     ({ from, to }: ReorderableListReorderEvent) => {
+      if (!serverData) return;
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      const previous = localTracks;
       const next = reorderItems(localTracks, from, to);
-      setLocalTracks(next);
-      reorderMutation.mutate(
+      setOverride({ base: serverData, tracks: next });
+      reorderTracks(
         next.map((t) => t.track_id),
         {
-          // Restore the pre-drag order on failure: the sync effect only
-          // re-runs when the query data changes, so without this a failed
-          // reorder would leave the UI diverged from the server order.
+          // Restore the pre-drag order on failure. Nothing refetches after a
+          // failed reorder, so without this the UI would keep an order the
+          // server never saved.
           onError: (error) => {
-            setLocalTracks(previous);
+            setOverride(activeOverride);
             Alert.alert(
               "Couldn't reorder tracks",
               error instanceof Error ? error.message : "Please try again.",
@@ -277,18 +292,20 @@ export default function PlaylistDetailScreen() {
         },
       );
     },
-    [localTracks, reorderMutation],
+    [activeOverride, localTracks, reorderTracks, serverData],
   );
 
   const onRemove = useCallback(
     (position: number) => {
+      if (!serverData) return;
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      // Optimistic local remove; mutation invalidates on success.
-      const previous = localTracks;
-      setLocalTracks((prev) => prev.filter((t) => t.position !== position));
-      removeMutation.mutate(position, {
+      setOverride({
+        base: serverData,
+        tracks: localTracks.filter((t) => t.position !== position),
+      });
+      removeTrack(position, {
         onError: (error) => {
-          setLocalTracks(previous);
+          setOverride(activeOverride);
           Alert.alert(
             "Couldn't remove track",
             error instanceof Error ? error.message : "Please try again.",
@@ -296,7 +313,7 @@ export default function PlaylistDetailScreen() {
         },
       });
     },
-    [localTracks, removeMutation],
+    [activeOverride, localTracks, removeTrack, serverData],
   );
 
   const onDelete = () => {
@@ -472,12 +489,13 @@ export default function PlaylistDetailScreen() {
       <DraggablePlaylistRow
         model={item}
         canEdit={canEdit}
+        canRemove={canRemove}
         theme={theme}
         onPress={onTrackPress}
         onRemove={onRemove}
       />
     ),
-    [canEdit, theme, onTrackPress, onRemove],
+    [canEdit, canRemove, theme, onTrackPress, onRemove],
   );
 
   const renderReadOnlyItem = useCallback(
@@ -486,6 +504,7 @@ export default function PlaylistDetailScreen() {
         entry={item.entry}
         track={item.track}
         canEdit={false}
+        canRemove={false}
         theme={theme}
         onPress={onTrackPress}
         onRemove={noop}
@@ -594,12 +613,14 @@ export default function PlaylistDetailScreen() {
 function DraggablePlaylistRow({
   model,
   canEdit,
+  canRemove,
   theme,
   onPress,
   onRemove,
 }: {
   model: PlaylistTrackRowModel;
   canEdit: boolean;
+  canRemove: boolean;
   theme: ThemeTokens;
   onPress: (track: TrackListItem) => void;
   onRemove: (position: number) => void;
@@ -613,6 +634,7 @@ function DraggablePlaylistRow({
       drag={drag}
       isActive={isActive}
       canEdit={canEdit}
+      canRemove={canRemove}
       theme={theme}
       onPress={onPress}
       onRemove={onRemove}
@@ -626,6 +648,7 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
   drag,
   isActive,
   canEdit,
+  canRemove,
   theme,
   onPress,
   onRemove,
@@ -635,6 +658,7 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
   drag?: () => void;
   isActive?: boolean;
   canEdit: boolean;
+  canRemove: boolean;
   theme: ThemeTokens;
   onPress: (track: TrackListItem) => void;
   onRemove: (position: number) => void;
@@ -697,10 +721,12 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
         <>
           <Pressable
             onPress={handleRemove}
+            disabled={!canRemove}
             hitSlop={8}
-            style={{ padding: 8 }}
+            style={{ padding: 8, opacity: canRemove ? 1 : 0.4 }}
             accessibilityRole="button"
             accessibilityLabel={`Remove ${track.title}`}
+            accessibilityState={{ disabled: !canRemove }}
           >
             <SymbolView
               name="minus.circle.fill"

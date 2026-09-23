@@ -481,14 +481,14 @@ function PadTrackActionsButton({ track }: { track: TrackListItem }) {
     ];
 
     if (actions.hasAlbum) {
-      items.push({ label: "Go to Album", onPress: actions.openAlbum });
+      items.push({ label: "View Album", onPress: actions.openAlbum });
     }
     if (actions.isAdmin) {
       items.push({
         label: "Edit Metadata",
         onPress: actions.openEditMetadata,
       });
-      if (actions.hasAlbum) {
+      if (actions.hasEditableAlbum) {
         items.push({
           label: "Edit Album & Cover",
           onPress: actions.openEditAlbum,

@@ -61,11 +61,20 @@ function push(force: boolean): void {
   });
 }
 
-function settle(trackId: string, bucket: "completed" | "failed"): void {
+function settle(trackId: string, bucket: "completed" | "failed" | "dropped"): void {
   if (!session?.tracks.has(trackId)) return;
   if (session.completed.has(trackId) || session.failed.has(trackId)) return;
-  session[bucket].add(trackId);
   session.byteProgress.delete(trackId);
+  if (bucket === "dropped") {
+    session.tracks.delete(trackId);
+    if (session.tracks.size === 0) {
+      session.instance?.end("immediate").catch(() => {});
+      session = null;
+      return;
+    }
+  } else {
+    session[bucket].add(trackId);
+  }
   if (session.completed.size + session.failed.size >= session.tracks.size) {
     const phase = session.failed.size === 0 ? "done" : "partial";
     session.instance
@@ -83,7 +92,8 @@ function settle(trackId: string, bucket: "completed" | "failed"): void {
  * Bridges the download store to the iOS Live Activity. Owns the notion of a
  * "download session": everything queued between the first `begin` and the
  * moment all of it settles is one activity. The store calls `begin` /
- * `noteProgress` / `noteDone` / `noteFailed` / `clearOrphaned`; everything
+ * `noteProgress` / `noteDone` / `noteFailed` / `noteDropped` / `cancel` /
+ * `clearOrphaned`; everything
  * here no-ops on Android and degrades silently when Live Activities are
  * unavailable, disabled, or dismissed — downloads never depend on it.
  */
@@ -138,6 +148,22 @@ export const downloadLiveActivity = {
 
   noteFailed(trackId: string): void {
     settle(trackId, "failed");
+  },
+
+  /** The track was withdrawn before it started (its last owner went away):
+   *  it no longer counts toward the session at all. */
+  noteDropped(trackId: string): void {
+    settle(trackId, "dropped");
+  },
+
+  /** The store is shutting down (sign-out or account switch): its tasks stop
+   *  without settling, so end the card now rather than leave it on
+   *  "downloading" and merge it into the next account's session. */
+  cancel(): void {
+    if (Platform.OS !== "ios") return;
+    session?.instance?.end("immediate").catch(() => {});
+    session = null;
+    downloadLiveActivity.clearOrphaned();
   },
 
   /** Hydrate-time sweep: a process kill orphans the previous run's activity

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,6 +16,7 @@ import * as Haptics from "expo-haptics";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
+  errorMessage,
   libraryChanged,
   type MusicRoot,
   type RescanStatus,
@@ -46,13 +47,16 @@ export default function AdminLibraryScreen() {
     refetchIntervalInBackground: false,
   });
 
-  // Fire library-wide refresh events when a rescan finishes so other screens
-  // pull updated lists.
+  // Fire a library-wide refresh when a rescan finishes so other screens pull
+  // updated lists. Only on the running → idle transition: every idle status
+  // fetch (mount, focus) would otherwise invalidate the whole library cache.
+  const rescanRunning = rescanQuery.data?.running;
+  const wasRunningRef = useRef(false);
   useEffect(() => {
-    if (!rescanQuery.data?.running && rescanQuery.dataUpdatedAt > 0) {
-      libraryChanged.emit();
-    }
-  }, [rescanQuery.data?.running, rescanQuery.dataUpdatedAt]);
+    if (rescanRunning === undefined) return;
+    if (wasRunningRef.current && !rescanRunning) libraryChanged.emit();
+    wasRunningRef.current = rescanRunning;
+  }, [rescanRunning]);
 
   const startRescan = useMutation({
     mutationFn: () => api.startRescan(),
@@ -60,6 +64,8 @@ export default function AdminLibraryScreen() {
       void queryClient.invalidateQueries({
         queryKey: qk.adminRescanStatus,
       }),
+    onError: (error) =>
+      Alert.alert("Couldn't start rescan", errorMessage(error, "Please try again.")),
   });
 
   const toggleEnabled = useMutation({
@@ -69,6 +75,8 @@ export default function AdminLibraryScreen() {
       void queryClient.invalidateQueries({
         queryKey: qk.adminMusicRoots,
       }),
+    onError: (error) =>
+      Alert.alert("Couldn't update music root", errorMessage(error, "Please try again.")),
   });
 
   const deleteRoot = useMutation({
@@ -80,6 +88,8 @@ export default function AdminLibraryScreen() {
       });
       libraryChanged.emit();
     },
+    onError: (error) =>
+      Alert.alert("Couldn't remove music root", errorMessage(error, "Please try again.")),
   });
 
   const onDelete = (root: MusicRoot) => {
@@ -156,6 +166,16 @@ export default function AdminLibraryScreen() {
         ListEmptyComponent={
           rootsQuery.isLoading ? (
             <EmptyState loading />
+          ) : rootsQuery.isError ? (
+            <EmptyState
+              selectable
+              message="Couldn't load music roots."
+              action={{
+                label: rootsQuery.isFetching ? "Retrying…" : "Try again",
+                disabled: rootsQuery.isFetching,
+                onPress: () => void rootsQuery.refetch(),
+              }}
+            />
           ) : (
             <EmptyState
               selectable

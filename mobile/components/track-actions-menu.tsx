@@ -382,6 +382,19 @@ export function useTrackActionModel(track: TrackListItem) {
 
   const download = useCallback(async () => {
     if (downloading) return;
+    // Ask for the folder before any network work, so the picker opens at once
+    // and backing out of it costs nothing.
+    let selectedDir: Directory;
+    try {
+      selectedDir = await Directory.pickDirectoryAsync();
+    } catch (error) {
+      if (isPickerCancellation(error)) return;
+      Alert.alert(
+        "Download failed",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+      return;
+    }
     setDownloading(true);
     try {
       let detail: TrackDetail | null = null;
@@ -395,7 +408,6 @@ export function useTrackActionModel(track: TrackListItem) {
         extensionForFormat(detail?.format) ??
         (await extensionFromStream(track.id));
       const filename = downloadFilename(track, detail, ext);
-      const selectedDir = await Directory.pickDirectoryAsync();
       const destination = new File(selectedDir, filename);
       const file = await downloadStreamToFile(downloadStreamUrl(track.id), destination);
 
@@ -484,3 +496,12 @@ const styles = StyleSheet.create({
     width: "100%",
   },
 });
+
+/** expo-file-system rejects with this when the user dismisses the picker. */
+function isPickerCancellation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "ERR_FILE_PICKING_CANCELLED"
+  );
+}

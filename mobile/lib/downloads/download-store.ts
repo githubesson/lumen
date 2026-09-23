@@ -49,6 +49,8 @@ const COVER_DIR = "covers";
  *  hero, downscaled by expo-image for rows. */
 const COVER_SIZE = 640;
 const COVER_EXTENSIONS = ["jpg", "png", "webp", "gif", "heic", "avif"];
+/** Artwork is optional; give up on it rather than delay recording the audio. */
+const COVER_FETCH_TIMEOUT_MS = 20_000;
 
 /** An owner that keeps a downloaded track alive; a track is deleted only when
  *  its last owner is removed. Playlists own their tracks as `playlist:<id>`. */
@@ -106,7 +108,7 @@ export class DownloadStore {
     this.coverRequests.clear();
     this.active.clear();
     this.pendingOwners.clear();
-    downloadLiveActivity.clearOrphaned();
+    downloadLiveActivity.cancel();
     this.emit();
   }
 
@@ -125,6 +127,12 @@ export class DownloadStore {
   private listeners = new Set<Listener>();
   private hydrated = false;
   private hydrating: Promise<void> | null = null;
+  /**
+   * Set when hydration could not read the stored index. Persisting would then
+   * replace the real index with this session's partial view and orphan every
+   * file it listed, so writes are skipped until the next launch retries.
+   */
+  private indexUnreadable = false;
   /** Bumped on every mutation; used as the external-store snapshot. */
   private version = 0;
   private ownerIndex: { version: number; owners: Set<DownloadOwner> } | null = null;
@@ -243,9 +251,22 @@ export class DownloadStore {
     // context needed to resume the card doesn't survive the kill).
     downloadLiveActivity.clearOrphaned();
     try {
+      // A read failure (unlike unparseable JSON, which is unrecoverable
+      // anyway) may be transient, so the stored index must survive it.
+      this.indexUnreadable = true;
       const raw = await AsyncStorage.getItem(this.storageKey);
       if (!this.enabled) return;
-      const parsed = raw ? (JSON.parse(raw) as PersistShape) : null;
+      let parsed: PersistShape | null = null;
+      try {
+        parsed = raw ? (JSON.parse(raw) as PersistShape) : null;
+      } catch (error) {
+        diagnosticsLog.append({
+          scope: "store",
+          level: "error",
+          event: "index-corrupt",
+          message: `Discarding an unparseable download index: ${describe(error)}`,
+        });
+      }
       const restoredOwners = new Map(parsed?.pendingOwners ?? []);
       const dir = this.dir;
       let mutated = false;
@@ -285,6 +306,8 @@ export class DownloadStore {
         });
       }
 
+      this.indexUnreadable = false;
+
       // Re-attach to native transfers that survived a process death so their
       // completion still lands in the store. Isolated: a re-attach failure
       // must not break hydration.
@@ -299,7 +322,14 @@ export class DownloadStore {
             continue;
           }
           const trackId = meta.track.id;
-          if (this.records.has(trackId)) continue;
+          if (this.records.has(trackId)) {
+            // Already stored: this transfer is redundant. Left alone it would
+            // keep downloading into a stray .part file, and iOS would never
+            // hear that the background session finished.
+            void task.stop().catch(() => {});
+            void completeHandler(task.id);
+            continue;
+          }
           this.tasks.add(task);
           this.active.add(trackId);
           this.pendingOwners.set(trackId, new Set(restoredOwners.get(trackId) ?? (meta.owners?.length ? meta.owners : ["track"])));
@@ -334,8 +364,9 @@ export class DownloadStore {
       }
       if (mutated) await this.persist();
     } catch (error) {
-      // Best effort — a corrupt store just starts empty, but silently losing
-      // the whole index looks identical to "nothing was ever downloaded".
+      // The session starts empty but the stored index is left alone (see
+      // `indexUnreadable`). Log it: an empty store looks identical to
+      // "nothing was ever downloaded".
       diagnosticsLog.append({
         scope: "store",
         level: "error",
@@ -372,6 +403,15 @@ export class DownloadStore {
 
   private async writeSnapshot(): Promise<void> {
     if (!this.enabled) return;
+    if (this.indexUnreadable) {
+      diagnosticsLog.append({
+        scope: "store",
+        level: "warn",
+        event: "persist-skipped",
+        message: "Not saving the download index: it could not be read at launch.",
+      });
+      return;
+    }
     try {
       const records = [...this.records.values()];
       const pendingOwners: [string, DownloadOwner[]][] = [];
@@ -812,6 +852,7 @@ export class DownloadStore {
       if (this.pendingOwners.get(track.id)?.size === 0) {
         this.active.delete(track.id);
         this.pendingOwners.delete(track.id);
+        downloadLiveActivity.noteDropped(track.id);
         this.emit();
         continue;
       }
@@ -898,6 +939,7 @@ export class DownloadStore {
   }
 
   private async fetchCover(track: TrackListItem, key: string): Promise<string | undefined> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       for (const extension of COVER_EXTENSIONS) {
         const filename = `${key}.${extension}`;
@@ -907,8 +949,13 @@ export class DownloadStore {
       // so credentials only go to our own origin. Off-origin artwork is still
       // fetched, just anonymously.
       const coverUrl = trackCoverUrl(track, COVER_SIZE);
+      // finalize() waits on the artwork before it records the audio, so a
+      // stalled cover request must not hold the track in "downloading".
+      const abort = new AbortController();
+      timeout = setTimeout(() => abort.abort(), COVER_FETCH_TIMEOUT_MS);
       const response = await fetch(coverUrl, {
         credentials: isApiOrigin(coverUrl) ? "include" : "omit",
+        signal: abort.signal,
       });
       if (!this.enabled) return undefined;
       if (!response.ok) {
@@ -958,6 +1005,8 @@ export class DownloadStore {
         title: trackLabel(track),
       });
       return undefined;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 }

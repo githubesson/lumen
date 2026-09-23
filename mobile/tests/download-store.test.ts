@@ -28,6 +28,7 @@ const h = vi.hoisted(() => {
     tasks: [] as FakeTask[],
     writes: [] as { key: string; value: string }[],
     beforeWrite: async () => {},
+    readError: null as Error | null,
     listPlaylistTracks: vi.fn(),
     baseUrl: "https://api.test",
     cookieRead: async () => ({}),
@@ -39,7 +40,10 @@ const h = vi.hoisted(() => {
 
 vi.mock("@react-native-async-storage/async-storage", () => ({
   default: {
-    getItem: async (key: string) => h.kv.get(key) ?? null,
+    getItem: async (key: string) => {
+      if (h.readError) throw h.readError;
+      return h.kv.get(key) ?? null;
+    },
     setItem: async (key: string, value: string) => {
       h.writes.push({ key, value });
       await h.beforeWrite();
@@ -178,6 +182,8 @@ vi.mock("../lib/downloads/live-activity", () => ({
     noteProgress: vi.fn(),
     noteDone: vi.fn(),
     noteFailed: vi.fn(),
+    noteDropped: vi.fn(),
+    cancel: vi.fn(),
     clearOrphaned: vi.fn(),
   },
 }));
@@ -249,13 +255,41 @@ beforeEach(() => {
   h.tasks.length = 0;
   h.writes.length = 0;
   h.beforeWrite = async () => {};
+  h.readError = null;
   h.listPlaylistTracks.mockReset().mockResolvedValue({ tracks: [] });
   h.fetchImpl = async () => new Response(null, { status: 404 });
   vi.clearAllMocks();
   vi.mocked(getExistingDownloadTasks).mockResolvedValue([]);
 });
 
+const INDEX_KEY = `offline-downloads.v2:${JSON.stringify(["https://api.test", "alice"])}`;
+
 describe("downloadStore", () => {
+  it("never overwrites an index it could not read", async () => {
+    const stored = JSON.stringify({
+      records: [{ trackId: "kept", filename: "kept.mp3", size: 10, downloadedAt: 1, owners: ["track"] }],
+    });
+    h.kv.set(INDEX_KEY, stored);
+    h.readError = new Error("disk busy");
+    const store = await freshStore();
+    await store.hydrate();
+
+    await store.downloadTrack(t("a"), "track");
+    await finishTask(store, "a", MP3_HEAD);
+    expect(store.isDownloaded("a")).toBe(true);
+    expect(h.kv.get(INDEX_KEY)).toBe(stored);
+  });
+
+  it("replaces an unparseable index", async () => {
+    h.kv.set(INDEX_KEY, "{not json");
+    const store = await freshStore();
+    await store.hydrate();
+
+    await store.downloadTrack(t("a"), "track");
+    await finishTask(store, "a", MP3_HEAD);
+    expect(JSON.parse(h.kv.get(INDEX_KEY)!).records).toHaveLength(1);
+  });
+
   it("drops hydrated records whose audio file vanished", async () => {
     h.kv.set(
       `offline-downloads.v2:${JSON.stringify(["https://api.test", "alice"])}`,

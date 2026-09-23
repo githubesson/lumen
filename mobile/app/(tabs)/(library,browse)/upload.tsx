@@ -12,7 +12,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as Haptics from "expo-haptics";
 import {
   ApiError,
-  getBaseUrl,
+  api,
   libraryChanged,
   useAuth,
   type UploadResult,
@@ -36,10 +36,8 @@ type Scope = "personal" | "global";
 
 /**
  * Mobile upload screen. Pick audio files with the system document picker,
- * pick a scope (personal unless admin), and POST multipart/form-data directly
- * to `/api/library/upload` on the configured backend. The shared API helper's
- * `File[]` signature doesn't work on RN (no `File` constructor); we build the
- * RN-style `{ uri, name, type }` FormData parts here.
+ * pick a scope (personal unless admin), and upload them through the shared
+ * API client as RN-style `{ uri, name, type }` multipart parts.
  */
 export default function UploadScreen() {
   const theme = useTheme();
@@ -89,26 +87,10 @@ export default function UploadScreen() {
     setUploading(true);
     setError(null);
     try {
-      const fd = new FormData();
-      fd.append("scope", scope);
-      for (const f of files) {
-        // RN FormData accepts this shape for multipart file parts.
-        fd.append("files", {
-          uri: f.uri,
-          name: f.name,
-          type: f.type,
-        } as unknown as Blob);
-      }
-      const res = await fetch(`${getBaseUrl()}/api/library/upload`, {
-        method: "POST",
-        credentials: "include",
-        body: fd,
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new ApiError(res.status, text.trim() || res.statusText);
-      }
-      const json = (await res.json()) as UploadResult[];
+      const json = await api.uploadMusic(
+        files.map(({ uri, name, type }) => ({ uri, name, type })),
+        scope,
+      );
       setResults(json);
       // The root layout's libraryChanged subscriber invalidates the browse
       // lists and user-scoped queries, so emitting is the whole refresh.

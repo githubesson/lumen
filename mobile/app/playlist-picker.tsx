@@ -79,19 +79,23 @@ export default function PlaylistPickerScreen() {
       if (!trackId) throw new Error("Missing track id.");
       return api.addPlaylistTracks(playlist.id, [trackId]);
     },
-    onSuccess: async (_data, playlist) => {
+    onSuccess: (_data, playlist) => {
       const nextRecent = [
         playlist.id,
         ...recentIds.filter((id) => id !== playlist.id),
       ].slice(0, MAX_RECENT_PLAYLISTS);
       setRecentIds(nextRecent);
-      await AsyncStorage.setItem(
+      // The track is already added; a failed write only loses the ordering
+      // hint, so it must not turn into a "Couldn't add track" alert.
+      void AsyncStorage.setItem(
         recentPlaylistsKey,
         JSON.stringify(nextRecent),
-      );
+      ).catch(() => {});
       void queryClient.invalidateQueries({
         queryKey: qk.playlistTracks(userId, playlist.id),
       });
+      // updated_at moved, which drives the "Recently Updated" ordering.
+      void queryClient.invalidateQueries({ queryKey: qk.playlists(userId) });
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.back();
     },
@@ -192,7 +196,10 @@ export default function PlaylistPickerScreen() {
         <PlaylistPickerRow
           playlist={item.playlist}
           disabled={addMutation.isPending}
-          selected={addMutation.variables?.id === item.playlist.id}
+          selected={
+            addMutation.isPending &&
+            addMutation.variables?.id === item.playlist.id
+          }
           onPress={selectPlaylist}
         />
       );

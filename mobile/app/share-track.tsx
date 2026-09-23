@@ -231,10 +231,11 @@ export default function ShareTrackScreen() {
     trackQuery.data,
   ]);
 
+  const { mutateAsync: generateShareUrl } = generateMutation;
   const getShareUrl = useCallback(async () => {
     if (shareUrl) return shareUrl;
-    return await generateMutation.mutateAsync();
-  }, [generateMutation, shareUrl]);
+    return await generateShareUrl();
+  }, [generateShareUrl, shareUrl]);
 
   const markStickerReady = useCallback(() => {
     const resolve = stickerReadyRef.current;
@@ -401,8 +402,14 @@ export default function ShareTrackScreen() {
 
   const shareLink = useCallback(async () => {
     if (!picked) return;
+    let url: string;
     try {
-      const url = await getShareUrl();
+      url = await getShareUrl();
+    } catch {
+      // The mutation's onError already explained the failure.
+      return;
+    }
+    try {
       const title = trackQuery.data?.title ?? "Shared track";
       await NativeShare.share({
         title,
@@ -412,11 +419,9 @@ export default function ShareTrackScreen() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
       if (isShareDismissal(error)) return;
-      if (!generateMutation.isError) {
-        Alert.alert("Couldn't share link", "Please try again.");
-      }
+      Alert.alert("Couldn't share link", "Please try again.");
     }
-  }, [generateMutation.isError, getShareUrl, picked, trackQuery.data]);
+  }, [getShareUrl, picked, trackQuery.data]);
 
   const shareInstagramStory = useCallback(async (mode: StoryBackgroundMode) => {
     if (!picked || storyBusy) return;
