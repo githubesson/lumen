@@ -466,6 +466,10 @@ export class DownloadStore {
     track: TrackListItem,
     headers: Record<string, string>,
   ): Promise<void> {
+    // Callers await the cookie read first, and the store may have been retired
+    // meanwhile. Check before touching the filesystem: a retired store must
+    // not delete a .part file that a newer store for the same account owns.
+    if (!this.enabled) return;
     this.ensureDir();
     const partName = `${sanitizeId(track.id)}.part`;
     try {
@@ -475,7 +479,6 @@ export class DownloadStore {
       // A stale temp file only risks a failed rename; finalize re-checks.
     }
 
-    if (!this.enabled) return;
     const meta: TaskMeta = {
       accountKey: this.accountKey,
       // queueOwner ran before startTask, so pendingOwners holds the owner.
