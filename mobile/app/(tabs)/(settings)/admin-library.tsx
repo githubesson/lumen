@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -13,7 +13,12 @@ import {
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import {
   api,
   errorMessage,
@@ -27,6 +32,50 @@ import { Card } from "../../../components/primitives";
 import { qk } from "../../../lib/query-keys";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
 
+const RESCAN_POLL_MS = 2000;
+const MAX_RESCAN_POLL_FAILURES = 5;
+
+const rescanStatusQuery = {
+  queryKey: qk.adminRescanStatus,
+  queryFn: ({ signal }: { signal: AbortSignal }) => api.rescanStatus({ signal }),
+  staleTime: 0,
+};
+
+let rescanWatch: Promise<void> | null = null;
+
+/**
+ * Polls the rescan status through the query cache until the scan is idle, then
+ * fires one library-wide refresh so other screens pull updated lists. It runs
+ * outside the screen so leaving Admin → Library mid-scan still refreshes, and
+ * it starts from a known scan rather than reacting to idle statuses, since
+ * every mount and focus fetch reports idle and would otherwise invalidate the
+ * whole library cache. One watcher at a time.
+ */
+function watchRescan(queryClient: QueryClient): void {
+  if (rescanWatch) return;
+  rescanWatch = (async () => {
+    let failures = 0;
+    for (;;) {
+      try {
+        const status = await queryClient.fetchQuery(rescanStatusQuery);
+        failures = 0;
+        if (!status.running) {
+          libraryChanged.emit();
+          return;
+        }
+      } catch {
+        // Give up on a status endpoint that keeps failing (signed out, lost
+        // admin, server gone) rather than poll it forever.
+        failures += 1;
+        if (failures >= MAX_RESCAN_POLL_FAILURES) return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, RESCAN_POLL_MS));
+    }
+  })().finally(() => {
+    rescanWatch = null;
+  });
+}
+
 export default function AdminLibraryScreen() {
   const theme = useTheme();
   const router = useRouter();
@@ -37,43 +86,19 @@ export default function AdminLibraryScreen() {
     queryFn: ({ signal }) => api.listMusicRoots({ signal }),
   });
 
-  const rescanQuery = useQuery({
-    queryKey: qk.adminRescanStatus,
-    queryFn: ({ signal }) => api.rescanStatus({ signal }),
-    staleTime: 0,
-    // Poll every 2s while rescanning so progress updates live.
-    refetchInterval: (q) =>
-      (q.state.data as RescanStatus | undefined)?.running ? 2000 : false,
-    refetchIntervalInBackground: false,
-  });
+  const rescanQuery = useQuery(rescanStatusQuery);
 
-  // Fire a library-wide refresh when a rescan finishes so other screens pull
-  // updated lists. Only when a scan is known to have run: every idle status
-  // fetch (mount, focus) would otherwise invalidate the whole library cache.
-  // A scan counts as run once it was seen running, or once this screen started
-  // it (a small library can finish before the first status poll sees it).
-  const rescanRunning = rescanQuery.data?.running;
-  const scanPendingRef = useRef(false);
+  // A scan already running when the screen opens (started earlier, or from
+  // another client) gets watched to completion too. The watcher's polling is
+  // also what keeps the progress below live.
+  const rescanRunning = rescanQuery.data?.running === true;
   useEffect(() => {
-    if (rescanRunning === undefined) return;
-    if (rescanRunning) {
-      scanPendingRef.current = true;
-      return;
-    }
-    if (scanPendingRef.current) {
-      scanPendingRef.current = false;
-      libraryChanged.emit();
-    }
-  }, [rescanRunning, rescanQuery.dataUpdatedAt]);
+    if (rescanRunning) watchRescan(queryClient);
+  }, [queryClient, rescanRunning]);
 
   const startRescan = useMutation({
     mutationFn: () => api.startRescan(),
-    onSuccess: () => {
-      scanPendingRef.current = true;
-      void queryClient.invalidateQueries({
-        queryKey: qk.adminRescanStatus,
-      });
-    },
+    onSuccess: () => watchRescan(queryClient),
     onError: (error) =>
       Alert.alert("Couldn't start rescan", errorMessage(error, "Please try again.")),
   });
