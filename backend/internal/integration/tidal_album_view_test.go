@@ -114,6 +114,33 @@ func TestLibraryAlbumShowsFullTIDALRelease(t *testing.T) {
 	if head.TrackCount != 4 || head.SavedCount != 3 || head.TIDALAlbumID != rel || len(head.ArtistNames) != 2 || head.ReleaseYear != 2021 {
 		t.Fatalf("album = %+v", head)
 	}
+	// An admin edit returns the album as its page shows it, release fields
+	// included, so the page doesn't lose them (or its download control).
+	editor := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO users(id, username, password_hash, role) VALUES($1, $2, 'test', 'admin')`,
+		editor, "albumedit-"+run); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, editor) })
+	editToken, _, err := sessions.Create(ctx, editor, httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch := httptest.NewRequest(http.MethodPatch, "/api/albums/"+album.String(), strings.NewReader(`{"release_year":2022}`))
+	patch.Header.Set("Content-Type", "application/json")
+	patch.AddCookie(&http.Cookie{Name: "session", Value: editToken})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, patch)
+	var edited struct {
+		TIDALAlbumID string `json:"tidal_album_id"`
+		SavedCount   int    `json:"saved_count"`
+		TrackCount   int    `json:"track_count"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &edited) != nil ||
+		edited.TIDALAlbumID != rel || edited.SavedCount != 3 || edited.TrackCount != 4 {
+		t.Fatalf("edit response: %d %s", rec.Code, rec.Body)
+	}
+
 	var tracks []struct {
 		ID     string `json:"id"`
 		Source string `json:"source"`

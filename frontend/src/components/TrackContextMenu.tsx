@@ -168,7 +168,7 @@ export default function TrackContextMenu({
   };
 
   const runDownload = async () => {
-    if (downloading) return;
+    if (downloading || track.unavailable) return;
     setDownloading(true);
     setError(null);
     try {
@@ -362,7 +362,8 @@ export default function TrackContextMenu({
         role="menuitem"
         className="ctx-item"
         onClick={() => void runDownload()}
-        disabled={downloading}
+        disabled={downloading || track.unavailable}
+        title={track.unavailable ? "No longer on TIDAL" : undefined}
       >
         <ArrowDownTrayIcon className="size-3.5" />
         <span>{downloading ? "Preparing download..." : "Download file"}</span>

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -117,28 +118,38 @@ func (h *Browse) GetAlbum(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	out := makeAlbumResp(a)
-	merged, release, ok, err := libraryAlbumMerge(r.Context(), h.Library, a, u.ID)
+	out, err := albumDetailResp(r.Context(), h.Library, a, u.ID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	if ok {
-		out.TIDALAlbumID = a.TIDALAlbumID
-		out.TrackCount = len(merged.Tracks)
-		out.SavedCount = merged.SavedCount
-		out.DurationMS = merged.DurationMS
-		if n, err := h.Library.TIDALAlbumQueued(r.Context(), a.TIDALAlbumID); err == nil {
-			out.QueuedCount = n
-		}
-		if len(release.Artists) > 0 {
-			out.ArtistNames = release.Artists
-		}
-		if out.ReleaseYear == 0 {
-			out.ReleaseYear = release.ReleaseYear
-		}
-	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// albumDetailResp is a single album as its page shows it: for an album that
+// copies a TIDAL release, with the whole release's counts, the release's
+// artists, and queued downloads. Every endpoint returning the album the page
+// displays (get, edit, cover changes) uses it, so an edit doesn't drop them.
+func albumDetailResp(ctx context.Context, lib *library.Store, a *library.AlbumDetail, viewerID uuid.UUID) (albumListResp, error) {
+	out := makeAlbumResp(a)
+	merged, release, ok, err := libraryAlbumMerge(ctx, lib, a, viewerID)
+	if err != nil || !ok {
+		return out, err
+	}
+	out.TIDALAlbumID = a.TIDALAlbumID
+	out.TrackCount = len(merged.Tracks)
+	out.SavedCount = merged.SavedCount
+	out.DurationMS = merged.DurationMS
+	if n, err := lib.TIDALAlbumQueued(ctx, a.TIDALAlbumID); err == nil {
+		out.QueuedCount = n
+	}
+	if len(release.Artists) > 0 {
+		out.ArtistNames = release.Artists
+	}
+	if out.ReleaseYear == 0 {
+		out.ReleaseYear = release.ReleaseYear
+	}
+	return out, nil
 }
 
 func (h *Browse) ListAlbumTracks(w http.ResponseWriter, r *http.Request) {
@@ -218,7 +229,12 @@ func (h *Browse) PatchAlbum(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, makeAlbumResp(a))
+	out, err := albumDetailResp(r.Context(), h.Library, a, u.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Browse) ListArtists(w http.ResponseWriter, r *http.Request) {

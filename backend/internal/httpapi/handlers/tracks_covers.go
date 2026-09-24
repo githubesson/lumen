@@ -166,7 +166,12 @@ func (h *Tracks) PutAlbumCover(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, makeAlbumResp(a))
+	out, err := albumDetailResp(r.Context(), h.Library, a, u.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // DeleteAlbumCover clears an album's cover art, reverting it to the
@@ -197,7 +202,12 @@ func (h *Tracks) DeleteAlbumCover(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, makeAlbumResp(a))
+	out, err := albumDetailResp(r.Context(), h.Library, a, u.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 type signCoverResp struct {

@@ -199,7 +199,7 @@ function TrackActionItems({
         <Button
           label="Play"
           systemImage="play.fill"
-          modifiers={[swiftDisabled(!actions.canPlay)]}
+          modifiers={[swiftDisabled(!actions.available)]}
           onPress={actions.play}
         />
         <Button
@@ -230,7 +230,7 @@ function TrackActionItems({
         <Button
           label={actions.downloading ? "Downloading..." : "Download File..."}
           systemImage="arrow.down.doc"
-          modifiers={[swiftDisabled(actions.downloading)]}
+          modifiers={[swiftDisabled(actions.downloading || !actions.available)]}
           onPress={actions.download}
         />
       </Section>
@@ -384,7 +384,7 @@ export function useTrackActionModel(track: TrackListItem) {
   }, [router, track.id]);
 
   const download = useCallback(async () => {
-    if (downloading) return;
+    if (downloading || track.unavailable) return;
     // Ask for the folder before any network work, so the picker opens at once
     // and backing out of it costs nothing.
     let selectedDir: Directory;
@@ -482,7 +482,8 @@ export function useTrackActionModel(track: TrackListItem) {
     openPlaylistPicker,
     openShare,
     owned: Boolean(track.owned),
-    canPlay: !track.unavailable,
+    // Dropped from TIDAL with no library copy: no stream to play or save.
+    available: !track.unavailable,
     play,
     toggleFavorite,
   };
