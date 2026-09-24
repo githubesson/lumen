@@ -330,6 +330,7 @@ export function PlaylistMoreMenu({
   deletePending,
   onOpenCollaborators,
   onDelete,
+  serverSave,
   trigger,
 }: {
   theme: ThemeTokens;
@@ -345,6 +346,8 @@ export function PlaylistMoreMenu({
   deletePending: boolean;
   onOpenCollaborators: () => void;
   onDelete: () => void;
+  /** Admin-only: save the playlist's TIDAL tracks into the server library. */
+  serverSave?: { enabled: boolean; pending: boolean; onToggle: () => void };
   trigger: ReactNode;
 }) {
   const swiftUI = getOptionalSwiftUI();
@@ -443,6 +446,16 @@ export function PlaylistMoreMenu({
             ...(collaborative
               ? [{ text: "Collaborators", onPress: onOpenCollaborators }]
               : []),
+            ...(serverSave && !serverSave.pending
+              ? [
+                  {
+                    text: serverSave.enabled
+                      ? "Stop Saving TIDAL to Server"
+                      : "Save TIDAL to Server",
+                    onPress: serverSave.onToggle,
+                  },
+                ]
+              : []),
             ...(canDelete
               ? [
                   {
@@ -504,6 +517,14 @@ export function PlaylistMoreMenu({
             label="Collaborators"
             systemImage="person.2"
             onPress={onOpenCollaborators}
+          />
+        ) : null}
+        {serverSave ? (
+          <swiftUI.Button
+            label="Save TIDAL to Server"
+            systemImage={serverSave.enabled ? "checkmark" : "externaldrive"}
+            modifiers={[swiftDisabled(serverSave.pending)]}
+            onPress={serverSave.onToggle}
           />
         ) : null}
         {canDelete ? (

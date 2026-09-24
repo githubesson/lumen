@@ -1,0 +1,393 @@
+package tidaldl
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/githubesson/lumen/internal/downloadfile"
+	"github.com/githubesson/lumen/internal/ingest"
+	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/mediaembed"
+	"github.com/githubesson/lumen/internal/musicroots"
+	"github.com/githubesson/lumen/internal/pathsafe"
+	"github.com/githubesson/lumen/internal/pinscan"
+	"github.com/githubesson/lumen/internal/tidal"
+)
+
+const (
+	defaultPollInterval = 5 * time.Minute
+	defaultFileTimeout  = 30 * time.Minute
+	batchSize           = 20
+	// maxBatchesPerWake bounds one drain so a stuck candidate (one whose
+	// adoption keeps succeeding without leaving the queue) cannot spin.
+	maxBatchesPerWake = 50
+)
+
+// Worker downloads the TIDAL tracks of opted-in playlists one at a time.
+type Worker struct {
+	Store   *Store
+	TIDAL   *tidal.Client
+	Ingest  *ingest.Service
+	Library *library.Store
+	Roots   *musicroots.Store
+	// PrimaryRoot is MUSIC_PATH, the destination root when Settings.RootID is nil.
+	PrimaryRoot  string
+	Logger       *slog.Logger
+	PollInterval time.Duration
+	FileTimeout  time.Duration
+
+	kickOnce sync.Once
+	kick     chan struct{}
+
+	// Test seams; nil means TIDAL and mediaembed.Embed.
+	source source
+	tag    tagFunc
+}
+
+// source is the part of *tidal.Client the worker uses.
+type source interface {
+	Track(ctx context.Context, id string) (tidal.Track, error)
+	FileResponse(ctx context.Context, id string, incoming *http.Request) (*http.Response, error)
+	CoverBytes(ctx context.Context, coverURL string) ([]byte, error)
+}
+
+type tagFunc func(ctx context.Context, r io.ReadCloser, cover []byte, meta mediaembed.Metadata, hint mediaembed.FormatHint) (*mediaembed.Result, error)
+
+func (w *Worker) src() source {
+	if w.source != nil {
+		return w.source
+	}
+	return w.TIDAL
+}
+
+func (w *Worker) kickCh() chan struct{} {
+	w.kickOnce.Do(func() { w.kick = make(chan struct{}, 1) })
+	return w.kick
+}
+
+// Kick wakes the worker early, e.g. after tracks are added to an opted-in
+// playlist. It never blocks; wakes that arrive mid-drain coalesce.
+func (w *Worker) Kick() {
+	if w == nil {
+		return
+	}
+	select {
+	case w.kickCh() <- struct{}{}:
+	default:
+	}
+}
+
+func (w *Worker) Run(ctx context.Context) {
+	if w == nil || w.Store == nil || (w.TIDAL == nil && w.source == nil) {
+		return
+	}
+	interval := w.PollInterval
+	if interval <= 0 {
+		interval = defaultPollInterval
+	}
+	timer := time.NewTimer(pinscan.InitialScanDelay)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		case <-w.kickCh():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		}
+		w.drain(ctx)
+		timer.Reset(interval)
+	}
+}
+
+func (w *Worker) log() *slog.Logger {
+	if w.Logger != nil {
+		return w.Logger
+	}
+	return slog.Default()
+}
+
+func (w *Worker) drain(ctx context.Context) {
+	if w.tag == nil && !mediaembed.Available() {
+		w.log().Warn("tidal auto-download paused: ffmpeg is not installed")
+		return
+	}
+	var dest string
+	for batch := 0; batch < maxBatchesPerWake; batch++ {
+		pending, err := w.Store.Pending(ctx, batchSize)
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				w.log().Warn("tidal auto-download queue fetch failed", "err", err)
+			}
+			return
+		}
+		if len(pending) == 0 {
+			return
+		}
+		if dest == "" {
+			// Resolved per drain, not per track: an admin changing the
+			// destination mid-drain takes effect on the next wake.
+			if dest, err = w.Destination(ctx); err != nil {
+				w.log().Warn("tidal auto-download destination unavailable", "err", err)
+				return
+			}
+		}
+		failed := 0
+		for _, c := range pending {
+			if ctx.Err() != nil {
+				return
+			}
+			if err := w.process(ctx, c, dest); err != nil {
+				if errors.Is(err, tidal.ErrNotConfigured) {
+					w.log().Warn("tidal auto-download paused: tidal proxy is not configured")
+					return
+				}
+				if ctx.Err() != nil {
+					return
+				}
+				failed++
+				w.log().Warn("tidal auto-download failed", "tidal_track", c.TIDALID, "err", err)
+			}
+		}
+		// A batch with no successes means TIDAL or the database is having a
+		// bad time, and errors that could not be recorded would hand the same
+		// rows straight back. Leave the rest for the next wake.
+		if failed == len(pending) {
+			return
+		}
+	}
+}
+
+// Destination is the absolute directory downloads are written under.
+func (w *Worker) Destination(ctx context.Context) (string, error) {
+	settings, err := w.Store.Settings(ctx)
+	if err != nil {
+		return "", err
+	}
+	root := w.PrimaryRoot
+	if settings.RootID != nil {
+		if w.Roots == nil {
+			return "", errors.New("music roots are not available")
+		}
+		r, err := w.Roots.Get(ctx, *settings.RootID)
+		if err != nil {
+			return "", fmt.Errorf("destination root: %w", err)
+		}
+		root = r.Path
+	}
+	return ResolveDestination(root, settings.Subdir)
+}
+
+// ResolveDestination joins a music root and a relative subdirectory,
+// refusing any subdirectory that escapes the root.
+func ResolveDestination(root, subdir string) (string, error) {
+	if strings.TrimSpace(root) == "" {
+		return "", errors.New("no music root configured")
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	subdir = strings.TrimSpace(subdir)
+	if subdir == "" || filepath.Clean(subdir) == "." {
+		return abs, nil
+	}
+	if filepath.IsAbs(subdir) {
+		return "", errors.New("subdir must be relative")
+	}
+	dest, err := pathsafe.CleanSubdir(abs, subdir)
+	if err != nil {
+		return "", errors.New("subdir escapes the music root")
+	}
+	return dest, nil
+}
+
+// process gives one remote row a local copy — reusing one already in the
+// library when possible — and moves its references onto it. Failures are
+// recorded for backoff; only a missing TIDAL proxy is returned unrecorded so
+// the drain can stop without marking every track failed.
+func (w *Worker) process(ctx context.Context, c Candidate, dest string) error {
+	if localID, err := w.Library.DownloadedTIDALTrack(ctx, c.TIDALID); err == nil {
+		// Saved earlier; this row reappeared (e.g. re-added by a stale client).
+		return w.Store.Adopt(ctx, Adoption{RowID: c.RowID, TIDALID: c.TIDALID, LocalID: localID})
+	} else if !errors.Is(err, library.ErrNotFound) {
+		return err
+	}
+
+	meta, err := w.src().Track(ctx, c.TIDALID)
+	if err != nil {
+		if errors.Is(err, tidal.ErrNotConfigured) {
+			return err
+		}
+		return w.fail(ctx, c, tidal.Track{}, fmt.Errorf("metadata: %w", err))
+	}
+	artist := strings.Join(meta.Artists, ", ")
+
+	localID, found, err := w.Store.LocalByISRC(ctx, meta.ISRC)
+	if err != nil {
+		return err
+	}
+	if found {
+		w.log().Info("tidal auto-download matched library track by ISRC",
+			"tidal_track", c.TIDALID, "track", localID, "isrc", meta.ISRC)
+		return w.Store.Adopt(ctx, Adoption{
+			RowID: c.RowID, TIDALID: c.TIDALID, LocalID: localID,
+			Status: StatusExisting, Title: meta.Title, Artist: artist,
+		})
+	}
+
+	path, err := w.download(ctx, meta, dest)
+	if err != nil {
+		if errors.Is(err, tidal.ErrNotConfigured) {
+			return err
+		}
+		return w.fail(ctx, c, meta, err)
+	}
+	out := w.Ingest.IngestFile(ctx, path)
+	if out.Err != nil {
+		return w.fail(ctx, c, meta, fmt.Errorf("ingest: %w", out.Err))
+	}
+	if out.TrackID == uuid.Nil {
+		return w.fail(ctx, c, meta, errors.New("ingest skipped the downloaded file"))
+	}
+	status := StatusExisting
+	if out.Inserted {
+		status = StatusDownloaded
+		w.applyArtists(ctx, out.TrackID, meta)
+	}
+	if err := w.Store.Adopt(ctx, Adoption{
+		RowID: c.RowID, TIDALID: c.TIDALID, LocalID: out.TrackID,
+		Status: status, FilePath: out.Path, Title: meta.Title, Artist: artist,
+	}); err != nil {
+		return err
+	}
+	w.log().Info("tidal auto-download saved track",
+		"tidal_track", c.TIDALID, "track", out.TrackID, "path", out.Path, "status", status)
+	return nil
+}
+
+func (w *Worker) fail(ctx context.Context, c Candidate, meta tidal.Track, cause error) error {
+	if err := w.Store.RecordFailure(ctx, c.TIDALID, meta.Title, strings.Join(meta.Artists, ", "), cause); err != nil {
+		return errors.Join(cause, err)
+	}
+	return cause
+}
+
+// download writes a tagged copy of the track under dest and returns its path.
+func (w *Worker) download(ctx context.Context, meta tidal.Track, dest string) (string, error) {
+	timeout := w.FileTimeout
+	if timeout <= 0 {
+		timeout = defaultFileTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	resp, err := w.src().FileResponse(ctx, meta.ID, nil)
+	if err != nil {
+		return "", err
+	}
+	var cover []byte
+	if meta.CoverURL != "" {
+		if cover, err = w.src().CoverBytes(ctx, meta.CoverURL); err != nil {
+			w.log().Warn("tidal auto-download cover fetch failed; saving without cover",
+				"tidal_track", meta.ID, "err", err)
+			cover = nil
+		}
+	}
+	tag := w.tag
+	if tag == nil {
+		tag = mediaembed.Embed
+	}
+	// The tagger closes resp.Body.
+	tagged, err := tag(ctx, resp.Body, cover, mediaembed.Metadata{
+		Title:       meta.Title,
+		Artist:      strings.Join(meta.Artists, "; "),
+		Album:       meta.AlbumTitle,
+		AlbumArtist: meta.AlbumArtist,
+		Year:        meta.Year,
+		TrackNo:     meta.TrackNo,
+		DiscNo:      meta.DiscNo,
+		ISRC:        meta.ISRC,
+	}, mediaembed.HintFromContentType(resp.Header.Get("Content-Type")))
+	if err != nil {
+		return "", fmt.Errorf("tag: %w", err)
+	}
+	defer tagged.Cleanup()
+
+	target := filepath.Join(dest, TrackPath(meta)+tagged.Ext)
+	path, _, err := downloadfile.Save(tagged.File, target)
+	if err != nil {
+		return path, fmt.Errorf("save: %w", err)
+	}
+	return path, nil
+}
+
+// applyArtists replaces the artists ingest parsed from the tags with TIDAL's
+// list: ingest splits on ", " and " & ", which mangles names like
+// "Simon & Garfunkel", and does not split the "; " the tag was written with.
+func (w *Worker) applyArtists(ctx context.Context, trackID uuid.UUID, meta tidal.Track) {
+	if len(meta.Artists) == 0 {
+		return
+	}
+	artists := meta.Artists
+	if len(artists) > library.MaxTrackArtists {
+		artists = artists[:library.MaxTrackArtists]
+	}
+	if err := w.Library.UpdateTrack(ctx, trackID, library.TrackPatch{Artists: &artists}); err != nil {
+		w.log().Warn("tidal auto-download artist update failed", "track", trackID, "err", err)
+	}
+}
+
+// TrackPath is the library-relative path, without extension, for a track:
+// "Album Artist/Album/01 - Title", with the disc number prefixed on
+// multi-disc releases.
+func TrackPath(t tidal.Track) string {
+	artist := t.AlbumArtist
+	if strings.TrimSpace(artist) == "" && len(t.Artists) > 0 {
+		artist = t.Artists[0]
+	}
+	if strings.TrimSpace(artist) == "" {
+		artist = "Unknown Artist"
+	}
+	album := t.AlbumTitle
+	if strings.TrimSpace(album) == "" {
+		album = "Singles"
+	}
+	title := t.Title
+	if strings.TrimSpace(title) == "" {
+		title = "TIDAL " + t.ID
+	}
+	name := title
+	switch {
+	case t.TrackNo > 0 && t.DiscNo > 1:
+		name = fmt.Sprintf("%d-%02d - %s", t.DiscNo, t.TrackNo, title)
+	case t.TrackNo > 0:
+		name = fmt.Sprintf("%02d - %s", t.TrackNo, title)
+	}
+	return filepath.Join(safeName(artist), safeName(album), safeName(name))
+}
+
+// safeName sanitizes one path component. SanitizeName truncates by bytes,
+// which can split a multi-byte rune, and ingest rejects non-UTF-8 paths.
+func safeName(s string) string {
+	s = strings.ToValidUTF8(downloadfile.SanitizeName(s), "")
+	if s == "" {
+		return "unnamed"
+	}
+	return s
+}

@@ -47,8 +47,10 @@ type Playlist struct {
 	Description string
 	Visibility  Visibility
 	IsSmart     bool
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// TIDALAutoDownload saves the playlist's TIDAL tracks into the library.
+	TIDALAutoDownload bool
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type Collaborator struct {
@@ -82,9 +84,9 @@ func (s *Store) Create(ctx context.Context, ownerID uuid.UUID, name, description
 	err := s.db.QueryRow(ctx, `
 		INSERT INTO playlists (owner_id, name, description, visibility)
 		VALUES ($1, $2, NULLIF($3, ''), $4)
-		RETURNING id, owner_id, name, COALESCE(description, ''), visibility, is_smart, created_at, updated_at`,
+		RETURNING id, owner_id, name, COALESCE(description, ''), visibility, is_smart, tidal_auto_download, created_at, updated_at`,
 		ownerID, name, description, visibility,
-	).Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.CreatedAt, &p.UpdatedAt)
+	).Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.TIDALAutoDownload, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		// Never hand back a half-scanned row alongside an error, matching
 		// library.Store.GetTrack.
@@ -96,9 +98,9 @@ func (s *Store) Create(ctx context.Context, ownerID uuid.UUID, name, description
 func (s *Store) Get(ctx context.Context, id uuid.UUID) (*Playlist, error) {
 	p := &Playlist{}
 	err := s.db.QueryRow(ctx, `
-		SELECT id, owner_id, name, COALESCE(description, ''), visibility, is_smart, created_at, updated_at
+		SELECT id, owner_id, name, COALESCE(description, ''), visibility, is_smart, tidal_auto_download, created_at, updated_at
 		FROM playlists WHERE id = $1`, id,
-	).Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.CreatedAt, &p.UpdatedAt)
+	).Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.TIDALAutoDownload, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -118,7 +120,7 @@ type PlaylistForUser struct {
 // playlist is collaborative.
 func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]PlaylistForUser, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT p.id, p.owner_id, p.name, COALESCE(p.description, ''), p.visibility, p.is_smart, p.created_at, p.updated_at,
+		SELECT p.id, p.owner_id, p.name, COALESCE(p.description, ''), p.visibility, p.is_smart, p.tidal_auto_download, p.created_at, p.updated_at,
 		       CASE WHEN p.owner_id = $1 THEN 'owner' ELSE pc.role END
 		FROM playlists p
 		LEFT JOIN playlist_collaborators pc
@@ -136,7 +138,7 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]PlaylistFo
 	var out []PlaylistForUser
 	for rows.Next() {
 		var p PlaylistForUser
-		if err := rows.Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.CreatedAt, &p.UpdatedAt, &p.EffectiveRole); err != nil {
+		if err := rows.Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.TIDALAutoDownload, &p.CreatedAt, &p.UpdatedAt, &p.EffectiveRole); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -164,6 +166,20 @@ func (s *Store) Update(ctx context.Context, id uuid.UUID, name, description stri
 		}
 		return nil
 	})
+}
+
+// SetTIDALAutoDownload turns TIDAL auto-download on or off. Admin-only,
+// enforced by the caller. It leaves updated_at alone: the playlist's contents
+// have not changed, and bumping it would reorder everyone's playlist list.
+func (s *Store) SetTIDALAutoDownload(ctx context.Context, id uuid.UUID, enabled bool) error {
+	tag, err := s.db.Exec(ctx, `UPDATE playlists SET tidal_auto_download = $2 WHERE id = $1`, id, enabled)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) Delete(ctx context.Context, id uuid.UUID) error {

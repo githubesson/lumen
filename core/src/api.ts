@@ -454,6 +454,12 @@ export const api = {
     }),
   deletePlaylist: (id: string) =>
     requestVoid(`/api/playlists/${pathID(id)}`, { method: "DELETE" }),
+  /** Admin-only: save the playlist's TIDAL tracks into the server library. */
+  setPlaylistTidalAutoDownload: (id: string, enabled: boolean) =>
+    requestVoid(`/api/playlists/${pathID(id)}/tidal-auto-download`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    }),
 
   listPlaylistTracks: (id: string, options: RequestOptions = {}) =>
     request<PlaylistTracks>(`/api/playlists/${pathID(id)}/tracks`, options),
@@ -514,6 +520,17 @@ export const api = {
     requestVoid(`/api/admin/tidal/accounts/${pathID(accountId)}`, {
       method: "DELETE",
       signal: options.signal,
+    }),
+  tidalAutoDownload: (options: RequestOptions = {}) =>
+    request<TidalAutoDownloadStatus>("/api/admin/tidal/auto-download", options),
+  saveTidalAutoDownloadSettings: (input: { root_id?: string; subdir: string }) =>
+    request<TidalAutoDownloadStatus>("/api/admin/tidal/auto-download", {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
+  retryTidalAutoDownloads: () =>
+    request<{ retried: number }>("/api/admin/tidal/auto-download/retry", {
+      method: "POST",
     }),
 
   // Lyrics API (fastest valid result from the configured providers)
@@ -666,6 +683,8 @@ export interface Playlist {
   description?: string;
   visibility: Visibility;
   is_smart: boolean;
+  /** Its TIDAL tracks are being saved into the server library. */
+  tidal_auto_download?: boolean;
   effective_role?: EffectiveRole;
   created_at: string;
   updated_at: string;
@@ -708,6 +727,35 @@ export interface TidalStatus {
   management_supported: boolean;
   management_error?: string;
   accounts: TidalAccount[];
+}
+
+export interface TidalAutoDownloadStatus {
+  /** Absent = the primary music root. */
+  root_id?: string;
+  subdir: string;
+  destination?: string;
+  destination_error?: string;
+  ffmpeg: boolean;
+  summary: {
+    playlists: number;
+    queued: number;
+    failed: number;
+    saved: number;
+  };
+  recent: TidalDownload[];
+}
+
+export interface TidalDownload {
+  tidal_id: string;
+  status: "downloaded" | "existing" | "failed";
+  local_track_id?: string;
+  file_path?: string;
+  title?: string;
+  artist?: string;
+  error?: string;
+  attempts: number;
+  next_attempt_at?: string;
+  updated_at: string;
 }
 
 export interface TidalAccount {

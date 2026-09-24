@@ -12,6 +12,13 @@ import (
 )
 
 func materializeTIDALTrack(ctx context.Context, lib *library.Store, tidalClient *tidal.Client, tidalID string) (uuid.UUID, error) {
+	// A track saved by playlist auto-download is referenced by its local copy
+	// from then on, so adds, favorites, and plays all land on the same row.
+	if id, err := lib.DownloadedTIDALTrack(ctx, tidalID); err == nil {
+		return id, nil
+	} else if !errors.Is(err, library.ErrNotFound) {
+		return uuid.Nil, err
+	}
 	if tidalClient == nil {
 		return uuid.Nil, tidal.ErrNotConfigured
 	}
@@ -53,6 +60,11 @@ func resolveTrackRowID(ctx context.Context, lib *library.Store, tidalClient *tid
 	case trackref.SourceTIDAL:
 		if createRemote {
 			return materializeTIDALTrack(ctx, lib, tidalClient, ref.ID)
+		}
+		if id, err := lib.DownloadedTIDALTrack(ctx, ref.ID); err == nil {
+			return id, nil
+		} else if !errors.Is(err, library.ErrNotFound) {
+			return uuid.Nil, err
 		}
 		return lib.TrackIDForExternal(ctx, trackref.SourceTIDAL, ref.ID)
 	default:

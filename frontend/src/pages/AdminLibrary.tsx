@@ -53,7 +53,7 @@ export function LibraryAdminSection() {
         error={error}
         onError={onError}
       />
-      <TidalSection />
+      <TidalSection roots={roots} />
       <APITrackerPinsSection
         rootOptions={rootOptions}
         defaultRootPath={defaultRootPath}

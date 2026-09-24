@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowDown as ArrowDownIcon,
   ArrowUp as ArrowUpIcon,
+  HardDriveDownload as HardDriveDownloadIcon,
   Lock as LockClosedIcon,
   Music as MusicalNoteIcon,
   SquarePen as PencilSquareIcon,
@@ -19,6 +20,7 @@ import {
   type Playlist,
   type TrackListItem,
 } from "../api";
+import { useAuth } from "../context/Auth";
 import { usePlayer } from "../context/Player";
 import { Button } from "../components/Button";
 import { Select } from "../components/Select";
@@ -46,6 +48,9 @@ import type { PlaylistTrackEntry } from "../api";
 
 type Tab = "tracks" | "collaborators";
 const PLAYLIST_SELECTION_CONTROLS_ID = "playlist-track-selection-controls";
+// While TIDAL tracks are queued for download, refresh so rows flip to their
+// library copies without a manual reload.
+const AUTO_DOWNLOAD_REFRESH_MS = 20_000;
 
 export default function PlaylistDetail() {
   const { id } = useParams<{ id: string }>();
@@ -59,6 +64,8 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   const navigate = useNavigate();
   const { play, current, isPlaying } = usePlayer();
   const { isFavorite, toggle: toggleFav } = useFavorites();
+  const { me } = useAuth();
+  const isAdmin = me?.role === "admin";
 
   const [playlist, setPlaylist] = useState<Playlist | null>(null);
   const [tracks, setTracks] = useState<PlaylistTrackEntry[] | null>(null);
@@ -70,6 +77,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("custom");
   const [sortAsc, setSortAsc] = useState(true);
+  const [savingAutoDownload, setSavingAutoDownload] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useKey(
@@ -111,6 +119,24 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
+
+  const autoDownload = Boolean(playlist?.tidal_auto_download);
+  const queuedTidal = useMemo(
+    () => (tracks ?? []).filter((t) => t.source === "tidal").length,
+    [tracks],
+  );
+  useEffect(() => {
+    if (!id || !autoDownload || queuedTidal === 0) return;
+    const timer = window.setInterval(() => {
+      // Quiet refresh: a transient failure must not replace the page with
+      // the load error banner.
+      api
+        .listPlaylistTracks(id)
+        .then((t) => setTracks(t.tracks))
+        .catch(() => {});
+    }, AUTO_DOWNLOAD_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [id, autoDownload, queuedTidal]);
 
   // All hooks must run unconditionally — keep them above every early return so
   // an error/loading state never changes the hook count between renders.
@@ -200,6 +226,20 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   // out — otherwise row indices wouldn't map to server positions.
   const canReorder = canEdit && sortKey === "custom" && q.length === 0;
 
+  const onToggleAutoDownload = async () => {
+    if (!id || savingAutoDownload) return;
+    const next = !autoDownload;
+    setSavingAutoDownload(true);
+    try {
+      await api.setPlaylistTidalAutoDownload(id, next);
+      setPlaylist((p) => (p ? { ...p, tidal_auto_download: next } : p));
+    } catch (err) {
+      setError(errorMessage(err, "Failed to update TIDAL auto-download."));
+    } finally {
+      setSavingAutoDownload(false);
+    }
+  };
+
   const onDelete = async () => {
     if (
       !id ||
@@ -238,6 +278,16 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
                 <span>{role}</span>
               </>
             )}
+            {autoDownload && (
+              <>
+                <span style={{ margin: "0 8px" }}>·</span>
+                <span
+                  style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                >
+                  <HardDriveDownloadIcon className="size-3" /> Saving TIDAL tracks
+                </span>
+              </>
+            )}
           </>
         }
         title={playlist.name}
@@ -262,6 +312,12 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
                 </span>
               </>
             )}
+            {autoDownload && queuedTidal > 0 && (
+              <>
+                <span className="dot" />
+                <span>{queuedTidal} queued for download</span>
+              </>
+            )}
           </>
         }
         actions={
@@ -280,6 +336,22 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
                 leadingIcon={<PlusIcon className="size-4" />}
               >
                 Add tracks
+              </Button>
+            )}
+            {isAdmin && (
+              <Button
+                variant={autoDownload ? "secondary" : "ghost"}
+                onClick={() => void onToggleAutoDownload()}
+                disabled={savingAutoDownload}
+                aria-pressed={autoDownload}
+                title={
+                  autoDownload
+                    ? "TIDAL tracks in this playlist are being downloaded to the server library. Click to stop."
+                    : "Download this playlist's TIDAL tracks to the server library, now and as they're added."
+                }
+                leadingIcon={<HardDriveDownloadIcon className="size-4" />}
+              >
+                {autoDownload ? "Auto-saving TIDAL" : "Auto-save TIDAL"}
               </Button>
             )}
             {isOwner && (

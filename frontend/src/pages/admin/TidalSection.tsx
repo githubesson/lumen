@@ -9,6 +9,7 @@ import {
 import {
   api,
   errorMessage,
+  type MusicRoot,
   type TidalAuthStart,
   type TidalStatus,
 } from "../../api";
@@ -20,6 +21,7 @@ import {
   reserveExternalWindow,
 } from "../../lib/platform";
 import { useApiResource } from "../../lib/useApiResource";
+import { TidalAutoDownloadCard } from "./TidalAutoDownloadCard";
 
 function normalizeTidalVerificationURL(rawURL: string): string {
   const trimmed = rawURL.trim();
@@ -57,7 +59,7 @@ const cardTitleStyle = {
   margin: 0,
 } as const;
 
-export function TidalSection() {
+export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
   const {
     data: status,
     error: loadError,
@@ -359,6 +361,10 @@ export function TidalSection() {
             </div>
           )}
         </div>
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        <TidalAutoDownloadCard roots={roots} />
       </div>
     </section>
   );

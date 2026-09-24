@@ -86,6 +86,7 @@ export const qk = {
   adminRescanStatus: ["admin", "rescan-status"] as const,
   adminInvites: ["admin", "invites"] as const,
   adminTidalStatus: ["admin", "tidal-status"] as const,
+  adminTidalAutoDownload: ["admin", "tidal-auto-download"] as const,
 
   // ---- replay ----
   replay: (periodKey: string) => ["replay", periodKey] as const,

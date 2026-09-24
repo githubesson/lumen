@@ -17,6 +17,7 @@ import {
   errorMessage,
   type TidalAccount,
   type TidalAuthStart,
+  type TidalAutoDownloadStatus,
 } from "@music-library/core";
 import { HeaderIconButton } from "../../../components/header-buttons";
 import { Card, SectionLabel } from "../../../components/primitives";
@@ -71,6 +72,22 @@ export default function AdminTidalScreen() {
       });
     return () => controller.abort();
   }, [flow, queryClient]);
+
+  const autoDownloadQuery = useQuery({
+    queryKey: qk.adminTidalAutoDownload,
+    queryFn: ({ signal }) => api.tidalAutoDownload({ signal }),
+    staleTime: 0,
+  });
+  const retryDownloads = useMutation({
+    mutationFn: () => api.retryTidalAutoDownloads(),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: qk.adminTidalAutoDownload }),
+    onError: (error) =>
+      Alert.alert(
+        "Couldn't retry downloads",
+        errorMessage(error, "Please try again."),
+      ),
+  });
 
   const startAuth = useMutation({
     mutationFn: () => api.startTidalAuth(),
@@ -148,6 +165,7 @@ export default function AdminTidalScreen() {
               onPress={() => {
                 void Haptics.selectionAsync();
                 void statusQuery.refetch();
+                void autoDownloadQuery.refetch();
               }}
             />
           ),
@@ -279,6 +297,18 @@ export default function AdminTidalScreen() {
           theme={theme}
           primary
         />
+
+        {autoDownloadQuery.data ? (
+          <AutoDownloadSection
+            status={autoDownloadQuery.data}
+            retrying={retryDownloads.isPending}
+            onRetry={() => {
+              void Haptics.selectionAsync();
+              retryDownloads.mutate();
+            }}
+            theme={theme}
+          />
+        ) : null}
       </ScrollView>
     </>
   );
@@ -337,6 +367,58 @@ function StatusCard({
         <StatusValue label="Version" value={version} theme={theme} />
       </View>
     </Card>
+  );
+}
+
+function AutoDownloadSection({
+  status,
+  retrying,
+  onRetry,
+  theme,
+}: {
+  status: TidalAutoDownloadStatus;
+  retrying: boolean;
+  onRetry: () => void;
+  theme: ThemeTokens;
+}) {
+  const { summary } = status;
+  const problem = !status.ffmpeg
+    ? "ffmpeg is not installed on the server, so downloads are paused."
+    : status.destination_error
+      ? `Download folder unavailable: ${status.destination_error}`
+      : null;
+  return (
+    <View style={{ gap: theme.space.sm }}>
+      <SectionLabel>Server library saving</SectionLabel>
+      <Card style={{ padding: theme.space.lg, gap: theme.space.md }}>
+        <Text selectable style={{ color: theme.color.fgMuted, fontSize: 13, lineHeight: 18 }}>
+          Turn it on from a playlist&apos;s menu. Its TIDAL tracks are saved to{" "}
+          {status.destination ?? "the music folder"} and the playlist switches
+          to the library copies. Change the folder from the web admin.
+        </Text>
+        {problem ? (
+          <Text selectable style={{ color: theme.color.danger, fontSize: 13 }}>
+            {problem}
+          </Text>
+        ) : null}
+        <View style={{ flexDirection: "row", gap: theme.space.sm }}>
+          <StatusValue label="Playlists" value={String(summary.playlists)} theme={theme} />
+          <StatusValue label="Queued" value={String(summary.queued)} theme={theme} />
+          <StatusValue label="Failed" value={String(summary.failed)} theme={theme} />
+          <StatusValue label="Saved" value={String(summary.saved)} theme={theme} />
+        </View>
+        {summary.failed > 0 ? (
+          <ActionButton
+            label={retrying ? "Retrying…" : "Retry failed downloads"}
+            icon="arrow.clockwise"
+            loading={retrying}
+            disabled={retrying}
+            onPress={onRetry}
+            theme={theme}
+          />
+        ) : null}
+      </Card>
+    </View>
   );
 }
 

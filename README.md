@@ -27,6 +27,7 @@ surface for invites and library management.
 
 - Playlists with create/edit, add-tracks flow, and local sorting (title, length, plays)
 - Playlist collaborators — invite others to a shared playlist
+- TIDAL auto-download: admins opt a playlist in, and its TIDAL tracks are saved into the library as tagged files that the playlist then plays
 - Favorites across all clients
 - Yearly **Replay**: listening recap with activity chart, animated stats, and a shareable top-songs image
 
@@ -118,7 +119,8 @@ TIDAL integration is handled by the internal `hifi-api` sidecar. The frontend
 and mobile clients still talk only to Lumen's backend; the backend calls
 `hifi-api`, rewrites the returned stream manifests, and proxies the audio
 segments back through `/api`. TIDAL credentials and media URLs are never exposed
-to clients, and no TIDAL audio is downloaded into the local library.
+to clients, and no TIDAL audio is downloaded into the local library unless an
+admin opts a playlist in (see [Saving playlist TIDAL tracks](#saving-playlist-tidal-tracks)).
 
 This is intentionally a passthrough setup:
 
@@ -214,6 +216,28 @@ Common checks:
 - Relink an account from either admin client when its authorization or
   subscription changes. `TIDAL_COUNTRY_CODE` still requires recreating the
   containers because it is server configuration rather than account state.
+
+### Saving playlist TIDAL tracks
+
+An admin can turn on **Auto-save TIDAL** from a playlist's page (web/desktop)
+or **Save TIDAL to Server** from its menu (mobile). A background worker then
+downloads the playlist's TIDAL tracks, plus any added later, into the library:
+
+- Files are tagged with ffmpeg (title, artists, album, track number, ISRC, and
+  cover) and written to `<music folder>/<subfolder>/Artist/Album/NN - Title.ext`.
+  The default is `MUSIC_PATH/TIDAL`; change it under **Admin → Library → TIDAL**.
+- A track whose ISRC already matches a library track is linked to that track
+  instead of being downloaded again.
+- Once a track is saved, every playlist entry, favorite, play count, and play
+  history row that pointed at the TIDAL version moves to the library copy. Any
+  later reference to that TIDAL track, like adding it from search, resolves to
+  the library copy too.
+- Failures retry with backoff, from 5 minutes up to a day. The admin panel lists
+  recent results and has a **Retry failed** button.
+
+`TIDAL_DOWNLOAD_POLL_INTERVAL` (default `5m`) sets the fallback poll interval;
+adding tracks to an opted-in playlist wakes the worker right away.
+`TIDAL_DOWNLOAD_FILE_TIMEOUT` (default `30m`) limits each download.
 
 ## Putting it on the internet
 

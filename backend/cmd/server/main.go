@@ -29,6 +29,7 @@ import (
 	"github.com/githubesson/lumen/internal/safego"
 	"github.com/githubesson/lumen/internal/storage"
 	"github.com/githubesson/lumen/internal/tidal"
+	"github.com/githubesson/lumen/internal/tidaldl"
 	"github.com/githubesson/lumen/internal/users"
 )
 
@@ -203,6 +204,19 @@ func main() {
 		ScriptPath:   cfg.FilenDownloaderScript,
 	}
 	startWorker(func() { filenScanner.Run(ctx) })
+	tidalDownloadStore := tidaldl.NewStore(pool)
+	tidalDownloadWorker := &tidaldl.Worker{
+		Store:        tidalDownloadStore,
+		TIDAL:        tidalClient,
+		Ingest:       ingestSvc,
+		Library:      libraryStore,
+		Roots:        musicRootsStore,
+		PrimaryRoot:  cfg.MusicPath,
+		Logger:       logger,
+		PollInterval: cfg.TIDALDownloadPollInterval,
+		FileTimeout:  cfg.TIDALDownloadFileTimeout,
+	}
+	startWorker(func() { tidalDownloadWorker.Run(ctx) })
 
 	handler := httpapi.NewRouter(httpapi.Deps{
 		DB:               pool,
@@ -223,6 +237,8 @@ func main() {
 		ArtistGridScan:   artistGridScanner,
 		Filen:            filenStore,
 		FilenScan:        filenScanner,
+		TIDALDownloads:   tidalDownloadStore,
+		TIDALDownload:    tidalDownloadWorker,
 		Preview:          previewBuilder,
 		MusicRoot:        cfg.MusicPath,
 		Background:       ctx,

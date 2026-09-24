@@ -21,31 +21,38 @@ type Playlists struct {
 	Users   *users.Store
 	Library *library.Store
 	TIDAL   *tidal.Client
+	// AutoDownload is woken when TIDAL tracks may have joined an opted-in
+	// playlist. Nil disables the wake-up; the worker still polls.
+	AutoDownload interface{ Kick() }
 }
 
 type playlistResp struct {
-	ID            string `json:"id"`
-	OwnerID       string `json:"owner_id"`
-	Name          string `json:"name"`
-	Description   string `json:"description,omitempty"`
-	Visibility    string `json:"visibility"`
-	IsSmart       bool   `json:"is_smart"`
-	EffectiveRole string `json:"effective_role,omitempty"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
+	ID          string `json:"id"`
+	OwnerID     string `json:"owner_id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Visibility  string `json:"visibility"`
+	IsSmart     bool   `json:"is_smart"`
+	// TIDALAutoDownload is true when the playlist's TIDAL tracks are being
+	// saved into the library.
+	TIDALAutoDownload bool   `json:"tidal_auto_download"`
+	EffectiveRole     string `json:"effective_role,omitempty"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
 }
 
 func toPlaylistResp(p *playlists.Playlist, role string) playlistResp {
 	return playlistResp{
-		ID:            p.ID.String(),
-		OwnerID:       p.OwnerID.String(),
-		Name:          p.Name,
-		Description:   p.Description,
-		Visibility:    string(p.Visibility),
-		IsSmart:       p.IsSmart,
-		EffectiveRole: role,
-		CreatedAt:     p.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:     p.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ID:                p.ID.String(),
+		OwnerID:           p.OwnerID.String(),
+		Name:              p.Name,
+		Description:       p.Description,
+		Visibility:        string(p.Visibility),
+		IsSmart:           p.IsSmart,
+		TIDALAutoDownload: p.TIDALAutoDownload,
+		EffectiveRole:     role,
+		CreatedAt:         p.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:         p.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 
@@ -308,7 +315,11 @@ func (h *Playlists) AddTracks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ids := make([]uuid.UUID, 0, len(req.TrackIDs))
+	addsTIDAL := false
 	for _, s := range req.TrackIDs {
+		if ref, err := trackref.Parse(s); err == nil && ref.Source == trackref.SourceTIDAL {
+			addsTIDAL = true
+		}
 		id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, s, true)
 		if err != nil {
 			if errors.Is(err, tidal.ErrNotConfigured) {
@@ -323,6 +334,39 @@ func (h *Playlists) AddTracks(w http.ResponseWriter, r *http.Request) {
 	if err := h.Store.AddTracks(r.Context(), pid, ids, u.ID); err != nil {
 		writeStoreError(w, err)
 		return
+	}
+	if addsTIDAL && h.AutoDownload != nil {
+		h.AutoDownload.Kick()
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type tidalAutoDownloadReq struct {
+	Enabled *bool `json:"enabled"`
+}
+
+// SetTIDALAutoDownload turns TIDAL auto-download on or off for a playlist.
+// Mounted on the admin router: downloads land in the shared library, so only
+// admins may opt a playlist in, whoever owns it.
+func (h *Playlists) SetTIDALAutoDownload(w http.ResponseWriter, r *http.Request) {
+	pid, ok := pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req tidalAutoDownloadReq
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.Enabled == nil {
+		http.Error(w, "enabled required", http.StatusBadRequest)
+		return
+	}
+	if err := h.Store.SetTIDALAutoDownload(r.Context(), pid, *req.Enabled); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if *req.Enabled && h.AutoDownload != nil {
+		h.AutoDownload.Kick()
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

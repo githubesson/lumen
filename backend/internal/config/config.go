@@ -37,6 +37,8 @@ type Config struct {
 	TIDALCountryCode           string
 	TIDALQuality               string
 	TIDALHifiAPIURL            string
+	TIDALDownloadPollInterval  time.Duration
+	TIDALDownloadFileTimeout   time.Duration
 	LastFMAPIKey               string
 	LastFMSharedSecret         string
 	TrustedProxies             []string
@@ -99,6 +101,14 @@ func FromEnv() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	tidalDownloadPoll, err := durenv("TIDAL_DOWNLOAD_POLL_INTERVAL", 5*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	tidalDownloadFileTimeout, err := durenv("TIDAL_DOWNLOAD_FILE_TIMEOUT", 30*time.Minute)
+	if err != nil {
+		return nil, err
+	}
 	trustedProxies, err := proxyenv("TRUSTED_PROXIES")
 	if err != nil {
 		return nil, err
@@ -129,6 +139,8 @@ func FromEnv() (*Config, error) {
 		TIDALCountryCode:           strings.ToUpper(getenv("TIDAL_COUNTRY_CODE", "US")),
 		TIDALQuality:               strings.ToUpper(getenv("TIDAL_QUALITY", "LOSSLESS")),
 		TIDALHifiAPIURL:            getenv("TIDAL_HIFI_API_URL", ""),
+		TIDALDownloadPollInterval:  tidalDownloadPoll,
+		TIDALDownloadFileTimeout:   tidalDownloadFileTimeout,
 		LastFMAPIKey:               getenv("LASTFM_API_KEY", ""),
 		LastFMSharedSecret:         getenv("LASTFM_SHARED_SECRET", ""),
 		TrustedProxies:             trustedProxies,

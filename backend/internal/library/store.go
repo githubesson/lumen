@@ -285,6 +285,25 @@ func (s *Store) TrackIDForExternal(ctx context.Context, source, externalID strin
 	return id, nil
 }
 
+// DownloadedTIDALTrack returns the live library copy that TIDAL playlist
+// auto-download saved for tidalID, or ErrNotFound.
+func (s *Store) DownloadedTIDALTrack(ctx context.Context, tidalID string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := s.db.QueryRow(ctx, `
+		SELECT t.id
+		FROM tidal_downloads d
+		JOIN tracks t ON t.id = d.local_track_id AND t.deleted_at IS NULL
+		WHERE d.tidal_id = $1 AND d.status IN ('downloaded', 'existing')`,
+		dbtext.Clean(strings.TrimSpace(tidalID))).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return id, nil
+}
+
 // InsertTrack inserts a track honoring the ownership rules:
 //
 //   - Ingest with OwnerID=nil (global): if a global row already exists for the

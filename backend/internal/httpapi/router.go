@@ -26,6 +26,7 @@ import (
 	"github.com/githubesson/lumen/internal/preview"
 	"github.com/githubesson/lumen/internal/storage"
 	"github.com/githubesson/lumen/internal/tidal"
+	"github.com/githubesson/lumen/internal/tidaldl"
 	"github.com/githubesson/lumen/internal/users"
 )
 
@@ -48,6 +49,8 @@ type Deps struct {
 	ArtistGridScan *artistgrid.Scanner
 	Filen          *filen.Store
 	FilenScan      *filen.Scanner
+	TIDALDownloads *tidaldl.Store
+	TIDALDownload  *tidaldl.Worker
 	Preview        *preview.Builder
 	MusicRoot      string
 	Background     context.Context // application lifecycle for request-detached jobs
@@ -89,6 +92,9 @@ func NewRouter(d Deps) http.Handler {
 		UploadQuotaBytes: d.UploadQuotaBytes,
 	}
 	plH := &handlers.Playlists{Store: d.Playlists, Users: d.Users, Library: d.Library, TIDAL: d.TIDAL}
+	if d.TIDALDownload != nil {
+		plH.AutoDownload = d.TIDALDownload
+	}
 	activityH := &handlers.Activity{
 		Store:      d.Activity,
 		Hub:        activity.NewHub(),
@@ -127,6 +133,12 @@ func NewRouter(d Deps) http.Handler {
 		Background:  d.Background,
 	}
 	adminTIDALH := &handlers.AdminTIDAL{TIDAL: d.TIDAL}
+	adminTIDALDownloadsH := &handlers.AdminTIDALDownloads{
+		Store:       d.TIDALDownloads,
+		Worker:      d.TIDALDownload,
+		MusicRoots:  d.MusicRoots,
+		PrimaryRoot: d.MusicRoot,
+	}
 	lastFMH := &handlers.LastFM{Service: d.LastFM}
 	tracksH := &handlers.Tracks{
 		Library:      d.Library,
@@ -327,6 +339,10 @@ func NewRouter(d Deps) http.Handler {
 			ordinary.Post("/admin/tidal/auth", adminTIDALH.StartAuth)
 			ordinary.Get("/admin/tidal/auth/{flowID}", adminTIDALH.PollAuth)
 			ordinary.Delete("/admin/tidal/accounts/{accountID}", adminTIDALH.RemoveAccount)
+			ordinary.Get("/admin/tidal/auto-download", adminTIDALDownloadsH.Status)
+			ordinary.Put("/admin/tidal/auto-download", adminTIDALDownloadsH.SaveSettings)
+			ordinary.Post("/admin/tidal/auto-download/retry", adminTIDALDownloadsH.Retry)
+			ordinary.Put("/playlists/{id}/tidal-auto-download", plH.SetTIDALAutoDownload)
 
 			ordinary.Get("/admin/users", adminUsersH.List)
 			ordinary.Get("/admin/users/{id}/departure-preview", adminUsersH.DeparturePreview)

@@ -66,6 +66,9 @@ import { useTheme, type ThemeTokens } from "../../../theme/theme";
 
 const TRACK_ART_SIZE = 40;
 const noop = () => {};
+// While TIDAL tracks are queued for the server library, refetch so rows flip
+// to their library copies.
+const SERVER_SAVE_REFRESH_MS = 20_000;
 
 type TracksOverride = {
   /** The server snapshot the edit was made against. */
@@ -116,6 +119,11 @@ export default function PlaylistDetailScreen() {
     queryKey: playlistTracksQueryKey,
     queryFn: ({ signal }) => api.listPlaylistTracks(id!, { signal }),
     enabled: !!userId && !!id,
+    refetchInterval: (query) =>
+      playlistQuery.data?.tidal_auto_download &&
+      query.state.data?.tracks.some((t) => t.source === "tidal")
+        ? SERVER_SAVE_REFRESH_MS
+        : false,
   });
 
   const offline = useIsOffline();
@@ -194,6 +202,42 @@ export default function PlaylistDetailScreen() {
     },
   });
 
+  const isAdmin = me?.role === "admin";
+  const serverSaveMutation = useMutation({
+    mutationFn: (enabled: boolean) =>
+      api.setPlaylistTidalAutoDownload(id!, enabled),
+    onSuccess: (_data, enabled) => {
+      queryClient.setQueryData<Playlist>(playlistQueryKey, (p) =>
+        p ? { ...p, tidal_auto_download: enabled } : p,
+      );
+      if (enabled) {
+        void queryClient.invalidateQueries({ queryKey: playlistTracksQueryKey });
+      }
+    },
+    onError: (error) =>
+      Alert.alert(
+        "Couldn't update server saving",
+        error instanceof Error ? error.message : "Please try again.",
+      ),
+  });
+  const serverSaveEnabled = !!playlistQuery.data?.tidal_auto_download;
+  const { mutate: setServerSave } = serverSaveMutation;
+  const onToggleServerSave = useCallback(() => {
+    void Haptics.selectionAsync();
+    if (serverSaveEnabled) {
+      setServerSave(false);
+      return;
+    }
+    Alert.alert(
+      "Save TIDAL tracks to the server?",
+      "This playlist's TIDAL tracks are downloaded into the shared library, now and whenever more are added. The playlist then plays the library copies.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Save", onPress: () => setServerSave(true) },
+      ],
+    );
+  }, [serverSaveEnabled, setServerSave]);
+
   const role = playlist?.effective_role;
   // Editing and deleting need the server's own data: reorder positions must
   // match the backend's list, and the offline fallback is a downloaded
@@ -236,6 +280,10 @@ export default function PlaylistDetailScreen() {
     [displayModels],
   );
   const onTrackPress = usePlayQueue(tracks);
+  const queuedForServer = useMemo(
+    () => localTracks.filter((t) => t.source === "tidal").length,
+    [localTracks],
+  );
 
   // Fresh query data is the earliest signal that entries were added, so catch
   // up here too rather than waiting for the next foreground or reconnect.
@@ -396,6 +444,9 @@ export default function PlaylistDetailScreen() {
             <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>
               {tracks.length} {tracks.length === 1 ? "track" : "tracks"}
               {p.visibility === "collaborative" ? " · Collaborative" : ""}
+              {p.tidal_auto_download && queuedForServer > 0
+                ? ` · ${queuedForServer} saving to server`
+                : ""}
             </Text>
             <PlaylistStatusGlyphs
               theme={theme}
@@ -493,6 +544,7 @@ export default function PlaylistDetailScreen() {
     sortAsc,
     onSelectSort,
     onToggleSortDirection,
+    queuedForServer,
   ]);
 
   const keyExtractor = useCallback(
@@ -569,6 +621,15 @@ export default function PlaylistDetailScreen() {
                 })
               }
               onDelete={onDelete}
+              serverSave={
+                isAdmin && playlistQuery.data
+                  ? {
+                      enabled: serverSaveEnabled,
+                      pending: serverSaveMutation.isPending,
+                      onToggle: onToggleServerSave,
+                    }
+                  : undefined
+              }
               trigger={
                 <View style={{ padding: 4 }}>
                   <SymbolView
