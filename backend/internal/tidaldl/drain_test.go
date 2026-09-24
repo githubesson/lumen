@@ -1445,3 +1445,58 @@ func TestUnresolvedReleaseIsRetriedByBackfill(t *testing.T) {
 		t.Fatalf("after recovery: artist %q, year %d, marker %q", artist, year, marker())
 	}
 }
+
+// If filing a saved track under its release fails, the album marker stays
+// unresolved and the backfill files it once the failure clears.
+func TestFailedFilingIsRetriedByBackfill(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	run := uuid.NewString()[:8]
+	tid, rel := "ff"+run, "frel"+run
+	title := "Boom " + run
+	// Linking any album titled `title` to its release fails, for now.
+	for _, sql := range []string{
+		`CREATE OR REPLACE FUNCTION tidaldl_test_boom() RETURNS trigger LANGUAGE plpgsql AS $$
+		 BEGIN RAISE EXCEPTION 'filing refused'; END $$`,
+		`CREATE TRIGGER tidaldl_test_boom BEFORE UPDATE OF tidal_album_id ON albums
+		 FOR EACH ROW WHEN (NEW.title = '` + title + `') EXECUTE FUNCTION tidaldl_test_boom()`,
+	} {
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dropTrigger := func() {
+		pool.Exec(context.Background(), `DROP TRIGGER IF EXISTS tidaldl_test_boom ON albums`)
+	}
+	t.Cleanup(dropTrigger)
+
+	optedInPlaylist(t, pool, tid)
+	root := t.TempDir()
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM tracks WHERE file_path LIKE $1`, root+"%") })
+	w := testWorker(t, pool, root, &fakeSource{
+		albums: map[string]tidal.Album{rel: {ID: rel, Title: title, Artist: "Band", ReleaseYear: 2022, TrackCount: 1,
+			Tracks: []tidal.Track{{ID: tid, Title: "Song", TrackNo: 1}}}},
+		tracks: map[string]tidal.Track{tid: {ID: tid, Title: "Song", AlbumID: rel, AlbumTitle: title}},
+	})
+	w.drain(ctx)
+	if _, err := w.Library.DownloadedTIDALTrack(ctx, tid); err != nil {
+		t.Fatalf("not saved: %v", err)
+	}
+	marker := func() string {
+		t.Helper()
+		var m string
+		if err := pool.QueryRow(ctx, `SELECT tidal_album_id FROM tidal_downloads WHERE tidal_id = $1`, tid).Scan(&m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	if m := marker(); m != "" {
+		t.Fatalf("marker = %q after a failed filing, want it left for the backfill", m)
+	}
+
+	dropTrigger()
+	w.drain(ctx)
+	if m := marker(); m != rel {
+		t.Fatalf("marker = %q after the backfill, want %q", m, rel)
+	}
+}

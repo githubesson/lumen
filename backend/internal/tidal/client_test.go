@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -610,5 +611,38 @@ func TestFileResponseFMP4InitSegment(t *testing.T) {
 	// start with "moof" instead of the ftyp header.
 	if !bytes.HasPrefix(body, initBytes) {
 		t.Fatalf("body does not start with init segment (ftyp)")
+	}
+}
+
+func TestFullAlbumPagesByRawItems(t *testing.T) {
+	// The proxy serves two items per page whatever the limit, and the first
+	// page holds a video, which Album filters out.
+	items := []string{
+		`{"type":"track","item":{"id":1,"title":"One","trackNumber":1}}`,
+		`{"type":"video","item":{"id":90,"title":"Clip"}}`,
+		`{"type":"track","item":{"id":2,"title":"Two","trackNumber":2}}`,
+		`{"type":"track","item":{"id":3,"title":"Three","trackNumber":3}}`,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		page := []string{}
+		for i := offset; i < len(items) && i < offset+2; i++ {
+			page = append(page, items[i])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"id":7,"title":"Record","numberOfTracks":3,"items":[` + strings.Join(page, ",") + `]}}`))
+	}))
+	defer srv.Close()
+
+	album, err := NewClient(Config{HifiAPIURL: srv.URL}).FullAlbum(context.Background(), "7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, tr := range album.Tracks {
+		ids = append(ids, tr.ID)
+	}
+	if strings.Join(ids, ",") != "1,2,3" {
+		t.Fatalf("tracks = %v, want 1,2,3", ids)
 	}
 }

@@ -132,6 +132,11 @@ type Album struct {
 	CoverID     string
 	CoverURL    string
 	Tracks      []Track
+
+	// pageItems is how many raw items this page held, including ones
+	// filtered out of Tracks (videos, incomplete entries): the offset step
+	// for the next page.
+	pageItems int
 }
 
 func (t Track) Metadata() map[string]any {
@@ -223,23 +228,39 @@ func (c *Client) Album(ctx context.Context, id string, limit, offset int) (Album
 // maxFullAlbumTracks bounds FullAlbum's paging; no real release comes close.
 const maxFullAlbumTracks = 1000
 
-// FullAlbum is Album with every page of the track list.
+// FullAlbum is Album with every page of the track list. Pages advance by the
+// raw item count, not the tracks kept from them, so filtered items (videos)
+// can't make pages overlap; a track listed twice is kept once.
 func (c *Client) FullAlbum(ctx context.Context, id string) (Album, error) {
 	const page = 100
 	album, err := c.Album(ctx, id, page, 0)
 	if err != nil {
 		return Album{}, err
 	}
-	for len(album.Tracks) < album.TrackCount && len(album.Tracks) < maxFullAlbumTracks {
-		next, err := c.Album(ctx, id, page, len(album.Tracks))
+	seen := map[string]bool{}
+	tracks := make([]Track, 0, len(album.Tracks))
+	keep := func(ts []Track) {
+		for _, t := range ts {
+			if !seen[t.ID] {
+				seen[t.ID] = true
+				tracks = append(tracks, t)
+			}
+		}
+	}
+	keep(album.Tracks)
+	offset, got := album.pageItems, album.pageItems
+	// Keep going while pages come back full, or short (a proxy may cap the
+	// page size) while tracks are still missing.
+	for got > 0 && (got >= page || len(tracks) < album.TrackCount) && len(tracks) < maxFullAlbumTracks {
+		next, err := c.Album(ctx, id, page, offset)
 		if err != nil {
 			return Album{}, err
 		}
-		if len(next.Tracks) == 0 {
-			break
-		}
-		album.Tracks = append(album.Tracks, next.Tracks...)
+		got = next.pageItems
+		offset += got
+		keep(next.Tracks)
 	}
+	album.Tracks = tracks
 	return album, nil
 }
 
@@ -642,6 +663,7 @@ func (a apiAlbum) album() Album {
 		CoverID:     coverID,
 		CoverURL:    CoverURL(coverID, 640),
 		Tracks:      make([]Track, 0, len(a.Items)),
+		pageItems:   len(a.Items),
 	}
 	for _, item := range a.Items {
 		if item.Type != "" && !strings.EqualFold(item.Type, "track") {

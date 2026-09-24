@@ -370,12 +370,12 @@ func (w *Worker) process(ctx context.Context, c Candidate, dest func() (string, 
 	}
 	// Ownership, not out.Inserted: the watcher may have ingested our file in
 	// the meantime, making this call a dedup hit on a row that is ours.
-	status := StatusExisting
+	status, filed := StatusExisting, false
 	if out.Inserted || w.ownsFile(ctx, out.TrackID, path) {
 		status = StatusDownloaded
-		w.applyTIDALMetadata(ctx, out.TrackID, meta)
+		filed = w.applyTIDALMetadata(ctx, out.TrackID, meta)
 	}
-	return w.adoptPlayable(ctx, c, meta, out.TrackID, status, path)
+	return w.adoptPlayable(ctx, c, meta, out.TrackID, status, path, filed)
 }
 
 // capBody fails reads with downloadfile.ErrTooLarge once more than max bytes
@@ -430,28 +430,31 @@ func (w *Worker) adoptAudioTwin(ctx context.Context, c Candidate, meta tidal.Tra
 	if filepath.Clean(twin.FilePath) == filepath.Clean(path) {
 		// The filesystem watcher ingested our file first; the row is ours
 		// and needs the same artist fix-up as a fresh insert.
-		w.applyTIDALMetadata(ctx, twin.ID, meta)
-		return true, w.adoptPlayable(ctx, c, meta, twin.ID, StatusDownloaded, path)
+		filed := w.applyTIDALMetadata(ctx, twin.ID, meta)
+		return true, w.adoptPlayable(ctx, c, meta, twin.ID, StatusDownloaded, path, filed)
 	}
 	if w.playable(ctx, twin.FilePath) {
 		w.removeFile("", path)
-		return true, w.adoptPlayable(ctx, c, meta, twin.ID, StatusExisting, "")
+		return true, w.adoptPlayable(ctx, c, meta, twin.ID, StatusExisting, "", false)
 	}
 	if err := w.Store.RepointFile(ctx, twin.ID, path); err != nil {
 		w.removeFile("", path)
 		return true, w.fail(ctx, c, meta, fmt.Errorf("repoint library track: %w", err))
 	}
 	// The row now plays our TIDAL-tagged download; file it the same way.
-	w.applyTIDALMetadata(ctx, twin.ID, meta)
+	filed := w.applyTIDALMetadata(ctx, twin.ID, meta)
 	w.log().Info("tidal auto-download moved an unplayable library track to the new copy",
 		"tidal_track", c.TIDALID, "track", twin.ID, "old_path", twin.FilePath, "path", path)
-	return true, w.adoptPlayable(ctx, c, meta, twin.ID, StatusDownloaded, path)
+	return true, w.adoptPlayable(ctx, c, meta, twin.ID, StatusDownloaded, path, filed)
 }
 
 // adoptPlayable is the last gate before a download's track replaces the
 // TIDAL entries: it must actually play. ours is the file this attempt wrote,
 // removed on failure unless the track now points at it.
-func (w *Worker) adoptPlayable(ctx context.Context, c Candidate, meta tidal.Track, localID uuid.UUID, status, ours string) error {
+//
+// filed reports whether TIDAL's metadata was applied to the track; until it
+// is, the album marker stays empty so the backfill retries the filing.
+func (w *Worker) adoptPlayable(ctx context.Context, c Candidate, meta tidal.Track, localID uuid.UUID, status, ours string, filed bool) error {
 	path, err := w.Store.TrackFilePath(ctx, localID)
 	if err != nil {
 		return err
@@ -467,7 +470,11 @@ func (w *Worker) adoptPlayable(ctx context.Context, c Candidate, meta tidal.Trac
 		if err := w.Store.RecordSaved(ctx, c.TIDALID, localID, status, path, meta.Title, artist); err != nil {
 			return err
 		}
-		if err := w.Store.SetDownloadAlbum(ctx, c.TIDALID, w.albumMarker(ctx, meta)); err != nil {
+		marker := ""
+		if filed {
+			marker = w.albumMarker(ctx, meta)
+		}
+		if err := w.Store.SetDownloadAlbum(ctx, c.TIDALID, marker); err != nil {
 			return err
 		}
 	}
@@ -602,7 +609,10 @@ func (w *Worker) download(ctx context.Context, meta tidal.Track, dest string) (s
 // ", " and " & ", which mangles names like "Simon & Garfunkel", and does not
 // split the "; " the tag was written with), and the release it belongs to,
 // with album artist, year, numbering, and the link to the TIDAL release.
-func (w *Worker) applyTIDALMetadata(ctx context.Context, trackID uuid.UUID, meta tidal.Track) {
+//
+// It reports whether everything applied; failures are logged.
+func (w *Worker) applyTIDALMetadata(ctx context.Context, trackID uuid.UUID, meta tidal.Track) bool {
+	ok := true
 	if len(meta.Artists) > 0 {
 		artists := meta.Artists
 		if len(artists) > library.MaxTrackArtists {
@@ -610,10 +620,11 @@ func (w *Worker) applyTIDALMetadata(ctx context.Context, trackID uuid.UUID, meta
 		}
 		if err := w.Library.UpdateTrack(ctx, trackID, library.TrackPatch{Artists: &artists}); err != nil {
 			w.log().Warn("tidal auto-download artist update failed", "track", trackID, "err", err)
+			ok = false
 		}
 	}
 	if strings.TrimSpace(meta.AlbumTitle) == "" {
-		return
+		return ok
 	}
 	if err := w.Library.ApplyTIDALAlbum(ctx, trackID, library.TIDALAlbumFields{
 		TIDALAlbumID: meta.AlbumID,
@@ -624,7 +635,9 @@ func (w *Worker) applyTIDALMetadata(ctx context.Context, trackID uuid.UUID, meta
 		DiscNo:       meta.DiscNo,
 	}); err != nil {
 		w.log().Warn("tidal auto-download album update failed", "track", trackID, "err", err)
+		return false
 	}
+	return ok
 }
 
 // withRelease fills what TIDAL's track info lacks from the track's release:
@@ -736,7 +749,9 @@ func (w *Worker) backfillAlbums(ctx context.Context) {
 			// rather than refiling it without album artist and year.
 			continue
 		}
-		w.applyTIDALMetadata(ctx, d.LocalID, meta)
+		if !w.applyTIDALMetadata(ctx, d.LocalID, meta) {
+			continue // retried on a later drain
+		}
 		if err := w.Store.SetDownloadAlbum(ctx, d.TIDALID, marker); err != nil {
 			w.log().Warn("tidal auto-download album backfill failed", "tidal_track", d.TIDALID, "err", err)
 		}
