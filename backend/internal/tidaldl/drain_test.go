@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,11 +32,15 @@ import (
 )
 
 type fakeSource struct {
-	tracks map[string]tidal.Track
-	errs   map[string]error
+	tracks  map[string]tidal.Track
+	errs    map[string]error
+	onTrack func(id string)
 }
 
 func (f *fakeSource) Track(_ context.Context, id string) (tidal.Track, error) {
+	if f.onTrack != nil {
+		f.onTrack(id)
+	}
 	if err := f.errs[id]; err != nil {
 		return tidal.Track{}, err
 	}
@@ -721,5 +726,126 @@ func TestDrainSkipsUnplayableLocalCopies(t *testing.T) {
 	})
 	if len(stray) > 0 {
 		t.Fatalf("duplicate download left behind: %v", stray)
+	}
+}
+
+// optedInPlaylist creates a user and an opted-in playlist holding a remote
+// row per TIDAL id, in order, cleaned up with the test.
+func optedInPlaylist(t *testing.T, pool *pgxpool.Pool, tids ...string) (uuid.UUID, []uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	lib := library.NewStore(pool)
+	pls := playlists.NewStore(pool)
+	owner := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO users(id, username, password_hash, role) VALUES($1,$2,'test','user')`,
+		owner, "tidaldl-"+owner.String()); err != nil {
+		t.Fatal(err)
+	}
+	var rows []uuid.UUID
+	for _, tid := range tids {
+		id, err := lib.UpsertRemoteTrack(ctx, library.RemoteTrackInput{
+			Source: "tidal", ExternalID: tid, Title: "Remote " + tid, ArtistNames: []string{"Remote"}, DurationMS: 1000,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, id)
+	}
+	pl, err := pls.Create(ctx, owner, "auto", "", playlists.VisibilityPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		pool.Exec(c, `DELETE FROM playlists WHERE id = $1`, pl.ID)
+		pool.Exec(c, `DELETE FROM tidal_downloads WHERE tidal_id = ANY($1)`, tids)
+		pool.Exec(c, `DELETE FROM tracks WHERE external_id = ANY($1)`, tids)
+		pool.Exec(c, `DELETE FROM users WHERE id = $1`, owner)
+	})
+	if err := pls.AddTracks(ctx, pl.ID, rows, owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := pls.SetTIDALAutoDownload(ctx, pl.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	return pl.ID, rows
+}
+
+func testWorker(t *testing.T, pool *pgxpool.Pool, root string, src *fakeSource) *Worker {
+	lib := library.NewStore(pool)
+	return &Worker{
+		Store: NewStore(pool), Library: lib, PrimaryRoot: root,
+		Ingest: &ingest.Service{
+			DB: pool, Library: lib, Storage: storage.NewLocal(root), MusicRoot: root,
+			Roots: func(context.Context) []string { return []string{root} },
+		},
+		source: src,
+		tag:    wavTagger(t),
+	}
+}
+
+func TestDrainStopsWhenPlaylistOptsOutMidBatch(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	run := uuid.NewString()[:8]
+	first, second := "sa"+run, "sb"+run
+	pl, _ := optedInPlaylist(t, pool, first, second)
+	root := t.TempDir()
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM tracks WHERE file_path LIKE $1`, root+"%") })
+	src := &fakeSource{tracks: map[string]tidal.Track{
+		first:  {ID: first, Title: "First " + run},
+		second: {ID: second, Title: "Second " + run},
+	}}
+	// The admin turns auto-download off while the batch's first track (either
+	// one: they share added_at) is processing.
+	var once sync.Once
+	src.onTrack = func(string) {
+		once.Do(func() {
+			if err := playlists.NewStore(pool).SetTIDALAutoDownload(ctx, pl, false); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	w := testWorker(t, pool, root, src)
+	w.drain(ctx)
+
+	recent, err := w.Store.Recent(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := findDownload(recent, first), findDownload(recent, second)
+	if (a == nil) == (b == nil) {
+		t.Fatalf("want exactly one track processed after opting out; got %+v and %+v", a, b)
+	}
+}
+
+func TestWatcherWinningIngestStillGetsTIDALArtists(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	run := uuid.NewString()[:8]
+	tid := "wr" + run
+	optedInPlaylist(t, pool, tid)
+	root := t.TempDir()
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM tracks WHERE file_path LIKE $1`, root+"%") })
+	w := testWorker(t, pool, root, &fakeSource{tracks: map[string]tidal.Track{
+		tid: {ID: tid, Title: "Duet " + run, Artists: []string{"Simon & Garfunkel", "Guest"}},
+	}})
+	// Stand in for the filesystem watcher ingesting the file first.
+	w.saved = func(path string) { w.Ingest.IngestFile(ctx, path) }
+	w.drain(ctx)
+
+	saved, err := w.Library.DownloadedTIDALTrack(ctx, tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var artists string
+	if err := pool.QueryRow(ctx, `
+		SELECT STRING_AGG(ar.name, '|' ORDER BY ta.position)
+		FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
+		WHERE ta.track_id = $1`, saved).Scan(&artists); err != nil {
+		t.Fatal(err)
+	}
+	if artists != "Simon & Garfunkel|Guest" {
+		t.Fatalf("artists = %q", artists)
 	}
 }

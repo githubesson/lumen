@@ -56,11 +56,12 @@ type Worker struct {
 	kick     chan struct{}
 
 	// Test seams; nil means TIDAL, mediaembed.Embed, mediaembed.Available,
-	// and freeBytes.
+	// and freeBytes. saved runs after a download lands on disk.
 	source source
 	tag    tagFunc
 	ffmpeg func() bool
 	free   func(path string) (uint64, bool)
+	saved  func(path string)
 }
 
 // errNoFFmpeg is recorded as a normal failure, so tracks that only need
@@ -169,6 +170,11 @@ func (w *Worker) drain(ctx context.Context) {
 		for _, c := range pending {
 			if ctx.Err() != nil {
 				return
+			}
+			// Turning auto-download off, or removing the track, must stop
+			// the rest of this batch too.
+			if wanted, err := w.Store.StillWanted(ctx, c.RowID); err == nil && !wanted {
+				continue
 			}
 			if err := w.process(ctx, c, dest); err != nil {
 				if errors.Is(err, tidal.ErrNotConfigured) {
@@ -350,7 +356,9 @@ func (w *Worker) adoptAudioTwin(ctx context.Context, c Candidate, meta tidal.Tra
 		return false, nil
 	}
 	if filepath.Clean(twin.FilePath) == filepath.Clean(path) {
-		// The filesystem watcher ingested our file first; the row is ours.
+		// The filesystem watcher ingested our file first; the row is ours
+		// and needs the same artist fix-up as a fresh insert.
+		w.applyArtists(ctx, twin.ID, meta)
 		return true, w.adoptPlayable(ctx, c, meta, twin.ID, StatusDownloaded, path)
 	}
 	if w.playable(ctx, twin.FilePath) {
@@ -496,6 +504,9 @@ func (w *Worker) download(ctx context.Context, meta tidal.Track, dest string) (s
 	path, err := downloadfile.SaveNew(tagged.File, target)
 	if err != nil {
 		return path, fmt.Errorf("save: %w", err)
+	}
+	if w.saved != nil {
+		w.saved(path)
 	}
 	return path, nil
 }

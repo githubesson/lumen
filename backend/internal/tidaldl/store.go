@@ -107,6 +107,18 @@ func (s *Store) Pending(ctx context.Context, limit int) ([]Candidate, error) {
 	return out, rows.Err()
 }
 
+// StillWanted reports whether a remote row is still in an opted-in playlist.
+// A batch from Pending can go stale while earlier tracks download.
+func (s *Store) StillWanted(ctx context.Context, rowID uuid.UUID) (bool, error) {
+	var wanted bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM playlist_tracks pt
+			JOIN playlists p ON p.id = pt.playlist_id AND p.tidal_auto_download
+			WHERE pt.track_id = $1)`, rowID).Scan(&wanted)
+	return wanted, err
+}
+
 // LocalTrack is a live, shared library track and the file it plays from.
 type LocalTrack struct {
 	ID       uuid.UUID
