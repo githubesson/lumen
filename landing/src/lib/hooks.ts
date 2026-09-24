@@ -125,6 +125,16 @@ async function writeClipboard(text: string) {
   }
 }
 
+/** Speaks a short status message through the page's polite live region
+ *  (rendered once in App), for state that is otherwise only shown visually. */
+export function announce(message: string) {
+  const region = document.getElementById("live-region");
+  if (!region) return;
+  // Clear first so repeating the same message is announced again.
+  region.textContent = "";
+  window.setTimeout(() => (region.textContent = message), 50);
+}
+
 export function useCopy(timeout = 1600) {
   const [copied, setCopied] = useState<string | null>(null);
   useEffect(() => {
@@ -133,7 +143,10 @@ export function useCopy(timeout = 1600) {
     return () => window.clearTimeout(id);
   }, [copied, timeout]);
   const copy = useCallback((text: string) => {
-    void writeClipboard(text).then((ok) => ok && setCopied(text));
+    void writeClipboard(text).then((ok) => {
+      announce(ok ? "Copied to clipboard" : "Couldn't copy to the clipboard");
+      if (ok) setCopied(text);
+    });
   }, []);
   return { copied, copy };
 }

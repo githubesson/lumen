@@ -27,6 +27,8 @@ export default function App() {
         <FinalCta repo={repo} />
       </main>
       <Footer />
+      {/* Polite status messages from `announce()`, e.g. copy confirmations. */}
+      <div id="live-region" role="status" aria-live="polite" className="sr-only" />
     </>
   );
 }

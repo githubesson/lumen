@@ -29,8 +29,12 @@ export default function ShareDemo() {
 
   // Type the link, hold while the preview plays (or sits paused), and start
   // over a moment after it finishes.
+  // Held while keyboard focus is inside the demo: restarting would make the
+  // embed inert and drop the focused control.
+  const [focusWithin, setFocusWithin] = useState(false);
+
   useEffect(() => {
-    if (!autoplay || (unfurled && pos < PREVIEW_SECONDS)) return;
+    if (!autoplay || focusWithin || (unfurled && pos < PREVIEW_SECONDS)) return;
     const id = window.setTimeout(
       () => {
         if (unfurled) {
@@ -45,7 +49,7 @@ export default function ShareDemo() {
       unfurled ? 2200 : typed === 0 ? 700 : 32,
     );
     return () => window.clearTimeout(id);
-  }, [autoplay, typed, unfurled, pos]);
+  }, [autoplay, focusWithin, typed, unfurled, pos]);
 
   useInterval(
     () =>
@@ -59,7 +63,14 @@ export default function ShareDemo() {
   );
 
   return (
-    <div ref={ref} className="flex w-full max-w-sm gap-3">
+    <div
+      ref={ref}
+      className="flex w-full max-w-sm gap-3"
+      onFocus={() => setFocusWithin(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusWithin(false);
+      }}
+    >
       <span className="grid size-9 shrink-0 place-items-center rounded-full bg-muted text-xs font-medium">MV</span>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2 text-[13px]">
