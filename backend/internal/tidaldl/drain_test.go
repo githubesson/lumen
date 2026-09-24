@@ -88,6 +88,18 @@ func wavTagger(t *testing.T) tagFunc {
 	}
 }
 
+// libraryFile writes a playable stand-in for an existing library track in its
+// own music root, so ISRC matches pass the worker's playability check.
+func libraryFile(t *testing.T) (root, path string) {
+	t.Helper()
+	root = t.TempDir()
+	path = filepath.Join(root, "existing.flac")
+	if err := os.WriteFile(path, []byte("existing audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root, path
+}
+
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	url := os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL")
@@ -128,9 +140,10 @@ func TestDrainSavesTIDALTracksAndRepointsPlaylists(t *testing.T) {
 
 	// A shared library track with the same recording as matchID.
 	existing := uuid.New()
+	libRoot, libPath := libraryFile(t)
 	exec(`INSERT INTO tracks(id, title, duration_ms, file_path, file_size, format, audio_sha256, isrc)
 	      VALUES($1, 'Already here', 1000, $2, 5, 'flac', $3, $4)`,
-		existing, "/nowhere/"+run+".flac", existing[:], strings.ToLower(isrc))
+		existing, libPath, existing[:], strings.ToLower(isrc))
 	remote := map[string]uuid.UUID{}
 	for _, tid := range []string{matchID, downloadID, brokenID} {
 		id, err := lib.UpsertRemoteTrack(ctx, library.RemoteTrackInput{
@@ -197,7 +210,7 @@ func TestDrainSavesTIDALTracksAndRepointsPlaylists(t *testing.T) {
 		Library: lib,
 		Ingest: &ingest.Service{
 			DB: pool, Library: lib, Storage: storage.NewLocal(root), MusicRoot: root,
-			Roots: func(context.Context) []string { return []string{root} },
+			Roots: func(context.Context) []string { return []string{root, libRoot} },
 		},
 		PrimaryRoot: root,
 		source: &fakeSource{
@@ -365,7 +378,7 @@ func TestDrainLinksISRCMatchesWhenDownloadsCannotRun(t *testing.T) {
 			w.ffmpeg = func() bool { return false }
 		}, "ffmpeg"},
 		{"no destination", func(w *Worker, _ string) { w.PrimaryRoot = "" }, "no music root"},
-		{"ingest rejects the file", func(w *Worker, root string) {
+		{"ingest rejects the file", func(w *Worker, _ string) {
 			tagWAV := wavTagger(t)
 			w.tag = func(ctx context.Context, r io.ReadCloser, c []byte, m mediaembed.Metadata, h mediaembed.FormatHint) (*mediaembed.Result, error) {
 				res, err := tagWAV(ctx, r, c, m, h)
@@ -373,10 +386,6 @@ func TestDrainLinksISRCMatchesWhenDownloadsCannotRun(t *testing.T) {
 					res.Ext = ".unsupported"
 				}
 				return res, err
-			}
-			w.Ingest = &ingest.Service{
-				DB: pool, Library: w.Library, Storage: storage.NewLocal(root), MusicRoot: root,
-				Roots: func(context.Context) []string { return []string{root} },
 			}
 		}, "ingest skipped"},
 	} {
@@ -395,9 +404,10 @@ func TestDrainLinksISRCMatchesWhenDownloadsCannotRun(t *testing.T) {
 			matchID, downloadID := "fm"+run, "fd"+run
 			isrc := "FF" + strings.ToUpper(run)
 			existing := uuid.New()
+			libRoot, libPath := libraryFile(t)
 			if _, err := pool.Exec(ctx, `INSERT INTO tracks(id, title, duration_ms, file_path, file_size, format, audio_sha256, isrc)
 				VALUES($1, 'Already here', 1000, $2, 5, 'flac', $3, $4)`,
-				existing, "/nowhere/"+run+".flac", existing[:], isrc); err != nil {
+				existing, libPath, existing[:], isrc); err != nil {
 				t.Fatal(err)
 			}
 			var rows []uuid.UUID
@@ -433,6 +443,10 @@ func TestDrainLinksISRCMatchesWhenDownloadsCannotRun(t *testing.T) {
 			root := t.TempDir()
 			w := &Worker{
 				Store: store, Library: lib, PrimaryRoot: root,
+				Ingest: &ingest.Service{
+					DB: pool, Library: lib, Storage: storage.NewLocal(root), MusicRoot: root,
+					Roots: func(context.Context) []string { return []string{root, libRoot} },
+				},
 				source: &fakeSource{tracks: map[string]tidal.Track{
 					matchID:    {ID: matchID, Title: "Match", ISRC: isrc},
 					downloadID: {ID: downloadID, Title: "Needs download", AlbumArtist: "Band"},
@@ -485,5 +499,112 @@ func TestDestinationRejectsDisabledRoot(t *testing.T) {
 	}
 	if _, err := w.destinationFor(ctx, settings); err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("disabled root accepted: %v", err)
+	}
+}
+
+// Adopting replaces a working TIDAL entry, so a local copy is only reused if
+// the stream endpoint would actually serve it.
+func TestDrainSkipsUnplayableLocalCopies(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	lib := library.NewStore(pool)
+	pls := playlists.NewStore(pool)
+	store := NewStore(pool)
+
+	owner := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO users(id, username, password_hash, role) VALUES($1,$2,'test','user')`,
+		owner, "tidaldl-"+owner.String()); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()    // the only music root
+	outside := t.TempDir() // exists, but not a music root
+	libRoot, playablePath := libraryFile(t)
+	outsidePath := filepath.Join(outside, "outside.flac")
+	if err := os.WriteFile(outsidePath, []byte("audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := uuid.NewString()[:8]
+	mixedID, missingID, staleID := "um"+run, "ux"+run, "us"+run
+	mixedISRC, missingISRC := "UM"+strings.ToUpper(run), "UX"+strings.ToUpper(run)
+	local := func(path, isrc string, age int) uuid.UUID {
+		t.Helper()
+		id := uuid.New()
+		if _, err := pool.Exec(ctx, `INSERT INTO tracks(id, title, duration_ms, file_path, file_size, format, audio_sha256, isrc, created_at)
+			VALUES($1, 'Local', 1000, $2, 5, 'flac', $3, NULLIF($4, ''), NOW() - make_interval(mins => $5))`,
+			id, path, id[:], isrc, age); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	// Oldest first: a missing file, then a file outside every root, then a
+	// playable copy — only the last may be adopted.
+	missingFile := local(filepath.Join(root, "gone-"+run+".flac"), mixedISRC, 30)
+	outsideRoot := local(outsidePath, mixedISRC, 20)
+	playable := local(playablePath, mixedISRC, 10)
+	onlyMissing := local(filepath.Join(root, "gone2-"+run+".flac"), missingISRC, 5)
+	staleCopy := local(filepath.Join(root, "gone3-"+run+".flac"), "", 5)
+	if _, err := pool.Exec(ctx, `INSERT INTO tidal_downloads(tidal_id, status, local_track_id) VALUES($1, 'downloaded', $2)`,
+		staleID, staleCopy); err != nil {
+		t.Fatal(err)
+	}
+
+	var rows []uuid.UUID
+	for _, tid := range []string{mixedID, missingID, staleID} {
+		id, err := lib.UpsertRemoteTrack(ctx, library.RemoteTrackInput{
+			Source: "tidal", ExternalID: tid, Title: "Remote " + tid, ArtistNames: []string{"Remote"}, DurationMS: 1000,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, id)
+	}
+	pl, err := pls.Create(ctx, owner, "auto", "", playlists.VisibilityPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	locals := []uuid.UUID{missingFile, outsideRoot, playable, onlyMissing, staleCopy}
+	t.Cleanup(func() {
+		c := context.Background()
+		pool.Exec(c, `DELETE FROM playlists WHERE id = $1`, pl.ID)
+		pool.Exec(c, `DELETE FROM tidal_downloads WHERE tidal_id = ANY($1)`, []string{mixedID, missingID, staleID})
+		pool.Exec(c, `DELETE FROM tracks WHERE id = ANY($1) OR external_id = ANY($2) OR file_path LIKE $3`,
+			locals, []string{mixedID, missingID, staleID}, root+"%")
+		pool.Exec(c, `DELETE FROM users WHERE id = $1`, owner)
+	})
+	if err := pls.AddTracks(ctx, pl.ID, rows, owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := pls.SetTIDALAutoDownload(ctx, pl.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	w := &Worker{
+		Store: store, Library: lib, PrimaryRoot: root,
+		Ingest: &ingest.Service{
+			DB: pool, Library: lib, Storage: storage.NewLocal(root), MusicRoot: root,
+			Roots: func(context.Context) []string { return []string{root, libRoot} },
+		},
+		source: &fakeSource{tracks: map[string]tidal.Track{
+			mixedID:   {ID: mixedID, Title: "Mixed " + run, ISRC: mixedISRC},
+			missingID: {ID: missingID, Title: "Missing " + run, ISRC: missingISRC},
+			staleID:   {ID: staleID, Title: "Stale " + run},
+		}},
+		tag: wavTagger(t),
+	}
+	w.drain(ctx)
+
+	if got, err := lib.DownloadedTIDALTrack(ctx, mixedID); err != nil || got != playable {
+		t.Fatalf("mixed matches adopted %v, %v; want the playable %v", got, err, playable)
+	}
+	for tid, dead := range map[string]uuid.UUID{missingID: onlyMissing, staleID: staleCopy} {
+		got, err := lib.DownloadedTIDALTrack(ctx, tid)
+		if err != nil || got == dead {
+			t.Fatalf("%s resolved to %v, %v; want a fresh download instead of %v", tid, got, err, dead)
+		}
+		path, err := store.TrackFilePath(ctx, got)
+		if err != nil || !w.playable(ctx, path) {
+			t.Fatalf("%s saved to unplayable %q, %v", tid, path, err)
+		}
 	}
 }

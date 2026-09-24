@@ -104,26 +104,45 @@ func (s *Store) Pending(ctx context.Context, limit int) ([]Candidate, error) {
 	return out, rows.Err()
 }
 
-// LocalByISRC finds a live, shared library track for the same recording.
-func (s *Store) LocalByISRC(ctx context.Context, isrc string) (uuid.UUID, bool, error) {
+// LocalTrack is a live, shared library track and the file it plays from.
+type LocalTrack struct {
+	ID       uuid.UUID
+	FilePath string
+}
+
+// LocalByISRC lists live, shared library tracks for the same recording,
+// oldest first. Callers still have to check the file is playable.
+func (s *Store) LocalByISRC(ctx context.Context, isrc string) ([]LocalTrack, error) {
 	isrc = dbtext.Clean(isrc)
 	if isrc == "" {
-		return uuid.Nil, false, nil
+		return nil, nil
 	}
-	var id uuid.UUID
-	err := s.db.QueryRow(ctx, `
-		SELECT id FROM tracks
+	rows, err := s.db.Query(ctx, `
+		SELECT id, file_path FROM tracks
 		WHERE source = 'local' AND owner_id IS NULL AND deleted_at IS NULL
 		  AND UPPER(isrc) = UPPER($1)
 		ORDER BY created_at ASC, id ASC
-		LIMIT 1`, isrc).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, false, nil
-	}
+		LIMIT 20`, isrc)
 	if err != nil {
-		return uuid.Nil, false, err
+		return nil, err
 	}
-	return id, true, nil
+	defer rows.Close()
+	var out []LocalTrack
+	for rows.Next() {
+		var t LocalTrack
+		if err := rows.Scan(&t.ID, &t.FilePath); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// TrackFilePath returns a track's file path.
+func (s *Store) TrackFilePath(ctx context.Context, id uuid.UUID) (string, error) {
+	var p string
+	err := s.db.QueryRow(ctx, `SELECT file_path FROM tracks WHERE id = $1`, id).Scan(&p)
+	return p, err
 }
 
 // Adoption moves a remote TIDAL row's references onto its local copy.

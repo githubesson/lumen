@@ -244,7 +244,14 @@ func ResolveDestination(root, subdir string) (string, error) {
 func (w *Worker) process(ctx context.Context, c Candidate, dest func() (string, error)) error {
 	if localID, err := w.Library.DownloadedTIDALTrack(ctx, c.TIDALID); err == nil {
 		// Saved earlier; this row reappeared (e.g. re-added by a stale client).
-		return w.Store.Adopt(ctx, Adoption{RowID: c.RowID, TIDALID: c.TIDALID, LocalID: localID})
+		// If that copy is no longer playable, fall through and save a new one.
+		path, err := w.Store.TrackFilePath(ctx, localID)
+		if err != nil {
+			return err
+		}
+		if w.playable(ctx, path) {
+			return w.Store.Adopt(ctx, Adoption{RowID: c.RowID, TIDALID: c.TIDALID, LocalID: localID})
+		}
 	} else if !errors.Is(err, library.ErrNotFound) {
 		return err
 	}
@@ -258,15 +265,19 @@ func (w *Worker) process(ctx context.Context, c Candidate, dest func() (string, 
 	}
 	artist := strings.Join(meta.Artists, ", ")
 
-	localID, found, err := w.Store.LocalByISRC(ctx, meta.ISRC)
+	matches, err := w.Store.LocalByISRC(ctx, meta.ISRC)
 	if err != nil {
 		return err
 	}
-	if found {
+	for _, m := range matches {
+		// Adoption replaces a working TIDAL entry, so the match has to play.
+		if !w.playable(ctx, m.FilePath) {
+			continue
+		}
 		w.log().Info("tidal auto-download matched library track by ISRC",
-			"tidal_track", c.TIDALID, "track", localID, "isrc", meta.ISRC)
+			"tidal_track", c.TIDALID, "track", m.ID, "isrc", meta.ISRC)
 		return w.Store.Adopt(ctx, Adoption{
-			RowID: c.RowID, TIDALID: c.TIDALID, LocalID: localID,
+			RowID: c.RowID, TIDALID: c.TIDALID, LocalID: m.ID,
 			Status: StatusExisting, Title: meta.Title, Artist: artist,
 		})
 	}
@@ -306,6 +317,15 @@ func (w *Worker) process(ctx context.Context, c Candidate, dest func() (string, 
 	w.log().Info("tidal auto-download saved track",
 		"tidal_track", c.TIDALID, "track", out.TrackID, "path", out.Path, "status", status)
 	return nil
+}
+
+// playable reports whether the stream endpoint would serve path: it must be a
+// non-empty file under the primary root or an enabled music root.
+func (w *Worker) playable(ctx context.Context, path string) bool {
+	if w.Ingest == nil || strings.TrimSpace(path) == "" {
+		return false
+	}
+	return pathsafe.WithinAnyRoot(w.Ingest.AllRoots(ctx), path) && downloadfile.NonEmpty(path)
 }
 
 // removeFile deletes a download that never made it into the library. Ingest
