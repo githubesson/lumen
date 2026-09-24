@@ -13,6 +13,9 @@ import SettingRow from "./SettingRow";
 export function useDesktopUpdates(enabled: boolean) {
   const electron = window.electron;
   const initialized = useRef(false);
+  // Bumped on close; save / check / install results from an earlier session
+  // are dropped so a late failure can't reappear on the next open.
+  const session = useRef(0);
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [branch, setBranch] = useState<UpdateBranch>("main");
   const [repoUrl, setRepoUrl] = useState("");
@@ -37,6 +40,8 @@ export function useDesktopUpdates(enabled: boolean) {
       active = false;
       // Reopening starts from the saved config, without a stale failure.
       initialized.current = false;
+      session.current += 1;
+      setBusy(false);
       setError(null);
       unsubscribe?.();
     };
@@ -44,51 +49,64 @@ export function useDesktopUpdates(enabled: boolean) {
 
   if (!enabled || !electron?.getUpdateStatus || !status) return null;
 
-  const save = async () => {
-    if (!electron.saveUpdateConfig) return;
+  const run = async (
+    task: (live: () => boolean) => Promise<void>,
+    failure: string,
+    { holdBusy = false } = {},
+  ) => {
+    const id = session.current;
+    const live = () => session.current === id;
     setBusy(true);
     setError(null);
     try {
-      const result = await electron.saveUpdateConfig({
+      await task(live);
+      if (live() && !holdBusy) setBusy(false);
+    } catch (cause) {
+      if (!live()) return;
+      setError(cause instanceof Error ? cause.message : failure);
+      setBusy(false);
+    }
+  };
+
+  const save = () => {
+    const saveConfig = electron.saveUpdateConfig;
+    if (!saveConfig) return;
+    return run(async (live) => {
+      const result = await saveConfig({
         branch,
         repoUrl: repoUrl.trim() || status.defaultRepoUrl,
       });
       if (!result.ok || !result.status) {
         throw new Error(result.error || "Could not save the update source.");
       }
+      if (!live()) return;
       setStatus(result.status);
       setBranch(result.status.branch);
       setRepoUrl(result.status.repoUrl);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not save updates.");
-    } finally {
-      setBusy(false);
-    }
+    }, "Could not save updates.");
   };
 
-  const check = async () => {
-    if (!electron.checkForUpdates) return;
-    setBusy(true);
-    setError(null);
-    try {
-      setStatus(await electron.checkForUpdates());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Update check failed.");
-    } finally {
-      setBusy(false);
-    }
+  const check = () => {
+    const checkForUpdates = electron.checkForUpdates;
+    if (!checkForUpdates) return;
+    return run(async (live) => {
+      const next = await checkForUpdates();
+      if (live()) setStatus(next);
+    }, "Update check failed.");
   };
 
-  const install = async () => {
-    if (!electron.installUpdate) return;
-    setBusy(true);
-    setError(null);
-    try {
-      setStatus(await electron.installUpdate());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Update install failed.");
-      setBusy(false);
-    }
+  // Busy stays on after a successful install call: the app is restarting.
+  const install = () => {
+    const installUpdate = electron.installUpdate;
+    if (!installUpdate) return;
+    return run(
+      async (live) => {
+        const next = await installUpdate();
+        if (live()) setStatus(next);
+      },
+      "Update install failed.",
+      { holdBusy: true },
+    );
   };
 
   return { status, branch, setBranch, repoUrl, setRepoUrl, busy, error, save, check, install };
