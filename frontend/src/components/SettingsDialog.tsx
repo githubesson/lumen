@@ -101,9 +101,9 @@ export default function SettingsDialog({ open, onClose }: Props) {
 
   // Shell passes a fresh arrow each render; the effect below must only run on
   // mount/unmount or it would yank focus back to the panel on every render.
-  const onCloseRef = useRef(onClose);
+  const latest = useRef({ onClose, query });
   useEffect(() => {
-    onCloseRef.current = onClose;
+    latest.current = { onClose, query };
   });
 
   useEffect(() => {
@@ -111,10 +111,17 @@ export default function SettingsDialog({ open, onClose }: Props) {
     const restoreTo = document.activeElement as HTMLElement | null;
     panelRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      // An open Select handles its own Escape (and marks it handled) first.
-      if (event.key !== "Escape" || event.defaultPrevented) return;
+      // An open Select handles its own Tab / Escape (and marks them handled) first.
+      if (event.defaultPrevented) return;
+      if (event.key === "Tab") {
+        trapTab(event, panelRef.current);
+        return;
+      }
+      if (event.key !== "Escape") return;
       event.preventDefault();
-      onCloseRef.current();
+      // Escape backs out one step: a search, wherever focus is, then the dialog.
+      if (latest.current.query) setQuery("");
+      else latest.current.onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => {
@@ -353,7 +360,6 @@ export default function SettingsDialog({ open, onClose }: Props) {
             placeholder="Search settings"
             value={query}
             onChange={(e) => setQuery(e.currentTarget.value)}
-            onClear={query ? () => setQuery("") : undefined}
           />
           <ul className="settings-nav-list">
             {navSections.map((s) => {
@@ -412,4 +418,31 @@ export default function SettingsDialog({ open, onClose }: Props) {
       </div>
     </div>
   );
+}
+
+const FOCUSABLE =
+  'button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+
+/** Keep Tab / Shift+Tab cycling inside the dialog instead of the app behind it. */
+function trapTab(event: KeyboardEvent, panel: HTMLElement | null) {
+  if (!panel) return;
+  const items = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+    (el) => el.getClientRects().length > 0,
+  );
+  if (items.length === 0) {
+    event.preventDefault();
+    panel.focus();
+    return;
+  }
+  const first = items[0];
+  const last = items[items.length - 1];
+  const current = document.activeElement;
+  const inside = current instanceof Node && panel.contains(current);
+  if (event.shiftKey && (!inside || current === first || current === panel)) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (!inside || current === last)) {
+    event.preventDefault();
+    first.focus();
+  }
 }
