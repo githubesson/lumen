@@ -51,32 +51,35 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 	}
 	id := chi.URLParam(r, "id")
 	limit, offset := pageParams(r.URL.Query())
+	// An unpaged request is the album page itself: it gets the whole
+	// release, not the proxy's first page, so counts and the download
+	// control cover every track.
+	unpaged := r.URL.Query().Get("limit") == "" && offset == 0
 	err := tidal.ErrNotConfigured
 	var album tidal.Album
 	if h.TIDAL != nil {
 		album, err = h.TIDAL.Album(r.Context(), id, limit, offset)
-		// An unpaged request is the album page itself: give it the whole
-		// release, not the proxy's first page, so counts and the download
-		// control cover every track.
-		unpaged := r.URL.Query().Get("limit") == "" && offset == 0
 		if err == nil && unpaged && len(album.Tracks) < album.TrackCount {
 			if full, ferr := h.TIDAL.FullAlbum(r.Context(), id); ferr == nil {
 				album = full
 			}
 		}
 	}
+	partial := err == nil && len(album.Tracks) < album.TrackCount
 	if h.Library != nil && offset == 0 {
-		if err == nil && len(album.Tracks) >= album.TrackCount {
+		if err == nil && !partial {
 			// A full fetch updates the stored record, which then also lists
 			// the tracks TIDAL has since dropped.
 			if serr := h.Library.SaveTIDALAlbum(r.Context(), album); serr != nil {
 				slog.Warn("tidal album cache write failed", "album", album.ID, "err", serr)
 			}
 		}
-		// The stored record outlives the release on TIDAL: serve it when
-		// TIDAL can't, and in place of a full fetch so dropped tracks show.
-		if err != nil || len(album.Tracks) >= album.TrackCount {
-			if cached, _, cerr := h.Library.TIDALAlbum(r.Context(), id); cerr == nil {
+		// The stored record outlives the release on TIDAL. Serve it when
+		// TIDAL can't; in place of a full fetch, so dropped tracks show; and
+		// to the album page when only part of the release could be fetched.
+		if err != nil || !partial || unpaged {
+			if cached, _, cerr := h.Library.TIDALAlbum(r.Context(), id); cerr == nil &&
+				(!partial || len(cached.Tracks) >= len(album.Tracks)) {
 				album, err = cached, nil
 			}
 		}

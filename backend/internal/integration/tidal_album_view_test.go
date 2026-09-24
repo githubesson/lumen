@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,5 +127,81 @@ func TestLibraryAlbumShowsFullTIDALRelease(t *testing.T) {
 		if tracks[i].ID != id {
 			t.Fatalf("tracks = %+v, want %v", tracks, want)
 		}
+	}
+}
+
+// When only the first page of a release can be fetched, the album page falls
+// back to the complete stored release instead of showing the partial page.
+func TestTIDALAlbumPageFallsBackToStoredRelease(t *testing.T) {
+	url := os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("set LUMEN_REVIEW_TEST_DATABASE_URL to an isolated PostgreSQL database")
+	}
+	if err := db.Migrate(url); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	pool, err := db.Open(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	run := uuid.NewString()[:8]
+	rel := "770" + strconv.Itoa(int(time.Now().UnixNano()%100000))
+	viewer := uuid.New()
+	t.Cleanup(func() {
+		c := context.Background()
+		pool.Exec(c, `DELETE FROM tidal_albums WHERE tidal_id = $1`, rel)
+		pool.Exec(c, `DELETE FROM users WHERE id = $1`, viewer)
+	})
+	if _, err := pool.Exec(ctx, `INSERT INTO users(id, username, password_hash, role) VALUES($1, $2, 'test', 'user')`,
+		viewer, "partial-"+run); err != nil {
+		t.Fatal(err)
+	}
+	lib := library.NewStore(pool)
+	stored := tidal.Album{ID: rel, Title: "Long " + run, TrackCount: 150}
+	for i := 0; i < 150; i++ {
+		stored.Tracks = append(stored.Tracks, tidal.Track{ID: strconv.Itoa(1000 + i), Title: "T", TrackNo: i + 1})
+	}
+	if err := lib.SaveTIDALAlbum(ctx, stored); err != nil {
+		t.Fatal(err)
+	}
+
+	// The proxy serves the first 100 tracks, then fails.
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("offset") != "0" {
+			http.Error(w, "upstream down", http.StatusBadGateway)
+			return
+		}
+		items := make([]string, 100)
+		for i := range items {
+			items[i] = `{"type":"track","item":{"id":` + strconv.Itoa(1000+i) + `,"title":"T","trackNumber":` + strconv.Itoa(i+1) + `}}`
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":` + rel + `,"title":"Long","numberOfTracks":150,"items":[` + strings.Join(items, ",") + `]}}`))
+	}))
+	defer proxy.Close()
+
+	sessions := auth.NewSessionStore(pool, "session", false, time.Hour)
+	router := httpapi.NewRouter(httpapi.Deps{
+		DB: pool, Users: users.NewStore(pool), Sessions: sessions, Library: lib, CoverSignKey: []byte("test-key"),
+		TIDAL: tidal.NewClient(tidal.Config{HifiAPIURL: proxy.URL}),
+	})
+	token, _, err := sessions.Create(ctx, viewer, httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/tidal/albums/"+rel, nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: token})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	var page struct {
+		Tracks []json.RawMessage `json:"tracks"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &page) != nil {
+		t.Fatalf("album page: %d %s", rec.Code, rec.Body)
+	}
+	if len(page.Tracks) != 150 {
+		t.Fatalf("album page lists %d tracks, want the stored 150", len(page.Tracks))
 	}
 }
