@@ -107,7 +107,19 @@ func (e SkipError) Error() string { return e.Reason }
 // non-empty files are reused; empty targets are preserved under their name.
 // The returned path is also meaningful on failure for download history.
 func Save(body io.Reader, target string) (filePath string, existing bool, err error) {
-	if NonEmpty(target) {
+	return save(body, target, true)
+}
+
+// SaveNew is Save for callers that cannot tell whether a file already at the
+// target holds the same media: it always writes the body, moving to a free
+// "-N" name when the target is taken.
+func SaveNew(body io.Reader, target string) (string, error) {
+	path, _, err := save(body, target, false)
+	return path, err
+}
+
+func save(body io.Reader, target string, reuse bool) (filePath string, existing bool, err error) {
+	if reuse && NonEmpty(target) {
 		return target, true, nil
 	}
 	if pathExists(target) {
@@ -135,11 +147,12 @@ func Save(body io.Reader, target string) (filePath string, existing bool, err er
 		return target, false, err
 	}
 	if pathExists(target) {
-		if NonEmpty(target) {
+		if reuse && NonEmpty(target) {
 			return target, true, nil
 		}
 		target = nextAvailablePath(target)
 	}
+	// InstallNoOverwrite also steps past a file created after the check above.
 	target, err = InstallNoOverwrite(tmpPath, target)
 	return target, false, err
 }

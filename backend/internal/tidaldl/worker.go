@@ -49,9 +49,28 @@ type Worker struct {
 	kickOnce sync.Once
 	kick     chan struct{}
 
-	// Test seams; nil means TIDAL and mediaembed.Embed.
+	// Test seams; nil means TIDAL, mediaembed.Embed, and mediaembed.Available.
 	source source
 	tag    tagFunc
+	ffmpeg func() bool
+}
+
+// errNoFFmpeg is recorded as a normal failure, so tracks that only need
+// linking keep moving while downloads back off until ffmpeg is installed.
+var errNoFFmpeg = errors.New("ffmpeg is not installed on the server")
+
+func (w *Worker) tagger() (tagFunc, error) {
+	if w.tag != nil {
+		return w.tag, nil
+	}
+	available := w.ffmpeg
+	if available == nil {
+		available = mediaembed.Available
+	}
+	if !available() {
+		return nil, errNoFFmpeg
+	}
+	return mediaembed.Embed, nil
 }
 
 // source is the part of *tidal.Client the worker uses.
@@ -123,10 +142,6 @@ func (w *Worker) log() *slog.Logger {
 }
 
 func (w *Worker) drain(ctx context.Context) {
-	if w.tag == nil && !mediaembed.Available() {
-		w.log().Warn("tidal auto-download paused: ffmpeg is not installed")
-		return
-	}
 	var dest string
 	for batch := 0; batch < maxBatchesPerWake; batch++ {
 		pending, err := w.Store.Pending(ctx, batchSize)
@@ -297,6 +312,10 @@ func (w *Worker) download(ctx context.Context, meta tidal.Track, dest string) (s
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	tag, err := w.tagger()
+	if err != nil {
+		return "", err
+	}
 	resp, err := w.src().FileResponse(ctx, meta.ID, nil)
 	if err != nil {
 		return "", err
@@ -308,10 +327,6 @@ func (w *Worker) download(ctx context.Context, meta tidal.Track, dest string) (s
 				"tidal_track", meta.ID, "err", err)
 			cover = nil
 		}
-	}
-	tag := w.tag
-	if tag == nil {
-		tag = mediaembed.Embed
 	}
 	// The tagger closes resp.Body.
 	tagged, err := tag(ctx, resp.Body, cover, mediaembed.Metadata{
@@ -329,8 +344,11 @@ func (w *Worker) download(ctx context.Context, meta tidal.Track, dest string) (s
 	}
 	defer tagged.Cleanup()
 
+	// Never reuse a file already at the target: two releases can share
+	// artist/album/number/title, and adopting the other file would repoint
+	// the playlist at different audio.
 	target := filepath.Join(dest, TrackPath(meta)+tagged.Ext)
-	path, _, err := downloadfile.Save(tagged.File, target)
+	path, err := downloadfile.SaveNew(tagged.File, target)
 	if err != nil {
 		return path, fmt.Errorf("save: %w", err)
 	}

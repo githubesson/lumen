@@ -120,3 +120,23 @@ func TestSaveRejectsOversizedBodyWithoutLeavingFiles(t *testing.T) {
 		t.Fatalf("Save at limit: %v", err)
 	}
 }
+
+func TestSaveNewNeverReusesExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "song.flac")
+	if err := os.WriteFile(target, []byte("other release"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := SaveNew(strings.NewReader("this release"), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "song-1.flac"); got != want {
+		t.Fatalf("saved to %q, want %q", got, want)
+	}
+	for path, want := range map[string]string{target: "other release", got: "this release"} {
+		if b, err := os.ReadFile(path); err != nil || string(b) != want {
+			t.Fatalf("%s = %q, %v; want %q", path, b, err, want)
+		}
+	}
+}
