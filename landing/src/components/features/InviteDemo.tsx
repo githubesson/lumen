@@ -11,7 +11,8 @@ const randomToken = () => Array.from({ length: 10 }, () => ALPHABET[Math.floor(M
 export default function InviteDemo() {
   const [token, setToken] = useState("q7mx2kfw9p");
   const [scrambling, setScrambling] = useState(false);
-  const reduced = usePrefersReducedMotion();
+  // Switching reduced motion on mid-scramble stops it on the current token.
+  const reduced = usePrefersReducedMotion(() => setScrambling(false));
   const { copied, copy } = useCopy();
   const link = `https://music.example.com/invite/${token}`;
 
