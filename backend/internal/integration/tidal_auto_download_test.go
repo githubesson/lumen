@@ -162,6 +162,23 @@ func TestTIDALAutoDownloadAPI(t *testing.T) {
 	if err != nil || len(entries) != 1 || entries[0].TrackID != local {
 		t.Fatalf("entries = %+v, %v", entries, err)
 	}
+	// A client holding a pre-swap snapshot sends the retired TIDAL row's id;
+	// its favorite must land on the saved copy.
+	remote, err := lib.UpsertRemoteTrack(ctx, library.RemoteTrackInput{
+		Source: "tidal", ExternalID: tidalID, Title: "Remote", ArtistNames: []string{"Remote"}, DurationMS: 1000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM tracks WHERE id = $1`, remote) })
+	if rec := do(member, http.MethodPost, "/api/tracks/"+remote.String()+"/favorite", ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("favorite stale id: %d %s", rec.Code, rec.Body)
+	}
+	var favTrack uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT track_id FROM user_track_stats WHERE user_id = $1 AND favorited`, member).Scan(&favTrack); err != nil || favTrack != local {
+		t.Fatalf("favorite stored on %v, %v; want %v", favTrack, err, local)
+	}
+
 	// Once the copy stops being playable, `tidal:` refs fall back to TIDAL.
 	if err := os.Remove(savedPath); err != nil {
 		t.Fatal(err)

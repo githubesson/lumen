@@ -56,7 +56,7 @@ func resolveTrackRowID(ctx context.Context, lib *library.Store, tidalClient *tid
 	}
 	switch ref.Source {
 	case trackref.SourceLocal:
-		return ref.LocalID, nil
+		return lib.RedirectSavedTIDAL(ctx, ref.LocalID)
 	case trackref.SourceTIDAL:
 		if createRemote {
 			return materializeTIDALTrack(ctx, lib, tidalClient, ref.ID)

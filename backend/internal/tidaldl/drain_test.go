@@ -849,3 +849,65 @@ func TestWatcherWinningIngestStillGetsTIDALArtists(t *testing.T) {
 		t.Fatalf("artists = %q", artists)
 	}
 }
+
+// A saved copy that is deleted — hard (file gone, admin delete) or soft (root
+// purge) — must hand its playlist entries back to the TIDAL row, not drop
+// or hide them.
+func TestDeletedSavedCopyFallsBackToTIDAL(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	run := uuid.NewString()[:8]
+	tid := "fb" + run
+	pl, rows := optedInPlaylist(t, pool, tid)
+	remote := rows[0]
+	root := t.TempDir()
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM tracks WHERE file_path LIKE $1`, root+"%") })
+	w := testWorker(t, pool, root, &fakeSource{tracks: map[string]tidal.Track{tid: {ID: tid, Title: "Fallback " + run}}})
+
+	entry := func() uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx, `SELECT track_id FROM playlist_tracks WHERE playlist_id = $1`, pl).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	for _, del := range []struct {
+		name string
+		run  func(local uuid.UUID, path string) error
+	}{
+		{"file gone from disk", func(_ uuid.UUID, path string) error { return w.Library.HardDeleteByPath(ctx, path) }},
+		{"root purged", func(local uuid.UUID, _ string) error {
+			_, err := pool.Exec(ctx, `UPDATE tracks SET deleted_at = NOW() WHERE id = $1`, local)
+			return err
+		}},
+	} {
+		w.drain(ctx)
+		local, err := w.Library.DownloadedTIDALTrack(ctx, tid)
+		if err != nil {
+			t.Fatalf("%s: not saved: %v", del.name, err)
+		}
+		if got := entry(); got != local {
+			t.Fatalf("%s: entry %v before delete, want the saved copy %v", del.name, got, local)
+		}
+		if got, err := w.Library.RedirectSavedTIDAL(ctx, remote); err != nil || got != local {
+			t.Fatalf("%s: stale remote id redirected to %v, %v; want %v", del.name, got, err, local)
+		}
+		path, err := w.Store.TrackFilePath(ctx, local)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := del.run(local, path); err != nil {
+			t.Fatal(err)
+		}
+		if got := entry(); got != remote {
+			t.Fatalf("%s: entry %v after delete, want the TIDAL row %v", del.name, got, remote)
+		}
+		if got, err := w.Library.RedirectSavedTIDAL(ctx, remote); err != nil || got != remote {
+			t.Fatalf("%s: remote id redirected to %v, %v after delete", del.name, got, err)
+		}
+		if pending, err := w.Store.Pending(ctx, 100); err != nil || !containsRow(pending, remote) {
+			t.Fatalf("%s: not queued again: %v, %v", del.name, pending, err)
+		}
+	}
+}
