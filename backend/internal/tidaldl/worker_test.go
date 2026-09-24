@@ -75,6 +75,9 @@ func TestResolveDestination(t *testing.T) {
 	if _, err := ResolveDestination(" ", "TIDAL"); err == nil {
 		t.Error("accepted a blank root")
 	}
+	if _, err := ResolveDestination(filepath.Join(root, "unmounted"), "TIDAL"); err == nil {
+		t.Error("accepted a root that does not exist")
+	}
 }
 
 func TestKickNeverBlocks(t *testing.T) {

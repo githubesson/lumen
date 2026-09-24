@@ -6,6 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -143,6 +146,44 @@ func (s *Store) TrackFilePath(ctx context.Context, id uuid.UUID) (string, error)
 	var p string
 	err := s.db.QueryRow(ctx, `SELECT file_path FROM tracks WHERE id = $1`, id).Scan(&p)
 	return p, err
+}
+
+// GlobalByAudioSHA finds the live shared track with this audio, if any.
+func (s *Store) GlobalByAudioSHA(ctx context.Context, sha []byte) (LocalTrack, bool, error) {
+	var t LocalTrack
+	err := s.db.QueryRow(ctx, `
+		SELECT id, file_path FROM tracks
+		WHERE audio_sha256 = $1 AND owner_id IS NULL AND deleted_at IS NULL AND source = 'local'`,
+		sha).Scan(&t.ID, &t.FilePath)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LocalTrack{}, false, nil
+	}
+	if err != nil {
+		return LocalTrack{}, false, err
+	}
+	return t, true, nil
+}
+
+// RepointFile moves a track onto another file with the same audio.
+func (s *Store) RepointFile(ctx context.Context, id uuid.UUID, path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !dbtext.Valid(path) {
+		return errors.New("file path is not valid UTF-8")
+	}
+	format := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
+	tag, err := s.db.Exec(ctx, `
+		UPDATE tracks SET file_path = $2, file_size = $3, format = $4, updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL`, id, path, info.Size(), format)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("track no longer exists")
+	}
+	return nil
 }
 
 // Adoption moves a remote TIDAL row's references onto its local copy.

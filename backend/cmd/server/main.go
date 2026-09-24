@@ -127,6 +127,8 @@ func main() {
 		},
 		Logger: logger,
 	}
+	// Saved TIDAL copies only stand in for `tidal:` refs while playable.
+	libraryStore.PlayableRoots = ingestSvc.AllRoots
 	// Prime the configured paths so the first playback request needs no root
 	// query. Failed loads are logged by the provider and retried on next use.
 	ingestSvc.AllRoots(ctx)

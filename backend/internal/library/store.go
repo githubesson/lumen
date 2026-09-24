@@ -15,6 +15,8 @@ import (
 
 	"github.com/githubesson/lumen/internal/dbtext"
 	"github.com/githubesson/lumen/internal/dbutil"
+	"github.com/githubesson/lumen/internal/downloadfile"
+	"github.com/githubesson/lumen/internal/pathsafe"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -33,6 +35,20 @@ const MaxTrackArtists = 64
 
 type Store struct {
 	db *pgxpool.Pool
+
+	// PlayableRoots lists the roots the stream endpoint serves files from.
+	// When set, DownloadedTIDALTrack only returns saved copies that are
+	// still playable. Assign before serving requests.
+	PlayableRoots func(context.Context) []string
+}
+
+// FilePlayable reports whether the stream endpoint would serve path: a
+// non-empty regular file inside one of roots.
+func FilePlayable(roots []string, path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	return pathsafe.WithinAnyRoot(roots, path) && downloadfile.NonEmpty(path)
 }
 
 func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
@@ -286,20 +302,28 @@ func (s *Store) TrackIDForExternal(ctx context.Context, source, externalID strin
 }
 
 // DownloadedTIDALTrack returns the live library copy that TIDAL playlist
-// auto-download saved for tidalID, or ErrNotFound.
+// auto-download saved for tidalID, or ErrNotFound. With PlayableRoots set, a
+// copy whose file is gone or under a disabled root also reports ErrNotFound,
+// so `tidal:` references fall back to the remote row.
 func (s *Store) DownloadedTIDALTrack(ctx context.Context, tidalID string) (uuid.UUID, error) {
-	var id uuid.UUID
+	var (
+		id   uuid.UUID
+		path string
+	)
 	err := s.db.QueryRow(ctx, `
-		SELECT t.id
+		SELECT t.id, t.file_path
 		FROM tidal_downloads d
 		JOIN tracks t ON t.id = d.local_track_id AND t.deleted_at IS NULL
 		WHERE d.tidal_id = $1 AND d.status IN ('downloaded', 'existing')`,
-		dbtext.Clean(strings.TrimSpace(tidalID))).Scan(&id)
+		dbtext.Clean(strings.TrimSpace(tidalID))).Scan(&id, &path)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, ErrNotFound
 	}
 	if err != nil {
 		return uuid.Nil, err
+	}
+	if s.PlayableRoots != nil && !FilePlayable(s.PlayableRoots(ctx), path) {
+		return uuid.Nil, ErrNotFound
 	}
 	return id, nil
 }

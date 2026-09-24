@@ -2,6 +2,7 @@ package tidaldl
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -229,6 +230,11 @@ func ResolveDestination(root, subdir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// An absent root is usually an unmounted volume. Creating the subfolder
+	// would recreate the mount point and write onto the wrong filesystem.
+	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("music root %s is not available", abs)
+	}
 	subdir = strings.TrimSpace(subdir)
 	if subdir == "" || filepath.Clean(subdir) == "." {
 		return abs, nil
@@ -302,6 +308,12 @@ func (w *Worker) process(ctx context.Context, c Candidate, dest func() (string, 
 		}
 		return w.fail(ctx, c, meta, err)
 	}
+	// Ingest folds identical audio into the existing row and, when that row's
+	// file still exists, deletes ours — even if the row itself can't play
+	// (e.g. under a disabled root). Handle audio twins first.
+	if handled, err := w.adoptAudioTwin(ctx, c, meta, path); handled {
+		return err
+	}
 	out := w.Ingest.IngestFile(ctx, path)
 	if out.Err != nil || out.TrackID == uuid.Nil {
 		// The file is ours and unused. SaveNew picks a fresh name on every
@@ -317,14 +329,65 @@ func (w *Worker) process(ctx context.Context, c Candidate, dest func() (string, 
 		status = StatusDownloaded
 		w.applyArtists(ctx, out.TrackID, meta)
 	}
+	return w.adoptPlayable(ctx, c, meta, out.TrackID, status, path)
+}
+
+// adoptAudioTwin handles a download whose audio already has a live shared
+// row. A playable twin is adopted and our copy discarded; an unplayable one
+// is pointed at our copy, which has the same audio, then adopted. handled is
+// false when there is no twin and ingest should take the file.
+func (w *Worker) adoptAudioTwin(ctx context.Context, c Candidate, meta tidal.Track, path string) (handled bool, err error) {
+	shaHex, err := ingest.AudioSHA256(ctx, path)
+	if err != nil {
+		return false, nil // ingest will hash it again and report the error
+	}
+	sha, err := hex.DecodeString(shaHex)
+	if err != nil {
+		return false, nil
+	}
+	twin, found, err := w.Store.GlobalByAudioSHA(ctx, sha)
+	if err != nil || !found {
+		return false, nil
+	}
+	if filepath.Clean(twin.FilePath) == filepath.Clean(path) {
+		// The filesystem watcher ingested our file first; the row is ours.
+		return true, w.adoptPlayable(ctx, c, meta, twin.ID, StatusDownloaded, path)
+	}
+	if w.playable(ctx, twin.FilePath) {
+		w.removeFile("", path)
+		return true, w.adoptPlayable(ctx, c, meta, twin.ID, StatusExisting, "")
+	}
+	if err := w.Store.RepointFile(ctx, twin.ID, path); err != nil {
+		w.removeFile("", path)
+		return true, w.fail(ctx, c, meta, fmt.Errorf("repoint library track: %w", err))
+	}
+	w.log().Info("tidal auto-download moved an unplayable library track to the new copy",
+		"tidal_track", c.TIDALID, "track", twin.ID, "old_path", twin.FilePath, "path", path)
+	return true, w.adoptPlayable(ctx, c, meta, twin.ID, StatusDownloaded, path)
+}
+
+// adoptPlayable is the last gate before a download's track replaces the
+// TIDAL entries: it must actually play. ours is the file this attempt wrote,
+// removed on failure unless the track now points at it.
+func (w *Worker) adoptPlayable(ctx context.Context, c Candidate, meta tidal.Track, localID uuid.UUID, status, ours string) error {
+	path, err := w.Store.TrackFilePath(ctx, localID)
+	if err != nil {
+		return err
+	}
+	if !w.playable(ctx, path) {
+		if ours != "" && ours != path {
+			w.removeFile("", ours)
+		}
+		return w.fail(ctx, c, meta, fmt.Errorf("library track %s is not playable (%s)", localID, path))
+	}
 	if err := w.Store.Adopt(ctx, Adoption{
-		RowID: c.RowID, TIDALID: c.TIDALID, LocalID: out.TrackID,
-		Status: status, FilePath: out.Path, Title: meta.Title, Artist: artist,
+		RowID: c.RowID, TIDALID: c.TIDALID, LocalID: localID,
+		Status: status, FilePath: path, Title: meta.Title, Artist: strings.Join(meta.Artists, ", "),
 	}); err != nil {
 		return err
 	}
 	w.log().Info("tidal auto-download saved track",
-		"tidal_track", c.TIDALID, "track", out.TrackID, "path", out.Path, "status", status)
+		"tidal_track", c.TIDALID, "track", localID, "path", path, "status", status)
 	return nil
 }
 
@@ -360,10 +423,10 @@ func (w *Worker) checkFreeSpace(dir string) error {
 // playable reports whether the stream endpoint would serve path: it must be a
 // non-empty file under the primary root or an enabled music root.
 func (w *Worker) playable(ctx context.Context, path string) bool {
-	if w.Ingest == nil || strings.TrimSpace(path) == "" {
+	if w.Ingest == nil {
 		return false
 	}
-	return pathsafe.WithinAnyRoot(w.Ingest.AllRoots(ctx), path) && downloadfile.NonEmpty(path)
+	return library.FilePlayable(w.Ingest.AllRoots(ctx), path)
 }
 
 // removeFile deletes a download that never made it into the library. Ingest

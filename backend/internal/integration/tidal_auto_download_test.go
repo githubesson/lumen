@@ -3,9 +3,11 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +52,7 @@ func TestTIDALAutoDownloadAPI(t *testing.T) {
 	downloads := tidaldl.NewStore(pool)
 	roots := musicroots.NewStore(pool)
 	primary := t.TempDir()
+	lib.PlayableRoots = func(context.Context) []string { return []string{primary} }
 	sessions := auth.NewSessionStore(pool, "session", false, time.Hour)
 	router := httpapi.NewRouter(httpapi.Deps{
 		DB: pool, Users: users.NewStore(pool), Sessions: sessions, Library: lib, Playlists: pls,
@@ -139,8 +142,12 @@ func TestTIDALAutoDownloadAPI(t *testing.T) {
 
 	// A TIDAL track that was already saved is added as its local copy, even
 	// with no TIDAL proxy configured.
+	savedPath := filepath.Join(primary, tidalID+".flac")
+	if err := os.WriteFile(savedPath, []byte("audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `INSERT INTO tracks(id, title, duration_ms, file_path, file_size, format, audio_sha256)
-		VALUES($1, 'Saved', 1000, $2, 5, 'flac', $3)`, local, "/nowhere/"+tidalID+".flac", local[:]); err != nil {
+		VALUES($1, 'Saved', 1000, $2, 5, 'flac', $3)`, local, savedPath, local[:]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO tidal_downloads(tidal_id, status, local_track_id) VALUES($1, 'downloaded', $2)`,
@@ -154,5 +161,12 @@ func TestTIDALAutoDownloadAPI(t *testing.T) {
 	entries, err := pls.Tracks(ctx, playlist.ID)
 	if err != nil || len(entries) != 1 || entries[0].TrackID != local {
 		t.Fatalf("entries = %+v, %v", entries, err)
+	}
+	// Once the copy stops being playable, `tidal:` refs fall back to TIDAL.
+	if err := os.Remove(savedPath); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := lib.DownloadedTIDALTrack(ctx, tidalID); !errors.Is(err, library.ErrNotFound) {
+		t.Fatalf("missing saved copy resolved to %v, %v", got, err)
 	}
 }

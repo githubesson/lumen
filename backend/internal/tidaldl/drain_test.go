@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
@@ -52,33 +53,20 @@ func (f *fakeSource) CoverBytes(context.Context, string) ([]byte, error) {
 
 // wavTagger stands in for ffmpeg: it consumes the assembled stream and emits
 // a WAV of random samples, so each download has distinct audio.
-func wavTagger(t *testing.T) tagFunc {
-	return func(_ context.Context, r io.ReadCloser, _ []byte, _ mediaembed.Metadata, _ mediaembed.FormatHint) (*mediaembed.Result, error) {
+func wavTagger(t *testing.T) tagFunc { return wavTaggerWith(t, nil) }
+
+// wavTaggerWith emits fixed samples for the titles in fixed, random otherwise.
+func wavTaggerWith(t *testing.T, fixed map[string][]byte) tagFunc {
+	return func(_ context.Context, r io.ReadCloser, _ []byte, meta mediaembed.Metadata, _ mediaembed.FormatHint) (*mediaembed.Result, error) {
 		_, _ = io.Copy(io.Discard, r)
 		r.Close()
-		samples := make([]byte, 4000)
-		_, _ = rand.Read(samples)
-		f, err := os.CreateTemp(t.TempDir(), "tagged-*.wav")
+		samples, ok := fixed[meta.Title]
+		if !ok {
+			samples = make([]byte, 4000)
+			_, _ = rand.Read(samples)
+		}
+		f, err := writeWAV(t, samples)
 		if err != nil {
-			return nil, err
-		}
-		hdr := make([]byte, 44)
-		copy(hdr[0:], "RIFF")
-		binary.LittleEndian.PutUint32(hdr[4:], uint32(36+len(samples)))
-		copy(hdr[8:], "WAVEfmt ")
-		binary.LittleEndian.PutUint32(hdr[16:], 16)
-		binary.LittleEndian.PutUint16(hdr[20:], 1)    // PCM
-		binary.LittleEndian.PutUint16(hdr[22:], 1)    // mono
-		binary.LittleEndian.PutUint32(hdr[24:], 8000) // sample rate
-		binary.LittleEndian.PutUint32(hdr[28:], 8000) // byte rate
-		binary.LittleEndian.PutUint16(hdr[32:], 1)    // block align
-		binary.LittleEndian.PutUint16(hdr[34:], 8)    // bits per sample
-		copy(hdr[36:], "data")
-		binary.LittleEndian.PutUint32(hdr[40:], uint32(len(samples)))
-		if _, err := f.Write(append(hdr, samples...)); err != nil {
-			return nil, err
-		}
-		if _, err := f.Seek(0, io.SeekStart); err != nil {
 			return nil, err
 		}
 		return &mediaembed.Result{
@@ -86,6 +74,53 @@ func wavTagger(t *testing.T) tagFunc {
 			Cleanup: func() { f.Close(); os.Remove(f.Name()) },
 		}, nil
 	}
+}
+
+// writeWAV writes a mono 8-bit PCM WAV and returns it rewound.
+func writeWAV(t *testing.T, samples []byte) (*os.File, error) {
+	f, err := os.CreateTemp(t.TempDir(), "tagged-*.wav")
+	if err != nil {
+		return nil, err
+	}
+	hdr := make([]byte, 44)
+	copy(hdr[0:], "RIFF")
+	binary.LittleEndian.PutUint32(hdr[4:], uint32(36+len(samples)))
+	copy(hdr[8:], "WAVEfmt ")
+	binary.LittleEndian.PutUint32(hdr[16:], 16)
+	binary.LittleEndian.PutUint16(hdr[20:], 1)    // PCM
+	binary.LittleEndian.PutUint16(hdr[22:], 1)    // mono
+	binary.LittleEndian.PutUint32(hdr[24:], 8000) // sample rate
+	binary.LittleEndian.PutUint32(hdr[28:], 8000) // byte rate
+	binary.LittleEndian.PutUint16(hdr[32:], 1)    // block align
+	binary.LittleEndian.PutUint16(hdr[34:], 8)    // bits per sample
+	copy(hdr[36:], "data")
+	binary.LittleEndian.PutUint32(hdr[40:], uint32(len(samples)))
+	if _, err := f.Write(append(hdr, samples...)); err != nil {
+		return nil, err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+// audioSHA is the ingest hash of a WAV holding samples.
+func audioSHA(t *testing.T, samples []byte) []byte {
+	t.Helper()
+	f, err := writeWAV(t, samples)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	h, err := ingest.AudioSHA256(context.Background(), f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := hex.DecodeString(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 // libraryFile writes a playable stand-in for an existing library track in its
@@ -530,17 +565,22 @@ func TestDrainSkipsUnplayableLocalCopies(t *testing.T) {
 
 	run := uuid.NewString()[:8]
 	mixedID, missingID, staleID := "um"+run, "ux"+run, "us"+run
+	deadTwinID, liveTwinID := "ud"+run, "ul"+run
 	mixedISRC, missingISRC := "UM"+strings.ToUpper(run), "UX"+strings.ToUpper(run)
-	local := func(path, isrc string, age int) uuid.UUID {
+	localWithSHA := func(path, isrc string, age int, sha []byte) uuid.UUID {
 		t.Helper()
 		id := uuid.New()
+		if sha == nil {
+			sha = id[:]
+		}
 		if _, err := pool.Exec(ctx, `INSERT INTO tracks(id, title, duration_ms, file_path, file_size, format, audio_sha256, isrc, created_at)
 			VALUES($1, 'Local', 1000, $2, 5, 'flac', $3, NULLIF($4, ''), NOW() - make_interval(mins => $5))`,
-			id, path, id[:], isrc, age); err != nil {
+			id, path, sha, isrc, age); err != nil {
 			t.Fatal(err)
 		}
 		return id
 	}
+	local := func(path, isrc string, age int) uuid.UUID { return localWithSHA(path, isrc, age, nil) }
 	// Oldest first: a missing file, then a file outside every root, then a
 	// playable copy — only the last may be adopted.
 	missingFile := local(filepath.Join(root, "gone-"+run+".flac"), mixedISRC, 30)
@@ -548,13 +588,23 @@ func TestDrainSkipsUnplayableLocalCopies(t *testing.T) {
 	playable := local(playablePath, mixedISRC, 10)
 	onlyMissing := local(filepath.Join(root, "gone2-"+run+".flac"), missingISRC, 5)
 	staleCopy := local(filepath.Join(root, "gone3-"+run+".flac"), "", 5)
+	// Rows with the same audio as the next downloads. Ingest would fold the
+	// download into them (deleting it when their file exists), so the dead
+	// twin must be moved onto the new copy, and the live one reused as is.
+	deadAudio, liveAudio := []byte("dead twin "+run), []byte("live twin "+run)
+	deadTwin := localWithSHA(outsidePath, "", 5, audioSHA(t, deadAudio))
+	liveTwinPath := filepath.Join(libRoot, "twin-"+run+".flac")
+	if err := os.WriteFile(liveTwinPath, []byte("audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	liveTwin := localWithSHA(liveTwinPath, "", 5, audioSHA(t, liveAudio))
 	if _, err := pool.Exec(ctx, `INSERT INTO tidal_downloads(tidal_id, status, local_track_id) VALUES($1, 'downloaded', $2)`,
 		staleID, staleCopy); err != nil {
 		t.Fatal(err)
 	}
 
 	var rows []uuid.UUID
-	for _, tid := range []string{mixedID, missingID, staleID} {
+	for _, tid := range []string{mixedID, missingID, staleID, deadTwinID, liveTwinID} {
 		id, err := lib.UpsertRemoteTrack(ctx, library.RemoteTrackInput{
 			Source: "tidal", ExternalID: tid, Title: "Remote " + tid, ArtistNames: []string{"Remote"}, DurationMS: 1000,
 		})
@@ -567,13 +617,14 @@ func TestDrainSkipsUnplayableLocalCopies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	locals := []uuid.UUID{missingFile, outsideRoot, playable, onlyMissing, staleCopy}
+	locals := []uuid.UUID{missingFile, outsideRoot, playable, onlyMissing, staleCopy, deadTwin, liveTwin}
 	t.Cleanup(func() {
 		c := context.Background()
 		pool.Exec(c, `DELETE FROM playlists WHERE id = $1`, pl.ID)
-		pool.Exec(c, `DELETE FROM tidal_downloads WHERE tidal_id = ANY($1)`, []string{mixedID, missingID, staleID})
+		tids := []string{mixedID, missingID, staleID, deadTwinID, liveTwinID}
+		pool.Exec(c, `DELETE FROM tidal_downloads WHERE tidal_id = ANY($1)`, tids)
 		pool.Exec(c, `DELETE FROM tracks WHERE id = ANY($1) OR external_id = ANY($2) OR file_path LIKE $3`,
-			locals, []string{mixedID, missingID, staleID}, root+"%")
+			locals, tids, root+"%")
 		pool.Exec(c, `DELETE FROM users WHERE id = $1`, owner)
 	})
 	if err := pls.AddTracks(ctx, pl.ID, rows, owner); err != nil {
@@ -590,11 +641,13 @@ func TestDrainSkipsUnplayableLocalCopies(t *testing.T) {
 			Roots: func(context.Context) []string { return []string{root, libRoot} },
 		},
 		source: &fakeSource{tracks: map[string]tidal.Track{
-			mixedID:   {ID: mixedID, Title: "Mixed " + run, ISRC: mixedISRC},
-			missingID: {ID: missingID, Title: "Missing " + run, ISRC: missingISRC},
-			staleID:   {ID: staleID, Title: "Stale " + run},
+			mixedID:    {ID: mixedID, Title: "Mixed " + run, ISRC: mixedISRC},
+			missingID:  {ID: missingID, Title: "Missing " + run, ISRC: missingISRC},
+			staleID:    {ID: staleID, Title: "Stale " + run},
+			deadTwinID: {ID: deadTwinID, Title: "Dead twin " + run},
+			liveTwinID: {ID: liveTwinID, Title: "Live twin " + run},
 		}},
-		tag: wavTagger(t),
+		tag: wavTaggerWith(t, map[string][]byte{"Dead twin " + run: deadAudio, "Live twin " + run: liveAudio}),
 	}
 	w.drain(ctx)
 
@@ -610,5 +663,33 @@ func TestDrainSkipsUnplayableLocalCopies(t *testing.T) {
 		if err != nil || !w.playable(ctx, path) {
 			t.Fatalf("%s saved to unplayable %q, %v", tid, path, err)
 		}
+	}
+
+	// The dead twin keeps its row (and history) but now plays the new copy.
+	if got, err := lib.DownloadedTIDALTrack(ctx, deadTwinID); err != nil || got != deadTwin {
+		t.Fatalf("dead twin resolved to %v, %v; want %v", got, err, deadTwin)
+	}
+	if path, err := store.TrackFilePath(ctx, deadTwin); err != nil || !w.playable(ctx, path) || !strings.HasPrefix(path, root) {
+		t.Fatalf("dead twin was not moved onto the new copy: %q, %v", path, err)
+	}
+	if _, err := os.Stat(outsidePath); err != nil {
+		t.Fatalf("the old file outside the roots should be left alone: %v", err)
+	}
+	// The live twin is reused, and the duplicate download discarded.
+	if got, err := lib.DownloadedTIDALTrack(ctx, liveTwinID); err != nil || got != liveTwin {
+		t.Fatalf("live twin resolved to %v, %v; want %v", got, err, liveTwin)
+	}
+	if path, _ := store.TrackFilePath(ctx, liveTwin); path != liveTwinPath {
+		t.Fatalf("live twin moved to %q", path)
+	}
+	var stray []string
+	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.Contains(p, "Live twin") {
+			stray = append(stray, p)
+		}
+		return nil
+	})
+	if len(stray) > 0 {
+		t.Fatalf("duplicate download left behind: %v", stray)
 	}
 }
