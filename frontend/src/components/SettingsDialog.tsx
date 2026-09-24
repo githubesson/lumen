@@ -10,7 +10,7 @@ import {
 import { useLastFMConnection } from "@music-library/core";
 import { useTheme, type Density, type Layout, type Theme } from "../context/Theme";
 import { useAudioOutput } from "../lib/audioOutput";
-import { useKey } from "../lib/keybindings";
+import { useKey, useModalKeyScope } from "../lib/keybindings";
 import { openExternal } from "../lib/platform";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import { Button } from "./Button";
@@ -113,26 +113,37 @@ export default function SettingsDialog({ open, onClose }: Props) {
     const restoreTo = document.activeElement as HTMLElement | null;
     const panel = panelRef.current;
     panel?.focus();
+    // Capture phase, so Escape and Tab are settled here before anything behind
+    // the scrim sees them. Other page shortcuts are off via useModalKeyScope.
     const onKeyDown = (event: KeyboardEvent) => {
-      // An open Select handles its own Tab / Escape (and marks them handled) first.
-      if (event.defaultPrevented) return;
+      // An open Select owns Tab / Escape until it closes.
+      if (event.target instanceof Element && event.target.closest('[role="listbox"]')) {
+        return;
+      }
       if (event.key === "Tab") {
         trapTab(event, panel);
         return;
       }
       if (event.key !== "Escape") return;
       event.preventDefault();
+      event.stopPropagation();
       // Escape backs out one step: a search, wherever focus is, then the dialog.
-      if (latest.current.query) setQuery("");
-      else latest.current.onClose();
+      if (latest.current.query) {
+        // Clearing swaps the results for the section view, which would unmount
+        // a focused result control; park focus on the search box first.
+        searchRef.current?.focus();
+        setQuery("");
+      } else {
+        latest.current.onClose();
+      }
     };
-    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keydown", onKeyDown, true);
       // Unmount lands after the exit transition. If something else took focus
       // meanwhile (e.g. Mod-K opened the palette), leave it there.
       const now = document.activeElement;
-      if (!now || now === document.body || panel?.contains(now)) restoreTo?.focus?.();
+      if (!now || now === document.body || panel?.contains(now)) restoreFocus(restoreTo);
     };
   }, [mounted]);
 
@@ -145,8 +156,9 @@ export default function SettingsDialog({ open, onClose }: Props) {
       searchRef.current?.focus();
       searchRef.current?.select();
     },
-    { id: "settings:search", allowInInput: true, priority: 10, enabled: mounted },
+    { id: "settings:search", allowInInput: true, enabled: mounted, whileModal: true },
   );
+  useModalKeyScope(mounted);
 
   // Start fresh each time the dialog opens.
   useEffect(() => {
@@ -463,5 +475,26 @@ function trapTab(event: KeyboardEvent, panel: HTMLElement | null) {
   } else if (!event.shiftKey && (!inside || current === last)) {
     event.preventDefault();
     first.focus();
+  }
+}
+
+/**
+ * Return focus to the element that opened the dialog. If it has since been
+ * hidden (the mobile drawer closes as Settings opens), fall back to the
+ * visible control for that drawer, e.g. the menu button.
+ */
+function restoreFocus(target: HTMLElement | null) {
+  if (!target?.isConnected) return;
+  target.focus();
+  if (document.activeElement === target) return;
+  for (let el = target.parentElement; el; el = el.parentElement) {
+    if (!el.id) continue;
+    const opener = [
+      ...document.querySelectorAll<HTMLElement>(`[aria-controls="${CSS.escape(el.id)}"]`),
+    ].find((c) => c.getClientRects().length > 0);
+    if (opener) {
+      opener.focus();
+      return;
+    }
   }
 }

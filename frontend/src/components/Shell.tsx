@@ -64,6 +64,8 @@ export default function Shell() {
     {
       id: "palette:toggle",
       allowInInput: true,
+      // Settings hands over to the palette rather than blocking it.
+      whileModal: true,
     },
   );
   useKey(

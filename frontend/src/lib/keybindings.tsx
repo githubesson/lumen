@@ -32,11 +32,15 @@ interface KeyBinding {
   keys: string;
   allowInInput?: boolean;
   priority?: number;
+  /** Still fires while a modal scope is open (see useModalKeyScope). */
+  whileModal?: boolean;
   handler: (e: KeyboardEvent) => void;
 }
 
 interface Registry {
   register: (b: KeyBinding) => () => void;
+  /** Suppress bindings without `whileModal` until the returned release runs. */
+  enterModal: () => () => void;
 }
 
 const Ctx = createContext<Registry | null>(null);
@@ -122,6 +126,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 export function KeyBindingsProvider({ children }: { children: ReactNode }) {
   const bindings = useRef<Map<string, KeyBinding>>(new Map());
+  const modalDepth = useRef(0);
 
   const registry = useMemo<Registry>(() => {
     return {
@@ -131,6 +136,15 @@ export function KeyBindingsProvider({ children }: { children: ReactNode }) {
           if (bindings.current.get(b.id) === b) {
             bindings.current.delete(b.id);
           }
+        };
+      },
+      enterModal() {
+        modalDepth.current += 1;
+        let released = false;
+        return () => {
+          if (released) return;
+          released = true;
+          modalDepth.current -= 1;
         };
       },
     };
@@ -149,6 +163,7 @@ export function KeyBindingsProvider({ children }: { children: ReactNode }) {
       let bestPriority = -Infinity;
       for (const b of bindings.current.values()) {
         if (inEditable && !b.allowInInput) continue;
+        if (modalDepth.current > 0 && !b.whileModal) continue;
         const parsed = parse(b.keys);
         if (!matches(parsed, e)) continue;
         const p = b.priority ?? 0;
@@ -171,6 +186,7 @@ interface UseKeyOptions {
   allowInInput?: boolean;
   priority?: number;
   enabled?: boolean;
+  whileModal?: boolean;
 }
 
 /**
@@ -203,6 +219,7 @@ export function useKey(
       keys,
       allowInInput: opts.allowInInput,
       priority: opts.priority,
+      whileModal: opts.whileModal,
       handler: (e) => handlerRef.current(e),
     });
   }, [
@@ -213,5 +230,19 @@ export function useKey(
     uid,
     opts.allowInInput,
     opts.priority,
+    opts.whileModal,
   ]);
+}
+
+/**
+ * While `active`, page and app shortcuts (playback, selection, sidebar…) stop
+ * firing so they can't act on content behind a modal. Bindings registered with
+ * `whileModal: true` keep working.
+ */
+export function useModalKeyScope(active: boolean) {
+  const reg = useContext(Ctx);
+  useEffect(() => {
+    if (!reg || !active) return;
+    return reg.enterModal();
+  }, [reg, active]);
 }
