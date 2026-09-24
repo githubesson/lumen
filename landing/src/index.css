@@ -91,6 +91,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-focus-ring: var(--focus-ring);
   --color-sidebar: var(--sidebar);
   --color-brand: var(--brand);
   --color-brand-soft: var(--brand-soft);
@@ -124,6 +125,9 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
+  /* Solid keyboard-focus indicator, as in the app: neutral-500 clears 3:1
+     against white where --ring (~2.6:1) doesn't. */
+  --focus-ring: oklch(0.556 0 0);
   --sidebar: oklch(0.985 0 0);
   --brand: oklch(0.205 0 0);
   --brand-soft: oklch(0 0 0 / 0.05);
@@ -148,6 +152,7 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
+  --focus-ring: oklch(0.708 0 0);
   --sidebar: oklch(0.18 0 0);
   --brand: oklch(0.985 0 0);
   --brand-soft: oklch(1 0 0 / 0.07);
@@ -174,7 +179,7 @@ body {
   background: color-mix(in oklch, var(--foreground) 15%, transparent);
 }
 :focus-visible {
-  outline: 2px solid var(--ring);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 

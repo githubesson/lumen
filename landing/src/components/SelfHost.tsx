@@ -28,10 +28,12 @@ function Terminal() {
   const [ref, inView] = useInView<HTMLDivElement>();
   const { copied, copy } = useCopy();
   // Container lines appear one by one the first time the terminal is seen.
-  // With reduced motion (live, including a change mid-reveal) they're all
-  // shown at once.
-  const reduced = usePrefersReducedMotion();
-  const [revealed, setRevealed] = useState(0);
+  // With reduced motion they're all shown at once, and switching it on
+  // mid-reveal completes the reveal for good.
+  const [revealed, setRevealed] = useState(() =>
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches ? OUTPUT.length : 0,
+  );
+  const reduced = usePrefersReducedMotion(() => setRevealed(OUTPUT.length));
   const lines = reduced ? OUTPUT.length : revealed;
 
   useEffect(() => {

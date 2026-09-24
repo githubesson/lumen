@@ -17,7 +17,8 @@ export default function ShareDemo() {
   const autoplay = useAutoplay(inView);
   // Starts unfurled so the card is never blank, then loops.
   const [typed, setTyped] = useState(URL.length);
-  const reduced = usePrefersReducedMotion();
+  // Switching reduced motion on mid-retype jumps straight to the unfurled card.
+  const reduced = usePrefersReducedMotion(() => setTyped(URL.length));
   const [wantsPlay, setWantsPlay] = useState(true);
   // Whether the visitor pressed play themselves. Autoplay yields to reduced
   // motion, including when the preference is switched on mid-preview; an

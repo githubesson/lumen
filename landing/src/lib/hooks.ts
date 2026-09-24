@@ -29,13 +29,23 @@ export function useTheme() {
   return { theme, toggle };
 }
 
-export function usePrefersReducedMotion() {
+/** Live prefers-reduced-motion. `onReduce` runs when the preference is
+ *  switched on after mount, so a demo can jump to its finished state (and
+ *  stay there if the preference is later switched off again). */
+export function usePrefersReducedMotion(onReduce?: () => void) {
   const [reduced, setReduced] = useState(
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
+  const onReduceRef = useRef(onReduce);
+  useEffect(() => {
+    onReduceRef.current = onReduce;
+  });
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const onChange = () => setReduced(mq.matches);
+    const onChange = () => {
+      setReduced(mq.matches);
+      if (mq.matches) onReduceRef.current?.();
+    };
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
@@ -109,9 +119,13 @@ async function writeClipboard(text: string) {
       // Permission denied or document not focused: try the fallback.
     }
   }
+  // Selecting the textarea moves focus to it; put focus back afterwards so
+  // keyboard users stay on the button they pressed.
+  const previous = document.activeElement as HTMLElement | null;
   const area = document.createElement("textarea");
   area.value = text;
   area.setAttribute("readonly", "");
+  area.setAttribute("aria-hidden", "true");
   area.style.position = "fixed";
   area.style.opacity = "0";
   document.body.appendChild(area);
@@ -122,6 +136,7 @@ async function writeClipboard(text: string) {
     return false;
   } finally {
     area.remove();
+    previous?.focus({ preventScroll: true });
   }
 }
 

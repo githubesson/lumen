@@ -84,7 +84,7 @@ export default function ReplayDemo() {
             >
               <span
                 className={clsx(
-                  "w-full origin-bottom rounded-t-[4px] group-focus-visible:ring-2 group-focus-visible:ring-ring",
+                  "w-full origin-bottom rounded-t-[4px] group-focus-visible:ring-2 group-focus-visible:ring-focus-ring",
                   on ? "bg-foreground" : active === null ? "bg-foreground/20" : "bg-foreground/10",
                 )}
                 style={{
