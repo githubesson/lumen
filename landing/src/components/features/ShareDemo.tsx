@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Pause, Play } from "lucide-react";
 import { useEffect, useState } from "react";
-import { formatTime, sliderKey, useAutoplay, useInView, useInterval } from "../../lib/hooks";
+import { formatTime, sliderKey, useAutoplay, useInView, useInterval, usePrefersReducedMotion } from "../../lib/hooks";
 import { byId } from "../../lib/music";
 import CoverImg from "../CoverImg";
 import IconSwap from "../IconSwap";
@@ -17,8 +17,13 @@ export default function ShareDemo() {
   const autoplay = useAutoplay(inView);
   // Starts unfurled so the card is never blank, then loops.
   const [typed, setTyped] = useState(URL.length);
-  // With reduced motion the preview waits for a press instead of autoplaying.
-  const [playing, setPlaying] = useState(() => !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const reduced = usePrefersReducedMotion();
+  const [wantsPlay, setWantsPlay] = useState(true);
+  // Whether the visitor pressed play themselves. Autoplay yields to reduced
+  // motion, including when the preference is switched on mid-preview; an
+  // explicit press always plays.
+  const [userPlayed, setUserPlayed] = useState(false);
+  const playing = wantsPlay && (userPlayed || !reduced);
   const [pos, setPos] = useState(9);
   const unfurled = typed >= URL.length;
 
@@ -31,9 +36,10 @@ export default function ShareDemo() {
         if (unfurled) {
           setTyped(0);
           setPos(0);
+          setUserPlayed(false);
         } else {
           setTyped(typed + 1);
-          if (typed + 1 >= URL.length) setPlaying(true);
+          if (typed + 1 >= URL.length) setWantsPlay(true);
         }
       },
       unfurled ? 2200 : typed === 0 ? 700 : 32,
@@ -45,7 +51,7 @@ export default function ShareDemo() {
     () =>
       setPos((p) => {
         const next = Math.min(PREVIEW_SECONDS, p + 0.25);
-        if (next >= PREVIEW_SECONDS) setPlaying(false);
+        if (next >= PREVIEW_SECONDS) setWantsPlay(false);
         return next;
       }),
     250,
@@ -71,6 +77,9 @@ export default function ShareDemo() {
             "mt-2 origin-top-left rounded-md border-l-4 border-foreground/25 bg-muted/60 p-3 transition-[opacity,scale] duration-300 ease-[var(--ease-out)] dark:bg-black/25",
             unfurled ? "scale-100 opacity-100" : "scale-[0.97] opacity-0",
           )}
+          // Hidden between loops: keep its controls out of the tab order and
+          // the accessibility tree while it fades.
+          inert={unfurled ? undefined : ""}
         >
           <div className="flex gap-3">
             <div className="min-w-0 flex-1">
@@ -89,7 +98,8 @@ export default function ShareDemo() {
               type="button"
               onClick={() => {
                 if (pos >= PREVIEW_SECONDS) setPos(0);
-                setPlaying((p) => !p);
+                setUserPlayed(true);
+                setWantsPlay(!playing);
               }}
               className="press grid size-7 shrink-0 place-items-center rounded-full bg-foreground text-background"
               aria-label={playing ? "Pause preview" : "Play preview"}
