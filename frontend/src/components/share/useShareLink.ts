@@ -19,6 +19,8 @@ export function useShareLink() {
     resetCopied();
   }, [resetCopied]);
 
+  const clearError = useCallback(() => setCopyError(null), []);
+
   const reset = useCallback(() => {
     setShareUrl(null);
     setBusy(false);
@@ -54,5 +56,5 @@ export function useShareLink() {
     }
   };
 
-  return { shareUrl, busy, copied, copyError, copy, ensureUrl, invalidate, reset };
+  return { shareUrl, busy, copied, copyError, copy, clearError, ensureUrl, invalidate, reset };
 }

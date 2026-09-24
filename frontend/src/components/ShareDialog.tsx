@@ -71,6 +71,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     copied,
     copyError,
     copy: copyShareLink,
+    clearError: clearCopyError,
     ensureUrl: ensureShareUrl,
     invalidate: invalidateShareLink,
     reset: resetShareLink,
@@ -133,6 +134,8 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
 
   const onCopy = async () => {
     if (!trackId || !picked) return;
+    // One error line serves both actions; it reports the latest one.
+    setDownloadError(null);
     await copyShareLink(trackId, startSec, effectivePreviewSec);
   };
 
@@ -142,6 +145,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     if (!trackId || !track || !picked) return;
     setDownloading(true);
     setDownloadError(null);
+    clearCopyError();
     try {
       const ref = parseTrackShareUrl(
         await ensureShareUrl(trackId, startSec, effectivePreviewSec),
