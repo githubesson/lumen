@@ -1,0 +1,309 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ---------- Fonts (Geist, same files the app ships) ---------- */
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(/fonts/geist-latin-ext-wght-normal.woff2) format("woff2-variations");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(/fonts/geist-latin-wght-normal.woff2) format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(/fonts/geist-mono-latin-wght-normal.woff2) format("woff2-variations");
+}
+
+@theme {
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Motion tokens. Entrances/exits use --ease-out, on-screen movement
+     --ease-in-out. Plain hover and colour transitions default to `ease`. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --default-transition-timing-function: ease;
+  --default-transition-duration: 150ms;
+
+  --animate-eq: eq 900ms ease-in-out infinite alternate;
+  --animate-blink: blink 1s steps(1) infinite;
+  --animate-row-in: row-in 450ms cubic-bezier(0.23, 1, 0.32, 1);
+  --animate-row-grow: row-grow 500ms cubic-bezier(0.23, 1, 0.32, 1);
+  --animate-row-flash: row-flash 1600ms ease-out;
+
+  @keyframes eq {
+    from { transform: scaleY(0.25); }
+    to { transform: scaleY(1); }
+  }
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+  @keyframes row-in {
+    from { opacity: 0; transform: translateY(-8px); }
+  }
+  @keyframes row-grow {
+    from { grid-template-rows: 0fr; opacity: 0; }
+    to { grid-template-rows: 1fr; opacity: 1; }
+  }
+  @keyframes row-flash {
+    from { background-color: var(--brand-soft); }
+    to { background-color: transparent; }
+  }
+  @keyframes enter {
+    from { opacity: 0; transform: translateY(12px); filter: blur(4px); }
+  }
+  @keyframes enter-plain {
+    from { opacity: 0; transform: translateY(24px); }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+  }
+}
+
+/* shadcn/ui token bridge, same names as frontend/src/index.css */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-success: var(--success);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.4);
+}
+
+/* ---------- Theme tokens: the app's shadcn "Nova" neutrals. The accent
+   ("brand") is neutral too: near-black on light, near-white on dark. ---------- */
+:root {
+  --radius: 0.625rem;
+}
+
+[data-theme="light"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --brand: oklch(0.205 0 0);
+  --brand-soft: oklch(0 0 0 / 0.05);
+  --success: oklch(0.6 0.13 155);
+  --grid-line: oklch(0 0 0 / 0.05);
+  --shadow-float: 0 1px 2px oklch(0 0 0 / 0.06), 0 12px 40px -12px oklch(0 0 0 / 0.18);
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --sidebar: oklch(0.18 0 0);
+  --brand: oklch(0.985 0 0);
+  --brand-soft: oklch(1 0 0 / 0.07);
+  --success: oklch(0.72 0.13 155);
+  --grid-line: oklch(1 0 0 / 0.045);
+  --shadow-float: 0 1px 2px oklch(0 0 0 / 0.4), 0 24px 60px -20px oklch(0 0 0 / 0.7);
+  color-scheme: dark;
+}
+
+/* ---------- Base ---------- */
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 80px;
+}
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+::selection {
+  background: color-mix(in oklch, var(--foreground) 15%, transparent);
+}
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* ---------- Page-level treatments ---------- */
+
+/* Blueprint grid behind the hero, faded out at the edges. */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, black 30%, transparent 75%);
+}
+
+.glow {
+  background:
+    radial-gradient(40% 50% at 50% 50%, color-mix(in oklch, var(--foreground) 10%, transparent), transparent 70%),
+    radial-gradient(30% 40% at 30% 60%, color-mix(in oklch, var(--foreground) 5%, transparent), transparent 70%);
+  filter: blur(40px);
+}
+
+.text-gradient {
+  background: linear-gradient(180deg, var(--foreground) 30%, color-mix(in oklch, var(--foreground) 55%, transparent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.text-brand-gradient {
+  background: linear-gradient(100deg, var(--foreground) 10%, var(--muted-foreground) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Card with a hairline highlight on the top edge, like a lit bezel. */
+.card-surface {
+  background: var(--card);
+  border: 1px solid var(--border);
+  box-shadow:
+    inset 0 1px 0 0 oklch(1 0 0 / 0.04),
+    var(--shadow-float);
+}
+
+/* Pointer spotlight on feature cards; --mx/--my are set from JS. */
+.spotlight {
+  position: relative;
+  isolation: isolate;
+}
+.spotlight::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(360px circle at var(--mx, 50%) var(--my, -40%), var(--brand-soft), transparent 60%);
+  opacity: 0;
+  transition: opacity 200ms ease;
+  pointer-events: none;
+  z-index: -1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .spotlight:hover::before {
+    opacity: 1;
+  }
+}
+
+/* Scroll reveal. JS adds data-shown once the element enters the viewport.
+   Marketing entrance, so it may run longer than UI motion. */
+.reveal {
+  opacity: 0;
+  transform: translateY(16px);
+  transition:
+    opacity 600ms var(--ease-out),
+    transform 600ms var(--ease-out);
+  transition-delay: var(--delay, 0ms);
+}
+.reveal[data-shown] {
+  opacity: 1;
+  transform: none;
+}
+
+/* Above-the-fold entrance on first paint. A CSS animation rather than the
+   JS reveal, so it starts without waiting for React and the observer, and
+   stays smooth while the page is still loading. */
+.enter {
+  animation: enter 800ms var(--ease-out) both;
+  animation-delay: var(--delay, 0ms);
+}
+/* Same, without the blur: filters are expensive on large layers. */
+.enter-plain {
+  animation: enter-plain 900ms var(--ease-out) both;
+  animation-delay: var(--delay, 0ms);
+}
+
+/* Press feedback for anything clickable that isn't a ButtonLink. Owns the
+   transition list so colour changes and the press scale both animate. */
+.press {
+  transition-property: color, background-color, border-color, opacity, scale;
+  transition-duration: 160ms;
+  transition-timing-function: var(--ease-out);
+}
+.press:active {
+  scale: 0.97;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  /* Keep the fades, drop the travel. */
+  .reveal {
+    transform: none;
+    transition: opacity 400ms ease;
+  }
+  .enter,
+  .enter-plain {
+    animation: fade-in 400ms ease both;
+    animation-delay: var(--delay, 0ms);
+  }
+  .press:active {
+    scale: none;
+  }
+  /* Decorative loops stop; the demos' autoplay is paused in JS. */
+  .animate-eq,
+  .animate-ping,
+  .animate-pulse,
+  .animate-spin,
+  .animate-row-in,
+  .animate-row-grow {
+    animation: none;
+  }
+}

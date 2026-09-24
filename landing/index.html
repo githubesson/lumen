@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Lumen — your music library, on your own server</title>
+    <meta
+      name="description"
+      content="Lumen is a free, self-hosted music library. Point it at your folders and stream to the web, desktop, and your phone."
+    />
+    <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta property="og:title" content="Lumen" />
+    <meta property="og:description" content="Your music library, on your own server." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://lumen.rocks/" />
+    <link rel="canonical" href="https://lumen.rocks/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" href="/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <script>
+      // Pick the theme before first paint so there's no flash.
+      try {
+        var saved = localStorage.getItem("lumen-landing-theme");
+        var dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

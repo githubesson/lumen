@@ -73,6 +73,7 @@ surface for invites and library management.
 | [`backend/`](backend/) | Go HTTP API — auth, invites, library scanning/ingest, streaming, playlists, sharing, previews. Postgres-backed. |
 | [`frontend/`](frontend/) | React + Vite + TypeScript web app, also packaged for Windows, macOS, and Linux via Electron. |
 | [`mobile/`](mobile/) | Expo Router / React Native app for iOS and Android. |
+| [`landing/`](landing/) | Marketing site for [lumen.rocks](https://lumen.rocks), React + Vite, deployed to Cloudflare Workers. |
 | [`core/`](core/) | Shared TypeScript package (`@music-library/core`) — API client, player state, auth, favorites — consumed by the web and mobile clients. |
 
 Deployment lives at the repo root: [docker-compose.yml](docker-compose.yml)
