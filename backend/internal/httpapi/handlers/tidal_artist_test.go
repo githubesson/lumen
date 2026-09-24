@@ -80,3 +80,42 @@ func TestTIDALArtistFailureResponse(t *testing.T) {
 		})
 	}
 }
+
+func TestTIDALAlbumPageListsWholeRelease(t *testing.T) {
+	// 150 tracks, served 100 per page.
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		offset := 0
+		fmt.Sscan(r.URL.Query().Get("offset"), &offset)
+		limit := 100
+		items := ""
+		for i := offset; i < 150 && i < offset+limit; i++ {
+			if items != "" {
+				items += ","
+			}
+			items += fmt.Sprintf(`{"type":"track","item":{"id":%d,"title":"Track %d","trackNumber":%d}}`, 1000+i, i+1, i+1)
+		}
+		_, _ = fmt.Fprintf(w, `{"data":{"id":7,"title":"Long","numberOfTracks":150,"items":[%s]}}`, items)
+	}))
+	defer proxy.Close()
+	h := &TIDAL{TIDAL: tidal.NewClient(tidal.Config{HifiAPIURL: proxy.URL})}
+	sessions := &activitySocketSessions{cookieName: "session", user: &models.User{ID: uuid.New()}}
+	router := chi.NewRouter()
+	router.Use(middleware.Authenticate(sessions))
+	router.Get("/api/tidal/albums/{id}", h.Album)
+	for path, want := range map[string]int{
+		"/api/tidal/albums/7":                    150, // the album page: whole release
+		"/api/tidal/albums/7?limit=100&offset=0": 100, // explicit paging stays paged
+	} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.AddCookie(&http.Cookie{Name: "session", Value: "test"})
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		var got tidalAlbumResp
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", path, w.Code, w.Body)
+		}
+		if len(got.Tracks) != want {
+			t.Fatalf("%s: %d tracks, want %d", path, len(got.Tracks), want)
+		}
+	}
+}

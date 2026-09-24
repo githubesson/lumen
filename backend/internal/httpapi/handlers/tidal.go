@@ -55,6 +55,15 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 	var album tidal.Album
 	if h.TIDAL != nil {
 		album, err = h.TIDAL.Album(r.Context(), id, limit, offset)
+		// An unpaged request is the album page itself: give it the whole
+		// release, not the proxy's first page, so counts and the download
+		// control cover every track.
+		unpaged := r.URL.Query().Get("limit") == "" && offset == 0
+		if err == nil && unpaged && len(album.Tracks) < album.TrackCount {
+			if full, ferr := h.TIDAL.FullAlbum(r.Context(), id); ferr == nil {
+				album = full
+			}
+		}
 	}
 	if h.Library != nil && offset == 0 {
 		if err == nil && len(album.Tracks) >= album.TrackCount {
