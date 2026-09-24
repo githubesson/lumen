@@ -683,3 +683,14 @@ func TestFullAlbumTrackCapIsIncomplete(t *testing.T) {
 		t.Fatalf("err = %v, want ErrIncompleteAlbum", err)
 	}
 }
+
+func TestFullAlbumWithTitlelessTrackIsIncomplete(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"id":7,"title":"R","numberOfTracks":2,"items":[` +
+			`{"type":"track","item":{"id":1,"title":"One"}},{"type":"track","item":{"id":2,"title":""}}]}}`))
+	}))
+	defer srv.Close()
+	if _, err := NewClient(Config{HifiAPIURL: srv.URL}).FullAlbum(context.Background(), "7"); !errors.Is(err, ErrIncompleteAlbum) {
+		t.Fatalf("err = %v, want ErrIncompleteAlbum", err)
+	}
+}

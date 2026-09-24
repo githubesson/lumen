@@ -140,8 +140,10 @@ type Album struct {
 
 	// pageItems is how many raw items this page held, including ones
 	// filtered out of Tracks (videos, incomplete entries): the offset step
-	// for the next page.
-	pageItems int
+	// for the next page. incompleteItems counts tracks dropped for missing
+	// an id or title, which makes the listing incomplete.
+	pageItems       int
+	incompleteItems int
 }
 
 func (t Track) Metadata() map[string]any {
@@ -259,6 +261,7 @@ func (c *Client) FullAlbum(ctx context.Context, id string) (Album, error) {
 		return added
 	}
 	keep(album.Tracks)
+	incomplete := album.incompleteItems
 	offset, got := album.pageItems, album.pageItems
 	// Keep going while pages come back full, or short (a proxy may cap the
 	// page size) while tracks are still missing.
@@ -275,6 +278,7 @@ func (c *Client) FullAlbum(ctx context.Context, id string) (Album, error) {
 		}
 		got = next.pageItems
 		offset += got
+		incomplete += next.incompleteItems
 		// A page of tracks we've all seen means the proxy is repeating
 		// itself (e.g. ignoring offset); there's nothing more to get.
 		if keep(next.Tracks) == 0 && len(next.Tracks) > 0 {
@@ -288,6 +292,11 @@ func (c *Client) FullAlbum(ctx context.Context, id string) (Album, error) {
 		cutShort = true
 	}
 	if cutShort && len(tracks) < album.TrackCount {
+		return Album{}, ErrIncompleteAlbum
+	}
+	// A track TIDAL listed without its title (a transient glitch) would read
+	// as removed if this listing were stored.
+	if incomplete > 0 {
 		return Album{}, ErrIncompleteAlbum
 	}
 	album.Tracks = tracks
@@ -701,6 +710,7 @@ func (a apiAlbum) album() Album {
 		}
 		track := item.Item.track()
 		if track.ID == "" || track.Title == "" {
+			album.incompleteItems++
 			continue
 		}
 		if track.AlbumID == "" {

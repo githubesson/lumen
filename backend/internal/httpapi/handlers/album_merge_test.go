@@ -22,9 +22,9 @@ func TestMergeAlbumTracksSwapsInLibraryCopies(t *testing.T) {
 	extra := library.TrackListItem{ID: uuid.New(), Title: "Bonus", Source: "local", DurationMS: 5000}
 	locals := []library.TrackListItem{isrcMatch, positionMatch, extra}
 	keys := map[uuid.UUID]library.TrackMatchKey{
-		isrcMatch.ID:     {ISRC: "USABC2100002", TrackNo: 9},
-		positionMatch.ID: {TrackNo: 3, Title: " Three "}, // disc 0 = disc 1
-		extra.ID:         {TrackNo: 99, Title: "Bonus"},
+		isrcMatch.ID:     {ISRC: "USABC2100002", TrackNo: 9, Playable: true},
+		positionMatch.ID: {TrackNo: 3, Title: " Three ", Playable: true}, // disc 0 = disc 1
+		extra.ID:         {TrackNo: 99, Title: "Bonus", Playable: true},
 	}
 	favs := map[uuid.UUID]struct{}{isrcMatch.ID: {}}
 
@@ -67,5 +67,15 @@ func TestMergeAlbumTracksSwapsInLibraryCopies(t *testing.T) {
 	dup := tidal.Album{ID: "100", Tracks: []tidal.Track{{ID: "1"}, {ID: "1b", ISRC: "USABC2100002"}, {ID: "1c", ISRC: "USABC2100002"}}}
 	if m := mergeAlbumTracks(dup, nil, locals, keys, nil, false); m.Tracks[1].Source != "local" || m.Tracks[2].Source != "tidal" {
 		t.Fatalf("copy reused: %+v", m.Tracks)
+	}
+}
+
+func TestMergeAlbumTracksSkipsUnplayableLibraryMatches(t *testing.T) {
+	release := tidal.Album{ID: "100", Tracks: []tidal.Track{{ID: "1", Title: "One", TrackNo: 1, ISRC: "X1"}}}
+	gone := library.TrackListItem{ID: uuid.New(), Title: "One", Source: "local"}
+	keys := map[uuid.UUID]library.TrackMatchKey{gone.ID: {ISRC: "X1", TrackNo: 1, Title: "One"}} // not playable
+	got := mergeAlbumTracks(release, nil, []library.TrackListItem{gone}, keys, nil, true)
+	if len(got.Tracks) != 2 || got.Tracks[0].ID != "tidal:1" || got.Tracks[1].ID != gone.ID.String() {
+		t.Fatalf("tracks = %+v; want the TIDAL entry, then the unplayable file listed after", got.Tracks)
 	}
 }

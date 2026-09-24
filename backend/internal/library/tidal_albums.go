@@ -400,13 +400,17 @@ type TrackMatchKey struct {
 	DiscNo  int
 	TrackNo int
 	Title   string
+	// Playable is false when the file is gone or outside the enabled roots
+	// (checked when PlayableRoots is set); such a track can't stand in for
+	// a playable TIDAL entry.
+	Playable bool
 }
 
 // AlbumTrackKeys returns the match keys of an album's tracks visible to the
 // viewer.
 func (s *Store) AlbumTrackKeys(ctx context.Context, albumID, viewerID uuid.UUID) (map[uuid.UUID]TrackMatchKey, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT t.id, COALESCE(t.isrc, ''), COALESCE(t.disc_no, 0), COALESCE(t.track_no, 0), t.title
+		SELECT t.id, COALESCE(t.isrc, ''), COALESCE(t.disc_no, 0), COALESCE(t.track_no, 0), t.title, t.file_path
 		FROM tracks t
 		WHERE t.album_id = $1 AND t.deleted_at IS NULL AND t.library_visible = TRUE
 		  AND `+trackVisibleP2+`
@@ -415,15 +419,21 @@ func (s *Store) AlbumTrackKeys(ctx context.Context, albumID, viewerID uuid.UUID)
 		return nil, err
 	}
 	defer rows.Close()
+	var roots []string
+	if s.PlayableRoots != nil {
+		roots = s.PlayableRoots(ctx)
+	}
 	out := map[uuid.UUID]TrackMatchKey{}
 	for rows.Next() {
 		var (
-			id uuid.UUID
-			k  TrackMatchKey
+			id   uuid.UUID
+			k    TrackMatchKey
+			path string
 		)
-		if err := rows.Scan(&id, &k.ISRC, &k.DiscNo, &k.TrackNo, &k.Title); err != nil {
+		if err := rows.Scan(&id, &k.ISRC, &k.DiscNo, &k.TrackNo, &k.Title, &path); err != nil {
 			return nil, err
 		}
+		k.Playable = s.PlayableRoots == nil || FilePlayable(roots, path)
 		out[id] = k
 	}
 	return out, rows.Err()

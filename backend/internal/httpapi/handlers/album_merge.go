@@ -39,6 +39,11 @@ func mergeAlbumTracks(
 	byPosition := map[string]library.TrackListItem{}
 	for _, it := range locals {
 		k := keys[it.ID]
+		// A library track that can't play mustn't hide a TIDAL entry that
+		// can (it is still listed with the unmatched tracks).
+		if !k.Playable {
+			continue
+		}
 		if isrc := strings.ToUpper(strings.TrimSpace(k.ISRC)); isrc != "" {
 			if _, dup := byISRC[isrc]; !dup {
 				byISRC[isrc] = it
