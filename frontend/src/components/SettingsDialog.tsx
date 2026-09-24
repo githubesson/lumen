@@ -14,7 +14,7 @@ import { useKey, useModalKeyScope } from "../lib/keybindings";
 import { openExternal } from "../lib/platform";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import { Button } from "./Button";
-import DesktopUpdates from "./DesktopUpdates";
+import DesktopUpdates, { useDesktopUpdates } from "./DesktopUpdates";
 import SearchInput from "./SearchInput";
 import { Select, type SelectOption } from "./Select";
 import SettingRow from "./SettingRow";
@@ -100,7 +100,7 @@ export default function SettingsDialog({ open, onClose }: Props) {
       }
     },
   });
-  const hasDesktopUpdates = !!window.electron?.getUpdateStatus;
+  const updates = useDesktopUpdates(mounted);
 
   // Shell passes a fresh arrow each render; the effect below must only run on
   // mount/unmount or it would yank focus back to the panel on every render.
@@ -326,12 +326,12 @@ export default function SettingsDialog({ open, onClose }: Props) {
       id: "updates",
       title: "Updates",
       icon: DownloadIcon,
-      settings: hasDesktopUpdates
+      settings: updates
         ? [
             {
               id: "desktop-updates",
               keywords: "desktop updates update channel branch main dev source repository check install",
-              render: () => <DesktopUpdates />,
+              render: () => <DesktopUpdates updates={updates} />,
             },
           ]
         : [],

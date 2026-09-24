@@ -4,7 +4,13 @@ import { Button } from "./Button";
 import { Select, type SelectOption } from "./Select";
 import SettingRow from "./SettingRow";
 
-export default function DesktopUpdates() {
+/**
+ * Update status plus the unsaved channel / source draft. Owned by the settings
+ * dialog rather than the Updates rows, so the draft survives switching
+ * sections or searching; it resets when the dialog closes (`enabled` false).
+ * Returns null outside the desktop app and until the first status arrives.
+ */
+export function useDesktopUpdates(enabled: boolean) {
   const electron = window.electron;
   const initialized = useRef(false);
   const [status, setStatus] = useState<UpdateStatus | null>(null);
@@ -14,7 +20,7 @@ export default function DesktopUpdates() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!electron?.getUpdateStatus) return;
+    if (!enabled || !electron?.getUpdateStatus) return;
     let active = true;
     const accept = (next: UpdateStatus) => {
       if (!active) return;
@@ -29,11 +35,12 @@ export default function DesktopUpdates() {
     const unsubscribe = electron.onUpdateStatus?.(accept);
     return () => {
       active = false;
+      initialized.current = false;
       unsubscribe?.();
     };
-  }, [electron]);
+  }, [enabled, electron]);
 
-  if (!electron?.getUpdateStatus || !status) return null;
+  if (!enabled || !electron?.getUpdateStatus || !status) return null;
 
   const save = async () => {
     if (!electron.saveUpdateConfig) return;
@@ -82,6 +89,14 @@ export default function DesktopUpdates() {
     }
   };
 
+  return { status, branch, setBranch, repoUrl, setRepoUrl, busy, error, save, check, install };
+}
+
+export type DesktopUpdatesState = NonNullable<ReturnType<typeof useDesktopUpdates>>;
+
+export default function DesktopUpdates({ updates }: { updates: DesktopUpdatesState }) {
+  const { status, branch, setBranch, repoUrl, setRepoUrl, busy, error, save, check, install } =
+    updates;
   const dirty = branch !== status.branch || repoUrl.trim() !== status.repoUrl;
   const checking = status.state === "checking" || status.state === "downloading";
 
