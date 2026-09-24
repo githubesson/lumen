@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { useMemo, useRef, useState } from "react";
-import { formatTime, useAutoplay, useInView, useInterval } from "../../lib/hooks";
+import { formatTime, sliderKey, useAutoplay, useInView, useInterval } from "../../lib/hooks";
 import { seeded } from "./FeatureCard";
 
 const BARS = 88;
@@ -38,18 +38,21 @@ export default function ScrubDemo() {
     <div ref={ref} className="flex w-full max-w-xl flex-col gap-5">
       <div
         ref={wave}
-        className="relative flex h-28 cursor-pointer touch-none items-center gap-[3px]"
+        className="relative flex h-28 cursor-pointer touch-none items-center gap-[3px] rounded-md focus-visible:outline-2 focus-visible:outline-offset-4"
         onPointerMove={(e) => setHover(fractionAt(e.clientX))}
         onPointerLeave={() => setHover(null)}
         onPointerDown={(e) => {
           setPos(fractionAt(e.clientX));
           setLatency(8 + Math.floor(Math.random() * 9));
         }}
+        onKeyDown={(e) => sliderKey(e, pos, 5 / DURATION, setPos)}
+        tabIndex={0}
         role="slider"
         aria-label="Demo track position"
         aria-valuemin={0}
         aria-valuemax={DURATION}
         aria-valuenow={Math.round(pos * DURATION)}
+        aria-valuetext={`${formatTime(pos * DURATION)} of ${formatTime(DURATION)}`}
       >
         {bars.map((h, i) => {
           const f = i / BARS;

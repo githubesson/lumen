@@ -109,6 +109,9 @@ export default function Nav({
             ? "duration-200"
             : "pointer-events-none -translate-y-1 scale-[0.97] opacity-0 duration-150 motion-reduce:translate-y-0 motion-reduce:scale-100",
         )}
+        // Closed: out of the tab order and the accessibility tree, while
+        // staying mounted so the exit transition can play.
+        inert={open ? undefined : ""}
       >
         <div className="flex flex-col p-2">
           {LINKS.map((l) => (

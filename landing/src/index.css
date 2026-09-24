@@ -299,6 +299,7 @@ body {
   }
   /* Decorative loops stop; the demos' autoplay is paused in JS. */
   .animate-eq,
+  .animate-blink,
   .animate-ping,
   .animate-pulse,
   .animate-spin,

@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Pause, Play } from "lucide-react";
 import { useEffect, useState } from "react";
-import { formatTime, useAutoplay, useInView, useInterval } from "../../lib/hooks";
+import { formatTime, sliderKey, useAutoplay, useInView, useInterval } from "../../lib/hooks";
 import { byId } from "../../lib/music";
 import CoverImg from "../CoverImg";
 import IconSwap from "../IconSwap";
@@ -102,7 +102,15 @@ export default function ShareDemo() {
               />
             </button>
             <div
-              className="relative h-1 flex-1 cursor-pointer overflow-hidden rounded-full bg-foreground/15"
+              role="slider"
+              tabIndex={0}
+              aria-label="Preview position"
+              aria-valuemin={0}
+              aria-valuemax={PREVIEW_SECONDS}
+              aria-valuenow={Math.round(pos)}
+              aria-valuetext={`${formatTime(pos)} of ${formatTime(PREVIEW_SECONDS)}`}
+              onKeyDown={(e) => sliderKey(e, pos / PREVIEW_SECONDS, 1 / PREVIEW_SECONDS, (f) => setPos(f * PREVIEW_SECONDS))}
+              className="relative h-1 flex-1 cursor-pointer overflow-hidden rounded-full bg-foreground/15 focus-visible:outline-2 focus-visible:outline-offset-4"
               onClick={(e) => {
                 const r = e.currentTarget.getBoundingClientRect();
                 setPos(((e.clientX - r.left) / r.width) * PREVIEW_SECONDS);

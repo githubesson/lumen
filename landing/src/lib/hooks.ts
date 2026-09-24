@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
 export type Theme = "light" | "dark";
 const THEME_KEY = "lumen-landing-theme";
@@ -146,4 +146,22 @@ export function formatTime(sec: number) {
 export function useAutoplay(inView: boolean) {
   const reduced = usePrefersReducedMotion();
   return inView && !reduced;
+}
+
+/** Standard slider keys (ARIA APG): arrows step, Page keys jump, Home/End go
+ *  to the ends. `value` and the result are fractions from 0 to 1. */
+export function sliderKey(e: KeyboardEvent, value: number, step: number, onChange: (next: number) => void) {
+  const next = {
+    ArrowRight: value + step,
+    ArrowUp: value + step,
+    ArrowLeft: value - step,
+    ArrowDown: value - step,
+    PageUp: value + step * 5,
+    PageDown: value - step * 5,
+    Home: 0,
+    End: 1,
+  }[e.key];
+  if (next === undefined) return;
+  e.preventDefault();
+  onChange(Math.min(1, Math.max(0, next)));
 }
