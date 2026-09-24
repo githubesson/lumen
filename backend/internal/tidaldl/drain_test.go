@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/githubesson/lumen/internal/db"
@@ -137,19 +140,46 @@ func libraryFile(t *testing.T) (root, path string) {
 
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	url := os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL")
-	if url == "" {
+	base := os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL")
+	if base == "" {
 		t.Skip("set LUMEN_REVIEW_TEST_DATABASE_URL to an isolated PostgreSQL database")
 	}
-	if err := db.Migrate(url); err != nil {
+	dsn := ownDatabase(t, base)
+	if err := db.Migrate(dsn); err != nil {
 		t.Fatal(err)
 	}
-	pool, err := db.Open(context.Background(), url)
+	pool, err := db.Open(context.Background(), dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
 	return pool
+}
+
+// ownDatabase returns a sibling database for this package's tests. `go test
+// ./...` runs packages in parallel, and these tests add shared library tracks
+// that other packages' tests (which count visible tracks) would see.
+func ownDatabase(t *testing.T, base string) string {
+	t.Helper()
+	u, err := url.Parse(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := strings.TrimPrefix(u.Path, "/") + "_tidaldl"
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	_, err = conn.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize())
+	var pgErr *pgconn.PgError
+	if err != nil && !(errors.As(err, &pgErr) && pgErr.Code == "42P04") { // duplicate_database
+		t.Logf("using the shared test database; could not create %s: %v", name, err)
+		return base
+	}
+	u.Path = "/" + name
+	return u.String()
 }
 
 func TestDrainSavesTIDALTracksAndRepointsPlaylists(t *testing.T) {
