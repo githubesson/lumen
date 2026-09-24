@@ -1057,3 +1057,61 @@ func (zeroReader) Read(p []byte) (int, error) {
 	clear(p)
 	return len(p), nil
 }
+
+// Stats and history that land on a retired TIDAL row after adoption (a play
+// that resolved the old id just before the swap) move to the saved copy on
+// the next drain. And a retry after adoption failed keeps the download's
+// "downloaded" provenance instead of rediscovering the file as "existing".
+func TestDrainRepairsRetiredRowsAndRetriedAdoptions(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	run := uuid.NewString()[:8]
+	tid := "rr" + run
+	pl, rows := optedInPlaylist(t, pool, tid)
+	remote := rows[0]
+	var owner uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT owner_id FROM playlists WHERE id = $1`, pl).Scan(&owner); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM tracks WHERE file_path LIKE $1`, root+"%") })
+	w := testWorker(t, pool, root, &fakeSource{tracks: map[string]tidal.Track{tid: {ID: tid, Title: "Retired " + run}}})
+	w.drain(ctx)
+	local, err := w.Library.DownloadedTIDALTrack(ctx, tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A late play on the retired row.
+	if _, err := pool.Exec(ctx, `INSERT INTO user_track_stats(user_id, track_id, play_count) VALUES($1, $2, 1)`, owner, remote); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO play_history(user_id, track_id) VALUES($1, $2)`, owner, remote); err != nil {
+		t.Fatal(err)
+	}
+	// And an adoption that never happened: the entry is still on the remote
+	// row, though the download was recorded.
+	if _, err := pool.Exec(ctx, `UPDATE playlist_tracks SET track_id = $1, tidal_origin = NULL WHERE playlist_id = $2`, remote, pl); err != nil {
+		t.Fatal(err)
+	}
+	w.drain(ctx)
+
+	var leftover, localPlays int
+	if err := pool.QueryRow(ctx, `
+		SELECT (SELECT COUNT(*) FROM user_track_stats WHERE track_id = $1)
+		     + (SELECT COUNT(*) FROM play_history WHERE track_id = $1)
+		     + (SELECT COUNT(*) FROM playlist_tracks WHERE track_id = $1)`, remote).Scan(&leftover); err != nil {
+		t.Fatal(err)
+	}
+	if leftover != 0 {
+		t.Fatalf("%d references still on the retired row", leftover)
+	}
+	if err := pool.QueryRow(ctx, `SELECT play_count FROM user_track_stats WHERE user_id = $1 AND track_id = $2`,
+		owner, local).Scan(&localPlays); err != nil || localPlays != 1 {
+		t.Fatalf("saved copy plays = %d, %v; want 1", localPlays, err)
+	}
+	recent, _ := w.Store.Recent(ctx, 200)
+	if d := findDownload(recent, tid); d == nil || d.Status != StatusDownloaded || d.LocalTrackID == nil || *d.LocalTrackID != local {
+		t.Fatalf("provenance after retry = %+v, want downloaded → %v", d, local)
+	}
+}

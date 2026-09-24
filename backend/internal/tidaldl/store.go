@@ -281,6 +281,59 @@ func (s *Store) Adopt(ctx context.Context, in Adoption) error {
 	})
 }
 
+// RecordSaved records that localID is the saved copy of tidalID before its
+// references are moved. If adoption then fails, the retry finds this mapping
+// instead of rediscovering the file by ISRC or audio and calling it existing.
+func (s *Store) RecordSaved(ctx context.Context, tidalID string, localID uuid.UUID, status, filePath, title, artist string) error {
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO tidal_downloads (tidal_id, status, local_track_id, file_path, title, artist)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (tidal_id) DO UPDATE SET
+			status = EXCLUDED.status,
+			local_track_id = EXCLUDED.local_track_id,
+			file_path = EXCLUDED.file_path,
+			title = EXCLUDED.title,
+			artist = EXCLUDED.artist,
+			error = '',
+			updated_at = NOW()`,
+		tidalID, status, localID, dbtext.Clean(filePath), dbtext.Clean(title), dbtext.Clean(artist))
+	return err
+}
+
+// Retired is a saved TIDAL track whose remote row still holds stats or play
+// history, e.g. from a play resolved just before adoption committed.
+type Retired struct {
+	RowID     uuid.UUID
+	TIDALID   string
+	LocalID   uuid.UUID
+	LocalPath string
+}
+
+func (s *Store) RetiredWithHistory(ctx context.Context, limit int) ([]Retired, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT r.id, d.tidal_id, l.id, l.file_path
+		FROM tidal_downloads d
+		JOIN tracks l ON l.id = d.local_track_id AND l.deleted_at IS NULL
+		JOIN tracks r ON r.source = 'tidal' AND r.external_id = d.tidal_id AND r.deleted_at IS NULL
+		WHERE d.status IN ('downloaded', 'existing')
+		  AND (EXISTS (SELECT 1 FROM user_track_stats s WHERE s.track_id = r.id)
+		    OR EXISTS (SELECT 1 FROM play_history h WHERE h.track_id = r.id))
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Retired
+	for rows.Next() {
+		var r Retired
+		if err := rows.Scan(&r.RowID, &r.TIDALID, &r.LocalID, &r.LocalPath); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // RecordFailure stores the error and schedules a retry with exponential
 // backoff: 5 minutes after the first failure, doubling up to a day.
 func (s *Store) RecordFailure(ctx context.Context, tidalID, title, artist string, cause error) error {

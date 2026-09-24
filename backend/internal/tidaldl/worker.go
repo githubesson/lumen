@@ -157,6 +157,7 @@ func (w *Worker) drain(ctx context.Context) {
 	// destination must not hold up tracks that are just being linked. An
 	// admin changing the destination mid-drain takes effect on the next wake.
 	dest := sync.OnceValues(func() (string, error) { return w.Destination(ctx) })
+	w.sweepRetired(ctx)
 	for batch := 0; batch < maxBatchesPerWake; batch++ {
 		pending, err := w.Store.Pending(ctx, batchSize)
 		if err != nil {
@@ -195,6 +196,27 @@ func (w *Worker) drain(ctx context.Context) {
 		// rows straight back. Leave the rest for the next wake.
 		if failed == len(pending) {
 			return
+		}
+	}
+}
+
+// sweepRetired moves stats and history that landed on a retired TIDAL row
+// after its adoption (a request that resolved the old id just before the
+// swap committed) onto the saved copy.
+func (w *Worker) sweepRetired(ctx context.Context) {
+	retired, err := w.Store.RetiredWithHistory(ctx, 100)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			w.log().Warn("tidal auto-download retired-row sweep failed", "err", err)
+		}
+		return
+	}
+	for _, r := range retired {
+		if !w.playable(ctx, r.LocalPath) {
+			continue
+		}
+		if err := w.Store.Adopt(ctx, Adoption{RowID: r.RowID, TIDALID: r.TIDALID, LocalID: r.LocalID}); err != nil {
+			w.log().Warn("tidal auto-download retired-row sweep failed", "tidal_track", r.TIDALID, "err", err)
 		}
 	}
 }
@@ -427,9 +449,15 @@ func (w *Worker) adoptPlayable(ctx context.Context, c Candidate, meta tidal.Trac
 		}
 		return w.fail(ctx, c, meta, fmt.Errorf("library track %s is not playable (%s)", localID, path))
 	}
+	artist := strings.Join(meta.Artists, ", ")
+	if status == StatusDownloaded {
+		if err := w.Store.RecordSaved(ctx, c.TIDALID, localID, status, path, meta.Title, artist); err != nil {
+			return err
+		}
+	}
 	if err := w.Store.Adopt(ctx, Adoption{
 		RowID: c.RowID, TIDALID: c.TIDALID, LocalID: localID,
-		Status: status, FilePath: path, Title: meta.Title, Artist: strings.Join(meta.Artists, ", "),
+		Status: status, FilePath: path, Title: meta.Title, Artist: artist,
 	}); err != nil {
 		return err
 	}

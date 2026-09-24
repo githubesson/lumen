@@ -26,6 +26,12 @@ CREATE TABLE tidal_downloads (
 CREATE INDEX tidal_downloads_updated_idx ON tidal_downloads(updated_at DESC);
 CREATE INDEX tidal_downloads_local_track_idx ON tidal_downloads(local_track_id);
 
+-- Adoption, the delete fallback below, and the retired-row sweep move stats
+-- and history by track; without these both are full scans (as were the
+-- cascades on every track delete).
+CREATE INDEX IF NOT EXISTS play_history_track_idx ON play_history(track_id);
+CREATE INDEX IF NOT EXISTS user_track_stats_track_idx ON user_track_stats(track_id);
+
 -- The TIDAL id a playlist entry was saved from, set when auto-download
 -- repoints the entry to the library copy. NULL for every other entry.
 ALTER TABLE playlist_tracks ADD COLUMN tidal_origin TEXT;
@@ -44,6 +50,14 @@ LANGUAGE plpgsql AS $$
 DECLARE
     remote_id UUID;
 BEGIN
+    -- Take the playlist locks every other playlist mutation takes first, in
+    -- id order, so a concurrent reorder cannot reinsert a stale snapshot of
+    -- these entries after they are moved.
+    PERFORM 1 FROM playlists
+    WHERE id IN (SELECT playlist_id FROM playlist_tracks WHERE track_id = OLD.id)
+    ORDER BY id
+    FOR UPDATE;
+
     UPDATE playlist_tracks pt
     SET track_id = t.id, tidal_origin = NULL
     FROM tracks t
