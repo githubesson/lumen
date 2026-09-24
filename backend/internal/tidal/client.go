@@ -20,7 +20,12 @@ import (
 )
 
 var (
-	ErrNotConfigured   = errors.New("tidal proxy is not configured")
+	ErrNotConfigured = errors.New("tidal proxy is not configured")
+	// ErrIncompleteAlbum reports that FullAlbum had to stop paging early (a
+	// proxy repeating pages, or the page cap) with tracks still missing. A
+	// partial listing must not be stored as the release, or the merge would
+	// mark the missing tracks removed.
+	ErrIncompleteAlbum = errors.New("tidal album listing is incomplete")
 	ErrDASHManifest    = errors.New("tidal returned a DASH manifest, which this proxy does not yet transcode")
 	ErrPreviewManifest = errors.New("tidal returned a preview manifest instead of full playback")
 )
@@ -257,8 +262,13 @@ func (c *Client) FullAlbum(ctx context.Context, id string) (Album, error) {
 	offset, got := album.pageItems, album.pageItems
 	// Keep going while pages come back full, or short (a proxy may cap the
 	// page size) while tracks are still missing.
+	cutShort := false
 	for pages := 1; got > 0 && (got >= page || len(tracks) < album.TrackCount) &&
-		len(tracks) < maxFullAlbumTracks && pages < maxFullAlbumPages; pages++ {
+		len(tracks) < maxFullAlbumTracks; pages++ {
+		if pages >= maxFullAlbumPages {
+			cutShort = true
+			break
+		}
 		next, err := c.Album(ctx, id, page, offset)
 		if err != nil {
 			return Album{}, err
@@ -268,8 +278,14 @@ func (c *Client) FullAlbum(ctx context.Context, id string) (Album, error) {
 		// A page of tracks we've all seen means the proxy is repeating
 		// itself (e.g. ignoring offset); there's nothing more to get.
 		if keep(next.Tracks) == 0 && len(next.Tracks) > 0 {
+			cutShort = true
 			break
 		}
+	}
+	// Running out of items is TIDAL's actual listing, even if shorter than
+	// its count; stopping early with tracks missing is not.
+	if cutShort && len(tracks) < album.TrackCount {
+		return Album{}, ErrIncompleteAlbum
 	}
 	album.Tracks = tracks
 	return album, nil

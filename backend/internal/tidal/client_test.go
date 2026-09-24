@@ -660,11 +660,9 @@ func TestFullAlbumStopsWhenAProxyRepeatsItself(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	album, err := NewClient(Config{HifiAPIURL: srv.URL}).FullAlbum(context.Background(), "7")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(album.Tracks) != 100 || requests > 2 {
-		t.Fatalf("%d tracks after %d requests", len(album.Tracks), requests)
+	_, err := NewClient(Config{HifiAPIURL: srv.URL}).FullAlbum(context.Background(), "7")
+	// 100 of 150 tracks is not the release: it must not be stored as one.
+	if !errors.Is(err, ErrIncompleteAlbum) || requests > 2 {
+		t.Fatalf("err = %v after %d requests, want ErrIncompleteAlbum", err, requests)
 	}
 }
