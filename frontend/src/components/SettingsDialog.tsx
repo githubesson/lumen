@@ -330,7 +330,7 @@ export default function SettingsDialog({ open, onClose }: Props) {
         ? [
             {
               id: "desktop-updates",
-              keywords: "desktop updates update channel branch main dev source repository check install",
+              keywords: "desktop updates update channel branch main dev source repository status check install",
               render: () => <DesktopUpdates updates={updates} />,
             },
           ]

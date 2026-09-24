@@ -35,7 +35,9 @@ export function useDesktopUpdates(enabled: boolean) {
     const unsubscribe = electron.onUpdateStatus?.(accept);
     return () => {
       active = false;
+      // Reopening starts from the saved config, without a stale failure.
       initialized.current = false;
+      setError(null);
       unsubscribe?.();
     };
   }, [enabled, electron]);
