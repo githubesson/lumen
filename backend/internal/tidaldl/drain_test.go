@@ -872,6 +872,28 @@ func TestDeletedSavedCopyFallsBackToTIDAL(t *testing.T) {
 		}
 		return id
 	}
+	// A listener's history on the TIDAL track must survive every round trip.
+	var owner uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT owner_id FROM playlists WHERE id = $1`, pl).Scan(&owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_track_stats(user_id, track_id, play_count, favorited) VALUES($1, $2, 3, TRUE)`,
+		owner, remote); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO play_history(user_id, track_id) VALUES($1, $2)`, owner, remote); err != nil {
+		t.Fatal(err)
+	}
+	history := func(track uuid.UUID) (plays int, fav bool, rows int) {
+		t.Helper()
+		_ = pool.QueryRow(ctx, `SELECT play_count, favorited FROM user_track_stats WHERE user_id = $1 AND track_id = $2`,
+			owner, track).Scan(&plays, &fav)
+		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM play_history WHERE user_id = $1 AND track_id = $2`,
+			owner, track).Scan(&rows); err != nil {
+			t.Fatal(err)
+		}
+		return plays, fav, rows
+	}
 	for _, del := range []struct {
 		name string
 		run  func(local uuid.UUID, path string) error
@@ -890,6 +912,9 @@ func TestDeletedSavedCopyFallsBackToTIDAL(t *testing.T) {
 		if got := entry(); got != local {
 			t.Fatalf("%s: entry %v before delete, want the saved copy %v", del.name, got, local)
 		}
+		if plays, fav, rows := history(local); plays != 3 || !fav || rows != 1 {
+			t.Fatalf("%s: history on the saved copy = %d plays, fav %v, %d rows", del.name, plays, fav, rows)
+		}
 		if got, err := w.Library.RedirectSavedTIDAL(ctx, remote); err != nil || got != local {
 			t.Fatalf("%s: stale remote id redirected to %v, %v; want %v", del.name, got, err, local)
 		}
@@ -903,11 +928,79 @@ func TestDeletedSavedCopyFallsBackToTIDAL(t *testing.T) {
 		if got := entry(); got != remote {
 			t.Fatalf("%s: entry %v after delete, want the TIDAL row %v", del.name, got, remote)
 		}
+		if plays, fav, rows := history(remote); plays != 3 || !fav || rows != 1 {
+			t.Fatalf("%s: history back on TIDAL = %d plays, fav %v, %d rows", del.name, plays, fav, rows)
+		}
 		if got, err := w.Library.RedirectSavedTIDAL(ctx, remote); err != nil || got != remote {
 			t.Fatalf("%s: remote id redirected to %v, %v after delete", del.name, got, err)
 		}
 		if pending, err := w.Store.Pending(ctx, 100); err != nil || !containsRow(pending, remote) {
 			t.Fatalf("%s: not queued again: %v, %v", del.name, pending, err)
 		}
+	}
+}
+
+// Several TIDAL ids can share one library copy (single and album releases of
+// one recording share an ISRC). Deleting it must return each entry to its own
+// TIDAL track, even after a reorder, and leave entries that were always the
+// library track to the usual deletion rules.
+func TestFallbackReturnsEachEntryToItsOwnTIDALTrack(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	run := uuid.NewString()[:8]
+	single, album := "fs"+run, "fa"+run
+	isrc := "FS" + strings.ToUpper(run)
+	pl, rows := optedInPlaylist(t, pool, single, album)
+	var owner uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT owner_id FROM playlists WHERE id = $1`, pl).Scan(&owner); err != nil {
+		t.Fatal(err)
+	}
+	libRoot, libPath := libraryFile(t)
+	shared := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO tracks(id, title, duration_ms, file_path, file_size, format, audio_sha256, isrc)
+		VALUES($1, 'Shared', 1000, $2, 5, 'flac', $3, $4)`, shared, libPath, shared[:], isrc); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM tracks WHERE id = $1`, shared) })
+	pls := playlists.NewStore(pool)
+	// The playlist also holds the library track itself.
+	if err := pls.AddTracks(ctx, pl, []uuid.UUID{shared}, owner); err != nil {
+		t.Fatal(err)
+	}
+
+	w := testWorker(t, pool, t.TempDir(), &fakeSource{tracks: map[string]tidal.Track{
+		single: {ID: single, Title: "Song", ISRC: isrc},
+		album:  {ID: album, Title: "Song", ISRC: isrc},
+	}})
+	w.Ingest.Roots = func(context.Context) []string { return []string{libRoot} }
+	w.drain(ctx)
+	for _, tid := range []string{single, album} {
+		if got, err := w.Library.DownloadedTIDALTrack(ctx, tid); err != nil || got != shared {
+			t.Fatalf("%s resolved to %v, %v; want the shared copy", tid, got, err)
+		}
+	}
+	// Reordering rewrites every row; provenance has to survive it.
+	if err := pls.ReplaceOrder(ctx, pl, owner, []uuid.UUID{shared, shared, shared}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Library.HardDeleteByPath(ctx, libPath); err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[uuid.UUID]int{}
+	r, err := pool.Query(ctx, `SELECT track_id FROM playlist_tracks WHERE playlist_id = $1`, pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for r.Next() {
+		var id uuid.UUID
+		if err := r.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		got[id]++
+	}
+	r.Close()
+	if len(got) != 2 || got[rows[0]] != 1 || got[rows[1]] != 1 {
+		t.Fatalf("entries after delete = %v; want one each on %v (single) and %v (album)", got, rows[0], rows[1])
 	}
 }

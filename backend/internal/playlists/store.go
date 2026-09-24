@@ -68,6 +68,9 @@ type TrackEntry struct {
 	TrackID  uuid.UUID
 	AddedBy  *uuid.UUID
 	AddedAt  time.Time
+	// TIDALOrigin is the TIDAL id an entry was saved from by auto-download;
+	// the entry falls back to that TIDAL track if the saved copy is deleted.
+	TIDALOrigin *string
 }
 
 type Store struct{ db *pgxpool.Pool }
@@ -444,7 +447,7 @@ func (s *Store) ReplaceOrder(ctx context.Context, id, viewerID uuid.UUID, trackI
 			visibleEntries []TrackEntry
 		)
 		rows, err := tx.Query(ctx, `
-			SELECT pt.position, pt.track_id, pt.added_by, pt.added_at,
+			SELECT pt.position, pt.track_id, pt.added_by, pt.added_at, pt.tidal_origin,
 			       (t.owner_id IS NULL OR t.owner_id = $2) AS visible
 			FROM playlist_tracks pt
 			JOIN tracks t ON t.id = pt.track_id AND t.deleted_at IS NULL
@@ -457,7 +460,7 @@ func (s *Store) ReplaceOrder(ctx context.Context, id, viewerID uuid.UUID, trackI
 			var entry reorderEntry
 			if err := rows.Scan(
 				&entry.Position, &entry.TrackID, &entry.AddedBy, &entry.AddedAt,
-				&entry.visible,
+				&entry.TIDALOrigin, &entry.visible,
 			); err != nil {
 				rows.Close()
 				return err
@@ -493,7 +496,11 @@ func (s *Store) ReplaceOrder(ctx context.Context, id, viewerID uuid.UUID, trackI
 		// the adding user is removed).
 		addedByCol := make([]pgtype.UUID, len(allEntries))
 		addedAtCol := make([]time.Time, len(allEntries))
+		originCol := make([]pgtype.Text, len(allEntries))
 		for i, entry := range allEntries {
+			if entry.TIDALOrigin != nil {
+				originCol[i] = pgtype.Text{String: *entry.TIDALOrigin, Valid: true}
+			}
 			trackIDCol[i] = entry.TrackID
 			if entry.AddedBy != nil {
 				addedByCol[i] = pgtype.UUID{Bytes: *entry.AddedBy, Valid: true}
@@ -502,11 +509,11 @@ func (s *Store) ReplaceOrder(ctx context.Context, id, viewerID uuid.UUID, trackI
 		}
 		if len(allEntries) > 0 {
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO playlist_tracks (playlist_id, position, track_id, added_by, added_at)
-				SELECT $1, t.ord - 1, t.track_id, t.added_by, t.added_at
-				FROM unnest($2::uuid[], $3::uuid[], $4::timestamptz[])
-				     WITH ORDINALITY AS t(track_id, added_by, added_at, ord)`,
-				id, trackIDCol, addedByCol, addedAtCol); err != nil {
+				INSERT INTO playlist_tracks (playlist_id, position, track_id, added_by, added_at, tidal_origin)
+				SELECT $1, t.ord - 1, t.track_id, t.added_by, t.added_at, t.tidal_origin
+				FROM unnest($2::uuid[], $3::uuid[], $4::timestamptz[], $5::text[])
+				     WITH ORDINALITY AS t(track_id, added_by, added_at, tidal_origin, ord)`,
+				id, trackIDCol, addedByCol, addedAtCol, originCol); err != nil {
 				return err
 			}
 		}

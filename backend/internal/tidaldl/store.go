@@ -227,9 +227,10 @@ func (s *Store) Adopt(ctx context.Context, in Adoption) error {
 			FOR UPDATE`, in.RowID); err != nil {
 			return err
 		}
+		// Remember each entry's TIDAL id so it can fall back if the copy goes.
 		if _, err := tx.Exec(ctx, `
-			UPDATE playlist_tracks SET track_id = $2 WHERE track_id = $1`,
-			in.RowID, in.LocalID); err != nil {
+			UPDATE playlist_tracks SET track_id = $2, tidal_origin = $3 WHERE track_id = $1`,
+			in.RowID, in.LocalID, in.TIDALID); err != nil {
 			return err
 		}
 		// Stats before history: RecordPlay locks in that order.
