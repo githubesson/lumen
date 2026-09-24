@@ -88,6 +88,18 @@ func (h *AdminTIDALDownloads) SaveSettings(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Files under a disabled root cannot be streamed.
+	if rootID != nil {
+		root, err := h.MusicRoots.Get(r.Context(), *rootID)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if !root.Enabled {
+			http.Error(w, "root is disabled", http.StatusBadRequest)
+			return
+		}
+	}
 	subdir, err := cleanPinSubdir(rootPath, req.Subdir)
 	if err != nil {
 		http.Error(w, strings.Replace(err.Error(), "destination_subdir", "subdir", 1), http.StatusBadRequest)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -142,7 +143,10 @@ func (w *Worker) log() *slog.Logger {
 }
 
 func (w *Worker) drain(ctx context.Context) {
-	var dest string
+	// Resolved lazily, once per drain: only downloads need it, so a broken
+	// destination must not hold up tracks that are just being linked. An
+	// admin changing the destination mid-drain takes effect on the next wake.
+	dest := sync.OnceValues(func() (string, error) { return w.Destination(ctx) })
 	for batch := 0; batch < maxBatchesPerWake; batch++ {
 		pending, err := w.Store.Pending(ctx, batchSize)
 		if err != nil {
@@ -153,14 +157,6 @@ func (w *Worker) drain(ctx context.Context) {
 		}
 		if len(pending) == 0 {
 			return
-		}
-		if dest == "" {
-			// Resolved per drain, not per track: an admin changing the
-			// destination mid-drain takes effect on the next wake.
-			if dest, err = w.Destination(ctx); err != nil {
-				w.log().Warn("tidal auto-download destination unavailable", "err", err)
-				return
-			}
 		}
 		failed := 0
 		for _, c := range pending {
@@ -194,6 +190,10 @@ func (w *Worker) Destination(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return w.destinationFor(ctx, settings)
+}
+
+func (w *Worker) destinationFor(ctx context.Context, settings Settings) (string, error) {
 	root := w.PrimaryRoot
 	if settings.RootID != nil {
 		if w.Roots == nil {
@@ -202,6 +202,11 @@ func (w *Worker) Destination(ctx context.Context) (string, error) {
 		r, err := w.Roots.Get(ctx, *settings.RootID)
 		if err != nil {
 			return "", fmt.Errorf("destination root: %w", err)
+		}
+		// Playback only serves files under enabled roots, so a copy saved
+		// here would 403 once the playlist switched to it.
+		if !r.Enabled {
+			return "", errors.New("destination music root is disabled")
 		}
 		root = r.Path
 	}
@@ -236,7 +241,7 @@ func ResolveDestination(root, subdir string) (string, error) {
 // library when possible — and moves its references onto it. Failures are
 // recorded for backoff; only a missing TIDAL proxy is returned unrecorded so
 // the drain can stop without marking every track failed.
-func (w *Worker) process(ctx context.Context, c Candidate, dest string) error {
+func (w *Worker) process(ctx context.Context, c Candidate, dest func() (string, error)) error {
 	if localID, err := w.Library.DownloadedTIDALTrack(ctx, c.TIDALID); err == nil {
 		// Saved earlier; this row reappeared (e.g. re-added by a stale client).
 		return w.Store.Adopt(ctx, Adoption{RowID: c.RowID, TIDALID: c.TIDALID, LocalID: localID})
@@ -266,7 +271,11 @@ func (w *Worker) process(ctx context.Context, c Candidate, dest string) error {
 		})
 	}
 
-	path, err := w.download(ctx, meta, dest)
+	dir, err := dest()
+	if err != nil {
+		return w.fail(ctx, c, meta, fmt.Errorf("destination: %w", err))
+	}
+	path, err := w.download(ctx, meta, dir)
 	if err != nil {
 		if errors.Is(err, tidal.ErrNotConfigured) {
 			return err
@@ -274,10 +283,13 @@ func (w *Worker) process(ctx context.Context, c Candidate, dest string) error {
 		return w.fail(ctx, c, meta, err)
 	}
 	out := w.Ingest.IngestFile(ctx, path)
-	if out.Err != nil {
-		return w.fail(ctx, c, meta, fmt.Errorf("ingest: %w", out.Err))
-	}
-	if out.TrackID == uuid.Nil {
+	if out.Err != nil || out.TrackID == uuid.Nil {
+		// The file is ours and unused. SaveNew picks a fresh name on every
+		// retry, so leaving it would stack up a copy per attempt.
+		w.removeFile(out.Path, path)
+		if out.Err != nil {
+			return w.fail(ctx, c, meta, fmt.Errorf("ingest: %w", out.Err))
+		}
 		return w.fail(ctx, c, meta, errors.New("ingest skipped the downloaded file"))
 	}
 	status := StatusExisting
@@ -294,6 +306,18 @@ func (w *Worker) process(ctx context.Context, c Candidate, dest string) error {
 	w.log().Info("tidal auto-download saved track",
 		"tidal_track", c.TIDALID, "track", out.TrackID, "path", out.Path, "status", status)
 	return nil
+}
+
+// removeFile deletes a download that never made it into the library. Ingest
+// may have renamed it (invalid UTF-8 fix-up), so prefer the path it reports.
+func (w *Worker) removeFile(ingested, saved string) {
+	p := ingested
+	if p == "" {
+		p = saved
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+		w.log().Warn("tidal auto-download could not remove unused file", "path", p, "err", err)
+	}
 }
 
 func (w *Worker) fail(ctx context.Context, c Candidate, meta tidal.Track, cause error) error {

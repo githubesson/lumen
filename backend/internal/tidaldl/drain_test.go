@@ -20,6 +20,7 @@ import (
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/mediaembed"
+	"github.com/githubesson/lumen/internal/musicroots"
 	"github.com/githubesson/lumen/internal/playlists"
 	"github.com/githubesson/lumen/internal/storage"
 	"github.com/githubesson/lumen/internal/tidal"
@@ -350,75 +351,139 @@ func TestDownloadNeverAdoptsAFileAlreadyAtTheTarget(t *testing.T) {
 	}
 }
 
-func TestDrainLinksISRCMatchesWithoutFFmpeg(t *testing.T) {
+// Linking needs neither ffmpeg, a destination, nor a successful ingest, so a
+// problem with any of them must only fail the tracks that need a download.
+func TestDrainLinksISRCMatchesWhenDownloadsCannotRun(t *testing.T) {
+	pool := testPool(t)
+	for _, tc := range []struct {
+		name    string
+		setup   func(w *Worker, root string)
+		wantErr string
+	}{
+		{"ffmpeg missing", func(w *Worker, _ string) {
+			w.tag = nil // the real tagger path, which checks for ffmpeg
+			w.ffmpeg = func() bool { return false }
+		}, "ffmpeg"},
+		{"no destination", func(w *Worker, _ string) { w.PrimaryRoot = "" }, "no music root"},
+		{"ingest rejects the file", func(w *Worker, root string) {
+			tagWAV := wavTagger(t)
+			w.tag = func(ctx context.Context, r io.ReadCloser, c []byte, m mediaembed.Metadata, h mediaembed.FormatHint) (*mediaembed.Result, error) {
+				res, err := tagWAV(ctx, r, c, m, h)
+				if res != nil {
+					res.Ext = ".unsupported"
+				}
+				return res, err
+			}
+			w.Ingest = &ingest.Service{
+				DB: pool, Library: w.Library, Storage: storage.NewLocal(root), MusicRoot: root,
+				Roots: func(context.Context) []string { return []string{root} },
+			}
+		}, "ingest skipped"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			lib := library.NewStore(pool)
+			pls := playlists.NewStore(pool)
+			store := NewStore(pool)
+
+			owner := uuid.New()
+			if _, err := pool.Exec(ctx, `INSERT INTO users(id, username, password_hash, role) VALUES($1,$2,'test','user')`,
+				owner, "tidaldl-"+owner.String()); err != nil {
+				t.Fatal(err)
+			}
+			run := uuid.NewString()[:8]
+			matchID, downloadID := "fm"+run, "fd"+run
+			isrc := "FF" + strings.ToUpper(run)
+			existing := uuid.New()
+			if _, err := pool.Exec(ctx, `INSERT INTO tracks(id, title, duration_ms, file_path, file_size, format, audio_sha256, isrc)
+				VALUES($1, 'Already here', 1000, $2, 5, 'flac', $3, $4)`,
+				existing, "/nowhere/"+run+".flac", existing[:], isrc); err != nil {
+				t.Fatal(err)
+			}
+			var rows []uuid.UUID
+			for _, tid := range []string{downloadID, matchID} {
+				id, err := lib.UpsertRemoteTrack(ctx, library.RemoteTrackInput{
+					Source: "tidal", ExternalID: tid, Title: "Remote " + tid, ArtistNames: []string{"Remote"}, DurationMS: 1000,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				rows = append(rows, id)
+			}
+			pl, err := pls.Create(ctx, owner, "auto", "", playlists.VisibilityPrivate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				c := context.Background()
+				pool.Exec(c, `DELETE FROM playlists WHERE id = $1`, pl.ID)
+				pool.Exec(c, `DELETE FROM tidal_downloads WHERE tidal_id = ANY($1)`, []string{matchID, downloadID})
+				pool.Exec(c, `DELETE FROM tracks WHERE id = $1 OR external_id = ANY($2)`, existing, []string{matchID, downloadID})
+				pool.Exec(c, `DELETE FROM users WHERE id = $1`, owner)
+			})
+			// The track that needs a download comes first, so a drain that gave
+			// up at its failure would never reach the match.
+			if err := pls.AddTracks(ctx, pl.ID, rows, owner); err != nil {
+				t.Fatal(err)
+			}
+			if err := pls.SetTIDALAutoDownload(ctx, pl.ID, true); err != nil {
+				t.Fatal(err)
+			}
+
+			root := t.TempDir()
+			w := &Worker{
+				Store: store, Library: lib, PrimaryRoot: root,
+				source: &fakeSource{tracks: map[string]tidal.Track{
+					matchID:    {ID: matchID, Title: "Match", ISRC: isrc},
+					downloadID: {ID: downloadID, Title: "Needs download", AlbumArtist: "Band"},
+				}},
+				tag: wavTagger(t),
+			}
+			tc.setup(w, root)
+			w.drain(ctx)
+
+			if got, err := lib.DownloadedTIDALTrack(ctx, matchID); err != nil || got != existing {
+				t.Fatalf("ISRC match resolved to %v, %v; want %v", got, err, existing)
+			}
+			recent, err := store.Recent(ctx, 200)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d := findDownload(recent, downloadID); d == nil || d.Status != StatusFailed || !strings.Contains(d.Error, tc.wantErr) {
+				t.Fatalf("failed download = %+v, want error containing %q", d, tc.wantErr)
+			}
+			var leftovers []string
+			_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+				if err == nil && !d.IsDir() {
+					leftovers = append(leftovers, p)
+				}
+				return nil
+			})
+			if len(leftovers) > 0 {
+				t.Fatalf("failed download left files behind: %v", leftovers)
+			}
+		})
+	}
+}
+
+func TestDestinationRejectsDisabledRoot(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	lib := library.NewStore(pool)
-	pls := playlists.NewStore(pool)
-	store := NewStore(pool)
-
-	owner := uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO users(id, username, password_hash, role) VALUES($1,$2,'test','user')`,
-		owner, "tidaldl-"+owner.String()); err != nil {
-		t.Fatal(err)
-	}
-	run := uuid.NewString()[:8]
-	matchID, downloadID := "fm"+run, "fd"+run
-	isrc := "FF" + strings.ToUpper(run)
-	existing := uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO tracks(id, title, duration_ms, file_path, file_size, format, audio_sha256, isrc)
-		VALUES($1, 'Already here', 1000, $2, 5, 'flac', $3, $4)`,
-		existing, "/nowhere/"+run+".flac", existing[:], isrc); err != nil {
-		t.Fatal(err)
-	}
-	var rows []uuid.UUID
-	for _, tid := range []string{downloadID, matchID} {
-		id, err := lib.UpsertRemoteTrack(ctx, library.RemoteTrackInput{
-			Source: "tidal", ExternalID: tid, Title: "Remote " + tid, ArtistNames: []string{"Remote"}, DurationMS: 1000,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		rows = append(rows, id)
-	}
-	pl, err := pls.Create(ctx, owner, "auto", "", playlists.VisibilityPrivate)
+	roots := musicroots.NewStore(pool)
+	root, err := roots.Add(ctx, t.TempDir(), "extra")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		c := context.Background()
-		pool.Exec(c, `DELETE FROM playlists WHERE id = $1`, pl.ID)
-		pool.Exec(c, `DELETE FROM tidal_downloads WHERE tidal_id = ANY($1)`, []string{matchID, downloadID})
-		pool.Exec(c, `DELETE FROM tracks WHERE id = $1 OR external_id = ANY($2)`, existing, []string{matchID, downloadID})
-		pool.Exec(c, `DELETE FROM users WHERE id = $1`, owner)
-	})
-	// The track that needs a download comes first, so a drain that gave up at
-	// the first ffmpeg failure would never reach the match.
-	if err := pls.AddTracks(ctx, pl.ID, rows, owner); err != nil {
+	t.Cleanup(func() { roots.Delete(context.Background(), root.ID) })
+	w := &Worker{Roots: roots, PrimaryRoot: t.TempDir()}
+	settings := Settings{RootID: &root.ID, Subdir: "TIDAL"}
+	if got, err := w.destinationFor(ctx, settings); err != nil || got != filepath.Join(root.Path, "TIDAL") {
+		t.Fatalf("enabled root: %q, %v", got, err)
+	}
+	if _, err := roots.SetEnabled(ctx, root.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := pls.SetTIDALAutoDownload(ctx, pl.ID, true); err != nil {
-		t.Fatal(err)
-	}
-
-	w := &Worker{
-		Store: store, Library: lib, PrimaryRoot: t.TempDir(),
-		source: &fakeSource{tracks: map[string]tidal.Track{
-			matchID:    {ID: matchID, Title: "Match", ISRC: isrc},
-			downloadID: {ID: downloadID, Title: "Needs download"},
-		}},
-		ffmpeg: func() bool { return false },
-	}
-	w.drain(ctx)
-
-	if got, err := lib.DownloadedTIDALTrack(ctx, matchID); err != nil || got != existing {
-		t.Fatalf("ISRC match resolved to %v, %v; want %v", got, err, existing)
-	}
-	recent, err := store.Recent(ctx, 200)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if d := findDownload(recent, downloadID); d == nil || d.Status != StatusFailed || !strings.Contains(d.Error, "ffmpeg") {
-		t.Fatalf("download without ffmpeg = %+v", d)
+	if _, err := w.destinationFor(ctx, settings); err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("disabled root accepted: %v", err)
 	}
 }

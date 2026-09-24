@@ -51,7 +51,8 @@ export function TidalAutoDownloadCard({ roots }: { roots: MusicRoot[] | null }) 
       (roots ?? []).map((r) => ({
         value: r.id,
         label: r.primary ? `Primary - ${r.path}` : `${r.label || "Source"} - ${r.path}`,
-        disabled: !r.exists,
+        // Files under a disabled root can't be streamed.
+        disabled: !r.exists || !r.enabled,
       })),
     [roots],
   );

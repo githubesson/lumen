@@ -114,6 +114,17 @@ func TestTIDALAutoDownloadAPI(t *testing.T) {
 	if rec := do(admin, http.MethodPut, "/api/admin/tidal/auto-download", `{"root_id":"`+uuid.NewString()+`"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("unknown root: %d %s", rec.Code, rec.Body)
 	}
+	disabled, err := roots.Add(ctx, t.TempDir(), "disabled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { roots.Delete(context.Background(), disabled.ID) })
+	if _, err := roots.SetEnabled(ctx, disabled.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if rec := do(admin, http.MethodPut, "/api/admin/tidal/auto-download", `{"root_id":"`+disabled.ID.String()+`"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("disabled root: %d %s", rec.Code, rec.Body)
+	}
 	rec = do(admin, http.MethodPut, "/api/admin/tidal/auto-download", `{"subdir":" Lossless/TIDAL "}`)
 	var status struct {
 		Subdir      string `json:"subdir"`
