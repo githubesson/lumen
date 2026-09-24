@@ -25,6 +25,24 @@ func TestBuildArgsUseSelectedDuration(t *testing.T) {
 	}
 }
 
+func TestBuildAudioArgsCopyAudioIntoM4A(t *testing.T) {
+	args := buildAudioArgs("/cache/track-12.mp4", "/cache/track-12-audio.m4a")
+	for _, want := range [][]string{
+		{"-i", "/cache/track-12.mp4"},
+		{"-map", "0:a:0"},
+		{"-c:a", "copy"},
+		{"-f", "ipod"},
+	} {
+		i := slices.Index(args, want[0])
+		if i < 0 || i+1 >= len(args) || args[i+1] != want[1] {
+			t.Fatalf("audio args missing %v: %#v", want, args)
+		}
+	}
+	if args[len(args)-1] != "/cache/track-12-audio.m4a" {
+		t.Fatalf("output path must be last for the .part rewrite: %#v", args)
+	}
+}
+
 func TestDurationAwareCachePathsPreserveDefaultNames(t *testing.T) {
 	b := &Builder{CacheDir: t.TempDir()}
 	if got, want := b.cachePath("track", 12, 30), filepath.Join(b.CacheDir, "track-12.mp4"); got != want {
@@ -32,6 +50,9 @@ func TestDurationAwareCachePathsPreserveDefaultNames(t *testing.T) {
 	}
 	if got, want := b.cachePath("track", 12, 75), filepath.Join(b.CacheDir, "track-12-75s.mp4"); got != want {
 		t.Fatalf("duration cache path = %q, want %q", got, want)
+	}
+	if got, want := b.audioCachePath("track", 12, 30), filepath.Join(b.CacheDir, "track-12-audio.m4a"); got != want {
+		t.Fatalf("audio cache path = %q, want %q", got, want)
 	}
 	if got, want := b.storyBackgroundCachePath("track", 12, 75), filepath.Join(b.CacheDir, "track-12-75s-story-bg-v4.mp4"); got != want {
 		t.Fatalf("story cache path = %q, want %q", got, want)

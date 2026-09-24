@@ -135,3 +135,18 @@ func TestRenderShareEmbedPageIncludesEscapedVideoPlayer(t *testing.T) {
 		}
 	}
 }
+
+func TestSignedPreviewAudioURLUsesM4APath(t *testing.T) {
+	id := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	u, err := url.Parse(signedPreviewAudioURL("https://lumen.test", id, 12, 75, 99, "signed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := u.Path, "/api/public/preview-audio/"+id.String()+".m4a"; got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+	q := u.Query()
+	if q.Get("t") != "12" || q.Get("d") != "75" || q.Get("exp") != "99" || q.Get("sig") != "signed" {
+		t.Fatalf("unexpected query: %s", u.RawQuery)
+	}
+}

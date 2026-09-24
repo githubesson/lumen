@@ -24,7 +24,7 @@ export function ShareActionButton({
   style,
 }: {
   label: string;
-  icon: "camera" | "square.and.arrow.up" | "doc.on.doc";
+  icon: "camera" | "square.and.arrow.up" | "square.and.arrow.down" | "doc.on.doc";
   primary?: boolean;
   disabled?: boolean;
   loading?: boolean;

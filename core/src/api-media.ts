@@ -75,6 +75,8 @@ export interface PublicTrackShare {
   duration_ms: number;
   preview_duration_sec: number;
   preview_url: string;
+  /** The preview's audio alone, as M4A. Missing from older backends. */
+  audio_url?: string;
   story_url?: string;
   story_background_url?: string;
   embed_url?: string;
@@ -82,6 +84,59 @@ export interface PublicTrackShare {
   accent_color?: string;
   canonical_url: string;
   open_url: string;
+}
+
+/** The parts of a signed share URL (/share/track/{id}?t=…&d=…&sig=…). */
+export interface TrackShareRef {
+  trackId: string;
+  sig: string;
+  startSec: number;
+  /** Absent on links minted before snippets had a selectable length. */
+  durationSec?: number;
+}
+
+export function parseTrackShareUrl(raw: string): TrackShareRef | null {
+  try {
+    const parsed = new URL(raw, "https://lumen.invalid");
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const trackIndex = parts.findIndex((part) => part === "track");
+    const trackId = trackIndex >= 0 ? parts[trackIndex + 1] : "";
+    const sig = parsed.searchParams.get("sig") ?? "";
+    const startSec = Number.parseInt(parsed.searchParams.get("t") ?? "0", 10);
+    const rawDurationSec = parsed.searchParams.get("d");
+    const durationSec = rawDurationSec === null
+      ? undefined
+      : Number(rawDurationSec);
+    if (
+      !trackId ||
+      !sig ||
+      !Number.isFinite(startSec) ||
+      startSec < 0 ||
+      (durationSec !== undefined && (
+        !Number.isInteger(durationSec) ||
+        durationSec <= 0 ||
+        durationSec > MAX_SHARE_SNIPPET_DURATION_SEC
+      ))
+    ) {
+      return null;
+    }
+    return { trackId, sig, startSec, durationSec };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The snippet's generated preview MP4 (cover + audio) — the same file chat
+ * apps embed. Signed by the share link itself, so it doesn't expire.
+ */
+export function trackSharePreviewVideoUrl(ref: TrackShareRef): string {
+  const query = new URLSearchParams({ t: String(ref.startSec) });
+  if (ref.durationSec !== undefined) query.set("d", String(ref.durationSec));
+  query.set("sig", ref.sig);
+  return apiUrl(
+    `/api/public/preview-videos/${pathID(ref.trackId)}.mp4?${query.toString()}`,
+  );
 }
 
 export function createTrackShareLink(

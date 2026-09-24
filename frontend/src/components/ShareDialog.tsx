@@ -3,10 +3,18 @@ import {
   snippetWindow,
 } from "@music-library/core/share-snippet";
 import { useEffect, useMemo, useState } from "react";
-import { Pause as PauseIcon, Play as PlayIcon } from "lucide-react";
+import {
+  Download as DownloadIcon,
+  Pause as PauseIcon,
+  Play as PlayIcon,
+} from "lucide-react";
+import { sanitizeFilename } from "@music-library/core/audio-format";
 import {
   DEFAULT_SHARE_SNIPPET_DURATION_SEC,
+  errorMessage,
+  parseTrackShareUrl,
   trackCoverUrl,
+  trackSharePreviewVideoUrl,
   type TrackDetail,
 } from "../api";
 import { Button } from "./Button";
@@ -63,10 +71,14 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     copied,
     copyError,
     copy: copyShareLink,
+    clearError: clearCopyError,
+    ensureUrl: ensureShareUrl,
     invalidate: invalidateShareLink,
     reset: resetShareLink,
   } = useShareLink();
   const { shownLabel, swapping } = useCopyLabel(busy, copied);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const durationSec = useMemo(
     () => (track ? Math.max(0, track.duration_ms / 1000) : 0),
@@ -100,6 +112,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     setSelection(INITIAL_SELECTION);
     resetPreview();
     resetShareLink();
+    setDownloadError(null);
   }, [open, trackId, resetPreview, resetShareLink]);
 
   const onWindowChange = (nextStartSec: number, nextDurationSec: number) => {
@@ -121,7 +134,35 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
 
   const onCopy = async () => {
     if (!trackId || !picked) return;
+    // One error line serves both actions; it reports the latest one.
+    setDownloadError(null);
     await copyShareLink(trackId, startSec, effectivePreviewSec);
+  };
+
+  // Downloads the snippet's generated preview video — the same MP4 that
+  // unfurls in chat — via the share link for the current window.
+  const onDownloadVideo = async () => {
+    if (!trackId || !track || !picked) return;
+    setDownloading(true);
+    setDownloadError(null);
+    clearCopyError();
+    try {
+      const ref = parseTrackShareUrl(
+        await ensureShareUrl(trackId, startSec, effectivePreviewSec),
+      );
+      if (!ref) throw new Error("Couldn't read the generated share link.");
+      const a = document.createElement("a");
+      a.href = trackSharePreviewVideoUrl(ref);
+      a.download = `${sanitizeFilename(`${primaryArtist(track)} - ${track.title} (clip)`)}.mp4`;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err) {
+      setDownloadError(errorMessage(err, "Couldn't download the video — try again."));
+    } finally {
+      setDownloading(false);
+    }
   };
 
   const body = loadError ? (
@@ -228,12 +269,12 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
         </div>
       )}
 
-      {copyError && (
+      {(copyError || downloadError) && (
         <div
           role="alert"
           style={{ color: "var(--destructive)", fontSize: 12 }}
         >
-          {copyError}
+          {copyError ?? downloadError}
         </div>
       )}
 
@@ -254,6 +295,13 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
     <DialogFooter>
       <Button variant="ghost" onClick={onClose} disabled={busy}>
         Close
+      </Button>
+      <Button
+        onClick={() => void onDownloadVideo()}
+        disabled={!picked || busy || downloading || !track}
+        leadingIcon={<DownloadIcon className="size-3.5" />}
+      >
+        Download video
       </Button>
       <CopyLinkButton
         shownLabel={shownLabel}
@@ -281,11 +329,16 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
   );
 }
 
-function HeaderBlock({ track }: { track: TrackDetail }) {
-  const primary =
+function primaryArtist(track: TrackDetail): string {
+  return (
     track.artists.find((a) => a.role === "primary")?.name ??
     track.artists[0]?.name ??
-    "Unknown artist";
+    "Unknown artist"
+  );
+}
+
+function HeaderBlock({ track }: { track: TrackDetail }) {
+  const primary = primaryArtist(track);
   return (
     <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
       <CoverArt

@@ -19,6 +19,8 @@ export function useShareLink() {
     resetCopied();
   }, [resetCopied]);
 
+  const clearError = useCallback(() => setCopyError(null), []);
+
   const reset = useCallback(() => {
     setShareUrl(null);
     setBusy(false);
@@ -26,16 +28,19 @@ export function useShareLink() {
     setCopyError(null);
   }, [resetCopied]);
 
+  /** The link for this window, minting it on first use. */
+  const ensureUrl = async (trackId: string, startSec: number, durationSec: number) => {
+    if (shareUrl) return shareUrl;
+    const res = await createTrackShareLink(trackId, startSec, durationSec);
+    setShareUrl(res.url);
+    return res.url;
+  };
+
   const copy = async (trackId: string, startSec: number, durationSec: number) => {
     setBusy(true);
     setCopyError(null);
     try {
-      let url = shareUrl;
-      if (!url) {
-        const res = await createTrackShareLink(trackId, startSec, durationSec);
-        url = res.url;
-        setShareUrl(url);
-      }
+      const url = await ensureUrl(trackId, startSec, durationSec);
       const copiedOk = await copyText(url);
       if (!copiedOk) throw new Error("copy failed");
       flashCopied();
@@ -51,5 +56,5 @@ export function useShareLink() {
     }
   };
 
-  return { shareUrl, busy, copied, copyError, copy, invalidate, reset };
+  return { shareUrl, busy, copied, copyError, copy, clearError, ensureUrl, invalidate, reset };
 }
