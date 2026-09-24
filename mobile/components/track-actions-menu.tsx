@@ -199,6 +199,7 @@ function TrackActionItems({
         <Button
           label="Play"
           systemImage="play.fill"
+          modifiers={[swiftDisabled(!actions.canPlay)]}
           onPress={actions.play}
         />
         <Button
@@ -291,6 +292,8 @@ export function useTrackActionModel(track: TrackListItem) {
   const [deleting, setDeleting] = useState(false);
 
   const play = useCallback(() => {
+    // Dropped from TIDAL with no library copy: nothing to stream.
+    if (track.unavailable) return;
     playTrack(track);
   }, [playTrack, track]);
 
@@ -479,6 +482,7 @@ export function useTrackActionModel(track: TrackListItem) {
     openPlaylistPicker,
     openShare,
     owned: Boolean(track.owned),
+    canPlay: !track.unavailable,
     play,
     toggleFavorite,
   };

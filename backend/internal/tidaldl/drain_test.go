@@ -691,10 +691,11 @@ func TestDrainSkipsUnplayableLocalCopies(t *testing.T) {
 			Roots: func(context.Context) []string { return []string{root, libRoot} },
 		},
 		source: &fakeSource{tracks: map[string]tidal.Track{
-			mixedID:    {ID: mixedID, Title: "Mixed " + run, ISRC: mixedISRC},
-			missingID:  {ID: missingID, Title: "Missing " + run, ISRC: missingISRC},
-			staleID:    {ID: staleID, Title: "Stale " + run},
-			deadTwinID: {ID: deadTwinID, Title: "Dead twin " + run},
+			mixedID:   {ID: mixedID, Title: "Mixed " + run, ISRC: mixedISRC},
+			missingID: {ID: missingID, Title: "Missing " + run, ISRC: missingISRC},
+			staleID:   {ID: staleID, Title: "Stale " + run},
+			deadTwinID: {ID: deadTwinID, Title: "Dead twin " + run, Artists: []string{"Twin Artist " + run},
+				AlbumTitle: "Twin Album " + run, AlbumArtist: "Twin Artist " + run},
 			liveTwinID: {ID: liveTwinID, Title: "Live twin " + run},
 		}},
 		tag: wavTaggerWith(t, map[string][]byte{"Dead twin " + run: deadAudio, "Live twin " + run: liveAudio}),
@@ -724,6 +725,18 @@ func TestDrainSkipsUnplayableLocalCopies(t *testing.T) {
 	}
 	if _, err := os.Stat(outsidePath); err != nil {
 		t.Fatalf("the old file outside the roots should be left alone: %v", err)
+	}
+	// It now plays the TIDAL download, so it is filed by TIDAL's metadata.
+	var twinArtist, twinAlbum string
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE((SELECT ar.name FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
+		                 WHERE ta.track_id = t.id ORDER BY ta.position LIMIT 1), ''),
+		       COALESCE(a.title, '')
+		FROM tracks t LEFT JOIN albums a ON a.id = t.album_id WHERE t.id = $1`, deadTwin).Scan(&twinArtist, &twinAlbum); err != nil {
+		t.Fatal(err)
+	}
+	if twinArtist != "Twin Artist "+run || twinAlbum != "Twin Album "+run {
+		t.Fatalf("repointed twin filed as %q / %q", twinArtist, twinAlbum)
 	}
 	// The live twin is reused, and the duplicate download discarded.
 	if got, err := lib.DownloadedTIDALTrack(ctx, liveTwinID); err != nil || got != liveTwin {

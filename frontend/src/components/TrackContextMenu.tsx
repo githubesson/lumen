@@ -141,7 +141,10 @@ export default function TrackContextMenu({
   );
 
   const runPlay = () => {
-    play(track, queue && queue.length > 0 ? queue : [track]);
+    // Dropped from TIDAL with no library copy: nothing to stream.
+    if (!track.unavailable) {
+      play(track, queue && queue.length > 0 ? queue : [track]);
+    }
     onClose();
   };
 
@@ -305,6 +308,8 @@ export default function TrackContextMenu({
         role="menuitem"
         className="ctx-item"
         onClick={runPlay}
+        disabled={track.unavailable}
+        title={track.unavailable ? "No longer on TIDAL" : undefined}
       >
         <PlayIcon className="size-3.5" />
         <span>Play</span>

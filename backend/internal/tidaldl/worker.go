@@ -441,6 +441,8 @@ func (w *Worker) adoptAudioTwin(ctx context.Context, c Candidate, meta tidal.Tra
 		w.removeFile("", path)
 		return true, w.fail(ctx, c, meta, fmt.Errorf("repoint library track: %w", err))
 	}
+	// The row now plays our TIDAL-tagged download; file it the same way.
+	w.applyTIDALMetadata(ctx, twin.ID, meta)
 	w.log().Info("tidal auto-download moved an unplayable library track to the new copy",
 		"tidal_track", c.TIDALID, "track", twin.ID, "old_path", twin.FilePath, "path", path)
 	return true, w.adoptPlayable(ctx, c, meta, twin.ID, StatusDownloaded, path)
