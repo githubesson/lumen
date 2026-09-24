@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Check, Copy, RefreshCw, Ticket } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useCopy } from "../../lib/hooks";
+import { useCopy, usePrefersReducedMotion } from "../../lib/hooks";
 import IconSwap from "../IconSwap";
 
 const ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
@@ -11,6 +11,7 @@ const randomToken = () => Array.from({ length: 10 }, () => ALPHABET[Math.floor(M
 export default function InviteDemo() {
   const [token, setToken] = useState("q7mx2kfw9p");
   const [scrambling, setScrambling] = useState(false);
+  const reduced = usePrefersReducedMotion();
   const { copied, copy } = useCopy();
   const link = `https://music.example.com/invite/${token}`;
 
@@ -39,7 +40,8 @@ export default function InviteDemo() {
         </div>
         <button
           type="button"
-          onClick={() => setScrambling(true)}
+          // With reduced motion the new token just appears, no scramble.
+          onClick={() => (reduced ? setToken(randomToken()) : setScrambling(true))}
           className="press flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-xs hover:bg-accent"
         >
           <RefreshCw className={clsx("size-3", scrambling && "animate-spin")} /> New
