@@ -57,6 +57,8 @@ export default function Shell() {
     "mod+k",
     (e) => {
       e.preventDefault();
+      // The palette layers below Settings; hand over instead of hiding behind it.
+      setTweaksOpen(false);
       setPaletteOpen((o) => !o);
     },
     {

@@ -10,6 +10,7 @@ import {
 import { useLastFMConnection } from "@music-library/core";
 import { useTheme, type Density, type Layout, type Theme } from "../context/Theme";
 import { useAudioOutput } from "../lib/audioOutput";
+import { useKey } from "../lib/keybindings";
 import { openExternal } from "../lib/platform";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import { Button } from "./Button";
@@ -68,6 +69,7 @@ export default function SettingsDialog({ open, onClose }: Props) {
   const { mounted, visible } = useTransitionMount(open, 200);
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const [active, setActive] = useState<SectionId>("appearance");
   const [query, setQuery] = useState("");
 
@@ -109,12 +111,13 @@ export default function SettingsDialog({ open, onClose }: Props) {
   useEffect(() => {
     if (!mounted) return;
     const restoreTo = document.activeElement as HTMLElement | null;
-    panelRef.current?.focus();
+    const panel = panelRef.current;
+    panel?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       // An open Select handles its own Tab / Escape (and marks them handled) first.
       if (event.defaultPrevented) return;
       if (event.key === "Tab") {
-        trapTab(event, panelRef.current);
+        trapTab(event, panel);
         return;
       }
       if (event.key !== "Escape") return;
@@ -126,9 +129,24 @@ export default function SettingsDialog({ open, onClose }: Props) {
     window.addEventListener("keydown", onKeyDown);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
-      restoreTo?.focus?.();
+      // Unmount lands after the exit transition. If something else took focus
+      // meanwhile (e.g. Mod-K opened the palette), leave it there.
+      const now = document.activeElement;
+      if (!now || now === document.body || panel?.contains(now)) restoreTo?.focus?.();
     };
   }, [mounted]);
+
+  // Page-level Mod-F would focus a search box behind the scrim; while Settings
+  // is open it means this one.
+  useKey(
+    "mod+f",
+    (e) => {
+      e.preventDefault();
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    },
+    { id: "settings:search", allowInInput: true, priority: 10, enabled: mounted },
+  );
 
   // Start fresh each time the dialog opens.
   useEffect(() => {
@@ -356,6 +374,7 @@ export default function SettingsDialog({ open, onClose }: Props) {
             <XMarkIcon className="size-4" aria-hidden="true" />
           </button>
           <SearchInput
+            ref={searchRef}
             className="settings-search"
             placeholder="Search settings"
             value={query}
