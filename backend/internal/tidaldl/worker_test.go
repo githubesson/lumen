@@ -98,14 +98,15 @@ func TestKickNeverBlocks(t *testing.T) {
 }
 
 func TestCheckFreeSpaceMeasuresNearestExistingDir(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "TIDAL", "Artist") // not created yet
+	root := t.TempDir()
+	dir := filepath.Join(root, "TIDAL", "Artist") // not created yet
 	if err := (&Worker{}).checkFreeSpace(dir); err != nil {
 		t.Fatalf("floor disabled: %v", err)
 	}
 	if err := (&Worker{MinFreeBytes: 1}).checkFreeSpace(dir); err != nil {
 		t.Fatalf("1 byte floor: %v", err)
 	}
-	if _, ok := freeBytes(filepath.Dir(dir)); !ok {
+	if _, ok := freeBytes(root); !ok {
 		t.Skip("free space is not measurable on this platform")
 	}
 	if err := (&Worker{MinFreeBytes: 1 << 62}).checkFreeSpace(dir); err == nil {
