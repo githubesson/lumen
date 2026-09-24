@@ -7,8 +7,10 @@ import SettingRow from "./SettingRow";
 /**
  * Update status plus the unsaved channel / source draft. Owned by the settings
  * dialog rather than the Updates rows, so the draft survives switching
- * sections or searching; it resets when the dialog closes (`enabled` false).
- * Returns null outside the desktop app and until the first status arrives.
+ * sections or searching. Each stretch of `enabled` is one session: closing
+ * ends it (dropping late results) and the next one restarts the draft from
+ * the saved config. The last status is kept so the rows can fade out with
+ * the dialog. Returns null outside the desktop app and until a status arrives.
  */
 export function useDesktopUpdates(enabled: boolean) {
   const electron = window.electron;
@@ -47,7 +49,7 @@ export function useDesktopUpdates(enabled: boolean) {
     };
   }, [enabled, electron]);
 
-  if (!enabled || !electron?.getUpdateStatus || !status) return null;
+  if (!electron?.getUpdateStatus || !status) return null;
 
   const run = async (
     task: (live: () => boolean) => Promise<void>,

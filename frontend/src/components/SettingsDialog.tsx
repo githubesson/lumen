@@ -100,7 +100,11 @@ export default function SettingsDialog({ open, onClose }: Props) {
       }
     },
   });
-  const updates = useDesktopUpdates(mounted);
+  // Interactive only while open. During the exit fade `mounted` is still true,
+  // but keys, shortcuts, focus and in-flight updater work must already be
+  // released (e.g. to the palette after a Mod-K handoff, or a quick reopen).
+  const interactive = open && mounted;
+  const updates = useDesktopUpdates(interactive);
 
   // Shell passes a fresh arrow each render; the effect below must only run on
   // mount/unmount or it would yank focus back to the panel on every render.
@@ -108,11 +112,6 @@ export default function SettingsDialog({ open, onClose }: Props) {
   useEffect(() => {
     latest.current = { onClose, query };
   });
-
-  // Interactive only while open. During the exit fade `mounted` is still true,
-  // but keys, shortcuts and focus must already belong to whatever comes next
-  // (e.g. the palette after a Mod-K handoff).
-  const interactive = open && mounted;
 
   useEffect(() => {
     if (!interactive) return;
