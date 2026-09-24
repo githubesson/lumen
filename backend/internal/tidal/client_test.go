@@ -666,3 +666,20 @@ func TestFullAlbumStopsWhenAProxyRepeatsItself(t *testing.T) {
 		t.Fatalf("err = %v after %d requests, want ErrIncompleteAlbum", err, requests)
 	}
 }
+
+func TestFullAlbumTrackCapIsIncomplete(t *testing.T) {
+	// 1500 distinct tracks, 100 per page: more than FullAlbum will hold.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		items := []string{}
+		for i := offset; i < 1500 && i < offset+100; i++ {
+			items = append(items, `{"type":"track","item":{"id":`+strconv.Itoa(i+1)+`,"title":"T"}}`)
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":7,"title":"Huge","numberOfTracks":1500,"items":[` + strings.Join(items, ",") + `]}}`))
+	}))
+	defer srv.Close()
+
+	if _, err := NewClient(Config{HifiAPIURL: srv.URL}).FullAlbum(context.Background(), "7"); !errors.Is(err, ErrIncompleteAlbum) {
+		t.Fatalf("err = %v, want ErrIncompleteAlbum", err)
+	}
+}

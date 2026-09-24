@@ -283,7 +283,10 @@ func (c *Client) FullAlbum(ctx context.Context, id string) (Album, error) {
 		}
 	}
 	// Running out of items is TIDAL's actual listing, even if shorter than
-	// its count; stopping early with tracks missing is not.
+	// its count; stopping early (repeats, a cap) with tracks missing is not.
+	if len(tracks) >= maxFullAlbumTracks {
+		cutShort = true
+	}
 	if cutShort && len(tracks) < album.TrackCount {
 		return Album{}, ErrIncompleteAlbum
 	}
