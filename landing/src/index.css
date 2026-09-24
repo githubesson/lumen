@@ -284,7 +284,15 @@ body {
   html {
     scroll-behavior: auto;
   }
-  /* Keep the fades, drop the travel. */
+  /* Keep the fades, drop the travel: across the whole page only colour and
+     opacity transition. Movement, scale, rotation and size (accordions,
+     menus, sliders, press feedback) change instantly. Beats inline
+     `transition` styles too. */
+  *,
+  *::before,
+  *::after {
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow !important;
+  }
   .reveal {
     transform: none;
     transition: opacity 400ms ease;
