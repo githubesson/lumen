@@ -104,6 +104,30 @@ type cachedRelease struct {
 	Tracks            []cachedTIDALTrack
 }
 
+// mergeCachedTrack keeps a track's stored values for fields a fresh listing
+// left empty.
+func mergeCachedTrack(old, fresh cachedTIDALTrack) cachedTIDALTrack {
+	if strings.TrimSpace(fresh.Title) == "" {
+		fresh.Title = old.Title
+	}
+	if strings.TrimSpace(fresh.ISRC) == "" {
+		fresh.ISRC = old.ISRC
+	}
+	if len(fresh.Artists) == 0 {
+		fresh.Artists = old.Artists
+	}
+	if fresh.DurationMS == 0 {
+		fresh.DurationMS = old.DurationMS
+	}
+	if fresh.TrackNo == 0 {
+		fresh.TrackNo = old.TrackNo
+	}
+	if fresh.DiscNo == 0 {
+		fresh.DiscNo = old.DiscNo
+	}
+	return fresh
+}
+
 // mergeCachedRelease folds a fresh fetch into the stored record. Fresh values
 // win where TIDAL returned one. Stored tracks the fetch no longer lists are
 // kept, marked removed, at their place in disc/track order; a track TIDAL
@@ -130,10 +154,17 @@ func mergeCachedRelease(old, fresh cachedRelease) cachedRelease {
 		out.DurationMS = old.DurationMS
 	}
 
+	stored := make(map[string]cachedTIDALTrack, len(old.Tracks))
+	for _, t := range old.Tracks {
+		stored[t.ID] = t
+	}
 	listed := map[string]bool{}
 	tracks := make([]cachedTIDALTrack, 0, len(fresh.Tracks)+len(old.Tracks))
 	for _, t := range fresh.Tracks {
 		listed[t.ID] = true
+		if o, ok := stored[t.ID]; ok {
+			t = mergeCachedTrack(o, t)
+		}
 		t.Removed = false
 		tracks = append(tracks, t)
 	}

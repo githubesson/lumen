@@ -132,7 +132,4 @@ func TestFromReleaseFillsWhatTrackInfoLacks(t *testing.T) {
 	if got := fromRelease(tidal.Track{ID: "2", TrackNo: 3, DiscNo: 1}, release); got.TrackNo != 3 || got.DiscNo != 1 {
 		t.Fatalf("overrode track numbering: %+v", got)
 	}
-	if albumMarker(tidal.Track{}) != "-" || albumMarker(tidal.Track{AlbumID: "9"}) != "9" {
-		t.Fatal("album marker")
-	}
 }

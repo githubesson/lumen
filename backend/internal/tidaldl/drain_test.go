@@ -1381,3 +1381,54 @@ func TestRequestedAlbumTracksAreSaved(t *testing.T) {
 		t.Fatalf("pending after cancel = %v, %v", pending, err)
 	}
 }
+
+// If the release can't be loaded when a track is saved, the track is still
+// saved, but left for the backfill, which files it properly once TIDAL
+// serves the release again.
+func TestUnresolvedReleaseIsRetriedByBackfill(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	run := uuid.NewString()[:8]
+	tid, rel := "ur"+run, "urel"+run
+	optedInPlaylist(t, pool, tid)
+	root := t.TempDir()
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM tracks WHERE file_path LIKE $1`, root+"%") })
+	src := &fakeSource{
+		albums: map[string]tidal.Album{}, // FullAlbum fails
+		tracks: map[string]tidal.Track{tid: {ID: tid, Title: "Song " + run, Artists: []string{"Rapper"}, AlbumID: rel, AlbumTitle: "Tape " + run}},
+	}
+	w := testWorker(t, pool, root, src)
+	w.drain(ctx)
+
+	local, err := w.Library.DownloadedTIDALTrack(ctx, tid)
+	if err != nil {
+		t.Fatalf("not saved without its release: %v", err)
+	}
+	marker := func() string {
+		t.Helper()
+		var m string
+		if err := pool.QueryRow(ctx, `SELECT tidal_album_id FROM tidal_downloads WHERE tidal_id = $1`, tid).Scan(&m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	if m := marker(); m != "" {
+		t.Fatalf("marker = %q, want it left unresolved", m)
+	}
+
+	src.albums[rel] = tidal.Album{ID: rel, Title: "Tape " + run, Artist: "Rapper", ReleaseYear: 2019, TrackCount: 1,
+		Tracks: []tidal.Track{{ID: tid, Title: "Song " + run, TrackNo: 1}}}
+	w.drain(ctx)
+
+	var artist string
+	var year int
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(ar.name, ''), COALESCE(a.release_year, 0)
+		FROM tracks t JOIN albums a ON a.id = t.album_id LEFT JOIN artists ar ON ar.id = a.album_artist_id
+		WHERE t.id = $1`, local).Scan(&artist, &year); err != nil {
+		t.Fatal(err)
+	}
+	if artist != "Rapper" || year != 2019 || marker() != rel {
+		t.Fatalf("after recovery: artist %q, year %d, marker %q", artist, year, marker())
+	}
+}

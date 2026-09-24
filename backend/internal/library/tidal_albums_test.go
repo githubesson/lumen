@@ -10,7 +10,7 @@ func TestMergeCachedReleaseKeepsRemovedTracks(t *testing.T) {
 		Title: "Record", Artist: "Band", Artists: []string{"Band", "Guest"}, ReleaseYear: 2020,
 		CoverURL: "old-cover", DurationMS: 10,
 		Tracks: []cachedTIDALTrack{
-			{ID: "1", Title: "One", TrackNo: 1},
+			{ID: "1", Title: "One", TrackNo: 1, ISRC: "X1", Artists: []string{"Band"}, DurationMS: 100},
 			{ID: "2", Title: "Two", TrackNo: 2, ISRC: "X2"},
 			{ID: "3", Title: "Three", TrackNo: 3, Removed: true}, // removed before, listed again now
 			{ID: "4", Title: "Four", TrackNo: 4},
@@ -18,7 +18,8 @@ func TestMergeCachedReleaseKeepsRemovedTracks(t *testing.T) {
 			{ID: "u", Title: "Unnumbered"},
 		},
 	}
-	// TIDAL now lists 1, 3 and 4 only, and returns no artists or year.
+	// TIDAL now lists 1, 3 and 4 only, and returns no artists or year; track
+	// 1 comes back without its ISRC, artists and duration.
 	fresh := cachedRelease{
 		Title: "Record (Remastered)", CoverURL: "new-cover",
 		Tracks: []cachedTIDALTrack{
@@ -47,5 +48,8 @@ func TestMergeCachedReleaseKeepsRemovedTracks(t *testing.T) {
 	}
 	if got.Tracks[1].ISRC != "X2" {
 		t.Fatal("a removed track lost its metadata")
+	}
+	if one := got.Tracks[0]; one.ISRC != "X1" || len(one.Artists) != 1 || one.DurationMS != 100 {
+		t.Fatalf("a listed track lost fields the refresh omitted: %+v", one)
 	}
 }

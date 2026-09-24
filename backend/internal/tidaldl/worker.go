@@ -465,7 +465,7 @@ func (w *Worker) adoptPlayable(ctx context.Context, c Candidate, meta tidal.Trac
 		if err := w.Store.RecordSaved(ctx, c.TIDALID, localID, status, path, meta.Title, artist); err != nil {
 			return err
 		}
-		if err := w.Store.SetDownloadAlbum(ctx, c.TIDALID, albumMarker(meta)); err != nil {
+		if err := w.Store.SetDownloadAlbum(ctx, c.TIDALID, w.albumMarker(ctx, meta)); err != nil {
 			return err
 		}
 	}
@@ -691,10 +691,16 @@ func fromRelease(meta tidal.Track, r tidal.Album) tidal.Track {
 	return meta
 }
 
-// albumMarker is the tidal_downloads.tidal_album_id for a saved track.
-func albumMarker(meta tidal.Track) string {
+// albumMarker is the tidal_downloads.tidal_album_id for a saved track: the
+// release id once the release is stored (its metadata was applied), "-"
+// when TIDAL lists none, and "" while the release couldn't be loaded, which
+// leaves the track for the backfill to retry.
+func (w *Worker) albumMarker(ctx context.Context, meta tidal.Track) string {
 	if meta.AlbumID == "" {
 		return "-"
+	}
+	if _, _, err := w.Library.TIDALAlbum(ctx, meta.AlbumID); err != nil {
+		return ""
 	}
 	return meta.AlbumID
 }
@@ -722,8 +728,14 @@ func (w *Worker) backfillAlbums(ctx context.Context) {
 			continue
 		}
 		meta = w.withRelease(ctx, meta)
+		marker := w.albumMarker(ctx, meta)
+		if marker == "" {
+			// Release unavailable: leave the track as is and retry later
+			// rather than refiling it without album artist and year.
+			continue
+		}
 		w.applyTIDALMetadata(ctx, d.LocalID, meta)
-		if err := w.Store.SetDownloadAlbum(ctx, d.TIDALID, albumMarker(meta)); err != nil {
+		if err := w.Store.SetDownloadAlbum(ctx, d.TIDALID, marker); err != nil {
 			w.log().Warn("tidal auto-download album backfill failed", "tidal_track", d.TIDALID, "err", err)
 		}
 	}
