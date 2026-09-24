@@ -398,7 +398,22 @@ func (c *Client) CoverBytes(ctx context.Context, coverURL string) ([]byte, error
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("cover fetch status %s", resp.Status)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, maxCoverBytes))
+	return readCapped(resp.Body, maxCoverBytes)
+}
+
+// errCoverTooLarge rejects a cover past maxCoverBytes rather than returning a
+// truncated image, which ffmpeg could refuse and fail the whole download on.
+var errCoverTooLarge = errors.New("tidal cover exceeds size limit")
+
+func readCapped(r io.Reader, max int64) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > max {
+		return nil, errCoverTooLarge
+	}
+	return b, nil
 }
 
 func (c *Client) StreamURL(ctx context.Context, id string) (string, error) {

@@ -62,3 +62,12 @@ func TestTIDALMediaClientFollowsAllowedRedirects(t *testing.T) {
 		t.Fatalf("final path = %q", resp.Request.URL.Path)
 	}
 }
+
+func TestReadCappedRejectsInsteadOfTruncating(t *testing.T) {
+	if b, err := readCapped(strings.NewReader("12345"), 5); err != nil || string(b) != "12345" {
+		t.Fatalf("at the cap: %q, %v", b, err)
+	}
+	if b, err := readCapped(strings.NewReader("123456"), 5); err != errCoverTooLarge || b != nil {
+		t.Fatalf("past the cap: %q, %v", b, err)
+	}
+}
