@@ -162,6 +162,11 @@ func TestTIDALAutoDownloadAPI(t *testing.T) {
 	if err != nil || len(entries) != 1 || entries[0].TrackID != local {
 		t.Fatalf("entries = %+v, %v", entries, err)
 	}
+	// It remembers which TIDAL track it stands for, to fall back to later.
+	var origin *string
+	if err := pool.QueryRow(ctx, `SELECT tidal_origin FROM playlist_tracks WHERE playlist_id = $1`, playlist.ID).Scan(&origin); err != nil || origin == nil || *origin != tidalID {
+		t.Fatalf("tidal_origin = %v, %v; want %q", origin, err, tidalID)
+	}
 	// A client holding a pre-swap snapshot sends the retired TIDAL row's id;
 	// its favorite must land on the saved copy.
 	remote, err := lib.UpsertRemoteTrack(ctx, library.RemoteTrackInput{
@@ -185,5 +190,12 @@ func TestTIDALAutoDownloadAPI(t *testing.T) {
 	}
 	if got, err := lib.DownloadedTIDALTrack(ctx, tidalID); !errors.Is(err, library.ErrNotFound) {
 		t.Fatalf("missing saved copy resolved to %v, %v", got, err)
+	}
+	// Rescan drops the missing file's row; the entry falls back to TIDAL.
+	if err := lib.HardDeleteByPath(ctx, savedPath); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := pls.Tracks(ctx, playlist.ID); err != nil || len(entries) != 1 || entries[0].TrackID != remote {
+		t.Fatalf("entries after delete = %+v, %v; want the TIDAL row %v", entries, err, remote)
 	}
 }

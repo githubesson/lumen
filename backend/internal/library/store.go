@@ -333,24 +333,31 @@ func (s *Store) DownloadedTIDALTrack(ctx context.Context, tidalID string) (uuid.
 // Clients holding a snapshot from before the swap still send the old row id;
 // without this their plays and favorites would land on the retired row.
 func (s *Store) RedirectSavedTIDAL(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	id, _, err := s.ResolveSavedTIDAL(ctx, id)
+	return id, err
+}
+
+// ResolveSavedTIDAL is RedirectSavedTIDAL that also reports the TIDAL id when
+// id is a TIDAL row ("" otherwise), whether or not it was redirected.
+func (s *Store) ResolveSavedTIDAL(ctx context.Context, id uuid.UUID) (uuid.UUID, string, error) {
 	var tidalID string
 	err := s.db.QueryRow(ctx, `
 		SELECT external_id FROM tracks
 		WHERE id = $1 AND source = 'tidal' AND external_id <> ''`, id).Scan(&tidalID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return id, nil
+		return id, "", nil
 	}
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, "", err
 	}
 	local, err := s.DownloadedTIDALTrack(ctx, tidalID)
 	if errors.Is(err, ErrNotFound) {
-		return id, nil
+		return id, tidalID, nil
 	}
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, "", err
 	}
-	return local, nil
+	return local, tidalID, nil
 }
 
 // InsertTrack inserts a track honoring the ownership rules:

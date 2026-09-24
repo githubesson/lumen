@@ -315,12 +315,10 @@ func (h *Playlists) AddTracks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ids := make([]uuid.UUID, 0, len(req.TrackIDs))
+	origins := make([]string, 0, len(req.TrackIDs))
 	addsTIDAL := false
 	for _, s := range req.TrackIDs {
-		if ref, err := trackref.Parse(s); err == nil && ref.Source == trackref.SourceTIDAL {
-			addsTIDAL = true
-		}
-		id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, s, true)
+		id, origin, err := resolveTrackEntry(r.Context(), h.Library, h.TIDAL, s, true)
 		if err != nil {
 			if errors.Is(err, tidal.ErrNotConfigured) {
 				http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
@@ -330,8 +328,12 @@ func (h *Playlists) AddTracks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ids = append(ids, id)
+		origins = append(origins, origin)
+		if origin != "" {
+			addsTIDAL = true
+		}
 	}
-	if err := h.Store.AddTracks(r.Context(), pid, ids, u.ID); err != nil {
+	if err := h.Store.AddEntries(r.Context(), pid, ids, origins, u.ID); err != nil {
 		writeStoreError(w, err)
 		return
 	}

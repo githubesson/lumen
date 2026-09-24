@@ -313,8 +313,22 @@ func lockPlaylist(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
 
 // AddTracks appends trackIDs to the end of the playlist, preserving order.
 func (s *Store) AddTracks(ctx context.Context, id uuid.UUID, trackIDs []uuid.UUID, addedBy uuid.UUID) error {
+	return s.AddEntries(ctx, id, trackIDs, nil, addedBy)
+}
+
+// AddEntries is AddTracks with each entry's TIDAL origin ("" for none): the
+// TIDAL id a track added as `tidal:<id>` stands for when it resolved to the
+// library copy auto-download saved, so the entry can fall back to TIDAL if
+// that copy is deleted. origins is nil or parallel to trackIDs.
+func (s *Store) AddEntries(ctx context.Context, id uuid.UUID, trackIDs []uuid.UUID, origins []string, addedBy uuid.UUID) error {
 	if len(trackIDs) == 0 {
 		return nil
+	}
+	if origins == nil {
+		origins = make([]string, len(trackIDs))
+	}
+	if len(origins) != len(trackIDs) {
+		return errors.New("origins must match track ids")
 	}
 	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
 		if err := lockPlaylist(ctx, tx, id); err != nil {
@@ -331,10 +345,10 @@ func (s *Store) AddTracks(ctx context.Context, id uuid.UUID, trackIDs []uuid.UUI
 		// 1000 round-trips blocked every concurrent add/remove/reorder on that
 		// playlist for the duration, and could outlive the request deadline.
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO playlist_tracks (playlist_id, position, track_id, added_by)
-			SELECT $1, $2 + ord, t.tid, $4
-			FROM unnest($3::uuid[]) WITH ORDINALITY AS t(tid, ord)`,
-			id, maxPos, trackIDs, addedBy); err != nil {
+			INSERT INTO playlist_tracks (playlist_id, position, track_id, added_by, tidal_origin)
+			SELECT $1, $2 + ord, t.tid, $4, NULLIF(t.origin, '')
+			FROM unnest($3::uuid[], $5::text[]) WITH ORDINALITY AS t(tid, origin, ord)`,
+			id, maxPos, trackIDs, addedBy, origins); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE playlists SET updated_at = NOW() WHERE id = $1`, id); err != nil {
