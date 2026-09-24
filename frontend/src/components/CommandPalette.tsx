@@ -188,8 +188,8 @@ export default function CommandPalette({
         },
         {
           id: "tweaks",
-          label: "Open tweaks",
-          keywords: "settings depth radius density layout",
+          label: "Open settings",
+          keywords: "tweaks preferences radius density layout output last.fm updates",
           icon: AdjustmentsHorizontalIcon,
           perform: onOpenTweaks,
         },

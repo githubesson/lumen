@@ -169,7 +169,7 @@ function MobileSidebarActions({
         onClick={onOpenTweaks}
       >
         <AdjustmentsHorizontalIcon className="nav-icon" aria-hidden="true" />
-        <span className="nav-label">Tweaks</span>
+        <span className="nav-label">Settings</span>
       </button>
       {isElectron() && (
         <button

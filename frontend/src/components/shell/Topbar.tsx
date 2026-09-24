@@ -134,9 +134,8 @@ export default function Topbar({
       <button
         className={"iconbtn topbar-secondary" + (tweaksOpen ? " active" : "")}
         type="button"
-        title="Tweaks"
-        aria-label="Tweaks"
-        data-tweaks-trigger=""
+        title="Settings"
+        aria-label="Settings"
         onClick={onToggleTweaks}
       >
         <AdjustmentsHorizontalIcon className="size-4" aria-hidden="true" />

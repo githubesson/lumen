@@ -10,7 +10,7 @@ import { useLyricsPanel } from "../context/LyricsPanel";
 import MiniPlayer from "./MiniPlayer";
 import LyricsSidebar from "./LyricsSidebar";
 import UploadDialog from "./UploadDialog";
-import TweaksPanel from "./TweaksPanel";
+import SettingsDialog from "./SettingsDialog";
 import Sidebar from "./shell/Sidebar";
 import Topbar from "./shell/Topbar";
 import { useMobileNav } from "./shell/useMobileNav";
@@ -122,7 +122,7 @@ export default function Shell() {
       {/* Player */}
       <MiniPlayer />
 
-      <TweaksPanel open={tweaksOpen} onClose={() => setTweaksOpen(false)} />
+      <SettingsDialog open={tweaksOpen} onClose={() => setTweaksOpen(false)} />
 
       <UploadDialog
         open={uploadOpen}
