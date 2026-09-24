@@ -4,6 +4,8 @@
 // "can this be edited / shared?" the same way.
 export {
   canShareTrack,
+  downloadableAlbumTracks,
   isLocalTrack,
   isTidalTrack,
+  playableTracks,
 } from "@music-library/core/track";

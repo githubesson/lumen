@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, errorMessage, type TrackListItem } from "../api";
 
 export type EntityState<T> = T | null | "notfound";
@@ -21,7 +21,13 @@ interface EntityLoaders<T> {
 export function useEntityDetail<T>(
   id: string,
   { get, listTracks, label }: EntityLoaders<T>,
-): { entity: EntityState<T>; tracks: TrackListItem[] | null; error: string | null } {
+): {
+  entity: EntityState<T>;
+  tracks: TrackListItem[] | null;
+  error: string | null;
+  /** Refetch in place, without clearing to the loading state. Failures are ignored. */
+  refresh: () => void;
+} {
   const [entity, setEntity] = useState<EntityState<T>>(null);
   const [tracks, setTracks] = useState<TrackListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,5 +63,23 @@ export function useEntityDetail<T>(
     };
   }, [id, get, listTracks, label]);
 
-  return { entity, tracks, error };
+  const refreshing = useRef<AbortController | null>(null);
+  useEffect(() => () => refreshing.current?.abort(), [id]);
+  const refresh = useCallback(() => {
+    refreshing.current?.abort();
+    const controller = new AbortController();
+    refreshing.current = controller;
+    Promise.all([
+      get(id, { signal: controller.signal }),
+      listTracks(id, { signal: controller.signal }),
+    ])
+      .then(([e, t]) => {
+        if (controller.signal.aborted) return;
+        setEntity(e);
+        setTracks(t ?? []);
+      })
+      .catch(() => {});
+  }, [id, get, listTracks]);
+
+  return { entity, tracks, error, refresh };
 }

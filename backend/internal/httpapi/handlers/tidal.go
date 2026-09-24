@@ -1,25 +1,38 @@
 package handlers
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
+	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/tidal"
-	"github.com/githubesson/lumen/internal/trackref"
 )
 
 type TIDAL struct {
 	TIDAL *tidal.Client
+	// Library, when set, caches viewed albums and swaps saved copies into
+	// their track lists.
+	Library *library.Store
 }
 
 type tidalAlbumResp struct {
-	ID          string              `json:"id"`
-	Title       string              `json:"title"`
-	Artist      string              `json:"artist,omitempty"`
-	ReleaseYear int                 `json:"release_year,omitempty"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Artist      string   `json:"artist,omitempty"`
+	Artists     []string `json:"artists,omitempty"`
+	ReleaseYear int      `json:"release_year,omitempty"`
+	// SavedCount tracks are served from the library; LibraryAlbumID is the
+	// library album copying this release, if any.
+	SavedCount     int    `json:"saved_count,omitempty"`
+	LibraryAlbumID string `json:"library_album_id,omitempty"`
+	// QueuedCount tracks are waiting for an album download.
+	QueuedCount int                 `json:"queued_count,omitempty"`
 	TrackCount  int                 `json:"track_count"`
 	DurationMS  int                 `json:"duration_ms"`
 	CoverURL    string              `json:"cover_url,omitempty"`
@@ -32,15 +45,33 @@ type tidalArtistProfileResp struct {
 }
 
 func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireUser(w, r); !ok {
+	u, ok := requireUser(w, r)
+	if !ok {
 		return
 	}
-	if h.TIDAL == nil {
-		http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-		return
-	}
+	id := chi.URLParam(r, "id")
 	limit, offset := pageParams(r.URL.Query())
-	album, err := h.TIDAL.Album(r.Context(), chi.URLParam(r, "id"), limit, offset)
+	err := tidal.ErrNotConfigured
+	var album tidal.Album
+	if h.TIDAL != nil {
+		album, err = h.TIDAL.Album(r.Context(), id, limit, offset)
+	}
+	if h.Library != nil && offset == 0 {
+		if err == nil && len(album.Tracks) >= album.TrackCount {
+			// A full fetch updates the stored record, which then also lists
+			// the tracks TIDAL has since dropped.
+			if serr := h.Library.SaveTIDALAlbum(r.Context(), album); serr != nil {
+				slog.Warn("tidal album cache write failed", "album", album.ID, "err", serr)
+			}
+		}
+		// The stored record outlives the release on TIDAL: serve it when
+		// TIDAL can't, and in place of a full fetch so dropped tracks show.
+		if err != nil || len(album.Tracks) >= album.TrackCount {
+			if cached, _, cerr := h.Library.TIDALAlbum(r.Context(), id); cerr == nil {
+				album, err = cached, nil
+			}
+		}
+	}
 	if err != nil {
 		if errors.Is(err, tidal.ErrNotConfigured) {
 			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
@@ -49,7 +80,34 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "tidal album unavailable", http.StatusBadGateway)
 		return
 	}
-	writeJSON(w, http.StatusOK, makeTIDALAlbumResp(album))
+	out := makeTIDALAlbumResp(album)
+	if h.Library != nil {
+		h.withLibrary(r.Context(), &out, album, u.ID)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// withLibrary swaps the viewer's library copies into the release's track
+// list and reports downloads queued for it. Library failures only cost the
+// enrichment.
+func (h *TIDAL) withLibrary(ctx context.Context, out *tidalAlbumResp, album tidal.Album, viewerID uuid.UUID) {
+	var localAlbum *uuid.UUID
+	if id, err := h.Library.LocalAlbumForTIDAL(ctx, album.ID, viewerID); err == nil {
+		localAlbum = &id
+		out.LibraryAlbumID = id.String()
+	}
+	if n, err := h.Library.TIDALAlbumQueued(ctx, album.ID); err == nil {
+		out.QueuedCount = n
+	}
+	// Library tracks that match no entry aren't appended here (this may be
+	// one page of the release); the library album's page shows them.
+	merged, err := mergeWithLibrary(ctx, h.Library, album, localAlbum, viewerID, false)
+	if err != nil {
+		slog.Warn("tidal album library merge failed", "album", album.ID, "err", err)
+		return
+	}
+	out.Tracks = merged.Tracks
+	out.SavedCount = merged.SavedCount
 }
 
 func makeTIDALAlbumResp(album tidal.Album) tidalAlbumResp {
@@ -57,6 +115,7 @@ func makeTIDALAlbumResp(album tidal.Album) tidalAlbumResp {
 		ID:          album.ID,
 		Title:       album.Title,
 		Artist:      album.Artist,
+		Artists:     album.Artists,
 		ReleaseYear: album.ReleaseYear,
 		TrackCount:  album.TrackCount,
 		DurationMS:  album.DurationMS,
@@ -64,18 +123,7 @@ func makeTIDALAlbumResp(album tidal.Album) tidalAlbumResp {
 		Tracks:      make([]trackListItemResp, 0, len(album.Tracks)),
 	}
 	for _, it := range album.Tracks {
-		out.Tracks = append(out.Tracks, trackListItemResp{
-			ID:            trackref.Remote(trackref.SourceTIDAL, it.ID),
-			Source:        trackref.SourceTIDAL,
-			SourceID:      it.ID,
-			SourceAlbumID: it.AlbumID,
-			Title:         it.Title,
-			AlbumTitle:    firstNonEmpty(it.AlbumTitle, album.Title),
-			TrackNo:       it.TrackNo,
-			DurationMS:    it.DurationMS,
-			Artist:        strings.Join(it.Artists, ", "),
-			CoverURL:      proxyRemoteCoverURL(firstNonEmpty(it.CoverURL, album.CoverURL)),
-		})
+		out.Tracks = append(out.Tracks, tidalAlbumTrackResp(album, it))
 	}
 	return out
 }

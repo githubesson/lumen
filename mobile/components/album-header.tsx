@@ -13,6 +13,8 @@ interface Props {
   coverKey?: string;
   metadata: string;
   onPlay?: () => void;
+  /** A second, quieter button under Play (e.g. an admin album download). */
+  secondaryAction?: { label: string; onPress: () => void; disabled?: boolean };
 }
 
 export function AlbumHeader({
@@ -22,6 +24,7 @@ export function AlbumHeader({
   coverKey,
   metadata,
   onPlay,
+  secondaryAction,
 }: Props) {
   const theme = useTheme();
   return (
@@ -120,6 +123,32 @@ export function AlbumHeader({
             }}
           >
             Play
+          </Text>
+        </Pressable>
+      ) : null}
+      {secondaryAction ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={secondaryAction.label}
+          accessibilityState={{ disabled: !!secondaryAction.disabled }}
+          disabled={secondaryAction.disabled}
+          onPress={() => {
+            void Haptics.selectionAsync();
+            secondaryAction.onPress();
+          }}
+          style={({ pressed }) => ({
+            alignItems: "center",
+            justifyContent: "center",
+            marginTop: theme.space.sm,
+            backgroundColor: theme.color.bgElev1,
+            borderRadius: theme.radius.md,
+            paddingVertical: 12,
+            opacity: secondaryAction.disabled ? 0.5 : pressed ? 0.85 : 1,
+            borderCurve: "continuous",
+          })}
+        >
+          <Text style={{ color: theme.color.fg, fontWeight: "600", fontSize: 15 }}>
+            {secondaryAction.label}
           </Text>
         </Pressable>
       ) : null}

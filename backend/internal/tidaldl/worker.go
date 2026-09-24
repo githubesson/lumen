@@ -87,6 +87,7 @@ func (w *Worker) tagger() (tagFunc, error) {
 // source is the part of *tidal.Client the worker uses.
 type source interface {
 	Track(ctx context.Context, id string) (tidal.Track, error)
+	FullAlbum(ctx context.Context, id string) (tidal.Album, error)
 	FileResponse(ctx context.Context, id string, incoming *http.Request) (*http.Response, error)
 	CoverBytes(ctx context.Context, coverURL string) ([]byte, error)
 }
@@ -158,6 +159,7 @@ func (w *Worker) drain(ctx context.Context) {
 	// admin changing the destination mid-drain takes effect on the next wake.
 	dest := sync.OnceValues(func() (string, error) { return w.Destination(ctx) })
 	w.sweepRetired(ctx)
+	w.backfillAlbums(ctx)
 	for batch := 0; batch < maxBatchesPerWake; batch++ {
 		pending, err := w.Store.Pending(ctx, batchSize)
 		if err != nil {
@@ -189,6 +191,12 @@ func (w *Worker) drain(ctx context.Context) {
 				}
 				failed++
 				w.log().Warn("tidal auto-download failed", "tidal_track", c.TIDALID, "err", err)
+				continue
+			}
+			// Saved: an explicit request for it is done. Failures keep theirs
+			// and retry with the usual backoff.
+			if err := w.Store.ClearRequest(ctx, c.TIDALID); err != nil {
+				w.log().Warn("tidal auto-download request cleanup failed", "tidal_track", c.TIDALID, "err", err)
 			}
 		}
 		// A batch with no successes means TIDAL or the database is having a
@@ -305,6 +313,9 @@ func (w *Worker) process(ctx context.Context, c Candidate, dest func() (string, 
 		}
 		return w.fail(ctx, c, tidal.Track{}, fmt.Errorf("metadata: %w", err))
 	}
+	// TIDAL's track info carries no album artist or release date; the
+	// release does.
+	meta = w.withRelease(ctx, meta)
 	artist := strings.Join(meta.Artists, ", ")
 
 	matches, err := w.Store.LocalByISRC(ctx, meta.ISRC)
@@ -362,7 +373,7 @@ func (w *Worker) process(ctx context.Context, c Candidate, dest func() (string, 
 	status := StatusExisting
 	if out.Inserted || w.ownsFile(ctx, out.TrackID, path) {
 		status = StatusDownloaded
-		w.applyArtists(ctx, out.TrackID, meta)
+		w.applyTIDALMetadata(ctx, out.TrackID, meta)
 	}
 	return w.adoptPlayable(ctx, c, meta, out.TrackID, status, path)
 }
@@ -419,7 +430,7 @@ func (w *Worker) adoptAudioTwin(ctx context.Context, c Candidate, meta tidal.Tra
 	if filepath.Clean(twin.FilePath) == filepath.Clean(path) {
 		// The filesystem watcher ingested our file first; the row is ours
 		// and needs the same artist fix-up as a fresh insert.
-		w.applyArtists(ctx, twin.ID, meta)
+		w.applyTIDALMetadata(ctx, twin.ID, meta)
 		return true, w.adoptPlayable(ctx, c, meta, twin.ID, StatusDownloaded, path)
 	}
 	if w.playable(ctx, twin.FilePath) {
@@ -452,6 +463,9 @@ func (w *Worker) adoptPlayable(ctx context.Context, c Candidate, meta tidal.Trac
 	artist := strings.Join(meta.Artists, ", ")
 	if status == StatusDownloaded {
 		if err := w.Store.RecordSaved(ctx, c.TIDALID, localID, status, path, meta.Title, artist); err != nil {
+			return err
+		}
+		if err := w.Store.SetDownloadAlbum(ctx, c.TIDALID, albumMarker(meta)); err != nil {
 			return err
 		}
 	}
@@ -581,19 +595,137 @@ func (w *Worker) download(ctx context.Context, meta tidal.Track, dest string) (s
 	return path, nil
 }
 
-// applyArtists replaces the artists ingest parsed from the tags with TIDAL's
-// list: ingest splits on ", " and " & ", which mangles names like
-// "Simon & Garfunkel", and does not split the "; " the tag was written with.
-func (w *Worker) applyArtists(ctx context.Context, trackID uuid.UUID, meta tidal.Track) {
-	if len(meta.Artists) == 0 {
+// applyTIDALMetadata files a saved track by TIDAL's metadata rather than
+// what ingest parsed from the tags: TIDAL's artist list (ingest splits on
+// ", " and " & ", which mangles names like "Simon & Garfunkel", and does not
+// split the "; " the tag was written with), and the release it belongs to,
+// with album artist, year, numbering, and the link to the TIDAL release.
+func (w *Worker) applyTIDALMetadata(ctx context.Context, trackID uuid.UUID, meta tidal.Track) {
+	if len(meta.Artists) > 0 {
+		artists := meta.Artists
+		if len(artists) > library.MaxTrackArtists {
+			artists = artists[:library.MaxTrackArtists]
+		}
+		if err := w.Library.UpdateTrack(ctx, trackID, library.TrackPatch{Artists: &artists}); err != nil {
+			w.log().Warn("tidal auto-download artist update failed", "track", trackID, "err", err)
+		}
+	}
+	if strings.TrimSpace(meta.AlbumTitle) == "" {
 		return
 	}
-	artists := meta.Artists
-	if len(artists) > library.MaxTrackArtists {
-		artists = artists[:library.MaxTrackArtists]
+	if err := w.Library.ApplyTIDALAlbum(ctx, trackID, library.TIDALAlbumFields{
+		TIDALAlbumID: meta.AlbumID,
+		Title:        meta.AlbumTitle,
+		Artist:       meta.AlbumArtist,
+		Year:         meta.Year,
+		TrackNo:      meta.TrackNo,
+		DiscNo:       meta.DiscNo,
+	}); err != nil {
+		w.log().Warn("tidal auto-download album update failed", "track", trackID, "err", err)
 	}
-	if err := w.Library.UpdateTrack(ctx, trackID, library.TrackPatch{Artists: &artists}); err != nil {
-		w.log().Warn("tidal auto-download artist update failed", "track", trackID, "err", err)
+}
+
+// withRelease fills what TIDAL's track info lacks from the track's release:
+// album artist, release year, and numbering. Without a release (none listed,
+// or TIDAL unavailable) the track info is used as is.
+func (w *Worker) withRelease(ctx context.Context, meta tidal.Track) tidal.Track {
+	if meta.AlbumID == "" || w.Library == nil {
+		return meta
+	}
+	release, err := w.release(ctx, meta.AlbumID)
+	if err != nil {
+		w.log().Warn("tidal auto-download album metadata unavailable",
+			"tidal_track", meta.ID, "album", meta.AlbumID, "err", err)
+		return meta
+	}
+	return fromRelease(meta, release)
+}
+
+// release returns the full TIDAL release, from the cache while it is fresh.
+// A stale cache entry still serves when TIDAL can't be reached.
+func (w *Worker) release(ctx context.Context, id string) (tidal.Album, error) {
+	cached, fetchedAt, cacheErr := w.Library.TIDALAlbum(ctx, id)
+	if cacheErr == nil && time.Since(fetchedAt) < library.TIDALAlbumMaxAge {
+		return cached, nil
+	}
+	fresh, err := w.src().FullAlbum(ctx, id)
+	if err != nil {
+		if cacheErr == nil {
+			return cached, nil
+		}
+		return tidal.Album{}, err
+	}
+	if err := w.Library.SaveTIDALAlbum(ctx, fresh); err != nil {
+		w.log().Warn("tidal album cache write failed", "album", id, "err", err)
+	}
+	return fresh, nil
+}
+
+// fromRelease prefers the release's album title, artist, year and cover, and
+// takes the track's disc and number from the release listing when missing.
+func fromRelease(meta tidal.Track, r tidal.Album) tidal.Track {
+	if t := strings.TrimSpace(r.Title); t != "" {
+		meta.AlbumTitle = t
+	}
+	if a := strings.TrimSpace(r.Artist); a != "" {
+		meta.AlbumArtist = a
+	}
+	if r.ReleaseYear > 0 {
+		meta.Year = r.ReleaseYear
+	}
+	if meta.CoverURL == "" {
+		meta.CoverID, meta.CoverURL = r.CoverID, r.CoverURL
+	}
+	for _, t := range r.Tracks {
+		if t.ID != meta.ID {
+			continue
+		}
+		if meta.TrackNo == 0 {
+			meta.TrackNo = t.TrackNo
+		}
+		if meta.DiscNo == 0 {
+			meta.DiscNo = t.DiscNo
+		}
+		break
+	}
+	return meta
+}
+
+// albumMarker is the tidal_downloads.tidal_album_id for a saved track.
+func albumMarker(meta tidal.Track) string {
+	if meta.AlbumID == "" {
+		return "-"
+	}
+	return meta.AlbumID
+}
+
+// backfillAlbums gives tracks saved before album metadata was applied their
+// album artist, year and release link, a few per drain.
+func (w *Worker) backfillAlbums(ctx context.Context) {
+	pending, err := w.Store.DownloadsMissingAlbum(ctx, 10)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			w.log().Warn("tidal auto-download album backfill failed", "err", err)
+		}
+		return
+	}
+	for _, d := range pending {
+		if ctx.Err() != nil {
+			return
+		}
+		meta, err := w.src().Track(ctx, d.TIDALID)
+		if err != nil {
+			if errors.Is(err, tidal.ErrNotConfigured) {
+				return
+			}
+			w.log().Warn("tidal auto-download album backfill failed", "tidal_track", d.TIDALID, "err", err)
+			continue
+		}
+		meta = w.withRelease(ctx, meta)
+		w.applyTIDALMetadata(ctx, d.LocalID, meta)
+		if err := w.Store.SetDownloadAlbum(ctx, d.TIDALID, albumMarker(meta)); err != nil {
+			w.log().Warn("tidal auto-download album backfill failed", "tidal_track", d.TIDALID, "err", err)
+		}
 	}
 }
 

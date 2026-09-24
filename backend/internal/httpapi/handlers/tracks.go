@@ -94,6 +94,9 @@ type trackListItemResp struct {
 	Favorited     bool   `json:"favorited,omitempty"`
 	Owned         bool   `json:"owned,omitempty"` // true = the viewer's own personal upload (deletable)
 	CoverURL      string `json:"cover_url,omitempty"`
+	// Unavailable marks a TIDAL release entry TIDAL no longer lists and the
+	// library has no copy of: shown for completeness, not playable.
+	Unavailable bool `json:"unavailable,omitempty"`
 }
 
 type trackAliasResp struct {

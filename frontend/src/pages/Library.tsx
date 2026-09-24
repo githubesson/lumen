@@ -89,8 +89,15 @@ export default function Library() {
   const openAlbum = (id: string) => {
     const next = new URLSearchParams(params);
     next.delete("tidalArtist");
-    if (id.startsWith("tidal:")) next.set("tidalAlbum", id.slice(6));
-    else next.set("album", id);
+    // Only one album param at a time: the library album view wins when both
+    // are set, which would strand a jump from it to its TIDAL release.
+    if (id.startsWith("tidal:")) {
+      next.delete("album");
+      next.set("tidalAlbum", id.slice(6));
+    } else {
+      next.delete("tidalAlbum");
+      next.set("album", id);
+    }
     setParams(next);
   };
 
@@ -119,6 +126,7 @@ export default function Library() {
         key={tidalAlbumID}
         id={tidalAlbumID}
         onBack={clearDrill}
+        onOpenAlbum={openAlbum}
       />
     );
   }

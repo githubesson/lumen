@@ -11,6 +11,7 @@ import * as Haptics from "expo-haptics";
 import {
   albumCoverUrl,
   api,
+  playableTracks,
   useAuth,
   type TrackListItem,
 } from "@music-library/core";
@@ -23,6 +24,10 @@ import { TrackRow } from "../../../../components/track-row";
 import { usePlayTrack } from "../../../../context/player";
 import { qk } from "../../../../lib/query-keys";
 import { usePlayQueue } from "../../../../lib/use-play-queue";
+import {
+  ALBUM_DOWNLOAD_REFRESH_MS,
+  useAlbumDownloadAction,
+} from "../../../../lib/album-download";
 import { useTheme } from "../../../../theme/theme";
 import { AlbumHeader, ALBUM_ART_SIZE } from "../../../../components/album-header";
 import { EmptyState, retryAction } from "../../../../components/empty-state";
@@ -42,12 +47,17 @@ export default function AlbumDetailScreen() {
     queryKey: qk.album(userId, id),
     queryFn: ({ signal }) => api.getAlbum(id!, { signal }),
     enabled: !!userId && !!id,
+    // While an album download runs, refetch so saved tracks show up.
+    refetchInterval: (query) =>
+      query.state.data?.queued_count ? ALBUM_DOWNLOAD_REFRESH_MS : false,
   });
+  const downloading = !!albumQuery.data?.queued_count;
 
   const tracksQuery = useQuery({
     queryKey: qk.albumTracks(userId, id),
     queryFn: ({ signal }) => api.listAlbumTracks(id!, { signal }),
     enabled: !!userId && !!id,
+    refetchInterval: downloading ? ALBUM_DOWNLOAD_REFRESH_MS : false,
   });
 
   // Local cache-bust for the cover <Image>. The album-edit screen bumps this
@@ -68,6 +78,18 @@ export default function AlbumDetailScreen() {
     [tracksQuery.data],
   );
   const onTrackPress = usePlayQueue(tracks);
+  const { refetch: refetchAlbum } = albumQuery;
+  const { refetch: refetchTracks } = tracksQuery;
+  const refetchAll = useCallback(() => {
+    void refetchAlbum();
+    void refetchTracks();
+  }, [refetchAlbum, refetchTracks]);
+  const downloadAction = useAlbumDownloadAction(
+    albumQuery.data?.tidal_album_id,
+    tracks,
+    albumQuery.data?.queued_count ?? 0,
+    refetchAll,
+  );
 
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<TrackListItem>) => (
@@ -91,14 +113,20 @@ export default function AlbumDetailScreen() {
     return (
       <AlbumHeader
         title={album.title}
-        artist={album.artist_name}
+        artist={album.artist_names?.join(", ") || album.artist_name}
         coverUri={coverUri}
         coverKey={coverUri ?? undefined}
-        metadata={`${album.track_count} ${album.track_count === 1 ? "track" : "tracks"}${album.release_year ? ` · ${album.release_year}` : ""}`}
-        onPlay={tracks.length > 0 ? () => play(tracks[0], tracks) : undefined}
+        metadata={`${album.track_count} ${album.track_count === 1 ? "track" : "tracks"}${
+          album.tidal_album_id && album.saved_count !== undefined ? ` · ${album.saved_count} saved` : ""
+        }${album.release_year ? ` · ${album.release_year}` : ""}`}
+        onPlay={(() => {
+          const playable = playableTracks(tracks);
+          return playable.length > 0 ? () => play(playable[0], playable) : undefined;
+        })()}
+        secondaryAction={downloadAction}
       />
     );
-  }, [albumQuery.data, coverBust, tracks, play]);
+  }, [albumQuery.data, coverBust, tracks, play, downloadAction]);
 
   const openEdit = useCallback(() => {
     if (!id) return;

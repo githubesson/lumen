@@ -79,18 +79,26 @@ type Candidate struct {
 // copy, oldest addition first. Failures stay out until their backoff expires.
 func (s *Store) Pending(ctx context.Context, limit int) ([]Candidate, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT t.id, t.external_id
-		FROM playlist_tracks pt
-		JOIN playlists p ON p.id = pt.playlist_id AND p.tidal_auto_download
-		JOIN tracks t ON t.id = pt.track_id
-		 AND t.source = 'tidal' AND t.external_id <> '' AND t.deleted_at IS NULL
-		LEFT JOIN tidal_downloads d ON d.tidal_id = t.external_id
+		WITH wanted AS (
+			SELECT t.id, t.external_id, pt.added_at AS since
+			FROM playlist_tracks pt
+			JOIN playlists p ON p.id = pt.playlist_id AND p.tidal_auto_download
+			JOIN tracks t ON t.id = pt.track_id
+			 AND t.source = 'tidal' AND t.external_id <> '' AND t.deleted_at IS NULL
+			UNION ALL
+			SELECT t.id, t.external_id, r.requested_at
+			FROM tidal_download_requests r
+			JOIN tracks t ON t.source = 'tidal' AND t.external_id = r.tidal_id AND t.deleted_at IS NULL
+		)
+		SELECT w.id, w.external_id
+		FROM wanted w
+		LEFT JOIN tidal_downloads d ON d.tidal_id = w.external_id
 		WHERE d.tidal_id IS NULL
 		   OR d.status <> 'failed'
 		   OR d.next_attempt_at IS NULL
 		   OR d.next_attempt_at <= NOW()
-		GROUP BY t.id, t.external_id
-		ORDER BY MIN(pt.added_at) ASC, t.id ASC
+		GROUP BY w.id, w.external_id
+		ORDER BY MIN(w.since) ASC, w.id ASC
 		LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
@@ -107,7 +115,8 @@ func (s *Store) Pending(ctx context.Context, limit int) ([]Candidate, error) {
 	return out, rows.Err()
 }
 
-// StillWanted reports whether a remote row is still in an opted-in playlist.
+// StillWanted reports whether a remote row is still in an opted-in playlist
+// or requested for download.
 // A batch from Pending can go stale while earlier tracks download.
 func (s *Store) StillWanted(ctx context.Context, rowID uuid.UUID) (bool, error) {
 	var wanted bool
@@ -115,7 +124,11 @@ func (s *Store) StillWanted(ctx context.Context, rowID uuid.UUID) (bool, error) 
 		SELECT EXISTS (
 			SELECT 1 FROM playlist_tracks pt
 			JOIN playlists p ON p.id = pt.playlist_id AND p.tidal_auto_download
-			WHERE pt.track_id = $1)`, rowID).Scan(&wanted)
+			WHERE pt.track_id = $1)
+		OR EXISTS (
+			SELECT 1 FROM tidal_download_requests r
+			JOIN tracks t ON t.external_id = r.tidal_id AND t.source = 'tidal'
+			WHERE t.id = $1)`, rowID).Scan(&wanted)
 	return wanted, err
 }
 
@@ -353,6 +366,81 @@ func (s *Store) RetiredWithHistory(ctx context.Context, limit int) ([]Retired, e
 	return out, rows.Err()
 }
 
+// RequestTracks queues TIDAL tracks of a release for download, returning how
+// many weren't queued already. Each needs a remote track row (the worker
+// works from those); the caller materializes them first.
+func (s *Store) RequestTracks(ctx context.Context, tidalAlbumID string, tidalIDs []string, by uuid.UUID) (int, error) {
+	if len(tidalIDs) == 0 {
+		return 0, nil
+	}
+	var requester any // uuid.Nil = nobody in particular
+	if by != uuid.Nil {
+		requester = by
+	}
+	tag, err := s.db.Exec(ctx, `
+		INSERT INTO tidal_download_requests (tidal_id, tidal_album_id, requested_by)
+		SELECT id, $2, $3::uuid FROM unnest($1::text[]) AS id
+		ON CONFLICT (tidal_id) DO NOTHING`, tidalIDs, tidalAlbumID, requester)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// CancelAlbumRequests drops a release's queued downloads.
+func (s *Store) CancelAlbumRequests(ctx context.Context, tidalAlbumID string) (int64, error) {
+	tag, err := s.db.Exec(ctx, `DELETE FROM tidal_download_requests WHERE tidal_album_id = $1`, tidalAlbumID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ClearRequest drops a track's download request once it is saved.
+func (s *Store) ClearRequest(ctx context.Context, tidalID string) error {
+	_, err := s.db.Exec(ctx, `DELETE FROM tidal_download_requests WHERE tidal_id = $1`, tidalID)
+	return err
+}
+
+// SetDownloadAlbum records the TIDAL album a saved track belongs to ("-" for
+// none).
+func (s *Store) SetDownloadAlbum(ctx context.Context, tidalID, albumID string) error {
+	_, err := s.db.Exec(ctx, `UPDATE tidal_downloads SET tidal_album_id = $2 WHERE tidal_id = $1`, tidalID, albumID)
+	return err
+}
+
+// SavedTrack is a saved TIDAL track and its library copy.
+type SavedTrack struct {
+	TIDALID string
+	LocalID uuid.UUID
+}
+
+// DownloadsMissingAlbum lists downloaded tracks whose album hasn't been
+// resolved yet: those saved before album metadata was applied.
+func (s *Store) DownloadsMissingAlbum(ctx context.Context, limit int) ([]SavedTrack, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT d.tidal_id, d.local_track_id
+		FROM tidal_downloads d
+		JOIN tracks t ON t.id = d.local_track_id AND t.deleted_at IS NULL
+		WHERE d.status = 'downloaded' AND d.tidal_album_id = ''
+		-- Random, so a track TIDAL keeps failing on can't hold a batch slot.
+		ORDER BY random()
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SavedTrack
+	for rows.Next() {
+		var t SavedTrack
+		if err := rows.Scan(&t.TIDALID, &t.LocalID); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // RecordFailure stores the error and schedules a retry with exponential
 // backoff: 5 minutes after the first failure, doubling up to a day.
 func (s *Store) RecordFailure(ctx context.Context, tidalID, title, artist string, cause error) error {
@@ -396,11 +484,13 @@ func (s *Store) Summary(ctx context.Context) (Summary, error) {
 	var out Summary
 	err := s.db.QueryRow(ctx, `
 		WITH wanted AS (
-			SELECT DISTINCT t.external_id
+			SELECT t.external_id
 			FROM playlist_tracks pt
 			JOIN playlists p ON p.id = pt.playlist_id AND p.tidal_auto_download
 			JOIN tracks t ON t.id = pt.track_id
 			 AND t.source = 'tidal' AND t.external_id <> '' AND t.deleted_at IS NULL
+			UNION
+			SELECT tidal_id FROM tidal_download_requests
 		)
 		SELECT
 			(SELECT COUNT(*) FROM playlists WHERE tidal_auto_download),

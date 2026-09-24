@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import type { TrackListItem } from "@music-library/core";
+import { playableTracks, type TrackListItem } from "@music-library/core";
 import { usePlayTrack } from "../context/player";
 
 /**
@@ -14,10 +14,13 @@ export function usePlayQueue(tracks: TrackListItem[]) {
   // Ref updates belong in an effect: writing refs during render is illegal
   // under concurrent React (and rejected by the React Compiler).
   useEffect(() => {
-    tracksRef.current = tracks;
+    // Unavailable rows (dropped from TIDAL, no library copy) are never queued.
+    tracksRef.current = playableTracks(tracks);
   }, [tracks]);
   return useCallback(
-    (track: TrackListItem) => play(track, tracksRef.current),
+    (track: TrackListItem) => {
+      if (!track.unavailable) play(track, tracksRef.current);
+    },
     [play],
   );
 }

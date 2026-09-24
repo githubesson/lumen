@@ -384,6 +384,8 @@ type AlbumListItem struct {
 type AlbumDetail struct {
 	AlbumListItem
 	CoverArtPath string
+	// TIDALAlbumID is the TIDAL release this album is a copy of, or "".
+	TIDALAlbumID string
 }
 
 type ArtistListItem struct {
@@ -462,7 +464,8 @@ func (s *Store) GetAlbum(ctx context.Context, albumID, viewerID uuid.UUID) (*Alb
 		       a.is_compilation, COALESCE(a.release_year, 0),
 		       COUNT(t.id)::int, COALESCE(SUM(t.duration_ms), 0)::bigint,
 		       `+albumHasCoverFor("$2")+` AS has_cover,
-		       `+albumCoverFor("$2")+`
+		       `+albumCoverFor("$2")+`,
+		       COALESCE(a.tidal_album_id, '')
 		FROM albums a
 		LEFT JOIN artists aa ON aa.id = a.album_artist_id
 		INNER JOIN tracks t ON t.album_id = a.id
@@ -472,7 +475,8 @@ func (s *Store) GetAlbum(ctx context.Context, albumID, viewerID uuid.UUID) (*Alb
 		WHERE a.id = $1
 		GROUP BY a.id, aa.name`, albumID, viewerID).
 		Scan(&a.ID, &a.Title, &a.ArtistID, &a.ArtistName,
-			&a.IsCompilation, &a.ReleaseYear, &a.TrackCount, &a.DurationMS, &a.HasCover, &cover)
+			&a.IsCompilation, &a.ReleaseYear, &a.TrackCount, &a.DurationMS, &a.HasCover, &cover,
+			&a.TIDALAlbumID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound

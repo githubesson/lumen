@@ -7,6 +7,19 @@ import type { PlaylistTrackEntry, TrackListItem } from "./api";
  * call sites, which is how a rule drifts without anyone noticing.
  */
 
+/** The tracks of a list that can actually be played (see `unavailable`). */
+export function playableTracks<T extends TrackListItem>(tracks: readonly T[]): T[] {
+  return tracks.filter((track) => !track.unavailable);
+}
+
+/**
+ * TIDAL tracks of an album listing that aren't in the library and can still
+ * be downloaded: what an album download would queue.
+ */
+export function downloadableAlbumTracks(tracks: readonly TrackListItem[]): TrackListItem[] {
+  return tracks.filter((track) => track.source === "tidal" && !track.unavailable);
+}
+
 /**
  * Flatten a playlist entry into the list-item shape the players and download
  * store consume. Drops `position`, which is the playlist's ordering rather

@@ -33,6 +33,7 @@ import (
 )
 
 type fakeSource struct {
+	albums  map[string]tidal.Album
 	tracks  map[string]tidal.Track
 	errs    map[string]error
 	onTrack func(id string)
@@ -47,6 +48,14 @@ func (f *fakeSource) Track(_ context.Context, id string) (tidal.Track, error) {
 		return tidal.Track{}, err
 	}
 	return f.tracks[id], nil
+}
+
+func (f *fakeSource) FullAlbum(_ context.Context, id string) (tidal.Album, error) {
+	a, ok := f.albums[id]
+	if !ok {
+		return tidal.Album{}, errors.New("album not found")
+	}
+	return a, nil
 }
 
 func (f *fakeSource) FileResponse(context.Context, string, *http.Request) (*http.Response, error) {
@@ -1196,5 +1205,179 @@ func TestSharedDownloadedCopyDoesNotMisattributeHistory(t *testing.T) {
 		if err := pool.QueryRow(ctx, `SELECT track_id FROM playlist_tracks WHERE playlist_id = $1`, pl).Scan(&entry); err != nil || entry != want {
 			t.Fatalf("playlist %v entry = %v, %v; want its own TIDAL track %v", pl, entry, err, want)
 		}
+	}
+}
+
+// TIDAL's track info has no album artist or release date. A saved track is
+// filed under its release with both, the release is cached in full, and the
+// library album is linked to it.
+func TestDownloadIsFiledUnderItsTIDALRelease(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	run := uuid.NewString()[:8]
+	tid, rel := "al"+run, "rel"+run
+	optedInPlaylist(t, pool, tid)
+	root := t.TempDir()
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM tracks WHERE file_path LIKE $1`, root+"%") })
+	release := tidal.Album{
+		ID: rel, Title: "Record " + run, Artist: "Band " + run, Artists: []string{"Band " + run, "Guest " + run},
+		ReleaseYear: 2021, TrackCount: 3, DurationMS: 9000,
+		Tracks: []tidal.Track{
+			{ID: "x1" + run, Title: "Intro", TrackNo: 1, DiscNo: 1, DurationMS: 3000},
+			{ID: tid, Title: "Song " + run, TrackNo: 2, DiscNo: 1, DurationMS: 3000},
+			{ID: "x3" + run, Title: "Outro", TrackNo: 3, DiscNo: 1, DurationMS: 3000},
+		},
+	}
+	w := testWorker(t, pool, root, &fakeSource{
+		albums: map[string]tidal.Album{rel: release},
+		// What /info/ returns: album id and title only.
+		tracks: map[string]tidal.Track{tid: {ID: tid, Title: "Song " + run, Artists: []string{"Band " + run}, AlbumID: rel, AlbumTitle: "Record " + run}},
+	})
+	w.drain(ctx)
+
+	local, err := w.Library.DownloadedTIDALTrack(ctx, tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var (
+		albumTitle, albumArtist, linked string
+		year, trackNo                   int
+	)
+	if err := pool.QueryRow(ctx, `
+		SELECT a.title, COALESCE(ar.name, ''), COALESCE(a.release_year, 0), COALESCE(a.tidal_album_id, ''), COALESCE(t.track_no, 0)
+		FROM tracks t JOIN albums a ON a.id = t.album_id LEFT JOIN artists ar ON ar.id = a.album_artist_id
+		WHERE t.id = $1`, local).Scan(&albumTitle, &albumArtist, &year, &linked, &trackNo); err != nil {
+		t.Fatal(err)
+	}
+	if albumTitle != "Record "+run || albumArtist != "Band "+run || year != 2021 || linked != rel || trackNo != 2 {
+		t.Fatalf("filed as %q by %q (%d), link %q, track %d", albumTitle, albumArtist, year, linked, trackNo)
+	}
+	cached, _, err := w.Library.TIDALAlbum(ctx, rel)
+	if err != nil || len(cached.Tracks) != 3 || len(cached.Artists) != 2 || cached.ReleaseYear != 2021 {
+		t.Fatalf("cached release = %+v, %v", cached, err)
+	}
+	var marker string
+	if err := pool.QueryRow(ctx, `SELECT tidal_album_id FROM tidal_downloads WHERE tidal_id = $1`, tid).Scan(&marker); err != nil || marker != rel {
+		t.Fatalf("download album marker = %q, %v", marker, err)
+	}
+}
+
+// Tracks saved before album metadata was applied sit in an album with no
+// artist or year; the worker refiles them, keeping the album's cover.
+func TestBackfillRefilesOlderDownloads(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	run := uuid.NewString()[:8]
+	tid, rel := "bf"+run, "brel"+run
+	_, libPath := libraryFile(t)
+	oldAlbum, local := uuid.New(), uuid.New()
+	for _, q := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO albums(id, title, cover_art_path) VALUES($1, $2, 'covers/old.jpg')`, []any{oldAlbum, "FF " + run}},
+		{`INSERT INTO tracks(id, album_id, title, duration_ms, file_path, file_size, format, audio_sha256)
+		  VALUES($1, $2, 'Song', 1000, $3, 5, 'flac', $4)`, []any{local, oldAlbum, libPath, local[:]}},
+		{`INSERT INTO tidal_downloads(tidal_id, status, local_track_id) VALUES($1, 'downloaded', $2)`, []any{tid, local}},
+	} {
+		if _, err := pool.Exec(ctx, q.sql, q.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		pool.Exec(c, `DELETE FROM tidal_downloads WHERE tidal_id = $1`, tid)
+		pool.Exec(c, `DELETE FROM tracks WHERE id = $1`, local)
+	})
+	w := testWorker(t, pool, t.TempDir(), &fakeSource{
+		albums: map[string]tidal.Album{rel: {ID: rel, Title: "FF " + run, Artist: "Rapper " + run, ReleaseYear: 2024,
+			TrackCount: 1, Tracks: []tidal.Track{{ID: tid, Title: "Song", TrackNo: 5, DiscNo: 1}}}},
+		tracks: map[string]tidal.Track{tid: {ID: tid, Title: "Song", AlbumID: rel, AlbumTitle: "FF " + run}},
+	})
+	w.drain(ctx)
+
+	var (
+		albumID               uuid.UUID
+		artist, linked, cover string
+		year, trackNo         int
+	)
+	if err := pool.QueryRow(ctx, `
+		SELECT a.id, COALESCE(ar.name, ''), COALESCE(a.tidal_album_id, ''), COALESCE(a.cover_art_path, ''),
+		       COALESCE(a.release_year, 0), COALESCE(t.track_no, 0)
+		FROM tracks t JOIN albums a ON a.id = t.album_id LEFT JOIN artists ar ON ar.id = a.album_artist_id
+		WHERE t.id = $1`, local).Scan(&albumID, &artist, &linked, &cover, &year, &trackNo); err != nil {
+		t.Fatal(err)
+	}
+	if albumID == oldAlbum || artist != "Rapper "+run || linked != rel || cover != "covers/old.jpg" || year != 2024 || trackNo != 5 {
+		t.Fatalf("refiled into %v by %q, link %q, cover %q, year %d, track %d", albumID, artist, linked, cover, year, trackNo)
+	}
+	var marker string
+	if err := pool.QueryRow(ctx, `SELECT tidal_album_id FROM tidal_downloads WHERE tidal_id = $1`, tid).Scan(&marker); err != nil || marker != rel {
+		t.Fatalf("marker = %q, %v", marker, err)
+	}
+}
+
+// An album download queues tracks outside any playlist. Each request is
+// one-shot: cleared once the track is saved, kept (with backoff) on failure,
+// and cancellable.
+func TestRequestedAlbumTracksAreSaved(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	run := uuid.NewString()[:8]
+	rel, good, bad := "rq"+run, "rg"+run, "rb"+run
+	root := t.TempDir()
+	lib := library.NewStore(pool)
+	t.Cleanup(func() {
+		c := context.Background()
+		pool.Exec(c, `DELETE FROM tidal_download_requests WHERE tidal_album_id = $1`, rel)
+		pool.Exec(c, `DELETE FROM tidal_downloads WHERE tidal_id = ANY($1)`, []string{good, bad})
+		pool.Exec(c, `DELETE FROM tracks WHERE external_id = ANY($1) OR file_path LIKE $2`, []string{good, bad}, root+"%")
+	})
+	for _, tid := range []string{good, bad} {
+		if _, err := lib.UpsertRemoteTrack(ctx, library.RemoteTrackInput{
+			Source: "tidal", ExternalID: tid, Title: "Remote " + tid, ArtistNames: []string{"Band"}, DurationMS: 1000,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := NewStore(pool)
+	if n, err := store.RequestTracks(ctx, rel, []string{good, bad}, uuid.Nil); err != nil || n != 2 {
+		t.Fatalf("queued %d, %v", n, err)
+	}
+	if n, _ := store.RequestTracks(ctx, rel, []string{good}, uuid.Nil); n != 0 {
+		t.Fatal("re-queued an already queued track")
+	}
+	if q, err := lib.TIDALAlbumQueued(ctx, rel); err != nil || q != 2 {
+		t.Fatalf("album queued = %d, %v", q, err)
+	}
+
+	w := testWorker(t, pool, root, &fakeSource{
+		tracks: map[string]tidal.Track{good: {ID: good, Title: "Good " + run}},
+		errs:   map[string]error{bad: errors.New("upstream 500")},
+	})
+	w.drain(ctx)
+
+	if _, err := w.Library.DownloadedTIDALTrack(ctx, good); err != nil {
+		t.Fatalf("requested track not saved: %v", err)
+	}
+	var left []string
+	rows, err := pool.Query(ctx, `SELECT tidal_id FROM tidal_download_requests WHERE tidal_album_id = $1`, rel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id string
+		_ = rows.Scan(&id)
+		left = append(left, id)
+	}
+	rows.Close()
+	if len(left) != 1 || left[0] != bad {
+		t.Fatalf("requests left = %v, want only the failing %s", left, bad)
+	}
+	if n, err := store.CancelAlbumRequests(ctx, rel); err != nil || n != 1 {
+		t.Fatalf("cancelled %d, %v", n, err)
+	}
+	if pending, err := store.Pending(ctx, 100); err != nil || len(pending) != 0 {
+		t.Fatalf("pending after cancel = %v, %v", pending, err)
 	}
 }

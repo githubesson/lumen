@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,6 +28,13 @@ type albumListResp struct {
 	TrackCount    int    `json:"track_count"`
 	DurationMS    int64  `json:"duration_ms"`
 	HasCover      bool   `json:"has_cover"`
+
+	// Set on a single album that copies a TIDAL release: its page lists the
+	// whole release, with SavedCount of the tracks served from the library.
+	TIDALAlbumID string   `json:"tidal_album_id,omitempty"`
+	SavedCount   int      `json:"saved_count,omitempty"`
+	QueuedCount  int      `json:"queued_count,omitempty"` // tracks waiting for an album download
+	ArtistNames  []string `json:"artist_names,omitempty"` // every main artist of the release
 }
 
 type artistListResp struct {
@@ -109,7 +117,28 @@ func (h *Browse) GetAlbum(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, makeAlbumResp(a))
+	out := makeAlbumResp(a)
+	merged, release, ok, err := libraryAlbumMerge(r.Context(), h.Library, a, u.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if ok {
+		out.TIDALAlbumID = a.TIDALAlbumID
+		out.TrackCount = len(merged.Tracks)
+		out.SavedCount = merged.SavedCount
+		out.DurationMS = merged.DurationMS
+		if n, err := h.Library.TIDALAlbumQueued(r.Context(), a.TIDALAlbumID); err == nil {
+			out.QueuedCount = n
+		}
+		if len(release.Artists) > 0 {
+			out.ArtistNames = release.Artists
+		}
+		if out.ReleaseYear == 0 {
+			out.ReleaseYear = release.ReleaseYear
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Browse) ListAlbumTracks(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +148,22 @@ func (h *Browse) ListAlbumTracks(w http.ResponseWriter, r *http.Request) {
 	}
 	id, ok := pathUUID(w, r, "id")
 	if !ok {
+		return
+	}
+	// An album copying a TIDAL release lists the whole release, with the
+	// library's copies swapped in.
+	if a, err := h.Library.GetAlbum(r.Context(), id, u.ID); err == nil {
+		merged, _, ok, err := libraryAlbumMerge(r.Context(), h.Library, a, u.ID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		if ok {
+			writeJSON(w, http.StatusOK, merged.Tracks)
+			return
+		}
+	} else if !errors.Is(err, library.ErrNotFound) {
+		writeStoreError(w, err)
 		return
 	}
 	items, err := h.Library.ListAlbumTracks(r.Context(), id, u.ID)

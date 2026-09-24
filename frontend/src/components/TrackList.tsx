@@ -10,7 +10,7 @@ import {
 import { SquarePen as PencilSquareIcon } from "lucide-react";
 import { trackCoverUrl, type TrackListItem } from "../api";
 import { displayText, fmtDurationMs } from "../lib/format";
-import { isLocalTrack } from "../lib/track";
+import { isLocalTrack, playableTracks } from "../lib/track";
 import CoverArt from "./CoverArt";
 import { EditTrackDialog } from "./edit/EditTrackDialog";
 import { MoveToAlbumDialog } from "./edit/MoveToAlbumDialog";
@@ -99,7 +99,9 @@ export default function TrackList({
 
   // Queue reference held in a ref so stable per-track callbacks can read the
   // latest list without invalidating React.memo on every pagination page.
-  const queue = queueSource ?? tracks;
+  // Unavailable rows (dropped from TIDAL, no library copy) are listed but
+  // never queued.
+  const queue = useMemo(() => playableTracks(queueSource ?? tracks), [queueSource, tracks]);
   const queueRef = useRef(queue);
   // Refreshed from an effect rather than during render: a discarded render must
   // not mutate a ref. Every reader is an event handler, so a tick of lag is
@@ -111,7 +113,9 @@ export default function TrackList({
   // Stable action callbacks: each takes the track (or id) at event time,
   // instead of closing over a new function per row on every parent render.
   const handlePlay = useCallback(
-    (t: TrackListItem) => play(t, queueRef.current),
+    (t: TrackListItem) => {
+      if (!t.unavailable) play(t, queueRef.current);
+    },
     [play],
   );
   const handleToggleFav = useCallback(
@@ -332,6 +336,9 @@ export const TrackRow = memo(function TrackRow({
         undefined
       }
       aria-selected={selectionMode ? selected : undefined}
+      aria-disabled={track.unavailable || undefined}
+      style={track.unavailable ? { opacity: 0.45 } : undefined}
+      title={track.unavailable ? "No longer on TIDAL" : undefined}
       onClick={(e) => {
         if (!selectionMode) return;
         onToggleSelect(track, index, e.shiftKey);
@@ -372,7 +379,7 @@ export const TrackRow = memo(function TrackRow({
           {displayText(track.title)}
           {showSourceBadge && track.source === "tidal" && (
             <span className="badge" style={{ marginLeft: 8 }}>
-              TIDAL
+              {track.unavailable ? "Removed from TIDAL" : "TIDAL"}
             </span>
           )}
           {akaParts && (

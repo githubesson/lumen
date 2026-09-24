@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ArrowLeft as ArrowLeftIcon,
+  Library as LibraryIcon,
   SquarePen as PencilSquareIcon,
   Play as PlayIcon,
 } from "lucide-react";
@@ -26,6 +27,8 @@ import SearchInput from "../../components/SearchInput";
 import { usePlayer } from "../../context/Player";
 import { useAuth } from "../../context/Auth";
 import { useKey } from "../../lib/keybindings";
+import { playableTracks } from "../../lib/track";
+import { AlbumDownloadControl } from "./AlbumDownloadControl";
 
 export function AlbumDetailView({
   id,
@@ -34,11 +37,12 @@ export function AlbumDetailView({
   id: string;
   onBack: () => void;
 }) {
-  const { entity, tracks, error } = useEntityDetail<Album>(id, {
+  const { entity, tracks, error, refresh } = useEntityDetail<Album>(id, {
     get: api.getAlbum,
     listTracks: api.listAlbumTracks,
     label: "album",
   });
+  const [actionError, setActionError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   // Bumped whenever the album is saved so the cover <img> reloads — the cover
   // URL is stable even when an admin replaces the artwork.
@@ -49,6 +53,10 @@ export function AlbumDetailView({
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
   const search = useDetailTrackSearch("album", tracks);
+  const onDownloadChanged = useCallback(() => {
+    setSaved(null); // the refetch carries fresh counts
+    refresh();
+  }, [refresh]);
 
   if (entity === "notfound") {
     return <NotFound kind="Album" onBack={onBack} />;
@@ -61,6 +69,7 @@ export function AlbumDetailView({
     );
   }
   const album = saved ?? entity;
+  const playable = playableTracks(tracks);
   return (
     <div className="view" style={{ display: "grid", gap: 18 }}>
       <DetailBackRow onBack={onBack} />
@@ -80,13 +89,23 @@ export function AlbumDetailView({
         }
         meta={
           <>
-            {album.artist_name && (
+            {(album.artist_names?.length || album.artist_name) && (
               <>
-                <span>{displayText(album.artist_name)}</span>
+                <span>
+                  {displayText(album.artist_names?.join(", ") || album.artist_name)}
+                </span>
                 <span className="dot" />
               </>
             )}
             <span>{pluralize(album.track_count, "track")}</span>
+            {album.tidal_album_id && album.saved_count !== undefined && (
+              <>
+                <span className="dot" />
+                <span title="The rest of the release plays from TIDAL">
+                  {album.saved_count} saved
+                </span>
+              </>
+            )}
             {album.release_year ? (
               <>
                 <span className="dot" />
@@ -99,12 +118,21 @@ export function AlbumDetailView({
           <>
             <Button
               variant="primary"
-              onClick={() => tracks.length && play(tracks[0], tracks)}
-              disabled={tracks.length === 0}
+              onClick={() => playable.length && play(playable[0], playable)}
+              disabled={playable.length === 0}
               leadingIcon={<PlayIcon className="size-4" />}
             >
               Play all
             </Button>
+            {isAdmin && album.tidal_album_id && (
+              <AlbumDownloadControl
+                tidalAlbumId={album.tidal_album_id}
+                tracks={tracks}
+                queuedCount={album.queued_count ?? 0}
+                onChanged={onDownloadChanged}
+                onError={setActionError}
+              />
+            )}
             {isAdmin && (
               <Button
                 onClick={() => setEditing(true)}
@@ -127,7 +155,7 @@ export function AlbumDetailView({
           />
         }
       />
-      {error && <ErrorBanner message={error} />}
+      {(error || actionError) && <ErrorBanner message={(error || actionError)!} />}
       <TrackList
         tracks={search.filteredTracks}
         queueSource={tracks}
@@ -157,13 +185,21 @@ export function AlbumDetailView({
 export function TidalAlbumDetailView({
   id,
   onBack,
+  onOpenAlbum,
 }: {
   id: string;
   onBack: () => void;
+  onOpenAlbum: (id: string) => void;
 }) {
   const [album, setAlbum] = useState<TidalAlbum | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { play } = usePlayer();
+  const { me } = useAuth();
+  const isAdmin = me?.role === "admin";
+  // Quiet refetch for download progress; failures keep the current view.
+  const reload = useCallback(() => {
+    api.getTidalAlbum(id).then(setAlbum).catch(() => {});
+  }, [id]);
   const search = useDetailTrackSearch("album", album?.tracks ?? null);
 
   useEffect(() => {
@@ -211,13 +247,21 @@ export function TidalAlbumDetailView({
             }
             meta={
               <>
-                {album.artist && (
+                {(album.artists?.length || album.artist) && (
                   <>
-                    <span>{displayText(album.artist)}</span>
+                    <span>{displayText(album.artists?.join(", ") || album.artist)}</span>
                     <span className="dot" />
                   </>
                 )}
                 <span>{pluralize(album.track_count, "track")}</span>
+                {album.saved_count ? (
+                  <>
+                    <span className="dot" />
+                    <span title="Played from the library instead of TIDAL">
+                      {album.saved_count} saved
+                    </span>
+                  </>
+                ) : null}
                 {album.release_year ? (
                   <>
                     <span className="dot" />
@@ -227,14 +271,36 @@ export function TidalAlbumDetailView({
               </>
             }
             actions={
-              <Button
-                variant="primary"
-                onClick={() => album.tracks.length && play(album.tracks[0], album.tracks)}
-                disabled={album.tracks.length === 0}
-                leadingIcon={<PlayIcon className="size-4" />}
-              >
-                Play all
-              </Button>
+              <>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    const playable = playableTracks(album.tracks);
+                    if (playable.length) play(playable[0], playable);
+                  }}
+                  disabled={playableTracks(album.tracks).length === 0}
+                  leadingIcon={<PlayIcon className="size-4" />}
+                >
+                  Play all
+                </Button>
+                {isAdmin && (
+                  <AlbumDownloadControl
+                    tidalAlbumId={album.id}
+                    tracks={album.tracks}
+                    queuedCount={album.queued_count ?? 0}
+                    onChanged={reload}
+                    onError={setError}
+                  />
+                )}
+                {album.library_album_id && (
+                  <Button
+                    onClick={() => onOpenAlbum(album.library_album_id!)}
+                    leadingIcon={<LibraryIcon className="size-4" />}
+                  >
+                    Open in library
+                  </Button>
+                )}
+              </>
             }
             corner={
               <DetailTrackSearchBar

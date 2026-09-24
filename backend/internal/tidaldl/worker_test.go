@@ -116,3 +116,23 @@ func TestCheckFreeSpaceMeasuresNearestExistingDir(t *testing.T) {
 		t.Fatal("impossible floor was satisfied")
 	}
 }
+
+func TestFromReleaseFillsWhatTrackInfoLacks(t *testing.T) {
+	release := tidal.Album{
+		ID: "9", Title: "The Album", Artist: "Band", Artists: []string{"Band", "Guest"},
+		ReleaseYear: 2021, CoverURL: "https://resources.tidal.com/images/x/640x640.jpg",
+		Tracks: []tidal.Track{{ID: "1", TrackNo: 1, DiscNo: 1}, {ID: "2", TrackNo: 7, DiscNo: 2}},
+	}
+	// What /info/ returns: the album's id and title, no artist or date.
+	got := fromRelease(tidal.Track{ID: "2", Title: "Song", AlbumID: "9", AlbumTitle: "The Album"}, release)
+	if got.AlbumArtist != "Band" || got.Year != 2021 || got.TrackNo != 7 || got.DiscNo != 2 || got.CoverURL != release.CoverURL {
+		t.Fatalf("fromRelease = %+v", got)
+	}
+	// Numbers the track info already has win.
+	if got := fromRelease(tidal.Track{ID: "2", TrackNo: 3, DiscNo: 1}, release); got.TrackNo != 3 || got.DiscNo != 1 {
+		t.Fatalf("overrode track numbering: %+v", got)
+	}
+	if albumMarker(tidal.Track{}) != "-" || albumMarker(tidal.Track{AlbumID: "9"}) != "9" {
+		t.Fatal("album marker")
+	}
+}

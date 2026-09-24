@@ -102,7 +102,7 @@ func NewRouter(d Deps) http.Handler {
 		Background: d.Background,
 	}
 	searchH := &handlers.Search{Library: d.Library, TIDAL: d.TIDAL}
-	tidalH := &handlers.TIDAL{TIDAL: d.TIDAL}
+	tidalH := &handlers.TIDAL{TIDAL: d.TIDAL, Library: d.Library}
 	adminUsersH := &handlers.AdminUsers{DB: d.DB, Users: d.Users, Playlists: d.Playlists}
 	adminRootsH := &handlers.AdminRoots{
 		Store:       d.MusicRoots,
@@ -138,6 +138,8 @@ func NewRouter(d Deps) http.Handler {
 		Worker:      d.TIDALDownload,
 		MusicRoots:  d.MusicRoots,
 		PrimaryRoot: d.MusicRoot,
+		TIDAL:       d.TIDAL,
+		Library:     d.Library,
 	}
 	lastFMH := &handlers.LastFM{Service: d.LastFM}
 	tracksH := &handlers.Tracks{
@@ -342,6 +344,8 @@ func NewRouter(d Deps) http.Handler {
 			ordinary.Get("/admin/tidal/auto-download", adminTIDALDownloadsH.Status)
 			ordinary.Put("/admin/tidal/auto-download", adminTIDALDownloadsH.SaveSettings)
 			ordinary.Post("/admin/tidal/auto-download/retry", adminTIDALDownloadsH.Retry)
+			ordinary.Post("/admin/tidal/albums/{id}/download", adminTIDALDownloadsH.DownloadAlbum)
+			ordinary.Delete("/admin/tidal/albums/{id}/download", adminTIDALDownloadsH.CancelAlbumDownload)
 			ordinary.Put("/playlists/{id}/tidal-auto-download", plH.SetTIDALAutoDownload)
 
 			ordinary.Get("/admin/users", adminUsersH.List)

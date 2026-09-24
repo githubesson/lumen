@@ -532,6 +532,17 @@ export const api = {
     request<{ retried: number }>("/api/admin/tidal/auto-download/retry", {
       method: "POST",
     }),
+  /** Admin: queue every track of a TIDAL release the library has no copy of. */
+  downloadTidalAlbum: (id: string) =>
+    request<{ queued: number; saved: number; unavailable: number }>(
+      `/api/admin/tidal/albums/${pathID(id)}/download`,
+      { method: "POST" },
+    ),
+  cancelTidalAlbumDownload: (id: string) =>
+    request<{ cancelled: number }>(
+      `/api/admin/tidal/albums/${pathID(id)}/download`,
+      { method: "DELETE" },
+    ),
 
   // Lyrics API (fastest valid result from the configured providers)
   searchLyrics: (query: string, options: RequestOptions = {}) =>
@@ -575,6 +586,9 @@ export interface TrackListItem {
   /** True when the track is the current user's own personal upload — only
    *  these can be deleted via `deleteTrack`. */
   owned?: boolean;
+  /** A TIDAL release entry TIDAL no longer lists and the library has no copy
+   *  of. Listed for completeness; it can't be played. */
+  unavailable?: boolean;
 }
 
 export interface PlaybackActivityInput {
@@ -795,7 +809,15 @@ export interface TidalAlbum {
   id: string;
   title: string;
   artist?: string;
+  /** Every main artist, primary first. */
+  artists?: string[];
   release_year?: number;
+  /** Tracks served from the library instead of TIDAL. */
+  saved_count?: number;
+  /** The library album copying this release, if any. */
+  library_album_id?: string;
+  /** Tracks waiting for an album download. */
+  queued_count?: number;
   track_count: number;
   duration_ms: number;
   cover_url?: string;
@@ -880,6 +902,16 @@ export interface Album {
   track_count: number;
   duration_ms: number;
   has_cover: boolean;
+  /**
+   * Set when the album copies a TIDAL release: its track list is then the
+   * whole release, `saved_count` of it served from the library.
+   */
+  tidal_album_id?: string;
+  saved_count?: number;
+  /** Tracks waiting for an album download. */
+  queued_count?: number;
+  /** Every main artist of the TIDAL release, primary first. */
+  artist_names?: string[];
 }
 
 export interface Artist {

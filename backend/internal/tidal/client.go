@@ -116,12 +116,16 @@ type Track struct {
 	AlbumArtist string
 	CoverID     string
 	CoverURL    string
+	// Removed marks a cached release entry TIDAL no longer lists; it can't
+	// be streamed, but its metadata is kept.
+	Removed bool
 }
 
 type Album struct {
 	ID          string
 	Title       string
-	Artist      string
+	Artist      string   // primary artist
+	Artists     []string // every main artist, primary first
 	ReleaseYear int
 	TrackCount  int
 	DurationMS  int
@@ -213,6 +217,29 @@ func (c *Client) Album(ctx context.Context, id string, limit, offset int) (Album
 		return Album{}, errors.New("hifi-api album response did not include an album")
 	}
 	slog.Debug("tidal hifi album response", "album", id, "title", album.Title, "tracks", len(album.Tracks), "version", out.Version)
+	return album, nil
+}
+
+// maxFullAlbumTracks bounds FullAlbum's paging; no real release comes close.
+const maxFullAlbumTracks = 1000
+
+// FullAlbum is Album with every page of the track list.
+func (c *Client) FullAlbum(ctx context.Context, id string) (Album, error) {
+	const page = 100
+	album, err := c.Album(ctx, id, page, 0)
+	if err != nil {
+		return Album{}, err
+	}
+	for len(album.Tracks) < album.TrackCount && len(album.Tracks) < maxFullAlbumTracks {
+		next, err := c.Album(ctx, id, page, len(album.Tracks))
+		if err != nil {
+			return Album{}, err
+		}
+		if len(next.Tracks) == 0 {
+			break
+		}
+		album.Tracks = append(album.Tracks, next.Tracks...)
+	}
 	return album, nil
 }
 
@@ -608,6 +635,7 @@ func (a apiAlbum) album() Album {
 		ID:          string(a.ID),
 		Title:       a.Title,
 		Artist:      artist,
+		Artists:     albumArtists(artist, a.Artists),
 		ReleaseYear: year,
 		TrackCount:  a.NumberOfTracks,
 		DurationMS:  max(0, a.Duration) * 1000,
@@ -642,6 +670,24 @@ func (a apiAlbum) album() Album {
 		album.TrackCount = len(album.Tracks)
 	}
 	return album
+}
+
+func albumArtists(primary string, all []apiArtist) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[strings.ToLower(name)] {
+			return
+		}
+		seen[strings.ToLower(name)] = true
+		out = append(out, name)
+	}
+	add(primary)
+	for _, a := range all {
+		add(a.Name)
+	}
+	return out
 }
 
 func (t apiTrack) track() Track {

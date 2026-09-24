@@ -16,7 +16,9 @@ interface Props {
  * scroll-window calculations stay predictable.
  */
 function TrackRowImpl({ track, onPress }: Props) {
-  const unavailable = useTrackUnavailableOffline(track.id);
+  const unavailableOffline = useTrackUnavailableOffline(track.id);
+  // track.unavailable: no longer on TIDAL and not in the library.
+  const unavailable = unavailableOffline || !!track.unavailable;
   const row = (
     <ListRow
       style={unavailable ? { opacity: 0.4 } : undefined}
@@ -27,7 +29,7 @@ function TrackRowImpl({ track, onPress }: Props) {
       accessibilityHint="Double tap to play. Press and hold for more actions."
       leading={<CoverArt track={track} size={40} transitionMs={0} priority="low" />}
       title={track.title}
-      subtitle={track.artist}
+      subtitle={track.unavailable ? "Removed from TIDAL" : track.artist}
       trailing={formatDurationMs(track.duration_ms)}
     />
   );

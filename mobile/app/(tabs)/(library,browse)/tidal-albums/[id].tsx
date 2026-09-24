@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams } from "expo-router";
 import {
   api,
+  playableTracks,
   resolveCoverUrl,
   useAuth,
   type TrackListItem,
@@ -17,6 +18,10 @@ import {
 import { TrackRow } from "../../../../components/track-row";
 import { qk } from "../../../../lib/query-keys";
 import { usePlayQueue } from "../../../../lib/use-play-queue";
+import {
+  ALBUM_DOWNLOAD_REFRESH_MS,
+  useAlbumDownloadAction,
+} from "../../../../lib/album-download";
 import { useTheme } from "../../../../theme/theme";
 import { AlbumHeader, ALBUM_ART_SIZE } from "../../../../components/album-header";
 import { EmptyState, retryAction } from "../../../../components/empty-state";
@@ -33,6 +38,9 @@ export default function TidalAlbumDetailScreen() {
     queryKey: qk.tidalAlbum(userId, id),
     queryFn: ({ signal }) => api.getTidalAlbum(id!, { signal }),
     enabled: !!userId && !!id,
+    // While an album download runs, refetch so saved tracks show up.
+    refetchInterval: (query) =>
+      query.state.data?.queued_count ? ALBUM_DOWNLOAD_REFRESH_MS : false,
   });
 
   const tracks = useMemo<TrackListItem[]>(
@@ -40,6 +48,14 @@ export default function TidalAlbumDetailScreen() {
     [albumQuery.data?.tracks],
   );
   const onTrackPress = usePlayQueue(tracks);
+  const { refetch } = albumQuery;
+  const refetchAlbum = useCallback(() => void refetch(), [refetch]);
+  const downloadAction = useAlbumDownloadAction(
+    albumQuery.data?.id,
+    tracks,
+    albumQuery.data?.queued_count ?? 0,
+    refetchAlbum,
+  );
 
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<TrackListItem>) => (
@@ -61,14 +77,20 @@ export default function TidalAlbumDetailScreen() {
     return (
       <AlbumHeader
         title={album.title}
-        artist={album.artist}
+        artist={album.artists?.join(", ") || album.artist}
         coverUri={coverUri}
         coverKey={`${album.id}:${requestSize}`}
-        metadata={`${album.track_count} ${album.track_count === 1 ? "track" : "tracks"}${album.release_year ? ` - ${album.release_year}` : ""}`}
-        onPlay={tracks.length > 0 ? () => onTrackPress(tracks[0]) : undefined}
+        metadata={`${album.track_count} ${album.track_count === 1 ? "track" : "tracks"}${
+          album.saved_count ? ` - ${album.saved_count} saved` : ""
+        }${album.release_year ? ` - ${album.release_year}` : ""}`}
+        onPlay={(() => {
+          const first = playableTracks(tracks)[0];
+          return first ? () => onTrackPress(first) : undefined;
+        })()}
+        secondaryAction={downloadAction}
       />
     );
-  }, [albumQuery.data, onTrackPress, tracks]);
+  }, [albumQuery.data, onTrackPress, tracks, downloadAction]);
 
   if (albumQuery.isLoading) return <EmptyState fill loading />;
   if (albumQuery.isError || !albumQuery.data) {
