@@ -18,13 +18,15 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preload" href="/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
     <script>
-      // Pick the theme before first paint so there's no flash.
+      // Pick the theme before first paint so there's no flash. Only the
+      // storage read is guarded: if it's blocked, fall back to the OS theme.
+      var saved = null;
       try {
-        var saved = localStorage.getItem("lumen-landing-theme");
-        var dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-        document.documentElement.dataset.theme = dark ? "dark" : "light";
-        document.querySelector('meta[name="theme-color"]').content = dark ? "#0a0a0a" : "#ffffff";
+        saved = localStorage.getItem("lumen-landing-theme");
       } catch (e) {}
+      var dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+      document.querySelector('meta[name="theme-color"]').content = dark ? "#0a0a0a" : "#ffffff";
     </script>
   </head>
   <body>

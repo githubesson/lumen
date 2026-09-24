@@ -13,7 +13,7 @@ import {
   Smartphone,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useCopy, useInView } from "../lib/hooks";
+import { useCopy, useInView, usePrefersReducedMotion } from "../lib/hooks";
 import { INSTALL_STEPS, README_URL } from "../lib/site";
 import IconSwap from "./IconSwap";
 import { ButtonLink, SectionHeading, delay } from "./ui";
@@ -27,18 +27,19 @@ const OUTPUT = [
 function Terminal() {
   const [ref, inView] = useInView<HTMLDivElement>();
   const { copied, copy } = useCopy();
-  // Container lines appear one by one the first time the terminal is seen;
-  // with reduced motion they're all there from the start.
-  const [lines, setLines] = useState(() =>
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches ? OUTPUT.length : 0,
-  );
+  // Container lines appear one by one the first time the terminal is seen.
+  // With reduced motion (live, including a change mid-reveal) they're all
+  // shown at once.
+  const reduced = usePrefersReducedMotion();
+  const [revealed, setRevealed] = useState(0);
+  const lines = reduced ? OUTPUT.length : revealed;
 
   useEffect(() => {
     // Once started it finishes, even if scrolled away.
-    if ((!inView && lines === 0) || lines >= OUTPUT.length) return;
-    const id = window.setTimeout(() => setLines((l) => l + 1), lines === 0 ? 900 : 420);
+    if (reduced || (!inView && lines === 0) || lines >= OUTPUT.length) return;
+    const id = window.setTimeout(() => setRevealed((l) => l + 1), lines === 0 ? 900 : 420);
     return () => window.clearTimeout(id);
-  }, [inView, lines]);
+  }, [reduced, inView, lines]);
 
   return (
     <div ref={ref} className="card-surface flex h-full flex-col overflow-hidden rounded-2xl">
