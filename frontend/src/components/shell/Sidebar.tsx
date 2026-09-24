@@ -166,6 +166,7 @@ function MobileSidebarActions({
       <button
         className="nav-item mobile-sidebar-action"
         type="button"
+        data-settings-trigger=""
         onClick={onOpenTweaks}
       >
         <AdjustmentsHorizontalIcon className="nav-icon" aria-hidden="true" />

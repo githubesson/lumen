@@ -485,22 +485,35 @@ function trapTab(event: KeyboardEvent, panel: HTMLElement | null) {
 }
 
 /**
- * Return focus to the element that opened the dialog. If it has since been
- * hidden (the mobile drawer closes as Settings opens), fall back to the
- * visible control for that drawer, e.g. the menu button.
+ * Return focus to the element that opened the dialog. If it can't take focus
+ * (it was hidden, like the mobile drawer that closes as Settings opens, or it
+ * is gone, like a command palette item), fall back to a visible Settings
+ * trigger, or the control that reveals one (e.g. the mobile menu button).
  */
 function restoreFocus(target: HTMLElement | null) {
-  if (!target?.isConnected) return;
-  target.focus();
-  if (document.activeElement === target) return;
-  for (let el = target.parentElement; el; el = el.parentElement) {
-    if (!el.id) continue;
+  const candidates = [
+    target,
+    ...document.querySelectorAll<HTMLElement>("[data-settings-trigger]"),
+  ];
+  for (const el of candidates) {
+    if (el && el !== document.body && focusOrOpener(el)) return;
+  }
+}
+
+/** Focus `el`, or the visible `aria-controls` opener of a hidden container around it. */
+function focusOrOpener(el: HTMLElement): boolean {
+  if (!el.isConnected) return false;
+  el.focus();
+  if (document.activeElement === el) return true;
+  for (let box = el.parentElement; box; box = box.parentElement) {
+    if (!box.id) continue;
     const opener = [
-      ...document.querySelectorAll<HTMLElement>(`[aria-controls="${CSS.escape(el.id)}"]`),
+      ...document.querySelectorAll<HTMLElement>(`[aria-controls="${CSS.escape(box.id)}"]`),
     ].find((c) => c.getClientRects().length > 0);
     if (opener) {
       opener.focus();
-      return;
+      return document.activeElement === opener;
     }
   }
+  return false;
 }

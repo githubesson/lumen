@@ -136,6 +136,7 @@ export default function Topbar({
         type="button"
         title="Settings"
         aria-label="Settings"
+        data-settings-trigger=""
         onClick={onToggleTweaks}
       >
         <AdjustmentsHorizontalIcon className="size-4" aria-hidden="true" />
