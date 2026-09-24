@@ -8,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,8 +16,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/githubesson/lumen/internal/db"
@@ -29,6 +26,7 @@ import (
 	"github.com/githubesson/lumen/internal/musicroots"
 	"github.com/githubesson/lumen/internal/playlists"
 	"github.com/githubesson/lumen/internal/storage"
+	"github.com/githubesson/lumen/internal/testdb"
 	"github.com/githubesson/lumen/internal/tidal"
 )
 
@@ -176,30 +174,17 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// ownDatabase returns a sibling database for this package's tests. `go test
-// ./...` runs packages in parallel, and these tests add shared library tracks
-// that other packages' tests (which count visible tracks) would see.
+// ownDatabase returns a sibling database for this package's tests: they add
+// shared library tracks that other packages' tests (which count visible
+// tracks) would see.
 func ownDatabase(t *testing.T, base string) string {
 	t.Helper()
-	u, err := url.Parse(base)
+	own, err := testdb.Sibling(context.Background(), base, "_tidaldl")
 	if err != nil {
-		t.Fatal(err)
-	}
-	name := strings.TrimPrefix(u.Path, "/") + "_tidaldl"
-	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close(ctx)
-	_, err = conn.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize())
-	var pgErr *pgconn.PgError
-	if err != nil && !(errors.As(err, &pgErr) && pgErr.Code == "42P04") { // duplicate_database
-		t.Logf("using the shared test database; could not create %s: %v", name, err)
+		t.Logf("using the shared test database: %v", err)
 		return base
 	}
-	u.Path = "/" + name
-	return u.String()
+	return own
 }
 
 func TestDrainSavesTIDALTracksAndRepointsPlaylists(t *testing.T) {
