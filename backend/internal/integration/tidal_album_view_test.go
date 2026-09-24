@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -248,5 +249,71 @@ func TestTIDALAlbumPageFallsBackToStoredRelease(t *testing.T) {
 		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &paged) != nil || len(paged.Tracks) != want {
 			t.Fatalf("%s: %d, %d tracks, want %d", path, rec.Code, len(paged.Tracks), want)
 		}
+	}
+}
+
+// Browsing album pages doesn't add to the permanent release store; a release
+// the library references (already stored, linked, queued) is refreshed.
+func TestTIDALAlbumPageStoresOnlyReferencedReleases(t *testing.T) {
+	url := os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("set LUMEN_REVIEW_TEST_DATABASE_URL to an isolated PostgreSQL database")
+	}
+	if err := db.Migrate(url); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	pool, err := db.Open(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	run := uuid.NewString()[:8]
+	browsed := "880" + strconv.Itoa(int(time.Now().UnixNano()%100000))
+	stored := browsed + "1"
+	viewer := uuid.New()
+	t.Cleanup(func() {
+		c := context.Background()
+		pool.Exec(c, `DELETE FROM tidal_albums WHERE tidal_id = ANY($1)`, []string{browsed, stored})
+		pool.Exec(c, `DELETE FROM users WHERE id = $1`, viewer)
+	})
+	if _, err := pool.Exec(ctx, `INSERT INTO users(id, username, password_hash, role) VALUES($1, $2, 'test', 'user')`,
+		viewer, "browse-"+run); err != nil {
+		t.Fatal(err)
+	}
+	lib := library.NewStore(pool)
+	if err := lib.SaveTIDALAlbum(ctx, tidal.Album{ID: stored, Title: "Old title", TrackCount: 1,
+		Tracks: []tidal.Track{{ID: "s1", Title: "T"}}}); err != nil {
+		t.Fatal(err)
+	}
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		_, _ = w.Write([]byte(`{"data":{"id":` + id + `,"title":"New title","numberOfTracks":1,"items":[{"type":"track","item":{"id":` + id + `9,"title":"T"}}]}}`))
+	}))
+	defer proxy.Close()
+	sessions := auth.NewSessionStore(pool, "session", false, time.Hour)
+	router := httpapi.NewRouter(httpapi.Deps{
+		DB: pool, Users: users.NewStore(pool), Sessions: sessions, Library: lib, CoverSignKey: []byte("test-key"),
+		TIDAL: tidal.NewClient(tidal.Config{HifiAPIURL: proxy.URL}),
+	})
+	token, _, err := sessions.Create(ctx, viewer, httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{browsed, stored} {
+		req := httptest.NewRequest(http.MethodGet, "/api/tidal/albums/"+id, nil)
+		req.AddCookie(&http.Cookie{Name: "session", Value: token})
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", id, rec.Code, rec.Body)
+		}
+	}
+	if _, _, err := lib.TIDALAlbum(ctx, browsed); !errors.Is(err, library.ErrNotFound) {
+		t.Fatalf("a merely browsed release was stored: %v", err)
+	}
+	if a, _, err := lib.TIDALAlbum(ctx, stored); err != nil || a.Title != "New title" {
+		t.Fatalf("stored release not refreshed: %+v, %v", a, err)
 	}
 }

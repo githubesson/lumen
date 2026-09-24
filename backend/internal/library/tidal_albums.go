@@ -313,6 +313,20 @@ func (s *Store) ApplyTIDALAlbum(ctx context.Context, trackID uuid.UUID, in TIDAL
 	return tx.Commit(ctx)
 }
 
+// TIDALAlbumReferenced reports whether the library has a stake in a TIDAL
+// release: it is already stored, a library album copies it, or downloads are
+// queued for it. Only such releases are stored from album page views, so
+// browsing can't grow the permanent store without bound.
+func (s *Store) TIDALAlbumReferenced(ctx context.Context, tidalAlbumID string) (bool, error) {
+	var ok bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM tidal_albums WHERE tidal_id = $1)
+		    OR EXISTS (SELECT 1 FROM albums WHERE tidal_album_id = $1)
+		    OR EXISTS (SELECT 1 FROM tidal_download_requests WHERE tidal_album_id = $1)`,
+		tidalAlbumID).Scan(&ok)
+	return ok, err
+}
+
 // TIDALAlbumQueued counts tracks of a TIDAL release waiting for an album
 // download.
 func (s *Store) TIDALAlbumQueued(ctx context.Context, tidalAlbumID string) (int, error) {

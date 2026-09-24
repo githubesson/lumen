@@ -69,9 +69,12 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 	if h.Library != nil {
 		if offset == 0 && err == nil && !partial {
 			// A full fetch updates the stored record, which then also lists
-			// the tracks TIDAL has since dropped.
-			if serr := h.Library.SaveTIDALAlbum(r.Context(), album); serr != nil {
-				slog.Warn("tidal album cache write failed", "album", album.ID, "err", serr)
+			// the tracks TIDAL has since dropped. Only releases the library
+			// references are stored from a page view; downloads store the rest.
+			if ref, rerr := h.Library.TIDALAlbumReferenced(r.Context(), id); rerr == nil && ref {
+				if serr := h.Library.SaveTIDALAlbum(r.Context(), album); serr != nil {
+					slog.Warn("tidal album cache write failed", "album", album.ID, "err", serr)
+				}
 			}
 		}
 		// The stored record outlives the release on TIDAL. Serve it when
