@@ -198,6 +198,9 @@ func (s *Store) RepointFile(ctx context.Context, id uuid.UUID, path string) erro
 	return nil
 }
 
+// ErrLocalGone reports that the library copy was deleted before adoption.
+var ErrLocalGone = errors.New("library copy was deleted before it could be adopted")
+
 // Adoption moves a remote TIDAL row's references onto its local copy.
 type Adoption struct {
 	RowID    uuid.UUID
@@ -218,8 +221,24 @@ func (s *Store) Adopt(ctx context.Context, in Adoption) error {
 		return errors.New("tidal row and local track are the same")
 	}
 	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
-		// Take playlist locks first, in id order, matching the lock order of
-		// the playlist mutations so a concurrent reorder cannot interleave.
+		// Lock the local row first and require it live: a delete or root
+		// purge that lands between the caller's checks and this transaction
+		// would otherwise receive entries its fallback trigger already ran
+		// for, hiding them for good. Row before playlists, as deletes do
+		// (their trigger locks playlists after the row), so the two cannot
+		// deadlock.
+		var live bool
+		err := tx.QueryRow(ctx, `
+			SELECT TRUE FROM tracks WHERE id = $1 AND deleted_at IS NULL FOR SHARE`,
+			in.LocalID).Scan(&live)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrLocalGone
+		}
+		if err != nil {
+			return err
+		}
+		// Then playlist locks, in id order, matching the lock order of the
+		// playlist mutations so a concurrent reorder cannot interleave.
 		if _, err := tx.Exec(ctx, `
 			SELECT id FROM playlists
 			WHERE id IN (SELECT playlist_id FROM playlist_tracks WHERE track_id = $1)
@@ -262,7 +281,7 @@ func (s *Store) Adopt(ctx context.Context, in Adoption) error {
 		if in.Status == "" {
 			return nil
 		}
-		_, err := tx.Exec(ctx, `
+		_, err = tx.Exec(ctx, `
 			INSERT INTO tidal_downloads (tidal_id, status, local_track_id, file_path, title, artist)
 			VALUES ($1, $2, $3, $4, $5, $6)
 			ON CONFLICT (tidal_id) DO UPDATE SET

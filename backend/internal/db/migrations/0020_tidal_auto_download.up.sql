@@ -41,8 +41,11 @@ ALTER TABLE playlist_tracks ADD COLUMN tidal_origin TEXT;
 --   * each entry saved from TIDAL goes back to its own TIDAL track instead of
 --     cascading away or going hidden; entries added as the library track
 --     itself are left to the usual deletion rules;
---   * a copy that only exists because it was downloaded carries nothing but
---     that TIDAL track's listening history, so the history goes back too.
+--   * a copy that only exists because it was downloaded, for a single TIDAL
+--     track, carries nothing but that track's listening history, so the
+--     history goes back too. A copy that also stands in for other TIDAL ids
+--     holds their merged history, which can't be split: like any library
+--     track's, it goes with the copy.
 -- An opted-in playlist then saves the track again, and adoption merges the
 -- history onto the new copy.
 CREATE FUNCTION tidal_restore_remote_entries() RETURNS trigger
@@ -71,8 +74,10 @@ BEGIN
     JOIN tracks t ON t.source = 'tidal' AND t.external_id = d.tidal_id
      AND t.deleted_at IS NULL
     WHERE d.local_track_id = OLD.id AND d.status = 'downloaded'
-    ORDER BY d.created_at, d.tidal_id
-    LIMIT 1;
+      AND NOT EXISTS (
+          SELECT 1 FROM tidal_downloads o
+          WHERE o.local_track_id = OLD.id AND o.tidal_id <> d.tidal_id
+            AND o.status IN ('downloaded', 'existing'));
     IF remote_id IS NOT NULL THEN
         INSERT INTO user_track_stats
             (user_id, track_id, play_count, last_played_at, rating, favorited, favorited_at)

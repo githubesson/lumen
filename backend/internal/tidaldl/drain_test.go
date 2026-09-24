@@ -1115,3 +1115,86 @@ func TestDrainRepairsRetiredRowsAndRetriedAdoptions(t *testing.T) {
 		t.Fatalf("provenance after retry = %+v, want downloaded → %v", d, local)
 	}
 }
+
+func TestAdoptRefusesADeletedLocalCopy(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	run := uuid.NewString()[:8]
+	tid := "ag" + run
+	pl, rows := optedInPlaylist(t, pool, tid)
+	_, libPath := libraryFile(t)
+	local := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO tracks(id, title, duration_ms, file_path, file_size, format, audio_sha256, deleted_at)
+		VALUES($1, 'Purged', 1000, $2, 5, 'flac', $3, NOW())`, local, libPath, local[:]); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM tracks WHERE id = $1`, local) })
+	err := NewStore(pool).Adopt(ctx, Adoption{RowID: rows[0], TIDALID: tid, LocalID: local, Status: StatusExisting})
+	if !errors.Is(err, ErrLocalGone) {
+		t.Fatalf("err = %v, want ErrLocalGone", err)
+	}
+	var entry uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT track_id FROM playlist_tracks WHERE playlist_id = $1`, pl).Scan(&entry); err != nil || entry != rows[0] {
+		t.Fatalf("entry = %v, %v; want it left on the TIDAL row", entry, err)
+	}
+}
+
+// A downloaded copy that later also stands in for another TIDAL id (same
+// ISRC) holds both tracks' merged history. Deleting it must not hand all of
+// that to one of them; each playlist entry still returns to its own track.
+func TestSharedDownloadedCopyDoesNotMisattributeHistory(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	run := uuid.NewString()[:8]
+	first, second := "hf"+run, "hs"+run
+	isrc := "HS" + strings.ToUpper(run)
+	root := t.TempDir()
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM tracks WHERE file_path LIKE $1`, root+"%") })
+
+	pl1, rows1 := optedInPlaylist(t, pool, first)
+	w := testWorker(t, pool, root, &fakeSource{tracks: map[string]tidal.Track{
+		first:  {ID: first, Title: "Song " + run},
+		second: {ID: second, Title: "Song " + run, ISRC: isrc},
+	}})
+	w.drain(ctx)
+	copyID, err := w.Library.DownloadedTIDALTrack(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE tracks SET isrc = $2 WHERE id = $1`, copyID, isrc); err != nil {
+		t.Fatal(err)
+	}
+	pl2, rows2 := optedInPlaylist(t, pool, second)
+	var listener uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT owner_id FROM playlists WHERE id = $1`, pl2).Scan(&listener); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_track_stats(user_id, track_id, play_count) VALUES($1, $2, 4)`, listener, rows2[0]); err != nil {
+		t.Fatal(err)
+	}
+	w.drain(ctx)
+	if got, err := w.Library.DownloadedTIDALTrack(ctx, second); err != nil || got != copyID {
+		t.Fatalf("second resolved to %v, %v; want the shared copy %v", got, err, copyID)
+	}
+
+	path, err := w.Store.TrackFilePath(ctx, copyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Library.HardDeleteByPath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	var misattributed int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM user_track_stats WHERE track_id = $1`, rows1[0]).Scan(&misattributed); err != nil {
+		t.Fatal(err)
+	}
+	if misattributed != 0 {
+		t.Fatalf("the first TIDAL track received %d stats rows from the shared copy", misattributed)
+	}
+	for pl, want := range map[uuid.UUID]uuid.UUID{pl1: rows1[0], pl2: rows2[0]} {
+		var entry uuid.UUID
+		if err := pool.QueryRow(ctx, `SELECT track_id FROM playlist_tracks WHERE playlist_id = $1`, pl).Scan(&entry); err != nil || entry != want {
+			t.Fatalf("playlist %v entry = %v, %v; want its own TIDAL track %v", pl, entry, err, want)
+		}
+	}
+}
