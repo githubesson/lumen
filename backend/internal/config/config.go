@@ -39,9 +39,12 @@ type Config struct {
 	TIDALHifiAPIURL            string
 	TIDALDownloadPollInterval  time.Duration
 	TIDALDownloadFileTimeout   time.Duration
-	LastFMAPIKey               string
-	LastFMSharedSecret         string
-	TrustedProxies             []string
+	// TIDALDownloadMinFreeBytes pauses auto-downloads below this much free
+	// space on the destination volume. Set via TIDAL_DOWNLOAD_MIN_FREE_MB.
+	TIDALDownloadMinFreeBytes int64
+	LastFMAPIKey              string
+	LastFMSharedSecret        string
+	TrustedProxies            []string
 	// PublicHosts optionally allowlists the hostnames that may appear in
 	// generated share/embed/og:url absolute URLs. Set via PUBLIC_HOSTS
 	// (comma-separated). Empty means "trust whatever the reverse proxy
@@ -109,6 +112,10 @@ func FromEnv() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	tidalDownloadMinFreeMB, err := nonnegintenv("TIDAL_DOWNLOAD_MIN_FREE_MB", 5<<10)
+	if err != nil {
+		return nil, err
+	}
 	trustedProxies, err := proxyenv("TRUSTED_PROXIES")
 	if err != nil {
 		return nil, err
@@ -141,6 +148,7 @@ func FromEnv() (*Config, error) {
 		TIDALHifiAPIURL:            getenv("TIDAL_HIFI_API_URL", ""),
 		TIDALDownloadPollInterval:  tidalDownloadPoll,
 		TIDALDownloadFileTimeout:   tidalDownloadFileTimeout,
+		TIDALDownloadMinFreeBytes:  tidalDownloadMinFreeMB << 20,
 		LastFMAPIKey:               getenv("LASTFM_API_KEY", ""),
 		LastFMSharedSecret:         getenv("LASTFM_SHARED_SECRET", ""),
 		TrustedProxies:             trustedProxies,

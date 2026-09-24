@@ -215,6 +215,7 @@ func main() {
 		Logger:       logger,
 		PollInterval: cfg.TIDALDownloadPollInterval,
 		FileTimeout:  cfg.TIDALDownloadFileTimeout,
+		MinFreeBytes: cfg.TIDALDownloadMinFreeBytes,
 	}
 	startWorker(func() { tidalDownloadWorker.Run(ctx) })
 

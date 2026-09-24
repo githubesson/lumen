@@ -46,14 +46,20 @@ type Worker struct {
 	Logger       *slog.Logger
 	PollInterval time.Duration
 	FileTimeout  time.Duration
+	// MinFreeBytes pauses downloads while the destination volume has less
+	// free space than this, so an opted-in playlist that non-admins can edit
+	// cannot fill the music volume. 0 disables the check.
+	MinFreeBytes int64
 
 	kickOnce sync.Once
 	kick     chan struct{}
 
-	// Test seams; nil means TIDAL, mediaembed.Embed, and mediaembed.Available.
+	// Test seams; nil means TIDAL, mediaembed.Embed, mediaembed.Available,
+	// and freeBytes.
 	source source
 	tag    tagFunc
 	ffmpeg func() bool
+	free   func(path string) (uint64, bool)
 }
 
 // errNoFFmpeg is recorded as a normal failure, so tracks that only need
@@ -286,6 +292,9 @@ func (w *Worker) process(ctx context.Context, c Candidate, dest func() (string, 
 	if err != nil {
 		return w.fail(ctx, c, meta, fmt.Errorf("destination: %w", err))
 	}
+	if err := w.checkFreeSpace(dir); err != nil {
+		return w.fail(ctx, c, meta, err)
+	}
 	path, err := w.download(ctx, meta, dir)
 	if err != nil {
 		if errors.Is(err, tidal.ErrNotConfigured) {
@@ -317,6 +326,35 @@ func (w *Worker) process(ctx context.Context, c Candidate, dest func() (string, 
 	w.log().Info("tidal auto-download saved track",
 		"tidal_track", c.TIDALID, "track", out.TrackID, "path", out.Path, "status", status)
 	return nil
+}
+
+// checkFreeSpace enforces MinFreeBytes on the volume holding dir. dir may not
+// exist yet, so the nearest existing ancestor is measured.
+func (w *Worker) checkFreeSpace(dir string) error {
+	if w.MinFreeBytes <= 0 {
+		return nil
+	}
+	measure := w.free
+	if measure == nil {
+		measure = freeBytes
+	}
+	p := dir
+	for {
+		if _, err := os.Stat(p); err == nil {
+			break
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return nil
+		}
+		p = parent
+	}
+	free, ok := measure(p)
+	if !ok || free >= uint64(w.MinFreeBytes) {
+		return nil
+	}
+	return fmt.Errorf("not enough free space on the music volume (%d MiB left, %d MiB required)",
+		free>>20, w.MinFreeBytes>>20)
 }
 
 // playable reports whether the stream endpoint would serve path: it must be a

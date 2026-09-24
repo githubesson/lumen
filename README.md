@@ -238,6 +238,10 @@ downloads the playlist's TIDAL tracks, plus any added later, into the library:
 `TIDAL_DOWNLOAD_POLL_INTERVAL` (default `5m`) sets the fallback poll interval;
 adding tracks to an opted-in playlist wakes the worker right away.
 `TIDAL_DOWNLOAD_FILE_TIMEOUT` (default `30m`) limits each download.
+`TIDAL_DOWNLOAD_MIN_FREE_MB` (default `5120`) pauses downloads while the
+destination volume has less free space than that. Anyone who can edit an
+opted-in playlist can add tracks to it, so only opt in playlists whose editors
+you trust with library space.
 
 ## Putting it on the internet
 

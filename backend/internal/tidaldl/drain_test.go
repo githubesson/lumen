@@ -378,6 +378,10 @@ func TestDrainLinksISRCMatchesWhenDownloadsCannotRun(t *testing.T) {
 			w.ffmpeg = func() bool { return false }
 		}, "ffmpeg"},
 		{"no destination", func(w *Worker, _ string) { w.PrimaryRoot = "" }, "no music root"},
+		{"volume nearly full", func(w *Worker, _ string) {
+			w.MinFreeBytes = 5 << 30
+			w.free = func(string) (uint64, bool) { return 1 << 30, true }
+		}, "not enough free space"},
 		{"ingest rejects the file", func(w *Worker, _ string) {
 			tagWAV := wavTagger(t)
 			w.tag = func(ctx context.Context, r io.ReadCloser, c []byte, m mediaembed.Metadata, h mediaembed.FormatHint) (*mediaembed.Result, error) {
