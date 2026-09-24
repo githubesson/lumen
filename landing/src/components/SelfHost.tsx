@@ -27,8 +27,11 @@ const OUTPUT = [
 function Terminal() {
   const [ref, inView] = useInView<HTMLDivElement>();
   const { copied, copy } = useCopy();
-  // Container lines appear one by one the first time the terminal is seen.
-  const [lines, setLines] = useState(0);
+  // Container lines appear one by one the first time the terminal is seen;
+  // with reduced motion they're all there from the start.
+  const [lines, setLines] = useState(() =>
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches ? OUTPUT.length : 0,
+  );
 
   useEffect(() => {
     // Once started it finishes, even if scrolled away.
@@ -73,7 +76,7 @@ function Terminal() {
             <div
               key={o.name}
               className={clsx(
-                "flex gap-3 transition-[opacity,translate] duration-300 ease-[var(--ease-out)]",
+                "flex gap-3 transition-[opacity,translate] duration-300 ease-[var(--ease-out)] motion-reduce:transition-none",
                 i < lines ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0",
               )}
             >

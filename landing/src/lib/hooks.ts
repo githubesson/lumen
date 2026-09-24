@@ -10,6 +10,8 @@ export function useTheme() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    // Browser chrome (mobile address bar) follows the site theme, not the OS.
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#0a0a0a" : "#ffffff");
   }, [theme]);
 
   const toggle = useCallback(() => {

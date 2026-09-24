@@ -8,8 +8,8 @@
       name="description"
       content="Lumen is a free, self-hosted music library. Point it at your folders and stream to the web, desktop, and your phone."
     />
-    <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
-    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <!-- Set from the resolved site theme below, and updated by the toggle. -->
+    <meta name="theme-color" content="#0a0a0a" />
     <meta property="og:title" content="Lumen" />
     <meta property="og:description" content="Your music library, on your own server." />
     <meta property="og:type" content="website" />
@@ -23,6 +23,7 @@
         var saved = localStorage.getItem("lumen-landing-theme");
         var dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
         document.documentElement.dataset.theme = dark ? "dark" : "light";
+        document.querySelector('meta[name="theme-color"]').content = dark ? "#0a0a0a" : "#ffffff";
       } catch (e) {}
     </script>
   </head>
