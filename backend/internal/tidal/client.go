@@ -225,8 +225,12 @@ func (c *Client) Album(ctx context.Context, id string, limit, offset int) (Album
 	return album, nil
 }
 
-// maxFullAlbumTracks bounds FullAlbum's paging; no real release comes close.
-const maxFullAlbumTracks = 1000
+// maxFullAlbumTracks and maxFullAlbumPages bound FullAlbum's paging; no
+// real release comes close.
+const (
+	maxFullAlbumTracks = 1000
+	maxFullAlbumPages  = 20
+)
 
 // FullAlbum is Album with every page of the track list. Pages advance by the
 // raw item count, not the tracks kept from them, so filtered items (videos)
@@ -239,26 +243,33 @@ func (c *Client) FullAlbum(ctx context.Context, id string) (Album, error) {
 	}
 	seen := map[string]bool{}
 	tracks := make([]Track, 0, len(album.Tracks))
-	keep := func(ts []Track) {
+	keep := func(ts []Track) (added int) {
 		for _, t := range ts {
 			if !seen[t.ID] {
 				seen[t.ID] = true
 				tracks = append(tracks, t)
+				added++
 			}
 		}
+		return added
 	}
 	keep(album.Tracks)
 	offset, got := album.pageItems, album.pageItems
 	// Keep going while pages come back full, or short (a proxy may cap the
 	// page size) while tracks are still missing.
-	for got > 0 && (got >= page || len(tracks) < album.TrackCount) && len(tracks) < maxFullAlbumTracks {
+	for pages := 1; got > 0 && (got >= page || len(tracks) < album.TrackCount) &&
+		len(tracks) < maxFullAlbumTracks && pages < maxFullAlbumPages; pages++ {
 		next, err := c.Album(ctx, id, page, offset)
 		if err != nil {
 			return Album{}, err
 		}
 		got = next.pageItems
 		offset += got
-		keep(next.Tracks)
+		// A page of tracks we've all seen means the proxy is repeating
+		// itself (e.g. ignoring offset); there's nothing more to get.
+		if keep(next.Tracks) == 0 && len(next.Tracks) > 0 {
+			break
+		}
 	}
 	album.Tracks = tracks
 	return album, nil

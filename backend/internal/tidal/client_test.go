@@ -646,3 +646,25 @@ func TestFullAlbumPagesByRawItems(t *testing.T) {
 		t.Fatalf("tracks = %v, want 1,2,3", ids)
 	}
 }
+
+func TestFullAlbumStopsWhenAProxyRepeatsItself(t *testing.T) {
+	requests := 0
+	// Ignores offset: always the same full page of 100, claiming 150 tracks.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		items := make([]string, 100)
+		for i := range items {
+			items[i] = `{"type":"track","item":{"id":` + strconv.Itoa(i+1) + `,"title":"T"}}`
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":7,"title":"Loop","numberOfTracks":150,"items":[` + strings.Join(items, ",") + `]}}`))
+	}))
+	defer srv.Close()
+
+	album, err := NewClient(Config{HifiAPIURL: srv.URL}).FullAlbum(context.Background(), "7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(album.Tracks) != 100 || requests > 2 {
+		t.Fatalf("%d tracks after %d requests", len(album.Tracks), requests)
+	}
+}
