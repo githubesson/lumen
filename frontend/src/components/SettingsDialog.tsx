@@ -109,8 +109,13 @@ export default function SettingsDialog({ open, onClose }: Props) {
     latest.current = { onClose, query };
   });
 
+  // Interactive only while open. During the exit fade `mounted` is still true,
+  // but keys, shortcuts and focus must already belong to whatever comes next
+  // (e.g. the palette after a Mod-K handoff).
+  const interactive = open && mounted;
+
   useEffect(() => {
-    if (!mounted) return;
+    if (!interactive) return;
     const restoreTo = document.activeElement as HTMLElement | null;
     const layer = layerRef.current;
     const panel = panelRef.current;
@@ -142,13 +147,13 @@ export default function SettingsDialog({ open, onClose }: Props) {
     window.addEventListener("keydown", onKeyDown, true);
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
-      // Unmount lands after the exit transition. If something else took focus
-      // meanwhile (e.g. Mod-K opened the palette), leave it there.
+      // If something else already took focus (e.g. Mod-K opened the palette),
+      // leave it there.
       const now = document.activeElement;
       // The scrim counts as the dialog's own focus too.
       if (!now || now === document.body || layer?.contains(now)) restoreFocus(restoreTo);
     };
-  }, [mounted]);
+  }, [interactive]);
 
   // Page-level Mod-F would focus a search box behind the scrim; while Settings
   // is open it means this one.
@@ -159,9 +164,9 @@ export default function SettingsDialog({ open, onClose }: Props) {
       searchRef.current?.focus();
       searchRef.current?.select();
     },
-    { id: "settings:search", allowInInput: true, enabled: mounted, whileModal: true },
+    { id: "settings:search", allowInInput: true, enabled: interactive, whileModal: true },
   );
-  useModalKeyScope(mounted);
+  useModalKeyScope(interactive);
 
   // Start fresh each time the dialog opens.
   useEffect(() => {
@@ -363,6 +368,8 @@ export default function SettingsDialog({ open, onClose }: Props) {
       ref={layerRef}
       className="dialog-layer group fixed inset-0 grid place-items-center p-4 settings-layer"
       data-closed={!visible || undefined}
+      // Fading out: no focus, clicks or Tab stops, so nothing lands in it.
+      inert={open ? undefined : ""}
     >
       <button
         type="button"
