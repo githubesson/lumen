@@ -62,6 +62,8 @@ type Worker struct {
 	ffmpeg func() bool
 	free   func(path string) (uint64, bool)
 	saved  func(path string)
+	// beforeIngest runs between the twin check and the worker's own ingest.
+	beforeIngest func(path string)
 }
 
 // errNoFFmpeg is recorded as a normal failure, so tracks that only need
@@ -320,6 +322,9 @@ func (w *Worker) process(ctx context.Context, c Candidate, dest func() (string, 
 	if handled, err := w.adoptAudioTwin(ctx, c, meta, path); handled {
 		return err
 	}
+	if w.beforeIngest != nil {
+		w.beforeIngest(path)
+	}
 	out := w.Ingest.IngestFile(ctx, path)
 	if out.Err != nil || out.TrackID == uuid.Nil {
 		// The file is ours and unused. SaveNew picks a fresh name on every
@@ -330,12 +335,46 @@ func (w *Worker) process(ctx context.Context, c Candidate, dest func() (string, 
 		}
 		return w.fail(ctx, c, meta, errors.New("ingest skipped the downloaded file"))
 	}
+	// Ownership, not out.Inserted: the watcher may have ingested our file in
+	// the meantime, making this call a dedup hit on a row that is ours.
 	status := StatusExisting
-	if out.Inserted {
+	if out.Inserted || w.ownsFile(ctx, out.TrackID, path) {
 		status = StatusDownloaded
 		w.applyArtists(ctx, out.TrackID, meta)
 	}
 	return w.adoptPlayable(ctx, c, meta, out.TrackID, status, path)
+}
+
+// capBody fails reads with downloadfile.ErrTooLarge once more than max bytes
+// have come through.
+func capBody(body io.ReadCloser, max int64) io.ReadCloser {
+	return &cappedBody{ReadCloser: body, left: max}
+}
+
+type cappedBody struct {
+	io.ReadCloser
+	left int64
+}
+
+func (b *cappedBody) Read(p []byte) (int, error) {
+	if b.left < 0 {
+		return 0, downloadfile.ErrTooLarge
+	}
+	if int64(len(p)) > b.left+1 {
+		p = p[:b.left+1]
+	}
+	n, err := b.ReadCloser.Read(p)
+	b.left -= int64(n)
+	if b.left < 0 {
+		return n, downloadfile.ErrTooLarge
+	}
+	return n, err
+}
+
+// ownsFile reports whether track plays from path, the file this attempt wrote.
+func (w *Worker) ownsFile(ctx context.Context, track uuid.UUID, path string) bool {
+	p, err := w.Store.TrackFilePath(ctx, track)
+	return err == nil && filepath.Clean(p) == filepath.Clean(path)
 }
 
 // adoptAudioTwin handles a download whose audio already has a live shared
@@ -473,6 +512,9 @@ func (w *Worker) download(ctx context.Context, meta tidal.Track, dest string) (s
 	if err != nil {
 		return "", err
 	}
+	// Cap the stream before tagging: the tagger spools it to temp files, which
+	// may sit on a different (smaller) filesystem than the destination.
+	resp.Body = capBody(resp.Body, downloadfile.MaxFileBytes)
 	var cover []byte
 	if meta.CoverURL != "" {
 		if cover, err = w.src().CoverBytes(ctx, meta.CoverURL); err != nil {

@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/githubesson/lumen/internal/db"
+	"github.com/githubesson/lumen/internal/downloadfile"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/mediaembed"
@@ -35,6 +36,7 @@ type fakeSource struct {
 	tracks  map[string]tidal.Track
 	errs    map[string]error
 	onTrack func(id string)
+	body    func() io.Reader // default: a short fixed body
 }
 
 func (f *fakeSource) Track(_ context.Context, id string) (tidal.Track, error) {
@@ -48,10 +50,14 @@ func (f *fakeSource) Track(_ context.Context, id string) (tidal.Track, error) {
 }
 
 func (f *fakeSource) FileResponse(context.Context, string, *http.Request) (*http.Response, error) {
+	var body io.Reader = strings.NewReader("assembled audio")
+	if f.body != nil {
+		body = f.body()
+	}
 	return &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": {"audio/flac"}},
-		Body:       io.NopCloser(strings.NewReader("assembled audio")),
+		Body:       io.NopCloser(body),
 	}, nil
 }
 
@@ -819,34 +825,50 @@ func TestDrainStopsWhenPlaylistOptsOutMidBatch(t *testing.T) {
 	}
 }
 
+// The filesystem watcher can ingest the new file before the worker's audio
+// twin check or between that check and the worker's own ingest. Either way
+// the row is the worker's and needs TIDAL's artist list.
 func TestWatcherWinningIngestStillGetsTIDALArtists(t *testing.T) {
 	pool := testPool(t)
-	ctx := context.Background()
-	run := uuid.NewString()[:8]
-	tid := "wr" + run
-	optedInPlaylist(t, pool, tid)
-	root := t.TempDir()
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM tracks WHERE file_path LIKE $1`, root+"%") })
-	w := testWorker(t, pool, root, &fakeSource{tracks: map[string]tidal.Track{
-		tid: {ID: tid, Title: "Duet " + run, Artists: []string{"Simon & Garfunkel", "Guest"}},
-	}})
-	// Stand in for the filesystem watcher ingesting the file first.
-	w.saved = func(path string) { w.Ingest.IngestFile(ctx, path) }
-	w.drain(ctx)
+	for _, tc := range []struct {
+		name string
+		hook func(w *Worker, ingest func(string))
+	}{
+		{"before the twin check", func(w *Worker, ingest func(string)) { w.saved = ingest }},
+		{"before the worker's ingest", func(w *Worker, ingest func(string)) { w.beforeIngest = ingest }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			run := uuid.NewString()[:8]
+			tid := "wr" + run
+			optedInPlaylist(t, pool, tid)
+			root := t.TempDir()
+			t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM tracks WHERE file_path LIKE $1`, root+"%") })
+			w := testWorker(t, pool, root, &fakeSource{tracks: map[string]tidal.Track{
+				tid: {ID: tid, Title: "Duet " + run, Artists: []string{"Simon & Garfunkel", "Guest"}},
+			}})
+			tc.hook(w, func(path string) { w.Ingest.IngestFile(ctx, path) })
+			w.drain(ctx)
 
-	saved, err := w.Library.DownloadedTIDALTrack(ctx, tid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var artists string
-	if err := pool.QueryRow(ctx, `
-		SELECT STRING_AGG(ar.name, '|' ORDER BY ta.position)
-		FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
-		WHERE ta.track_id = $1`, saved).Scan(&artists); err != nil {
-		t.Fatal(err)
-	}
-	if artists != "Simon & Garfunkel|Guest" {
-		t.Fatalf("artists = %q", artists)
+			saved, err := w.Library.DownloadedTIDALTrack(ctx, tid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var artists string
+			if err := pool.QueryRow(ctx, `
+				SELECT STRING_AGG(ar.name, '|' ORDER BY ta.position)
+				FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
+				WHERE ta.track_id = $1`, saved).Scan(&artists); err != nil {
+				t.Fatal(err)
+			}
+			if artists != "Simon & Garfunkel|Guest" {
+				t.Fatalf("artists = %q", artists)
+			}
+			recent, _ := w.Store.Recent(ctx, 200)
+			if d := findDownload(recent, tid); d == nil || d.Status != StatusDownloaded {
+				t.Fatalf("status = %+v, want downloaded", d)
+			}
+		})
 	}
 }
 
@@ -1003,4 +1025,35 @@ func TestFallbackReturnsEachEntryToItsOwnTIDALTrack(t *testing.T) {
 	if len(got) != 2 || got[rows[0]] != 1 || got[rows[1]] != 1 {
 		t.Fatalf("entries after delete = %v; want one each on %v (single) and %v (album)", got, rows[0], rows[1])
 	}
+}
+
+func TestDownloadCapsTheStreamBeforeTagging(t *testing.T) {
+	prev := downloadfile.MaxFileBytes
+	downloadfile.MaxFileBytes = 1 << 10
+	t.Cleanup(func() { downloadfile.MaxFileBytes = prev })
+
+	var spooled int64
+	w := &Worker{
+		source: &fakeSource{body: func() io.Reader { return zeroReader{} }}, // never ends
+		tag: func(_ context.Context, r io.ReadCloser, _ []byte, _ mediaembed.Metadata, _ mediaembed.FormatHint) (*mediaembed.Result, error) {
+			defer r.Close()
+			n, err := io.Copy(io.Discard, r) // what Embed does with its temp input
+			spooled = n
+			return nil, err
+		},
+	}
+	_, err := w.download(context.Background(), tidal.Track{ID: "1", Title: "Huge"}, t.TempDir())
+	if !errors.Is(err, downloadfile.ErrTooLarge) {
+		t.Fatalf("err = %v, want ErrTooLarge", err)
+	}
+	if spooled > downloadfile.MaxFileBytes+1 {
+		t.Fatalf("tagger spooled %d bytes past a %d byte cap", spooled, downloadfile.MaxFileBytes)
+	}
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }
