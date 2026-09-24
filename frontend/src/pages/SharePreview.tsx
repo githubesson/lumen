@@ -3,14 +3,20 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   ExternalLink as ArrowTopRightOnSquareIcon,
   Check as CheckIcon,
+  ChevronDown as ChevronDownIcon,
   ClipboardCopy as ClipboardDocumentIcon,
+  Download as DownloadIcon,
+  Film as FilmIcon,
+  Music as MusicIcon,
   Pause as PauseIcon,
   Play as PlayIcon,
 } from "lucide-react";
+import { sanitizeFilename } from "@music-library/core/audio-format";
 import {
   MAX_SHARE_SNIPPET_DURATION_SEC,
   errorMessage,
   getPublicTrackShare,
+  trackSharePreviewVideoUrl,
   type PublicTrackShare,
 } from "../api";
 import { Button } from "../components/Button";
@@ -20,6 +26,8 @@ import LoadingState from "../components/LoadingState";
 import { copyText } from "../lib/clipboard";
 import { fmtDurationSec } from "../lib/format";
 import { useCopiedFlag } from "../lib/useCopiedFlag";
+import { useDismiss } from "../lib/useDismiss";
+import { useTransitionMount } from "../lib/useTransitionMount";
 
 export default function SharePreview() {
   const { id = "" } = useParams();
@@ -210,6 +218,15 @@ export default function SharePreview() {
               >
                 {copied ? "Copied" : "Copy link"}
               </Button>
+              <SnippetDownloadMenu
+                share={share}
+                videoUrl={trackSharePreviewVideoUrl({
+                  trackId: id,
+                  startSec,
+                  durationSec,
+                  sig,
+                })}
+              />
             </footer>
 
             <video
@@ -233,6 +250,66 @@ export default function SharePreview() {
         )}
       </div>
     </main>
+  );
+}
+
+/** "Download ▾" — the snippet's audio (M4A) or its generated preview video. */
+function SnippetDownloadMenu({
+  share,
+  videoUrl,
+}: {
+  share: PublicTrackShare;
+  videoUrl: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const { mounted, visible } = useTransitionMount(open, 150);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(rootRef, { onDismiss: close, enabled: open });
+
+  const baseName = sanitizeFilename(
+    `${share.artist ? `${share.artist} - ` : ""}${share.title} (clip)`,
+  );
+  const items = [
+    ...(share.audio_url
+      ? [{ label: "Audio", hint: "M4A", href: share.audio_url, ext: "m4a", Icon: MusicIcon }]
+      : []),
+    { label: "Video", hint: "MP4", href: videoUrl, ext: "mp4", Icon: FilmIcon },
+  ];
+
+  return (
+    <div ref={rootRef} className="share-preview-download">
+      <Button
+        aria-label="Download snippet"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        leadingIcon={<DownloadIcon className="size-4" />}
+        trailingIcon={<ChevronDownIcon className="size-3.5 share-preview-download-chevron" />}
+      />
+      {mounted && (
+        <div
+          role="menu"
+          className="menu share-preview-download-menu"
+          data-closed={!visible || undefined}
+        >
+          {items.map(({ label, hint, href, ext, Icon }) => (
+            <a
+              key={ext}
+              role="menuitem"
+              className="menu-item"
+              href={href}
+              download={`${baseName}.${ext}`}
+              onClick={close}
+            >
+              <Icon className="size-4" aria-hidden="true" />
+              <span style={{ flex: 1 }}>{label}</span>
+              <span className="share-preview-download-hint">{hint}</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

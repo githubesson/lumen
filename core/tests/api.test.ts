@@ -4,9 +4,11 @@ import {
   api,
   createTrackShareLink,
   getPublicTrackShare,
+  parseTrackShareUrl,
   resolveCoverUrl,
   setBaseUrl,
   setUnauthorizedHandler,
+  trackSharePreviewVideoUrl,
 } from "../src/api";
 
 describe("share snippet requests", () => {
@@ -51,6 +53,35 @@ describe("share snippet requests", () => {
       "/api/public/share/track/track-1?t=12&sig=signature&d=75",
       expect.any(Object),
     );
+  });
+});
+
+describe("share link parsing", () => {
+  afterEach(() => setBaseUrl(""));
+
+  it("reads the track, window, and signature from a share URL", () => {
+    expect(
+      parseTrackShareUrl("https://lumen.test/share/track/abc?t=12&d=75&sig=x"),
+    ).toEqual({ trackId: "abc", startSec: 12, durationSec: 75, sig: "x" });
+    expect(
+      parseTrackShareUrl("https://lumen.test/share/track/abc?t=12&sig=x"),
+    ).toEqual({ trackId: "abc", startSec: 12, durationSec: undefined, sig: "x" });
+  });
+
+  it("rejects unsigned or out-of-range links", () => {
+    expect(parseTrackShareUrl("https://lumen.test/share/track/abc?t=12")).toBeNull();
+    expect(parseTrackShareUrl("https://lumen.test/share/track/abc?t=1&d=999&sig=x")).toBeNull();
+    expect(parseTrackShareUrl("https://lumen.test/share/track/abc?t=-1&sig=x")).toBeNull();
+  });
+
+  it("points the video download at the share-signed preview MP4", () => {
+    setBaseUrl("https://api.lumen.test/");
+    expect(
+      trackSharePreviewVideoUrl({ trackId: "abc", startSec: 12, durationSec: 75, sig: "x+y" }),
+    ).toBe("https://api.lumen.test/api/public/preview-videos/abc.mp4?t=12&d=75&sig=x%2By");
+    expect(
+      trackSharePreviewVideoUrl({ trackId: "abc", startSec: 12, sig: "x" }),
+    ).toBe("https://api.lumen.test/api/public/preview-videos/abc.mp4?t=12&sig=x");
   });
 });
 

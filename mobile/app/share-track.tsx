@@ -23,12 +23,14 @@ import { captureRef } from "react-native-view-shot";
 import {
   ApiError,
   DEFAULT_SHARE_SNIPPET_DURATION_SEC,
-  MAX_SHARE_SNIPPET_DURATION_SEC,
   api,
   createTrackShareLink,
   createTrackStoryBackgroundVideo,
   getPublicTrackShare,
+  parseTrackShareUrl,
+  sanitizeFilename,
   streamUrl,
+  trackSharePreviewVideoUrl,
   type PublicTrackShare,
   type StoryBackgroundCrop,
 } from "@music-library/core";
@@ -75,6 +77,7 @@ export default function ShareTrackScreen() {
   const [picked, setPicked] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [storyBusy, setStoryBusy] = useState(false);
+  const [videoBusy, setVideoBusy] = useState(false);
   const [stickerShare, setStickerShare] = useState<PublicTrackShare | null>(null);
   const [customBackground, setCustomBackground] =
     useState<PickedStoryBackground | null>(null);
@@ -324,7 +327,7 @@ export default function ShareTrackScreen() {
     }
 
     const url = await getShareUrl();
-    const shareRef = parseShareUrl(url);
+    const shareRef = parseTrackShareUrl(url);
     if (!shareRef) {
       throw new Error("Couldn't read the generated share link.");
     }
@@ -424,6 +427,52 @@ export default function ShareTrackScreen() {
     }
   }, [getShareUrl, picked, trackQuery.data]);
 
+  // Downloads the snippet's generated preview video (the MP4 chat apps embed)
+  // and hands it to the share sheet, whose "Save Video" puts it in Photos.
+  const saveVideo = useCallback(async () => {
+    if (!picked || videoBusy) return;
+    let url: string;
+    try {
+      url = await getShareUrl();
+    } catch {
+      // The mutation's onError already explained the failure.
+      return;
+    }
+    setVideoBusy(true);
+    try {
+      const shareRef = parseTrackShareUrl(url);
+      if (!shareRef) throw new Error("Couldn't read the generated share link.");
+      const track = trackQuery.data;
+      const artist =
+        track?.artists.find((a) => a.role === "primary")?.name ??
+        track?.artists[0]?.name;
+      const name = sanitizeFilename(
+        `${artist ? `${artist} - ` : ""}${track?.title ?? "Lumen"} (clip)`,
+      );
+      const dir = new Directory(Paths.cache, "share-videos");
+      dir.create({ idempotent: true, intermediates: true });
+      const file = await downloadToFile(
+        trackSharePreviewVideoUrl(shareRef),
+        new File(dir, `${name}.mp4`),
+      );
+      await RNShare.open({
+        url: file.uri,
+        type: "video/mp4",
+        filename: name,
+        failOnCancel: false,
+      });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      if (isShareDismissal(error)) return;
+      Alert.alert(
+        "Couldn't save video",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setVideoBusy(false);
+    }
+  }, [getShareUrl, picked, trackQuery.data, videoBusy]);
+
   const shareInstagramStory = useCallback(async (mode: StoryBackgroundMode) => {
     if (!picked || storyBusy) return;
     if (mode === "custom-image" && (!customBackground || !customCrop)) {
@@ -469,7 +518,9 @@ export default function ShareTrackScreen() {
   }, [pausePreview, router]);
 
   const busy = generateMutation.isPending;
-  const canShare = Boolean(trackQuery.data && picked && !busy && !storyBusy);
+  const canShare = Boolean(
+    trackQuery.data && picked && !busy && !storyBusy && !videoBusy,
+  );
 
   return (
     <>
@@ -552,6 +603,13 @@ export default function ShareTrackScreen() {
                 onPress={() => void shareLink()}
               />
               <ShareActionButton
+                label={videoBusy ? "Preparing Video..." : "Save Video"}
+                icon="square.and.arrow.down"
+                disabled={!canShare}
+                loading={videoBusy}
+                onPress={() => void saveVideo()}
+              />
+              <ShareActionButton
                 label="Copy Link"
                 icon="doc.on.doc"
                 disabled={!canShare}
@@ -581,37 +639,6 @@ export default function ShareTrackScreen() {
 }
 
 type StoryBackgroundMode = "generated-colors" | "custom-image";
-
-function parseShareUrl(raw: string) {
-  try {
-    const parsed = new URL(raw, "https://lumen.invalid");
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    const trackIndex = parts.findIndex((part) => part === "track");
-    const trackId = trackIndex >= 0 ? parts[trackIndex + 1] : "";
-    const sig = parsed.searchParams.get("sig") ?? "";
-    const startSec = Number.parseInt(parsed.searchParams.get("t") ?? "0", 10);
-    const rawDurationSec = parsed.searchParams.get("d");
-    const durationSec = rawDurationSec === null
-      ? undefined
-      : Number(rawDurationSec);
-    if (
-      !trackId ||
-      !sig ||
-      !Number.isFinite(startSec) ||
-      startSec < 0 ||
-      (durationSec !== undefined && (
-        !Number.isInteger(durationSec) ||
-        durationSec <= 0 ||
-        durationSec > MAX_SHARE_SNIPPET_DURATION_SEC
-      ))
-    ) {
-      return null;
-    }
-    return { trackId, sig, startSec, durationSec };
-  } catch {
-    return null;
-  }
-}
 
 function ensureStoryCacheDir() {
   const dir = new Directory(Paths.cache, "instagram-stories");

@@ -85,6 +85,7 @@ type publicShareResp struct {
 	StoryURL           string `json:"story_url,omitempty"`
 	StoryBackgroundURL string `json:"story_background_url,omitempty"`
 	EmbedURL           string `json:"embed_url,omitempty"`
+	AudioURL           string `json:"audio_url,omitempty"`
 	CoverURL           string `json:"cover_url,omitempty"`
 	AccentColor        string `json:"accent_color,omitempty"`
 	CanonicalURL       string `json:"canonical_url"`
@@ -512,6 +513,7 @@ func (h *Share) PublicInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	urlDurationSec := req.urlDurationSec()
 	previewURL := signedPreviewMediaURL(base, "/api/public/previews/", id, req.startSec, urlDurationSec, mp4Exp, mp4Sig)
+	audioURL := signedPreviewAudioURL(base, id, req.startSec, urlDurationSec, mp4Exp, mp4Sig)
 	storyURL := signedPreviewMediaURL(base, "/api/public/stories/", id, req.startSec, urlDurationSec, mp4Exp, mp4Sig)
 	storyBackgroundURL := signedPreviewMediaURL(base, "/api/public/story-backgrounds/", id, req.startSec, urlDurationSec, mp4Exp, mp4Sig)
 
@@ -541,6 +543,7 @@ func (h *Share) PublicInfo(w http.ResponseWriter, r *http.Request) {
 		DurationMS:         t.DurationMS,
 		PreviewDurationSec: effectivePreviewDurationSec(req.durationSec, t.DurationMS),
 		PreviewURL:         previewURL,
+		AudioURL:           audioURL,
 		StoryURL:           storyURL,
 		StoryBackgroundURL: storyBackgroundURL,
 		EmbedURL:           embedURL,
@@ -559,7 +562,8 @@ func (h *Share) PublicInfo(w http.ResponseWriter, r *http.Request) {
 // FxEmbed-like same-origin .mp4 URL that scrapers prefer, but avoids a redirect
 // hop so Telegram receives the actual media response from the advertised URL.
 // signedMediaRequest is the parsed+verified form of a public signed media URL
-// (/api/public/previews|preview-videos|stories|story-backgrounds/{id}.mp4).
+// (/api/public/previews|preview-videos|stories|story-backgrounds/{id}.mp4, or
+// /api/public/preview-audio/{id}.m4a).
 type signedMediaRequest struct {
 	id             uuid.UUID
 	startSec       int
@@ -569,7 +573,7 @@ type signedMediaRequest struct {
 }
 
 // parseSignedMediaRequest implements the shared front half of every public
-// signed-media handler: the not-configured guard, the ".mp4"-suffixed id, the
+// signed-media handler: the not-configured guard, the ".mp4"/".m4a"-suffixed id, the
 // t parameter, and signature verification. withExpiry selects between the
 // hourly-rotating preview signature (exp+sig) and the long-lived share
 // signature (sig only). Returns ok=false once a response has been written.
@@ -579,7 +583,10 @@ func (h *Share) parseSignedMediaRequest(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "preview not configured", http.StatusServiceUnavailable)
 		return req, false
 	}
-	raw := strings.TrimSuffix(chi.URLParam(r, "id"), ".mp4")
+	raw := chi.URLParam(r, "id")
+	if ext := filepath.Ext(raw); ext == ".mp4" || ext == ".m4a" {
+		raw = strings.TrimSuffix(raw, ext)
+	}
 	id, err := uuid.Parse(raw)
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
@@ -730,6 +737,11 @@ func (h *Share) coverPathWithFallback(ctx context.Context, t *library.TrackDetai
 // missingMsg is the body for an unopenable file ("preview missing" / "story
 // missing"); cacheControl is the endpoint's Cache-Control value.
 func serveMediaFile(w http.ResponseWriter, r *http.Request, outPath, missingMsg, cacheControl string) {
+	serveFileAs(w, r, outPath, "video/mp4", missingMsg, cacheControl)
+}
+
+// serveFileAs is serveMediaFile with an explicit Content-Type.
+func serveFileAs(w http.ResponseWriter, r *http.Request, outPath, contentType, missingMsg, cacheControl string) {
 	f, err := os.Open(outPath)
 	if err != nil {
 		http.Error(w, missingMsg, http.StatusInternalServerError)
@@ -741,7 +753,7 @@ func serveMediaFile(w http.ResponseWriter, r *http.Request, outPath, missingMsg,
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Cache-Control", cacheControl)
 	http.ServeContent(w, r, filepath.Base(outPath), stat.ModTime(), f)

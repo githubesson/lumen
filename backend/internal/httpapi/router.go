@@ -203,6 +203,10 @@ func NewRouter(d Deps) http.Handler {
 			Get("/public/preview-videos/{id}", shareH.PublicPreviewVideo)
 		r.With(appmw.RateLimitByIP(120, time.Minute)).
 			Head("/public/preview-videos/{id}", shareH.PublicPreviewVideo)
+		// Signed snippet audio (M4A remuxed from the preview MP4) for
+		// the share page's download menu. May build the preview first.
+		r.With(appmw.RateLimitByIP(60, time.Minute)).
+			Get("/public/preview-audio/{id}", shareH.PublicPreviewAudio)
 		// Signed public 9:16 Story MP4. Also lazy-built by ffmpeg.
 		r.With(appmw.RateLimitByIP(60, time.Minute)).
 			Get("/public/stories/{id}", shareH.PublicStory)

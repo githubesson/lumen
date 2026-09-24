@@ -137,6 +137,25 @@ func (b *Builder) cachedOutput(path string) (string, bool) {
 	return "", false
 }
 
+// EnsureAudioBuilt extracts the audio of an already-built preview MP4
+// (previewPath) into a standalone M4A, for "download audio" on the share page.
+// It is a stream copy — a remux, not a second encode — and never needs the
+// source audio, which for TIDAL tracks would mean another full download.
+func (b *Builder) EnsureAudioBuilt(ctx context.Context, trackID string, startSec, durationSec int, previewPath string) (string, error) {
+	in := normalizeInput(Input{
+		TrackID:     trackID,
+		AudioPath:   previewPath,
+		StartSec:    startSec,
+		DurationSec: durationSec,
+	})
+	return b.ensureBuilt(ctx, in, "audio", b.audioCachePath(in.TrackID, in.StartSec, in.DurationSec), b.runAudio)
+}
+
+// CachedAudio is CachedPreview for the extracted M4A.
+func (b *Builder) CachedAudio(trackID string, startSec, durationSec int) (string, bool) {
+	return b.cachedOutput(b.audioCachePath(trackID, startSec, normalizeDurationSec(durationSec)))
+}
+
 // EnsureStoryBuilt builds the Instagram-story-shaped MP4 for `in` if it isn't
 // cached. The story variant is 1080x1920 with a textured color background,
 // artwork card, title/artist text, and the same selected audio window.
@@ -287,6 +306,11 @@ func (b *Builder) cachePath(trackID string, startSec, durationSec int) string {
 	return filepath.Join(b.CacheDir, name)
 }
 
+func (b *Builder) audioCachePath(trackID string, startSec, durationSec int) string {
+	name := trackID + "-" + strconv.Itoa(startSec) + durationCacheSuffix(durationSec) + "-audio.m4a"
+	return filepath.Join(b.CacheDir, name)
+}
+
 func (b *Builder) storyCachePath(trackID string, startSec, durationSec int) string {
 	name := trackID + "-" + strconv.Itoa(startSec) + durationCacheSuffix(durationSec) + "-story-v12.mp4"
 	return filepath.Join(b.CacheDir, name)
@@ -320,6 +344,10 @@ func durationCacheSuffix(durationSec int) string {
 // see a truncated MP4 if ffmpeg is killed mid-write.
 func (b *Builder) run(parent context.Context, in Input, outPath string) error {
 	return b.runFFmpeg(parent, buildArgs(in, outPath), outPath)
+}
+
+func (b *Builder) runAudio(parent context.Context, in Input, outPath string) error {
+	return b.runFFmpeg(parent, buildAudioArgs(in.AudioPath, outPath), outPath)
 }
 
 func (b *Builder) runStory(parent context.Context, in Input, outPath string) error {
@@ -475,6 +503,24 @@ func buildArgs(in Input, outPath string) []string {
 		outPath,
 	)
 	return args
+}
+
+// buildAudioArgs copies the AAC track out of a preview MP4 into an M4A.
+func buildAudioArgs(previewPath string, outPath string) []string {
+	return []string{
+		"-y",
+		"-hide_banner",
+		"-loglevel", "error",
+		"-i", previewPath,
+		"-map", "0:a:0",
+		"-vn",
+		"-c:a", "copy",
+		"-movflags", "+faststart",
+		// The ipod muxer writes an .m4a (M4A brand). Forced for the same
+		// reason as the MP4 muxer above: the output path ends in `.part`.
+		"-f", "ipod",
+		outPath,
+	}
 }
 
 func buildStoryArgs(in Input, framePath string, outPath string) []string {
