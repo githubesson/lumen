@@ -231,4 +231,22 @@ func TestTIDALAlbumPageFallsBackToStoredRelease(t *testing.T) {
 	if len(page.Tracks) != 150 {
 		t.Fatalf("album page lists %d tracks, want the stored 150", len(page.Tracks))
 	}
+
+	// Explicit pages keep their window: live for the first, the stored
+	// release for the one TIDAL can't serve.
+	for path, want := range map[string]int{
+		"/api/tidal/albums/" + rel + "?limit=100&offset=0":   100,
+		"/api/tidal/albums/" + rel + "?limit=100&offset=100": 50,
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(&http.Cookie{Name: "session", Value: token})
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		var paged struct {
+			Tracks []json.RawMessage `json:"tracks"`
+		}
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &paged) != nil || len(paged.Tracks) != want {
+			t.Fatalf("%s: %d, %d tracks, want %d", path, rec.Code, len(paged.Tracks), want)
+		}
+	}
 }

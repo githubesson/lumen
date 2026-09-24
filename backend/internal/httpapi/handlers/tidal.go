@@ -66,8 +66,8 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	partial := err == nil && len(album.Tracks) < album.TrackCount
-	if h.Library != nil && offset == 0 {
-		if err == nil && !partial {
+	if h.Library != nil {
+		if offset == 0 && err == nil && !partial {
 			// A full fetch updates the stored record, which then also lists
 			// the tracks TIDAL has since dropped.
 			if serr := h.Library.SaveTIDALAlbum(r.Context(), album); serr != nil {
@@ -75,12 +75,15 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// The stored record outlives the release on TIDAL. Serve it when
-		// TIDAL can't; in place of a full fetch, so dropped tracks show; and
-		// to the album page when only part of the release could be fetched.
-		if err != nil || !partial || unpaged {
+		// TIDAL can't (any page); in place of a full fetch, so dropped tracks
+		// show; and to the album page when only part could be fetched.
+		if err != nil || (offset == 0 && (!partial || unpaged)) {
 			if cached, _, cerr := h.Library.TIDALAlbum(r.Context(), id); cerr == nil &&
-				(!partial || len(cached.Tracks) >= len(album.Tracks)) {
+				(err != nil || !partial || len(cached.Tracks) >= len(album.Tracks)) {
 				album, err = cached, nil
+				if !unpaged {
+					album.Tracks = pageOf(album.Tracks, offset, limit)
+				}
 			}
 		}
 	}
@@ -97,6 +100,18 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 		h.withLibrary(r.Context(), &out, album, u.ID)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// pageOf applies an explicit page request to a stored track list, with the
+// same limit defaults the TIDAL client uses.
+func pageOf(tracks []tidal.Track, offset, limit int) []tidal.Track {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if offset < 0 || offset >= len(tracks) {
+		return []tidal.Track{}
+	}
+	return tracks[offset:min(len(tracks), offset+limit)]
 }
 
 // withLibrary swaps the viewer's library copies into the release's track
