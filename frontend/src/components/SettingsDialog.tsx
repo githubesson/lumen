@@ -68,6 +68,7 @@ const LAYOUTS: SelectOption<Layout>[] = [
 export default function SettingsDialog({ open, onClose }: Props) {
   const { mounted, visible } = useTransitionMount(open, 200);
   const titleId = useId();
+  const layerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [active, setActive] = useState<SectionId>("appearance");
@@ -111,6 +112,7 @@ export default function SettingsDialog({ open, onClose }: Props) {
   useEffect(() => {
     if (!mounted) return;
     const restoreTo = document.activeElement as HTMLElement | null;
+    const layer = layerRef.current;
     const panel = panelRef.current;
     panel?.focus();
     // Capture phase, so Escape and Tab are settled here before anything behind
@@ -143,7 +145,8 @@ export default function SettingsDialog({ open, onClose }: Props) {
       // Unmount lands after the exit transition. If something else took focus
       // meanwhile (e.g. Mod-K opened the palette), leave it there.
       const now = document.activeElement;
-      if (!now || now === document.body || panel?.contains(now)) restoreFocus(restoreTo);
+      // The scrim counts as the dialog's own focus too.
+      if (!now || now === document.body || layer?.contains(now)) restoreFocus(restoreTo);
     };
   }, [mounted]);
 
@@ -357,6 +360,7 @@ export default function SettingsDialog({ open, onClose }: Props) {
 
   return (
     <div
+      ref={layerRef}
       className="dialog-layer group fixed inset-0 grid place-items-center p-4 settings-layer"
       data-closed={!visible || undefined}
     >
@@ -364,6 +368,8 @@ export default function SettingsDialog({ open, onClose }: Props) {
         type="button"
         aria-hidden="true"
         tabIndex={-1}
+        // Don't let a click focus the scrim; focus should go back to the opener.
+        onMouseDown={(e) => e.preventDefault()}
         onClick={onClose}
         className="absolute inset-0 transition-opacity duration-200 ease-out group-data-closed:opacity-0"
         style={{ background: "var(--scrim)" }}
