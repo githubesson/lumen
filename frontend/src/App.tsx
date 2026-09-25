@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./context/Auth";
 import Login from "./pages/Login";
@@ -8,6 +8,9 @@ import SharePreview from "./pages/SharePreview";
 import Shell from "./components/Shell";
 import WindowControls from "./components/WindowControls";
 import StartupConnection from "./components/StartupConnection";
+import Welcome from "./pages/Welcome";
+import { useDesktopConfig } from "./lib/desktopConfig";
+import { isElectron } from "./lib/platform";
 import { PlaylistsProvider } from "./context/Playlists";
 
 const loadHome = () => import("./pages/Home");
@@ -40,6 +43,8 @@ const PageFallback = () => (
 export default function App() {
   const { status, me, refreshError } = useAuth();
   const { pathname } = useLocation();
+  const desktopConfig = useDesktopConfig();
+  const [changingServer, setChangingServer] = useState(false);
 
   useEffect(() => {
     // Fetch/parse the landing route while /me is in flight. Its data requests
@@ -47,11 +52,28 @@ export default function App() {
     if (pathname === "/") void loadHome().catch(() => {});
   }, [pathname]);
 
+  if (isElectron()) {
+    // Nothing to sign in to until the app knows its server.
+    if (!desktopConfig) return null;
+    if (!desktopConfig.backendUrl || (changingServer && !me)) {
+      return (
+        <>
+          <WindowControls className="root-window-controls" />
+          <Welcome
+            mode={desktopConfig.backendUrl ? "change" : "first-run"}
+            onCancel={() => setChangingServer(false)}
+          />
+        </>
+      );
+    }
+  }
+  const changeServer = isElectron() ? () => setChangingServer(true) : undefined;
+
   if (status === "loading" || (!me && refreshError && pathname !== "/register" && !pathname.startsWith("/shared/"))) {
     return (
       <>
         <WindowControls className="root-window-controls" />
-        <StartupConnection key={status} />
+        <StartupConnection key={status} onChangeServer={changeServer} />
       </>
     );
   }
@@ -60,7 +82,7 @@ export default function App() {
     <>
       {!me && <WindowControls className="root-window-controls" />}
       <Routes>
-        <Route path="/login" element={me ? <Navigate to="/" replace /> : <Login />} />
+        <Route path="/login" element={me ? <Navigate to="/" replace /> : <Login onChangeServer={changeServer} />} />
         <Route path="/register" element={<Register />} />
         <Route path="/shared/track/:id" element={<SharePreview />} />
 

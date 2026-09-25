@@ -94,7 +94,6 @@ const config = {
   files: [
     "package.json",
     "electron/package.json",
-    "electron/setup.html",
     "electron/build/**/*",
     "dist/**/*",
     "!**/*.map",

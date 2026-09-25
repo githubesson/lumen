@@ -1,10 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { DesktopConfigPatch } from "../electron";
-import {
-  canUpdateDesktopConfig,
-  updateDesktopConfig,
-  useDesktopConfig,
-} from "../lib/desktopConfig";
+import { testDesktopServer, updateDesktopConfig, useDesktopConfig } from "../lib/desktopConfig";
 import { Button } from "./Button";
 import SettingRow from "./SettingRow";
 import Switch from "./Switch";
@@ -16,8 +12,7 @@ type Key = keyof DesktopConfigPatch;
  * draft. Owned by the settings dialog, like the updater state, so the draft
  * survives switching sections or searching. Closing the dialog ends the
  * session: the draft resets and late failures are dropped. Toggles save as
- * they flip. Returns null outside the desktop app, until the config loads,
- * and on desktop builds that can't save it from here.
+ * they flip. Returns null outside the desktop app and until the config loads.
  */
 export function useDesktopSettings(enabled: boolean) {
   const config = useDesktopConfig();
@@ -37,8 +32,7 @@ export function useDesktopSettings(enabled: boolean) {
     };
   }, [enabled]);
 
-  // Older desktop builds can read their config but not save it from here.
-  if (!config || !canUpdateDesktopConfig()) return null;
+  if (!config) return null;
 
   const save = async (key: Key, patch: DesktopConfigPatch) => {
     const id = session.current;
@@ -47,7 +41,10 @@ export function useDesktopSettings(enabled: boolean) {
     setErrors((e) => ({ ...e, [key]: undefined }));
     let result: Awaited<ReturnType<typeof updateDesktopConfig>>;
     try {
-      result = await updateDesktopConfig(patch);
+      // Only switch to a server that answers, at the origin it answers on.
+      const tested = patch.backendUrl === undefined ? null : await testDesktopServer(patch.backendUrl);
+      if (tested && !tested.ok) throw new Error(tested.error);
+      result = await updateDesktopConfig(tested ? { backendUrl: tested.url } : patch);
     } catch (cause) {
       result = { ok: false, error: cause instanceof Error ? cause.message : "Could not save." };
     }
@@ -93,7 +90,7 @@ export function ServerSetting({ desktop }: { desktop: DesktopSettingsState }) {
           placeholder="https://music.example.com"
           spellCheck={false}
           value={server}
-          disabled={busy}
+          readOnly={busy}
           onChange={(e) => setServer(e.currentTarget.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && serverDirty) void saveServer();
@@ -102,7 +99,7 @@ export function ServerSetting({ desktop }: { desktop: DesktopSettingsState }) {
       }
     >
       <Button size="sm" disabled={busy || !serverDirty} onClick={() => void saveServer()}>
-        Save
+        {busy ? "Connecting…" : "Save"}
       </Button>
     </SettingRow>
   );

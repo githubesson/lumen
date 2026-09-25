@@ -15,5 +15,5 @@
     "declaration": false,
     "types": ["node"]
   },
-  "include": ["main.ts", "preload.ts", "mainPreload.ts"]
+  "include": ["main.ts", "mainPreload.ts"]
 }

@@ -75,6 +75,7 @@
 @import "./styles/menu.css";
 @import "./styles/utilities.css";
 @import "./styles/auth.css";
+@import "./styles/welcome.css";
 @import "./styles/forms.css";
 @import "./styles/dialogs.css";
 @import "./styles/primitives.css";

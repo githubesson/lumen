@@ -1,5 +1,5 @@
 // Shared IPC declarations only: safe to reference from the main process,
-// sandboxed preloads, web renderer, and the setup page's classic script.
+// sandboxed preload, and web renderer.
 export type Theme = "light" | "dark";
 export type Density = "airy" | "balanced" | "dense";
 export type Layout = "compact" | "sidebar" | "wide";
@@ -90,7 +90,7 @@ export interface UpdatePreferences {
   repoUrl: string;
 }
 
-export interface SetupConfig {
+export interface DesktopConfig {
   backendUrl: string;
   discordEnabled: boolean;
   alwaysOnTop: boolean;
@@ -99,33 +99,22 @@ export interface SetupConfig {
   fh6BridgePort: number;
 }
 export type DesktopConfigPatch = Partial<
-  Pick<SetupConfig, "backendUrl" | "discordEnabled" | "alwaysOnTop" | "fh6RadioEnabled">
+  Pick<DesktopConfig, "backendUrl" | "discordEnabled" | "alwaysOnTop" | "fh6RadioEnabled">
 >;
 export type DesktopConfigUpdateResult =
   | { ok: false; error: string }
   | {
       ok: true;
-      config: SetupConfig;
+      config: DesktopConfig;
       /** The server changed; the window reloads onto its sign-in page. */
       changed: boolean;
     };
-export interface SetupDoneOpts {
-  clearSession?: boolean;
-}
+/** `url` is the server origin to save, after any redirect. */
+export type ServerTestResult = { ok: true; url: string } | { ok: false; error: string };
 export interface FH6InstallRequest {
   gameDir?: string;
   mediaSource?: string;
   skipMedia?: boolean;
-}
-
-export interface SetupApi {
-  getConfig(): Promise<SetupConfig>;
-  saveConfig(
-    patch: Pick<SetupConfig, "backendUrl"> &
-      Partial<Omit<SetupConfig, "backendUrl">>,
-  ): Promise<{ ok: boolean; error?: string; changed?: boolean }>;
-  setupDone(opts?: SetupDoneOpts): Promise<{ ok: boolean }>;
-  setupCancel(): Promise<{ ok: boolean }>;
 }
 
 export interface ElectronApi {
@@ -133,10 +122,10 @@ export interface ElectronApi {
   setSignOutIntent(signedOut: boolean): Promise<void>;
   isElectron: true;
   platform: string;
-  openSettings(): Promise<{ ok: boolean }>;
   openExternal(url: string): Promise<{ ok: boolean; error?: string }>;
-  getConfig(): Promise<SetupConfig>;
+  getConfig(): Promise<DesktopConfig>;
   updateConfig(patch: DesktopConfigPatch): Promise<DesktopConfigUpdateResult>;
+  testServer(url: string): Promise<ServerTestResult>;
   getFH6Status(): Promise<FH6StatusPayload>;
   chooseFH6GameDir(): Promise<{
     ok: boolean;
@@ -185,7 +174,6 @@ export interface ElectronApi {
 
 // Older desktop builds may not expose these methods to a newer web renderer.
 type OptionalRendererMethods =
-  | "updateConfig"
   | "setDiscordActivity"
   | "clearDiscordActivity"
   | "exportTrackFiles"

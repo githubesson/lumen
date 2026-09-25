@@ -1,4 +1,4 @@
-import { app, ipcMain, session, dialog, shell } from "electron";
+import { app, ipcMain, net, session, dialog, shell } from "electron";
 import * as path from "node:path";
 import * as fsp from "node:fs/promises";
 import type { OpenDialogOptions } from "electron";
@@ -33,9 +33,9 @@ import type { WindowManager } from "./windows";
 import { downloadToFile, exportDownloadUrl, uniqueExportPath } from "./track-export";
 import { postJson } from "./fh6-bridge";
 
-import type { SetupConfig, SetupDoneOpts, ExportTrackFileItem } from "../src/contracts/desktop";
+import type { DesktopConfig, ExportTrackFileItem } from "../src/contracts/desktop";
 
-async function readSetupConfig(): Promise<SetupConfig> {
+async function readDesktopConfig(): Promise<DesktopConfig> {
   const cfg = await loadConfig();
   return {
     backendUrl: cfg.backendUrl ?? "",
@@ -79,7 +79,7 @@ export function registerIpcHandlers(deps: {
 }): void {
   const { windows, localProxy, updateManager } = deps;
 
-  ipcMain.handle("config:get", () => readSetupConfig());
+  ipcMain.handle("config:get", () => readDesktopConfig());
 
   ipcMain.handle("tweaks:get", async () => {
     const cfg = await loadConfig();
@@ -140,9 +140,8 @@ export function registerIpcHandlers(deps: {
     }
   });
 
-  // Validate a patch, persist it and apply its live side effects. The server
-  // URL is optional here so the in-app settings dialog can flip one toggle
-  // at a time; the setup window always sends it.
+  // Validate a patch, persist it and apply its live side effects. Every field
+  // is optional, so Settings can flip one toggle at a time.
   async function applyConfigPatch(
     patch: SavePatch | undefined,
   ): Promise<{ ok: false; error: string } | { ok: true; changed: boolean }> {
@@ -181,15 +180,8 @@ export function registerIpcHandlers(deps: {
     if (normalized === null) return { ok: true, changed: false };
     deps.setBackendUrl(normalized);
     configureDiscordPresence({ backendUrl: normalized });
-    return { ok: true, changed: prev !== "" && prev !== normalized };
+    return { ok: true, changed: prev !== normalized };
   }
-
-  ipcMain.handle("config:save", async (_e, patch: SavePatch) => {
-    if (typeof patch?.backendUrl !== "string" || !patch.backendUrl.trim()) {
-      return { ok: false, error: "Server URL is required" };
-    }
-    return applyConfigPatch(patch);
-  });
 
   ipcMain.handle("config:update", async (_e, patch: SavePatch) => {
     const result = await applyConfigPatch(patch);
@@ -204,34 +196,47 @@ export function registerIpcHandlers(deps: {
       }
       setTimeout(() => windows.mainWindow?.webContents.reload(), 0);
     }
-    return { ...result, config: await readSetupConfig() };
+    return { ...result, config: await readDesktopConfig() };
   });
 
-  ipcMain.handle("setup:done", async (_e, opts: SetupDoneOpts | undefined) => {
-    const clear = !!opts?.clearSession;
-    const hadMain = !!windows.mainWindow;
-    if (windows.setupWindow) windows.setupWindow.close();
-    if (clear) {
-      try {
-        await session.defaultSession.clearStorageData({ storages: ["cookies"] });
-      } catch {
-        // Non-fatal: stale cookies will simply be rejected by the new backend.
-      }
+  // First-run and change-server check: is there a Lumen server at this
+  // address? Forgiving about what's typed (no scheme, a pasted page URL), and
+  // answers with the origin to save, after any redirect (say, to https).
+  ipcMain.handle("config:test-server", async (_e, raw: unknown) => {
+    const text = typeof raw === "string" ? raw.trim() : "";
+    if (!text) return { ok: false, error: "Enter your server's address." };
+    let target: URL;
+    try {
+      target = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(text) ? text : `https://${text}`);
+    } catch {
+      return { ok: false, error: "That doesn't look like a web address." };
     }
-    if (!hadMain) await windows.openMain();
-    else windows.mainWindow?.webContents.reload();
-    return { ok: true };
-  });
-
-  ipcMain.handle("setup:cancel", async () => {
-    if (windows.setupWindow) windows.setupWindow.close();
-    if (!windows.mainWindow && !deps.getBackendUrl()) app.quit();
-    return { ok: true };
-  });
-
-  ipcMain.handle("settings:open", () => {
-    windows.openSetup();
-    return { ok: true };
+    if (target.protocol !== "http:" && target.protocol !== "https:") {
+      return { ok: false, error: "The address must start with http:// or https://." };
+    }
+    if (target.username || target.password) {
+      return { ok: false, error: "Leave the username and password out of the address." };
+    }
+    let response: Response;
+    try {
+      response = await net.fetch(`${target.origin}/api/health`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(8000),
+      });
+    } catch (error) {
+      const timedOut = (error as Error).name === "TimeoutError";
+      return {
+        ok: false,
+        error: timedOut
+          ? `${target.host} didn't answer in time.`
+          : `Couldn't reach ${target.host}. Check the address and that the server is running.`,
+      };
+    }
+    const body = response.ok ? await response.json().catch(() => null) : null;
+    if ((body as { ok?: unknown } | null)?.ok !== true) {
+      return { ok: false, error: `${target.host} answered, but it isn't a Lumen server.` };
+    }
+    return { ok: true, url: new URL(response.url || target.href).origin };
   });
 
   ipcMain.handle("external:open", async (_e, rawUrl: unknown) => {

@@ -1,0 +1,164 @@
+/* ============================================================
+   Desktop first-run setup (pages/Welcome.tsx)
+   ============================================================ */
+.welcome {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 48px 24px 24px;
+  background: var(--muted);
+  overflow-y: auto;
+}
+[data-theme="dark"] .welcome {
+  background: var(--background);
+}
+/* The window has no title bar; let the empty top edge move it. */
+.welcome-drag {
+  position: fixed;
+  inset: 0 0 auto;
+  height: 44px;
+  -webkit-app-region: drag;
+}
+.welcome-card {
+  width: 100%;
+  max-width: 440px;
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  padding: 28px;
+}
+
+.welcome-progress {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 24px;
+}
+.welcome-progress span {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 200ms ease;
+}
+.welcome-progress span[data-done] {
+  background: var(--primary);
+}
+
+.welcome-step {
+  display: grid;
+  gap: 16px;
+  animation: welcome-in 220ms ease-out;
+}
+.welcome-step h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+  outline: none;
+}
+.welcome-lead {
+  margin: -8px 0 4px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+.welcome-intro {
+  justify-items: center;
+  text-align: center;
+  padding: 8px 0 4px;
+}
+.welcome-intro .welcome-lead {
+  margin-top: -6px;
+  max-width: 340px;
+}
+.welcome-mark.brand-mark {
+  width: 52px;
+  height: 52px;
+  flex-basis: 52px;
+  font-size: 22px;
+  border-radius: var(--radius-xl);
+}
+.welcome-intro .welcome-actions {
+  justify-content: center;
+}
+
+.welcome-field {
+  display: grid;
+  gap: 8px;
+}
+.welcome-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.welcome-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.welcome-link:hover {
+  color: var(--primary);
+}
+
+.welcome-connected {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -8px 0 0;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+.welcome-connected svg {
+  color: var(--success);
+}
+.welcome-connected .mono {
+  color: var(--foreground);
+}
+.welcome-prefs {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.welcome-note {
+  margin: -4px 0 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.welcome-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--destructive);
+}
+
+.welcome-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+.welcome-actions:has(> :only-child) {
+  justify-content: flex-end;
+}
+
+@keyframes welcome-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .welcome-step {
+    animation: none;
+  }
+  .welcome-progress span {
+    transition: none;
+  }
+}

@@ -1,14 +1,12 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../context/Auth";
-import { electron } from "../lib/platform";
 import CenteredCard from "./CenteredCard";
 import { Button } from "./Button";
 
-export default function StartupConnection() {
+export default function StartupConnection({ onChangeServer }: { onChangeServer?: () => void }) {
   const { status, refreshError, refresh } = useAuth();
   const [slow, setSlow] = useState(false);
   const connecting = status === "loading";
-  const desktop = electron();
 
   useEffect(() => {
     const timer = setTimeout(() => setSlow(true), 3000);
@@ -24,7 +22,7 @@ export default function StartupConnection() {
       </p>
       <div className="flex gap-3 mt-5">
         {!connecting && <Button variant="primary" onClick={() => { setSlow(false); void refresh(); }}>Try again</Button>}
-        {desktop && <Button onClick={() => void desktop.openSettings()}>Server settings</Button>}
+        {onChangeServer && <Button onClick={onChangeServer}>Change server</Button>}
       </div>
     </CenteredCard>
   );

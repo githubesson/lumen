@@ -56,12 +56,10 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    const { mainWindow, setupWindow } = windows;
+    const { mainWindow } = windows;
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
-    } else if (setupWindow) {
-      setupWindow.focus();
     }
   });
 
@@ -86,8 +84,8 @@ if (!gotLock) {
       parseGitHubRepoUrl(cfg.updateRepoUrl)?.url ?? DEFAULT_UPDATE_REPO_URL;
     updateManager.configure({ branch: updateBranch, repoUrl: updateRepoUrl });
     await localProxy.start();
-    if (!backendUrl) windows.openSetup();
-    else await windows.openMain();
+    // With no server yet the renderer shows its first-run setup.
+    await windows.openMain();
   });
 
   app.on("window-all-closed", () => {
@@ -95,10 +93,7 @@ if (!gotLock) {
   });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      if (!backendUrl) windows.openSetup();
-      else void windows.openMain();
-    }
+    if (BrowserWindow.getAllWindows().length === 0) void windows.openMain();
   });
 
   app.on("before-quit", () => {

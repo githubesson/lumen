@@ -18,7 +18,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "lint": "eslint . --max-warnings=0",
-    "electron:compile": "node scripts/electron-buildenv.mjs && tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.setup.json",
+    "electron:compile": "node scripts/electron-buildenv.mjs && tsc -p electron/tsconfig.json",
     "electron:dev": "npm run build && npm run electron:compile && electron .",
     "electron:build": "npm run build && npm run electron:compile && electron-builder --win --publish never --config electron-builder.cjs",
     "electron:build:linux": "npm run build && npm run electron:compile && electron-builder --linux --publish never --config electron-builder.cjs",

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { DesktopConfigPatch, SetupConfig } from "../electron";
+import type { DesktopConfig, DesktopConfigPatch, ServerTestResult } from "../electron";
 import { electron } from "./platform";
 
 /**
@@ -8,11 +8,11 @@ import { electron } from "./platform";
  * at once by the sidebar and the FH6 page. Null on the web and until the
  * first load resolves.
  */
-let config: SetupConfig | null = null;
+let config: DesktopConfig | null = null;
 let loading: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
-function publish(next: SetupConfig) {
+function publish(next: DesktopConfig) {
   config = next;
   for (const listener of listeners) listener();
 }
@@ -39,22 +39,25 @@ function subscribe(listener: () => void) {
   };
 }
 
-export function useDesktopConfig(): SetupConfig | null {
+export function useDesktopConfig(): DesktopConfig | null {
   return useSyncExternalStore(subscribe, () => config, () => null);
 }
 
-/** Whether this desktop build can change its settings from inside the app. */
-export function canUpdateDesktopConfig(): boolean {
-  return !!electron()?.updateConfig;
-}
-
+/** Save settings; a new server reloads the window onto its sign-in page. */
 export async function updateDesktopConfig(
   patch: DesktopConfigPatch,
 ): Promise<{ ok: true; changed: boolean } | { ok: false; error: string }> {
-  const updateConfig = electron()?.updateConfig;
-  if (!updateConfig) return { ok: false, error: "This version of the app can't change settings here." };
-  const result = await updateConfig(patch);
+  const desktop = electron();
+  if (!desktop) return { ok: false, error: "Only the desktop app has these settings." };
+  const result = await desktop.updateConfig(patch);
   if (!result.ok) return result;
   publish(result.config);
   return { ok: true, changed: result.changed };
+}
+
+/** Check there's a Lumen server at `address`; resolves to its origin. */
+export function testDesktopServer(address: string): Promise<ServerTestResult> {
+  const desktop = electron();
+  if (!desktop) return Promise.resolve({ ok: false, error: "Only the desktop app connects to a server." });
+  return desktop.testServer(address);
 }

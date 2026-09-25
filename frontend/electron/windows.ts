@@ -4,19 +4,15 @@ import type { Rectangle } from "electron";
 import type { LocalProxy } from "./local-proxy";
 import type { DesktopUpdateManager } from "./updater";
 
-const SETUP_FILE = path.join(__dirname, "..", "setup.html");
-const SETUP_PRELOAD = path.join(__dirname, "preload.js");
 const MAIN_PRELOAD = path.join(__dirname, "mainPreload.js");
 const NORMAL_MIN_SIZE = { width: 640, height: 480 };
 const MINI_PLAYER_SIZE = { width: 780, height: 184 };
 
 export interface WindowManager {
   readonly mainWindow: BrowserWindow | null;
-  readonly setupWindow: BrowserWindow | null;
   readonly isMiniPlayer: boolean;
   alwaysOnTop: boolean;
   openMain(): Promise<void>;
-  openSetup(): void;
   setMiniPlayerMode(enabled: boolean): void;
 }
 
@@ -26,13 +22,11 @@ export function createWindowManager(options: {
 }): WindowManager {
   const { localProxy, updateManager } = options;
   let mainWindow: BrowserWindow | null = null;
-  let setupWindow: BrowserWindow | null = null;
   let isMiniPlayer = false;
   let normalBounds: Rectangle | null = null;
   let alwaysOnTop = false;
 
-  // The renderer only ever needs the local proxy origin (and, for the setup
-  // window, a file:// page). Without these guards a compromised or injected
+  // The renderer only ever needs the local proxy origin. Without these guards a compromised or injected
   // renderer could navigate the main window to any remote origin, and
   // `window.open` would create unrestricted child BrowserWindows. contextIsolation
   // + sandbox + nodeIntegration:false make that not-immediately-RCE, but this is
@@ -41,7 +35,6 @@ export function createWindowManager(options: {
   function isInternalURL(rawUrl: string): boolean {
     try {
       const u = new URL(rawUrl);
-      if (u.protocol === "file:") return true;
       return (
         u.protocol === "http:" &&
         (u.hostname === "127.0.0.1" || u.hostname === "localhost") &&
@@ -105,37 +98,6 @@ export function createWindowManager(options: {
     updateManager.startAutomaticChecks();
   }
 
-  function openSetup(): void {
-    if (setupWindow) {
-      setupWindow.focus();
-      return;
-    }
-    setupWindow = new BrowserWindow({
-      width: 520,
-      height: 540,
-      parent: mainWindow ?? undefined,
-      modal: !!mainWindow,
-      resizable: false,
-      minimizable: false,
-      maximizable: false,
-      autoHideMenuBar: true,
-      title: "Server configuration",
-      webPreferences: {
-        contextIsolation: true,
-        sandbox: false,
-        nodeIntegration: false,
-        preload: SETUP_PRELOAD,
-      },
-    });
-    hardenNavigation(setupWindow);
-    setupWindow.webContents.once("did-finish-load", () => updateManager.startAutomaticChecks());
-    setupWindow.setMenuBarVisibility(false);
-    setupWindow.on("closed", () => {
-      setupWindow = null;
-    });
-    void setupWindow.loadFile(SETUP_FILE);
-  }
-
   function setMiniPlayerMode(enabled: boolean): void {
     if (!mainWindow || enabled === isMiniPlayer) return;
 
@@ -173,9 +135,6 @@ export function createWindowManager(options: {
     get mainWindow() {
       return mainWindow;
     },
-    get setupWindow() {
-      return setupWindow;
-    },
     get isMiniPlayer() {
       return isMiniPlayer;
     },
@@ -186,7 +145,6 @@ export function createWindowManager(options: {
       alwaysOnTop = value;
     },
     openMain,
-    openSetup,
     setMiniPlayerMode,
   };
 }

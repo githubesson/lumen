@@ -52,10 +52,6 @@ export function clearDiscordActivity() {
   return electron()?.clearDiscordActivity?.();
 }
 
-export function getDesktopConfig() {
-  return electron()?.getConfig?.();
-}
-
 export function reserveExternalWindow(): Window | null {
   if (electron()) return null;
   const opened = window.open("", "_blank");

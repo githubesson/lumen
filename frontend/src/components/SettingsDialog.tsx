@@ -12,8 +12,7 @@ import { useLastFMConnection } from "@music-library/core";
 import { useTheme, type Density, type Layout, type Theme } from "../context/Theme";
 import { useAudioOutput } from "../lib/audioOutput";
 import { useKey, useModalKeyScope } from "../lib/keybindings";
-import { canUpdateDesktopConfig } from "../lib/desktopConfig";
-import { electron, openExternal } from "../lib/platform";
+import { openExternal } from "../lib/platform";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import { Button } from "./Button";
 import { ServerSetting, ToggleSetting, useDesktopSettings } from "./DesktopSettings";
@@ -68,8 +67,7 @@ const LAYOUTS: SelectOption<Layout>[] = [
  * App settings as a modal with a searchable section list on the left and
  * label / control rows on the right. Replaces the old floating Tweaks panel,
  * which had outgrown a popover once audio output, Last.fm and desktop updates
- * moved in. The desktop app's server and window options live here too; the
- * separate setup window is only for first run and the sign-in screen.
+ * moved in. The desktop app's server and window options live here too.
  */
 export default function SettingsDialog({ open, section, onClose }: Props) {
   const { mounted, visible } = useTransitionMount(open, 200);
@@ -192,8 +190,6 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
           ? "Waiting for you to approve Lumen on Last.fm."
           : "Send what you play to your Last.fm profile.";
   const lastFMErrorText = lastFMError || lastFM?.last_error;
-  // Desktop builds from before in-app editing still have the setup window.
-  const legacyDesktop = !canUpdateDesktopConfig() ? electron()?.openSettings : undefined;
 
   const sections: SectionDef[] = [
     {
@@ -335,24 +331,7 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
               ),
             },
           ]
-        : legacyDesktop
-          ? [
-              {
-                id: "desktop-window",
-                keywords: "server url address backend host discord presence stay on top window lumen radio fh6 forza",
-                render: () => (
-                  <SettingRow
-                    label="Server and app options"
-                    description="This version of the app edits them in a separate window."
-                  >
-                    <Button size="sm" onClick={() => void legacyDesktop()}>
-                      Open
-                    </Button>
-                  </SettingRow>
-                ),
-              },
-            ]
-          : [],
+        : [],
     },
     {
       id: "connections",
