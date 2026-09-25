@@ -2,6 +2,7 @@ import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "re
 import {
   Download as DownloadIcon,
   Link2 as LinkIcon,
+  Monitor as MonitorIcon,
   Palette as PaletteIcon,
   Volume2 as SpeakerIcon,
   X as XMarkIcon,
@@ -11,20 +12,24 @@ import { useLastFMConnection } from "@music-library/core";
 import { useTheme, type Density, type Layout, type Theme } from "../context/Theme";
 import { useAudioOutput } from "../lib/audioOutput";
 import { useKey, useModalKeyScope } from "../lib/keybindings";
-import { openExternal } from "../lib/platform";
+import { canUpdateDesktopConfig } from "../lib/desktopConfig";
+import { electron, openExternal } from "../lib/platform";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import { Button } from "./Button";
+import { ServerSetting, ToggleSetting, useDesktopSettings } from "./DesktopSettings";
 import DesktopUpdates, { useDesktopUpdates } from "./DesktopUpdates";
 import SearchInput from "./SearchInput";
 import { Select, type SelectOption } from "./Select";
 import SettingRow from "./SettingRow";
 
+export type SectionId = "appearance" | "playback" | "desktop" | "connections" | "updates";
+
 interface Props {
   open: boolean;
+  /** Section to show on opening; otherwise the last one viewed. */
+  section?: SectionId;
   onClose: () => void;
 }
-
-type SectionId = "appearance" | "playback" | "connections" | "updates";
 
 interface SettingDef {
   id: string;
@@ -63,9 +68,10 @@ const LAYOUTS: SelectOption<Layout>[] = [
  * App settings as a modal with a searchable section list on the left and
  * label / control rows on the right. Replaces the old floating Tweaks panel,
  * which had outgrown a popover once audio output, Last.fm and desktop updates
- * moved in.
+ * moved in. The desktop app's server and window options live here too; the
+ * separate setup window is only for first run and the sign-in screen.
  */
-export default function SettingsDialog({ open, onClose }: Props) {
+export default function SettingsDialog({ open, section, onClose }: Props) {
   const { mounted, visible } = useTransitionMount(open, 200);
   const titleId = useId();
   const layerRef = useRef<HTMLDivElement>(null);
@@ -105,6 +111,7 @@ export default function SettingsDialog({ open, onClose }: Props) {
   // released (e.g. to the palette after a Mod-K handoff, or a quick reopen).
   const interactive = open && mounted;
   const updates = useDesktopUpdates(interactive);
+  const desktop = useDesktopSettings(interactive);
 
   // Shell passes a fresh arrow each render; the effect below must only run on
   // mount/unmount or it would yank focus back to the panel on every render.
@@ -167,12 +174,13 @@ export default function SettingsDialog({ open, onClose }: Props) {
   );
   useModalKeyScope(interactive);
 
-  // Start fresh each time the dialog opens.
+  // Start fresh each time the dialog opens, on the section asked for if any.
   useEffect(() => {
     if (!open) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setQuery("");
-  }, [open]);
+    if (section) setActive(section);
+  }, [open, section]);
 
   const lastFMState = !lastFM
     ? "Checking…"
@@ -184,6 +192,8 @@ export default function SettingsDialog({ open, onClose }: Props) {
           ? "Waiting for you to approve Lumen on Last.fm."
           : "Send what you play to your Last.fm profile.";
   const lastFMErrorText = lastFMError || lastFM?.last_error;
+  // Desktop builds from before in-app editing still have the setup window.
+  const legacyDesktop = !canUpdateDesktopConfig() ? electron()?.openSettings : undefined;
 
   const sections: SectionDef[] = [
     {
@@ -290,6 +300,61 @@ export default function SettingsDialog({ open, onClose }: Props) {
         : [],
     },
     {
+      id: "desktop",
+      title: "Desktop",
+      icon: MonitorIcon,
+      settings: desktop
+        ? [
+            {
+              id: "server",
+              keywords: "server url address backend host change switch",
+              render: () => <ServerSetting desktop={desktop} />,
+            },
+            {
+              id: "always-on-top",
+              keywords: "stay on top always window pin float",
+              render: () => (
+                <ToggleSetting
+                  desktop={desktop}
+                  setting="alwaysOnTop"
+                  label="Stay on top"
+                  description="Keep Lumen above other windows."
+                />
+              ),
+            },
+            {
+              id: "fh6-radio",
+              keywords: "lumen radio fh6 forza horizon game",
+              render: () => (
+                <ToggleSetting
+                  desktop={desktop}
+                  setting="fh6RadioEnabled"
+                  label="Lumen Radio for FH6"
+                  description="Adds the Forza Horizon 6 radio installer and controls to the sidebar."
+                />
+              ),
+            },
+          ]
+        : legacyDesktop
+          ? [
+              {
+                id: "desktop-window",
+                keywords: "server url address backend host discord presence stay on top window lumen radio fh6 forza",
+                render: () => (
+                  <SettingRow
+                    label="Server and app options"
+                    description="This version of the app edits them in a separate window."
+                  >
+                    <Button size="sm" onClick={() => void legacyDesktop()}>
+                      Open
+                    </Button>
+                  </SettingRow>
+                ),
+              },
+            ]
+          : [],
+    },
+    {
       id: "connections",
       title: "Connections",
       icon: LinkIcon,
@@ -324,6 +389,22 @@ export default function SettingsDialog({ open, onClose }: Props) {
             </SettingRow>
           ),
         },
+        ...(desktop
+          ? [
+              {
+                id: "discord",
+                keywords: "discord rich presence status listening activity",
+                render: () => (
+                  <ToggleSetting
+                    desktop={desktop}
+                    setting="discordEnabled"
+                    label="Discord status"
+                    description="Show what you're listening to. Needs the Discord app running."
+                  />
+                ),
+              },
+            ]
+          : []),
       ],
     },
     {
@@ -389,21 +470,23 @@ export default function SettingsDialog({ open, onClose }: Props) {
         className="dialog settings relative transition-[opacity,transform] duration-200 ease-out group-data-closed:scale-95 group-data-closed:opacity-0 motion-reduce:transition-none motion-reduce:group-data-closed:scale-100"
       >
         <nav className="settings-nav" aria-label="Settings sections">
-          <button
-            type="button"
-            className="iconbtn settings-close"
-            aria-label="Close settings"
-            onClick={onClose}
-          >
-            <XMarkIcon className="size-4" aria-hidden="true" />
-          </button>
-          <SearchInput
-            ref={searchRef}
-            className="settings-search"
-            placeholder="Search settings"
-            value={query}
-            onChange={(e) => setQuery(e.currentTarget.value)}
-          />
+          <div className="settings-nav-top">
+            <button
+              type="button"
+              className="iconbtn settings-close"
+              aria-label="Close settings"
+              onClick={onClose}
+            >
+              <XMarkIcon className="size-4" aria-hidden="true" />
+            </button>
+            <SearchInput
+              ref={searchRef}
+              className="settings-search"
+              placeholder="Search settings"
+              value={query}
+              onChange={(e) => setQuery(e.currentTarget.value)}
+            />
+          </div>
           <ul className="settings-nav-list">
             {navSections.map((s) => {
               const Icon = s.icon;

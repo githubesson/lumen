@@ -3,9 +3,9 @@
    ============================================================ */
 .settings {
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
+  grid-template-columns: 216px minmax(0, 1fr);
   width: 100%;
-  max-width: 680px;
+  max-width: 700px;
   height: min(560px, calc(100dvh - 32px));
   overflow: hidden;
   box-shadow: var(--shadow-md);
@@ -23,11 +23,18 @@
   min-height: 0;
   overflow-y: auto;
 }
+.settings-nav-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .settings-close {
   background: var(--muted);
 }
 .settings-search.search {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
+  width: auto;
   max-width: none;
 }
 .settings-nav-list {
@@ -144,6 +151,50 @@
   font-size: 12px;
 }
 
+/* On/off switch (Switch.tsx) */
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 36px;
+  height: 20px;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--input);
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+.switch[aria-checked="true"] {
+  background: var(--primary);
+}
+.switch:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.switch:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.switch-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--background);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  transition: transform 150ms ease;
+}
+.switch[aria-checked="true"] .switch-thumb {
+  background: var(--primary-foreground);
+  transform: translateX(16px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .switch,
+  .switch-thumb {
+    transition: none;
+  }
+}
+
 /* Phones: section list becomes a scrolling strip above the rows. */
 @media (max-width: 640px) {
   .settings-layer {
@@ -155,14 +206,11 @@
     height: calc(100dvh - 16px);
   }
   .settings-nav {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
     border-right: 0;
     border-bottom: 1px solid var(--border);
     overflow: visible;
   }
   .settings-nav-list {
-    grid-column: 1 / -1;
     flex-direction: row;
     overflow-x: auto;
     scrollbar-width: none;

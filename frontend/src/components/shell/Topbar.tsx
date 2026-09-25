@@ -7,14 +7,12 @@ import {
   PanelLeftOpen as ChevronDoubleRightIcon,
   Search as MagnifyingGlassIcon,
   Moon as MoonIcon,
-  Server as ServerStackIcon,
   Sun as SunIcon,
   X as XMarkIcon,
 } from "lucide-react";
 import type { Playlist } from "../../api";
 import { useLyricsPanel } from "../../context/LyricsPanel";
 import { useTheme } from "../../context/Theme";
-import { electron, isElectron } from "../../lib/platform";
 import WindowControls from "../WindowControls";
 import Breadcrumbs from "./Breadcrumbs";
 
@@ -141,18 +139,6 @@ export default function Topbar({
       >
         <AdjustmentsHorizontalIcon className="size-4" aria-hidden="true" />
       </button>
-
-      {isElectron() && (
-        <button
-          className="iconbtn topbar-secondary"
-          type="button"
-          title="Change server URL"
-          aria-label="Change server URL"
-          onClick={() => void electron()?.openSettings()}
-        >
-          <ServerStackIcon className="size-4" aria-hidden="true" />
-        </button>
-      )}
 
       <WindowControls />
     </div>

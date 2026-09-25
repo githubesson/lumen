@@ -12,7 +12,6 @@ import {
   Music as MusicalNoteIcon,
   ListMusic as QueueListIcon,
   Radio as RadioIcon,
-  Server as ServerStackIcon,
   Sparkles as SparklesIcon,
   Sun as SunIcon,
 } from "lucide-react";
@@ -20,7 +19,7 @@ import type { Playlist } from "../../api";
 import { useAuth } from "../../context/Auth";
 import { useTheme } from "../../context/Theme";
 import { startDesktopDownload } from "../../lib/downloads";
-import { electron, isElectron } from "../../lib/platform";
+import { isElectron } from "../../lib/platform";
 import NavItem from "./NavItem";
 import SidebarPlaylists from "./SidebarPlaylists";
 
@@ -172,16 +171,6 @@ function MobileSidebarActions({
         <AdjustmentsHorizontalIcon className="nav-icon" aria-hidden="true" />
         <span className="nav-label">Settings</span>
       </button>
-      {isElectron() && (
-        <button
-          className="nav-item mobile-sidebar-action"
-          type="button"
-          onClick={() => void electron()?.openSettings()}
-        >
-          <ServerStackIcon className="nav-icon" aria-hidden="true" />
-          <span className="nav-label">Server settings</span>
-        </button>
-      )}
     </div>
   );
 }

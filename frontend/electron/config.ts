@@ -42,10 +42,18 @@ export async function loadConfig(): Promise<Config> {
   }
 }
 
-export async function saveConfigPatch(patch: Config): Promise<Config> {
-  const current = await loadConfig();
-  const next: Config = { ...current, ...patch };
-  await fsp.mkdir(path.dirname(configPath()), { recursive: true });
-  await fsp.writeFile(configPath(), JSON.stringify(next, null, 2));
-  return next;
+// Writes are read-modify-write, so two settings saved at once (say, two
+// toggles flipped quickly) would drop one without this queue.
+let writes: Promise<unknown> = Promise.resolve();
+
+export function saveConfigPatch(patch: Config): Promise<Config> {
+  const write = writes.then(async () => {
+    const current = await loadConfig();
+    const next: Config = { ...current, ...patch };
+    await fsp.mkdir(path.dirname(configPath()), { recursive: true });
+    await fsp.writeFile(configPath(), JSON.stringify(next, null, 2));
+    return next;
+  });
+  writes = write.catch(() => undefined);
+  return write;
 }

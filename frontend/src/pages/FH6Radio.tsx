@@ -9,13 +9,9 @@ import ErrorBanner from "../components/ErrorBanner";
 import { TextInput } from "../components/Field";
 import { Select } from "../components/Select";
 import { api, type Playlist } from "../api";
-import {
-  electron,
-  getDesktopConfig,
-  getFH6Status,
-  isElectron,
-  syncFH6Session,
-} from "../lib/platform";
+import { getFH6Status, isElectron, syncFH6Session } from "../lib/platform";
+import { useDesktopConfig } from "../lib/desktopConfig";
+import { useOpenSettings } from "../components/shell/openSettings";
 import {
   FH6_DEFAULT_BRIDGE_URL,
   bridgePost,
@@ -38,7 +34,8 @@ const MODE_OPTIONS = [
 ] satisfies Array<{ value: QueueMode; label: string }>;
 
 export default function FH6Radio() {
-  const [enabled, setEnabled] = useState(false);
+  const enabled = useDesktopConfig()?.fh6RadioEnabled === true;
+  const openSettings = useOpenSettings();
   const [status, setStatus] = useState<FH6StatusPayload | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -73,12 +70,8 @@ export default function FH6Radio() {
     let alive = true;
     void (async () => {
       if (!isElectron()) return;
-      const [cfg, nextStatus] = await Promise.all([
-        getDesktopConfig?.(),
-        getFH6Status?.(),
-      ]);
+      const nextStatus = await getFH6Status?.();
       if (!alive) return;
-      setEnabled(cfg?.fh6RadioEnabled === true);
       if (nextStatus) setStatus(nextStatus);
     })();
     return () => {
@@ -162,7 +155,7 @@ export default function FH6Radio() {
           <Button
             variant="primary"
             leadingIcon={<PowerIcon className="size-4" />}
-            onClick={() => void electron()?.openSettings()}
+            onClick={() => openSettings("desktop")}
           >
             Open settings
           </Button>

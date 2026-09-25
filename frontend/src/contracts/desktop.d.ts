@@ -98,6 +98,17 @@ export interface SetupConfig {
   fh6GameDir: string;
   fh6BridgePort: number;
 }
+export type DesktopConfigPatch = Partial<
+  Pick<SetupConfig, "backendUrl" | "discordEnabled" | "alwaysOnTop" | "fh6RadioEnabled">
+>;
+export type DesktopConfigUpdateResult =
+  | { ok: false; error: string }
+  | {
+      ok: true;
+      config: SetupConfig;
+      /** The server changed; the window reloads onto its sign-in page. */
+      changed: boolean;
+    };
 export interface SetupDoneOpts {
   clearSession?: boolean;
 }
@@ -125,6 +136,7 @@ export interface ElectronApi {
   openSettings(): Promise<{ ok: boolean }>;
   openExternal(url: string): Promise<{ ok: boolean; error?: string }>;
   getConfig(): Promise<SetupConfig>;
+  updateConfig(patch: DesktopConfigPatch): Promise<DesktopConfigUpdateResult>;
   getFH6Status(): Promise<FH6StatusPayload>;
   chooseFH6GameDir(): Promise<{
     ok: boolean;
@@ -173,6 +185,7 @@ export interface ElectronApi {
 
 // Older desktop builds may not expose these methods to a newer web renderer.
 type OptionalRendererMethods =
+  | "updateConfig"
   | "setDiscordActivity"
   | "clearDiscordActivity"
   | "exportTrackFiles"

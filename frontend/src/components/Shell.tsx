@@ -1,18 +1,19 @@
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { Outlet } from "react-router-dom";
 import { api, type Playlist } from "../api";
 import { useAuth } from "../context/Auth";
 import { usePlaylists } from "../context/Playlists";
 import { useKey } from "../lib/keybindings";
 import { useDiscordPresence } from "../lib/discordPresence";
-import { getDesktopConfig, isElectron } from "../lib/platform";
+import { useDesktopConfig } from "../lib/desktopConfig";
 import { useLyricsPanel } from "../context/LyricsPanel";
 import MiniPlayer from "./MiniPlayer";
 import LyricsSidebar from "./LyricsSidebar";
 import UploadDialog from "./UploadDialog";
-import SettingsDialog from "./SettingsDialog";
+import SettingsDialog, { type SectionId } from "./SettingsDialog";
 import Sidebar from "./shell/Sidebar";
 import Topbar from "./shell/Topbar";
+import { OpenSettingsContext } from "./shell/openSettings";
 import { useMobileNav } from "./shell/useMobileNav";
 import { useSidebarToggle } from "./shell/useSidebarToggle";
 
@@ -27,8 +28,9 @@ export default function Shell() {
   const [pendingCount, setPendingCount] = useState(0);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [tweaksOpen, setTweaksOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SectionId>();
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [fh6RadioEnabled, setFh6RadioEnabled] = useState(false);
+  const fh6RadioEnabled = useDesktopConfig()?.fh6RadioEnabled === true;
   const { mobileNavOpen, setMobileNavOpen } = useMobileNav();
 
   useDiscordPresence();
@@ -44,11 +46,9 @@ export default function Shell() {
     // this, otherwise the sidebar stays empty after a forced reset.
   }, [me?.id, me?.must_reset_password, me]);
 
-  useEffect(() => {
-    if (!isElectron()) return;
-    void getDesktopConfig()
-      ?.then((cfg) => setFh6RadioEnabled(cfg.fh6RadioEnabled === true))
-      .catch(() => setFh6RadioEnabled(false));
+  const openSettings = useCallback((section?: SectionId) => {
+    setSettingsSection(section);
+    setTweaksOpen(true);
   }, []);
 
   const toggleSidebar = useSidebarToggle();
@@ -91,7 +91,7 @@ export default function Shell() {
         }}
         onOpenTweaks={() => {
           setMobileNavOpen(false);
-          setTweaksOpen(true);
+          openSettings();
         }}
       />
       <button
@@ -113,11 +113,16 @@ export default function Shell() {
           onToggleSidebar={toggleSidebar}
           onOpenPalette={() => setPaletteOpen(true)}
           onOpenUpload={() => setUploadOpen(true)}
-          onToggleTweaks={() => setTweaksOpen((v) => !v)}
+          onToggleTweaks={() => {
+            setSettingsSection(undefined);
+            setTweaksOpen((v) => !v);
+          }}
         />
 
         <div className="content">
-          <Outlet />
+          <OpenSettingsContext.Provider value={openSettings}>
+            <Outlet />
+          </OpenSettingsContext.Provider>
         </div>
       </main>
 
@@ -126,7 +131,11 @@ export default function Shell() {
       {/* Player */}
       <MiniPlayer />
 
-      <SettingsDialog open={tweaksOpen} onClose={() => setTweaksOpen(false)} />
+      <SettingsDialog
+        open={tweaksOpen}
+        section={settingsSection}
+        onClose={() => setTweaksOpen(false)}
+      />
 
       <UploadDialog
         open={uploadOpen}
@@ -143,7 +152,7 @@ export default function Shell() {
             pendingInvites={pendingCount}
             onOpenTweaks={() => {
               setPaletteOpen(false);
-              setTweaksOpen(true);
+              openSettings();
             }}
             onOpenUpload={() => {
               setPaletteOpen(false);

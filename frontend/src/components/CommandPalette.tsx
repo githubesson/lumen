@@ -189,7 +189,7 @@ export default function CommandPalette({
         {
           id: "tweaks",
           label: "Open settings",
-          keywords: "tweaks preferences radius density layout output last.fm updates",
+          keywords: "tweaks preferences radius density layout output last.fm updates server discord desktop",
           icon: AdjustmentsHorizontalIcon,
           perform: onOpenTweaks,
         },

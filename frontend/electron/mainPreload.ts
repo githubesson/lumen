@@ -13,6 +13,7 @@ const api: ElectronApi = {
   openSettings: () => ipcRenderer.invoke("settings:open"),
   openExternal: (url) => ipcRenderer.invoke("external:open", url),
   getConfig: () => ipcRenderer.invoke("config:get"),
+  updateConfig: (patch) => ipcRenderer.invoke("config:update", patch),
   getFH6Status: () => ipcRenderer.invoke("fh6:status"),
   chooseFH6GameDir: () => ipcRenderer.invoke("fh6:choose-game-dir"),
   chooseFH6MediaSource: () => ipcRenderer.invoke("fh6:choose-media-source"),
