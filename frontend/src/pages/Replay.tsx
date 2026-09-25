@@ -87,17 +87,24 @@ export default function Replay() {
   // depend on a stable value. `period` only changes identity when the user
   // picks a new pill, so depending on it directly is both correct and
   // exhaustive-deps clean (the old code keyed on a fresh periodKey string).
-  const request = useMemo(
-    () => ({ key: periodKey(period), range: periodRange(period) }),
-    [period],
-  );
+  //
+  // Rolling periods ("this month") keep their key across a boundary, so the
+  // cache also keys on the concrete days they cover: last month's numbers
+  // never answer for this month. Day granularity lets "last 30 days" still
+  // hit within a day.
+  const request = useMemo(() => {
+    const range = periodRange(period);
+    const key = periodKey(period);
+    const day = (iso?: string) => iso?.slice(0, 10) ?? "";
+    return { key, range, cacheKey: `replay:${key}:${day(range.from)}:${day(range.to)}` };
+  }, [period]);
   const range = request.range;
   // A period seen before this session answers from the cache while it
   // refreshes -- still that period's own numbers, never another's.
   const data =
     loaded?.key === request.key
       ? loaded.data
-      : (readCache<ReplayData>(`replay:${request.key}`) ?? null);
+      : (readCache<ReplayData>(request.cacheKey) ?? null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -116,7 +123,7 @@ export default function Replay() {
         if (ac.signal.aborted) return;
         setLoaded({ key: request.key, data: d });
         setYears(d.available_years ?? []);
-        writeCache(`replay:${request.key}`, d);
+        writeCache(request.cacheKey, d);
         writeCache("replay:years", d.available_years ?? []);
       })
       .catch((err) => {
