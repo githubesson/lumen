@@ -29,6 +29,7 @@ export function UsersAdminSection() {
   } = useApiResource<AdminUser[]>(
     () => api.listAdminUsers(),
     "Failed to load users.",
+    { cacheKey: "admin:users" },
   );
 
   const summary = useMemo(() => {

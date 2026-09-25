@@ -23,6 +23,7 @@ export function LibraryAdminSection() {
   } = useApiResource<MusicRoot[]>(
     () => api.listMusicRoots(),
     "Failed to load roots.",
+    { cacheKey: "admin:roots" },
   );
   const [actionError, setActionError] = useState<string | null>(null);
   const error = actionError ?? loadError;

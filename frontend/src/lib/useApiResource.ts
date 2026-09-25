@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage } from "../api";
+import { readCache, writeCache } from "./resourceCache";
 
 export interface ApiResource<T> {
   data: T | null;
@@ -16,12 +17,18 @@ export interface ApiResource<T> {
 /**
  * Load a resource on mount or explicit reload, cancelling superseded requests.
  * Fetchers are read through refs so inline callbacks do not trigger refetches.
+ *
+ * With a `cacheKey`, a remount starts from the last result for that key and
+ * refetches behind it (`loading` is still true meanwhile). The key is read
+ * once per mount; a page showing a different resource should remount.
  */
 export function useApiResource<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
   fallbackMessage = "Something went wrong.",
+  { cacheKey }: { cacheKey?: string } = {},
 ): ApiResource<T> {
-  const [data, setData] = useState<T | null>(null);
+  const [data, setData] = useState<T | null>(() => readCache<T>(cacheKey) ?? null);
+  const cacheKeyRef = useRef(cacheKey);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [nonce, setNonce] = useState(0);
@@ -69,6 +76,7 @@ export function useApiResource<T>(
       .current(controller.signal)
       .then((result) => {
         if (!active) return;
+        writeCache(cacheKeyRef.current, result);
         setData(result);
         setLoading(false);
         settle(nonce);

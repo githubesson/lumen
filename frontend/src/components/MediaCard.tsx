@@ -70,3 +70,24 @@ export default function MediaCard({
     </div>
   );
 }
+
+/**
+ * Stand-ins for a row of cards that is still loading. Same box as a real
+ * card (square art, one title line, one subtitle line), so the row doesn't
+ * change height when the cards arrive.
+ */
+export function MediaCardPlaceholders({ count = 6 }: { count?: number }) {
+  return Array.from({ length: count }, (_, i) => (
+    <div key={i} className="card card-placeholder" aria-hidden="true">
+      <div className="card-art" />
+      <div>
+        <div className="card-title">
+          <span className="skeleton-text" style={{ width: "70%" }} />
+        </div>
+        <div className="card-sub">
+          <span className="skeleton-text" style={{ width: "45%" }} />
+        </div>
+      </div>
+    </div>
+  ));
+}

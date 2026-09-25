@@ -5,6 +5,7 @@ import type { Playlist, TrackListItem } from "../src/api";
 import { FavoritesProvider } from "../src/context/Favorites";
 import { PlaylistsProvider, usePlaylists } from "../src/context/Playlists";
 import Home from "../src/pages/Home";
+import { clearResourceCache } from "../src/lib/resourceCache";
 
 const mock = vi.hoisted(() => ({
   recent: vi.fn(), tracks: vi.fn(), favorites: vi.fn(), playlists: vi.fn(),
@@ -17,7 +18,10 @@ vi.mock("../../core/src/api", async (original) => ({
 }));
 vi.mock("../src/context/Player", () => ({ usePlayer: () => ({ play: vi.fn() }) }));
 vi.mock("../src/components/TrackContextMenu", () => ({ useTrackContextMenu: () => ({ bind: vi.fn(), menu: null }) }));
-vi.mock("../src/components/MediaCard", () => ({ default: ({ title }: { title: string }) => <div>{title}</div> }));
+vi.mock("../src/components/MediaCard", () => ({
+  default: ({ title }: { title: string }) => <div>{title}</div>,
+  MediaCardPlaceholders: () => null,
+}));
 vi.mock("../src/components/PlaylistCard", () => ({ default: ({ playlist }: { playlist: Playlist }) => <div>{playlist.name}</div> }));
 
 function deferred<T>() {
@@ -48,6 +52,7 @@ function renderHome() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearResourceCache();
   for (const fn of [mock.recent, mock.tracks, mock.favorites, mock.playlists]) fn.mockResolvedValue([]);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });

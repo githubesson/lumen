@@ -68,6 +68,7 @@ export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
   } = useApiResource<TidalStatus>(
     () => api.tidalStatus(),
     "Failed to load TIDAL status.",
+    { cacheKey: "admin:tidal" },
   );
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);

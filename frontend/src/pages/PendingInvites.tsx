@@ -9,6 +9,7 @@ export default function PendingInvites() {
   const { data: rows, error: loadError, reload } = useApiResource<PendingInvite[]>(
     async () => (await api.listPendingInvites()) ?? [],
     "Failed to load invites.",
+    { cacheKey: "invites:pending" },
   );
   const [actionError, setActionError] = useState<string | null>(null);
   const error = actionError ?? loadError;

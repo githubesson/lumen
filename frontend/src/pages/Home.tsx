@@ -8,7 +8,7 @@ import {
   trackCoverUrl,
   type TrackListItem,
 } from "../api";
-import MediaCard from "../components/MediaCard";
+import MediaCard, { MediaCardPlaceholders } from "../components/MediaCard";
 import PlaylistCard from "../components/PlaylistCard";
 import Section from "../components/Section";
 import { Button } from "../components/Button";
@@ -27,9 +27,11 @@ export default function Home() {
   const { play } = usePlayer();
   const recentResource = useApiResource(
     (signal) => api.listRecent(20, { signal }), "Could not load recently played tracks.",
+    { cacheKey: "recent:20" },
   );
   const tracksResource = useApiResource(
     (signal) => api.listTracks({ limit: 24, signal }), "Could not load your library.",
+    { cacheKey: "home:tracks" },
   );
   const favorites = useFavorites();
   const playlistResource = usePlaylists();
@@ -39,7 +41,10 @@ export default function Home() {
   const playlists = playlistResource.data ?? [];
   const { bind: bindCtx, menu: ctxMenu } = useTrackContextMenu();
 
-  const hero = recent[0] ?? tracks[0] ?? null;
+  // Wait for recently played before picking the hero, so a library track
+  // doesn't take the slot and then get swapped out when it lands.
+  const recentSettled = recentResource.data !== null || !recentResource.loading;
+  const hero = recentSettled ? recent[0] ?? tracks[0] ?? null : null;
   const albums = useMemo(() => groupAlbums(tracks), [tracks]);
 
   return (
@@ -76,10 +81,22 @@ export default function Home() {
         </div>
       ) : recentResource.loading || tracksResource.loading ? (
         <div className="hero" aria-busy="true">
+          <div className="hero-art" aria-hidden="true" />
           <div className="hero-body">
-            <div className="hero-eyebrow">Welcome, {me?.username}</div>
+            <div className="hero-eyebrow">Welcome back, {me?.username}</div>
             <h1 className="hero-title">Your library</h1>
-            <p role="status">Loading your music…</p>
+            {/* Same rows as the loaded hero, so its text doesn't jump. */}
+            <div className="hero-meta">
+              <span role="status">Loading your music…</span>
+            </div>
+            <div className="hero-actions">
+              <Button variant="primary" disabled leadingIcon={<PlayIcon className="size-4" />}>
+                Play
+              </Button>
+              <Link to="/library" className="btn">
+                Browse library
+              </Link>
+            </div>
           </div>
         </div>
       ) : recentResource.error || tracksResource.error ? (
@@ -109,6 +126,7 @@ export default function Home() {
 
       {(recent.length > 0 || recentResource.loading || recentResource.error) && (
         <Shelf sub="Picked up where you left off" title="Recently played" to="/recent" status={<ShelfStatus title="Recently played" loading={recentResource.loading} error={recentResource.error} reload={recentResource.reload} />}>
+          {recent.length === 0 && recentResource.loading && <MediaCardPlaceholders />}
           {recent.slice(0, 12).map((t) => (
             <MediaCard
               key={t.id}
@@ -125,6 +143,7 @@ export default function Home() {
 
       {(albums.length > 0 || tracksResource.loading || tracksResource.error) && (
         <Shelf sub="Your library" title="Albums" to="/library?view=albums" status={<ShelfStatus title="Albums" loading={tracksResource.loading} error={tracksResource.error} reload={tracksResource.reload} />}>
+          {albums.length === 0 && tracksResource.loading && <MediaCardPlaceholders />}
           {albums.slice(0, 12).map((a) => (
             <MediaCard
               key={a.key}
@@ -143,6 +162,7 @@ export default function Home() {
 
       {(favs.length > 0 || favorites.loading || favorites.error) && (
         <Shelf sub="Hearts" title="Your favorites" to="/favorites" status={<ShelfStatus title="Your favorites" loading={favorites.loading} error={favorites.error} reload={() => void favorites.refresh()} />}>
+          {favs.length === 0 && favorites.loading && <MediaCardPlaceholders />}
           {favs.slice(0, 12).map((t) => (
             <MediaCard
               key={t.id}
@@ -159,6 +179,7 @@ export default function Home() {
 
       {(playlists.length > 0 || playlistResource.loading || playlistResource.error) && (
         <Shelf sub="Curated" title="Playlists" to="/playlists" status={<ShelfStatus title="Playlists" loading={playlistResource.loading} error={playlistResource.error} reload={playlistResource.reload} />}>
+          {playlists.length === 0 && playlistResource.loading && <MediaCardPlaceholders />}
           {playlists.slice(0, 12).map((p) => (
             <PlaylistCard key={p.id} playlist={p} />
           ))}
@@ -175,8 +196,10 @@ function ShelfStatus({ title, loading, error, reload }: {
   reload: () => void;
 }) {
   if (!loading && !error) return null;
+  // While loading, the shelf's placeholder cards show it; the text is for
+  // screen readers only, so it doesn't push the shelf down and back up.
   return (
-    <div role="status" aria-busy={loading}>
+    <div role="status" aria-busy={loading} className={loading ? "sr-only" : undefined}>
       {loading ? `Loading ${title.toLowerCase()}…` : (
         <><p>{error}</p><Button onClick={reload}>Retry {title.toLowerCase()}</Button></>
       )}

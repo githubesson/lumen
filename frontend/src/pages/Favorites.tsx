@@ -1,21 +1,25 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { Heart as HeartIcon, Play as PlayIcon } from "lucide-react";
-import { api, type TrackListItem } from "../api";
 import { Button } from "../components/Button";
 import TrackList from "../components/TrackList";
 import ListPageHeader from "../components/ListPageHeader";
 import ErrorBanner from "../components/ErrorBanner";
 import EmptyState from "../components/EmptyState";
+import { useFavorites } from "../context/Favorites";
 import { usePlayer } from "../context/Player";
-import { useApiResource } from "../lib/useApiResource";
 import { pluralize } from "../lib/format";
 
 export default function Favorites() {
   const { play } = usePlayer();
-  const { data: tracks, error } = useApiResource<TrackListItem[]>(
-    (signal) => api.listFavorites({ signal }),
-    "Failed to load favorites.",
-  );
+  // The favorites context loaded this list at sign-in: show it at once and
+  // refresh it behind (it doesn't pick up hearts added since). Empty while
+  // loading means not loaded yet, not no favorites.
+  const favorites = useFavorites();
+  const { error, refresh } = favorites;
+  const tracks = favorites.loading && favorites.tracks.length === 0 ? null : favorites.tracks;
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   const hero = useMemo(() => tracks?.[0] ?? null, [tracks]);
 

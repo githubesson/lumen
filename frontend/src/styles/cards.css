@@ -133,3 +133,19 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Loading stand-ins (MediaCardPlaceholders). Not interactive. */
+.card-placeholder {
+  cursor: default;
+}
+.card-placeholder:hover {
+  background: transparent;
+}
+/* A bar in place of a line of text. Inline so the line keeps its height. */
+.skeleton-text {
+  display: inline-block;
+  height: 0.75em;
+  vertical-align: middle;
+  border-radius: var(--radius-sm);
+  background: var(--muted);
+}

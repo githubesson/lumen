@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Download as ArrowDownTrayIcon,
@@ -17,6 +17,7 @@ import {
 import TrackList from "../components/TrackList";
 import StatCard from "../components/StatCard";
 import AnimatedNumber from "../components/AnimatedNumber";
+import { readCache, writeCache } from "../lib/resourceCache";
 import ActivityChart from "../components/ActivityChart";
 import ErrorBanner from "../components/ErrorBanner";
 import LoadingState from "../components/LoadingState";
@@ -74,8 +75,8 @@ export default function Replay() {
   const [loaded, setLoaded] = useState<{ key: string; data: ReplayData } | null>(null);
   // Sticky: the year pills are navigation, not results, and must survive the
   // gap where `data` is null or the selector would collapse mid-load.
-  const [years, setYears] = useState<number[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Remembered across visits so the pills are all there on arrival.
+  const [years, setYears] = useState<number[]>(() => readCache<number[]>("replay:years") ?? []);
   const [error, setError] = useState<string | null>(null);
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -91,13 +92,17 @@ export default function Replay() {
     [period],
   );
   const range = request.range;
-  const data = loaded?.key === request.key ? loaded.data : null;
+  // A period seen before this session answers from the cache while it
+  // refreshes -- still that period's own numbers, never another's.
+  const data =
+    loaded?.key === request.key
+      ? loaded.data
+      : (readCache<ReplayData>(`replay:${request.key}`) ?? null);
 
   useEffect(() => {
     const ac = new AbortController();
     // Changing the replay period starts a new API request lifecycle.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoading(true);
     setError(null);
     api
       .getReplay(request.range, { signal: ac.signal })
@@ -105,18 +110,18 @@ export default function Replay() {
         // Aborting after the response headers arrive does not reject this
         // promise: the transport drops the caller's abort listener as soon as
         // `fetch` resolves, before it parses the body. A superseded request
-        // would otherwise clear `loading` while the current one is still in
-        // flight, and the keyed derivation would correctly reject its data --
-        // leaving a blank results area until the real response landed.
+        // landing after the current one would otherwise replace its results
+        // with the previous period's, which the keyed derivation rejects --
+        // leaving the loading state up for good.
         if (ac.signal.aborted) return;
         setLoaded({ key: request.key, data: d });
         setYears(d.available_years ?? []);
-        setLoading(false);
+        writeCache(`replay:${request.key}`, d);
+        writeCache("replay:years", d.available_years ?? []);
       })
       .catch((err) => {
         if (ac.signal.aborted) return;
         setError(errorMessage(err, "Failed to load Replay."));
-        setLoading(false);
       });
     return () => ac.abort();
   }, [request]);
@@ -181,6 +186,24 @@ export default function Replay() {
   }
 
   const summary = data?.summary;
+
+  // No data for this period and no error means its request is in flight,
+  // including the render between picking a period and the effect starting it.
+  const showLoading = !data && !error;
+  // Meanwhile, hold the results area at the height it last had, so the page
+  // doesn't collapse to a loading line (dragging the scroll position with it)
+  // and grow back. A layout effect, so the observer is gone before the
+  // browser lays out the emptied area and can't record it as the new height.
+  const hasData = data !== null;
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const [reservedHeight, setReservedHeight] = useState(0);
+  useLayoutEffect(() => {
+    const el = resultsRef.current;
+    if (!el || !hasData || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setReservedHeight(el.offsetHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hasData]);
   const totalGenrePlays = useMemo(
     () => (data?.top_genres ?? []).reduce((acc, g) => acc + g.plays, 0),
     [data?.top_genres],
@@ -297,146 +320,149 @@ export default function Replay() {
       {createError && <ErrorBanner>{createError}</ErrorBanner>}
       {imageError && <ErrorBanner>{imageError}</ErrorBanner>}
 
-      {/* Any in-flight request shows the loading state, not just the first.
-          Rendering retained data while a new period loads put the previous
-          window's numbers under the new label -- and since the block below is
-          keyed on the period, the key change remounted that stale subtree and
-          replayed its entrance, presenting old results as freshly arrived. */}
-      {loading ? (
-        <LoadingState />
-      ) : summary && summary.total_plays === 0 ? (
-        <EmptyState
-          icon={<SparklesIcon className="size-10" />}
-          title="No plays in this window yet."
-          hint={
-            <>
-              <Link to="/library" style={{ color: "var(--foreground)", textDecoration: "underline", textUnderlineOffset: 4 }}>
-                Listen to some music
-              </Link>{" "}
-              and check back here.
-            </>
-          }
-        />
-      ) : data && summary ? (
-        <div
-          key={periodKey(period)}
-          className="replay-enter"
-          style={{ display: "grid", gap: 18, minWidth: 0 }}
-        >
-          <section className="stat-grid">
-            <StatCard
-              label="Total plays"
-              value={
-                <AnimatedNumber value={summary.total_plays} />
-              }
-            />
-            <StatCard
-              label="Listening time"
-              value={
-                <AnimatedNumber
-                  format={formatListeningTime}
-                  value={summary.total_ms}
+      {/* Any in-flight request without this period's own (cached) data shows
+          the loading state, not just the first. Rendering retained data while
+          a new period loads put the previous window's numbers under the new
+          label -- and since the block below is keyed on the period, the key
+          change remounted that stale subtree and replayed its entrance,
+          presenting old results as freshly arrived. */}
+      <div ref={resultsRef} style={{ minHeight: hasData ? undefined : reservedHeight }}>
+        {showLoading ? (
+          <LoadingState />
+        ) : summary && summary.total_plays === 0 ? (
+          <EmptyState
+            icon={<SparklesIcon className="size-10" />}
+            title="No plays in this window yet."
+            hint={
+              <>
+                <Link to="/library" style={{ color: "var(--foreground)", textDecoration: "underline", textUnderlineOffset: 4 }}>
+                  Listen to some music
+                </Link>{" "}
+                and check back here.
+              </>
+            }
+          />
+        ) : data && summary ? (
+          <div
+            key={periodKey(period)}
+            className="replay-enter"
+            style={{ display: "grid", gap: 18, minWidth: 0 }}
+          >
+            <section className="stat-grid">
+              <StatCard
+                label="Total plays"
+                value={
+                  <AnimatedNumber value={summary.total_plays} />
+                }
+              />
+              <StatCard
+                label="Listening time"
+                value={
+                  <AnimatedNumber
+                    format={formatListeningTime}
+                    value={summary.total_ms}
+                  />
+                }
+                title={
+                  summary.total_ms >= 60_000
+                    ? `${Math.round(summary.total_ms / 60_000).toLocaleString()} minutes total`
+                    : undefined
+                }
+              />
+              <StatCard
+                label="Unique tracks"
+                value={<AnimatedNumber value={summary.unique_tracks} />}
+              />
+              <StatCard
+                label="Unique artists"
+                value={<AnimatedNumber value={summary.unique_artists} />}
+              />
+            </section>
+
+            {data.top_tracks.length > 0 && (
+              <Section sub="On repeat" title="Top tracks">
+                <TrackList
+                  tracks={queue}
+                  queueSource={queue}
+                  extraColumn={extraColumn}
                 />
-              }
-              title={
-                summary.total_ms >= 60_000
-                  ? `${Math.round(summary.total_ms / 60_000).toLocaleString()} minutes total`
-                  : undefined
-              }
-            />
-            <StatCard
-              label="Unique tracks"
-              value={<AnimatedNumber value={summary.unique_tracks} />}
-            />
-            <StatCard
-              label="Unique artists"
-              value={<AnimatedNumber value={summary.unique_artists} />}
-            />
-          </section>
+              </Section>
+            )}
 
-          {data.top_tracks.length > 0 && (
-            <Section sub="On repeat" title="Top tracks">
-              <TrackList
-                tracks={queue}
-                queueSource={queue}
-                extraColumn={extraColumn}
-              />
-            </Section>
-          )}
+            {data.top_artists.length > 0 && (
+              <Section sub="On the marquee" title="Top artists">
+                <div className="shelf replay-shelf">
+                  {data.top_artists.map((a, i) => (
+                    <MediaCard
+                      key={a.id}
+                      title={displayText(a.name)}
+                      subtitle={pluralize(a.plays, "play")}
+                      rankBadge={<span className="replay-rank">{i + 1}</span>}
+                    />
+                  ))}
+                </div>
+              </Section>
+            )}
 
-          {data.top_artists.length > 0 && (
-            <Section sub="On the marquee" title="Top artists">
-              <div className="shelf replay-shelf">
-                {data.top_artists.map((a, i) => (
-                  <MediaCard
-                    key={a.id}
-                    title={displayText(a.name)}
-                    subtitle={pluralize(a.plays, "play")}
-                    rankBadge={<span className="replay-rank">{i + 1}</span>}
-                  />
-                ))}
-              </div>
-            </Section>
-          )}
+            {data.top_albums.length > 0 && (
+              <Section sub="Played front to back" title="Top albums">
+                <div className="shelf replay-shelf">
+                  {data.top_albums.map((a, i) => (
+                    <MediaCard
+                      key={a.id}
+                      coverUrl={albumCoverUrl(a.id)}
+                      title={displayText(a.title)}
+                      subtitle={
+                        <>
+                          {a.artist ? `${displayText(a.artist)} · ` : ""}
+                          {pluralize(a.plays, "play")}
+                        </>
+                      }
+                      rankBadge={<span className="replay-rank">{i + 1}</span>}
+                    />
+                  ))}
+                </div>
+              </Section>
+            )}
 
-          {data.top_albums.length > 0 && (
-            <Section sub="Played front to back" title="Top albums">
-              <div className="shelf replay-shelf">
-                {data.top_albums.map((a, i) => (
-                  <MediaCard
-                    key={a.id}
-                    coverUrl={albumCoverUrl(a.id)}
-                    title={displayText(a.title)}
-                    subtitle={
-                      <>
-                        {a.artist ? `${displayText(a.artist)} · ` : ""}
-                        {pluralize(a.plays, "play")}
-                      </>
-                    }
-                    rankBadge={<span className="replay-rank">{i + 1}</span>}
-                  />
-                ))}
-              </div>
-            </Section>
-          )}
+            {data.activity.length > 0 && (
+              <Section sub="When you listened" title="Listening activity">
+                <ActivityChart
+                  buckets={data.activity}
+                  bucket={data.bucket}
+                />
+              </Section>
+            )}
 
-          {data.activity.length > 0 && (
-            <Section sub="When you listened" title="Listening activity">
-              <ActivityChart
-                buckets={data.activity}
-                bucket={data.bucket}
-              />
-            </Section>
-          )}
-
-          {data.top_genres.length > 0 && (
-            <Section sub="What filled the room" title="Top genres">
-              <div className="genre-list">
-                {data.top_genres.map((g) => {
-                  const pct =
-                    totalGenrePlays > 0
-                      ? (g.plays / totalGenrePlays) * 100
-                      : 0;
-                  return (
-                    <div key={g.genre} className="genre-row">
-                      <div className="genre-label">{displayText(g.genre)}</div>
-                      <div className="genre-bar-track">
-                        <div
-                          className="genre-bar-fill"
-                          style={{ width: `${pct}%` }}
-                        />
+            {data.top_genres.length > 0 && (
+              <Section sub="What filled the room" title="Top genres">
+                <div className="genre-list">
+                  {data.top_genres.map((g) => {
+                    const pct =
+                      totalGenrePlays > 0
+                        ? (g.plays / totalGenrePlays) * 100
+                        : 0;
+                    return (
+                      <div key={g.genre} className="genre-row">
+                        <div className="genre-label">{displayText(g.genre)}</div>
+                        <div className="genre-bar-track">
+                          <div
+                            className="genre-bar-fill"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <div className="genre-count mono">
+                          {g.plays} · {pct.toFixed(0)}%
+                        </div>
                       </div>
-                      <div className="genre-count mono">
-                        {g.plays} · {pct.toFixed(0)}%
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </Section>
-          )}
-        </div>
-      ) : null}
+                    );
+                  })}
+                </div>
+              </Section>
+            )}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -32,6 +32,8 @@ import ListPageHeader from "../components/ListPageHeader";
 import ErrorBanner from "../components/ErrorBanner";
 import LoadingState from "../components/LoadingState";
 import { useFavorites } from "../context/Favorites";
+import { usePlaylists } from "../context/Playlists";
+import { readCache, writeCache } from "../lib/resourceCache";
 import { useKey } from "../lib/keybindings";
 import { fmtTotalMs } from "../lib/format";
 import CollaboratorsPanel from "./playlist/CollaboratorsPanel";
@@ -52,6 +54,15 @@ const PLAYLIST_SELECTION_CONTROLS_ID = "playlist-track-selection-controls";
 // library copies without a manual reload.
 const AUTO_DOWNLOAD_REFRESH_MS = 20_000;
 
+interface CachedPlaylist {
+  playlist: Playlist;
+  tracks: PlaylistTrackEntry[];
+  collabs: Collaborator[];
+}
+const cacheKey = (id: string | undefined) => (id ? `playlist:${id}` : undefined);
+const showsCollaborators = (p: Playlist) =>
+  p.effective_role === "owner" || p.visibility === "collaborative";
+
 export default function PlaylistDetail() {
   const { id } = useParams<{ id: string }>();
   // Keyed on the route id so switching playlists remounts with fresh state
@@ -67,9 +78,18 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
 
-  const [playlist, setPlaylist] = useState<Playlist | null>(null);
-  const [tracks, setTracks] = useState<PlaylistTrackEntry[] | null>(null);
-  const [collabs, setCollabs] = useState<Collaborator[]>([]);
+  // A revisit starts from what this page showed last time; a first visit
+  // starts from the sidebar's row, so the header is up while tracks load.
+  const [cached] = useState(() => readCache<CachedPlaylist>(cacheKey(id)));
+  const listed = usePlaylists().data?.find((p) => p.id === id) ?? null;
+  const [loadedPlaylist, setPlaylist] = useState<Playlist | null>(cached?.playlist ?? null);
+  const playlist = loadedPlaylist ?? listed;
+  const listedRef = useRef(listed);
+  useEffect(() => {
+    listedRef.current = listed;
+  }, [listed]);
+  const [tracks, setTracks] = useState<PlaylistTrackEntry[] | null>(cached?.tracks ?? null);
+  const [collabs, setCollabs] = useState<Collaborator[]>(cached?.collabs ?? []);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("tracks");
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -99,16 +119,22 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   const load = useCallback(async () => {
     if (!id) return;
     try {
-      const [p, t] = await Promise.all([
+      // Fetch collaborators alongside when the row we already have says the
+      // tab exists, so its count lands with everything else.
+      const known = listedRef.current;
+      const [p, t, early] = await Promise.all([
         api.getPlaylist(id),
         api.listPlaylistTracks(id),
+        known && showsCollaborators(known)
+          ? api.listCollaborators(id).catch(() => [])
+          : null,
       ]);
+      const c = showsCollaborators(p)
+        ? early ?? (await api.listCollaborators(id).catch(() => []))
+        : [];
       setPlaylist(p);
       setTracks(t.tracks);
-      if (p.effective_role === "owner" || p.visibility === "collaborative") {
-        const c = await api.listCollaborators(id).catch(() => []);
-        setCollabs(c);
-      }
+      setCollabs(c);
     } catch (err) {
       setError(errorMessage(err, "Failed to load playlist."));
     }
@@ -119,6 +145,12 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (loadedPlaylist && tracks) {
+      writeCache(cacheKey(id), { playlist: loadedPlaylist, tracks, collabs } satisfies CachedPlaylist);
+    }
+  }, [id, loadedPlaylist, tracks, collabs]);
 
   const autoDownload = Boolean(playlist?.tidal_auto_download);
   const queuedTidal = useMemo(
@@ -180,8 +212,12 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     );
   }
 
-  if (!playlist || tracks === null) {
-    return <LoadingState />;
+  if (!playlist) {
+    return (
+      <div className="view">
+        <LoadingState />
+      </div>
+    );
   }
 
   const role = playlist.effective_role ?? "";
@@ -293,18 +329,24 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         title={playlist.name}
         description={playlist.description || undefined}
         heroTrack={firstCoverTrack}
+        // Plain art until the tracks say whether there's a cover, rather
+        // than a note that gets swapped for one.
         fallbackIcon={
-          <MusicalNoteIcon
-            className="size-12"
-            style={{ color: "var(--muted-foreground)" }}
-          />
+          tracks && (
+            <MusicalNoteIcon
+              className="size-12"
+              style={{ color: "var(--muted-foreground)" }}
+            />
+          )
         }
         meta={
           <>
             <span>
-              {tracks.length} {tracks.length === 1 ? "track" : "tracks"}
+              {tracks === null
+                ? "—"
+                : `${tracks.length} ${tracks.length === 1 ? "track" : "tracks"}`}
             </span>
-            {tracks.length > 0 && (
+            {tracks && tracks.length > 0 && (
               <>
                 <span className="dot" />
                 <span>
@@ -325,7 +367,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
             <Button
               variant="primary"
               onClick={onPlayAll}
-              disabled={tracks.length === 0}
+              disabled={!tracks || tracks.length === 0}
               leadingIcon={<PlayIcon className="size-4" />}
             >
               Play all
@@ -405,7 +447,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
           ]}
         />
         <div className="playlist-toolbar-spacer" />
-        {tab === "tracks" && tracks.length > 1 && (
+        {tab === "tracks" && tracks && tracks.length > 1 && (
           <div className="playlist-sort-controls">
             <div
               id={PLAYLIST_SELECTION_CONTROLS_ID}
@@ -452,7 +494,8 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         />
       </div>
 
-      {tab === "tracks" && (
+      {tab === "tracks" && tracks === null && <LoadingState />}
+      {tab === "tracks" && tracks && (
         <PlaylistTracksPanel
           tracks={filteredTracks}
           totalCount={tracks.length}
@@ -489,7 +532,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         <AddTracksDialog
           open={showAddDialog}
           playlistId={id}
-          existingIds={new Set(tracks.map((t) => t.track_id))}
+          existingIds={new Set((tracks ?? []).map((t) => t.track_id))}
           onClose={() => setShowAddDialog(false)}
           onAdded={async () => {
             setShowAddDialog(false);

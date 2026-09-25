@@ -38,6 +38,7 @@ export function InvitesAdminSection() {
   } = useApiResource<Invite[]>(
     () => api.listInvites(),
     "Failed to load invites.",
+    { cacheKey: "admin:invites" },
   );
   const [actionError, setActionError] = useState<string | null>(null);
   const error = actionError ?? loadError;

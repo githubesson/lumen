@@ -15,6 +15,7 @@ export default function Recent() {
   const { data: tracks, error } = useApiResource<TrackListItem[]>(
     (signal) => api.listRecent(100, { signal }),
     "Failed to load recent plays.",
+    { cacheKey: "recent:100" },
   );
 
   const hero = useMemo(() => tracks?.[0] ?? null, [tracks]);

@@ -31,6 +31,7 @@ export function TidalAutoDownloadCard({ roots }: { roots: MusicRoot[] | null }) 
   } = useApiResource<TidalAutoDownloadStatus>(
     () => api.tidalAutoDownload(),
     "Failed to load TIDAL auto-download status.",
+    { cacheKey: "admin:tidal-auto-download" },
   );
   const [rootId, setRootId] = useState("");
   const [subdir, setSubdir] = useState("");

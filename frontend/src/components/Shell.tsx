@@ -16,16 +16,29 @@ import Topbar from "./shell/Topbar";
 import { OpenSettingsContext } from "./shell/openSettings";
 import { useMobileNav } from "./shell/useMobileNav";
 import { useSidebarToggle } from "./shell/useSidebarToggle";
+import { clearResourceCache } from "../lib/resourceCache";
 
 const CommandPalette = lazy(() => import("./CommandPalette"));
 const EMPTY_PLAYLISTS: Playlist[] = [];
+
+// The last pending-invite count, so the sidebar's Invites row is there from
+// the first frame instead of pushing the nav down when the request lands.
+const pendingKey = (userId: string) => `lumen.pendingInvites.${userId}`;
+function readPendingCount(userId: string | undefined) {
+  if (!userId) return 0;
+  try {
+    return Number(localStorage.getItem(pendingKey(userId))) || 0;
+  } catch {
+    return 0;
+  }
+}
 
 export default function Shell() {
   const { me } = useAuth();
   const { open: lyricsOpen } = useLyricsPanel();
   const { data: playlistRows } = usePlaylists();
   const playlists = playlistRows ?? EMPTY_PLAYLISTS;
-  const [pendingCount, setPendingCount] = useState(0);
+  const [pendingCount, setPendingCount] = useState(() => readPendingCount(me?.id));
   const [uploadOpen, setUploadOpen] = useState(false);
   const [tweaksOpen, setTweaksOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SectionId>();
@@ -35,11 +48,24 @@ export default function Shell() {
 
   useDiscordPresence();
 
+  // Pages cache their last results for revisits; none of it outlives the
+  // account that loaded it.
+  useEffect(() => () => clearResourceCache(), [me?.id]);
+
   useEffect(() => {
     if (!me || me.must_reset_password) return;
+    const userId = me.id;
     void api
       .listPendingInvites()
-      .then((p) => setPendingCount(p?.length ?? 0))
+      .then((p) => {
+        const count = p?.length ?? 0;
+        setPendingCount(count);
+        try {
+          localStorage.setItem(pendingKey(userId), String(count));
+        } catch {
+          // Only costs the head start on the next launch.
+        }
+      })
       .catch(() => {});
     // must_reset_password is a dep: ForceReset lives inside this persistent
     // Shell, so the false→true→false flip with the same user id must re-run
@@ -82,7 +108,7 @@ export default function Shell() {
       {/* Sidebar */}
       <Sidebar
         mobileOpen={mobileNavOpen}
-        playlists={playlists}
+        playlists={playlistRows}
         pendingCount={pendingCount}
         fh6RadioEnabled={fh6RadioEnabled}
         onAddMusic={() => {

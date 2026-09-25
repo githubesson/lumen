@@ -1,18 +1,20 @@
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Plus as PlusIcon } from "lucide-react";
-import { api, type Playlist } from "../api";
 import PageHeader from "../components/PageHeader";
 import PlaylistCard from "../components/PlaylistCard";
 import EmptyState from "../components/EmptyState";
 import DataState from "../components/DataState";
-import { useApiResource } from "../lib/useApiResource";
+import { usePlaylists } from "../context/Playlists";
 import { pluralize } from "../lib/format";
 
 export default function Playlists() {
-  const { data: rows, error } = useApiResource<Playlist[]>(
-    (signal) => api.listPlaylists({ signal }),
-    "Failed to load playlists.",
-  );
+  // The sidebar already holds the list: show it at once and refresh it (and
+  // the sidebar with it) behind.
+  const { data: rows, error, reload } = usePlaylists();
+  useEffect(() => {
+    void reload();
+  }, [reload]);
 
   return (
     <div className="view">

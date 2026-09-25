@@ -14,7 +14,7 @@ export default function Breadcrumbs({ playlists }: { playlists: Playlist[] }) {
   return (
     <div className="crumbs">
       {crumbs.map((c, i) => (
-        <span key={`${c.label}-${i}`} className="crumb">
+        <span key={i} className="crumb">
           {i > 0 && <ChevronRightIcon className="size-3" aria-hidden="true" />}
           {c.current ? (
             <b>{c.label}</b>

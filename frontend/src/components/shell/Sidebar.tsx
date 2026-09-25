@@ -48,7 +48,8 @@ export default function Sidebar({
   onOpenTweaks,
 }: {
   mobileOpen: boolean;
-  playlists: Playlist[];
+  /** Null until loaded. */
+  playlists: Playlist[] | null;
   pendingCount: number;
   fh6RadioEnabled: boolean;
   onAddMusic: () => void;

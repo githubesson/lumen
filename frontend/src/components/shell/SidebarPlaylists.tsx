@@ -7,7 +7,8 @@ import NavItem from "./NavItem";
 export default function SidebarPlaylists({
   playlists,
 }: {
-  playlists: Playlist[];
+  /** Null until loaded: shows nothing rather than "None yet". */
+  playlists: Playlist[] | null;
 }) {
   const { layout } = useTheme();
   return (
@@ -30,7 +31,7 @@ export default function SidebarPlaylists({
         icon={<QueueListIcon className="nav-icon" />}
         label="All playlists"
       />
-      {playlists.length === 0 && (
+      {playlists?.length === 0 && (
         <div
           className="mono sidebar-playlists-empty"
           style={{
@@ -42,7 +43,7 @@ export default function SidebarPlaylists({
           None yet
         </div>
       )}
-      {playlists.map((p) => (
+      {playlists?.map((p) => (
         <NavLink
           key={p.id}
           to={`/playlists/${p.id}`}
