@@ -135,6 +135,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       setPlaylist(p);
       setTracks(t.tracks);
       setCollabs(c);
+      setError(null);
     } catch (err) {
       setError(errorMessage(err, "Failed to load playlist."));
     }
@@ -204,7 +205,9 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     [sortedTracks, q],
   );
 
-  if (error) {
+  // With nothing to show, the error is the page; otherwise (a cached or
+  // listed playlist, a failed refresh or action) it sits under the header.
+  if (error && !playlist) {
     return (
       <div className="view">
         <ErrorBanner message={error} />
@@ -374,6 +377,9 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
             </Button>
             {canEdit && (
               <Button
+                // The dialog marks tracks already in the playlist; until they
+                // load it would offer them again as duplicates.
+                disabled={tracks === null}
                 onClick={() => setShowAddDialog(true)}
                 leadingIcon={<PlusIcon className="size-4" />}
               >
@@ -417,6 +423,8 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
           </>
         }
       />
+
+      {error && <ErrorBanner message={error} />}
 
       <div className="playlist-toolbar">
         <SegmentedControl
@@ -494,7 +502,8 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         />
       </div>
 
-      {tab === "tracks" && tracks === null && <LoadingState />}
+      {/* Collaborators land with the tracks, so both tabs wait on them. */}
+      {tracks === null && !error && <LoadingState />}
       {tab === "tracks" && tracks && (
         <PlaylistTracksPanel
           tracks={filteredTracks}
@@ -518,7 +527,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         />
       )}
 
-      {tab === "collaborators" && (
+      {tab === "collaborators" && tracks !== null && (
         <CollaboratorsPanel
           playlistId={id!}
           collaborators={collabs}

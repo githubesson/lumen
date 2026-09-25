@@ -62,7 +62,7 @@ export function AlbumDetailView({
     return <NotFound kind="Album" onBack={onBack} />;
   }
   if (!entity || !tracks) {
-    return <DetailLoading kind="Album" label="Loading album…" onBack={onBack} />;
+    return <DetailLoading kind="Album" label="Loading album…" error={error} onBack={onBack} />;
   }
   const album = saved ?? entity;
   const playable = playableTracks(tracks);
@@ -445,12 +445,23 @@ export function DetailTrackSearchBar({
 function DetailLoading({
   kind,
   label,
+  error,
   onBack,
 }: {
   kind: string;
   label: string;
+  /** A failed first load: shown instead of the header, with the way back. */
+  error?: string | null;
   onBack: () => void;
 }) {
+  if (error) {
+    return (
+      <div className="view" style={{ display: "grid", gap: 18 }}>
+        <DetailBackRow onBack={onBack} />
+        <ErrorBanner message={error} />
+      </div>
+    );
+  }
   return (
     <div className="view" style={{ display: "grid", gap: 18 }} aria-busy="true">
       <DetailBackRow onBack={onBack} />
