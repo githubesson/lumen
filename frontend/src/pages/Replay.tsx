@@ -91,13 +91,20 @@ export default function Replay() {
   // Rolling periods ("this month") keep their key across a boundary, so the
   // cache also keys on the concrete days they cover: last month's numbers
   // never answer for this month. Day granularity lets "last 30 days" still
-  // hit within a day.
+  // hit within a day. A page left open past midnight recomputes the range
+  // (and refetches), so rolling periods don't keep acting on old dates.
+  const today = useLocalDay();
   const request = useMemo(() => {
     const range = periodRange(period);
     const key = periodKey(period);
     const day = (iso?: string) => iso?.slice(0, 10) ?? "";
-    return { key, range, cacheKey: `replay:${key}:${day(range.from)}:${day(range.to)}` };
-  }, [period]);
+    return {
+      key,
+      range,
+      asOf: today,
+      cacheKey: `replay:${key}:${day(range.from)}:${day(range.to)}`,
+    };
+  }, [period, today]);
   const range = request.range;
   // A period seen before this session answers from the cache while it
   // refreshes -- still that period's own numbers, never another's.
@@ -333,7 +340,7 @@ export default function Replay() {
           label -- and since the block below is keyed on the period, the key
           change remounted that stale subtree and replayed its entrance,
           presenting old results as freshly arrived. */}
-      <div ref={resultsRef} style={{ minHeight: hasData ? undefined : reservedHeight }}>
+      <div ref={resultsRef} style={{ minHeight: showLoading ? reservedHeight : undefined }}>
         {showLoading ? (
           <LoadingState />
         ) : summary && summary.total_plays === 0 ? (
@@ -472,4 +479,31 @@ export default function Replay() {
       </div>
     </div>
   );
+}
+
+/**
+ * The local date, updated when it changes: a timer set for midnight, plus a
+ * check on returning to the tab, since timers stall while a laptop sleeps.
+ */
+function useLocalDay() {
+  const [day, setDay] = useState(() => new Date().toDateString());
+  useEffect(() => {
+    let timer = 0;
+    const check = () => setDay(new Date().toDateString());
+    const arm = () => {
+      const now = new Date();
+      const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      timer = window.setTimeout(() => {
+        check();
+        arm();
+      }, midnight.getTime() - now.getTime() + 1000);
+    };
+    arm();
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, []);
+  return day;
 }

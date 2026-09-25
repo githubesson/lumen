@@ -99,6 +99,7 @@ export function useEntityDetail<T>(
         writeCache(key, { entity: e, tracks: t ?? [] } satisfies Cached<T>);
         setEntity(e);
         setTracks(t ?? []);
+        setError(null);
       })
       .catch(() => {});
   }, [id, key, get, listTracks]);
@@ -107,6 +108,7 @@ export function useEntityDetail<T>(
     (next: T) => {
       genRef.current += 1;
       setEntity(next);
+      setError(null);
       if (tracks) writeCache(key, { entity: next, tracks } satisfies Cached<T>);
     },
     [key, tracks],
