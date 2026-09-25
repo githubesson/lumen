@@ -25,27 +25,36 @@ export default function SearchResults({
   onOpenAlbum: (id: string) => void;
   onOpenArtist: (id: string, name?: string) => void;
 }) {
-  const [warning, setWarning] = useState<string | null>(null);
+  // Tagged with the search it came from: results stay mounted across
+  // queries, and an old warning mustn't read as the new search's.
+  const [taggedWarning, setWarning] = useState<{ search: string; text: string | null }>({
+    search: "",
+    text: null,
+  });
   const fetcher = useCallback(
     async (params: PageRequest): Promise<Page<SearchResult>> => {
       if (!params.q) return { items: [], total: 0, nextOffsets: {} };
       const result = await api.searchPage({ ...params, type });
+      const search = `${type}\u0000${params.q}`;
       if (!params.signal.aborted)
-        setWarning(
-          (previous) =>
+        setWarning((previous) => ({
+          search,
+          text:
             [
               ...new Set(
                 [
-                  params.offset === 0 ? null : previous,
+                  params.offset === 0 || previous.search !== search ? null : previous.text,
                   ...(result.warnings ?? []),
                 ].filter(Boolean),
               ),
             ].join(" ") || null,
-        );
+        }));
       return result;
     },
     [type],
   );
+  const warning =
+    taggedWarning.search === `${type}\u0000${query.trim()}` ? taggedWarning.text : null;
   const { items, total, hasMore, loadingMore, error, stale, sentinelRef, reload } =
     usePaginatedList(fetcher, query, { pageSize: 25, resourceKey: type, keepPrevious: true });
   const tracks =

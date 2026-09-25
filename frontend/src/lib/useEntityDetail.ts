@@ -34,6 +34,8 @@ export function useEntityDetail<T>(
   error: string | null;
   /** Refetch in place, without clearing to the loading state. Failures are ignored. */
   refresh: () => void;
+  /** Show (and cache) an entity the caller got back from saving it. */
+  replace: (entity: T) => void;
 } {
   const key = `${label}:${id}`;
   const [entity, setEntity] = useState<EntityState<T>>(
@@ -96,5 +98,13 @@ export function useEntityDetail<T>(
       .catch(() => {});
   }, [id, key, get, listTracks]);
 
-  return { entity, tracks, error, refresh };
+  const replace = useCallback(
+    (next: T) => {
+      setEntity(next);
+      if (tracks) writeCache(key, { entity: next, tracks } satisfies Cached<T>);
+    },
+    [key, tracks],
+  );
+
+  return { entity, tracks, error, refresh, replace };
 }

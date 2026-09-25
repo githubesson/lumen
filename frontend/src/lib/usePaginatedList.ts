@@ -160,6 +160,8 @@ export function usePaginatedList<T>(
   useEffect(() => {
     // Query inputs define a new paginated resource and reset accumulated pages
     // (to its cached first page, if there is one).
+    // An error belongs to the request that failed, not the new one.
+    setError(null);
     const cached = readCache<CachedPage<T>>(pageCacheKeyRef.current);
     if (cached) {
       setItems(cached.items);

@@ -37,7 +37,7 @@ export function AlbumDetailView({
   id: string;
   onBack: () => void;
 }) {
-  const { entity, tracks, error, refresh } = useEntityDetail<Album>(id, {
+  const { entity, tracks, error, refresh, replace } = useEntityDetail<Album>(id, {
     get: api.getAlbum,
     listTracks: api.listAlbumTracks,
     label: "album",
@@ -47,16 +47,12 @@ export function AlbumDetailView({
   // Bumped whenever the album is saved so the cover <img> reloads — the cover
   // URL is stable even when an admin replaces the artwork.
   const [coverNonce, setCoverNonce] = useState(0);
-  // Local override so an in-place save reflects immediately without refetching.
-  const [saved, setSaved] = useState<Album | null>(null);
   const { play } = usePlayer();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
   const search = useDetailTrackSearch("album", tracks);
-  const onDownloadChanged = useCallback(() => {
-    setSaved(null); // the refetch carries fresh counts
-    refresh();
-  }, [refresh]);
+  // The refetch carries fresh counts.
+  const onDownloadChanged = useCallback(() => refresh(), [refresh]);
 
   if (entity === "notfound") {
     return <NotFound kind="Album" onBack={onBack} />;
@@ -64,7 +60,7 @@ export function AlbumDetailView({
   if (!entity || !tracks) {
     return <DetailLoading kind="Album" label="Loading album…" error={error} onBack={onBack} />;
   }
-  const album = saved ?? entity;
+  const album = entity;
   const playable = playableTracks(tracks);
   return (
     <div className="view" style={{ display: "grid", gap: 18 }}>
@@ -170,7 +166,8 @@ export function AlbumDetailView({
         album={album}
         onClose={() => setEditing(false)}
         onSaved={(a) => {
-          setSaved(a);
+          // In place and in the cache, so a revisit doesn't show the old one.
+          replace(a);
           setCoverNonce(Date.now());
         }}
       />
