@@ -142,16 +142,20 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         api.getPlaylist(id),
         api.listPlaylistTracks(id),
         known && showsCollaborators(known)
-          ? api.listCollaborators(id).catch(() => [])
+          ? api.listCollaborators(id).catch(() => undefined)
           : null,
       ]);
+      // undefined: that request failed, so keep what's shown (a cached
+      // list) rather than committing an empty one over it.
       const c = showsCollaborators(p)
-        ? early ?? (await api.listCollaborators(id).catch(() => []))
+        ? early !== null
+          ? early
+          : await api.listCollaborators(id).catch(() => undefined)
         : [];
       if (gen !== loadGenRef.current) return;
       setPlaylist(p);
       setTracks(t.tracks);
-      setCollabs(c);
+      if (c) setCollabs(c);
       setError(null);
     } catch (err) {
       if (gen !== loadGenRef.current) return;
