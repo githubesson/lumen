@@ -40,7 +40,7 @@ export default function GridView<T>({
 
   return (
     <>
-      <ListMeta loaded={items?.length ?? 0} total={total} unit={unit} />
+      <ListMeta loaded={items?.length ?? null} total={total} unit={unit} />
       {error && <ErrorBanner message={error} />}
       <div style={{ marginTop: 14 }}>
         {items === null && <LoadingState label="Loading library…" />}

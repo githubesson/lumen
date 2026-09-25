@@ -13,6 +13,17 @@
 [data-density="dense"] .card-title { font-size: 12px; }
 [data-density="dense"] .card-sub { font-size: 12px; }
 
+/* A list showing the previous query's or sort's results while the next ones
+   load. The dim waits a beat so fast responses never flicker; the new results
+   come back at full opacity straight away. */
+.refreshable {
+  transition: opacity 150ms var(--ease-out);
+}
+.refreshable[aria-busy="true"] {
+  opacity: 0.55;
+  transition-delay: 150ms;
+}
+
 /* Library table */
 .track-selectbar {
   min-height: 38px;

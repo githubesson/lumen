@@ -1,3 +1,4 @@
+import { useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Download as ArrowDownTrayIcon,
@@ -47,10 +48,8 @@ export default function TrackSelectionToolbar({
   hostId,
   className,
 }: TrackSelectionToolbarProps) {
-  const host =
-    hostId && typeof document !== "undefined"
-      ? document.getElementById(hostId)
-      : null;
+  const host = usePortalHost(hostId);
+  if (host === undefined) return null;
 
   const toolbar = (
     <div
@@ -94,13 +93,58 @@ export default function TrackSelectionToolbar({
           </button>
         </>
       ) : (
-        <button type="button" className="btn" onClick={onToggleMode}>
-          <CheckIcon className="size-3.5" />
-          Select
-        </button>
+        <SelectButton onClick={onToggleMode} />
       )}
     </div>
   );
 
   return host ? createPortal(toolbar, host) : toolbar;
+}
+
+/**
+ * A disabled "Select" in the toolbar host while the list it belongs to is
+ * still loading, so the button is there from the first frame instead of
+ * popping into the toolbar once the tracks arrive.
+ */
+export function TrackSelectionToolbarPlaceholder({ hostId }: { hostId: string }) {
+  const host = usePortalHost(hostId);
+  if (!host) return null;
+  return createPortal(
+    <div className="track-selectbar track-selectbar-attached" data-selecting={false}>
+      <SelectButton disabled />
+    </div>,
+    host,
+  );
+}
+
+function SelectButton({ onClick, disabled }: { onClick?: () => void; disabled?: boolean }) {
+  return (
+    <button type="button" className="btn" onClick={onClick} disabled={disabled}>
+      <CheckIcon className="size-3.5" />
+      Select
+    </button>
+  );
+}
+
+/**
+ * The host element, looked up after commit. The host usually mounts in the
+ * same commit as the list (switching grid to list, a playlist loading), so a
+ * lookup during render misses it and the bar would paint inline above the
+ * table for a frame. `undefined` means not looked up yet (render nothing);
+ * `null` means there's no host (render inline).
+ */
+function usePortalHost(hostId: string | undefined) {
+  const [host, setHost] = useState<HTMLElement | null | undefined>(
+    hostId ? undefined : null,
+  );
+  // No deps: the host can mount or remount without this component re-keying
+  // (a playlist growing past one track). The bail-out below ends the loop.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    const next = hostId ? document.getElementById(hostId) : null;
+    // Syncing from the DOM, which only exists after commit.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHost((prev) => (prev === next ? prev : next));
+  });
+  return host;
 }

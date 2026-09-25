@@ -10,6 +10,12 @@ interface Options {
   rootMargin?: string;
   /** Poll the server every N ms. Off when undefined or 0. */
   pollIntervalMs?: number;
+  /**
+   * Keep the current items up when the query or resource key changes, until
+   * the new first page lands (`stale` is true meanwhile), instead of dropping
+   * back to the loading state.
+   */
+  keepPrevious?: boolean;
 }
 
 export interface PageRequest {
@@ -37,6 +43,7 @@ export function usePaginatedList<T>(
 ) {
   const pageSize = opts.pageSize ?? 100;
   const rootMargin = opts.rootMargin ?? "600px 0px";
+  const keepPrevious = opts.keepPrevious ?? false;
 
   const [items, setItems] = useState<T[] | null>(null);
   const [total, setTotal] = useState<number | null>(null);
@@ -49,13 +56,18 @@ export function usePaginatedList<T>(
   const loadingRef = useRef(false);
   const activeRequestRef = useRef<AbortController | null>(null);
   const fetcherRef = useRef(fetcher);
+  // Which query + resource the items on screen came from, for `stale`.
+  const requestKey = `${opts.resourceKey ?? ""}\u0000${query}`;
+  const requestKeyRef = useRef(requestKey);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
   // Keep the ref current from an effect: writing refs during render is illegal
   // under concurrent React (a render that is thrown away still mutates it) and
   // is rejected by the React Compiler. Declared before the loader effects so
   // it commits first.
   useEffect(() => {
     fetcherRef.current = fetcher;
-  }, [fetcher]);
+    requestKeyRef.current = requestKey;
+  }, [fetcher, requestKey]);
 
   const loadPage = useCallback(
     async (offset: number, reset: boolean) => {
@@ -71,6 +83,7 @@ export function usePaginatedList<T>(
       }
       loadingRef.current = true;
       const token = tokenRef.current;
+      const key = requestKeyRef.current;
       const controller = new AbortController();
       activeRequestRef.current = controller;
       try {
@@ -91,11 +104,15 @@ export function usePaginatedList<T>(
         setItems((prev) =>
           reset || !prev ? page.items : [...prev, ...page.items],
         );
+        setLoadedKey(key);
         setError(null);
       } catch (err) {
         if (controller.signal.aborted || token !== tokenRef.current) return;
         setError(errorMessage(err, "Failed to load."));
-        if (reset) setItems([]);
+        if (reset) {
+          setItems([]);
+          setLoadedKey(key);
+        }
       } finally {
         if (activeRequestRef.current === controller) {
           activeRequestRef.current = null;
@@ -110,11 +127,13 @@ export function usePaginatedList<T>(
   // Initial + query-change reload.
   useEffect(() => {
     // Query inputs define a new paginated resource and reset accumulated pages.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setItems(null);
-    setTotal(null);
+    if (!keepPrevious) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setItems(null);
+      setTotal(null);
+    }
     void loadPage(0, true);
-  }, [loadPage, opts.resourceKey]);
+  }, [loadPage, opts.resourceKey, keepPrevious]);
 
   useEffect(
     () => () => {
@@ -156,5 +175,6 @@ export function usePaginatedList<T>(
     return () => obs.disconnect();
   }, [loadPage, items, hasMore, rootMargin]);
 
-  return { items, total, hasMore, loadingMore, error, sentinelRef, reload: () => loadPage(0, true) };
+  const stale = items !== null && loadedKey !== requestKey;
+  return { items, total, hasMore, loadingMore, error, stale, sentinelRef, reload: () => loadPage(0, true) };
 }

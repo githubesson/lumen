@@ -46,8 +46,8 @@ export default function SearchResults({
     },
     [type],
   );
-  const { items, total, hasMore, loadingMore, error, sentinelRef, reload } =
-    usePaginatedList(fetcher, query, { pageSize: 25, resourceKey: type });
+  const { items, total, hasMore, loadingMore, error, stale, sentinelRef, reload } =
+    usePaginatedList(fetcher, query, { pageSize: 25, resourceKey: type, keepPrevious: true });
   const tracks =
     items?.flatMap((result) =>
       result.type === "track" ? [result.item] : [],
@@ -60,8 +60,17 @@ export default function SearchResults({
     items?.flatMap((result) =>
       result.type === "artist" ? [result.item] : [],
     ) ?? [];
+  // The debounced query is still blank for a beat after the first keystroke,
+  // and a stale empty page (a type with no hits) says nothing about the next
+  // query, so both show as loading rather than "No matching results".
+  const searching =
+    items === null || !query.trim() || (stale && items.length === 0);
   return (
-    <div style={{ display: "grid", gap: 18, marginTop: 18 }}>
+    <div
+      className="refreshable"
+      aria-busy={(stale && !searching) || undefined}
+      style={{ display: "grid", gap: 18, marginTop: 18 }}
+    >
       {error && <ErrorBanner message={error} />}
       {warning && <ErrorBanner message={warning} />}
       {(error || warning) && (
@@ -69,8 +78,8 @@ export default function SearchResults({
           <Button onClick={() => void reload()}>Retry search</Button>
         </div>
       )}
-      {items === null && <LoadingState label="Searching…" />}
-      {items?.length === 0 && !error && !warning && (
+      {searching && <LoadingState label="Searching…" />}
+      {!searching && items.length === 0 && !error && !warning && (
         <EmptyState
           title="No matching results."
           hint="Try another search or type."

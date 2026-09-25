@@ -25,6 +25,7 @@ import LoadMoreSentinel from "../components/list/LoadMoreSentinel";
 import PageHeader from "../components/PageHeader";
 import { useTrackContextMenu } from "../components/TrackContextMenu";
 import BrowseToolbar from "../components/library/BrowseToolbar";
+import { TrackSelectionToolbarPlaceholder } from "../components/TrackSelectionToolbar";
 import { usePlayer } from "../context/Player";
 import {
   usePaginatedList,
@@ -193,7 +194,7 @@ function LibraryBrowse({
       />
 
       {query.trim() && (
-        <SearchResults key={`${searchType}:${requestQuery}`} query={requestQuery} type={searchType} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} />
+        <SearchResults query={requestQuery} type={searchType} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} />
       )}
       {!query.trim() && view === "tracks" && (
         <TracksView query="" sort={sort} displayMode={displayMode} />
@@ -244,24 +245,28 @@ function TracksView({
     },
     [sort],
   );
-  const { items, total, hasMore, loadingMore, error, sentinelRef } = usePaginatedList(
+  const { items, total, hasMore, loadingMore, error, stale, sentinelRef } = usePaginatedList(
     fetcher,
     query,
-    { pageSize: 100, pollIntervalMs: POLL_INTERVAL_MS, resourceKey: sort },
+    { pageSize: 100, pollIntervalMs: POLL_INTERVAL_MS, resourceKey: sort, keepPrevious: true },
   );
   const { play } = usePlayer();
 
   const sorted = items ?? [];
+  const showList = items !== null && items.length > 0 && displayMode === "list";
 
   return (
     <>
-      <ListMeta loaded={sorted.length} total={total} unit="track" />
+      {displayMode === "list" && !showList && (
+        <TrackSelectionToolbarPlaceholder hostId={LIBRARY_SELECTION_CONTROLS_ID} />
+      )}
+      <ListMeta loaded={items?.length ?? null} total={total} unit="track" />
       {error && <ErrorBanner message={error} />}
       {!error && searchWarning && <ErrorBanner message={searchWarning} />}
-      <div style={{ marginTop: 14 }}>
+      <div className="refreshable" aria-busy={stale || undefined} style={{ marginTop: 14 }}>
         {items === null && <LoadingState label="Loading library…" />}
         {items && items.length === 0 && !error && (query.trim() ? <EmptyState title="No matching tracks." hint="Try a different search." /> : <LibraryEmptyState />)}
-        {items && items.length > 0 && displayMode === "list" && (
+        {showList && (
           <TrackList
             tracks={sorted}
             queueSource={sorted}
