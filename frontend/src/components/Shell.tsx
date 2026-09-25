@@ -16,7 +16,7 @@ import Topbar from "./shell/Topbar";
 import { OpenSettingsContext } from "./shell/openSettings";
 import { useMobileNav } from "./shell/useMobileNav";
 import { useSidebarToggle } from "./shell/useSidebarToggle";
-import { clearResourceCache } from "../lib/resourceCache";
+import { claimResourceCache, clearResourceCache } from "../lib/resourceCache";
 
 const CommandPalette = lazy(() => import("./CommandPalette"));
 const EMPTY_PLAYLISTS: Playlist[] = [];
@@ -35,6 +35,7 @@ function readPendingCount(userId: string | undefined) {
 
 export default function Shell() {
   const { me } = useAuth();
+  claimResourceCache(me?.id ?? null);
   const { open: lyricsOpen } = useLyricsPanel();
   const { data: playlistRows } = usePlaylists();
   const playlists = playlistRows ?? EMPTY_PLAYLISTS;
@@ -48,9 +49,10 @@ export default function Shell() {
 
   useDiscordPresence();
 
-  // Pages cache their last results for revisits; none of it outlives the
-  // account that loaded it.
-  useEffect(() => () => clearResourceCache(), [me?.id]);
+  // Pages cache their last results for revisits. Nothing is kept once the
+  // signed-in shell goes (sign-out); a switch to another account is handled
+  // by the claim above, before its pages render.
+  useEffect(() => () => clearResourceCache(), []);
 
   useEffect(() => {
     if (!me || me.must_reset_password) return;

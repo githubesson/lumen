@@ -12,6 +12,11 @@ export interface ApiResource<T> {
    * never rejects. Await it to keep controls busy until fresh data arrives.
    */
   reload: () => Promise<void>;
+  /**
+   * Apply a change the caller already knows happened (a delete), so it shows
+   * before any refetch. Also updates the cached copy.
+   */
+  update: (fn: (data: T | null) => T | null) => void;
 }
 
 /**
@@ -93,5 +98,13 @@ export function useApiResource<T>(
     };
   }, [nonce, settle]);
 
-  return { data, error, loading, reload };
+  const update = useCallback((fn: (data: T | null) => T | null) => {
+    setData((prev) => {
+      const next = fn(prev);
+      writeCache(cacheKeyRef.current, next ?? undefined);
+      return next;
+    });
+  }, []);
+
+  return { data, error, loading, reload, update };
 }

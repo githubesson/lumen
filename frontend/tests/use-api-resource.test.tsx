@@ -1,7 +1,12 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { useApiResource } from "../src/lib/useApiResource";
-import { clearResourceCache } from "../src/lib/resourceCache";
+import {
+  claimResourceCache,
+  clearResourceCache,
+  readCache,
+  writeCache,
+} from "../src/lib/resourceCache";
 
 afterEach(() => {
   cleanup();
@@ -74,4 +79,13 @@ it("starts a remount from the cached result and refreshes behind it", async () =
   await act(async () => { loads[1].resolve("second"); });
   expect(second.result.current.data).toBe("second");
   expect(second.result.current.loading).toBe(false);
+});
+
+it("drops the cache when another account claims it, and keeps it for the same one", () => {
+  claimResourceCache("a");
+  writeCache("k", "a's data");
+  claimResourceCache("a");
+  expect(readCache("k")).toBe("a's data");
+  claimResourceCache("b");
+  expect(readCache("k")).toBeUndefined();
 });

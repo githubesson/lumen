@@ -82,7 +82,11 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   // A revisit starts from what this page showed last time; a first visit
   // starts from the sidebar's row, so the header is up while tracks load.
   const [cached] = useState(() => readCache<CachedPlaylist>(cacheKey(id)));
-  const { data: playlistRows, reload: reloadPlaylists } = usePlaylists();
+  const {
+    data: playlistRows,
+    reload: reloadPlaylists,
+    update: updatePlaylists,
+  } = usePlaylists();
   // Deleted, or access lost: nothing cached or listed stands in for it.
   const [gone, setGone] = useState(false);
   const listed = gone ? null : (playlistRows?.find((p) => p.id === id) ?? null);
@@ -327,6 +331,11 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       return;
     try {
       await api.deletePlaylist(id);
+      // Gone from the sidebar, the Playlists page and the cache before we
+      // land there, rather than whenever a refetch succeeds.
+      invalidateLoads();
+      dropCache(cacheKey(id));
+      updatePlaylists((rows) => rows?.filter((p) => p.id !== id) ?? rows);
       navigate("/playlists", { replace: true });
     } catch (err) {
       setError(errorMessage(err, "Failed to delete."));
