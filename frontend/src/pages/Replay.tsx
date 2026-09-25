@@ -102,7 +102,7 @@ export default function Replay() {
   // A period seen before this session answers from the cache while it
   // refreshes -- still that period's own numbers, never another's.
   const data =
-    loaded?.key === request.key
+    loaded?.key === request.cacheKey
       ? loaded.data
       : (readCache<ReplayData>(request.cacheKey) ?? null);
 
@@ -121,7 +121,7 @@ export default function Replay() {
         // with the previous period's, which the keyed derivation rejects --
         // leaving the loading state up for good.
         if (ac.signal.aborted) return;
-        setLoaded({ key: request.key, data: d });
+        setLoaded({ key: request.cacheKey, data: d });
         setYears(d.available_years ?? []);
         writeCache(request.cacheKey, d);
         writeCache("replay:years", d.available_years ?? []);

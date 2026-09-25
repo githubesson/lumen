@@ -45,10 +45,14 @@ export function useEntityDetail<T>(
     () => readCache<Cached<T>>(key)?.tracks ?? null,
   );
   const [error, setError] = useState<string | null>(null);
+  // Only the newest read may commit: replace() bumps it too, so a save made
+  // while the mount or a refresh read is out isn't rolled back by it.
+  const genRef = useRef(0);
 
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
+    const gen = ++genRef.current;
     // A changed entity id invalidates the previous entity/track snapshot.
     const cached = readCache<Cached<T>>(key);
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -60,13 +64,13 @@ export function useEntityDetail<T>(
       listTracks(id, { signal: controller.signal }),
     ])
       .then(([e, t]) => {
-        if (cancelled) return;
+        if (cancelled || gen !== genRef.current) return;
         writeCache(key, { entity: e, tracks: t ?? [] } satisfies Cached<T>);
         setEntity(e);
         setTracks(t ?? []);
       })
       .catch((err) => {
-        if (cancelled || controller.signal.aborted) return;
+        if (cancelled || controller.signal.aborted || gen !== genRef.current) return;
         if (err instanceof ApiError && err.status === 404) {
           setEntity("notfound");
           return;
@@ -85,12 +89,13 @@ export function useEntityDetail<T>(
     refreshing.current?.abort();
     const controller = new AbortController();
     refreshing.current = controller;
+    const gen = ++genRef.current;
     Promise.all([
       get(id, { signal: controller.signal }),
       listTracks(id, { signal: controller.signal }),
     ])
       .then(([e, t]) => {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || gen !== genRef.current) return;
         writeCache(key, { entity: e, tracks: t ?? [] } satisfies Cached<T>);
         setEntity(e);
         setTracks(t ?? []);
@@ -100,6 +105,7 @@ export function useEntityDetail<T>(
 
   const replace = useCallback(
     (next: T) => {
+      genRef.current += 1;
       setEntity(next);
       if (tracks) writeCache(key, { entity: next, tracks } satisfies Cached<T>);
     },

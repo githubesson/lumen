@@ -116,8 +116,16 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     },
   );
 
+  // Only the newest load may commit. The page is usable while its first
+  // load is out (seeded from the cache or sidebar), so a mutation and its
+  // reload can overtake it, and its older rows mustn't land on top.
+  const loadGenRef = useRef(0);
+  const invalidateLoads = () => {
+    loadGenRef.current += 1;
+  };
   const load = useCallback(async () => {
     if (!id) return;
+    const gen = ++loadGenRef.current;
     try {
       // Fetch collaborators alongside when the row we already have says the
       // tab exists, so its count lands with everything else.
@@ -132,11 +140,13 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       const c = showsCollaborators(p)
         ? early ?? (await api.listCollaborators(id).catch(() => []))
         : [];
+      if (gen !== loadGenRef.current) return;
       setPlaylist(p);
       setTracks(t.tracks);
       setCollabs(c);
       setError(null);
     } catch (err) {
+      if (gen !== loadGenRef.current) return;
       setError(errorMessage(err, "Failed to load playlist."));
     }
   }, [id]);
@@ -163,9 +173,12 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     const timer = window.setInterval(() => {
       // Quiet refresh: a transient failure must not replace the page with
       // the load error banner.
+      const gen = loadGenRef.current;
       api
         .listPlaylistTracks(id)
-        .then((t) => setTracks(t.tracks))
+        .then((t) => {
+          if (gen === loadGenRef.current) setTracks(t.tracks);
+        })
         .catch(() => {});
     }, AUTO_DOWNLOAD_REFRESH_MS);
     return () => window.clearInterval(timer);
@@ -233,6 +246,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
 
   const onRemove = async (position: number) => {
     if (!id) return;
+    invalidateLoads();
     try {
       await api.removePlaylistTrack(id, position);
       await load();
@@ -248,6 +262,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     const next = [...tracks];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
+    invalidateLoads();
     setTracks(next);
     try {
       await api.reorderPlaylist(
@@ -268,10 +283,13 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   const onToggleAutoDownload = async () => {
     if (!id || savingAutoDownload) return;
     const next = !autoDownload;
+    invalidateLoads();
     setSavingAutoDownload(true);
     try {
       await api.setPlaylistTidalAutoDownload(id, next);
       setPlaylist((p) => (p ? { ...p, tidal_auto_download: next } : p));
+      // The load this may have superseded still has to happen.
+      void load();
     } catch (err) {
       setError(errorMessage(err, "Failed to update TIDAL auto-download."));
     } finally {
