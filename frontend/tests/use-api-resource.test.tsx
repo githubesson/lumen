@@ -89,3 +89,12 @@ it("drops the cache when another account claims it, and keeps it for the same on
   claimResourceCache("b");
   expect(readCache("k")).toBeUndefined();
 });
+
+it("drops a read that started before update() and still settles its reload", async () => {
+  const pending = deferred<string[]>();
+  const { result } = renderHook(() => useApiResource(() => pending.promise));
+  act(() => { result.current.update(() => ["kept"]); });
+  await act(async () => { pending.resolve(["stale"]); });
+  expect(result.current.data).toEqual(["kept"]);
+  expect(result.current.loading).toBe(false);
+});

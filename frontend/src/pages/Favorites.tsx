@@ -13,10 +13,14 @@ export default function Favorites() {
   const { play } = usePlayer();
   // The favorites context loaded this list at sign-in: show it at once and
   // refresh it behind (it doesn't pick up hearts added since). Empty while
-  // loading means not loaded yet, not no favorites.
+  // loading, or after a failed load, means not known yet -- not "no
+  // favorites".
   const favorites = useFavorites();
   const { error, refresh } = favorites;
-  const tracks = favorites.loading && favorites.tracks.length === 0 ? null : favorites.tracks;
+  const tracks =
+    (favorites.loading || favorites.error) && favorites.tracks.length === 0
+      ? null
+      : favorites.tracks;
   useEffect(() => {
     void refresh();
   }, [refresh]);

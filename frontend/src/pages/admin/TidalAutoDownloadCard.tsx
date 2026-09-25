@@ -28,6 +28,7 @@ export function TidalAutoDownloadCard({ roots }: { roots: MusicRoot[] | null }) 
     error: loadError,
     loading,
     reload,
+    update,
   } = useApiResource<TidalAutoDownloadStatus>(
     () => api.tidalAutoDownload(),
     "Failed to load TIDAL auto-download status.",
@@ -64,13 +65,14 @@ export function TidalAutoDownloadCard({ roots }: { roots: MusicRoot[] | null }) 
     setBusy("save");
     setActionError(null);
     try {
-      await api.saveTidalAutoDownloadSettings({
+      // The response is what the server stored (it normalises the path), so
+      // it becomes the status and the edits give way to it.
+      const saved = await api.saveTidalAutoDownloadSettings({
         root_id: rootId || undefined,
         subdir: subdir.trim(),
       });
-      // The edits stay: once the refresh lands they match the status (and
-      // stop counting as dirty), and if it fails the form still shows what
-      // the server accepted rather than the stale status.
+      update(() => saved);
+      setEdits({});
       await reload();
     } catch (err) {
       setActionError(errorMessage(err, "Could not save the download folder."));

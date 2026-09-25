@@ -70,9 +70,14 @@ export function useApiResource<T>(
     [],
   );
 
+  // Bumped by update(): a read that started before it is older than the
+  // change it applied, so its result is dropped (it still settles).
+  const updatesRef = useRef(0);
+
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
+    const updatesAtStart = updatesRef.current;
     // Mount and explicit reload begin a new request lifecycle.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
@@ -81,14 +86,18 @@ export function useApiResource<T>(
       .current(controller.signal)
       .then((result) => {
         if (!active) return;
-        writeCache(cacheKeyRef.current, result);
-        setData(result);
+        if (updatesRef.current === updatesAtStart) {
+          writeCache(cacheKeyRef.current, result);
+          setData(result);
+        }
         setLoading(false);
         settle(nonce);
       })
       .catch((err) => {
         if (!active || controller.signal.aborted) return;
-        setError(errorMessage(err, fallbackRef.current));
+        if (updatesRef.current === updatesAtStart) {
+          setError(errorMessage(err, fallbackRef.current));
+        }
         setLoading(false);
         settle(nonce);
       });
@@ -99,6 +108,7 @@ export function useApiResource<T>(
   }, [nonce, settle]);
 
   const update = useCallback((fn: (data: T | null) => T | null) => {
+    updatesRef.current += 1;
     setData((prev) => {
       const next = fn(prev);
       writeCache(cacheKeyRef.current, next ?? undefined);
