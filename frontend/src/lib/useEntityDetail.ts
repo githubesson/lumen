@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, errorMessage, type TrackListItem } from "../api";
+import { readCache, writeCache } from "./resourceCache";
 
 export type EntityState<T> = T | null | "notfound";
+
+interface Cached<T> {
+  entity: T;
+  tracks: TrackListItem[];
+}
 
 interface EntityLoaders<T> {
   get: (id: string, options: { signal: AbortSignal }) => Promise<T>;
@@ -17,6 +23,7 @@ interface EntityLoaders<T> {
  * Load a detail entity + its tracks with a cancellable fetch and 404 ->
  * "notfound" handling. Extracted from the near-identical AlbumDetailView /
  * ArtistDetailView effects (and now actually aborts the in-flight request).
+ * A revisit starts from the last load of the same entity and refreshes it.
  */
 export function useEntityDetail<T>(
   id: string,
@@ -28,17 +35,23 @@ export function useEntityDetail<T>(
   /** Refetch in place, without clearing to the loading state. Failures are ignored. */
   refresh: () => void;
 } {
-  const [entity, setEntity] = useState<EntityState<T>>(null);
-  const [tracks, setTracks] = useState<TrackListItem[] | null>(null);
+  const key = `${label}:${id}`;
+  const [entity, setEntity] = useState<EntityState<T>>(
+    () => readCache<Cached<T>>(key)?.entity ?? null,
+  );
+  const [tracks, setTracks] = useState<TrackListItem[] | null>(
+    () => readCache<Cached<T>>(key)?.tracks ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
     // A changed entity id invalidates the previous entity/track snapshot.
+    const cached = readCache<Cached<T>>(key);
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setEntity(null);
-    setTracks(null);
+    setEntity(cached?.entity ?? null);
+    setTracks(cached?.tracks ?? null);
     setError(null);
     Promise.all([
       get(id, { signal: controller.signal }),
@@ -46,6 +59,7 @@ export function useEntityDetail<T>(
     ])
       .then(([e, t]) => {
         if (cancelled) return;
+        writeCache(key, { entity: e, tracks: t ?? [] } satisfies Cached<T>);
         setEntity(e);
         setTracks(t ?? []);
       })
@@ -61,7 +75,7 @@ export function useEntityDetail<T>(
       cancelled = true;
       controller.abort();
     };
-  }, [id, get, listTracks, label]);
+  }, [id, key, get, listTracks, label]);
 
   const refreshing = useRef<AbortController | null>(null);
   useEffect(() => () => refreshing.current?.abort(), [id]);
@@ -75,11 +89,12 @@ export function useEntityDetail<T>(
     ])
       .then(([e, t]) => {
         if (controller.signal.aborted) return;
+        writeCache(key, { entity: e, tracks: t ?? [] } satisfies Cached<T>);
         setEntity(e);
         setTracks(t ?? []);
       })
       .catch(() => {});
-  }, [id, get, listTracks]);
+  }, [id, key, get, listTracks]);
 
   return { entity, tracks, error, refresh };
 }

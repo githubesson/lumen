@@ -62,13 +62,13 @@ it("does not leave reload() pending when the owner unmounts mid-load", async () 
 it("starts a remount from the cached result and refreshes behind it", async () => {
   const loads = [deferred<string>(), deferred<string>()];
   let call = 0;
-  const hook = () => useApiResource(() => loads[call++].promise, "x", { cacheKey: "k" });
-  const first = renderHook(hook);
+  const useCachedResource = () => useApiResource(() => loads[call++].promise, "x", { cacheKey: "k" });
+  const first = renderHook(useCachedResource);
   expect(first.result.current.data).toBeNull();
   await act(async () => { loads[0].resolve("first"); });
   first.unmount();
 
-  const second = renderHook(hook);
+  const second = renderHook(useCachedResource);
   expect(second.result.current.data).toBe("first");
   expect(second.result.current.loading).toBe(true);
   await act(async () => { loads[1].resolve("second"); });

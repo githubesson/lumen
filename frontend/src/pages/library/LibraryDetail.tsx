@@ -15,6 +15,7 @@ import {
 } from "../../api";
 import { displayText, pluralize } from "../../lib/format";
 import { useEntityDetail } from "../../lib/useEntityDetail";
+import { readCache, writeCache } from "../../lib/resourceCache";
 import TrackList from "../../components/TrackList";
 import CoverArt from "../../components/CoverArt";
 import { Button } from "../../components/Button";
@@ -22,7 +23,6 @@ import { EditAlbumDialog } from "../../components/edit/EditAlbumDialog";
 import EmptyState from "../../components/EmptyState";
 import ErrorBanner from "../../components/ErrorBanner";
 import ListPageHeader from "../../components/ListPageHeader";
-import LoadingState from "../../components/LoadingState";
 import SearchInput from "../../components/SearchInput";
 import { usePlayer } from "../../context/Player";
 import { useAuth } from "../../context/Auth";
@@ -62,11 +62,7 @@ export function AlbumDetailView({
     return <NotFound kind="Album" onBack={onBack} />;
   }
   if (!entity || !tracks) {
-    return (
-      <div className="view">
-        <LoadingState label="Loading library…" />
-      </div>
-    );
+    return <DetailLoading kind="Album" label="Loading album…" onBack={onBack} />;
   }
   const album = saved ?? entity;
   const playable = playableTracks(tracks);
@@ -191,27 +187,38 @@ export function TidalAlbumDetailView({
   onBack: () => void;
   onOpenAlbum: (id: string) => void;
 }) {
-  const [album, setAlbum] = useState<TidalAlbum | null>(null);
+  const [album, setAlbum] = useState<TidalAlbum | null>(
+    () => readCache<TidalAlbum>(`tidal-album:${id}`) ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const { play } = usePlayer();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
   // Quiet refetch for download progress; failures keep the current view.
   const reload = useCallback(() => {
-    api.getTidalAlbum(id).then(setAlbum).catch(() => {});
+    api
+      .getTidalAlbum(id)
+      .then((next) => {
+        writeCache(`tidal-album:${id}`, next);
+        setAlbum(next);
+      })
+      .catch(() => {});
   }, [id]);
   const search = useDetailTrackSearch("album", album?.tracks ?? null);
 
   useEffect(() => {
     const ac = new AbortController();
-    // A changed TIDAL album id invalidates the previous remote snapshot.
+    // A changed TIDAL album id invalidates the previous remote snapshot; a
+    // revisit starts from its own last load.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setAlbum(null);
+    setAlbum(readCache<TidalAlbum>(`tidal-album:${id}`) ?? null);
     setError(null);
     api
       .getTidalAlbum(id, { signal: ac.signal })
       .then((next) => {
-        if (!ac.signal.aborted) setAlbum(next);
+        if (ac.signal.aborted) return;
+        writeCache(`tidal-album:${id}`, next);
+        setAlbum(next);
       })
       .catch((err) => {
         if (!ac.signal.aborted) {
@@ -222,11 +229,7 @@ export function TidalAlbumDetailView({
   }, [id]);
 
   if (!album && !error) {
-    return (
-      <div className="view">
-        <LoadingState label="Loading TIDAL album..." />
-      </div>
-    );
+    return <DetailLoading kind="TIDAL Album" label="Loading TIDAL album…" onBack={onBack} />;
   }
 
   return (
@@ -435,6 +438,32 @@ export function DetailTrackSearchBar({
  * Renders inside `.detail-header` as the top strip, over the same card
  * gradient as the cover/body below it.
  */
+/**
+ * The detail page's frame while its first load is out: the Back row and a
+ * header of the same shape, so neither pops in with the album.
+ */
+function DetailLoading({
+  kind,
+  label,
+  onBack,
+}: {
+  kind: string;
+  label: string;
+  onBack: () => void;
+}) {
+  return (
+    <div className="view" style={{ display: "grid", gap: 18 }} aria-busy="true">
+      <DetailBackRow onBack={onBack} />
+      <ListPageHeader
+        kind={kind}
+        title={<span className="skeleton-text" style={{ width: "min(320px, 60%)" }} />}
+        art={<div className="detail-art" aria-hidden="true" />}
+        meta={<span role="status">{label}</span>}
+      />
+    </div>
+  );
+}
+
 function DetailBackRow({ onBack }: { onBack: () => void }) {
   return (
     <div>

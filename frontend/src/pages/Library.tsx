@@ -248,7 +248,7 @@ function TracksView({
   const { items, total, hasMore, loadingMore, error, stale, sentinelRef } = usePaginatedList(
     fetcher,
     query,
-    { pageSize: 100, pollIntervalMs: POLL_INTERVAL_MS, resourceKey: sort, keepPrevious: true },
+    { pageSize: 100, pollIntervalMs: POLL_INTERVAL_MS, resourceKey: sort, keepPrevious: true, cacheKey: "library:tracks" },
   );
   const { play } = usePlayer();
 
@@ -298,6 +298,7 @@ function AlbumsView({
   return (
     <GridView<Album>
       fetcher={api.listAlbumsPage}
+      cacheKey="library:albums"
       query={query}
       pageSize={60}
       unit="album"
@@ -317,6 +318,7 @@ function ArtistsView({
   return (
     <GridView<Artist>
       fetcher={api.listArtistsPage}
+      cacheKey="library:artists"
       query={query}
       pageSize={60}
       unit="artist"

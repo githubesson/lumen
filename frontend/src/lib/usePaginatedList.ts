@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage, type Page, type SearchOffsets } from "../api";
 import { libraryChanged } from "./events";
+import { readCache, writeCache } from "./resourceCache";
 
 interface Options {
   resourceKey?: string;
@@ -16,6 +17,16 @@ interface Options {
    * back to the loading state.
    */
   keepPrevious?: boolean;
+  /**
+   * Remember the first page under this key (per query and resource key), so
+   * a remount shows it at once and refreshes behind it.
+   */
+  cacheKey?: string;
+}
+
+interface CachedPage<T> {
+  items: T[];
+  total: number | null;
 }
 
 export interface PageRequest {
@@ -45,8 +56,16 @@ export function usePaginatedList<T>(
   const rootMargin = opts.rootMargin ?? "600px 0px";
   const keepPrevious = opts.keepPrevious ?? false;
 
-  const [items, setItems] = useState<T[] | null>(null);
-  const [total, setTotal] = useState<number | null>(null);
+  // Which query + resource the items on screen came from, for `stale`.
+  const requestKey = `${opts.resourceKey ?? ""}\u0000${query}`;
+  const pageCacheKey =
+    opts.cacheKey === undefined ? undefined : `${opts.cacheKey}\u0000${requestKey}`;
+  const [items, setItems] = useState<T[] | null>(
+    () => readCache<CachedPage<T>>(pageCacheKey)?.items ?? null,
+  );
+  const [total, setTotal] = useState<number | null>(
+    () => readCache<CachedPage<T>>(pageCacheKey)?.total ?? null,
+  );
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,10 +75,11 @@ export function usePaginatedList<T>(
   const loadingRef = useRef(false);
   const activeRequestRef = useRef<AbortController | null>(null);
   const fetcherRef = useRef(fetcher);
-  // Which query + resource the items on screen came from, for `stale`.
-  const requestKey = `${opts.resourceKey ?? ""}\u0000${query}`;
   const requestKeyRef = useRef(requestKey);
-  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const pageCacheKeyRef = useRef(pageCacheKey);
+  const [loadedKey, setLoadedKey] = useState<string | null>(() =>
+    readCache(pageCacheKey) === undefined ? null : requestKey,
+  );
   // Keep the ref current from an effect: writing refs during render is illegal
   // under concurrent React (a render that is thrown away still mutates it) and
   // is rejected by the React Compiler. Declared before the loader effects so
@@ -67,7 +87,8 @@ export function usePaginatedList<T>(
   useEffect(() => {
     fetcherRef.current = fetcher;
     requestKeyRef.current = requestKey;
-  }, [fetcher, requestKey]);
+    pageCacheKeyRef.current = pageCacheKey;
+  }, [fetcher, requestKey, pageCacheKey]);
 
   const loadPage = useCallback(
     async (offset: number, reset: boolean) => {
@@ -84,6 +105,7 @@ export function usePaginatedList<T>(
       loadingRef.current = true;
       const token = tokenRef.current;
       const key = requestKeyRef.current;
+      const cacheKey = pageCacheKeyRef.current;
       const controller = new AbortController();
       activeRequestRef.current = controller;
       try {
@@ -100,7 +122,9 @@ export function usePaginatedList<T>(
           ? Object.keys(page.nextOffsets).length > 0
           : offset + page.items.length < page.total;
         setHasMore(more);
-        setTotal(page.nextOffsets !== undefined && more ? null : page.total);
+        const nextTotal = page.nextOffsets !== undefined && more ? null : page.total;
+        setTotal(nextTotal);
+        if (reset) writeCache(cacheKey, { items: page.items, total: nextTotal } satisfies CachedPage<T>);
         setItems((prev) =>
           reset || !prev ? page.items : [...prev, ...page.items],
         );
@@ -126,9 +150,14 @@ export function usePaginatedList<T>(
 
   // Initial + query-change reload.
   useEffect(() => {
-    // Query inputs define a new paginated resource and reset accumulated pages.
-    if (!keepPrevious) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+    // Query inputs define a new paginated resource and reset accumulated pages
+    // (to its cached first page, if there is one).
+    const cached = readCache<CachedPage<T>>(pageCacheKeyRef.current);
+    if (cached) {
+      setItems(cached.items);
+      setTotal(cached.total);
+      setLoadedKey(requestKeyRef.current);
+    } else if (!keepPrevious) {
       setItems(null);
       setTotal(null);
     }

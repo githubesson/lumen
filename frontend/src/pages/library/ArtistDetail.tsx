@@ -27,6 +27,7 @@ import {
 } from "@music-library/core/artist-releases";
 import { displayText, pluralize } from "../../lib/format";
 import { useEntityDetail } from "../../lib/useEntityDetail";
+import { readCache, writeCache } from "../../lib/resourceCache";
 import { usePlayer, useRemotePlayback } from "../../context/Player";
 import { Button } from "../../components/Button";
 import CoverArt from "../../components/CoverArt";
@@ -91,9 +92,18 @@ export function ArtistDetailView({
     );
   }
   if (!artist || !tracks) {
+    // The page's frame, so the hero and play button don't pop in with it.
     return (
-      <div className="view">
-        <LoadingState label="Loading library…" />
+      <div className="view artist-page" aria-busy="true">
+        <ArtistHero
+          name={null}
+          imageUrl={null}
+          kind="Artist"
+          meta={["Loading artist…"]}
+          backLabel="Library"
+          onBack={onBack}
+        />
+        <ArtistActions name="" tracks={NO_TRACKS} />
       </div>
     );
   }
@@ -154,7 +164,10 @@ export function TidalArtistDetailView({
   onBack: () => void;
   onOpenAlbum: (id: string) => void;
 }) {
-  const [data, setData] = useState<TidalArtist | null>(null);
+  // Keyed on the id by the caller, so this only has to seed a revisit.
+  const [data, setData] = useState<TidalArtist | null>(
+    () => readCache<TidalArtist>(`tidal-artist:${id}`) ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [completedAttempt, setCompletedAttempt] = useState(-1);
@@ -178,7 +191,9 @@ export function TidalArtistDetailView({
     api
       .getTidalArtist(id, { signal: controller.signal })
       .then((result) => {
-        if (!controller.signal.aborted) setData(result);
+        if (controller.signal.aborted) return;
+        writeCache(`tidal-artist:${id}`, result);
+        setData(result);
       })
       .catch((err) => {
         if (!controller.signal.aborted)
@@ -255,9 +270,11 @@ function ArtistHero({
   backLabel,
   onBack,
 }: {
-  name: string;
+  /** Null while loading: a bar in place of the name. */
+  name: string | null;
   imageUrl: string | null;
   kind: ReactNode;
+  /** Undefined while loading; the row keeps its height either way. */
   meta?: (string | false)[];
   backLabel: string;
   onBack: () => void;
@@ -277,23 +294,34 @@ function ArtistHero({
         </Button>
       </div>
       <div className="artist-hero-main">
-        <CoverArt
-          className="artist-hero-avatar"
-          src={imageUrl}
-          label={name}
-          radius={999}
-          forcePlaceholder={!imageUrl}
-        />
+        {name === null ? (
+          // No initial to show yet; a "?" would flash before the real one.
+          <div className="artist-hero-avatar cover-art" style={{ borderRadius: 999 }} />
+        ) : (
+          <CoverArt
+            className="artist-hero-avatar"
+            src={imageUrl}
+            label={name}
+            radius={999}
+            forcePlaceholder={!imageUrl}
+          />
+        )}
         <div className="artist-hero-body">
           <div className="artist-hero-kind">{kind}</div>
-          <h1 className="artist-hero-name">{displayText(name)}</h1>
-          {metaItems && metaItems.length > 0 && (
-            <div className="artist-hero-meta">
-              {metaItems.map((item) => (
-                <span key={item}>{item}</span>
-              ))}
-            </div>
-          )}
+          <h1 className="artist-hero-name">
+            {name === null ? (
+              <span className="skeleton-text" style={{ width: "min(360px, 70%)" }} />
+            ) : (
+              displayText(name)
+            )}
+          </h1>
+          <div className="artist-hero-meta">
+            {metaItems && metaItems.length > 0 ? (
+              metaItems.map((item) => <span key={item}>{item}</span>)
+            ) : (
+              <span aria-hidden="true">{"\u00a0"}</span>
+            )}
+          </div>
         </div>
       </div>
     </header>
