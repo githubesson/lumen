@@ -192,11 +192,17 @@ export function TidalAlbumDetailView({
   const { play } = usePlayer();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
+  // Only the newest read may commit: a revisit's mount read is still out
+  // while the (cached) page's download controls are usable, and it mustn't
+  // land on top of the reload that follows a download or cancel.
+  const readGenRef = useRef(0);
   // Quiet refetch for download progress; failures keep the current view.
   const reload = useCallback(() => {
+    const gen = ++readGenRef.current;
     api
       .getTidalAlbum(id)
       .then((next) => {
+        if (gen !== readGenRef.current) return;
         writeCache(`tidal-album:${id}`, next);
         setAlbum(next);
       })
@@ -211,15 +217,16 @@ export function TidalAlbumDetailView({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setAlbum(readCache<TidalAlbum>(`tidal-album:${id}`) ?? null);
     setError(null);
+    const gen = ++readGenRef.current;
     api
       .getTidalAlbum(id, { signal: ac.signal })
       .then((next) => {
-        if (ac.signal.aborted) return;
+        if (ac.signal.aborted || gen !== readGenRef.current) return;
         writeCache(`tidal-album:${id}`, next);
         setAlbum(next);
       })
       .catch((err) => {
-        if (ac.signal.aborted) return;
+        if (ac.signal.aborted || gen !== readGenRef.current) return;
         // Gone from TIDAL: don't keep showing (or caching) the old copy.
         if (err instanceof ApiError && err.status === 404) {
           dropCache(`tidal-album:${id}`);
