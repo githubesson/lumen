@@ -1,10 +1,11 @@
 /* ============================================================
    Desktop first-run setup (pages/Welcome.tsx)
    ============================================================ */
+/* A fixed-height scroller, with the card centred by auto margins, so a short
+   window scrolls to every step's buttons instead of clipping them. */
 .welcome {
-  min-height: 100dvh;
-  display: grid;
-  place-items: center;
+  height: 100dvh;
+  display: flex;
   padding: 48px 24px 24px;
   background: var(--muted);
   overflow-y: auto;
@@ -20,6 +21,7 @@
   -webkit-app-region: drag;
 }
 .welcome-card {
+  margin: auto;
   width: 100%;
   max-width: 440px;
   background: var(--card);
