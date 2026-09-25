@@ -68,8 +68,10 @@ export function TidalAutoDownloadCard({ roots }: { roots: MusicRoot[] | null }) 
         root_id: rootId || undefined,
         subdir: subdir.trim(),
       });
+      // The edits stay: once the refresh lands they match the status (and
+      // stop counting as dirty), and if it fails the form still shows what
+      // the server accepted rather than the stale status.
       await reload();
-      setEdits({});
     } catch (err) {
       setActionError(errorMessage(err, "Could not save the download folder."));
     } finally {

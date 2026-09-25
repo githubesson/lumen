@@ -189,6 +189,9 @@ export function TidalAlbumDetailView({
     () => readCache<TidalAlbum>(`tidal-album:${id}`) ?? null,
   );
   const [error, setError] = useState<string | null>(null);
+  // Kept apart from the load error: a later successful read clears that one,
+  // but it says nothing about a download or cancel that failed.
+  const [actionError, setActionError] = useState<string | null>(null);
   const { play } = usePlayer();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
@@ -205,6 +208,7 @@ export function TidalAlbumDetailView({
         if (gen !== readGenRef.current) return;
         writeCache(`tidal-album:${id}`, next);
         setAlbum(next);
+        setError(null);
       })
       .catch(() => {});
   }, [id]);
@@ -301,7 +305,7 @@ export function TidalAlbumDetailView({
                     tracks={album.tracks}
                     queuedCount={album.queued_count ?? 0}
                     onChanged={reload}
-                    onError={setError}
+                    onError={setActionError}
                   />
                 )}
                 {album.library_album_id && (
@@ -326,7 +330,7 @@ export function TidalAlbumDetailView({
               />
             }
           />
-          {error && <ErrorBanner message={error} />}
+          {(error || actionError) && <ErrorBanner message={(error || actionError)!} />}
           <TrackList
             tracks={search.filteredTracks}
             queueSource={album.tracks}
