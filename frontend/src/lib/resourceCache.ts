@@ -14,6 +14,11 @@ export function writeCache(key: string | undefined, value: unknown) {
   if (key !== undefined) cache.set(key, value);
 }
 
+/** For a resource that's gone (a 404): a revisit mustn't paint it again. */
+export function dropCache(key: string | undefined) {
+  if (key !== undefined) cache.delete(key);
+}
+
 export function clearResourceCache() {
   cache.clear();
 }

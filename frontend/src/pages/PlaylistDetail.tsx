@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   api,
+  ApiError,
   errorMessage,
   toQueueItem,
   type Collaborator,
@@ -33,7 +34,7 @@ import ErrorBanner from "../components/ErrorBanner";
 import LoadingState from "../components/LoadingState";
 import { useFavorites } from "../context/Favorites";
 import { usePlaylists } from "../context/Playlists";
-import { readCache, writeCache } from "../lib/resourceCache";
+import { dropCache, readCache, writeCache } from "../lib/resourceCache";
 import { useKey } from "../lib/keybindings";
 import { fmtTotalMs } from "../lib/format";
 import CollaboratorsPanel from "./playlist/CollaboratorsPanel";
@@ -81,7 +82,10 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   // A revisit starts from what this page showed last time; a first visit
   // starts from the sidebar's row, so the header is up while tracks load.
   const [cached] = useState(() => readCache<CachedPlaylist>(cacheKey(id)));
-  const listed = usePlaylists().data?.find((p) => p.id === id) ?? null;
+  const { data: playlistRows, reload: reloadPlaylists } = usePlaylists();
+  // Deleted, or access lost: nothing cached or listed stands in for it.
+  const [gone, setGone] = useState(false);
+  const listed = gone ? null : (playlistRows?.find((p) => p.id === id) ?? null);
   const [loadedPlaylist, setPlaylist] = useState<Playlist | null>(cached?.playlist ?? null);
   const playlist = loadedPlaylist ?? listed;
   const listedRef = useRef(listed);
@@ -147,9 +151,19 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       setError(null);
     } catch (err) {
       if (gen !== loadGenRef.current) return;
+      if (err instanceof ApiError && err.status === 404) {
+        dropCache(cacheKey(id));
+        setGone(true);
+        setPlaylist(null);
+        setTracks(null);
+        // Take it out of the sidebar too.
+        void reloadPlaylists();
+        setError("This playlist was deleted, or you no longer have access to it.");
+        return;
+      }
       setError(errorMessage(err, "Failed to load playlist."));
     }
-  }, [id]);
+  }, [id, reloadPlaylists]);
 
   useEffect(() => {
     // The route id selects an external playlist resource to load.
@@ -220,7 +234,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
 
   // With nothing to show, the error is the page; otherwise (a cached or
   // listed playlist, a failed refresh or action) it sits under the header.
-  if (error && !playlist) {
+  if (error && (gone || !playlist)) {
     return (
       <div className="view">
         <ErrorBanner message={error} />
@@ -244,6 +258,14 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     if (queue.length > 0) play(queue[0], queue);
   };
 
+  // After a failed action, reload anyway (the action may have superseded a
+  // pending load), then report the action's error, which a successful reload
+  // would otherwise clear.
+  const failAction = async (err: unknown, fallback: string) => {
+    await load();
+    setError(errorMessage(err, fallback));
+  };
+
   const onRemove = async (position: number) => {
     if (!id) return;
     invalidateLoads();
@@ -251,7 +273,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       await api.removePlaylistTrack(id, position);
       await load();
     } catch (err) {
-      setError(errorMessage(err, "Failed to remove track."));
+      await failAction(err, "Failed to remove track.");
     }
   };
   // Drag-reorder commits the full visible order, like mobile's reorder mode.
@@ -272,7 +294,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       await load();
     } catch (err) {
       setTracks(previous);
-      setError(errorMessage(err, "Failed to reorder tracks."));
+      await failAction(err, "Failed to reorder tracks.");
     }
   };
 
@@ -291,7 +313,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       // The load this may have superseded still has to happen.
       void load();
     } catch (err) {
-      setError(errorMessage(err, "Failed to update TIDAL auto-download."));
+      await failAction(err, "Failed to update TIDAL auto-download.");
     } finally {
       setSavingAutoDownload(false);
     }

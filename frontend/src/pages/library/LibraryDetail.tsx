@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import {
   api,
+  ApiError,
   albumCoverUrl,
   errorMessage,
   type Album,
@@ -15,7 +16,7 @@ import {
 } from "../../api";
 import { displayText, pluralize } from "../../lib/format";
 import { useEntityDetail } from "../../lib/useEntityDetail";
-import { readCache, writeCache } from "../../lib/resourceCache";
+import { dropCache, readCache, writeCache } from "../../lib/resourceCache";
 import TrackList from "../../components/TrackList";
 import CoverArt from "../../components/CoverArt";
 import { Button } from "../../components/Button";
@@ -218,9 +219,13 @@ export function TidalAlbumDetailView({
         setAlbum(next);
       })
       .catch((err) => {
-        if (!ac.signal.aborted) {
-          setError(errorMessage(err, "Failed to load TIDAL album."));
+        if (ac.signal.aborted) return;
+        // Gone from TIDAL: don't keep showing (or caching) the old copy.
+        if (err instanceof ApiError && err.status === 404) {
+          dropCache(`tidal-album:${id}`);
+          setAlbum(null);
         }
+        setError(errorMessage(err, "Failed to load TIDAL album."));
       });
     return () => ac.abort();
   }, [id]);

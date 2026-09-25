@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, errorMessage, type TrackListItem } from "../api";
-import { readCache, writeCache } from "./resourceCache";
+import { dropCache, readCache, writeCache } from "./resourceCache";
 
 export type EntityState<T> = T | null | "notfound";
 
@@ -72,6 +72,7 @@ export function useEntityDetail<T>(
       .catch((err) => {
         if (cancelled || controller.signal.aborted || gen !== genRef.current) return;
         if (err instanceof ApiError && err.status === 404) {
+          dropCache(key);
           setEntity("notfound");
           return;
         }

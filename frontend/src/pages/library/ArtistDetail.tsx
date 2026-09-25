@@ -8,6 +8,7 @@ import {
 import {
   albumCoverUrl,
   api,
+  ApiError,
   errorMessage,
   resolveCoverUrl,
   trackCoverUrl,
@@ -27,7 +28,7 @@ import {
 } from "@music-library/core/artist-releases";
 import { displayText, pluralize } from "../../lib/format";
 import { useEntityDetail } from "../../lib/useEntityDetail";
-import { readCache, writeCache } from "../../lib/resourceCache";
+import { dropCache, readCache, writeCache } from "../../lib/resourceCache";
 import { usePlayer, useRemotePlayback } from "../../context/Player";
 import { Button } from "../../components/Button";
 import CoverArt from "../../components/CoverArt";
@@ -198,8 +199,13 @@ export function TidalArtistDetailView({
         setData(result);
       })
       .catch((err) => {
-        if (!controller.signal.aborted)
-          setError(errorMessage(err, "Couldn't load artist."));
+        if (controller.signal.aborted) return;
+        // Gone from TIDAL: don't keep showing (or caching) the old copy.
+        if (err instanceof ApiError && err.status === 404) {
+          dropCache(`tidal-artist:${id}`);
+          setData(null);
+        }
+        setError(errorMessage(err, "Couldn't load artist."));
       })
       .finally(() => {
         if (!controller.signal.aborted) setCompletedAttempt(attempt);
