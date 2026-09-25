@@ -74,8 +74,9 @@ export function ArtistDetailView({
     return <NotFound kind="Artist" onBack={onBack} />;
   }
   // A failed load leaves both artist and tracks empty; without this the page
-  // would sit on the loading state with no way back.
-  if (error) {
+  // would sit on the loading state with no way back. A failed refresh of a
+  // cached artist keeps the page and shows the error in it.
+  if (error && (!artist || !tracks)) {
     return (
       <div className="view artist-status">
         <ErrorBanner message={error} />
@@ -131,6 +132,7 @@ export function ArtistDetailView({
           searchActive={search.searchActive}
         />
       </ArtistActions>
+      {error && <ErrorBanner message={error} />}
       {!search.searchActive && releases.length > 0 && (
         <Discography releases={releases} onOpen={onOpenAlbum} />
       )}

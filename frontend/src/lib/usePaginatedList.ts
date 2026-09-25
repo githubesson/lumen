@@ -77,6 +77,11 @@ export function usePaginatedList<T>(
   const fetcherRef = useRef(fetcher);
   const requestKeyRef = useRef(requestKey);
   const pageCacheKeyRef = useRef(pageCacheKey);
+  // For the failure path, which runs after the render that last set items.
+  const itemsRef = useRef(items);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
   const [loadedKey, setLoadedKey] = useState<string | null>(() =>
     readCache(pageCacheKey) === undefined ? null : requestKey,
   );
@@ -133,7 +138,10 @@ export function usePaginatedList<T>(
       } catch (err) {
         if (controller.signal.aborted || token !== tokenRef.current) return;
         setError(errorMessage(err, "Failed to load."));
-        if (reset) {
+        // Rows already on screen (cached, or kept from the previous query)
+        // stay up under the error, still marked stale if they belong to
+        // another query. Only a load with nothing to show settles on empty.
+        if (reset && !itemsRef.current?.length) {
           setItems([]);
           setLoadedKey(key);
         }
