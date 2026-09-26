@@ -109,6 +109,14 @@ func (h *Auth) loginFailureCounter(r *http.Request, username string) (*middlewar
 	return loginFailures, hex.EncodeToString(sum[:])
 }
 
+// markKnownDevice gives the browser that just authenticated as username a
+// known-device cookie, so the per-username lockout never applies to it.
+func (h *Auth) markKnownDevice(w http.ResponseWriter, username string) {
+	if len(h.DeviceKey) > 0 {
+		h.Sessions.SetKnownDeviceCookie(w, auth.SignKnownDevice(h.DeviceKey, username, time.Now()))
+	}
+}
+
 func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginReq
 	if !decodeAuthJSON(w, r, &req) {
@@ -162,9 +170,7 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 	if !h.issueSession(w, r, u.ID) {
 		return
 	}
-	if len(h.DeviceKey) > 0 {
-		h.Sessions.SetKnownDeviceCookie(w, auth.SignKnownDevice(h.DeviceKey, u.Username, time.Now()))
-	}
+	h.markKnownDevice(w, u.Username)
 	_ = h.Users.TouchLogin(r.Context(), u.ID, time.Now())
 	writeJSON(w, http.StatusOK, toResp(u))
 }
@@ -317,6 +323,7 @@ func (h *Auth) Register(w http.ResponseWriter, r *http.Request) {
 	if !h.issueSession(w, r, u.ID) {
 		return
 	}
+	h.markKnownDevice(w, u.Username)
 	writeJSON(w, http.StatusCreated, toResp(u))
 }
 
