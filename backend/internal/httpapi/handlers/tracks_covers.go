@@ -51,7 +51,7 @@ func (h *Tracks) TrackCover(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, chi.URLParam(r, "id"), false)
+	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), false)
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return

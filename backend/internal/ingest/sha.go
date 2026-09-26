@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/dhowden/tag"
+
+	"github.com/githubesson/lumen/internal/ffsafe"
 )
 
 const (
@@ -305,14 +307,15 @@ func ffmpegAudioSHA256(parent context.Context, path string) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, ffmpegHashTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "ffmpeg",
-		"-nostdin", "-v", "error",
+	args := append([]string{"-nostdin", "-v", "error"}, ffsafe.InputArgs()...)
+	args = append(args,
 		"-i", path,
 		"-map", "0:a",
 		"-c", "copy",
 		"-f", "hash", "-hash", "sha256",
 		"-",
 	)
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	out := &boundedBytes{max: subprocessOutLimit}
 	stderr := &lastBytes{max: subprocessErrTail}
 	cmd.Stdout = out

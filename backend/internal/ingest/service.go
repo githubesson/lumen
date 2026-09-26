@@ -11,9 +11,11 @@ import (
 	_ "image/png"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -338,15 +340,14 @@ func (s *Service) removeDedupFile(ctx context.Context, duplicatePath, canonicalP
 		return
 	}
 
-	allRoots := s.AllRoots(ctx)
-	roots := make([]string, 0, len(allRoots))
-	for _, root := range allRoots {
-		if strings.TrimSpace(root) != "" {
-			roots = append(roots, root)
-		}
+	// Only the primary root is ours to delete from. Admin-added roots are
+	// read-only scan locations and may point at backups or other trees the
+	// operator never meant Lumen to modify, so duplicates there stay on disk.
+	if strings.TrimSpace(s.MusicRoot) == "" {
+		return
 	}
-	if !pathsafe.WithinAnyRoot(roots, dupAbs) {
-		s.log().Warn("dedup cleanup skipped: duplicate path is outside configured music roots",
+	if inPrimary, _ := pathsafe.WithinRoot(s.MusicRoot, dupAbs); !inPrimary {
+		s.log().Debug("dedup cleanup skipped: duplicate path is outside the primary music root",
 			"path", dupAbs, "canonical_path", canonAbs, "track", trackID)
 		return
 	}
@@ -406,37 +407,99 @@ func (s *Service) saveCover(ctx context.Context, md *Metadata, sourcePath string
 
 // StoreCoverImage normalizes raw image bytes (decode → resize → re-encode as
 // JPEG) and writes them to the storage backend under covers/<sha>.<ext>,
-// returning the storage key. If the bytes can't be decoded it falls back to
-// storing them verbatim with fallbackType. Exported so HTTP handlers can let
-// admins replace album artwork with an uploaded image. Returns "" for empty
-// input.
-func (s *Service) StoreCoverImage(ctx context.Context, data []byte, fallbackType string) (string, error) {
+// returning the storage key. Bytes that don't decode as an image are rejected:
+// storing them verbatim let a personal upload park an arbitrarily large blob
+// in covers/ that the upload quota never counts. Exported so HTTP handlers can
+// let admins replace album artwork with an uploaded image. Returns "" for
+// empty input.
+func (s *Service) StoreCoverImage(ctx context.Context, data []byte, _ string) (string, error) {
 	if len(data) == 0 {
 		return "", nil
 	}
 	coverBytes, coverType, err := normalizeCoverBytes(data)
-	if errors.Is(err, imagesafe.ErrTooLarge) {
-		// Storing it verbatim would hand the pixel bomb to ffmpeg when a
-		// share preview is rendered.
-		return "", err
-	}
 	if err != nil {
-		coverBytes = data
-		coverType = fallbackType
+		return "", fmt.Errorf("cover image: %w", err)
 	}
-	ext := mimeExt(coverType)
 	// Key by SHA of the cover bytes so identical art across an album is shared.
-	key := "covers/" + coverKey(coverBytes) + ext
-	ok, err := s.Storage.Exists(ctx, key)
-	if err != nil {
+	key := "covers/" + coverKey(coverBytes) + mimeExt(coverType)
+	// Always rewrite, even when the key exists: the write refreshes the
+	// object's mtime, which is what keeps SweepOrphanCovers from deleting a
+	// cover an in-flight ingest is about to reference.
+	if _, err := s.Storage.Put(ctx, key, byteReader(coverBytes), int64(len(coverBytes)), coverType); err != nil {
 		return "", err
-	}
-	if !ok {
-		if _, err := s.Storage.Put(ctx, key, byteReader(coverBytes), int64(len(coverBytes)), coverType); err != nil {
-			return "", err
-		}
 	}
 	return key, nil
+}
+
+// SweepOrphanCovers deletes objects under covers/ that no album row
+// references and that were last written more than grace ago. Covers are
+// written before the ingest transaction commits and are never removed when a
+// track or album goes away, so without this sweep repeated upload/delete
+// cycles grow covers/ without bound. It returns the number of objects removed.
+func (s *Service) SweepOrphanCovers(ctx context.Context, grace time.Duration) (int, error) {
+	walker, ok := s.Storage.(storage.Walker)
+	if !ok || s.DB == nil {
+		return 0, nil
+	}
+	referenced := make(map[string]struct{})
+	rows, err := s.DB.Query(ctx, `
+		SELECT cover_art_path FROM albums WHERE NULLIF(cover_art_path, '') IS NOT NULL
+		UNION
+		SELECT cover_art_path FROM album_personal_covers`)
+	if err != nil {
+		return 0, err
+	}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		referenced[key] = struct{}{}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	// Thumbnails live at cover-thumbs/<size>/covers/<sha>.jpg whatever the
+	// source extension, so they are matched on the extensionless source key.
+	referencedThumbs := make(map[string]struct{}, len(referenced))
+	for key := range referenced {
+		referencedThumbs[strings.TrimSuffix(key, path.Ext(key))] = struct{}{}
+	}
+
+	cutoff := time.Now().Add(-grace)
+	removed := 0
+	remove := func(key string) {
+		if err := s.Storage.Delete(ctx, key); err != nil {
+			s.log().Warn("orphan cover removal failed", "key", key, "err", err)
+			return
+		}
+		removed++
+	}
+	err = walker.Walk(ctx, "covers", func(key string, modTime time.Time) error {
+		if _, ok := referenced[key]; !ok && modTime.Before(cutoff) {
+			remove(key)
+		}
+		return nil
+	})
+	if err != nil {
+		return removed, err
+	}
+	err = walker.Walk(ctx, "cover-thumbs", func(key string, modTime time.Time) error {
+		// cover-thumbs/<size>/<source key without extension>.jpg
+		parts := strings.SplitN(key, "/", 3)
+		if len(parts) != 3 {
+			return nil
+		}
+		source := strings.TrimSuffix(parts[2], path.Ext(parts[2]))
+		if _, ok := referencedThumbs[source]; !ok && modTime.Before(cutoff) {
+			remove(key)
+		}
+		return nil
+	})
+	return removed, err
 }
 
 func normalizeCoverBytes(data []byte) ([]byte, string, error) {

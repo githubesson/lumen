@@ -32,6 +32,7 @@ import (
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/githubesson/lumen/internal/ffsafe"
 	"github.com/githubesson/lumen/internal/imagesafe"
 )
 
@@ -460,8 +461,9 @@ func buildArgs(in Input, outPath string) []string {
 	args = append(args,
 		"-ss", strconv.Itoa(in.StartSec),
 		"-t", dur,
-		"-i", in.AudioPath,
 	)
+	args = append(args, ffsafe.InputArgs()...)
+	args = append(args, "-i", in.AudioPath)
 	if hasCover {
 		// Video from input 0, audio from input 1.
 		args = append(args,
@@ -537,8 +539,9 @@ func buildStoryArgs(in Input, framePath string, outPath string) []string {
 	args = append(args,
 		"-ss", strconv.Itoa(in.StartSec),
 		"-t", dur,
-		"-i", in.AudioPath,
 	)
+	args = append(args, ffsafe.InputArgs()...)
+	args = append(args, "-i", in.AudioPath)
 
 	args = append(args,
 		"-map", "0:v:0",

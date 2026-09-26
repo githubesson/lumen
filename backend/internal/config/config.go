@@ -19,9 +19,11 @@ type Config struct {
 	TranscodeCache string
 	AdminUsername  string
 	AdminPassword  string
-	CookieName     string
-	CookieSecure   bool
-	SessionTTL     time.Duration
+	// AdminPasswordFile receives a generated first-run admin password.
+	AdminPasswordFile string
+	CookieName        string
+	CookieSecure      bool
+	SessionTTL        time.Duration
 	// APITrackerBaseURL overrides the tracker-API instance for all scans,
 	// including pins with their own stored api_base_url. Blank means each
 	// pin's stored URL, falling back to apitracker.DefaultBaseURL.
@@ -164,6 +166,7 @@ func FromEnv() (*Config, error) {
 	}
 	c.CoverSignKey = key
 	c.CoverSignKeyEphemeral = ephemeral
+	c.AdminPasswordFile = getenv("ADMIN_PASSWORD_FILE", filepath.Join(c.MusicPath, ".initial-admin-password"))
 	c.PreviewCacheDir = getenv("PREVIEW_CACHE", filepath.Join(c.TranscodeCache, "previews"))
 	return c, nil
 }

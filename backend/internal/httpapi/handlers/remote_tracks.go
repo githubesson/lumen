@@ -49,21 +49,25 @@ func materializeTIDALTrack(ctx context.Context, lib *library.Store, tidalClient 
 	})
 }
 
-func resolveTrackRowID(ctx context.Context, lib *library.Store, tidalClient *tidal.Client, raw string, createRemote bool) (uuid.UUID, error) {
-	id, _, err := resolveTrackEntry(ctx, lib, tidalClient, raw, createRemote)
+func resolveTrackRowID(ctx context.Context, lib *library.Store, tidalClient *tidal.Client, viewer uuid.UUID, raw string, createRemote bool) (uuid.UUID, error) {
+	id, _, err := resolveTrackEntry(ctx, lib, tidalClient, viewer, raw, createRemote)
 	return id, err
 }
 
 // resolveTrackEntry is resolveTrackRowID that also reports the TIDAL id the
 // reference stands for ("" for local tracks), which a playlist entry keeps so
 // it can fall back to TIDAL if the saved copy it resolved to is deleted.
-func resolveTrackEntry(ctx context.Context, lib *library.Store, tidalClient *tidal.Client, raw string, createRemote bool) (uuid.UUID, string, error) {
+// Local ids the viewer cannot see resolve to library.ErrNotFound.
+func resolveTrackEntry(ctx context.Context, lib *library.Store, tidalClient *tidal.Client, viewer uuid.UUID, raw string, createRemote bool) (uuid.UUID, string, error) {
 	ref, err := trackref.Parse(raw)
 	if err != nil {
 		return uuid.Nil, "", err
 	}
 	switch ref.Source {
 	case trackref.SourceLocal:
+		if err := lib.CheckTrackVisible(ctx, ref.LocalID, viewer); err != nil {
+			return uuid.Nil, "", err
+		}
 		return lib.ResolveSavedTIDAL(ctx, ref.LocalID)
 	case trackref.SourceTIDAL:
 		var id uuid.UUID

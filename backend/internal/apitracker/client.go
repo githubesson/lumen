@@ -87,7 +87,7 @@ type erasPage struct {
 
 func NewClient(baseURL string) *Client {
 	return &Client{
-		HTTP:    &http.Client{Timeout: 45 * time.Second},
+		HTTP:    metadataHTTPClient(),
 		BaseURL: NormalizeBaseURL(baseURL),
 	}
 }
@@ -263,7 +263,17 @@ func (c *Client) httpClient() *http.Client {
 	if c != nil && c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{Timeout: 45 * time.Second}
+	return metadataHTTPClient()
+}
+
+// metadataHTTPClient is the SSRF-hardened download client with a request
+// timeout suited to API calls. The tracker API, and the imgur.gg resolver
+// reached through it, are third parties: a plain client would follow their
+// redirects to loopback or LAN hosts and echo the response into LastError.
+func metadataHTTPClient() *http.Client {
+	c := httpx.NewDownloadClient(httpx.DownloadPolicy{}, nil)
+	c.Timeout = 45 * time.Second
+	return c
 }
 
 func NormalizeBaseURL(raw string) string {

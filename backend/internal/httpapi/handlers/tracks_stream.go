@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -393,24 +392,16 @@ func decodeTIDALHLSURL(raw string) (string, error) {
 	return string(b), nil
 }
 
+// tidalStreamErrorMessage is the client-facing text for a failed TIDAL
+// stream. Upstream errors carry dial targets (internal IPs and ports), hifi
+// API bodies and account details, so they only go to the log — every caller
+// logs err before responding.
 func tidalStreamErrorMessage(err error) string {
-	msg := strings.TrimSpace(err.Error())
-	if msg == "" {
-		return "tidal stream unavailable"
+	if errors.Is(err, tidal.ErrPreviewManifest) {
+		return "tidal stream unavailable: " + tidal.ErrPreviewManifest.Error()
 	}
-	return "tidal stream unavailable: " + redactTIDALStreamError(msg)
+	return "tidal stream unavailable"
 }
-
-func redactTIDALStreamError(msg string) string {
-	msg = streamURLRe.ReplaceAllString(msg, "[url]")
-	msg = streamTokenRe.ReplaceAllString(msg, "${1}[redacted]")
-	return msg
-}
-
-var (
-	streamURLRe   = regexp.MustCompile(`https?://[^\s"']+`)
-	streamTokenRe = regexp.MustCompile(`(?i)(token=)[^&\s"']+`)
-)
 
 // pathWithinAnyRoot returns true when p lives inside any of the configured
 // roots. Prevents a stale DB row with a path outside every root from being

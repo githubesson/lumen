@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/githubesson/lumen/internal/ffsafe"
 )
 
 // AudioInfo is decode-free summary metadata about an audio stream.
@@ -395,13 +397,14 @@ func ffprobeAudioInfo(parent context.Context, path string) (*AudioInfo, error) {
 	ctx, cancel := context.WithTimeout(parent, ffprobeTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "ffprobe",
-		"-v", "error",
+	args := append([]string{"-v", "error"}, ffsafe.InputArgs()...)
+	args = append(args,
 		"-select_streams", "a:0",
 		"-show_entries", "format=duration:stream=bit_rate,sample_rate,channels",
 		"-of", "json",
 		path,
 	)
+	cmd := exec.CommandContext(ctx, "ffprobe", args...)
 	out := &boundedBytes{max: subprocessOutLimit}
 	stderr := &lastBytes{max: subprocessErrTail}
 	cmd.Stdout = out

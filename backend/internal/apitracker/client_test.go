@@ -50,6 +50,8 @@ func TestFetchEntriesPagesUntilComplete(t *testing.T) {
 	defer srv.Close()
 
 	client := NewClient(srv.URL + "/api")
+	// The production client refuses loopback; talk to the test server directly.
+	client.HTTP = srv.Client()
 	entries, err := client.FetchEntries(context.Background(), 7)
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +88,8 @@ func TestFetchErasAndEraImage(t *testing.T) {
 	defer srv.Close()
 
 	client := NewClient(srv.URL + "/api")
+	// The production client refuses loopback; talk to the test server directly.
+	client.HTTP = srv.Client()
 	eras, err := client.FetchEras(context.Background(), 7)
 	if err != nil {
 		t.Fatal(err)
@@ -99,5 +103,17 @@ func TestFetchErasAndEraImage(t *testing.T) {
 	}
 	if contentType != "image/png" || string(data) != string(imageBytes) {
 		t.Fatalf("unexpected image response type=%q data=%#v", contentType, data)
+	}
+}
+
+func TestDefaultClientRefusesLoopback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("loopback server was reached: %s", r.URL)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL + "/api")
+	if _, err := client.FetchEras(context.Background(), 7); err == nil {
+		t.Fatal("expected the default client to refuse a loopback tracker API")
 	}
 }

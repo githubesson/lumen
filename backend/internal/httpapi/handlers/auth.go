@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,12 +73,25 @@ func toResp(u *models.User) userResp {
 	}
 }
 
+// loginFailures caps password guesses per username, independent of source
+// address, so rotating IPs (an IPv6 /64, a botnet) can't sidestep the per-IP
+// limit on /auth/login. Unknown usernames are counted the same way so the
+// lockout doesn't reveal which accounts exist. The trade-off is that someone
+// can lock a known username out for one window.
+var loginFailures = middleware.NewFailureLimiter(10, 15*time.Minute)
+
 func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginReq
 	if !decodeAuthJSON(w, r, &req) {
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
+	failKey := strings.ToLower(req.Username)
+	if blocked, retryAfter := loginFailures.Blocked(failKey); blocked {
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		http.Error(w, "too many failed attempts; try again later", http.StatusTooManyRequests)
+		return
+	}
 	if req.Username == "" || req.Password == "" || len(req.Password) > maxPasswordLen {
 		// Spend the same Argon2id round-trip we'd spend on a real verify so
 		// the timing of a malformed/empty submission matches a real miss.
@@ -91,11 +105,13 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		// time matches the "exists, wrong password" path. Otherwise an
 		// attacker can enumerate valid usernames purely from timing.
 		_, _ = auth.VerifyPassword(req.Password, auth.DummyHash())
+		loginFailures.Fail(failKey)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
 	ok, err := auth.VerifyPassword(req.Password, u.PasswordHash)
 	if err != nil || !ok {
+		loginFailures.Fail(failKey)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
