@@ -450,6 +450,24 @@ func (s *Service) SweepOrphanCovers(ctx context.Context, grace time.Duration) (i
 	if !ok || s.DB == nil {
 		return 0, nil
 	}
+	// A personal cover row whose user has no live track left in the album
+	// is dead. Deletes remove it, but a personal upload that deduplicates
+	// into an existing track still commits the row for the album its tags
+	// named, so re-uploading one file under new album tags and art would
+	// otherwise pin unlimited covers. The row and its track are written in
+	// one ingest transaction, so a committed row without a track is never
+	// an in-flight ingest.
+	if _, err := s.DB.Exec(ctx, `
+		DELETE FROM album_personal_covers pc
+		WHERE pc.created_at < $1
+		  AND NOT EXISTS (
+			SELECT 1 FROM tracks t
+			WHERE t.album_id = pc.album_id AND t.owner_id = pc.user_id
+			  AND t.deleted_at IS NULL
+		)`, time.Now().Add(-grace)); err != nil {
+		return 0, err
+	}
+
 	referenced := make(map[string]struct{})
 	rows, err := s.DB.Query(ctx, `
 		SELECT cover_art_path FROM albums WHERE NULLIF(cover_art_path, '') IS NOT NULL

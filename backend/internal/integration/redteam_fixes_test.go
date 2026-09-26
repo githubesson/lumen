@@ -183,12 +183,27 @@ func TestSweepOrphanCovers(t *testing.T) {
 		}
 	}
 
+	// A personal cover row with no track of its user in the album (what a
+	// deduplicated personal upload leaves behind) must not pin its cover.
+	user := redteamUser(t, ctx, pool)
+	deadAlbum := redteamAlbum(t, ctx, pool, orphan, &user)
+	if _, err := pool.Exec(ctx, `UPDATE album_personal_covers SET created_at = $1 WHERE album_id = $2`, old, deadAlbum); err != nil {
+		t.Fatal(err)
+	}
+
 	removed, err := svc.SweepOrphanCovers(ctx, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if removed != 2 {
 		t.Fatalf("removed %d objects, want 2 (orphan + its thumbnail)", removed)
+	}
+	var deadRow bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM album_personal_covers WHERE album_id = $1)`, deadAlbum).Scan(&deadRow); err != nil {
+		t.Fatal(err)
+	}
+	if deadRow {
+		t.Fatal("personal cover row without a surviving track was kept")
 	}
 	for key, want := range map[string]bool{referenced: true, fresh: true, refThumb: true, orphan: false, orphanThumb: false} {
 		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(key)))
