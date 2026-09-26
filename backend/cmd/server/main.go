@@ -103,7 +103,7 @@ func main() {
 	sessions := auth.NewSessionStore(pool, cfg.CookieName, cfg.CookieSecure, cfg.SessionTTL)
 	startWorker(func() { runSessionCleanup(ctx, logger, sessions) })
 
-	if err := auth.SeedAdmin(ctx, logger, usersStore, cfg.AdminUsername, cfg.AdminPassword, cfg.AdminPasswordFile); err != nil {
+	if err := auth.SeedAdmin(ctx, logger, usersStore, cfg.AdminUsername, cfg.AdminPassword, cfg.AdminPasswordFiles()); err != nil {
 		logger.Error("admin seed failed", "err", err)
 		os.Exit(1)
 	}

@@ -59,14 +59,29 @@ func resolveTrackRowID(ctx context.Context, lib *library.Store, tidalClient *tid
 // it can fall back to TIDAL if the saved copy it resolved to is deleted.
 // Local ids the viewer cannot see resolve to library.ErrNotFound.
 func resolveTrackEntry(ctx context.Context, lib *library.Store, tidalClient *tidal.Client, viewer uuid.UUID, raw string, createRemote bool) (uuid.UUID, string, error) {
+	return resolveTrackRef(ctx, lib, tidalClient, &viewer, raw, createRemote)
+}
+
+// resolveTrackRowIDForRemoval resolves an id without the visibility check.
+// Only for removing the caller's own rows (e.g. unfavorite): those touch no
+// one else's data, and must keep working after the track is soft-deleted.
+func resolveTrackRowIDForRemoval(ctx context.Context, lib *library.Store, tidalClient *tidal.Client, raw string) (uuid.UUID, error) {
+	id, _, err := resolveTrackRef(ctx, lib, tidalClient, nil, raw, false)
+	return id, err
+}
+
+// resolveTrackRef checks local ids against viewer when viewer is non-nil.
+func resolveTrackRef(ctx context.Context, lib *library.Store, tidalClient *tidal.Client, viewer *uuid.UUID, raw string, createRemote bool) (uuid.UUID, string, error) {
 	ref, err := trackref.Parse(raw)
 	if err != nil {
 		return uuid.Nil, "", err
 	}
 	switch ref.Source {
 	case trackref.SourceLocal:
-		if err := lib.CheckTrackVisible(ctx, ref.LocalID, viewer); err != nil {
-			return uuid.Nil, "", err
+		if viewer != nil {
+			if err := lib.CheckTrackVisible(ctx, ref.LocalID, *viewer); err != nil {
+				return uuid.Nil, "", err
+			}
 		}
 		return lib.ResolveSavedTIDAL(ctx, ref.LocalID)
 	case trackref.SourceTIDAL:

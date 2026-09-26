@@ -15,12 +15,13 @@ import (
 )
 
 // SeedAdmin creates the initial admin user on first run if no users exist.
-// If adminPassword is empty, a random password is generated and written to
-// passwordFile (mode 0600) rather than the logs: logs are routinely readable
-// by more people and systems (docker logs, log shippers) than the admin, and
-// whoever reads the password first owns the instance. The user is flagged
-// MustResetPassword=true either way.
-func SeedAdmin(ctx context.Context, logger *slog.Logger, store *users.Store, adminUsername, adminPassword, passwordFile string) error {
+// If adminPassword is empty, a random password is generated and written
+// (mode 0600) to the first of passwordFiles that can be created, rather than
+// to the logs: logs are routinely readable by more people and systems
+// (docker logs, log shippers) than the admin, and whoever reads the password
+// first owns the instance. The user is flagged MustResetPassword=true either
+// way.
+func SeedAdmin(ctx context.Context, logger *slog.Logger, store *users.Store, adminUsername, adminPassword string, passwordFiles []string) error {
 	n, err := store.Count(ctx)
 	if err != nil {
 		return err
@@ -29,6 +30,7 @@ func SeedAdmin(ctx context.Context, logger *slog.Logger, store *users.Store, adm
 		return nil
 	}
 	generated := false
+	passwordFile := ""
 	if adminPassword == "" {
 		buf := make([]byte, 18)
 		if _, err := rand.Read(buf); err != nil {
@@ -38,8 +40,20 @@ func SeedAdmin(ctx context.Context, logger *slog.Logger, store *users.Store, adm
 		generated = true
 		// Write before creating the user so a failure leaves nothing seeded
 		// with a password nobody can read.
-		if err := writePasswordFile(passwordFile, adminUsername, adminPassword); err != nil {
-			return fmt.Errorf("seed admin: write generated password (set ADMIN_PASSWORD instead): %w", err)
+		var errs []error
+		for _, candidate := range passwordFiles {
+			err := writePasswordFile(candidate, adminUsername, adminPassword)
+			if err == nil {
+				passwordFile = candidate
+				break
+			}
+			errs = append(errs, fmt.Errorf("%s: %w", candidate, err))
+		}
+		if passwordFile == "" {
+			if len(errs) == 0 {
+				errs = append(errs, errors.New("no password file path configured"))
+			}
+			return fmt.Errorf("seed admin: write generated password (set ADMIN_PASSWORD or ADMIN_PASSWORD_FILE): %w", errors.Join(errs...))
 		}
 	}
 	hash, err := HashPassword(adminPassword)
@@ -64,20 +78,30 @@ func SeedAdmin(ctx context.Context, logger *slog.Logger, store *users.Store, adm
 	return nil
 }
 
+// writePasswordFile creates path exclusively. A file already there is
+// removed first only if it is a regular file: the default location sits in
+// the music directory, which host users may be able to write, and following a
+// planted symlink would overwrite whatever it points at with the credential.
 func writePasswordFile(path, username, password string) error {
 	if path == "" {
-		return errors.New("no password file path configured")
+		return errors.New("empty path")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
+	if info, err := os.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() {
+			return errors.New("existing path is not a regular file")
+		}
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	// O_CREATE's mode only applies to new files; tighten a pre-existing one.
-	if err := f.Chmod(0o600); err != nil {
-		f.Close()
+	// O_EXCL also fails on a symlink created between the Remove and here.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(f, "username: %s\npassword: %s\n", username, password); err != nil {

@@ -216,7 +216,7 @@ func (h *Tracks) Unfavorite(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), false)
+	id, err := resolveTrackRowIDForRemoval(r.Context(), h.Library, h.TIDAL, chi.URLParam(r, "id"))
 	if err != nil {
 		if errors.Is(err, library.ErrNotFound) {
 			w.WriteHeader(http.StatusNoContent)
