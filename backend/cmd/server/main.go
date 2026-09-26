@@ -103,7 +103,7 @@ func main() {
 	sessions := auth.NewSessionStore(pool, cfg.CookieName, cfg.CookieSecure, cfg.SessionTTL)
 	startWorker(func() { runSessionCleanup(ctx, logger, sessions) })
 
-	if err := auth.SeedAdmin(ctx, logger, usersStore, cfg.AdminUsername, cfg.AdminPassword); err != nil {
+	if err := auth.SeedAdmin(ctx, logger, usersStore, cfg.AdminUsername, cfg.AdminPassword, cfg.AdminPasswordFiles()); err != nil {
 		logger.Error("admin seed failed", "err", err)
 		os.Exit(1)
 	}
@@ -157,6 +157,8 @@ func main() {
 	if cfg.CoverSignKeyEphemeral {
 		logger.Warn("COVER_SIGN_KEY not set; using an ephemeral key — signed cover URLs will rotate on each restart")
 	}
+
+	startWorker(func() { runOrphanCoverSweep(ctx, logger, ingestSvc) })
 
 	previewBuilder := &preview.Builder{CacheDir: cfg.PreviewCacheDir}
 	startWorker(func() { runPreviewCachePrune(ctx, logger, previewBuilder) })
@@ -312,6 +314,37 @@ func runSessionCleanup(ctx context.Context, logger *slog.Logger, sessions *auth.
 			return
 		case <-ticker.C:
 			cleanup()
+		}
+	}
+}
+
+// orphanCoverGrace is how old an unreferenced cover must be before the sweep
+// removes it. Ingest writes a cover before its transaction commits; the grace
+// window keeps a cover alive until that commit references it.
+const orphanCoverGrace = time.Hour
+
+func runOrphanCoverSweep(ctx context.Context, logger *slog.Logger, svc *ingest.Service) {
+	sweep := func() {
+		removed, err := svc.SweepOrphanCovers(ctx, orphanCoverGrace)
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				logger.Warn("orphan cover sweep failed", "err", err)
+			}
+			return
+		}
+		if removed > 0 {
+			logger.Info("orphan covers removed", "count", removed)
+		}
+	}
+	sweep()
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sweep()
 		}
 	}
 }

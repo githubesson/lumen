@@ -142,6 +142,20 @@ func (s *SessionStore) ClearCookie(w http.ResponseWriter) {
 
 func (s *SessionStore) CookieName() string { return s.cookieName }
 
+// SetKnownDeviceCookie stores a known-device token. It is scoped to the auth
+// endpoints; nothing else needs to read it.
+func (s *SessionStore) SetKnownDeviceCookie(w http.ResponseWriter, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     KnownDeviceCookie,
+		Value:    token,
+		Path:     "/api/auth",
+		HttpOnly: true,
+		Secure:   s.secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(KnownDeviceValidity / time.Second),
+	})
+}
+
 // clientIP returns a bare IP (no port) suitable for a Postgres INET column.
 // Falls back to "" if nothing usable is available. Reads only r.RemoteAddr —
 // the trusted-proxy middleware is responsible for setting that to the real

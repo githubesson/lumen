@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/githubesson/lumen/internal/pathsafe"
 )
@@ -126,7 +128,7 @@ func (l *Local) Stat(ctx context.Context, key string) (ObjectInfo, error) {
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	return ObjectInfo{Key: key, Size: stat.Size()}, nil
+	return ObjectInfo{Key: key, Size: stat.Size(), ModTime: stat.ModTime()}, nil
 }
 
 func (l *Local) Delete(ctx context.Context, key string) error {
@@ -138,6 +140,40 @@ func (l *Local) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	return nil
+}
+
+func (l *Local) Walk(ctx context.Context, prefix string, fn func(key string, modTime time.Time) error) error {
+	dir, err := l.resolve(prefix)
+	if err != nil {
+		return err
+	}
+	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		rel, err := filepath.Rel(l.Root, p)
+		if err != nil {
+			return err
+		}
+		return fn(filepath.ToSlash(rel), info.ModTime())
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 func (l *Local) Exists(ctx context.Context, key string) (bool, error) {

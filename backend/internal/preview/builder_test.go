@@ -96,3 +96,32 @@ func TestPruneCacheRemovesOnlyStaleFiles(t *testing.T) {
 		t.Fatalf("fresh file removed: %v", err)
 	}
 }
+
+// The audio input is an untrusted upload: ffmpeg must not be free to pick a
+// playlist demuxer or a network protocol for it.
+func TestBuildArgsRestrictAudioInput(t *testing.T) {
+	for name, args := range map[string][]string{
+		"preview":      buildArgs(Input{AudioPath: "/music/x.mp3", CoverPath: "/c.jpg"}, "/out.mp4"),
+		"preview-bare": buildArgs(Input{AudioPath: "/music/x.mp3"}, "/out.mp4"),
+		"story":        buildStoryArgs(Input{AudioPath: "/music/x.mp3"}, "/frame.png", "/out.mp4"),
+	} {
+		audio := slices.Index(args, "/music/x.mp3")
+		if audio < 1 || args[audio-1] != "-i" {
+			t.Fatalf("%s: audio input not found: %#v", name, args)
+		}
+		// Options between the previous input and this -i apply to this input.
+		prevInput := -1
+		for i := audio - 2; i >= 0; i-- {
+			if args[i] == "-i" {
+				prevInput = i
+				break
+			}
+		}
+		opts := args[prevInput+1 : audio-1]
+		for _, want := range []string{"-protocol_whitelist", "-format_whitelist"} {
+			if !slices.Contains(opts, want) {
+				t.Fatalf("%s: %s missing before the audio input: %#v", name, want, args)
+			}
+		}
+	}
+}

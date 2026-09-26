@@ -133,11 +133,15 @@ func UpsertAlbum(ctx context.Context, q pgx.Tx, title string, albumArtistID *uui
 	}
 	if ownerID != nil && coverPath != "" {
 		// First cover a user uploads for an album sticks, mirroring the
-		// COALESCE fill on the shared row.
+		// COALESCE fill on the shared row. On conflict, created_at is still
+		// refreshed: the update row-locks the entry until this ingest
+		// commits, and a concurrent SweepOrphanCovers delete (which only
+		// takes rows older than its grace cutoff) re-checks the fresh
+		// timestamp after the lock and leaves the row alone.
 		if _, err := q.Exec(ctx, `
 			INSERT INTO album_personal_covers (album_id, user_id, cover_art_path)
 			VALUES ($1, $2, $3)
-			ON CONFLICT (album_id, user_id) DO NOTHING`, id, *ownerID, coverPath); err != nil {
+			ON CONFLICT (album_id, user_id) DO UPDATE SET created_at = NOW()`, id, *ownerID, coverPath); err != nil {
 			return uuid.Nil, err
 		}
 	}
@@ -326,6 +330,27 @@ func (s *Store) DownloadedTIDALTrack(ctx context.Context, tidalID string) (uuid.
 		return uuid.Nil, ErrNotFound
 	}
 	return id, nil
+}
+
+// CheckTrackVisible returns ErrNotFound unless track id exists, is not
+// soft-deleted, and viewer may see it (a global track, or one of viewer's own
+// uploads). Write paths that take a track id from the client use it so
+// another user's private track can neither be referenced nor probed for
+// existence, and a removed track behaves like a missing one.
+func (s *Store) CheckTrackVisible(ctx context.Context, id, viewer uuid.UUID) error {
+	var ok bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tracks t
+			WHERE t.id = $2 AND t.deleted_at IS NULL AND `+trackVisibleP1+`
+		)`, viewer, id).Scan(&ok)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // RedirectSavedTIDAL maps the row id of a TIDAL track that auto-download has
@@ -964,15 +989,63 @@ func (s *Store) HardDeleteByPath(ctx context.Context, path string) error {
 // user_track_stats, play_history, track_artists, and track_aliases. Returns
 // the on-disk file_path so the caller can delete the uploaded file.
 func (s *Store) DeletePersonalTrack(ctx context.Context, trackID, userID uuid.UUID) (string, error) {
-	var filePath string
-	err := s.db.QueryRow(ctx, `
-		DELETE FROM tracks
-		WHERE id = $1 AND owner_id = $2
-		RETURNING file_path`, trackID, userID).Scan(&filePath)
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+
+	// Lock the user's personal cover row for the track's album before the
+	// track row, the same order ingest takes them (UpsertAlbum, then the
+	// track), so a delete racing an upload into that album can't deadlock.
+	// The lock also serializes two concurrent deletes of the user's last two
+	// tracks in the album: without it each would see the other's uncommitted
+	// track and both would keep the row; with it, the second waits and its
+	// DELETE runs on a snapshot that sees the first commit.
+	var albumID *uuid.UUID
+	err = tx.QueryRow(ctx, `
+		SELECT album_id FROM tracks WHERE id = $1 AND owner_id = $2`, trackID, userID).Scan(&albumID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrNotFound
 		}
+		return "", err
+	}
+	if albumID != nil {
+		if _, err := tx.Exec(ctx, `
+			SELECT 1 FROM album_personal_covers
+			WHERE album_id = $1 AND user_id = $2
+			FOR UPDATE`, *albumID, userID); err != nil {
+			return "", err
+		}
+	}
+
+	var filePath string
+	err = tx.QueryRow(ctx, `
+		DELETE FROM tracks
+		WHERE id = $1 AND owner_id = $2
+		RETURNING file_path, album_id`, trackID, userID).Scan(&filePath, &albumID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	// Drop the user's personal album art once their last upload in the album
+	// is gone. The cover file itself is left to the orphan-cover sweep, which
+	// only removes objects no album row references.
+	if albumID != nil {
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM album_personal_covers pc
+			WHERE pc.album_id = $1 AND pc.user_id = $2
+			  AND NOT EXISTS (
+				SELECT 1 FROM tracks t
+				WHERE t.album_id = pc.album_id AND t.owner_id = pc.user_id
+			  )`, *albumID, userID); err != nil {
+			return "", err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return "", err
 	}
 	return filePath, nil

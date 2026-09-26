@@ -318,7 +318,7 @@ func (h *Playlists) AddTracks(w http.ResponseWriter, r *http.Request) {
 	origins := make([]string, 0, len(req.TrackIDs))
 	addsTIDAL := false
 	for _, s := range req.TrackIDs {
-		id, origin, err := resolveTrackEntry(r.Context(), h.Library, h.TIDAL, s, true)
+		id, origin, err := resolveTrackEntry(r.Context(), h.Library, h.TIDAL, u.ID, s, true)
 		if err != nil {
 			if errors.Is(err, tidal.ErrNotConfigured) {
 				http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
@@ -433,7 +433,7 @@ func (h *Playlists) Reorder(w http.ResponseWriter, r *http.Request) {
 	for _, s := range req.TrackIDs {
 		// Reordering can only reference rows already in this playlist. Do not
 		// materialize a new remote track before the exact-multiset validation.
-		id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, s, false)
+		id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, s, false)
 		if err != nil {
 			if errors.Is(err, tidal.ErrNotConfigured) {
 				http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)

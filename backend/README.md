@@ -6,8 +6,10 @@ Go HTTP API for Lumen, the self-hosted, invite-only music library.
 
 - **Auth** — Argon2id password hashing, HTTP-only cookie sessions backed by
   Postgres, first-run admin seeding (`ADMIN_USERNAME` / `ADMIN_PASSWORD`; if
-  the password is empty a random one is generated and logged, and the seeded
-  admin must reset it on first login).
+  the password is empty a random one is written, mode 0600, to
+  `ADMIN_PASSWORD_FILE` (default `$MUSIC_PATH/.initial-admin-password`, or
+  `<user config dir>/lumen/initial-admin-password` if that isn't writable), and
+  the seeded admin must reset it on first login).
 - **Invite-only registration** — admins mint invite tokens (role, max uses,
   expiry); users register via `/register?token=…`.
 - **Library** — admin-managed music roots, filesystem scanning and ingest with

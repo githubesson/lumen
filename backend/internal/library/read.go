@@ -825,6 +825,19 @@ func (s *Store) SetFavorite(ctx context.Context, userID, trackID uuid.UUID, fav 
 	return err
 }
 
+// ClearFavorite unfavorites trackID for userID if a stats row exists. Unlike
+// SetFavorite(false) it never inserts, so it is safe on a track id the caller
+// can't see: it touches only the caller's existing row and behaves the same
+// for any id, including one that doesn't exist.
+func (s *Store) ClearFavorite(ctx context.Context, userID, trackID uuid.UUID) error {
+	_, err := s.db.Exec(ctx, `
+		UPDATE user_track_stats
+		SET favorited = FALSE, favorited_at = NULL
+		WHERE user_id = $1 AND track_id = $2 AND favorited`,
+		userID, trackID)
+	return err
+}
+
 // ListFavorites returns the user's favorited tracks that are still visible
 // to them (global or their own personal), most-recently-favorited first.
 func (s *Store) ListFavorites(ctx context.Context, userID uuid.UUID, limit, offset int) ([]TrackListItem, error) {

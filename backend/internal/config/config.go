@@ -19,9 +19,12 @@ type Config struct {
 	TranscodeCache string
 	AdminUsername  string
 	AdminPassword  string
-	CookieName     string
-	CookieSecure   bool
-	SessionTTL     time.Duration
+	// AdminPasswordFile is ADMIN_PASSWORD_FILE as set; see
+	// AdminPasswordFiles for where a generated password actually goes.
+	AdminPasswordFile string
+	CookieName        string
+	CookieSecure      bool
+	SessionTTL        time.Duration
 	// APITrackerBaseURL overrides the tracker-API instance for all scans,
 	// including pins with their own stored api_base_url. Blank means each
 	// pin's stored URL, falling back to apitracker.DefaultBaseURL.
@@ -164,6 +167,7 @@ func FromEnv() (*Config, error) {
 	}
 	c.CoverSignKey = key
 	c.CoverSignKeyEphemeral = ephemeral
+	c.AdminPasswordFile = os.Getenv("ADMIN_PASSWORD_FILE")
 	c.PreviewCacheDir = getenv("PREVIEW_CACHE", filepath.Join(c.TranscodeCache, "previews"))
 	return c, nil
 }
@@ -263,4 +267,20 @@ func proxyenv(k string) ([]string, error) {
 		return nil, fmt.Errorf("%s contains invalid IP or CIDR %q", k, value)
 	}
 	return values, nil
+}
+
+// AdminPasswordFiles lists where a generated first-run admin password may be
+// written, in order of preference. An explicit ADMIN_PASSWORD_FILE is the only
+// choice. Otherwise the music volume comes first (it persists in the Compose
+// setup), then the user config directory for local runs where MUSIC_PATH is
+// left at a default that isn't writable.
+func (c *Config) AdminPasswordFiles() []string {
+	if c.AdminPasswordFile != "" {
+		return []string{c.AdminPasswordFile}
+	}
+	out := []string{filepath.Join(c.MusicPath, ".initial-admin-password")}
+	if dir, err := os.UserConfigDir(); err == nil {
+		out = append(out, filepath.Join(dir, "lumen", "initial-admin-password"))
+	}
+	return out
 }

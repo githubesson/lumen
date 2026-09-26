@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/githubesson/lumen/internal/lastfm"
@@ -77,7 +78,10 @@ func (h *LastFM) Complete(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "no Last.fm authorization is pending", http.StatusConflict)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		// Upstream and network errors can name internal addresses; keep them
+		// in the log.
+		slog.Warn("lastfm complete failed", "err", err)
+		http.Error(w, "Last.fm authorization failed", http.StatusBadGateway)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"username": username})

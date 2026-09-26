@@ -52,6 +52,12 @@ type Store struct {
 
 func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
 
+// InvalidInputError is a caller mistake whose text is safe to return to the
+// client. Any other Upsert error is internal (database) and is not.
+type InvalidInputError string
+
+func (e InvalidInputError) Error() string { return string(e) }
+
 func (s *Store) Upsert(ctx context.Context, in UpsertInput) (*Activity, error) {
 	in.DeviceID = clean(in.DeviceID)
 	in.DeviceName = clean(in.DeviceName)
@@ -62,13 +68,13 @@ func (s *Store) Upsert(ctx context.Context, in UpsertInput) (*Activity, error) {
 	in.AlbumID = clean(in.AlbumID)
 	in.CoverURL = clean(in.CoverURL)
 	if in.DeviceID == "" {
-		return nil, errors.New("device_id required")
+		return nil, InvalidInputError("device_id required")
 	}
 	if in.TrackID == "" {
-		return nil, errors.New("track_id required")
+		return nil, InvalidInputError("track_id required")
 	}
 	if in.Title == "" {
-		return nil, errors.New("title required")
+		return nil, InvalidInputError("title required")
 	}
 	if in.PositionSec < 0 {
 		in.PositionSec = 0

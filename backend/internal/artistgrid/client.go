@@ -45,9 +45,9 @@ type Record struct {
 
 func NewClient() *Client {
 	return &Client{
-		HTTP: &http.Client{
-			Timeout: 45 * time.Second,
-		},
+		// SSRF-hardened: ArtistGrid and the imgur.gg resolver are third
+		// parties whose redirects must not reach loopback or LAN hosts.
+		HTTP:       metadataHTTPClient(),
 		TrackerAPI: defaultTrackerAPI,
 	}
 }
@@ -489,4 +489,10 @@ func anyString(v any) string {
 	default:
 		return strings.TrimSpace(fmt.Sprint(x))
 	}
+}
+
+func metadataHTTPClient() *http.Client {
+	c := httpx.NewDownloadClient(httpx.DownloadPolicy{}, nil)
+	c.Timeout = 45 * time.Second
+	return c
 }

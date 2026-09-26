@@ -119,6 +119,23 @@ func (h *Lyrics) geniusBaseURL() string {
 	return defaultGeniusBase
 }
 
+// allowedGeniusURL reports whether target is a page the Genius scraper may
+// fetch: https on genius.com or a subdomain, or the operator's GENIUS_BASE
+// origin.
+func (h *Lyrics) allowedGeniusURL(target string) bool {
+	u, err := url.Parse(target)
+	if err != nil || u.Host == "" || u.User != nil {
+		return false
+	}
+	if base, err := url.Parse(h.geniusBaseURL()); err == nil &&
+		u.Scheme == base.Scheme && strings.EqualFold(u.Host, base.Host) {
+		return true
+	}
+	host := strings.ToLower(u.Hostname())
+	return u.Scheme == "https" && u.Port() == "" &&
+		(host == "genius.com" || strings.HasSuffix(host, ".genius.com"))
+}
+
 func (h *Lyrics) httpClient() *http.Client {
 	if h.Client != nil {
 		return h.Client
@@ -453,6 +470,13 @@ func (h *Lyrics) fetchGenius(ctx context.Context, query url.Values) lyricsRespon
 		return result
 	}
 
+	// song.URL comes from the search response, not from us. Without this
+	// check a hostile or intercepted response could aim the scraper at
+	// loopback, the metadata service, or anything else on the LAN.
+	if !h.allowedGeniusURL(song.URL) {
+		result.err = errLyricsNotFound
+		return result
+	}
 	lyrics, err := session.scrapeLyrics(ctx, song.URL)
 	if err != nil {
 		result.err = sanitizeProxyError(err, h.GeniusProxyURL)
@@ -554,6 +578,15 @@ func (h *Lyrics) newGeniusSession() (*geniusSession, error) {
 		tlsclient.WithClientProfile(profiles.Chrome_146),
 		tlsclient.WithRandomTLSExtensionOrder(),
 		tlsclient.WithCookieJar(jar),
+		tlsclient.WithCustomRedirectFunc(func(req *fhttp.Request, via []*fhttp.Request) error {
+			if len(via) >= 5 {
+				return errors.New("too many redirects")
+			}
+			if !h.allowedGeniusURL(req.URL.String()) {
+				return errors.New("redirect to a non-Genius host refused")
+			}
+			return nil
+		}),
 	}
 	if h.GeniusProxyURL != "" {
 		clientOptions = append(

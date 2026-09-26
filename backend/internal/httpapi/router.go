@@ -81,6 +81,9 @@ func NewRouter(d Deps) http.Handler {
 		Users:    d.Users,
 		Sessions: d.Sessions,
 		Invites:  d.Invites,
+		// Own subkey: the cover/share key signs public URLs, and a
+		// known-device token must never double as one.
+		DeviceKey: auth.DeriveKey(d.CoverSignKey, "known-device"),
 	}
 	invH := &handlers.Invites{Store: d.Invites}
 	libH := &handlers.Library{

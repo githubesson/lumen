@@ -48,22 +48,23 @@ func (rl *ipRateLimiter) middleware(next http.Handler) http.Handler {
 	})
 }
 
+// maxRateLimitBuckets bounds each limiter's memory. Keys are per IPv4
+// address or IPv6 /64, so reaching it takes a /47 of rotating IPv6 space
+// inside one window; past it, new keys are refused rather than tracked.
+const maxRateLimitBuckets = 100_000
+
 func (rl *ipRateLimiter) allow(key string) (bool, int) {
 	now := time.Now()
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	if now.After(rl.nextCleanup) {
-		for k, b := range rl.buckets {
-			if now.After(b.reset) {
-				delete(rl.buckets, k)
-			}
-		}
-		rl.nextCleanup = now.Add(rl.window)
-	}
+	rl.cleanupLocked(now)
 
 	b := rl.buckets[key]
 	if b.reset.IsZero() || !now.Before(b.reset) {
+		if b.reset.IsZero() && len(rl.buckets) >= maxRateLimitBuckets {
+			return false, retryAfterSeconds(now, rl.nextCleanup)
+		}
 		rl.buckets[key] = rateLimitBucket{count: 1, reset: now.Add(rl.window)}
 		return true, 0
 	}
@@ -73,6 +74,55 @@ func (rl *ipRateLimiter) allow(key string) (bool, int) {
 	b.count++
 	rl.buckets[key] = b
 	return true, 0
+}
+
+func (rl *ipRateLimiter) cleanupLocked(now time.Time) {
+	if !now.After(rl.nextCleanup) {
+		return
+	}
+	for k, b := range rl.buckets {
+		if now.After(b.reset) {
+			delete(rl.buckets, k)
+		}
+	}
+	rl.nextCleanup = now.Add(rl.window)
+}
+
+// FailureLimiter counts failures per key (e.g. a username) and blocks the key
+// once limit failures land inside one window. Unlike RateLimitByIP it is not
+// bypassed by rotating source addresses.
+type FailureLimiter struct {
+	rl *ipRateLimiter
+}
+
+func NewFailureLimiter(limit int, window time.Duration) *FailureLimiter {
+	return &FailureLimiter{rl: &ipRateLimiter{
+		limit:   limit,
+		window:  window,
+		buckets: map[string]rateLimitBucket{},
+	}}
+}
+
+// Reserve atomically claims one attempt for key and counts it as a failure
+// up front; call Refund once the attempt turns out to be legitimate. It
+// returns false, with the seconds until the window resets, when key is out of
+// attempts. Claiming before the expensive check (rather than checking, then
+// recording afterwards) is what stops a parallel burst from all passing the
+// check before any failure lands. It fails closed: while the table is full,
+// keys it isn't already tracking are refused, because their failures could
+// not be recorded.
+func (f *FailureLimiter) Reserve(key string) (bool, int) {
+	return f.rl.allow(key)
+}
+
+// Refund returns an attempt claimed by Reserve.
+func (f *FailureLimiter) Refund(key string) {
+	f.rl.mu.Lock()
+	defer f.rl.mu.Unlock()
+	if b, ok := f.rl.buckets[key]; ok && b.count > 0 {
+		b.count--
+		f.rl.buckets[key] = b
+	}
 }
 
 func retryAfterSeconds(now, reset time.Time) int {
@@ -92,11 +142,16 @@ func clientKey(r *http.Request) string {
 		return "unknown"
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil && host != "" {
-		return host
+	if err != nil || host == "" {
+		host = r.RemoteAddr
 	}
-	if ip := net.ParseIP(r.RemoteAddr); ip != nil {
-		return ip.String()
+	if ip := net.ParseIP(host); ip != nil {
+		if v4 := ip.To4(); v4 != nil {
+			return v4.String()
+		}
+		// One IPv6 subscriber is routinely handed a whole /64; keying on
+		// the full address would let them rotate through 2^64 buckets.
+		return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
 	}
 	if r.RemoteAddr != "" {
 		return r.RemoteAddr

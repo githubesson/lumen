@@ -458,3 +458,38 @@ type lyricsRoundTripFunc func(*http.Request) (*http.Response, error)
 func (fn lyricsRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return fn(request)
 }
+
+func TestAllowedGeniusURL(t *testing.T) {
+	h := &Lyrics{}
+	for target, want := range map[string]bool{
+		"https://genius.com/Artist-song-lyrics":    true,
+		"https://images.genius.com/x":              true,
+		"http://genius.com/Artist-song-lyrics":     false,
+		"https://genius.com:8443/x":                false,
+		"https://genius.com.evil.test/x":           false,
+		"https://evilgenius.com/x":                 false,
+		"http://169.254.169.254/latest/meta-data/": false,
+		"http://127.0.0.1:5432/":                   false,
+		"https://user@genius.com/x":                false,
+		"file:///etc/passwd":                       false,
+	} {
+		if got := h.allowedGeniusURL(target); got != want {
+			t.Errorf("allowedGeniusURL(%q) = %v, want %v", target, got, want)
+		}
+	}
+
+	custom := &Lyrics{GeniusBaseURL: "http://127.0.0.1:9000"}
+	if !custom.allowedGeniusURL("http://127.0.0.1:9000/song") {
+		t.Error("configured GENIUS_BASE origin refused")
+	}
+	if custom.allowedGeniusURL("http://127.0.0.1:9001/song") {
+		t.Error("different port on the GENIUS_BASE host allowed")
+	}
+}
+
+func TestTIDALStreamErrorMessageHidesUpstreamDetail(t *testing.T) {
+	err := errors.New("hifi api: dial tcp 172.18.0.3:8000: connect: connection refused")
+	if got := tidalStreamErrorMessage(err); strings.Contains(got, "172.18") || strings.Contains(got, "dial") {
+		t.Fatalf("upstream detail leaked: %q", got)
+	}
+}

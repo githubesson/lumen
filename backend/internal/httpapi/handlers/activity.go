@@ -194,7 +194,13 @@ func (h *Activity) Upsert(w http.ResponseWriter, r *http.Request) {
 		Muted:       req.Muted,
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		var invalid activity.InvalidInputError
+		if errors.As(err, &invalid) {
+			http.Error(w, invalid.Error(), http.StatusBadRequest)
+			return
+		}
+		slog.Error("activity upsert failed", "user", u.ID, "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	h.notify(u.ID)

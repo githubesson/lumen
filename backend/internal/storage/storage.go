@@ -7,12 +7,14 @@ package storage
 import (
 	"context"
 	"io"
+	"time"
 )
 
 type ObjectInfo struct {
 	Key         string
 	Size        int64
 	ContentType string
+	ModTime     time.Time // last write; zero when the backend doesn't track it
 }
 
 type Storage interface {
@@ -26,4 +28,11 @@ type Storage interface {
 	Delete(ctx context.Context, key string) error
 	// Exists is a convenience on top of Stat.
 	Exists(ctx context.Context, key string) (bool, error)
+}
+
+// Walker is implemented by backends that can enumerate stored objects. It is
+// optional: garbage collection that needs it is skipped on backends without.
+type Walker interface {
+	// Walk calls fn for every object whose key starts with prefix + "/".
+	Walk(ctx context.Context, prefix string, fn func(key string, modTime time.Time) error) error
 }
