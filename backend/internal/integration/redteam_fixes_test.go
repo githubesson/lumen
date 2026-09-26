@@ -251,3 +251,44 @@ func TestConcurrentLastTrackDeletesDropPersonalCover(t *testing.T) {
 		}
 	}
 }
+
+// Unfavorite skips the visibility check so it works on removed tracks; it
+// must therefore never create a row, or it would reference other users'
+// private tracks and fail on missing ids.
+func TestClearFavoriteNeverInserts(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	lib := library.NewStore(pool)
+	attacker, victim := redteamUser(t, ctx, pool), redteamUser(t, ctx, pool)
+	private := redteamTrack(t, ctx, pool, &victim, nil)
+
+	for _, id := range []uuid.UUID{private, uuid.New()} {
+		if err := lib.ClearFavorite(ctx, attacker, id); err != nil {
+			t.Fatalf("ClearFavorite(%s): %v", id, err)
+		}
+	}
+	var rows int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM user_track_stats WHERE user_id = $1`, attacker).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("ClearFavorite created %d stats rows", rows)
+	}
+
+	removed := redteamTrack(t, ctx, pool, nil, nil)
+	if err := lib.SetFavorite(ctx, attacker, removed, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE tracks SET deleted_at = NOW() WHERE id = $1`, removed); err != nil {
+		t.Fatal(err)
+	}
+	if err := lib.ClearFavorite(ctx, attacker, removed); err != nil {
+		t.Fatal(err)
+	}
+	var fav bool
+	if err := pool.QueryRow(ctx, `SELECT favorited FROM user_track_stats WHERE user_id = $1 AND track_id = $2`, attacker, removed).Scan(&fav); err != nil {
+		t.Fatal(err)
+	}
+	if fav {
+		t.Fatal("favorite on a soft-deleted track was not cleared")
+	}
+}

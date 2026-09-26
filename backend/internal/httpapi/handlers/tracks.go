@@ -225,7 +225,7 @@ func (h *Tracks) Unfavorite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad track id", http.StatusBadRequest)
 		return
 	}
-	if err := h.Library.SetFavorite(r.Context(), u.ID, id, false); err != nil {
+	if err := h.Library.ClearFavorite(r.Context(), u.ID, id); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
