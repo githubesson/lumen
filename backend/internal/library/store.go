@@ -133,11 +133,15 @@ func UpsertAlbum(ctx context.Context, q pgx.Tx, title string, albumArtistID *uui
 	}
 	if ownerID != nil && coverPath != "" {
 		// First cover a user uploads for an album sticks, mirroring the
-		// COALESCE fill on the shared row.
+		// COALESCE fill on the shared row. On conflict, created_at is still
+		// refreshed: the update row-locks the entry until this ingest
+		// commits, and a concurrent SweepOrphanCovers delete (which only
+		// takes rows older than its grace cutoff) re-checks the fresh
+		// timestamp after the lock and leaves the row alone.
 		if _, err := q.Exec(ctx, `
 			INSERT INTO album_personal_covers (album_id, user_id, cover_art_path)
 			VALUES ($1, $2, $3)
-			ON CONFLICT (album_id, user_id) DO NOTHING`, id, *ownerID, coverPath); err != nil {
+			ON CONFLICT (album_id, user_id) DO UPDATE SET created_at = NOW()`, id, *ownerID, coverPath); err != nil {
 			return uuid.Nil, err
 		}
 	}
