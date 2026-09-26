@@ -110,6 +110,14 @@ func TestCheckTrackVisibleHidesOtherUsersUploads(t *testing.T) {
 	if err := lib.CheckTrackVisible(ctx, global, attacker); err != nil {
 		t.Fatalf("global track hidden: %v", err)
 	}
+
+	removed := redteamTrack(t, ctx, pool, nil, nil)
+	if _, err := pool.Exec(ctx, `UPDATE tracks SET deleted_at = NOW() WHERE id = $1`, removed); err != nil {
+		t.Fatal(err)
+	}
+	if err := lib.CheckTrackVisible(ctx, removed, attacker); !errors.Is(err, library.ErrNotFound) {
+		t.Fatalf("soft-deleted track: err=%v, want ErrNotFound", err)
+	}
 }
 
 func TestDeletePersonalTrackDropsPersonalCoverWithLastTrack(t *testing.T) {

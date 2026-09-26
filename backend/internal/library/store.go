@@ -328,16 +328,17 @@ func (s *Store) DownloadedTIDALTrack(ctx context.Context, tidalID string) (uuid.
 	return id, nil
 }
 
-// CheckTrackVisible returns ErrNotFound unless track id exists and viewer may
-// see it (a global track, or one of viewer's own uploads). Write paths that
-// take a track id from the client use it so another user's private track can
-// neither be referenced nor probed for existence.
+// CheckTrackVisible returns ErrNotFound unless track id exists, is not
+// soft-deleted, and viewer may see it (a global track, or one of viewer's own
+// uploads). Write paths that take a track id from the client use it so
+// another user's private track can neither be referenced nor probed for
+// existence, and a removed track behaves like a missing one.
 func (s *Store) CheckTrackVisible(ctx context.Context, id, viewer uuid.UUID) error {
 	var ok bool
 	err := s.db.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM tracks t
-			WHERE t.id = $2 AND `+trackVisibleP1+`
+			WHERE t.id = $2 AND t.deleted_at IS NULL AND `+trackVisibleP1+`
 		)`, viewer, id).Scan(&ok)
 	if err != nil {
 		return err

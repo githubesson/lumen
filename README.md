@@ -102,11 +102,14 @@ roots using container paths: for `MUSIC_HOST_PATH=/srv/music`, the host folder
 `/srv/music/artist` is `/mnt/music/artist` in the admin UI.
 
 On first run the backend seeds an `admin` user; if you didn't set
-`ADMIN_PASSWORD` in `.env`, grab the generated one from:
+`ADMIN_PASSWORD` in `.env`, the generated one is written (mode 0600, not to
+the logs) to `/mnt/music/.initial-admin-password` inside the container:
 
 ```sh
-docker compose logs backend | grep generated_password
+docker compose exec backend cat /mnt/music/.initial-admin-password
 ```
+
+Delete that file once you've logged in and set a new password.
 
 The admin is forced to set a new password on first login. From the admin UI
 you can add music roots and create invites — registration is invite-only.
