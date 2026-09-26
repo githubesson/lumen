@@ -1007,6 +1007,16 @@ func (s *Store) DeletePersonalTrack(ctx context.Context, trackID, userID uuid.UU
 	// is gone. The cover file itself is left to the orphan-cover sweep, which
 	// only removes objects no album row references.
 	if albumID != nil {
+		// Lock the cover row first. Two concurrent deletes of the user's last
+		// two tracks in the album would otherwise each see the other's
+		// uncommitted track and both keep the row; with the lock, the second
+		// waits and its DELETE runs on a snapshot that sees the first commit.
+		if _, err := tx.Exec(ctx, `
+			SELECT 1 FROM album_personal_covers
+			WHERE album_id = $1 AND user_id = $2
+			FOR UPDATE`, *albumID, userID); err != nil {
+			return "", err
+		}
 		if _, err := tx.Exec(ctx, `
 			DELETE FROM album_personal_covers pc
 			WHERE pc.album_id = $1 AND pc.user_id = $2

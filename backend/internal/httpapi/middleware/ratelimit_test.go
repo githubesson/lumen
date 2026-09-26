@@ -58,3 +58,18 @@ func TestRateLimiterRefusesNewKeysWhenFull(t *testing.T) {
 		t.Fatalf("bucket map grew past cap: %d", len(rl.buckets))
 	}
 }
+
+func TestFailureLimiterFailsClosedWhenFull(t *testing.T) {
+	f := NewFailureLimiter(10, time.Minute)
+	f.rl.nextCleanup = time.Now().Add(time.Minute)
+	reset := time.Now().Add(time.Minute)
+	for i := range maxRateLimitBuckets {
+		f.rl.buckets["k"+strconv.Itoa(i)] = rateLimitBucket{count: 1, reset: reset}
+	}
+	if blocked, retry := f.Blocked("untracked"); !blocked || retry <= 0 {
+		t.Fatalf("untracked key allowed while the table is full: blocked=%v retry=%d", blocked, retry)
+	}
+	if blocked, _ := f.Blocked("k1"); blocked {
+		t.Fatal("tracked key under its limit was blocked")
+	}
+}

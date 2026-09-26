@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -193,6 +194,45 @@ func TestSweepOrphanCovers(t *testing.T) {
 		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(key)))
 		if exists := err == nil; exists != want {
 			t.Fatalf("%s exists=%v, want %v", key, exists, want)
+		}
+	}
+}
+
+// Deleting a user's last two tracks in an album at the same moment must still
+// drop their personal cover row.
+func TestConcurrentLastTrackDeletesDropPersonalCover(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	lib := library.NewStore(pool)
+	user := redteamUser(t, ctx, pool)
+	for round := range 10 {
+		albumID := redteamAlbum(t, ctx, pool, "covers/redteam-race-"+uuid.NewString()+".jpg", &user)
+		a := redteamTrack(t, ctx, pool, &user, &albumID)
+		b := redteamTrack(t, ctx, pool, &user, &albumID)
+
+		var wg sync.WaitGroup
+		errs := make(chan error, 2)
+		for _, id := range []uuid.UUID{a, b} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, err := lib.DeletePersonalTrack(ctx, id, user)
+				errs <- err
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		var kept bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM album_personal_covers WHERE album_id=$1 AND user_id=$2)`,
+			albumID, user).Scan(&kept); err != nil {
+			t.Fatal(err)
+		}
+		if kept {
+			t.Fatalf("round %d: personal cover row survived both deletes", round)
 		}
 	}
 }

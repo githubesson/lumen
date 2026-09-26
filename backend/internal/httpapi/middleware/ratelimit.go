@@ -104,14 +104,22 @@ func NewFailureLimiter(limit int, window time.Duration) *FailureLimiter {
 }
 
 // Blocked reports whether key has used up its failures, and if so how many
-// seconds remain until the window resets.
+// seconds remain until the window resets. It fails closed: while the table is
+// full, keys it isn't already tracking are blocked, because their failures
+// could not be recorded and would otherwise go uncounted.
 func (f *FailureLimiter) Blocked(key string) (bool, int) {
 	now := time.Now()
 	f.rl.mu.Lock()
 	defer f.rl.mu.Unlock()
 	f.rl.cleanupLocked(now)
 	b, ok := f.rl.buckets[key]
-	if !ok || !now.Before(b.reset) || b.count < f.rl.limit {
+	if !ok {
+		if len(f.rl.buckets) >= maxRateLimitBuckets {
+			return true, retryAfterSeconds(now, f.rl.nextCleanup)
+		}
+		return false, 0
+	}
+	if !now.Before(b.reset) || b.count < f.rl.limit {
 		return false, 0
 	}
 	return true, retryAfterSeconds(now, b.reset)

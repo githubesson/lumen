@@ -49,3 +49,15 @@ func checkExpiry(key []byte, expUnix int64, now time.Time, label string) error {
 	}
 	return nil
 }
+
+// DeriveKey returns a purpose-specific subkey of key (HMAC-SHA256 of the
+// label), so one configured secret can back several token families without
+// a token of one family ever verifying as another. Empty key yields nil.
+func DeriveKey(key []byte, label string) []byte {
+	if len(key) == 0 {
+		return nil
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte("lumen-subkey|" + label))
+	return mac.Sum(nil)
+}

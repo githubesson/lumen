@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -25,6 +27,9 @@ type Auth struct {
 	Users    *users.Store
 	Sessions *auth.SessionStore
 	Invites  *invites.Store
+	// DeviceKey signs known-device cookies (see auth.SignKnownDevice). Empty
+	// disables them, leaving every client on the per-username lockout.
+	DeviceKey []byte
 }
 
 // Auth payloads are tiny (a username + password). Cap body size so a hostile
@@ -76,9 +81,32 @@ func toResp(u *models.User) userResp {
 // loginFailures caps password guesses per username, independent of source
 // address, so rotating IPs (an IPv6 /64, a botnet) can't sidestep the per-IP
 // limit on /auth/login. Unknown usernames are counted the same way so the
-// lockout doesn't reveal which accounts exist. The trade-off is that someone
-// can lock a known username out for one window.
-var loginFailures = middleware.NewFailureLimiter(10, 15*time.Minute)
+// lockout doesn't reveal which accounts exist.
+//
+// A browser that has signed in as the username before (valid known-device
+// cookie) is counted in deviceLoginFailures instead, on its own failures
+// only. That keeps the lockout from being a denial of service: an attacker
+// hammering "admin" locks out new browsers, never the admin's own, and
+// filling loginFailures (which fails closed when full) can't touch
+// deviceLoginFailures because only a signed-in browser can add to it.
+var (
+	loginFailures       = middleware.NewFailureLimiter(10, 15*time.Minute)
+	deviceLoginFailures = middleware.NewFailureLimiter(10, 15*time.Minute)
+)
+
+// loginFailureCounter picks the failure counter and key for this attempt.
+// Keys are hashes so an arbitrarily long submitted username costs the table
+// a fixed amount of memory.
+func (h *Auth) loginFailureCounter(r *http.Request, username string) (*middleware.FailureLimiter, string) {
+	name := strings.ToLower(username)
+	if c, err := r.Cookie(auth.KnownDeviceCookie); err == nil &&
+		auth.VerifyKnownDevice(h.DeviceKey, c.Value, username, time.Now()) {
+		sum := sha256.Sum256([]byte(name + "|" + c.Value))
+		return deviceLoginFailures, hex.EncodeToString(sum[:])
+	}
+	sum := sha256.Sum256([]byte(name))
+	return loginFailures, hex.EncodeToString(sum[:])
+}
 
 func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginReq
@@ -86,8 +114,8 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
-	failKey := strings.ToLower(req.Username)
-	if blocked, retryAfter := loginFailures.Blocked(failKey); blocked {
+	failures, failKey := h.loginFailureCounter(r, req.Username)
+	if blocked, retryAfter := failures.Blocked(failKey); blocked {
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		http.Error(w, "too many failed attempts; try again later", http.StatusTooManyRequests)
 		return
@@ -105,13 +133,13 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		// time matches the "exists, wrong password" path. Otherwise an
 		// attacker can enumerate valid usernames purely from timing.
 		_, _ = auth.VerifyPassword(req.Password, auth.DummyHash())
-		loginFailures.Fail(failKey)
+		failures.Fail(failKey)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
 	ok, err := auth.VerifyPassword(req.Password, u.PasswordHash)
 	if err != nil || !ok {
-		loginFailures.Fail(failKey)
+		failures.Fail(failKey)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
@@ -123,6 +151,9 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	if !h.issueSession(w, r, u.ID) {
 		return
+	}
+	if len(h.DeviceKey) > 0 {
+		h.Sessions.SetKnownDeviceCookie(w, auth.SignKnownDevice(h.DeviceKey, u.Username, time.Now()))
 	}
 	_ = h.Users.TouchLogin(r.Context(), u.ID, time.Now())
 	writeJSON(w, http.StatusOK, toResp(u))
