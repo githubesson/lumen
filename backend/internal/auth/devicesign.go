@@ -43,5 +43,11 @@ func VerifyKnownDevice(key []byte, token, username string, now time.Time) bool {
 	if err != nil || exp <= 0 || now.Unix() > exp {
 		return false
 	}
+	// Only the exact form SignKnownDevice emits. ParseInt also accepts "+123"
+	// and "000123"; those would verify too, and since callers key failure
+	// counters on the token text, each variant would get a fresh counter.
+	if strconv.FormatInt(exp, 10) != expStr {
+		return false
+	}
 	return verifyMessage(key, knownDeviceMessage(username, exp), sig)
 }

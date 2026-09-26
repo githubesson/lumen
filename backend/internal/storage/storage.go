@@ -14,6 +14,7 @@ type ObjectInfo struct {
 	Key         string
 	Size        int64
 	ContentType string
+	ModTime     time.Time // last write; zero when the backend doesn't track it
 }
 
 type Storage interface {

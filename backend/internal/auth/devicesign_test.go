@@ -31,3 +31,14 @@ func TestKnownDeviceToken(t *testing.T) {
 		}
 	}
 }
+
+func TestKnownDeviceTokenRejectsNonCanonicalExpiry(t *testing.T) {
+	key := DeriveKey([]byte("secret"), "known-device")
+	now := time.Unix(1_800_000_000, 0)
+	token := SignKnownDevice(key, "admin", now)
+	for _, variant := range []string{"0" + token, "+" + token, "00" + token} {
+		if VerifyKnownDevice(key, variant, "admin", now) {
+			t.Fatalf("non-canonical variant %q accepted", variant)
+		}
+	}
+}

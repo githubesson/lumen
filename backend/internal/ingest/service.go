@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,6 +48,11 @@ type Service struct {
 	MusicRoot string        // primary root (env MUSIC_PATH) — used for uploads + storage
 	Roots     RootsProvider // all roots including MusicRoot, in order; used for scan/watch/path validation
 	Logger    *slog.Logger
+
+	// coverMu orders cover writes against the orphan sweep: StoreCoverImage
+	// writes under the read lock, and the sweep re-checks an object's age and
+	// deletes it under the write lock, so a rewrite can't land between them.
+	coverMu sync.RWMutex
 }
 
 // log returns the service logger, falling back to the slog default so call
@@ -425,7 +431,10 @@ func (s *Service) StoreCoverImage(ctx context.Context, data []byte, _ string) (s
 	// Always rewrite, even when the key exists: the write refreshes the
 	// object's mtime, which is what keeps SweepOrphanCovers from deleting a
 	// cover an in-flight ingest is about to reference.
-	if _, err := s.Storage.Put(ctx, key, byteReader(coverBytes), int64(len(coverBytes)), coverType); err != nil {
+	s.coverMu.RLock()
+	_, err = s.Storage.Put(ctx, key, byteReader(coverBytes), int64(len(coverBytes)), coverType)
+	s.coverMu.RUnlock()
+	if err != nil {
 		return "", err
 	}
 	return key, nil
@@ -471,7 +480,16 @@ func (s *Service) SweepOrphanCovers(ctx context.Context, grace time.Duration) (i
 
 	cutoff := time.Now().Add(-grace)
 	removed := 0
+	// The walk's mtime is only a prefilter. The age is re-read under coverMu
+	// so a StoreCoverImage rewrite that landed after the walk saw the file
+	// keeps it alive.
 	remove := func(key string) {
+		s.coverMu.Lock()
+		defer s.coverMu.Unlock()
+		info, err := s.Storage.Stat(ctx, key)
+		if err != nil || info.ModTime.IsZero() || info.ModTime.After(cutoff) {
+			return
+		}
 		if err := s.Storage.Delete(ctx, key); err != nil {
 			s.log().Warn("orphan cover removal failed", "key", key, "err", err)
 			return

@@ -128,7 +128,7 @@ func (l *Local) Stat(ctx context.Context, key string) (ObjectInfo, error) {
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	return ObjectInfo{Key: key, Size: stat.Size()}, nil
+	return ObjectInfo{Key: key, Size: stat.Size(), ModTime: stat.ModTime()}, nil
 }
 
 func (l *Local) Delete(ctx context.Context, key string) error {
