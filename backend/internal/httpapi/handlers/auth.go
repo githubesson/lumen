@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -130,6 +131,14 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := h.Users.ByUsername(r.Context(), req.Username)
+	if err != nil && !errors.Is(err, users.ErrNotFound) {
+		// An outage isn't a wrong guess: don't let retries during it lock
+		// the username out once the database is back.
+		failures.Refund(failKey)
+		slog.Error("login: user lookup failed", "err", err)
+		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	if err != nil {
 		// User doesn't exist — verify against a dummy hash so the response
 		// time matches the "exists, wrong password" path. Otherwise an

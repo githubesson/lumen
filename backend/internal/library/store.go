@@ -995,8 +995,32 @@ func (s *Store) DeletePersonalTrack(ctx context.Context, trackID, userID uuid.UU
 	}
 	defer tx.Rollback(ctx)
 
-	var filePath string
+	// Lock the user's personal cover row for the track's album before the
+	// track row, the same order ingest takes them (UpsertAlbum, then the
+	// track), so a delete racing an upload into that album can't deadlock.
+	// The lock also serializes two concurrent deletes of the user's last two
+	// tracks in the album: without it each would see the other's uncommitted
+	// track and both would keep the row; with it, the second waits and its
+	// DELETE runs on a snapshot that sees the first commit.
 	var albumID *uuid.UUID
+	err = tx.QueryRow(ctx, `
+		SELECT album_id FROM tracks WHERE id = $1 AND owner_id = $2`, trackID, userID).Scan(&albumID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	if albumID != nil {
+		if _, err := tx.Exec(ctx, `
+			SELECT 1 FROM album_personal_covers
+			WHERE album_id = $1 AND user_id = $2
+			FOR UPDATE`, *albumID, userID); err != nil {
+			return "", err
+		}
+	}
+
+	var filePath string
 	err = tx.QueryRow(ctx, `
 		DELETE FROM tracks
 		WHERE id = $1 AND owner_id = $2
@@ -1011,16 +1035,6 @@ func (s *Store) DeletePersonalTrack(ctx context.Context, trackID, userID uuid.UU
 	// is gone. The cover file itself is left to the orphan-cover sweep, which
 	// only removes objects no album row references.
 	if albumID != nil {
-		// Lock the cover row first. Two concurrent deletes of the user's last
-		// two tracks in the album would otherwise each see the other's
-		// uncommitted track and both keep the row; with the lock, the second
-		// waits and its DELETE runs on a snapshot that sees the first commit.
-		if _, err := tx.Exec(ctx, `
-			SELECT 1 FROM album_personal_covers
-			WHERE album_id = $1 AND user_id = $2
-			FOR UPDATE`, *albumID, userID); err != nil {
-			return "", err
-		}
 		if _, err := tx.Exec(ctx, `
 			DELETE FROM album_personal_covers pc
 			WHERE pc.album_id = $1 AND pc.user_id = $2
