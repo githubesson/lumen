@@ -3,6 +3,8 @@ package middleware
 import (
 	"net/http/httptest"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -27,20 +29,43 @@ func TestClientKeyGroupsIPv6By64(t *testing.T) {
 	}
 }
 
-func TestFailureLimiterBlocksAfterLimit(t *testing.T) {
+func TestFailureLimiterReserveAndRefund(t *testing.T) {
 	f := NewFailureLimiter(3, time.Minute)
 	for i := range 3 {
-		if blocked, _ := f.Blocked("admin"); blocked {
-			t.Fatalf("blocked after %d failures", i)
+		if ok, _ := f.Reserve("admin"); !ok {
+			t.Fatalf("attempt %d refused before the limit", i+1)
 		}
-		f.Fail("admin")
 	}
-	blocked, retry := f.Blocked("admin")
-	if !blocked || retry <= 0 {
-		t.Fatalf("not blocked after limit: blocked=%v retry=%d", blocked, retry)
+	ok, retry := f.Reserve("admin")
+	if ok || retry <= 0 {
+		t.Fatalf("fourth attempt allowed: ok=%v retry=%d", ok, retry)
 	}
-	if blocked, _ := f.Blocked("someone-else"); blocked {
-		t.Fatal("unrelated key blocked")
+	f.Refund("admin")
+	if ok, _ := f.Reserve("admin"); !ok {
+		t.Fatal("refunded attempt not returned")
+	}
+	if ok, _ := f.Reserve("someone-else"); !ok {
+		t.Fatal("unrelated key refused")
+	}
+}
+
+// A parallel burst must not get more attempts than the limit.
+func TestFailureLimiterReserveIsAtomic(t *testing.T) {
+	f := NewFailureLimiter(10, time.Minute)
+	var wg sync.WaitGroup
+	var allowed atomic.Int32
+	for range 200 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if ok, _ := f.Reserve("admin"); ok {
+				allowed.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := allowed.Load(); n != 10 {
+		t.Fatalf("%d parallel attempts allowed, want 10", n)
 	}
 }
 
@@ -66,10 +91,10 @@ func TestFailureLimiterFailsClosedWhenFull(t *testing.T) {
 	for i := range maxRateLimitBuckets {
 		f.rl.buckets["k"+strconv.Itoa(i)] = rateLimitBucket{count: 1, reset: reset}
 	}
-	if blocked, retry := f.Blocked("untracked"); !blocked || retry <= 0 {
-		t.Fatalf("untracked key allowed while the table is full: blocked=%v retry=%d", blocked, retry)
+	if ok, retry := f.Reserve("untracked"); ok || retry <= 0 {
+		t.Fatalf("untracked key allowed while the table is full: ok=%v retry=%d", ok, retry)
 	}
-	if blocked, _ := f.Blocked("k1"); blocked {
-		t.Fatal("tracked key under its limit was blocked")
+	if ok, _ := f.Reserve("k1"); !ok {
+		t.Fatal("tracked key under its limit was refused")
 	}
 }

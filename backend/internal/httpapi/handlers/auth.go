@@ -114,8 +114,10 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
+	// Every attempt, malformed ones included, claims a failure slot before
+	// any Argon2 work; only a correct password gives it back.
 	failures, failKey := h.loginFailureCounter(r, req.Username)
-	if blocked, retryAfter := failures.Blocked(failKey); blocked {
+	if ok, retryAfter := failures.Reserve(failKey); !ok {
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		http.Error(w, "too many failed attempts; try again later", http.StatusTooManyRequests)
 		return
@@ -133,16 +135,15 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		// time matches the "exists, wrong password" path. Otherwise an
 		// attacker can enumerate valid usernames purely from timing.
 		_, _ = auth.VerifyPassword(req.Password, auth.DummyHash())
-		failures.Fail(failKey)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
 	ok, err := auth.VerifyPassword(req.Password, u.PasswordHash)
 	if err != nil || !ok {
-		failures.Fail(failKey)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
+	failures.Refund(failKey)
 	// Disabled check happens *after* the password verify so we don't leak
 	// "account exists and is disabled" to anyone who guesses a username.
 	if u.Disabled {

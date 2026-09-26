@@ -103,31 +103,26 @@ func NewFailureLimiter(limit int, window time.Duration) *FailureLimiter {
 	}}
 }
 
-// Blocked reports whether key has used up its failures, and if so how many
-// seconds remain until the window resets. It fails closed: while the table is
-// full, keys it isn't already tracking are blocked, because their failures
-// could not be recorded and would otherwise go uncounted.
-func (f *FailureLimiter) Blocked(key string) (bool, int) {
-	now := time.Now()
-	f.rl.mu.Lock()
-	defer f.rl.mu.Unlock()
-	f.rl.cleanupLocked(now)
-	b, ok := f.rl.buckets[key]
-	if !ok {
-		if len(f.rl.buckets) >= maxRateLimitBuckets {
-			return true, retryAfterSeconds(now, f.rl.nextCleanup)
-		}
-		return false, 0
-	}
-	if !now.Before(b.reset) || b.count < f.rl.limit {
-		return false, 0
-	}
-	return true, retryAfterSeconds(now, b.reset)
+// Reserve atomically claims one attempt for key and counts it as a failure
+// up front; call Refund once the attempt turns out to be legitimate. It
+// returns false, with the seconds until the window resets, when key is out of
+// attempts. Claiming before the expensive check (rather than checking, then
+// recording afterwards) is what stops a parallel burst from all passing the
+// check before any failure lands. It fails closed: while the table is full,
+// keys it isn't already tracking are refused, because their failures could
+// not be recorded.
+func (f *FailureLimiter) Reserve(key string) (bool, int) {
+	return f.rl.allow(key)
 }
 
-// Fail records one failure for key.
-func (f *FailureLimiter) Fail(key string) {
-	f.rl.allow(key)
+// Refund returns an attempt claimed by Reserve.
+func (f *FailureLimiter) Refund(key string) {
+	f.rl.mu.Lock()
+	defer f.rl.mu.Unlock()
+	if b, ok := f.rl.buckets[key]; ok && b.count > 0 {
+		b.count--
+		f.rl.buckets[key] = b
+	}
 }
 
 func retryAfterSeconds(now, reset time.Time) int {
