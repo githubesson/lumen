@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { type ReactNode, type Ref } from "react";
 import {
   Text,
   TextInput,
@@ -65,7 +65,9 @@ export function FormField({
 }
 
 /** Themed single-line text input matching the elevated-surface form style. */
-export function FormTextInput(props: TextInputProps) {
+export function FormTextInput(
+  props: TextInputProps & { ref?: Ref<TextInput> },
+) {
   const theme = useTheme();
   return (
     <TextInput

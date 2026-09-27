@@ -36,7 +36,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { usePlayerTime } from "../../context/player";
 import { qk } from "../../lib/query-keys";
-import { useTheme } from "../../theme/theme";
+import { useTheme, withAlpha } from "../../theme/theme";
 
 interface LyricsTranslation extends LyricsTranslationState {
   trackId: TrackListItem["id"];
@@ -738,23 +738,4 @@ function AnimatedLyricWord({
       </Animated.Text>
     </View>
   );
-}
-
-/** Convert `#RRGGBB` to `rgba()` for reliable Reanimated color interpolation. */
-function withAlpha(color: string, alpha: number): string {
-  if (!color.startsWith("#")) return color;
-  const raw = color.slice(1);
-  const hex =
-    raw.length === 3
-      ? raw
-          .split("")
-          .map((ch) => `${ch}${ch}`)
-          .join("")
-      : raw.slice(0, 6);
-  if (hex.length !== 6) return color;
-  const r = Number.parseInt(hex.slice(0, 2), 16);
-  const g = Number.parseInt(hex.slice(2, 4), 16);
-  const b = Number.parseInt(hex.slice(4, 6), 16);
-  const a = Math.min(1, Math.max(0, alpha));
-  return `rgba(${r},${g},${b},${a})`;
 }
