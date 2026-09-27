@@ -66,15 +66,19 @@ const VIEW_FOR_SEARCH_TYPE: Record<Exclude<SearchType, "all">, View> = {
 
 export default function Library() {
   const [params, setParams] = useSearchParams();
+  const typeParam = params.get("type");
+  // A link with a search type but no tab (the command palette's "all
+  // results") opens on that type's tab.
   const view: View = isView(params.get("view"))
     ? (params.get("view") as View)
-    : "tracks";
+    : isSearchType(typeParam) && typeParam !== "all"
+      ? VIEW_FOR_SEARCH_TYPE[typeParam]
+      : "tracks";
   const albumID = params.get("album");
   const tidalAlbumID = params.get("tidalAlbum");
   const artistID = params.get("artist");
   const tidalArtistID = params.get("tidalArtist");
   // Search looks for what the open tab lists unless a type was picked.
-  const typeParam = params.get("type");
   const searchType: SearchType = isSearchType(typeParam) ? typeParam : SEARCH_TYPE_FOR_VIEW[view];
   const query = params.get("q") ?? "";
 
@@ -88,7 +92,7 @@ export default function Library() {
   const setSearchType = (type: SearchType) => {
     const next = new URLSearchParams(params);
     next.set("type", type);
-    if (type !== "all") applyView(next, VIEW_FOR_SEARCH_TYPE[type]);
+    applyView(next, type === "all" ? view : VIEW_FOR_SEARCH_TYPE[type]);
     setParams(next, { replace: true });
   };
 
@@ -107,7 +111,9 @@ export default function Library() {
       next.set("q", q);
     } else {
       next.delete("q");
-      // The next search starts from the tab again.
+      // Stay on the tab (it may only have come from the type), and let the
+      // next search start from it again.
+      applyView(next, view);
       next.delete("type");
     }
     setParams(next, { replace: true });
