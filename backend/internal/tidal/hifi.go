@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -180,13 +181,10 @@ func (c *Client) resolveHifiPlaybackInfoWithQuality(ctx context.Context, id, qua
 
 func (c *Client) doHifiJSON(ctx context.Context, rawURL string, dst any) error {
 	start := time.Now()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return err
+	resp, err := c.getHifi(ctx, rawURL)
+	if err == nil && resp.StatusCode == http.StatusAccepted {
+		resp, err = c.awaitQueuedPlayback(ctx, rawURL, resp)
 	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", httpx.BrowserUserAgent)
-	resp, err := c.api.Do(req)
 	if err != nil {
 		slog.Warn("tidal hifi request failed",
 			"url", logSafeURL(rawURL),
@@ -209,6 +207,108 @@ func (c *Client) doHifiJSON(ctx context.Context, rawURL string, dst any) error {
 		"status", resp.StatusCode,
 		"duration_ms", time.Since(start).Milliseconds())
 	return json.NewDecoder(resp.Body).Decode(dst)
+}
+
+func (c *Client) getHifi(ctx context.Context, rawURL string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", httpx.BrowserUserAgent)
+	return c.api.Do(req)
+}
+
+// hifi-api runs one playback request per TIDAL account at a time, since
+// parallel playback gets accounts banned. When every account is busy it
+// answers 202 with a Location to poll, which returns the original response
+// once the request has run.
+const (
+	playbackQueueMinPoll   = 100 * time.Millisecond
+	playbackQueueMaxPoll   = 5 * time.Second
+	playbackCancelTimeout  = 5 * time.Second
+	playbackRequestsPrefix = "/playback/requests/"
+)
+
+// awaitQueuedPlayback polls a queued playback request until it has run. If
+// the caller gives up first, the request is cancelled so it doesn't hold an
+// account for nothing.
+func (c *Client) awaitQueuedPlayback(ctx context.Context, rawURL string, resp *http.Response) (*http.Response, error) {
+	statusURL, err := c.playbackStatusURL(resp.Header.Get("Location"))
+	if err != nil {
+		resp.Body.Close()
+		return nil, err
+	}
+	for resp.StatusCode == http.StatusAccepted {
+		delay := playbackRetryDelay(resp.Header.Get("Retry-After"))
+		slog.Debug("tidal hifi playback queued",
+			"url", logSafeURL(rawURL),
+			"position", resp.Header.Get("X-Playback-Queue-Position"),
+			"retry_in_ms", delay.Milliseconds())
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			go c.cancelQueuedPlayback(statusURL)
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+		if resp, err = c.getHifi(ctx, statusURL); err != nil {
+			go c.cancelQueuedPlayback(statusURL)
+			return nil, err
+		}
+	}
+	return resp, nil
+}
+
+// playbackStatusURL accepts only a queue URL on the hifi-api host itself, so
+// a bad Location can't send the poll, or the cancelling DELETE, elsewhere.
+func (c *Client) playbackStatusURL(location string) (string, error) {
+	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(c.cfg.HifiAPIURL), "/"))
+	if err != nil {
+		return "", err
+	}
+	ref, err := url.Parse(strings.TrimSpace(location))
+	if err != nil || location == "" {
+		return "", errors.New("hifi-api queued playback without a status URL")
+	}
+	u := base.ResolveReference(ref)
+	if u.Scheme != base.Scheme || u.Host != base.Host || !strings.HasPrefix(u.Path, playbackRequestsPrefix) ||
+		len(u.Path) == len(playbackRequestsPrefix) {
+		return "", fmt.Errorf("hifi-api queued playback with an unexpected status URL: %s", logSafeURL(u.String()))
+	}
+	return u.String(), nil
+}
+
+func playbackRetryDelay(header string) time.Duration {
+	seconds, err := strconv.Atoi(strings.TrimSpace(header))
+	switch {
+	case err != nil:
+		return time.Second
+	case seconds <= 0:
+		return playbackQueueMinPoll
+	case seconds >= int(playbackQueueMaxPoll/time.Second):
+		return playbackQueueMaxPoll
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func (c *Client) cancelQueuedPlayback(statusURL string) {
+	ctx, cancel := context.WithTimeout(c.ctx, playbackCancelTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, statusURL, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("User-Agent", httpx.BrowserUserAgent)
+	resp, err := c.api.Do(req)
+	if err != nil {
+		slog.Debug("tidal hifi queued playback cancel failed", "url", logSafeURL(statusURL), "err", err)
+		return
+	}
+	resp.Body.Close()
 }
 
 func (c *Client) hifiURL(p string) *url.URL {

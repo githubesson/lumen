@@ -18,6 +18,8 @@ hifi = types.ModuleType("main")
 hifi.app = FastAPI()
 hifi.TOKEN_FILE = "/nonexistent/lumen-test-token.json"
 hifi._creds = []
+hifi._catalog_cred = None
+hifi._refresh_locks = {}
 hifi.COUNTRY_CODE = "US"
 auth = types.ModuleType("tidal_auth")
 auth.tidal_auth = types.SimpleNamespace()
@@ -27,7 +29,7 @@ with patch.dict(sys.modules, {"main": hifi, "tidal_auth": auth}):
 
 class ArtistTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        hifi.get_tidal_token_for_cred = AsyncMock(return_value=("token", {"test": True}))
+        hifi.get_catalog_token_for_cred = AsyncMock(return_value=("token", {"test": True}))
         self.calls = []
         self.responses = {
             "albums": {"items": [{"id": 1, "title": "Album"}]},
@@ -145,7 +147,7 @@ class ArtistTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([i["id"] for i in response.json()["albums"]["items"]], [1, 2])
 
     async def test_token_failure_is_gateway_error(self):
-        hifi.get_tidal_token_for_cred.side_effect = RuntimeError("private auth error")
+        hifi.get_catalog_token_for_cred.side_effect = RuntimeError("private auth error")
         response = await self.client.get("/lumen/artist?id=123")
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json(), {"detail": "TIDAL artist unavailable"})
@@ -154,7 +156,7 @@ class ArtistTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_id_does_not_call_upstream(self):
         response = await self.client.get("/lumen/artist?id=0")
         self.assertEqual(response.status_code, 400)
-        hifi.get_tidal_token_for_cred.assert_not_awaited()
+        hifi.get_catalog_token_for_cred.assert_not_awaited()
 
     async def test_cancellation_is_not_an_empty_success(self):
         self.responses["albums"] = asyncio.CancelledError()
