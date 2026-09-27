@@ -509,11 +509,16 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         />
         <div className="playlist-toolbar-spacer" />
         {tab === "tracks" && tracks && tracks.length > 1 && (
-          <div className="playlist-sort-controls">
+          <div
+            className="toolbar-group playlist-sort-controls"
+            role="group"
+            aria-label="Track list options"
+          >
             <div
               id={PLAYLIST_SELECTION_CONTROLS_ID}
               className="track-selectbar-host"
             />
+            <span className="toolbar-group-sep" aria-hidden="true" />
             <Select
               value={sortKey}
               onChange={(next) => {
@@ -521,13 +526,12 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
                 setSortKey(next);
               }}
               options={SORT_OPTIONS}
-              variant="minimal"
+              variant="toolbar"
               aria-label="Sort playlist"
             />
             {sortKey !== "custom" && (
               <Button
                 variant="ghost"
-                style={{ paddingInline: 8 }}
                 onClick={() => setSortAsc((asc) => !asc)}
                 aria-label={
                   sortAsc

@@ -203,6 +203,13 @@
 .toolbar-group .segmented button {
   padding: 0 6px;
 }
+/* While selecting, the bar holds only the selection actions: sort and view
+   step aside so the bar keeps its width and nothing next to it (the search
+   box) gets pushed onto a new row. */
+.toolbar-group:has(.track-selectbar[data-selecting="true"]) > :not(.track-selectbar-host) {
+  display: none;
+}
+
 /* Selection chrome portaled into the group: its wrappers step aside so each
    control is a flex item of the group and wraps on its own. */
 .toolbar-group .track-selectbar-host,

@@ -146,7 +146,9 @@ export default function BrowseToolbar({
       {/* Last, so the per-view controls come and go to its left and the box
           you're typing in never moves (a query hides them all). */}
       <SearchInput
-        style={{ width: 260 }}
+        // Shrinks (to 180px) before it wraps, so selection mode widening the
+        // bar doesn't push the search box onto its own row.
+        style={{ flex: "1 1 180px", maxWidth: 260 }}
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
         aria-label="Search music"
