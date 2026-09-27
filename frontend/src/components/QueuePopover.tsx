@@ -68,6 +68,27 @@ export default function QueuePopover({
       (target instanceof Element && !!target.closest(".ctx-menu")),
   });
 
+  // The queue stops mousedown from bubbling, so the row menu never sees
+  // clicks inside it. Route them here instead: with the menu open, a click in
+  // the queue only closes the menu (the click itself is swallowed, so it
+  // can't also play a row and close the queue).
+  const swallowClick = useRef(false);
+  // The menu is portaled but still a React child of the queue, so its own
+  // clicks pass through these handlers too; leave those alone.
+  const inMenu = (e: React.SyntheticEvent) =>
+    e.target instanceof Element && !!e.target.closest(".ctx-menu");
+  const onMouseDownCapture = (e: React.MouseEvent) => {
+    if (inMenu(e)) return;
+    swallowClick.current = ctxOpen && e.button === 0;
+    if (ctxOpen) closeCtx();
+  };
+  const onClickCapture = (e: React.MouseEvent) => {
+    if (inMenu(e) || !swallowClick.current) return;
+    swallowClick.current = false;
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
   // The menu belongs to a queue row; it goes when the queue does.
   useEffect(() => {
     if (!open) closeCtx();
@@ -123,6 +144,8 @@ export default function QueuePopover({
       style={{ bottom, right, width, maxHeight }}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
+      onMouseDownCapture={onMouseDownCapture}
+      onClickCapture={onClickCapture}
     >
       <div className="queue-pop-head">
         <span className="queue-pop-title-h">{externalQueue?.title ?? "Queue"}</span>
