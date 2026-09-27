@@ -156,7 +156,7 @@ jobs:
         working-directory: frontend
 
       # The version resolved by `prepare`; all platform jobs get the same value.
-      - run: npm version --no-git-tag-version "${{ needs.prepare.outputs.version }}"
+      - run: npm version --no-git-tag-version --allow-same-version "${{ needs.prepare.outputs.version }}"
         working-directory: frontend
 
       - run: npm run build
