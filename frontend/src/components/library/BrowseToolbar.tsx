@@ -1,19 +1,19 @@
 import { SEARCH_TYPE_OPTIONS, type SearchType } from "../../api";
 import { List as Bars3BottomLeftIcon, LayoutGrid as Squares2X2Icon } from "lucide-react";
-import { NativeSelect } from "../Field";
 import SearchInput from "../SearchInput";
+import { Select, type SelectOption } from "../Select";
 import SegmentedControl from "../SegmentedControl";
 
 type View = "tracks" | "artists" | "albums";
 type SortKey = "recent" | "title" | "artist" | "album" | "duration";
 
-const sortLabels: Record<SortKey, string> = {
-  recent: "Recently added",
-  title: "Title",
-  artist: "Artist",
-  album: "Album",
-  duration: "Duration",
-};
+const SORT_OPTIONS: SelectOption<SortKey>[] = [
+  { value: "recent", label: "Recently added" },
+  { value: "title", label: "Title" },
+  { value: "artist", label: "Artist" },
+  { value: "album", label: "Album" },
+  { value: "duration", label: "Duration" },
+];
 
 function labelFor(view: View) {
   switch (view) {
@@ -91,53 +91,49 @@ export default function BrowseToolbar({
 
       <div style={{ flex: 1 }} />
 
-      {!query.trim() &&
-        view === "tracks" &&
-        displayMode === "list" &&
-        selectionControlsHostId && (
-          <div id={selectionControlsHostId} className="track-selectbar-host" />
-        )}
-
-      {!query.trim() &&
-        view === "tracks" &&
-        sort != null &&
-        onSortChange != null && (
-          <NativeSelect
-            style={{ width: "auto" }}
-            value={sort}
-            onChange={(e) => onSortChange(e.target.value as SortKey)}
-            aria-label="Sort"
-          >
-            {(Object.keys(sortLabels) as SortKey[]).map((k) => (
-              <option key={k} value={k}>
-                {sortLabels[k]}
-              </option>
-            ))}
-          </NativeSelect>
-        )}
-
-      {!query.trim() &&
-        view === "tracks" &&
-        displayMode != null &&
-        onDisplayModeChange != null && (
-          <SegmentedControl
-            aria-label="Display mode"
-            value={displayMode}
-            onChange={onDisplayModeChange}
-            options={[
-              {
-                value: "list",
-                label: <Bars3BottomLeftIcon className="size-3.5" />,
-                ariaLabel: "List",
-              },
-              {
-                value: "grid",
-                label: <Squares2X2Icon className="size-3.5" />,
-                ariaLabel: "Grid",
-              },
-            ]}
-          />
-        )}
+      {/* Select, sort and view mode share one bar, styled like the view
+          tabs on the left. Tracks only; a query hides them all. */}
+      {!query.trim() && view === "tracks" && (
+        <div className="toolbar-group" role="group" aria-label="Track list options">
+          {displayMode === "list" && selectionControlsHostId && (
+            <>
+              <div id={selectionControlsHostId} className="track-selectbar-host" />
+              <span className="toolbar-group-sep" aria-hidden="true" />
+            </>
+          )}
+          {sort != null && onSortChange != null && (
+            <Select
+              variant="toolbar"
+              aria-label="Sort"
+              value={sort}
+              onChange={onSortChange}
+              options={SORT_OPTIONS}
+            />
+          )}
+          {displayMode != null && onDisplayModeChange != null && (
+            <>
+              <span className="toolbar-group-sep" aria-hidden="true" />
+              <SegmentedControl
+                aria-label="Display mode"
+                value={displayMode}
+                onChange={onDisplayModeChange}
+                options={[
+                  {
+                    value: "list",
+                    label: <Bars3BottomLeftIcon className="size-3.5" />,
+                    ariaLabel: "List",
+                  },
+                  {
+                    value: "grid",
+                    label: <Squares2X2Icon className="size-3.5" />,
+                    ariaLabel: "Grid",
+                  },
+                ]}
+              />
+            </>
+          )}
+        </div>
+      )}
 
       {/* Last, so the per-view controls come and go to its left and the box
           you're typing in never moves (a query hides them all). */}
@@ -146,7 +142,7 @@ export default function BrowseToolbar({
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
         aria-label="Search music"
-        placeholder="Search local + TIDAL"
+        placeholder={`Search ${labelFor(view).toLowerCase()}, local + TIDAL`}
       />
     </div>
   );

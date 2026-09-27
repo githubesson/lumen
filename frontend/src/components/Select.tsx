@@ -17,7 +17,7 @@ export interface SelectOption<V extends string = string> {
   disabled?: boolean;
 }
 
-type Variant = "outlined" | "minimal";
+type Variant = "outlined" | "minimal" | "toolbar";
 
 interface SelectProps<V extends string = string> {
   value: V;
@@ -38,6 +38,8 @@ const TRIGGER: Record<Variant, string> = {
     "flex w-full items-center justify-between gap-x-2 input text-left",
   minimal:
     "inline-flex items-center gap-x-1 text-sm text-muted-foreground hover:text-foreground focus:outline-none focus-visible:outline-2 focus-visible:outline-focus-ring focus-visible:outline-offset-2 rounded-md disabled:cursor-not-allowed disabled:opacity-50",
+  // A segment inside a `.toolbar-group` (see segmented.css).
+  toolbar: "toolbar-select",
 };
 
 const POPUP_BASE =
@@ -46,6 +48,7 @@ const POPUP_BASE =
 const POPUP: Record<Variant, string> = {
   outlined: `absolute z-30 mt-1 max-h-60 w-full overflow-y-auto focus:outline-none ${POPUP_BASE}`,
   minimal: `absolute right-0 z-30 mt-1 max-h-60 w-max min-w-40 overflow-y-auto focus:outline-none ${POPUP_BASE}`,
+  toolbar: `absolute right-0 z-30 mt-2 max-h-60 w-max min-w-44 overflow-y-auto focus:outline-none ${POPUP_BASE}`,
 };
 
 export function Select<V extends string = string>({
@@ -195,7 +198,13 @@ export function Select<V extends string = string>({
         <span
           className="truncate"
           style={{
-            color: selected ? "var(--foreground)" : "var(--muted-foreground)",
+            // Toolbar segments take their colour (and hover) from the group.
+            color:
+              variant === "toolbar"
+                ? undefined
+                : selected
+                  ? "var(--foreground)"
+                  : "var(--muted-foreground)",
             flex: 1,
             textAlign: "left",
           }}
@@ -204,7 +213,7 @@ export function Select<V extends string = string>({
         </span>
         <ChevronUpDownIcon
           className="size-3.5 shrink-0"
-          style={{ color: "var(--muted-foreground)" }}
+          style={{ color: variant === "toolbar" ? undefined : "var(--muted-foreground)" }}
           aria-hidden="true"
         />
       </button>

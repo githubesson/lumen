@@ -1,13 +1,19 @@
 import { useRef } from "react";
 import { createPortal } from "react-dom";
 import {
+  AppWindow as WebIcon,
   Check as CheckIcon,
+  Laptop as LaptopIcon,
+  MonitorSmartphone as DevicesIcon,
   Monitor as ComputerDesktopIcon,
-  Cast as SignalIcon,
-  PictureInPicture2 as WindowIcon,
+  Smartphone as PhoneIcon,
+  Tablet as TabletIcon,
   X as XMarkIcon,
 } from "lucide-react";
-import { useRemotePlayback } from "../context/Player";
+import type { ReactNode } from "react";
+import { usePlayer, useRemotePlayback } from "../context/Player";
+import { isElectron } from "../lib/platform";
+import { PlayingBars } from "./TrackRowCells";
 import { useDismiss } from "../lib/useDismiss";
 import { useTransitionMount } from "../lib/useTransitionMount";
 
@@ -24,6 +30,7 @@ export default function PlaybackDevicePopover({
   miniPlayerMode = false,
   onClose,
 }: Props) {
+  const { isPlaying, current } = usePlayer();
   const {
     connected,
     remoteDevices,
@@ -55,6 +62,8 @@ export default function PlaybackDevicePopover({
       ? lastCommandResult.error || `Command ${lastCommandResult.status}`
       : null;
 
+  const localPlaying = !targetDeviceId && isPlaying && !!current;
+
   return createPortal(
     <div
       ref={ref}
@@ -70,17 +79,16 @@ export default function PlaybackDevicePopover({
       onMouseDown={(event) => event.stopPropagation()}
     >
       <div className="device-pop-head">
-        <div>
-          <div className="device-pop-eyebrow">Connect</div>
-          <div className="device-pop-title">Playback device</div>
-        </div>
+        <span className="device-pop-title">Play on</span>
         <span
-          className={"device-pop-socket" + (connected ? " online" : "")}
-          title={connected ? "WebSocket connected" : "WebSocket reconnecting"}
+          className="device-pop-status"
+          data-online={connected || undefined}
+          title={connected ? "Connected to your server" : "Reconnecting to your server"}
         >
-          <SignalIcon aria-hidden="true" />
+          <span className="device-pop-status-dot" aria-hidden="true" />
           {connected ? "Live" : "Reconnecting"}
         </span>
+        <span style={{ flex: 1 }} />
         <button
           type="button"
           className="iconbtn device-pop-close"
@@ -92,57 +100,60 @@ export default function PlaybackDevicePopover({
       </div>
 
       <div className="device-pop-body">
-        <button
-          type="button"
-          className={"device-pop-row" + (!targetDeviceId ? " active" : "")}
-          onClick={() => {
+        <DeviceRow
+          icon={<LocalIcon aria-hidden="true" />}
+          name="This device"
+          meta={
+            localPlaying
+              ? `Playing · ${current.title}`
+              : targetDeviceId
+                ? "Play here instead"
+                : "Listening here"
+          }
+          active={!targetDeviceId}
+          playing={localPlaying}
+          onSelect={() => {
             selectTarget(null);
             onClose();
           }}
-        >
-          <span className="device-pop-icon">
-            <WindowIcon aria-hidden="true" />
-          </span>
-          <span className="device-pop-copy">
-            <span className="device-pop-name">This device</span>
-            <span className="device-pop-meta">Play locally in this app</span>
-          </span>
-          {!targetDeviceId && <CheckIcon className="device-pop-check" />}
-        </button>
+        />
 
-        <div className="device-pop-section">Available devices</div>
+        <div className="device-pop-section">Other devices</div>
         {remoteDevices.length ? (
           remoteDevices.map((device) => {
-            const active = targetDeviceId === device.deviceId;
+            const Icon = iconFor(device.deviceName);
+            const title = device.activity?.title;
             return (
-              <button
+              <DeviceRow
                 key={device.deviceId}
-                type="button"
-                className={"device-pop-row" + (active ? " active" : "")}
-                onClick={() => {
+                icon={<Icon aria-hidden="true" />}
+                name={device.deviceName}
+                meta={
+                  title
+                    ? `${device.activity?.is_playing ? "Playing" : "Paused"} · ${title}`
+                    : "Online · Nothing playing"
+                }
+                online
+                active={targetDeviceId === device.deviceId}
+                playing={!!title && !!device.activity?.is_playing}
+                onSelect={() => {
                   selectTarget(device.deviceId);
                   onClose();
                 }}
-              >
-                <span className="device-pop-icon remote">
-                  <ComputerDesktopIcon aria-hidden="true" />
-                  <span className="device-pop-online" aria-hidden="true" />
-                </span>
-                <span className="device-pop-copy">
-                  <span className="device-pop-name">{device.deviceName}</span>
-                  <span className="device-pop-meta">
-                    {device.activity?.title
-                      ? `${device.activity.is_playing ? "Playing" : "Paused"} · ${device.activity.title}`
-                      : "Online · Nothing playing"}
-                  </span>
-                </span>
-                {active && <CheckIcon className="device-pop-check" />}
-              </button>
+              />
             );
           })
         ) : (
           <div className="device-pop-empty">
-            Open Lumen on another device to control it from here.
+            <span className="device-pop-empty-icon" aria-hidden="true">
+              <DevicesIcon />
+            </span>
+            <span className="device-pop-empty-copy">
+              <span className="device-pop-empty-title">No other devices online</span>
+              <span className="device-pop-empty-hint">
+                Open Lumen on your phone or another computer.
+              </span>
+            </span>
           </div>
         )}
       </div>
@@ -154,5 +165,56 @@ export default function PlaybackDevicePopover({
       )}
     </div>,
     document.body,
+  );
+}
+
+const LocalIcon = isElectron() ? LaptopIcon : WebIcon;
+
+/** Icon for a device from the name its app reports (iPhone, iPad, Mobile, Desktop, Web). */
+function iconFor(name: string) {
+  if (/ipad|tablet/i.test(name)) return TabletIcon;
+  if (/iphone|android|mobile|phone/i.test(name)) return PhoneIcon;
+  if (/web|browser/i.test(name)) return WebIcon;
+  return ComputerDesktopIcon;
+}
+
+function DeviceRow({
+  icon,
+  name,
+  meta,
+  active,
+  playing,
+  online,
+  onSelect,
+}: {
+  icon: ReactNode;
+  name: string;
+  meta: string;
+  active: boolean;
+  playing: boolean;
+  online?: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={"device-pop-row" + (active ? " active" : "")}
+      aria-pressed={active}
+      onClick={onSelect}
+    >
+      <span className="device-pop-icon">
+        {icon}
+        {online && <span className="device-pop-online" aria-hidden="true" />}
+      </span>
+      <span className="device-pop-copy">
+        <span className="device-pop-name">{name}</span>
+        <span className="device-pop-meta">{meta}</span>
+      </span>
+      {playing ? (
+        <PlayingBars className="device-pop-bars" />
+      ) : (
+        active && <CheckIcon className="device-pop-check" aria-hidden="true" />
+      )}
+    </button>
   );
 }

@@ -53,6 +53,17 @@ function isView(v: string | null): v is View {
   return v === "tracks" || v === "artists" || v === "albums";
 }
 
+const SEARCH_TYPE_FOR_VIEW: Record<View, SearchType> = {
+  tracks: "track",
+  albums: "album",
+  artists: "artist",
+};
+const VIEW_FOR_SEARCH_TYPE: Record<Exclude<SearchType, "all">, View> = {
+  track: "tracks",
+  album: "albums",
+  artist: "artists",
+};
+
 export default function Library() {
   const [params, setParams] = useSearchParams();
   const view: View = isView(params.get("view"))
@@ -62,19 +73,29 @@ export default function Library() {
   const tidalAlbumID = params.get("tidalAlbum");
   const artistID = params.get("artist");
   const tidalArtistID = params.get("tidalArtist");
-  const searchType = isSearchType(params.get("type")) ? params.get("type") as SearchType : "all";
+  // Search looks for what the open tab lists unless a type was picked.
+  const typeParam = params.get("type");
+  const searchType: SearchType = isSearchType(typeParam) ? typeParam : SEARCH_TYPE_FOR_VIEW[view];
   const query = params.get("q") ?? "";
 
+  const applyView = (next: URLSearchParams, v: View) => {
+    if (v === "tracks") next.delete("view");
+    else next.set("view", v);
+  };
+
+  // Picking a type also moves to its tab, so clearing the search lands on
+  // the list you were searching.
   const setSearchType = (type: SearchType) => {
     const next = new URLSearchParams(params);
     next.set("type", type);
+    if (type !== "all") applyView(next, VIEW_FOR_SEARCH_TYPE[type]);
     setParams(next, { replace: true });
   };
 
   const setView = (v: View) => {
     const next = new URLSearchParams(params);
-    if (v === "tracks") next.delete("view");
-    else next.set("view", v);
+    applyView(next, v);
+    next.delete("type");
     next.delete("album");
     next.delete("artist");
     setParams(next, { replace: true });
@@ -82,8 +103,13 @@ export default function Library() {
 
   const setQuery = (q: string) => {
     const next = new URLSearchParams(params);
-    if (q) next.set("q", q);
-    else next.delete("q");
+    if (q) {
+      next.set("q", q);
+    } else {
+      next.delete("q");
+      // The next search starts from the tab again.
+      next.delete("type");
+    }
     setParams(next, { replace: true });
   };
 

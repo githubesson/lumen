@@ -18,49 +18,60 @@
     transform var(--dur-menu) var(--ease-out);
 }
 .device-pop-head {
-  min-height: 48px;
-  padding: 8px 8px 8px 12px;
+  min-height: 44px;
+  padding: 6px 6px 6px 14px;
   display: flex;
   align-items: center;
   gap: 8px;
   border-bottom: 1px solid var(--border);
 }
-.device-pop-eyebrow,
-.device-pop-section {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--muted-foreground);
-}
 .device-pop-title {
-  margin-top: 2px;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
 }
-.device-pop-socket {
-  margin-left: auto;
+.device-pop-status {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--muted);
   font-size: 12px;
+  font-weight: 500;
   color: var(--muted-foreground);
 }
-.device-pop-socket svg {
-  width: 11px;
-  height: 11px;
+.device-pop-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--warning);
+  animation: device-pop-pulse 1.4s ease-in-out infinite;
 }
-.device-pop-socket.online {
-  color: var(--success);
+.device-pop-status[data-online] .device-pop-status-dot {
+  background: var(--success);
+  animation: none;
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--success) 22%, transparent);
+}
+@keyframes device-pop-pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
 .device-pop-close {
-  width: 26px;
-  height: 26px;
-  flex: 0 0 26px;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  color: var(--muted-foreground);
 }
 .device-pop-body {
-  padding: 4px;
+  padding: 6px;
 }
 .device-pop-section {
-  padding: 6px 8px;
+  padding: 10px 8px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
 }
 .device-pop-row {
   position: relative;
@@ -69,7 +80,7 @@
   padding: 6px 8px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
@@ -77,6 +88,7 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background 120ms ease;
 }
 .device-pop-row:hover {
   background: var(--accent);
@@ -103,12 +115,18 @@
   color: var(--foreground);
   background: var(--background);
 }
-.device-pop-icon.remote {
-  color: var(--foreground);
-}
 .device-pop-icon svg {
   width: 16px;
   height: 16px;
+}
+/* The device playing right now gets the solid tile. */
+.device-pop-row.active .device-pop-icon {
+  border-color: transparent;
+  background: var(--foreground);
+  color: var(--background);
+  transition:
+    background 160ms ease,
+    color 160ms ease;
 }
 .device-pop-online {
   position: absolute;
@@ -148,12 +166,48 @@
   color: var(--foreground);
 }
 .device-pop-empty {
-  padding: 16px 12px 18px;
-  color: var(--muted-foreground);
-  font-size: 14px;
-  line-height: 1.5;
-  text-align: center;
+  margin: 2px 2px 4px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
 }
+.device-pop-empty-icon {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+.device-pop-empty-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.device-pop-empty-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.device-pop-empty-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+.device-pop-empty-hint {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+}
+.device-pop-bars {
+  flex: 0 0 14px;
+  margin-right: 1px;
+}
+
 .device-pop-error {
   padding: 8px 12px;
   border-top: 1px solid var(--border);
@@ -163,7 +217,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .device-picker-btn.pending svg {
+  .device-picker-btn.pending svg,
+  .device-pop-status-dot {
     animation: none;
   }
 }
