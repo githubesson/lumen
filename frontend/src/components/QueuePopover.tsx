@@ -80,6 +80,15 @@ export default function QueuePopover({
   const onMouseDownCapture = (e: React.MouseEvent) => {
     if (inMenu(e)) return;
     swallowClick.current = ctxOpen && e.button === 0;
+    if (swallowClick.current) {
+      // Only this gesture's click: if it's released elsewhere (no click
+      // here), don't let the flag eat a later one, e.g. a keyboard Enter.
+      window.addEventListener(
+        "mouseup",
+        () => window.setTimeout(() => (swallowClick.current = false), 0),
+        { once: true, capture: true },
+      );
+    }
     if (ctxOpen) closeCtx();
   };
   const onClickCapture = (e: React.MouseEvent) => {
