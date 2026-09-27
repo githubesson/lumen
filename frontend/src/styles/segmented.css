@@ -119,8 +119,12 @@
 .toolbar-group {
   display: inline-flex;
   align-items: center;
+  /* Wraps rather than overflowing on narrow screens (selection mode puts
+     four more controls in here). */
+  flex-wrap: wrap;
+  max-width: 100%;
   gap: 2px;
-  height: 32px;
+  min-height: 32px;
   padding: 3px;
   background: var(--muted);
   border-radius: var(--radius-lg);
@@ -199,13 +203,16 @@
 .toolbar-group .segmented button {
   padding: 0 6px;
 }
-/* Selection chrome portaled into the group. */
+/* Selection chrome portaled into the group: its wrappers step aside so each
+   control is a flex item of the group and wraps on its own. */
 .toolbar-group .track-selectbar-host,
 .toolbar-group .track-selectbar-attached {
-  min-height: 26px;
-  gap: 2px;
+  display: contents;
 }
 .toolbar-group .track-selectbar-status {
+  flex: 0 0 auto;
+  max-width: none;
+  white-space: nowrap;
   padding: 0 6px;
   color: var(--foreground);
   font-size: 14px;
