@@ -5,7 +5,10 @@
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
-const IS_PRERELEASE = /^(1|true)$/i.test(process.env.EP_PRE_RELEASE ?? "");
+// The update channel follows the version the release workflow stamps into
+// package.json: 0.1.4 publishes latest*.yml, 0.1.4-dev.57 publishes dev*.yml.
+const UPDATE_CHANNEL =
+  /^\d+\.\d+\.\d+-([0-9A-Za-z-]+)/.exec(require("./package.json").version)?.[1] ?? "latest";
 
 // Optional private add-on: the FH6 radio bridge DLL + config live in a local,
 // untracked folder. Bundled when present, silently skipped when not.
@@ -83,9 +86,8 @@ const config = {
     owner: "githubesson",
     repo: "lumen",
     releaseType: "release",
-    // GitHub does not infer update channels from prerelease versions. Stable
-    // releases publish latest*.yml; explicit dev builds publish dev*.yml.
-    channel: IS_PRERELEASE ? "dev" : "latest",
+    // GitHub does not infer update channels from prerelease versions.
+    channel: UPDATE_CHANNEL,
   },
   directories: {
     output: "release",

@@ -118,6 +118,7 @@ export function registerIpcHandlers(deps: {
   );
 
   ipcMain.handle("updates:check", async () => updateManager.check());
+  ipcMain.handle("updates:download", async () => updateManager.download());
   ipcMain.handle("updates:install", () => updateManager.install());
 
   // Renderer origins use an ephemeral proxy port, so logout intent must live

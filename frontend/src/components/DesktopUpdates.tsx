@@ -97,6 +97,15 @@ export function useDesktopUpdates(enabled: boolean) {
     }, "Update check failed.");
   };
 
+  const download = () => {
+    const downloadUpdate = electron.downloadUpdate;
+    if (!downloadUpdate) return;
+    return run(async (live) => {
+      const next = await downloadUpdate();
+      if (live()) setStatus(next);
+    }, "Update download failed.");
+  };
+
   // Busy stays on after a successful install call: the app is restarting.
   const install = () => {
     const installUpdate = electron.installUpdate;
@@ -111,14 +120,25 @@ export function useDesktopUpdates(enabled: boolean) {
     );
   };
 
-  return { status, branch, setBranch, repoUrl, setRepoUrl, busy, error, save, check, install };
+  return { status, branch, setBranch, repoUrl, setRepoUrl, busy, error, save, check, download, install };
 }
 
 export type DesktopUpdatesState = NonNullable<ReturnType<typeof useDesktopUpdates>>;
 
 export default function DesktopUpdates({ updates }: { updates: DesktopUpdatesState }) {
-  const { status, branch, setBranch, repoUrl, setRepoUrl, busy, error, save, check, install } =
-    updates;
+  const {
+    status,
+    branch,
+    setBranch,
+    repoUrl,
+    setRepoUrl,
+    busy,
+    error,
+    save,
+    check,
+    download,
+    install,
+  } = updates;
   const dirty = branch !== status.branch || repoUrl.trim() !== status.repoUrl;
   const checking = status.state === "checking" || status.state === "downloading";
 
@@ -171,13 +191,21 @@ export default function DesktopUpdates({ updates }: { updates: DesktopUpdatesSta
           <Button size="sm" variant="primary" disabled={busy} onClick={() => void install()}>
             Restart &amp; install
           </Button>
+        ) : status.state === "available" && window.electron?.downloadUpdate ? (
+          <Button size="sm" variant="primary" disabled={busy} onClick={() => void download()}>
+            Download
+          </Button>
         ) : (
           <Button
             size="sm"
             disabled={busy || checking || !status.canCheck || dirty}
             onClick={() => void check()}
           >
-            {checking ? "Checking…" : "Check now"}
+            {status.state === "downloading"
+              ? "Downloading…"
+              : checking
+                ? "Checking…"
+                : "Check now"}
           </Button>
         )}
       </SettingRow>

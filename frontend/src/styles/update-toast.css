@@ -1,0 +1,134 @@
+/* ============================================================
+   Update toast (bottom-right of the main pane, desktop app only)
+   ============================================================ */
+.update-toast {
+  position: absolute;
+  right: 20px;
+  bottom: 16px;
+  z-index: 5;
+  width: min(320px, calc(100% - 32px));
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+  color: var(--popover-foreground);
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md), 0 12px 32px -12px oklch(0 0 0 / 0.25);
+  transform-origin: bottom right;
+  /* Exit: quicker than the entrance, and it only sinks and fades. */
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+  transition:
+    opacity 160ms ease-in,
+    transform 160ms ease-in;
+}
+.update-toast[data-visible] {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 240ms var(--ease-out),
+    transform 320ms var(--ease-out);
+}
+
+.update-toast-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.update-toast .brand-mark {
+  width: 28px;
+  height: 28px;
+  flex-basis: 28px;
+  border-radius: var(--radius-md);
+}
+.update-toast-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-top: 1px;
+}
+.update-toast-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.update-toast-detail {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.update-toast-detail[data-error] {
+  color: var(--destructive);
+}
+.update-toast-close {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  margin: -4px -4px 0 0;
+  color: var(--muted-foreground);
+}
+
+/* Buttons and the progress bar share one row height, so switching step
+   swaps the row in place instead of resizing the card. */
+.update-toast-foot {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.update-toast-text,
+.update-toast-foot {
+  animation: update-toast-step 240ms var(--ease-out) both;
+}
+@keyframes update-toast-step {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+    filter: blur(2px);
+  }
+}
+
+.update-toast-progress {
+  flex: 1 1 auto;
+  height: 6px;
+  margin-left: 38px;
+  border-radius: 999px;
+  background: var(--muted);
+  overflow: hidden;
+}
+.update-toast-progress > div {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  transform-origin: left;
+  transition: transform 300ms var(--ease-out);
+}
+.update-toast-percent {
+  min-width: 4ch;
+  font-size: 12px;
+  text-align: right;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-toast,
+  .update-toast[data-visible] {
+    transform: none;
+  }
+  .update-toast-text,
+  .update-toast-foot {
+    animation-name: fade-in;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}

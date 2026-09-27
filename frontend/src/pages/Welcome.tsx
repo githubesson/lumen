@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft as ArrowLeftIcon, CircleCheck as CheckIcon } from "lucide-react";
+import BrandMark from "../components/BrandMark";
 import { Button } from "../components/Button";
 import { Field, TextInput } from "../components/Field";
 import SettingRow from "../components/SettingRow";
@@ -128,7 +129,7 @@ export default function Welcome({
 
         {step === "welcome" && (
           <div className="welcome-step welcome-intro" key="welcome">
-            <div className="brand-mark welcome-mark">L</div>
+            <BrandMark />
             <h1 id="welcome-title" ref={headingRef} tabIndex={-1}>
               Welcome to Lumen
             </h1>

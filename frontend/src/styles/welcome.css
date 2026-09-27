@@ -77,11 +77,10 @@
   margin-top: -6px;
   max-width: 340px;
 }
-.welcome-mark.brand-mark {
+.welcome-intro .brand-mark {
   width: 52px;
   height: 52px;
   flex-basis: 52px;
-  font-size: 22px;
   border-radius: var(--radius-xl);
 }
 .welcome-intro .welcome-actions {

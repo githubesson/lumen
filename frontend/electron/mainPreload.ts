@@ -34,6 +34,7 @@ const api: ElectronApi = {
   getUpdateStatus: () => ipcRenderer.invoke("updates:get"),
   saveUpdateConfig: (payload) => ipcRenderer.invoke("updates:save", payload),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),
+  downloadUpdate: () => ipcRenderer.invoke("updates:download"),
   installUpdate: () => ipcRenderer.invoke("updates:install"),
   onUpdateStatus: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, status: UpdateStatus) =>

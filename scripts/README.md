@@ -27,7 +27,7 @@ The second argument may explicitly be `always`, with `GH_TOKEN`, for release
 publishing. `LUMEN_BUILD_VERSION` optionally sets the package version. The
 release workflow uses this script for its Windows and Linux jobs on the
 `self-hosted`, `Linux`, `X64`, `lumen` runner, with one platform build at a time.
-It preserves the existing release version and prerelease settings. macOS
+It uses the version and prerelease setting resolved by the workflow. macOS
 continues on a GitHub-hosted Mac runner. The release workflow runs only for
 release tags or manual dispatches; pull-request CI is unchanged.
 

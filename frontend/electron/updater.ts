@@ -165,7 +165,9 @@ export class DesktopUpdateManager {
 
   async check(): Promise<UpdateStatus> {
     if (!this.status.canCheck) return this.getStatus();
-    if (this.status.state === "checking" || this.status.state === "downloading") {
+    // A downloaded update stays ready; re-checking would demote it to
+    // "available" and ask for a second download.
+    if (["checking", "downloading", "downloaded"].includes(this.status.state)) {
       return this.getStatus();
     }
     this.setStatus({
@@ -181,6 +183,30 @@ export class DesktopUpdateManager {
         state: "error",
         message: errorMessage(error),
         canInstall: false,
+      });
+    }
+    return this.getStatus();
+  }
+
+  /** Downloads the update found by the last check. */
+  async download(): Promise<UpdateStatus> {
+    if (!this.updater || this.status.state !== "available") {
+      return this.getStatus();
+    }
+    const version = this.status.targetVersion;
+    this.setStatus({
+      state: "downloading",
+      progress: 0,
+      message: version ? `Downloading Lumen ${version}…` : "Downloading update…",
+    });
+    try {
+      await this.updater.downloadUpdate();
+    } catch (error) {
+      this.setStatus({
+        state: "error",
+        message: errorMessage(error),
+        canInstall: false,
+        progress: undefined,
       });
     }
     return this.getStatus();
@@ -219,7 +245,8 @@ export class DesktopUpdateManager {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { autoUpdater } = require("electron-updater") as typeof import("electron-updater");
     this.applyPreferences(autoUpdater);
-    autoUpdater.autoDownload = true;
+    // The renderer asks before downloading (the update toast or Settings).
+    autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.logger = console;
 
@@ -230,8 +257,8 @@ export class DesktopUpdateManager {
       this.setStatus({
         state: "available",
         targetVersion: info.version,
-        message: `Downloading Lumen ${info.version}…`,
-        progress: 0,
+        message: `Lumen ${info.version} is available.`,
+        progress: undefined,
       });
     });
     autoUpdater.on("download-progress", (progress: ProgressInfo) => {
