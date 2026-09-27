@@ -156,7 +156,11 @@ export default function QueuePopover({
                     artist={current.artist}
                     coverUrl={trackCoverUrl(current)}
                     active
-                    onContextMenu={canContext ? bindCtx(current, { queue }) : undefined}
+                    onContextMenu={
+                      canContext
+                        ? bindCtx(current, { queue, onPlay: () => jumpTo(index) })
+                        : undefined
+                    }
                   />
                 ) : null}
               </>
@@ -193,7 +197,11 @@ export default function QueuePopover({
                         jumpTo(index + 1 + i);
                         onClose();
                       }}
-                      onContextMenu={canContext ? bindCtx(t, { queue }) : undefined}
+                      onContextMenu={
+                        canContext
+                          ? bindCtx(t, { queue, onPlay: () => jumpTo(index + 1 + i) })
+                          : undefined
+                      }
                     />
                   ))}
               </>

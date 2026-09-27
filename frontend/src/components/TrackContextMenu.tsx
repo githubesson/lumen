@@ -49,6 +49,9 @@ interface Props {
   y: number;
   /** Queue source for Play — the list the row belonged to. Falls back to [track]. */
   queue?: TrackListItem[];
+  /** Replaces Play's `play(track, queue)`, for rows that know their exact
+   *  queue position (the same track can be queued twice). */
+  onPlay?: () => void;
   /** Trigger the track-edit dialog. Optional — admins only. */
   onEdit?: () => void;
   /** Trigger the move-to-album dialog. Optional — admins only. */
@@ -71,6 +74,7 @@ export default function TrackContextMenu({
   x,
   y,
   queue,
+  onPlay,
   onEdit,
   onMoveToAlbum,
   onInfo,
@@ -142,7 +146,8 @@ export default function TrackContextMenu({
 
   const runPlay = () => {
     // Dropped from TIDAL with no library copy: nothing to stream.
-    if (!track.unavailable) {
+    if (onPlay) onPlay();
+    else if (!track.unavailable) {
       play(track, queue && queue.length > 0 ? queue : [track]);
     }
     onClose();
@@ -505,6 +510,7 @@ export function useTrackContextMenu() {
     x: number;
     y: number;
     queue?: TrackListItem[];
+    onPlay?: () => void;
     onEdit?: () => void;
     onMoveToAlbum?: () => void;
     onInfo?: () => void;
@@ -523,6 +529,7 @@ export function useTrackContextMenu() {
       track: TrackListItem,
       opts: {
         queue?: TrackListItem[];
+        onPlay?: () => void;
         onEdit?: () => void;
         onMoveToAlbum?: () => void;
         onInfo?: () => void;
@@ -536,6 +543,7 @@ export function useTrackContextMenu() {
           x: e.clientX,
           y: e.clientY,
           queue: opts.queue,
+          onPlay: opts.onPlay,
           onEdit: opts.onEdit,
           onMoveToAlbum: opts.onMoveToAlbum,
           onInfo:
@@ -557,6 +565,7 @@ export function useTrackContextMenu() {
       x={state.x}
       y={state.y}
       queue={state.queue}
+      onPlay={state.onPlay}
       onEdit={state.onEdit}
       onMoveToAlbum={state.onMoveToAlbum}
       onInfo={state.onInfo}
