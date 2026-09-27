@@ -20,6 +20,7 @@ import { useAuth } from "../../context/Auth";
 import { useTheme } from "../../context/Theme";
 import { startDesktopDownload } from "../../lib/downloads";
 import { isElectron } from "../../lib/platform";
+import BrandMark from "../BrandMark";
 import NavItem from "./NavItem";
 import SidebarPlaylists from "./SidebarPlaylists";
 
@@ -63,7 +64,7 @@ export default function Sidebar({
       aria-label="Sidebar"
     >
       <Link to="/" className="brand">
-        <div className="brand-mark">L</div>
+        <BrandMark />
         <div className="brand-text">
           <div className="brand-name">Lumen</div>
         </div>

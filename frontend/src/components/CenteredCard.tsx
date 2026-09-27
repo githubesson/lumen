@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import BrandMark from "./BrandMark";
 
 interface Props {
   title: string;
@@ -21,12 +22,7 @@ export default function CenteredCard({ title, intro, children }: Props) {
             position: "relative",
           }}
         >
-          <div
-            className="brand-mark"
-            style={{ width: 38, height: 38, fontSize: 16 }}
-          >
-            L
-          </div>
+          <BrandMark />
           <div>
             <h1
               style={{

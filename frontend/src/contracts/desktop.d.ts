@@ -168,6 +168,7 @@ export interface ElectronApi {
     payload: UpdatePreferences,
   ): Promise<{ ok: boolean; status?: UpdateStatus; error?: string }>;
   checkForUpdates(): Promise<UpdateStatus>;
+  downloadUpdate(): Promise<UpdateStatus>;
   installUpdate(): Promise<UpdateStatus>;
   onUpdateStatus(listener: (status: UpdateStatus) => void): () => void;
 }
@@ -182,6 +183,7 @@ type OptionalRendererMethods =
   | "getUpdateStatus"
   | "saveUpdateConfig"
   | "checkForUpdates"
+  | "downloadUpdate"
   | "installUpdate"
   | "onUpdateStatus";
 export type RendererElectronApi = Omit<ElectronApi, OptionalRendererMethods> &

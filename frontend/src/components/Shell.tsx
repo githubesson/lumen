@@ -9,6 +9,7 @@ import { useDesktopConfig } from "../lib/desktopConfig";
 import { useLyricsPanel } from "../context/LyricsPanel";
 import MiniPlayer from "./MiniPlayer";
 import LyricsSidebar from "./LyricsSidebar";
+import UpdateToast from "./UpdateToast";
 import UploadDialog from "./UploadDialog";
 import SettingsDialog, { type SectionId } from "./SettingsDialog";
 import Sidebar from "./shell/Sidebar";
@@ -152,6 +153,8 @@ export default function Shell() {
             <Outlet />
           </OpenSettingsContext.Provider>
         </div>
+
+        <UpdateToast />
       </main>
 
       <LyricsSidebar />

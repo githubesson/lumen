@@ -15,8 +15,10 @@ new contracts or suppressions narrow and explain why they are needed.
 
 The GitHub Actions release workflow intentionally builds unsigned Windows and
 macOS artifacts and sets `CSC_IDENTITY_AUTO_DISCOVERY=false`. Stable `v*` tags
-run automatically; branch builds run only through `workflow_dispatch` and are
-published as prereleases. Do not call these artifacts signed, notarized, or
+run automatically. Branch builds run through `workflow_dispatch`, and the
+branch picks the release: `main` publishes a stable release, `dev` a `-dev.N`
+prerelease, and other branches a prerelease named after the branch (see
+README.md). Do not call these artifacts signed, notarized, or
 distribution-ready. The signing workflow below remains available for explicitly
 configured local or future CI releases. Electron's macOS updater also requires
 a signed app, so these unsigned CI builds must report auto-update as unsupported

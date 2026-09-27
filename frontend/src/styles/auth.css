@@ -22,3 +22,9 @@
   padding: 24px;
   position: relative;
 }
+
+.auth-card .brand-mark {
+  width: 38px;
+  height: 38px;
+  flex-basis: 38px;
+}

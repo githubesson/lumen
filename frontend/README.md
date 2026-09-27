@@ -135,20 +135,31 @@ signs, notarizes, and staples the DMG container automatically (see
 get an unsigned dev build.
 
 GitHub releases intentionally build unsigned binaries for all three desktop
-platforms. Stable `v*` tags run automatically. Branch builds run only when the
-release workflow is manually dispatched and are published as uniquely versioned
-prereleases. Windows may show an unknown-publisher warning and macOS may require
+platforms. Dispatch the release workflow from the branch you want to ship:
+
+| Branch | Version | Release |
+| --- | --- | --- |
+| `main` | `0.1.4` | stable, `latest` update channel |
+| `dev` | `0.1.4-dev.57` | prerelease, `dev` update channel |
+| anything else | `0.1.4-branch-<name>.57` | prerelease that no updater follows |
+
+Patch versions count up from the highest stable tag, and the number after the
+branch name is the workflow run. To start a new minor or major line, raise
+`version` in `package.json`. A pushed `v*` tag builds as exactly that version.
+Each release is a draft until every platform has uploaded. Windows may show an unknown-publisher warning and macOS may require
 the user to explicitly approve the app in Gatekeeper.
 
 ### Desktop updates
 
 Packaged desktop builds check for updates shortly after launch and every six
-hours, download an available update, and install it on quit (or immediately
-when the user chooses **restart & install**). The Updates section in the tweaks
+hours. A found update is offered in a card in the corner of the main pane (and
+under Updates in Settings): the user downloads it, then chooses **Restart &
+install** or lets it install on quit. The Updates section in the tweaks
 panel lets users choose one of two strictly whitelisted release streams:
 
 - `main` follows stable GitHub Releases and reads `latest*.yml` metadata.
-- `dev` follows explicitly requested prereleases and reads `dev*.yml` metadata.
+- `dev` follows prereleases built from the `dev` branch and reads `dev*.yml`
+  metadata.
 
 Dev builds default to `dev`; stable builds default to `main`. Users may switch
 between them and may override the public GitHub repository URL, which must be

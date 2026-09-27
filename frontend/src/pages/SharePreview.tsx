@@ -19,6 +19,7 @@ import {
   trackSharePreviewVideoUrl,
   type PublicTrackShare,
 } from "../api";
+import BrandMark from "../components/BrandMark";
 import { Button } from "../components/Button";
 import CoverArt from "../components/CoverArt";
 import ErrorBanner from "../components/ErrorBanner";
@@ -141,7 +142,7 @@ export default function SharePreview() {
     <main className="share-preview-page">
       <div className="share-preview-shell">
         <Link to="/" className="share-preview-brand" aria-label="Lumen home">
-          <span className="brand-mark">L</span>
+          <BrandMark />
           <span>Lumen</span>
         </Link>
 

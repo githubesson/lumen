@@ -83,6 +83,7 @@
 @import "./styles/badges.css";
 @import "./styles/fh6.css";
 @import "./styles/player-popovers.css";
+@import "./styles/update-toast.css";
 @import "./styles/context-menu.css";
 @import "./styles/tooltip.css";
 @import "./styles/electron.css";

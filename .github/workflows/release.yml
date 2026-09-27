@@ -1,8 +1,17 @@
 name: release
 
-# Build and publish desktop binaries for stable version tags or an explicitly
-# requested branch build. Manual builds receive a unique semver prerelease tag;
-# GitHub's latest-release API ignores them, so downloads still resolve to stable.
+# Build and publish desktop binaries. The version and update channel follow
+# the branch the workflow is dispatched from:
+#
+#   main        -> 0.1.4           stable release, `latest` channel
+#   dev         -> 0.1.4-dev.57    prerelease, `dev` channel
+#   feat/name   -> 0.1.4-branch-feat-name.57   prerelease no updater follows
+#
+# Patch versions count up from the highest stable tag. To start a new minor or
+# major line, raise the version in frontend/package.json. A pushed v* tag is
+# built as exactly that version. Assets go to a draft release that is only
+# published once every platform has uploaded, so updaters never see a release
+# with files missing.
 on:
   workflow_dispatch:
   push:
@@ -13,11 +22,18 @@ on:
 permissions:
   contents: write
 
+# One release at a time: versions come from the existing tags, and only the
+# newest stable release may be marked Latest.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
       prerelease: ${{ steps.release.outputs.prerelease }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -31,45 +47,77 @@ jobs:
         run: |
           set -euo pipefail
 
+          stable_tags() { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V || true; }
+
+          # Next stable version: one patch past the highest stable tag, or the
+          # package.json version when that is newer (a manual minor/major bump).
+          base="$(node -p "require('./frontend/package.json').version.split('-')[0]")"
+          latest_stable="$(git tag --list 'v*' | stable_tags | tail -n 1)"
+          next="$(node -e '
+            const [base, latest] = process.argv.slice(1);
+            const parse = (v) => v.split(".").map(Number);
+            const b = parse(base);
+            const l = latest ? parse(latest) : null;
+            const newer = l ? l[0] - b[0] || l[1] - b[1] || l[2] - b[2] : -1;
+            console.log(newer < 0 ? base : `${l[0]}.${l[1]}.${l[2] + 1}`);
+          ' "$base" "${latest_stable#v}")"
+
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             version="${GITHUB_REF_NAME#v}"
-            prerelease=false
+          elif [[ "$GITHUB_REF_NAME" == "main" ]]; then
+            # Re-running a release for the same commit keeps its version.
+            existing="$(git tag --points-at "$GITHUB_SHA" --list 'v*' | stable_tags | tail -n 1)"
+            version="${existing#v}"
+            version="${version:-$next}"
+          elif [[ "$GITHUB_REF_NAME" == "dev" ]]; then
+            version="${next}-dev.${GITHUB_RUN_NUMBER}"
           else
-            package_version="$(node -p "require('./frontend/package.json').version.split('-')[0]")"
-            latest_tag="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
-            stable_version="${latest_tag#v}"
-            if [[ ! "$stable_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              stable_version="$package_version"
-            fi
-            next_patch="$(node -e '
-              const [major, minor, patch] = process.argv[1].split(".").map(Number);
-              console.log(`${major}.${minor}.${patch + 1}`);
-            ' "$stable_version")"
-            version="${next_patch}-dev.${GITHUB_RUN_NUMBER}"
-            prerelease=true
-            tag="v${version}"
+            # Branch name as a semver prerelease id: feat/Foo_bar ->
+            # branch-feat-foo-bar. The prefix keeps it non-empty, non-numeric
+            # and clear of the dev channel.
+            slug="$(printf '%s' "$GITHUB_REF_NAME" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9-' '-' | sed -E 's/-+/-/g; s/^-//; s/-$//')"
+            version="${next}-branch${slug:+-$slug}.${GITHUB_RUN_NUMBER}"
+          fi
+          # npm and electron-builder must stamp exactly this version.
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-z][0-9a-z-]*\.[0-9]+)?$ ]]; then
+            echo "::error::Refusing to release malformed version ${version}"
+            exit 1
+          fi
+          tag="v${version}"
+          prerelease=false
+          if [[ "$version" == *-* ]]; then prerelease=true; fi
+          echo "Building ${tag} from ${GITHUB_REF_NAME} (prerelease: ${prerelease})"
 
-            # A GitHub Release must point at a tag. Create an immutable tag for
-            # this exact dev commit before the parallel builders publish assets.
-            if git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null; then
-              test "$(git rev-list -n 1 "$tag")" = "$GITHUB_SHA"
+          # A GitHub Release must point at a tag. Create an immutable tag for
+          # this exact commit before the parallel builders publish assets.
+          if git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null; then
+            test "$(git rev-list -n 1 "$tag")" = "$GITHUB_SHA"
+          else
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "$tag"
+          fi
+
+          # Create the draft once so the platform jobs only append assets and
+          # cannot race while creating the GitHub Release itself. A published
+          # release is never rebuilt: electron-builder would skip its uploads.
+          if is_draft="$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [[ "$is_draft" != true ]]; then
+              echo "::error::${tag} is already published. Delete it or release a new commit."
+              exit 1
+            fi
+          else
+            flags=(--draft --verify-tag --title "Lumen ${version}")
+            notes="Unsigned desktop build from ${GITHUB_REF_NAME} at ${GITHUB_SHA}."
+            if [[ "$prerelease" == true ]]; then
+              flags+=(--prerelease --notes "$notes")
             else
-              git tag "$tag" "$GITHUB_SHA"
-              git push origin "$tag"
+              flags+=(--generate-notes --notes "$notes")
             fi
-
-            # Create the prerelease once so the three platform jobs only append
-            # assets and cannot race while creating the GitHub Release itself.
-            if ! gh release view "$tag" >/dev/null 2>&1; then
-              gh release create "$tag" \
-                --verify-tag \
-                --prerelease \
-                --title "Lumen ${version}" \
-                --notes "Unsigned desktop build from ${GITHUB_REF_NAME} at ${GITHUB_SHA}."
-            fi
+            gh release create "$tag" "${flags[@]}"
           fi
 
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
           printf 'prerelease=%s\n' "$prerelease" >> "$GITHUB_OUTPUT"
 
   desktop-macos:
@@ -88,7 +136,7 @@ jobs:
       # Releases are intentionally unsigned on Windows and macOS. This also
       # prevents a hosted runner from accidentally discovering an identity.
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      # Overrides electron-builder's stable releaseType for dev branch builds.
+      # Marks the upload as a prerelease for non-main branch builds.
       EP_PRE_RELEASE: ${{ needs.prepare.outputs.prerelease }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -107,8 +155,7 @@ jobs:
       - run: npm ci
         working-directory: frontend
 
-      # Stable builds use the pushed version tag; dev builds use the unique
-      # prerelease version prepared above. All platform jobs get the same value.
+      # The version resolved by `prepare`; all platform jobs get the same value.
       - run: npm version --no-git-tag-version "${{ needs.prepare.outputs.version }}"
         working-directory: frontend
 
@@ -151,3 +198,26 @@ jobs:
           UPDATE_REPO_URL: ${{ vars.UPDATE_REPO_URL || 'https://github.com/githubesson/lumen' }}
           EP_PRE_RELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: bash scripts/build-desktop-docker.sh "${{ matrix.target }}" always
+
+  publish:
+    needs: [prepare, desktop-macos, desktop-self-hosted]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [[ "$PRERELEASE" == true ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          else
+            # `latest` is what the main update channel and the landing page
+            # read; an older tag pushed later must not take it over.
+            current="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)"
+            newest="$(printf '%s\n%s\n' "$current" "$TAG" | sed '/^$/d' | sort -V | tail -n 1)"
+            latest=false
+            if [[ "$newest" == "$TAG" ]]; then latest=true; fi
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest="$latest"
+          fi
