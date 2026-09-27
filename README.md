@@ -195,6 +195,14 @@ finishes. Accounts can be added, replaced, or unlinked there without restarting
 the stack. Tokens remain in `./tidal-hifi/token.json`; that directory is local
 runtime state and is gitignored.
 
+Each linked account makes one playback request at a time, because TIDAL has
+been banning accounts that request playback in parallel. When more tracks
+start at once than there are accounts, the extra ones wait briefly in
+`hifi-api`'s queue; linking more accounts raises the limit. To keep search and
+browsing traffic off the playback accounts, add `"role": "catalog"` to one
+entry in `token.json` (that account needs no subscription) and restart
+`hifi-api`. It still shows in the accounts list and can be unlinked there.
+
 The original command-line device flow remains available as a recovery path:
 
 ```sh

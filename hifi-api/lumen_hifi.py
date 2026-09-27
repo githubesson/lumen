@@ -17,10 +17,11 @@ import os
 import secrets
 import tempfile
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 from urllib.parse import urlsplit
 
 import httpx
@@ -112,6 +113,81 @@ def _file_account_ids(entries: list[dict[str, Any]]) -> set[str]:
     return ids
 
 
+def _is_catalog_entry(entry: dict[str, Any]) -> bool:
+    # Same test upstream applies when it loads the token file.
+    return entry.get("role") == "catalog" or entry.get("catalog") is True
+
+
+class PlaybackPool:
+    """Upstream's one-request-per-account playback pool, resizable at runtime.
+
+    Upstream builds its pool once at import, so linking or removing an account
+    would never reach it.  This pool accepts a new credential set while
+    requests are in flight: a leased account goes back into rotation on release
+    only if it is still linked, and never occupies two slots.
+    """
+
+    def __init__(self, credentials: list[dict[str, Any]]):
+        self._active: dict[str, dict[str, Any]] = {}
+        self._leased: set[str] = set()
+        self._available: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self.replace(credentials)
+
+    @property
+    def size(self) -> int:
+        return len(self._active)
+
+    @property
+    def available(self) -> int:
+        return self._available.qsize()
+
+    def replace(self, credentials: list[dict[str, Any]]) -> None:
+        self._active = {_account_id(credential): credential for credential in credentials}
+        while not self._available.empty():
+            self._available.get_nowait()
+        for account_id, credential in self._active.items():
+            if account_id not in self._leased:
+                self._available.put_nowait(credential)
+
+    def _require_accounts(self) -> None:
+        if not self._active:
+            raise HTTPException(
+                status_code=500,
+                detail="No Tidal playback credentials available; populate token.json",
+            )
+
+    def try_acquire(self) -> dict[str, Any] | None:
+        self._require_accounts()
+        try:
+            credential = self._available.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+        self._leased.add(_account_id(credential))
+        return credential
+
+    def release(self, credential: dict[str, Any]) -> None:
+        account_id = _account_id(credential)
+        self._leased.discard(account_id)
+        current = self._active.get(account_id)
+        if current is not None:
+            self._available.put_nowait(current)
+
+    @asynccontextmanager
+    async def lease(self) -> AsyncIterator[dict[str, Any]]:
+        self._require_accounts()
+        credential = await self._available.get()
+        self._leased.add(_account_id(credential))
+        try:
+            yield credential
+        finally:
+            self.release(credential)
+
+
+# Upstream resolves _playback_pool on every use, so swapping it here, before
+# the app serves anything, routes all playback through the resizable pool.
+hifi._playback_pool = PlaybackPool(hifi._creds)
+
+
 # Preserve credentials supplied exclusively through environment variables when
 # the token file changes.  File-backed credentials are rebuilt on every write.
 try:
@@ -124,6 +200,11 @@ _environment_credentials = [
     for credential in hifi._creds
     if _account_id(credential) not in _initial_file_ids
 ]
+_environment_catalog_credential = (
+    dict(hifi._catalog_cred)
+    if hifi._catalog_cred is not None and _account_id(hifi._catalog_cred) not in _initial_file_ids
+    else None
+)
 
 
 def _write_token_entries(entries: list[dict[str, Any]]) -> None:
@@ -147,26 +228,56 @@ def _write_token_entries(entries: list[dict[str, Any]]) -> None:
 
 
 def _reload_runtime_credentials(entries: list[dict[str, Any]]) -> None:
+    # Keep the live dicts of accounts that stay linked, so their cached access
+    # tokens and refresh locks survive the reload.
+    live = {_account_id(credential): credential for credential in hifi._creds}
+    if hifi._catalog_cred is not None:
+        live[_account_id(hifi._catalog_cred)] = hifi._catalog_cred
+
     credentials: list[dict[str, Any]] = []
+    catalog: dict[str, Any] | None = None
     seen: set[str] = set()
     for entry in entries:
         credential = _credential_from_entry(entry)
         if not credential:
             continue
         account_id = _account_id(credential)
-        if account_id not in seen:
+        credential = live.get(account_id, credential)
+        if _is_catalog_entry(entry):
+            # Upstream uses the first catalog entry and ignores the rest.
+            if catalog is None:
+                catalog = credential
+        elif account_id not in seen:
             credentials.append(credential)
             seen.add(account_id)
     for environment_credential in _environment_credentials:
         account_id = _account_id(environment_credential)
         if account_id not in seen:
-            credentials.append(dict(environment_credential))
+            credentials.append(live.get(account_id) or dict(environment_credential))
             seen.add(account_id)
+    if catalog is None and _environment_catalog_credential is not None:
+        account_id = _account_id(_environment_catalog_credential)
+        catalog = live.get(account_id) or dict(_environment_catalog_credential)
+    if catalog is not None:
+        # As upstream does: the catalog account never doubles as a playback slot.
+        credentials = [
+            credential
+            for credential in credentials
+            if credential["refresh_token"] != catalog["refresh_token"]
+        ]
 
     # Assignment is atomic in CPython, so in-flight request selection sees
     # either the old complete list or the new complete list.
     hifi._creds = credentials
-    hifi._refresh_locks.clear()
+    hifi._catalog_cred = catalog
+    hifi._playback_pool.replace(credentials)
+    kept_locks = {
+        f"{credential['client_id']}:{credential['refresh_token']}"
+        for credential in [*credentials, *([catalog] if catalog else [])]
+    }
+    for key in list(hifi._refresh_locks):
+        if key not in kept_locks:
+            hifi._refresh_locks.pop(key, None)
     if credentials:
         hifi.CLIENT_ID = credentials[0]["client_id"]
         hifi.CLIENT_SECRET = credentials[0]["client_secret"]
@@ -228,10 +339,13 @@ async def list_lumen_accounts() -> dict[str, Any]:
         )
         raise HTTPException(status_code=500, detail="Could not read the TIDAL token file") from exc
     removable_ids = _file_account_ids(entries)
+    # A catalog account (token.json "role": "catalog") is kept out of playback
+    # rotation but is still linked, so it is listed and removable too.
+    credentials = [*hifi._creds, *([hifi._catalog_cred] if hifi._catalog_cred else [])]
     return {
         "accounts": [
             _account(credential, _account_id(credential) in removable_ids)
-            for credential in hifi._creds
+            for credential in credentials
         ]
     }
 
@@ -417,7 +531,10 @@ async def poll_lumen_device_auth(flow_id: str) -> dict[str, Any]:
         try:
             entries = _read_token_entries()
             # Relinking a user replaces that user's old refresh token while
-            # preserving every other linked account.
+            # preserving every other linked account and the user's role.
+            replaced = [item for item in entries if str(item.get("userID") or "") == user_id]
+            if any(_is_catalog_entry(item) for item in replaced):
+                entry["role"] = "catalog"
             entries = [item for item in entries if str(item.get("userID") or "") != user_id]
             entries.append(entry)
             _write_token_entries(entries)
@@ -458,7 +575,10 @@ async def remove_lumen_account(account_id: str) -> dict[str, Any]:
                     continue
                 kept.append(entry)
             if not found:
-                if any(_account_id(credential) == account_id for credential in _environment_credentials):
+                environment_ids = {_account_id(credential) for credential in _environment_credentials}
+                if _environment_catalog_credential is not None:
+                    environment_ids.add(_account_id(_environment_catalog_credential))
+                if account_id in environment_ids:
                     raise HTTPException(
                         status_code=409,
                         detail="This TIDAL account is configured through the environment",
@@ -507,7 +627,7 @@ async def get_lumen_artist(id: int):
     if id <= 0:
         raise HTTPException(status_code=400, detail="Invalid artist ID")
     try:
-        token, cred = await hifi.get_tidal_token_for_cred()
+        token, cred = await hifi.get_catalog_token_for_cred()
     except Exception as exc:
         raise HTTPException(status_code=502, detail="TIDAL artist unavailable") from exc
 
