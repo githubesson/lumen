@@ -235,7 +235,7 @@ function AuthGate() {
       inAuthGroup && routeSegments[1] === "reset-password";
 
     if (status === "guest" && !inAuthGroup) {
-      router.replace("/(auth)/login");
+      router.replace("/(auth)/welcome");
       return;
     }
     if (status === "authed") {

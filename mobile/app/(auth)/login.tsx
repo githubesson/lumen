@@ -1,21 +1,49 @@
-import { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { useRef, useState } from "react";
+import {
+  KeyboardAvoidingView,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  type TextInput,
+} from "react-native";
 import { useRouter } from "expo-router";
+import { useHeaderHeight } from "expo-router/react-navigation";
 import * as Haptics from "expo-haptics";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Animated, {
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 import { ApiError, useAuth } from "@music-library/core";
 import { PrimaryButton } from "../../components/buttons";
 import { FormError, FormTextInput } from "../../components/form-field";
-import { FormScreen } from "../../components/form-screen";
 import { useTheme } from "../../theme/theme";
 
+/**
+ * Sign-in form, pushed from the welcome screen. The fields sit under the
+ * header and the button stays pinned just above the keyboard.
+ */
 export default function LoginScreen() {
   const theme = useTheme();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const headerHeight = useHeaderHeight();
   const { login } = useAuth();
+  const reducedMotion = useReducedMotion();
+  const passwordRef = useRef<TextInput>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const shake = useSharedValue(0);
+  const shakeStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: shake.value }],
+  }));
 
   const onSubmit = async () => {
     if (!username || !password || pending) return;
@@ -28,6 +56,18 @@ export default function LoginScreen() {
       // replace the route to (tabs)/(library).
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      if (!reducedMotion) {
+        shake.set(
+          withSequence(
+            withTiming(-12, { duration: 50 }),
+            withTiming(12, { duration: 70 }),
+            withTiming(-8, { duration: 70 }),
+            withTiming(8, { duration: 70 }),
+            withTiming(-3, { duration: 60 }),
+            withTiming(0, { duration: 50 }),
+          ),
+        );
+      }
       if (err instanceof ApiError && err.status === 401) {
         setError("Wrong username or password.");
       } else if (err instanceof Error) {
@@ -41,74 +81,92 @@ export default function LoginScreen() {
   };
 
   return (
-    <FormScreen variant="centered">
-      <View style={{ gap: theme.space.xs }}>
-        <Text
-          style={{
-            fontSize: 34,
-            fontWeight: "700",
-            color: theme.color.fg,
-            letterSpacing: -0.4,
-          }}
-        >
-          Lumen
-        </Text>
-        <Text style={{ fontSize: 16, color: theme.color.fgMuted }}>
-          Sign in to your library.
-        </Text>
-      </View>
-
-      <View style={{ gap: theme.space.md }}>
-        <FormTextInput
-          placeholder="Username"
-          autoCapitalize="none"
-          autoCorrect={false}
-          autoComplete="username"
-          textContentType="username"
-          value={username}
-          onChangeText={setUsername}
-          editable={!pending}
-        />
-        <FormTextInput
-          placeholder="Password"
-          autoCapitalize="none"
-          autoCorrect={false}
-          autoComplete="current-password"
-          textContentType="password"
-          secureTextEntry
-          value={password}
-          onChangeText={setPassword}
-          editable={!pending}
-          onSubmitEditing={onSubmit}
-        />
-      </View>
-
-      <FormError message={error} />
-
-      <PrimaryButton
-        label="Sign in"
-        onPress={onSubmit}
-        loading={pending}
-        disabled={!username || !password}
-      />
-
-      <Pressable
-        onPress={() => {
-          void Haptics.selectionAsync();
-          router.push("/(auth)/register");
+    <KeyboardAvoidingView
+      behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
+      // The button already clears the home indicator; over the keyboard that
+      // inset would just be a gap.
+      keyboardVerticalOffset={-insets.bottom}
+      style={{ flex: 1, backgroundColor: theme.color.bg }}
+    >
+      <ScrollView
+        style={{ flex: 1 }}
+        contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{
+          paddingHorizontal: theme.space.xl,
+          // iOS insets the scroll view under the transparent header itself
+          // (contentInsetAdjustmentBehavior); elsewhere the form has to.
+          paddingTop:
+            (process.env.EXPO_OS === "ios" ? 0 : headerHeight) + theme.space.lg,
+          gap: theme.space.lg,
         }}
-        accessibilityRole="button"
-        accessibilityLabel="Create an account with an invite"
-        style={({ pressed }) => ({
-          alignItems: "center",
-          paddingVertical: 8,
-          opacity: pressed ? 0.6 : 1,
-        })}
       >
-        <Text style={{ color: theme.color.accent, fontSize: 15 }}>
-          Have an invite? Create an account
-        </Text>
-      </Pressable>
-    </FormScreen>
+        <Animated.View style={[{ gap: theme.space.md }, shakeStyle]}>
+          <FormTextInput
+            placeholder="Username"
+            autoFocus
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="username"
+            textContentType="username"
+            returnKeyType="next"
+            submitBehavior="submit"
+            value={username}
+            onChangeText={setUsername}
+            onSubmitEditing={() => passwordRef.current?.focus()}
+            editable={!pending}
+          />
+          <FormTextInput
+            ref={passwordRef}
+            placeholder="Password"
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="current-password"
+            textContentType="password"
+            returnKeyType="go"
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+            onSubmitEditing={onSubmit}
+            editable={!pending}
+          />
+        </Animated.View>
+
+        <FormError message={error} />
+
+        <Pressable
+          onPress={() => {
+            void Haptics.selectionAsync();
+            router.push("/(auth)/register");
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Create an account with an invite"
+          style={({ pressed }) => ({
+            alignItems: "center",
+            paddingVertical: 8,
+            opacity: pressed ? 0.6 : 1,
+          })}
+        >
+          <Text style={{ color: theme.color.accent, fontSize: 15 }}>
+            Have an invite? Create an account
+          </Text>
+        </Pressable>
+      </ScrollView>
+
+      <View
+        style={{
+          paddingHorizontal: theme.space.xl,
+          paddingTop: theme.space.md,
+          paddingBottom: insets.bottom + theme.space.md,
+        }}
+      >
+        <PrimaryButton
+          label="Sign in"
+          onPress={onSubmit}
+          loading={pending}
+          disabled={!username || !password}
+        />
+      </View>
+    </KeyboardAvoidingView>
   );
 }

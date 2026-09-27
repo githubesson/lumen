@@ -31,6 +31,11 @@ export interface ThemePalette {
   accent: string;
   /** Foreground (text/icon/spinner) on top of `accent`. */
   onAccent: string;
+  /**
+   * The app icon's purple, for brand moments like the welcome screen's hero.
+   * Controls and links keep using `accent`. Lifted in dark so it reads on black.
+   */
+  brand: string;
   /** Destructive / error (iOS systemRed, per scheme). */
   danger: string;
   /** Success / positive (iOS systemGreen, per scheme). */
@@ -70,6 +75,7 @@ const LIGHT: ThemePalette = {
   separator: "#D1D1D6",
   accent: "#0A84FF",
   onAccent: "#FFFFFF",
+  brand: "#7A24F7",
   danger: "#FF3B30",
   success: "#34C759",
   overlayStrong: "rgba(0,0,0,0.55)",
@@ -91,6 +97,7 @@ const DARK: ThemePalette = {
   separator: "#38383A",
   accent: "#0A84FF",
   onAccent: "#FFFFFF",
+  brand: "#9D5CFF",
   danger: "#FF453A",
   success: "#30D158",
   overlayStrong: "rgba(255,255,255,0.85)",
@@ -176,6 +183,25 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   if (mode === null) return null;
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+/** Convert `#RRGGBB` to `rgba()` for reliable Reanimated color interpolation. */
+export function withAlpha(color: string, alpha: number): string {
+  if (!color.startsWith("#")) return color;
+  const raw = color.slice(1);
+  const hex =
+    raw.length === 3
+      ? raw
+          .split("")
+          .map((ch) => `${ch}${ch}`)
+          .join("")
+      : raw.slice(0, 6);
+  if (hex.length !== 6) return color;
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  const a = Math.min(1, Math.max(0, alpha));
+  return `rgba(${r},${g},${b},${a})`;
 }
 
 export function useTheme(): ThemeTokens {
