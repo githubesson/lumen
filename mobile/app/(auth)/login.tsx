@@ -8,6 +8,7 @@ import {
   type TextInput,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { useHeaderHeight } from "expo-router/react-navigation";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
@@ -30,6 +31,7 @@ export default function LoginScreen() {
   const theme = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const headerHeight = useHeaderHeight();
   const { login } = useAuth();
   const reducedMotion = useReducedMotion();
   const passwordRef = useRef<TextInput>(null);
@@ -92,7 +94,10 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{
           paddingHorizontal: theme.space.xl,
-          paddingTop: theme.space.lg,
+          // iOS insets the scroll view under the transparent header itself
+          // (contentInsetAdjustmentBehavior); elsewhere the form has to.
+          paddingTop:
+            (process.env.EXPO_OS === "ios" ? 0 : headerHeight) + theme.space.lg,
           gap: theme.space.lg,
         }}
       >

@@ -1,4 +1,4 @@
-import { Pressable, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -9,6 +9,9 @@ import { BubbleParade } from "../../components/auth/bubble-parade";
 import { useAuthMotionClock } from "../../components/auth/motion";
 import { PrimaryButton } from "../../components/buttons";
 import { useTheme } from "../../theme/theme";
+
+/** Room for the largest bubble plus its bob, so the parade never collapses. */
+const PARADE_MIN_HEIGHT = 240;
 
 /**
  * Where signed-out users land: the wordmark, a parade of glass bubbles drifting
@@ -22,7 +25,13 @@ export default function WelcomeScreen() {
   const host = serverHost();
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.color.bg }}>
+    // Scrolls only when the content outgrows the screen (large text sizes);
+    // otherwise the bubbles take whatever height is left.
+    <ScrollView
+      style={{ flex: 1, backgroundColor: theme.color.bg }}
+      contentContainerStyle={{ flexGrow: 1 }}
+      alwaysBounceVertical={false}
+    >
       <View style={{ paddingTop: insets.top + theme.space.lg, alignItems: "center" }}>
         <BouncingTitle
           text="Lumen"
@@ -36,7 +45,7 @@ export default function WelcomeScreen() {
         />
       </View>
 
-      <BubbleParade clock={clock} style={{ flex: 1 }} />
+      <BubbleParade clock={clock} style={{ flex: 1, minHeight: PARADE_MIN_HEIGHT }} />
 
       <View
         style={{
@@ -91,7 +100,9 @@ export default function WelcomeScreen() {
               opacity: pressed ? 0.6 : 1,
             })}
           >
-            <Text style={{ color: theme.color.accent, fontSize: 15 }}>
+            <Text
+              style={{ color: theme.color.accent, fontSize: 15, textAlign: "center" }}
+            >
               Have an invite? Create an account
             </Text>
           </Pressable>
@@ -111,7 +122,7 @@ export default function WelcomeScreen() {
           )}
         </Animated.Text>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
