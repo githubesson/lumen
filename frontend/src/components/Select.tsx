@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -73,6 +74,20 @@ export function Select<V extends string = string>({
   const listRef = useRef<HTMLUListElement>(null);
   const typeahead = useRef({ buffer: "", timer: 0 });
   const { mounted, visible } = useTransitionMount(open, 150);
+
+  // Toolbar popups hang right-aligned from their trigger. When the trigger
+  // sits near the left edge (a wrapped toolbar on a phone), that would push
+  // the menu past the clipping page edge, so hang it from the left instead.
+  // The list is a fresh element on every open, so set it directly.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (variant !== "toolbar" || !mounted || !list) return;
+    const clip = list.closest(".view, .content")?.getBoundingClientRect().left ?? 0;
+    if (list.getBoundingClientRect().left < clip + 8) {
+      list.style.right = "auto";
+      list.style.left = "0";
+    }
+  }, [variant, mounted]);
 
   const selectedIndex = useMemo(
     () => options.findIndex((o) => o.value === value),
