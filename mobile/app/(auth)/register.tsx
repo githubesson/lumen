@@ -2,6 +2,7 @@ import { validateRegistrationInput } from "@music-library/core/auth/validation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useHeaderHeight } from "expo-router/react-navigation";
 import * as Haptics from "expo-haptics";
 import { ApiError, api, useAuth, type Role } from "@music-library/core";
 import { PrimaryButton } from "../../components/buttons";
@@ -38,6 +39,7 @@ type InviteState =
 export default function RegisterScreen() {
   const theme = useTheme();
   const router = useRouter();
+  const headerHeight = useHeaderHeight();
   const { token: routeTokenParam } = useLocalSearchParams<{
     token?: string | string[];
   }>();
@@ -171,7 +173,14 @@ export default function RegisterScreen() {
   };
 
   return (
-    <FormScreen variant="centered">
+    <FormScreen
+      variant="centered"
+      // iOS insets the scroll view under the transparent header itself;
+      // elsewhere the content has to clear it.
+      contentContainerStyle={{
+        paddingTop: process.env.EXPO_OS === "ios" ? 0 : headerHeight,
+      }}
+    >
       <View style={{ gap: theme.space.xs }}>
         <Text
           accessibilityRole="header"
