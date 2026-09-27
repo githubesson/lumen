@@ -50,7 +50,7 @@ docker run --rm --init --platform linux/amd64 \
     cd /project/frontend
     npm ci --no-audit --no-fund
     if [[ -n ${LUMEN_BUILD_VERSION:-} ]]; then
-      npm version --no-git-tag-version "$LUMEN_BUILD_VERSION"
+      npm version --no-git-tag-version --allow-same-version "$LUMEN_BUILD_VERSION"
     fi
     # discord-rpc uses Electron app.setAsDefaultProtocolClient in Electron.
     # Its optional standalone-Node fallback has no Windows prebuild and cannot
