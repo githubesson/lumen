@@ -7,6 +7,14 @@ import SegmentedControl from "../SegmentedControl";
 type View = "tracks" | "artists" | "albums";
 type SortKey = "recent" | "title" | "artist" | "album" | "duration";
 
+// What the search box looks for, from the type the search will use.
+const SEARCH_NOUN: Record<SearchType, string> = {
+  all: "all music",
+  track: "tracks",
+  album: "albums",
+  artist: "artists",
+};
+
 const SORT_OPTIONS: SelectOption<SortKey>[] = [
   { value: "recent", label: "Recently added" },
   { value: "title", label: "Title" },
@@ -142,7 +150,7 @@ export default function BrowseToolbar({
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
         aria-label="Search music"
-        placeholder={`Search ${labelFor(view).toLowerCase()}, local + TIDAL`}
+        placeholder={`Search ${SEARCH_NOUN[searchType]}, local + TIDAL`}
       />
     </div>
   );
