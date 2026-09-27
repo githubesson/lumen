@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Music as MusicalNoteIcon, X as XMarkIcon } from "lucide-react";
 import { trackCoverUrl } from "../api";
@@ -6,6 +6,7 @@ import { usePlayer, useRemotePlayback } from "../context/Player";
 import { useDismiss } from "../lib/useDismiss";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import CoverArt from "./CoverArt";
+import { useTrackContextMenu } from "./TrackContextMenu";
 
 interface ExternalQueueTrack {
   id: string;
@@ -44,13 +45,63 @@ export default function QueuePopover({
   const { targetDevice } = useRemotePlayback();
   const remoteQueue = targetDevice?.queue;
   const ref = useRef<HTMLDivElement>(null);
+  // Same right-click menu as every other track list. Only for this app's
+  // own queue: a remote device's or the bridge's rows aren't ours to act on.
+  const {
+    bind: bindCtx,
+    menu: ctxMenu,
+    close: closeCtx,
+    isOpen: ctxOpen,
+  } = useTrackContextMenu();
+  const canContext = !externalQueue && !targetDevice;
 
   useDismiss(ref, {
     onDismiss: onClose,
-    enabled: open,
+    // While the row menu is open, Escape and outside clicks are the menu's:
+    // the first one closes only the menu, the next one the queue.
+    enabled: open && !ctxOpen,
     capture: true,
-    ignore: (target) => !!anchor?.contains(target),
+    // The context menu is portaled outside the popover; using it mustn't
+    // close the queue it was opened from.
+    ignore: (target) =>
+      !!anchor?.contains(target) ||
+      (target instanceof Element && !!target.closest(".ctx-menu")),
   });
+
+  // The queue stops mousedown from bubbling, so the row menu never sees
+  // clicks inside it. Route them here instead: with the menu open, a click in
+  // the queue only closes the menu (the click itself is swallowed, so it
+  // can't also play a row and close the queue).
+  const swallowClick = useRef(false);
+  // The menu is portaled but still a React child of the queue, so its own
+  // clicks pass through these handlers too; leave those alone.
+  const inMenu = (e: React.SyntheticEvent) =>
+    e.target instanceof Element && !!e.target.closest(".ctx-menu");
+  const onMouseDownCapture = (e: React.MouseEvent) => {
+    if (inMenu(e)) return;
+    swallowClick.current = ctxOpen && e.button === 0;
+    if (swallowClick.current) {
+      // Only this gesture's click: if it's released elsewhere (no click
+      // here), don't let the flag eat a later one, e.g. a keyboard Enter.
+      window.addEventListener(
+        "mouseup",
+        () => window.setTimeout(() => (swallowClick.current = false), 0),
+        { once: true, capture: true },
+      );
+    }
+    if (ctxOpen) closeCtx();
+  };
+  const onClickCapture = (e: React.MouseEvent) => {
+    if (inMenu(e) || !swallowClick.current) return;
+    swallowClick.current = false;
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  // The menu belongs to a queue row; it goes when the queue does.
+  useEffect(() => {
+    if (!open) closeCtx();
+  }, [open, closeCtx]);
 
   const { mounted, visible } = useTransitionMount(open, 180);
 
@@ -102,6 +153,8 @@ export default function QueuePopover({
       style={{ bottom, right, width, maxHeight }}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
+      onMouseDownCapture={onMouseDownCapture}
+      onClickCapture={onClickCapture}
     >
       <div className="queue-pop-head">
         <span className="queue-pop-title-h">{externalQueue?.title ?? "Queue"}</span>
@@ -142,6 +195,11 @@ export default function QueuePopover({
                     artist={current.artist}
                     coverUrl={trackCoverUrl(current)}
                     active
+                    onContextMenu={
+                      canContext
+                        ? bindCtx(current, { queue, onPlay: () => jumpTo(index) })
+                        : undefined
+                    }
                   />
                 ) : null}
               </>
@@ -178,6 +236,11 @@ export default function QueuePopover({
                         jumpTo(index + 1 + i);
                         onClose();
                       }}
+                      onContextMenu={
+                        canContext
+                          ? bindCtx(t, { queue, onPlay: () => jumpTo(index + 1 + i) })
+                          : undefined
+                      }
                     />
                   ))}
               </>
@@ -187,6 +250,7 @@ export default function QueuePopover({
           </>
         )}
       </div>
+      {ctxMenu}
     </div>,
     document.body,
   );
@@ -220,12 +284,14 @@ function QueueRow({
   coverUrl,
   active,
   onClick,
+  onContextMenu,
 }: {
   title: string;
   artist?: string;
   coverUrl?: string;
   active?: boolean;
   onClick?: () => void;
+  onContextMenu?: React.MouseEventHandler<HTMLElement>;
 }) {
   const content = (
     <>
@@ -238,7 +304,7 @@ function QueueRow({
   );
   if (!onClick) {
     return (
-      <div className={"queue-pop-row" + (active ? " active" : "")}>
+      <div className={"queue-pop-row" + (active ? " active" : "")} onContextMenu={onContextMenu}>
         {content}
       </div>
     );
@@ -248,6 +314,7 @@ function QueueRow({
       type="button"
       className={"queue-pop-row" + (active ? " active" : "")}
       onClick={onClick}
+      onContextMenu={onContextMenu}
     >
       {content}
     </button>

@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -17,7 +18,7 @@ export interface SelectOption<V extends string = string> {
   disabled?: boolean;
 }
 
-type Variant = "outlined" | "minimal";
+type Variant = "outlined" | "minimal" | "toolbar";
 
 interface SelectProps<V extends string = string> {
   value: V;
@@ -38,6 +39,8 @@ const TRIGGER: Record<Variant, string> = {
     "flex w-full items-center justify-between gap-x-2 input text-left",
   minimal:
     "inline-flex items-center gap-x-1 text-sm text-muted-foreground hover:text-foreground focus:outline-none focus-visible:outline-2 focus-visible:outline-focus-ring focus-visible:outline-offset-2 rounded-md disabled:cursor-not-allowed disabled:opacity-50",
+  // A segment inside a `.toolbar-group` (see segmented.css).
+  toolbar: "toolbar-select",
 };
 
 const POPUP_BASE =
@@ -46,6 +49,7 @@ const POPUP_BASE =
 const POPUP: Record<Variant, string> = {
   outlined: `absolute z-30 mt-1 max-h-60 w-full overflow-y-auto focus:outline-none ${POPUP_BASE}`,
   minimal: `absolute right-0 z-30 mt-1 max-h-60 w-max min-w-40 overflow-y-auto focus:outline-none ${POPUP_BASE}`,
+  toolbar: `absolute right-0 z-30 mt-2 max-h-60 w-max min-w-44 overflow-y-auto focus:outline-none ${POPUP_BASE}`,
 };
 
 export function Select<V extends string = string>({
@@ -70,6 +74,20 @@ export function Select<V extends string = string>({
   const listRef = useRef<HTMLUListElement>(null);
   const typeahead = useRef({ buffer: "", timer: 0 });
   const { mounted, visible } = useTransitionMount(open, 150);
+
+  // Toolbar popups hang right-aligned from their trigger. When the trigger
+  // sits near the left edge (a wrapped toolbar on a phone), that would push
+  // the menu past the clipping page edge, so hang it from the left instead.
+  // The list is a fresh element on every open, so set it directly.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (variant !== "toolbar" || !mounted || !list) return;
+    const clip = list.closest(".view, .content")?.getBoundingClientRect().left ?? 0;
+    if (list.getBoundingClientRect().left < clip + 8) {
+      list.style.right = "auto";
+      list.style.left = "0";
+    }
+  }, [variant, mounted]);
 
   const selectedIndex = useMemo(
     () => options.findIndex((o) => o.value === value),
@@ -136,9 +154,14 @@ export function Select<V extends string = string>({
   const onListKey = (e: ReactKeyboardEvent<HTMLUListElement>) => {
     switch (e.key) {
       case "Escape":
-      case "Tab":
         e.preventDefault();
         close();
+        return;
+      case "Tab":
+        // Like a native select: close and let Tab carry on from the trigger
+        // (focus moves back there first, then the default Tab moves on).
+        buttonRef.current?.focus();
+        setOpen(false);
         return;
       case "Enter":
       case " ":
@@ -195,7 +218,13 @@ export function Select<V extends string = string>({
         <span
           className="truncate"
           style={{
-            color: selected ? "var(--foreground)" : "var(--muted-foreground)",
+            // Toolbar segments take their colour (and hover) from the group.
+            color:
+              variant === "toolbar"
+                ? undefined
+                : selected
+                  ? "var(--foreground)"
+                  : "var(--muted-foreground)",
             flex: 1,
             textAlign: "left",
           }}
@@ -204,7 +233,7 @@ export function Select<V extends string = string>({
         </span>
         <ChevronUpDownIcon
           className="size-3.5 shrink-0"
-          style={{ color: "var(--muted-foreground)" }}
+          style={{ color: variant === "toolbar" ? undefined : "var(--muted-foreground)" }}
           aria-hidden="true"
         />
       </button>

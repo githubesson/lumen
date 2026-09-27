@@ -111,3 +111,110 @@
   border-color: var(--input);
   color: var(--foreground);
 }
+
+/* ============================================================
+   Toolbar group: several controls in one bar that matches the
+   segmented control (Library's Select / sort / view mode).
+   ============================================================ */
+.toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  /* Wraps rather than overflowing on narrow screens (selection mode puts
+     four more controls in here). */
+  flex-wrap: wrap;
+  max-width: 100%;
+  gap: 2px;
+  min-height: 32px;
+  padding: 3px;
+  background: var(--muted);
+  border-radius: var(--radius-lg);
+}
+.toolbar-group-sep {
+  width: 1px;
+  height: 14px;
+  margin: 0 3px;
+  background: color-mix(in oklch, var(--foreground) 14%, transparent);
+  flex: 0 0 auto;
+}
+/* Every segment is a borderless 26px button that lights up on hover. */
+.toolbar-group .btn,
+.toolbar-group .toolbar-select,
+.toolbar-group .iconbtn {
+  height: 26px;
+  padding: 0 8px;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  box-shadow: none;
+  color: color-mix(in oklch, var(--foreground) 60%, transparent);
+  font-size: 14px;
+  font-weight: 500;
+}
+.toolbar-group .iconbtn {
+  width: 26px;
+  flex-basis: 26px;
+  padding: 0;
+}
+.toolbar-group .btn:hover:not(:disabled),
+.toolbar-group .toolbar-select:hover:not(:disabled),
+.toolbar-group .iconbtn:hover,
+.toolbar-group .toolbar-select[aria-expanded="true"] {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--foreground) 7%, transparent);
+}
+[data-theme="dark"] .toolbar-group .btn,
+[data-theme="dark"] .toolbar-group .toolbar-select,
+[data-theme="dark"] .toolbar-group .iconbtn {
+  color: var(--muted-foreground);
+}
+[data-theme="dark"] .toolbar-group .btn:hover:not(:disabled),
+[data-theme="dark"] .toolbar-group .toolbar-select:hover:not(:disabled),
+[data-theme="dark"] .toolbar-group .iconbtn:hover,
+[data-theme="dark"] .toolbar-group .toolbar-select[aria-expanded="true"] {
+  color: var(--foreground);
+}
+.toolbar-select {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    transform var(--dur-press) var(--ease-out);
+}
+.toolbar-select:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.toolbar-select:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+/* A segmented control nested in the group drops its own track. */
+.toolbar-group .segmented {
+  height: 26px;
+  padding: 0;
+  background: transparent;
+}
+.toolbar-group .segmented-indicator {
+  top: 0;
+  bottom: 0;
+}
+.toolbar-group .segmented button {
+  padding: 0 6px;
+}
+/* Selection chrome portaled into the group: its wrappers step aside so each
+   control is a flex item of the group and wraps on its own. */
+.toolbar-group .track-selectbar-host,
+.toolbar-group .track-selectbar-attached {
+  display: contents;
+}
+.toolbar-group .track-selectbar-status {
+  flex: 0 0 auto;
+  max-width: none;
+  white-space: nowrap;
+  padding: 0 6px;
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 500;
+}
