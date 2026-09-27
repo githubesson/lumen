@@ -47,12 +47,19 @@ export default function QueuePopover({
   const ref = useRef<HTMLDivElement>(null);
   // Same right-click menu as every other track list. Only for this app's
   // own queue: a remote device's or the bridge's rows aren't ours to act on.
-  const { bind: bindCtx, menu: ctxMenu, close: closeCtx } = useTrackContextMenu();
+  const {
+    bind: bindCtx,
+    menu: ctxMenu,
+    close: closeCtx,
+    isOpen: ctxOpen,
+  } = useTrackContextMenu();
   const canContext = !externalQueue && !targetDevice;
 
   useDismiss(ref, {
     onDismiss: onClose,
-    enabled: open,
+    // While the row menu is open, Escape and outside clicks are the menu's:
+    // the first one closes only the menu, the next one the queue.
+    enabled: open && !ctxOpen,
     capture: true,
     // The context menu is portaled outside the popover; using it mustn't
     // close the queue it was opened from.
