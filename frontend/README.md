@@ -141,7 +141,7 @@ platforms. Dispatch the release workflow from the branch you want to ship:
 | --- | --- | --- |
 | `main` | `0.1.4` | stable, `latest` update channel |
 | `dev` | `0.1.4-dev.57` | prerelease, `dev` update channel |
-| anything else | `0.1.4-<branch>.57` | prerelease that no updater follows |
+| anything else | `0.1.4-branch-<name>.57` | prerelease that no updater follows |
 
 Patch versions count up from the highest stable tag, and the number after the
 branch name is the workflow run. To start a new minor or major line, raise
