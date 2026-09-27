@@ -154,9 +154,14 @@ export function Select<V extends string = string>({
   const onListKey = (e: ReactKeyboardEvent<HTMLUListElement>) => {
     switch (e.key) {
       case "Escape":
-      case "Tab":
         e.preventDefault();
         close();
+        return;
+      case "Tab":
+        // Like a native select: close and let Tab carry on from the trigger
+        // (focus moves back there first, then the default Tab moves on).
+        buttonRef.current?.focus();
+        setOpen(false);
         return;
       case "Enter":
       case " ":
