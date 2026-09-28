@@ -69,9 +69,10 @@ export function useMiniPlayerMode() {
   const wanted = useRef<MiniPanel | null>(null);
   const shown = useRef<MiniPanel | null>(null);
   const instantClose = useRef(false);
-  const settling = useRef(false);
-  // Bumped when mini mode ends, so an in-flight settle stops touching state.
+  // Bumped when mini mode ends. A settle from an older session touches no
+  // state after its next await, and doesn't block the new session's own.
   const session = useRef(0);
+  const settlingSession = useRef<number | null>(null);
 
   useEffect(() => {
     document.documentElement.toggleAttribute(
@@ -90,9 +91,9 @@ export function useMiniPlayerMode() {
   }, [miniPlayerMode, lyricsOpen, setLyricsOpen]);
 
   const settle = useCallback(async () => {
-    if (settling.current) return;
-    settling.current = true;
     const id = session.current;
+    if (settlingSession.current === id) return;
+    settlingSession.current = id;
     const live = () => id === session.current;
     try {
       while (live() && wanted.current !== shown.current) {
@@ -128,23 +129,26 @@ export function useMiniPlayerMode() {
           await viewportResize(collapsedHeight);
           if (!live()) return;
           await morph("open", anchorRef.current, () => {
+            // The update runs a frame after the call; mini mode may be gone.
+            if (!live()) return;
             setSwapDirection(undefined);
             setPanel(to);
           });
+          if (!live()) return;
           shown.current = to;
         } else {
           const instant = instantClose.current;
           instantClose.current = false;
-          await morph(instant ? null : "close", anchorRef.current, () =>
-            setPanel(null),
-          );
-          shown.current = null;
+          await morph(instant ? null : "close", anchorRef.current, () => {
+            if (live()) setPanel(null);
+          });
           if (!live()) return;
+          shown.current = null;
           await setMiniPlayerPanel(false);
         }
       }
     } finally {
-      settling.current = false;
+      if (settlingSession.current === id) settlingSession.current = null;
     }
   }, [setAnchor]);
 
@@ -214,6 +218,10 @@ export function useMiniPlayerMode() {
   };
 }
 
+// The latest morph; an older one that settles late (a new one skips it)
+// mustn't clear the attributes the new one's transition is using.
+let activeMorph: object | null = null;
+
 /**
  * Runs a layout change as a view transition; the mini player CSS picks the
  * choreography from `<html data-mini-morph data-mini-morph-anchor>`. With no
@@ -229,6 +237,8 @@ async function morph(
     return;
   }
   const root = document.documentElement;
+  const token = {};
+  activeMorph = token;
   root.dataset.miniMorph = kind;
   root.dataset.miniMorphAnchor = anchor;
   try {
@@ -240,8 +250,11 @@ async function morph(
   } catch {
     // The update itself threw; nothing left to animate.
   } finally {
-    delete root.dataset.miniMorph;
-    delete root.dataset.miniMorphAnchor;
+    if (activeMorph === token) {
+      activeMorph = null;
+      delete root.dataset.miniMorph;
+      delete root.dataset.miniMorphAnchor;
+    }
   }
 }
 
