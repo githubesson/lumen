@@ -705,8 +705,9 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         />
       )}
 
-      {tab === "settings" && hasSettings && (
+      {hasSettings && (
         <PlaylistSettingsPanel
+          hidden={tab !== "settings"}
           playlist={playlist}
           isOwner={isOwner}
           isAdmin={isAdmin}

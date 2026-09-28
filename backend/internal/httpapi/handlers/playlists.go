@@ -263,13 +263,22 @@ func (h *Playlists) Cover(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	// A missing playlist is ErrNotFound (404); anything else is a 500.
 	role, err := h.Store.EffectiveRole(r.Context(), pid, u.ID)
-	if err != nil || role == "" {
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if role == "" {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	p, err := h.Store.Get(r.Context(), pid)
-	if err != nil || p.CoverArtPath == "" {
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if p.CoverArtPath == "" {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -334,7 +343,11 @@ func (h *Playlists) requireOwner(w http.ResponseWriter, r *http.Request) (*model
 		return nil, uuid.Nil, false
 	}
 	role, err := h.Store.EffectiveRole(r.Context(), pid, u.ID)
-	if err != nil || role == "" {
+	if err != nil {
+		writeStoreError(w, err)
+		return nil, uuid.Nil, false
+	}
+	if role == "" {
 		http.Error(w, "not found", http.StatusNotFound)
 		return nil, uuid.Nil, false
 	}

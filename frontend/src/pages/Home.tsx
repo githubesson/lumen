@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Disc3 as DiscIcon,
@@ -206,6 +206,12 @@ function HeroAlbum({
   const year = album.data?.release_year;
   const trackCount = album.data?.track_count;
 
+  // The album's tracks are fetched on Play. Leaving Home (or a new hero
+  // replacing this one) aborts the fetch, so a late reply never starts
+  // playback somewhere the user has moved on from.
+  const playRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => playRequest.current?.abort(), []);
+
   // Plays the album in order from the featured track, falling back to the
   // list the track came from if the album can't be loaded.
   const onPlay = async () => {
@@ -213,16 +219,20 @@ function HeroAlbum({
       play(track, fallbackQueue);
       return;
     }
+    playRequest.current?.abort();
+    const request = new AbortController();
+    playRequest.current = request;
     setStarting(true);
     try {
-      const albumTracks = await api.listAlbumTracks(albumID);
+      const albumTracks = await api.listAlbumTracks(albumID, { signal: request.signal });
+      if (request.signal.aborted) return;
       const start = albumTracks.find((t) => t.id === track.id) ?? albumTracks[0];
       if (start) play(start, albumTracks);
       else play(track, fallbackQueue);
     } catch {
-      play(track, fallbackQueue);
+      if (!request.signal.aborted) play(track, fallbackQueue);
     } finally {
-      setStarting(false);
+      if (!request.signal.aborted) setStarting(false);
     }
   };
 

@@ -21,12 +21,19 @@ export interface PlaylistDetails {
   visibility: Visibility;
 }
 
+// Names are saved trimmed, so a trailing space isn't a pending edit.
+const sameDetails = (a: PlaylistDetails, b: PlaylistDetails) =>
+  a.name.trim() === b.name.trim() &&
+  a.description === b.description &&
+  a.visibility === b.visibility;
+
 /**
  * The playlist's Settings tab: cover, details and deletion for the owner,
  * TIDAL auto-download for admins. The text details save together; the cover
  * and the switch apply as soon as they change.
  */
 export default function PlaylistSettingsPanel({
+  hidden,
   playlist,
   isOwner,
   isAdmin,
@@ -41,6 +48,8 @@ export default function PlaylistSettingsPanel({
   onToggleAutoDownload,
   onDelete,
 }: {
+  /** Kept mounted behind the other tabs, so unsaved edits survive a switch. */
+  hidden: boolean;
   playlist: Playlist;
   isOwner: boolean;
   isAdmin: boolean;
@@ -80,11 +89,16 @@ export default function PlaylistSettingsPanel({
       setError("Give the playlist a name.");
       return;
     }
+    const submitted = { ...values, name };
     setBusy(true);
     setError(null);
     try {
-      await onSaveDetails({ ...values, name });
-      setDraft(null);
+      await onSaveDetails(submitted);
+      // Typing can carry on while the save is out; keep anything newer than
+      // what was sent.
+      setDraft((current) =>
+        current === null || sameDetails(current, submitted) ? null : current,
+      );
     } catch (err) {
       setError(errorMessage(err, "Failed to save."));
     } finally {
@@ -93,7 +107,7 @@ export default function PlaylistSettingsPanel({
   };
 
   return (
-    <div className="playlist-settings">
+    <div className="playlist-settings" hidden={hidden}>
       {isOwner && (
         <Section title="Details">
           <form className="surface playlist-settings-card" onSubmit={save}>
