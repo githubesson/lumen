@@ -1,0 +1,405 @@
+/* ============================================================
+   Mini player panel
+   The queue, lyrics or device list opens on the right of a
+   window grown for it; art, track, progress and transport stack
+   in the left column. useMiniPlayerMode runs the resize and the
+   morph between the two layouts.
+   ============================================================ */
+html[data-mini-player] .player-bar[data-mini-panel] {
+  --mini-column: 184px;
+  height: 100vh;
+  margin-top: 0;
+  grid-template-columns: var(--mini-column) minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "np        panel-head util"
+    "np        panel      panel"
+    "transport panel      panel";
+  column-gap: 16px;
+  row-gap: 10px;
+  align-items: stretch;
+}
+
+html[data-mini-player] .player-bar[data-mini-panel] .np {
+  grid-area: np;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-self: start;
+  min-width: 0;
+}
+
+html[data-mini-player] .player-bar[data-mini-panel] .np-art {
+  width: var(--mini-column);
+  height: var(--mini-column);
+  flex: none;
+}
+
+html[data-mini-player] .player-bar[data-mini-panel] .np-text {
+  align-self: stretch;
+  align-items: center;
+  gap: 3px;
+  padding-right: 0;
+}
+
+html[data-mini-player] .player-bar[data-mini-panel] .np-title {
+  font-size: 16px;
+}
+
+html[data-mini-player] .player-bar[data-mini-panel] .np-artist {
+  font-size: 13px;
+}
+
+html[data-mini-player] .player-bar[data-mini-panel] .transport {
+  grid-area: transport;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+/* Too narrow for the times beside the bar: they sit under its ends. */
+html[data-mini-player] .player-bar[data-mini-panel] .progress {
+  order: -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-areas:
+    "bar     bar"
+    "elapsed remaining";
+  row-gap: 8px;
+  padding-left: 0;
+}
+
+html[data-mini-player] .player-bar[data-mini-panel] .progress .bar {
+  grid-area: bar;
+}
+
+html[data-mini-player] .player-bar[data-mini-panel] .progress-time:first-child {
+  grid-area: elapsed;
+  justify-self: start;
+}
+
+html[data-mini-player] .player-bar[data-mini-panel] .progress-time:last-child {
+  grid-area: remaining;
+  justify-self: end;
+}
+
+/* Content-sized, as in the bar, so the row keeps its size when it moves. */
+html[data-mini-player] .player-bar[data-mini-panel] .transport-row {
+  align-self: center;
+}
+
+.mini-panel-head {
+  grid-area: panel-head;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 2px;
+}
+
+.mini-panel-title {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-panel-body {
+  grid-area: panel;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  color: var(--card-foreground);
+  -webkit-app-region: no-drag;
+}
+
+.mini-panel-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.mini-panel-queue {
+  padding: 4px;
+}
+
+.mini-panel-lyrics {
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* ---------- Switching panels ----------
+   The new panel slides in from the side its button sits on. */
+.mini-panel-content[data-enter] {
+  animation: mini-panel-swap 200ms var(--ease-out) both;
+}
+
+.mini-panel-content[data-enter="forward"] {
+  --mini-swap-from: 16px;
+}
+
+.mini-panel-content[data-enter="back"] {
+  --mini-swap-from: -16px;
+}
+
+.mini-panel-head[data-enter] {
+  animation: mini-fade-in 160ms var(--ease-out) both;
+}
+
+@keyframes mini-panel-swap {
+  from {
+    opacity: 0;
+    transform: translateX(var(--mini-swap-from, 0));
+  }
+}
+
+@keyframes mini-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ---------- Opening and closing ----------
+   A view transition between the bar and the panel layout; the names exist
+   only while one runs. Everything in both layouts travels from its old box
+   to its new one, all on one curve, so nothing strays outside the card on
+   the way. The panel, new to the layout, grows out of the corner its buttons
+   sit in: the pieces heading for the left column move out ahead of its
+   growing edge, so it never covers them. */
+html[data-mini-morph] {
+  --mini-morph-dur: 340ms;
+  --mini-rolled: inset(0 0 100% 100% round var(--radius-lg));
+}
+
+html[data-mini-morph="close"] {
+  --mini-morph-dur: 300ms;
+}
+
+/* The window grew upward: the card's top edge is the one that moves, so the
+   panel grows from the bottom corner instead. */
+html[data-mini-morph-anchor="bottom"] {
+  --mini-rolled: inset(100% 0 0 100% round var(--radius-lg));
+}
+
+html[data-mini-morph] .player-bar {
+  view-transition-name: mini-card;
+}
+
+html[data-mini-morph] .player-bar .np-art {
+  view-transition-name: mini-art;
+}
+
+html[data-mini-morph] .player-bar .np-title {
+  view-transition-name: mini-title;
+}
+
+html[data-mini-morph] .player-bar .np-artist {
+  view-transition-name: mini-artist;
+}
+
+html[data-mini-morph] .player-bar .progress .bar {
+  view-transition-name: mini-seek;
+}
+
+html[data-mini-morph] .player-bar .progress-time:first-child {
+  view-transition-name: mini-elapsed;
+}
+
+html[data-mini-morph] .player-bar .progress-time:last-child {
+  view-transition-name: mini-remaining;
+}
+
+html[data-mini-morph] .player-bar .transport-row {
+  view-transition-name: mini-transport;
+}
+
+html[data-mini-morph] .player-bar .utility {
+  view-transition-name: mini-utility;
+}
+
+html[data-mini-morph] .mini-panel-head {
+  view-transition-name: mini-panel-head;
+}
+
+html[data-mini-morph] .mini-panel-body {
+  view-transition-name: mini-panel-body;
+}
+
+/* Its own snapshot, so the panel's box can grow empty and the rows arrive
+   whole once it's there, instead of being sliced by the growing edge. */
+html[data-mini-morph] .mini-panel-content {
+  view-transition-name: mini-panel-content;
+}
+
+html[data-mini-morph]::view-transition-group(mini-card),
+html[data-mini-morph]::view-transition-group(mini-art),
+html[data-mini-morph]::view-transition-group(mini-title),
+html[data-mini-morph]::view-transition-group(mini-artist),
+html[data-mini-morph]::view-transition-group(mini-seek),
+html[data-mini-morph]::view-transition-group(mini-elapsed),
+html[data-mini-morph]::view-transition-group(mini-remaining),
+html[data-mini-morph]::view-transition-group(mini-transport),
+html[data-mini-morph]::view-transition-group(mini-utility) {
+  animation-duration: var(--mini-morph-dur);
+  animation-timing-function: var(--ease-in-out);
+  animation-fill-mode: both;
+}
+
+/* The title and artist cross the art's corner on their way to the column;
+   they pass under it rather than over the cover. */
+html[data-mini-morph]::view-transition-group(mini-art) {
+  z-index: 2;
+}
+
+html[data-mini-morph]::view-transition-group(mini-title),
+html[data-mini-morph]::view-transition-group(mini-artist),
+html[data-mini-morph]::view-transition-group(mini-seek),
+html[data-mini-morph]::view-transition-group(mini-elapsed),
+html[data-mini-morph]::view-transition-group(mini-remaining),
+html[data-mini-morph]::view-transition-group(mini-transport) {
+  z-index: 1;
+}
+
+/* The group box draws the card, so it can change size without a snapshot
+   stretching its rounded corners. */
+html[data-mini-morph]::view-transition-old(mini-card),
+html[data-mini-morph]::view-transition-new(mini-card) {
+  display: none;
+}
+
+html[data-mini-morph]::view-transition-group(mini-card) {
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--background);
+}
+
+/* Text scales with its line height, so the title eases from 18px to 16px
+   even when the two layouts truncate it at different widths. */
+html[data-mini-morph]::view-transition-old(mini-title),
+html[data-mini-morph]::view-transition-new(mini-title),
+html[data-mini-morph]::view-transition-old(mini-artist),
+html[data-mini-morph]::view-transition-new(mini-artist) {
+  inline-size: auto;
+  block-size: 100%;
+}
+
+/* The seek bar only changes length: stretch it, don't scale its height. */
+html[data-mini-morph]::view-transition-old(mini-seek),
+html[data-mini-morph]::view-transition-new(mini-seek) {
+  block-size: 100%;
+}
+
+/* The panel's box trails the pieces by a beat on the way in, which keeps a
+   margin between its edge and theirs; on the way out they part without it. */
+html[data-mini-morph="open"]::view-transition-new(mini-panel-body) {
+  animation:
+    mini-unroll var(--mini-morph-dur) var(--ease-in-out) 40ms both,
+    mini-fade-in 200ms var(--ease-out) 40ms both;
+}
+
+html[data-mini-morph="close"]::view-transition-old(mini-panel-body) {
+  animation:
+    mini-roll var(--mini-morph-dur) var(--ease-in-out) both,
+    mini-fade-late var(--mini-morph-dur) linear both;
+}
+
+/* The rows share the box's clip but only show once it has (nearly) reached
+   full size, and leave before it starts to shrink. */
+html[data-mini-morph="open"]::view-transition-new(mini-panel-content) {
+  animation:
+    mini-unroll var(--mini-morph-dur) var(--ease-in-out) 40ms both,
+    mini-fade-in 160ms var(--ease-out) 330ms both;
+}
+
+html[data-mini-morph="close"]::view-transition-old(mini-panel-content) {
+  animation:
+    mini-roll var(--mini-morph-dur) var(--ease-in-out) both,
+    mini-fade-out 80ms var(--ease-out) both;
+}
+
+/* The heading sits by the top edge; wait until the card has grown past it
+   when that edge is the one moving. */
+html[data-mini-morph="open"]::view-transition-new(mini-panel-head) {
+  animation: mini-fade-in 180ms var(--ease-out) 120ms both;
+}
+
+html[data-mini-morph="open"][data-mini-morph-anchor="bottom"]::view-transition-new(mini-panel-head) {
+  animation-delay: 240ms;
+}
+
+html[data-mini-morph="close"]::view-transition-old(mini-panel-head) {
+  animation: mini-fade-out 80ms var(--ease-out) both;
+}
+
+@keyframes mini-unroll {
+  from {
+    clip-path: var(--mini-rolled);
+  }
+  to {
+    clip-path: inset(0 round var(--radius-lg));
+  }
+}
+
+@keyframes mini-roll {
+  from {
+    clip-path: inset(0 round var(--radius-lg));
+  }
+  to {
+    clip-path: var(--mini-rolled);
+  }
+}
+
+@keyframes mini-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes mini-fade-late {
+  0%,
+  40% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Reduced motion drops the travel: the layout changes at once and the new
+   panel fades in. Closing just snaps, as a fading panel would hang outside
+   the already small card. */
+@media (prefers-reduced-motion: reduce) {
+  html[data-mini-morph] {
+    --mini-morph-dur: 0s;
+  }
+
+  html[data-mini-morph="open"]::view-transition-new(mini-panel-body),
+  html[data-mini-morph="open"]::view-transition-new(mini-panel-content),
+  html[data-mini-morph="open"]::view-transition-new(mini-panel-head),
+  html[data-mini-morph="open"][data-mini-morph-anchor="bottom"]::view-transition-new(mini-panel-head) {
+    animation: mini-fade-in 200ms var(--ease-out) both;
+  }
+
+  html[data-mini-morph="close"]::view-transition-old(mini-panel-body),
+  html[data-mini-morph="close"]::view-transition-old(mini-panel-content),
+  html[data-mini-morph="close"]::view-transition-old(mini-panel-head) {
+    display: none;
+  }
+
+  @keyframes mini-panel-swap {
+    from {
+      opacity: 0;
+    }
+  }
+}

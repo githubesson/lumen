@@ -1,6 +1,7 @@
 import type { DiscordActivityPayload } from "../electron";
 import type { ExportTrackFileItem } from "../electron";
 import type { Tweaks as ElectronTweaks } from "../electron";
+import type { MiniPlayerPanelAnchor } from "../electron";
 
 type ElectronApi = NonNullable<Window["electron"]>;
 
@@ -48,6 +49,19 @@ export function setMiniPlayerMode(enabled: boolean) {
   return (
     electron()?.setMiniPlayerMode?.(enabled) ??
     Promise.resolve({ ok: false, miniPlayer: false })
+  );
+}
+
+export function getMiniPlayerPanelAnchor(): Promise<MiniPlayerPanelAnchor> {
+  return (
+    electron()?.getMiniPlayerPanelAnchor?.() ?? Promise.resolve("top" as const)
+  );
+}
+
+export function setMiniPlayerPanel(open: boolean) {
+  return (
+    electron()?.setMiniPlayerPanel?.(open) ??
+    Promise.resolve({ ok: false, open: false, anchor: "top" as const })
   );
 }
 

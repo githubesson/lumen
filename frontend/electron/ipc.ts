@@ -265,6 +265,22 @@ export function registerIpcHandlers(deps: {
     return { ok: true, miniPlayer: windows.isMiniPlayer };
   });
 
+  ipcMain.handle("window:mini-player:panel-anchor", () =>
+    windows.miniPlayerPanelAnchor(),
+  );
+
+  ipcMain.handle("window:mini-player:panel", (_e, open: boolean) => {
+    if (!windows.mainWindow || !windows.isMiniPlayer) {
+      return { ok: false, open: false, anchor: windows.miniPlayerPanelAnchor() };
+    }
+    windows.setMiniPlayerPanel(open === true);
+    return {
+      ok: true,
+      open: windows.miniPlayerPanelOpen,
+      anchor: windows.miniPlayerPanelAnchor(),
+    };
+  });
+
   ipcMain.handle("window:minimize", () => {
     windows.mainWindow?.minimize();
     return { ok: true };

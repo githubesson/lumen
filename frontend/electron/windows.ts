@@ -1,19 +1,27 @@
 import { BrowserWindow, screen, shell } from "electron";
 import * as path from "node:path";
 import type { Rectangle } from "electron";
+import type { MiniPlayerPanelAnchor } from "../src/contracts/desktop";
 import type { LocalProxy } from "./local-proxy";
 import type { DesktopUpdateManager } from "./updater";
 
 const MAIN_PRELOAD = path.join(__dirname, "mainPreload.js");
 const NORMAL_MIN_SIZE = { width: 640, height: 480 };
 const MINI_PLAYER_SIZE = { width: 780, height: 184 };
+/** The mini player with its queue, lyrics or device panel open. */
+const MINI_PLAYER_PANEL_SIZE = { width: 780, height: 344 };
 
 export interface WindowManager {
   readonly mainWindow: BrowserWindow | null;
   readonly isMiniPlayer: boolean;
+  readonly miniPlayerPanelOpen: boolean;
   alwaysOnTop: boolean;
   openMain(): Promise<void>;
   setMiniPlayerMode(enabled: boolean): void;
+  /** The edge that would stay put if the mini player's panel opened now. */
+  miniPlayerPanelAnchor(): MiniPlayerPanelAnchor;
+  /** Grows or shrinks the mini player window for its panel. */
+  setMiniPlayerPanel(open: boolean): void;
 }
 
 export function createWindowManager(options: {
@@ -23,6 +31,8 @@ export function createWindowManager(options: {
   const { localProxy, updateManager } = options;
   let mainWindow: BrowserWindow | null = null;
   let isMiniPlayer = false;
+  let miniPlayerPanelOpen = false;
+  let panelAnchor: MiniPlayerPanelAnchor = "top";
   let normalBounds: Rectangle | null = null;
   let alwaysOnTop = false;
 
@@ -92,6 +102,7 @@ export function createWindowManager(options: {
     mainWindow.on("closed", () => {
       mainWindow = null;
       isMiniPlayer = false;
+      miniPlayerPanelOpen = false;
       normalBounds = null;
     });
     await mainWindow.loadURL(`http://127.0.0.1:${localProxy.port}/`);
@@ -129,6 +140,49 @@ export function createWindowManager(options: {
     }
 
     isMiniPlayer = enabled;
+    miniPlayerPanelOpen = false;
+  }
+
+  function miniPlayerPanelAnchor(): MiniPlayerPanelAnchor {
+    if (!mainWindow || miniPlayerPanelOpen) return panelAnchor;
+    const bounds = mainWindow.getBounds();
+    const area = screen.getDisplayMatching(bounds).workArea;
+    const growth = MINI_PLAYER_PANEL_SIZE.height - bounds.height;
+    // Grow downward, unless the window is parked near the bottom of the
+    // screen and there is room above it instead.
+    const fitsBelow = bounds.y + bounds.height + growth <= area.y + area.height;
+    const fitsAbove = bounds.y - growth >= area.y;
+    return !fitsBelow && fitsAbove ? "bottom" : "top";
+  }
+
+  // The renderer asks for the anchor first and pins its bar to that edge, so
+  // the bar doesn't move on screen while the (transparent) window grows
+  // around it; only then does it animate into the panel layout.
+  function setMiniPlayerPanel(open: boolean): void {
+    if (!mainWindow || !isMiniPlayer || open === miniPlayerPanelOpen) return;
+    if (open) panelAnchor = miniPlayerPanelAnchor();
+    const bounds = mainWindow.getBounds();
+    const size = open ? MINI_PLAYER_PANEL_SIZE : MINI_PLAYER_SIZE;
+    let y =
+      panelAnchor === "bottom"
+        ? bounds.y + bounds.height - size.height
+        : bounds.y;
+    if (open) {
+      // Neither edge fits on a very short screen: stay on it anyway.
+      const area = screen.getDisplayMatching(bounds).workArea;
+      y = Math.max(area.y, Math.min(y, area.y + area.height - size.height));
+    }
+    // Min and max pin the size, so move the bound on the far side first or
+    // the other one clamps the new size.
+    if (size.height > bounds.height) {
+      mainWindow.setMaximumSize(size.width, size.height);
+      mainWindow.setMinimumSize(size.width, size.height);
+    } else {
+      mainWindow.setMinimumSize(size.width, size.height);
+      mainWindow.setMaximumSize(size.width, size.height);
+    }
+    mainWindow.setBounds({ x: bounds.x, y, ...size }, false);
+    miniPlayerPanelOpen = open;
   }
 
   return {
@@ -138,6 +192,9 @@ export function createWindowManager(options: {
     get isMiniPlayer() {
       return isMiniPlayer;
     },
+    get miniPlayerPanelOpen() {
+      return miniPlayerPanelOpen;
+    },
     get alwaysOnTop() {
       return alwaysOnTop;
     },
@@ -146,6 +203,8 @@ export function createWindowManager(options: {
     },
     openMain,
     setMiniPlayerMode,
+    miniPlayerPanelAnchor,
+    setMiniPlayerPanel,
   };
 }
 
