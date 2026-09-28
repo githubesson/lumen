@@ -74,6 +74,82 @@
   align-items: center;
   flex-wrap: wrap;
 }
+/* The playlist owner's title: a button that opens Settings on the name. */
+.detail-title-edit {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  text-wrap: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.detail-title-edit:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* The owner's playlist art: a button that picks a new cover. It keeps
+   .detail-art's box, so the header lays out the same either way. */
+.detail-art-edit {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.detail-art-edit:disabled {
+  cursor: progress;
+}
+.detail-art-edit:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.detail-art-edit-hint {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: oklch(1 0 0);
+  background: oklch(0 0 0 / 0.55);
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+.detail-art-edit:hover .detail-art-edit-hint,
+.detail-art-edit:focus-visible .detail-art-edit-hint,
+.detail-art-edit:disabled .detail-art-edit-hint {
+  opacity: 1;
+}
+
+/* Playlist Settings tab */
+.playlist-settings {
+  max-width: 720px;
+}
+.playlist-settings-card {
+  padding: 0 16px;
+}
+.playlist-settings-card > .error-banner {
+  margin-top: 12px;
+}
+.playlist-settings-buttons {
+  display: flex;
+  gap: 8px;
+}
+.playlist-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 0 16px;
+}
+
 .detail-corner {
   position: absolute;
   right: 24px;

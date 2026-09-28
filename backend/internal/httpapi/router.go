@@ -155,6 +155,7 @@ func NewRouter(d Deps) http.Handler {
 		Background:   d.Background,
 		StartJob:     d.StartJob,
 	}
+	plH.Covers = tracksH
 	browseH := &handlers.Browse{Library: d.Library}
 	statsH := &handlers.Stats{Library: d.Library, Playlists: d.Playlists, Storage: d.Storage}
 	shareH := &handlers.Share{
@@ -293,6 +294,12 @@ func NewRouter(d Deps) http.Handler {
 			ordinary.Get("/playlists/{id}", plH.Get)
 			ordinary.Patch("/playlists/{id}", plH.Update)
 			ordinary.Delete("/playlists/{id}", plH.Delete)
+			r.Get("/playlists/{id}/cover", plH.Cover)
+			// Any playlist owner may upload, so unlike album covers this is
+			// open to non-admins: rate-limit the image decode.
+			r.With(appmw.Timeout(imageRequestTimeout), appmw.RateLimitByIP(30, time.Minute)).
+				Put("/playlists/{id}/cover", plH.PutCover)
+			ordinary.Delete("/playlists/{id}/cover", plH.DeleteCover)
 			ordinary.Get("/playlists/{id}/tracks", plH.ListTracks)
 			ordinary.Post("/playlists/{id}/tracks", plH.AddTracks)
 			ordinary.Delete("/playlists/{id}/tracks/{pos}", plH.RemoveTrack)

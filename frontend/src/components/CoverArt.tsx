@@ -68,9 +68,12 @@ export default function CoverArt({
       <div
         className={"cover-art cover-art-placeholder " + (className ?? "")}
         style={extra}
-        aria-hidden="true"
       >
-        <span className="cover-art-letter">{firstLetter(label)}</span>
+        {/* Only the letter is hidden: children may be controls (a card's
+            play button) that must stay reachable. */}
+        <span className="cover-art-letter" aria-hidden="true">
+          {firstLetter(label)}
+        </span>
         {children}
       </div>
     );

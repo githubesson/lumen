@@ -36,6 +36,7 @@ import EmptyState from "../../components/EmptyState";
 import ErrorBanner from "../../components/ErrorBanner";
 import LoadingState from "../../components/LoadingState";
 import Section from "../../components/Section";
+import ShelfScroller from "../../components/ShelfScroller";
 import TrackList from "../../components/TrackList";
 import {
   DetailTrackSearchBar,
@@ -466,11 +467,19 @@ function Discography({
           ))}
         </div>
       )}
-      <div className={showAll ? "grid-cards" : "shelf"}>
-        {shown.map((release) => (
-          <ReleaseCard key={release.id} release={release} onOpen={onOpen} />
-        ))}
-      </div>
+      {showAll ? (
+        <div className="grid-cards">
+          {shown.map((release) => (
+            <ReleaseCard key={release.id} release={release} onOpen={onOpen} />
+          ))}
+        </div>
+      ) : (
+        <ShelfScroller>
+          {shown.map((release) => (
+            <ReleaseCard key={release.id} release={release} onOpen={onOpen} />
+          ))}
+        </ShelfScroller>
+      )}
     </Section>
   );
 }

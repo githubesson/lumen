@@ -163,12 +163,14 @@ func TestSweepOrphanCovers(t *testing.T) {
 	referenced := "covers/redteam-ref-" + uuid.NewString() + ".jpg"
 	orphan := "covers/redteam-orphan-" + uuid.NewString() + ".jpg"
 	fresh := "covers/redteam-fresh-" + uuid.NewString() + ".jpg"
+	playlistCover := "covers/redteam-playlist-" + uuid.NewString() + ".jpg"
 	orphanThumb := "cover-thumbs/512/" + orphan[:len(orphan)-len(".jpg")] + ".jpg"
 	refThumb := "cover-thumbs/512/" + referenced[:len(referenced)-len(".jpg")] + ".jpg"
+	playlistThumb := "cover-thumbs/512/" + playlistCover[:len(playlistCover)-len(".jpg")] + ".jpg"
 	redteamAlbum(t, ctx, pool, referenced, nil)
 
 	old := time.Now().Add(-2 * time.Hour)
-	for _, key := range []string{referenced, orphan, fresh, orphanThumb, refThumb} {
+	for _, key := range []string{referenced, orphan, fresh, playlistCover, orphanThumb, refThumb, playlistThumb} {
 		p := filepath.Join(root, filepath.FromSlash(key))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
@@ -187,6 +189,12 @@ func TestSweepOrphanCovers(t *testing.T) {
 	// deduplicated personal upload leaves behind) must not pin its cover.
 	user := redteamUser(t, ctx, pool)
 	deadAlbum := redteamAlbum(t, ctx, pool, orphan, &user)
+	// A playlist's uploaded cover is referenced like an album's.
+	var playlistID uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO playlists(owner_id, name, cover_art_path) VALUES($1, 'redteam', $2) RETURNING id`, user, playlistCover).Scan(&playlistID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM playlists WHERE id = $1`, playlistID) })
 	if _, err := pool.Exec(ctx, `UPDATE album_personal_covers SET created_at = $1 WHERE album_id = $2`, old, deadAlbum); err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +213,7 @@ func TestSweepOrphanCovers(t *testing.T) {
 	if deadRow {
 		t.Fatal("personal cover row without a surviving track was kept")
 	}
-	for key, want := range map[string]bool{referenced: true, fresh: true, refThumb: true, orphan: false, orphanThumb: false} {
+	for key, want := range map[string]bool{referenced: true, fresh: true, refThumb: true, playlistCover: true, playlistThumb: true, orphan: false, orphanThumb: false} {
 		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(key)))
 		if exists := err == nil; exists != want {
 			t.Fatalf("%s exists=%v, want %v", key, exists, want)

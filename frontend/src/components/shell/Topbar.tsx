@@ -13,6 +13,7 @@ import {
 import type { Playlist } from "../../api";
 import { useLyricsPanel } from "../../context/LyricsPanel";
 import { useTheme } from "../../context/Theme";
+import { modShortcut } from "../../lib/platform";
 import WindowControls from "../WindowControls";
 import Breadcrumbs from "./Breadcrumbs";
 
@@ -89,7 +90,7 @@ export default function Topbar({
         <span className="topbar-search-label">
           Search library, albums, tracks…
         </span>
-        <kbd>⌘K</kbd>
+        <kbd>{modShortcut("K")}</kbd>
       </button>
 
       <button

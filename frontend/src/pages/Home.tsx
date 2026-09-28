@@ -1,6 +1,10 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Play as PlayIcon, Sparkles as SparklesIcon } from "lucide-react";
+import {
+  Disc3 as DiscIcon,
+  Play as PlayIcon,
+  Sparkles as SparklesIcon,
+} from "lucide-react";
 import {
   api,
   albumCoverUrl,
@@ -8,9 +12,11 @@ import {
   trackCoverUrl,
   type TrackListItem,
 } from "../api";
+import CoverArt from "../components/CoverArt";
 import MediaCard, { MediaCardPlaceholders } from "../components/MediaCard";
 import PlaylistCard from "../components/PlaylistCard";
 import Section from "../components/Section";
+import ShelfScroller from "../components/ShelfScroller";
 import { Button } from "../components/Button";
 import { useTrackContextMenu } from "../components/TrackContextMenu";
 import { useAuth } from "../context/Auth";
@@ -18,7 +24,7 @@ import { usePlayer } from "../context/Player";
 import { useFavorites } from "../context/Favorites";
 import { usePlaylists } from "../context/Playlists";
 import { useApiResource } from "../lib/useApiResource";
-import { displayText } from "../lib/format";
+import { displayText, pluralize } from "../lib/format";
 
 const EMPTY_TRACKS: TrackListItem[] = [];
 
@@ -51,40 +57,20 @@ export default function Home() {
     <div className="view">
       {ctxMenu}
       {hero ? (
-        <div className="hero">
-          <div
-            className="hero-art"
-            style={{ backgroundImage: `url(${trackCoverUrl(hero)})` }}
-            aria-hidden="true"
-          />
-          <div className="hero-body">
-            <div className="hero-eyebrow">Welcome back, {me?.username}</div>
-            <h1 className="hero-title">{displayText(hero.album_title ?? hero.title)}</h1>
-            <div className="hero-meta">
-              <span>{displayText(hero.artist, "Unknown artist")}</span>
-              <span className="dot" aria-hidden="true" />
-              <span>{tracks.length} tracks in library</span>
-            </div>
-            <div className="hero-actions">
-              <Button
-                variant="primary"
-                onClick={() => play(hero, recent.length ? recent : tracks)}
-                leadingIcon={<PlayIcon className="size-4" />}
-              >
-                Play
-              </Button>
-              <Link to="/library" className="btn">
-                Browse library
-              </Link>
-            </div>
-          </div>
-        </div>
+        <HeroAlbum
+          key={hero.id}
+          track={hero}
+          fromRecent={recent.length > 0}
+          fallbackQueue={recent.length ? recent : tracks}
+        />
       ) : recentResource.loading || tracksResource.loading ? (
         <div className="hero" aria-busy="true">
           <div className="hero-art" aria-hidden="true" />
           <div className="hero-body">
-            <div className="hero-eyebrow">Welcome back, {me?.username}</div>
-            <h1 className="hero-title">Your library</h1>
+            <div className="hero-eyebrow">Jump back in</div>
+            <h1 className="hero-title">
+              <span className="skeleton-text" style={{ width: "12ch" }} />
+            </h1>
             {/* Same rows as the loaded hero, so its text doesn't jump. */}
             <div className="hero-meta">
               <span role="status">Loading your music…</span>
@@ -93,9 +79,9 @@ export default function Home() {
               <Button variant="primary" disabled leadingIcon={<PlayIcon className="size-4" />}>
                 Play
               </Button>
-              <Link to="/library" className="btn">
-                Browse library
-              </Link>
+              <Button disabled leadingIcon={<DiscIcon className="size-4" />}>
+                Open album
+              </Button>
             </div>
           </div>
         </div>
@@ -189,6 +175,115 @@ export default function Home() {
   );
 }
 
+/**
+ * The hero: the album of the last track you played (or, before you've played
+ * anything, a library track), with Play picking up from that track.
+ */
+function HeroAlbum({
+  track,
+  fromRecent,
+  fallbackQueue,
+}: {
+  track: TrackListItem;
+  fromRecent: boolean;
+  /** Queue for a track with no local album to play through. */
+  fallbackQueue: TrackListItem[];
+}) {
+  const { play } = usePlayer();
+  const albumID = track.album_id;
+  const album = useApiResource(
+    (signal) => (albumID ? api.getAlbum(albumID, { signal }) : Promise.resolve(null)),
+    "Could not load the album.",
+    { cacheKey: albumID ? `home:hero-album:${albumID}` : undefined },
+  );
+  const [starting, setStarting] = useState(false);
+  const tidalAlbumID = track.source === "tidal" ? track.source_album_id : undefined;
+  const albumHref = albumID
+    ? `/library?view=albums&album=${encodeURIComponent(albumID)}`
+    : tidalAlbumID
+      ? `/library?view=albums&tidalAlbum=${encodeURIComponent(tidalAlbumID)}`
+      : null;
+  const year = album.data?.release_year;
+  const trackCount = album.data?.track_count;
+
+  // The album's tracks are fetched on Play. Leaving Home (or a new hero
+  // replacing this one) aborts the fetch, so a late reply never starts
+  // playback somewhere the user has moved on from.
+  const playRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => playRequest.current?.abort(), []);
+
+  // Plays the album in order from the featured track, falling back to the
+  // list the track came from if the album can't be loaded.
+  const onPlay = async () => {
+    if (!albumID) {
+      play(track, fallbackQueue);
+      return;
+    }
+    playRequest.current?.abort();
+    const request = new AbortController();
+    playRequest.current = request;
+    setStarting(true);
+    try {
+      const albumTracks = await api.listAlbumTracks(albumID, { signal: request.signal });
+      if (request.signal.aborted) return;
+      const start = albumTracks.find((t) => t.id === track.id) ?? albumTracks[0];
+      if (start) play(start, albumTracks);
+      else play(track, fallbackQueue);
+    } catch {
+      if (!request.signal.aborted) play(track, fallbackQueue);
+    } finally {
+      if (!request.signal.aborted) setStarting(false);
+    }
+  };
+
+  return (
+    <div className="hero">
+      <CoverArt
+        className="hero-art"
+        src={trackCoverUrl(track)}
+        label={track.album_title ?? track.title}
+      />
+      <div className="hero-body">
+        <div className="hero-eyebrow">
+          {fromRecent ? "Jump back in" : "From your library"}
+        </div>
+        <h1 className="hero-title">{displayText(track.album_title ?? track.title)}</h1>
+        <div className="hero-meta">
+          <span>{displayText(track.artist, "Unknown artist")}</span>
+          {year ? (
+            <>
+              <span className="dot" aria-hidden="true" />
+              <span>{year}</span>
+            </>
+          ) : null}
+          {trackCount ? (
+            <>
+              <span className="dot" aria-hidden="true" />
+              <span>{pluralize(trackCount, "track")}</span>
+            </>
+          ) : null}
+        </div>
+        <div className="hero-actions">
+          <Button
+            variant="primary"
+            onClick={() => void onPlay()}
+            disabled={starting}
+            leadingIcon={<PlayIcon className="size-4" />}
+          >
+            Play
+          </Button>
+          {albumHref && (
+            <Link to={albumHref} className="btn">
+              <DiscIcon className="size-4" />
+              Open album
+            </Link>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ShelfStatus({ title, loading, error, reload }: {
   title: string;
   loading: boolean;
@@ -231,7 +326,7 @@ function Shelf({
       }
     >
       {status}
-      <div className="shelf">{children}</div>
+      <ShelfScroller>{children}</ShelfScroller>
     </Section>
   );
 }

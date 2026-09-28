@@ -17,7 +17,7 @@ import {
 } from "../../components/TrackRowCells";
 import TrackSelectionToolbar from "../../components/TrackSelectionToolbar";
 import CoverArt from "../../components/CoverArt";
-import { displayText, fmtDurationMs } from "../../lib/format";
+import { displayText, fmtDate, fmtDurationMs } from "../../lib/format";
 import { isLocalTrack } from "../../lib/track";
 import { useTrackSelection } from "../../lib/useTrackSelection";
 import { useWindowedSlice } from "../../lib/useWindowedSlice";
@@ -40,6 +40,7 @@ export default function PlaylistTracksPanel({
   queue,
   queueById,
   canEdit,
+  showAddedBy,
   onRemove,
   onReorder,
   onPlay,
@@ -56,6 +57,8 @@ export default function PlaylistTracksPanel({
   queue: TrackListItem[];
   queueById: Map<string, TrackListItem>;
   canEdit: boolean;
+  /** Name who added each track: only worth it once more than one person can. */
+  showAddedBy: boolean;
   onRemove: (position: number) => void;
   onReorder?: (from: number, to: number) => void;
   onPlay: (t: PlaylistTrackEntry) => void;
@@ -100,6 +103,7 @@ export default function PlaylistTracksPanel({
         queue={queue}
         queueById={queueById}
         canEdit={canEdit}
+        showAddedBy={showAddedBy}
         onRemove={onRemove}
         onReorder={onReorder}
         onPlay={onPlay}
@@ -118,6 +122,7 @@ function TracksTable({
   queue,
   queueById,
   canEdit,
+  showAddedBy,
   onRemove,
   onReorder,
   onPlay,
@@ -131,6 +136,7 @@ function TracksTable({
   queue: TrackListItem[];
   queueById: Map<string, TrackListItem>;
   canEdit: boolean;
+  showAddedBy: boolean;
   onRemove: (position: number) => void;
   onReorder?: (from: number, to: number) => void;
   onPlay: (t: PlaylistTrackEntry) => void;
@@ -307,6 +313,7 @@ function TracksTable({
                     isPlaying={isPlaying && isNow}
                     fav={isFav(t.track_id)}
                     canEdit={canEdit}
+                    showAddedBy={showAddedBy}
                     selectionMode={selectionMode}
                     selected={selectedIds.has(t.track_id)}
                     onPlay={handlePlay}
@@ -347,6 +354,7 @@ const PlaylistRow = memo(function PlaylistRow({
   isPlaying,
   fav,
   canEdit,
+  showAddedBy,
   selectionMode,
   selected,
   onPlay,
@@ -368,6 +376,7 @@ const PlaylistRow = memo(function PlaylistRow({
   isPlaying: boolean;
   fav: boolean;
   canEdit: boolean;
+  showAddedBy: boolean;
   selectionMode: boolean;
   selected: boolean;
   onPlay: (entry: PlaylistTrackEntry) => void;
@@ -391,8 +400,11 @@ const PlaylistRow = memo(function PlaylistRow({
   onDragEndRow: () => void;
 }) {
   const added = entry.added_at
-    ? new Date(entry.added_at).toLocaleDateString()
+    ? fmtDate(entry.added_at)
     : "—";
+  const artist = displayText(entry.artist, "Unknown artist");
+  const sub =
+    showAddedBy && entry.added_by ? `${artist} · added by ${entry.added_by}` : artist;
   return (
     <tr
       className={
@@ -452,9 +464,8 @@ const PlaylistRow = memo(function PlaylistRow({
         }}
       >
         <div className="track-title" title={displayText(entry.title)}>{displayText(entry.title)}</div>
-        <div className="track-sub" title={`${displayText(entry.artist, "Unknown artist")}${entry.added_by ? ` · added by ${entry.added_by}` : ""}`}>
-          {displayText(entry.artist, "Unknown artist")}
-          {entry.added_by ? ` · added by ${entry.added_by}` : ""}
+        <div className="track-sub" title={sub}>
+          {sub}
         </div>
       </td>
       <td className="col-album mono" title={entry.album_title ? displayText(entry.album_title) : undefined} style={{ color: "var(--muted-foreground)", fontSize: 12 }}>

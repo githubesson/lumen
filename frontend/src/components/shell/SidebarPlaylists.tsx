@@ -1,8 +1,12 @@
 import { Link, NavLink } from "react-router-dom";
 import { Plus as PlusIcon, ListMusic as QueueListIcon } from "lucide-react";
-import type { Playlist } from "../../api";
+import { playlistArtUrl, type Playlist } from "../../api";
 import { useTheme } from "../../context/Theme";
+import CoverArt from "../CoverArt";
 import NavItem from "./NavItem";
+
+// Covers are drawn at 20px; ask for the smallest size the server makes.
+const THUMB_SIZE = 64;
 
 export default function SidebarPlaylists({
   playlists,
@@ -53,7 +57,11 @@ export default function SidebarPlaylists({
             "sidebar-playlist" + (isActive ? " active" : "")
           }
         >
-          <QueueListIcon className="sidebar-playlist-icon" aria-hidden="true" />
+          <CoverArt
+            className="sidebar-playlist-art"
+            src={playlistArtUrl(p, THUMB_SIZE)}
+            label={p.name}
+          />
           <span className="sidebar-playlist-name">{p.name}</span>
         </NavLink>
       ))}

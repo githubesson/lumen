@@ -206,14 +206,83 @@
 }
 .section-link:hover { color: var(--foreground); }
 
+.shelf-scroller,
+.shelf {
+  --shelf-col: 168px;
+}
 .shelf {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 168px;
+  grid-auto-columns: var(--shelf-col);
   gap: var(--gap);
   overflow-x: auto;
   overflow-y: hidden;
   padding-bottom: 8px;
   scroll-snap-type: x proximity;
+  /* ShelfScroller's edge fades and arrows say there's more instead. */
+  scrollbar-width: none;
 }
-.shelf::-webkit-scrollbar { height: 6px; }
+.shelf::-webkit-scrollbar { display: none; }
+
+/* ShelfScroller: fade whichever edges have more cards past them. */
+.shelf-scroller {
+  --shelf-fade: 48px;
+  position: relative;
+}
+.shelf-scroller[data-forward] > .shelf {
+  mask-image: linear-gradient(to right, black calc(100% - var(--shelf-fade)), transparent);
+}
+.shelf-scroller[data-back] > .shelf {
+  mask-image: linear-gradient(to right, transparent, black var(--shelf-fade));
+}
+.shelf-scroller[data-back][data-forward] > .shelf {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--shelf-fade),
+    black calc(100% - var(--shelf-fade)),
+    transparent
+  );
+}
+.shelf-arrow {
+  position: absolute;
+  /* Centred on the cover art: the card's 8px padding cancels out. */
+  top: calc(var(--shelf-col) / 2);
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) scale(0.9);
+  transition:
+    opacity 150ms ease,
+    transform 150ms var(--ease-out),
+    background 120ms;
+}
+.shelf-arrow-back { left: 4px; }
+.shelf-arrow-forward { right: 4px; }
+.shelf-arrow:hover { background: var(--accent); }
+.shelf-scroller:hover > .shelf-arrow:not(:disabled) {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%);
+}
+.shelf-scroller:hover > .shelf-arrow:not(:disabled):active {
+  transform: translateY(-50%) scale(0.95);
+}
+/* Swiping covers it on touch screens, and a tap-revealed arrow would only
+   get in the way of the cards. */
+@media (hover: none) {
+  .shelf-arrow { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shelf-arrow { transition: opacity 150ms ease; }
+}

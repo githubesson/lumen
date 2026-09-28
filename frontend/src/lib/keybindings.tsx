@@ -7,6 +7,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import { IS_MAC } from "./platform";
 
 /**
  * Central keyboard-binding framework.
@@ -45,10 +46,6 @@ interface Registry {
 
 const Ctx = createContext<Registry | null>(null);
 
-const IS_MAC =
-  typeof navigator !== "undefined" &&
-  (/(Mac|iPhone|iPod|iPad)/i.test(navigator.platform) ||
-    /Mac/i.test(navigator.userAgent));
 
 interface Parsed {
   key: string;

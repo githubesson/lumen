@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   SlidersHorizontal as AdjustmentsHorizontalIcon,
   Download as ArrowDownTrayIcon,
@@ -6,14 +6,16 @@ import {
   Upload as ArrowUpTrayIcon,
   Clock as ClockIcon,
   Settings as Cog6ToothIcon,
+  Disc3 as DiscIcon,
   Mail as EnvelopeIcon,
   Heart as HeartIcon,
+  House as HomeIcon,
   Moon as MoonIcon,
   Music as MusicalNoteIcon,
-  ListMusic as QueueListIcon,
   Radio as RadioIcon,
   Sparkles as SparklesIcon,
   Sun as SunIcon,
+  UserRound as UserIcon,
 } from "lucide-react";
 import type { Playlist } from "../../api";
 import { useAuth } from "../../context/Auth";
@@ -27,12 +29,36 @@ import SidebarPlaylists from "./SidebarPlaylists";
 type NavItemCfg = {
   label: string;
   to: string;
-  icon: typeof QueueListIcon;
+  icon: typeof HeartIcon;
 };
 
-const BROWSE: NavItemCfg[] = [
-  { label: "Tracks", to: "/library", icon: QueueListIcon },
+type LibraryView = "tracks" | "albums" | "artists";
+
+// Tracks, Albums and Artists are tabs of one /library page.
+const BROWSE: (NavItemCfg & { view: LibraryView })[] = [
+  { label: "Tracks", to: "/library", icon: MusicalNoteIcon, view: "tracks" },
+  { label: "Albums", to: "/library?view=albums", icon: DiscIcon, view: "albums" },
+  { label: "Artists", to: "/library?view=artists", icon: UserIcon, view: "artists" },
 ];
+
+const VIEW_FOR_TYPE: Record<string, LibraryView> = {
+  track: "tracks",
+  album: "albums",
+  artist: "artists",
+};
+
+/** Which Browse entry a /library URL belongs to; mirrors Library's own tab
+ *  choice, with an open album or artist counting as its tab. Albums first,
+ *  like Library's drill-down: an album opened from an artist keeps the
+ *  artist param, but the album is what shows. */
+function libraryViewOf(search: string): LibraryView {
+  const params = new URLSearchParams(search);
+  if (params.has("album") || params.has("tidalAlbum")) return "albums";
+  if (params.has("artist") || params.has("tidalArtist")) return "artists";
+  const view = params.get("view");
+  if (view === "tracks" || view === "albums" || view === "artists") return view;
+  return VIEW_FOR_TYPE[params.get("type") ?? ""] ?? "tracks";
+}
 
 const LIBRARY: NavItemCfg[] = [
   { label: "Favorites", to: "/favorites", icon: HeartIcon },
@@ -56,7 +82,9 @@ export default function Sidebar({
   onAddMusic: () => void;
   onOpenTweaks: () => void;
 }) {
-  const { me } = useAuth();
+  const location = useLocation();
+  const libraryView =
+    location.pathname === "/library" ? libraryViewOf(location.search) : null;
   return (
     <aside
       id="app-sidebar"
@@ -74,7 +102,7 @@ export default function Sidebar({
         <div className="nav-section-title">Browse</div>
         <NavItem
           to="/"
-          icon={<MusicalNoteIcon className="nav-icon" />}
+          icon={<HomeIcon className="nav-icon" />}
           label="Home"
           end
         />
@@ -84,6 +112,7 @@ export default function Sidebar({
             to={i.to}
             icon={<i.icon className="nav-icon" />}
             label={i.label}
+            active={libraryView === i.view}
           />
         ))}
         {fh6RadioEnabled && (
@@ -109,13 +138,6 @@ export default function Sidebar({
             icon={<EnvelopeIcon className="nav-icon" />}
             label="Invites"
             badge={pendingCount}
-          />
-        )}
-        {me?.role === "admin" && (
-          <NavItem
-            to="/admin"
-            icon={<Cog6ToothIcon className="nav-icon" />}
-            label="Admin"
           />
         )}
       </div>
@@ -197,6 +219,16 @@ function SidebarFooter() {
           {me?.role === "admin" ? "admin" : "local library"}
         </div>
       </div>
+      {me?.role === "admin" && (
+        <NavLink
+          to="/admin"
+          className={({ isActive }) => "iconbtn" + (isActive ? " active" : "")}
+          title="Admin"
+          aria-label="Admin"
+        >
+          <Cog6ToothIcon className="size-4" />
+        </NavLink>
+      )}
       {!isElectron() && (
         <button
           className="iconbtn"

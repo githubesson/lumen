@@ -317,8 +317,9 @@
     flex: 1 1 120px;
   }
 
+  .shelf-scroller,
   .shelf {
-    grid-auto-columns: min(42vw, 168px);
+    --shelf-col: min(42vw, 168px);
   }
 
   .playlist-toolbar {
@@ -407,8 +408,9 @@
     width: min(100%, 196px);
   }
 
+  .shelf-scroller,
   .shelf {
-    grid-auto-columns: min(40vw, 152px);
+    --shelf-col: min(40vw, 152px);
   }
 
   html:not([data-mini-player]) .player-bar .transport-row > button:first-of-type,

@@ -10,6 +10,7 @@ import { Button } from "../../components/Button";
 import ErrorBanner from "../../components/ErrorBanner";
 import EmptyState from "../../components/EmptyState";
 import { Field, NativeSelect, TextInput } from "../../components/Field";
+import { fmtDate } from "../../lib/format";
 
 export default function CollaboratorsPanel({
   playlistId,
@@ -132,7 +133,7 @@ export default function CollaboratorsPanel({
                   style={{ fontSize: 12, color: "var(--muted-foreground)" }}
                 >
                   {c.status === "pending" ? "Invite pending" : "Accepted"} ·{" "}
-                  {new Date(c.invited_at).toLocaleDateString()}
+                  {fmtDate(c.invited_at)}
                 </div>
               </div>
               {isOwner && c.status === "accepted" ? (

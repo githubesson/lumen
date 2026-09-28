@@ -529,6 +529,24 @@ describe("browse templates", () => {
     expect(template.sections[0].header).toBe("2 playlists");
   });
 
+  it("gives playlist rows their own cover, else their first track's", () => {
+    const template = buildPlaylistsTemplate({
+      limits: LIMITS,
+      playlists: [
+        { ...playlists[0], id: "custom", custom_cover: "abc", cover: { track_id: "t1", album_id: "a1" } },
+        { ...playlists[0], id: "tracks", cover: { track_id: "t2", album_id: "a2" } },
+        playlists[0],
+      ],
+    });
+    const rows = allItems(template);
+
+    expect(rows[0].imageUrl).toContain("/api/playlists/custom/cover?v=abc");
+    expect(rows[1].imageUrl).toContain("/api/albums/a2/cover");
+    // No tracks yet: the symbol alone, not a broken image.
+    expect(rows[2].imageUrl).toBeUndefined();
+    expect(rows[2].symbol).toBe(rows[1].symbol);
+  });
+
   it("builds album rows with their cover and their artist", () => {
     const template = buildAlbumsTemplate({ limits: LIMITS, albums });
     const rows = allItems(template);

@@ -455,6 +455,17 @@ export const api = {
   deletePlaylist: (id: string) =>
     requestVoid(`/api/playlists/${pathID(id)}`, { method: "DELETE" }),
   /** Admin-only: save the playlist's TIDAL tracks into the server library. */
+  // Give a playlist its own cover (see `setAlbumCover` for `file`). Owner
+  // only; returns the updated playlist.
+  setPlaylistCover: (id: string, file: CoverUploadFile) => {
+    const fd = new FormData();
+    fd.append("file", file as unknown as Blob);
+    return request<Playlist>(`/api/playlists/${pathID(id)}/cover`, { method: "PUT", body: fd });
+  },
+  // Go back to the first track's art. Owner only.
+  removePlaylistCover: (id: string) =>
+    request<Playlist>(`/api/playlists/${pathID(id)}/cover`, { method: "DELETE" }),
+
   setPlaylistTidalAutoDownload: (id: string, enabled: boolean) =>
     requestVoid(`/api/playlists/${pathID(id)}/tidal-auto-download`, {
       method: "PUT",
@@ -702,6 +713,20 @@ export interface Playlist {
   effective_role?: EffectiveRole;
   created_at: string;
   updated_at: string;
+  /** Set when the owner uploaded a cover: pass it to `playlistCoverUrl`. It
+   *  changes with the image, so the URL never serves a stale copy. */
+  custom_cover?: string;
+  /** The track whose art stands for the playlist when there's no custom
+   *  cover. Only on `listPlaylists`, and absent when the playlist has no
+   *  tracks you can see. */
+  cover?: PlaylistCover;
+}
+
+/** Pass to `trackCoverUrl` as `{ id: track_id, album_id, cover_url }`. */
+export interface PlaylistCover {
+  track_id: string;
+  album_id?: string;
+  cover_url?: string;
 }
 
 export interface PlaylistTrackEntry {

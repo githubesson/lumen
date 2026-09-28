@@ -16,6 +16,7 @@ import { SymbolView } from "expo-symbols";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, useAuth, type Playlist } from "@music-library/core";
 import { EmptyState } from "../components/empty-state";
+import { PlaylistArtwork } from "../components/playlist-artwork";
 import { TRACK_FLASH_LIST_PERFORMANCE_PROPS } from "../components/list-performance";
 import { qk } from "../lib/query-keys";
 import { usePullToRefresh } from "../lib/use-pull-to-refresh";
@@ -345,23 +346,13 @@ function PlaylistPickerRow({
         },
       ]}
     >
-      <View
-        style={[
-          styles.art,
-          {
-            borderRadius: theme.radius.md,
-            backgroundColor: collaborative
-              ? theme.color.bgElev2
-              : theme.color.bgElev1,
-          },
-        ]}
-      >
-        <SymbolView
-          name={collaborative ? "person.2.fill" : "music.note.list"}
-          size={24}
-          tintColor={theme.color.fgMuted}
-        />
-      </View>
+      <PlaylistArtwork
+        playlist={playlist}
+        size={56}
+        glyphSize={24}
+        radius={theme.radius.md}
+        background={collaborative ? theme.color.bgElev2 : theme.color.bgElev1}
+      />
       <View
         style={[
           styles.rowBody,
@@ -424,14 +415,6 @@ const styles = StyleSheet.create({
     minHeight: 74,
     flexDirection: "row",
     alignItems: "center",
-  },
-  art: {
-    width: 56,
-    height: 56,
-    alignItems: "center",
-    justifyContent: "center",
-    borderCurve: "continuous",
-    overflow: "hidden",
   },
   rowBody: {
     minHeight: 74,
