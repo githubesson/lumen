@@ -1,6 +1,7 @@
 import type { DiscordActivityPayload } from "../electron";
 import type { ExportTrackFileItem } from "../electron";
 import type { Tweaks as ElectronTweaks } from "../electron";
+import type { MiniPlayerPanelAnchor } from "../electron";
 
 type ElectronApi = NonNullable<Window["electron"]>;
 
@@ -34,9 +35,18 @@ export function isElectron(): boolean {
   return !!electron();
 }
 
-/** Whether the desktop shell can toggle the compact mini-player window. */
+/**
+ * Whether the desktop shell can toggle the compact mini-player window. Its
+ * queue, lyrics and device views live in a panel the window grows for, so a
+ * shell without the panel calls doesn't get a mini player at all.
+ */
 export function canSetMiniPlayer(): boolean {
-  return !!electron()?.setMiniPlayerMode;
+  const bridge = electron();
+  return (
+    !!bridge?.setMiniPlayerMode &&
+    !!bridge.getMiniPlayerPanelAnchor &&
+    !!bridge.setMiniPlayerPanel
+  );
 }
 
 /** Whether the desktop shell can export many track streams into a chosen folder. */
@@ -48,6 +58,19 @@ export function setMiniPlayerMode(enabled: boolean) {
   return (
     electron()?.setMiniPlayerMode?.(enabled) ??
     Promise.resolve({ ok: false, miniPlayer: false })
+  );
+}
+
+export function getMiniPlayerPanelAnchor(): Promise<MiniPlayerPanelAnchor> {
+  return (
+    electron()?.getMiniPlayerPanelAnchor?.() ?? Promise.resolve("top" as const)
+  );
+}
+
+export function setMiniPlayerPanel(open: boolean) {
+  return (
+    electron()?.setMiniPlayerPanel?.(open) ??
+    Promise.resolve({ ok: false, open: false, anchor: "top" as const })
   );
 }
 

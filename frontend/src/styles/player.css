@@ -346,6 +346,8 @@ html[data-mini-player] .app {
 
 html[data-mini-player] .player-shell {
   height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 html[data-mini-player] .remote-control-indicator {
@@ -361,7 +363,10 @@ html[data-mini-player] .main {
 
 html[data-mini-player] .player-bar {
   --mini-art-size: clamp(48px, calc(100dvh - 24px), 152px);
-  height: 100vh;
+  /* --mini-bar-h keeps the bar its own size while the window is grown for
+     the panel but the bar isn't showing it (mini-player-panel.css). */
+  height: var(--mini-bar-h, 100vh);
+  flex: none;
   min-height: 0;
   padding: 12px;
   display: grid;
@@ -375,6 +380,11 @@ html[data-mini-player] .player-bar {
   border: 1px solid var(--border);
   background: var(--background);
   -webkit-app-region: drag;
+}
+
+/* The window grew upward for the panel: the bar stays on the bottom edge. */
+html[data-mini-player] .player-bar[data-mini-anchor="bottom"] {
+  margin-top: auto;
 }
 
 html[data-mini-player] .np {
@@ -404,6 +414,14 @@ html[data-mini-player] .np-text {
   height: auto;
   min-width: 0;
   padding-right: 8px;
+}
+
+/* Content-sized (up to the column), so the panel morph moves the text itself
+   rather than a box of empty space (mini-player-panel.css). */
+html[data-mini-player] .np-title,
+html[data-mini-player] .np-artist {
+  width: fit-content;
+  max-width: 100%;
 }
 
 html[data-mini-player] .np-title {

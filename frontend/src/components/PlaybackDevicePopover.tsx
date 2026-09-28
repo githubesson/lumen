@@ -20,24 +20,14 @@ import { useTransitionMount } from "../lib/useTransitionMount";
 interface Props {
   open: boolean;
   anchor: HTMLElement | null;
-  miniPlayerMode?: boolean;
   onClose: () => void;
 }
 
 export default function PlaybackDevicePopover({
   open,
   anchor,
-  miniPlayerMode = false,
   onClose,
 }: Props) {
-  const { isPlaying, current } = usePlayer();
-  const {
-    connected,
-    remoteDevices,
-    targetDeviceId,
-    lastCommandResult,
-    selectTarget,
-  } = useRemotePlayback();
   const ref = useRef<HTMLDivElement>(null);
 
   useDismiss(ref, {
@@ -52,17 +42,9 @@ export default function PlaybackDevicePopover({
   if (!mounted || !anchor) return null;
 
   const rect = anchor.getBoundingClientRect();
-  const width = miniPlayerMode
-    ? Math.min(300, window.innerWidth - 24)
-    : 300;
+  const width = 300;
   const bottom = Math.max(12, window.innerHeight - rect.top + 8);
   const right = Math.max(12, window.innerWidth - rect.right);
-  const error =
-    lastCommandResult && lastCommandResult.status !== "applied"
-      ? lastCommandResult.error || `Command ${lastCommandResult.status}`
-      : null;
-
-  const localPlaying = !targetDeviceId && isPlaying && !!current;
 
   return createPortal(
     <div
@@ -80,14 +62,7 @@ export default function PlaybackDevicePopover({
     >
       <div className="device-pop-head">
         <span className="device-pop-title">Play on</span>
-        <span
-          className="device-pop-status"
-          data-online={connected || undefined}
-          title={connected ? "Connected to your server" : "Reconnecting to your server"}
-        >
-          <span className="device-pop-status-dot" aria-hidden="true" />
-          {connected ? "Live" : "Reconnecting"}
-        </span>
+        <DeviceConnectionStatus />
         <span style={{ flex: 1 }} />
         <button
           type="button"
@@ -99,6 +74,44 @@ export default function PlaybackDevicePopover({
         </button>
       </div>
 
+      <DeviceList onSelected={onClose} />
+    </div>,
+    document.body,
+  );
+}
+
+/** The "Live" pill: whether this app is connected to your server. */
+export function DeviceConnectionStatus() {
+  const { connected } = useRemotePlayback();
+  return (
+    <span
+      className="device-pop-status"
+      data-online={connected || undefined}
+      title={connected ? "Connected to your server" : "Reconnecting to your server"}
+    >
+      <span className="device-pop-status-dot" aria-hidden="true" />
+      {connected ? "Live" : "Reconnecting"}
+    </span>
+  );
+}
+
+/**
+ * This device and every other online one; pick one to play there. Shared by
+ * the device popover and the mini player's device panel.
+ */
+export function DeviceList({ onSelected }: { onSelected?: () => void }) {
+  const { isPlaying, current } = usePlayer();
+  const { remoteDevices, targetDeviceId, lastCommandResult, selectTarget } =
+    useRemotePlayback();
+  const error =
+    lastCommandResult && lastCommandResult.status !== "applied"
+      ? lastCommandResult.error || `Command ${lastCommandResult.status}`
+      : null;
+
+  const localPlaying = !targetDeviceId && isPlaying && !!current;
+
+  return (
+    <>
       <div className="device-pop-body">
         <DeviceRow
           icon={<LocalIcon aria-hidden="true" />}
@@ -114,7 +127,7 @@ export default function PlaybackDevicePopover({
           playing={localPlaying}
           onSelect={() => {
             selectTarget(null);
-            onClose();
+            onSelected?.();
           }}
         />
 
@@ -138,7 +151,7 @@ export default function PlaybackDevicePopover({
                 playing={!!title && !!device.activity?.is_playing}
                 onSelect={() => {
                   selectTarget(device.deviceId);
-                  onClose();
+                  onSelected?.();
                 }}
               />
             );
@@ -163,8 +176,7 @@ export default function PlaybackDevicePopover({
           {error}
         </div>
       )}
-    </div>,
-    document.body,
+    </>
   );
 }
 

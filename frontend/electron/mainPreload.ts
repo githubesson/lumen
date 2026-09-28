@@ -22,6 +22,10 @@ const api: ElectronApi = {
   setTitleBarTheme: (opts) => ipcRenderer.invoke("titlebar:theme", opts),
   setMiniPlayerMode: (enabled) =>
     ipcRenderer.invoke("window:mini-player:set", enabled),
+  getMiniPlayerPanelAnchor: () =>
+    ipcRenderer.invoke("window:mini-player:panel-anchor"),
+  setMiniPlayerPanel: (open) =>
+    ipcRenderer.invoke("window:mini-player:panel", open),
   minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
   toggleMaximizeWindow: () => ipcRenderer.invoke("window:maximize-toggle"),
   closeWindow: () => ipcRenderer.invoke("window:close"),

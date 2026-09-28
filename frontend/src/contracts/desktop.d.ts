@@ -3,6 +3,8 @@
 export type Theme = "light" | "dark";
 export type Density = "airy" | "balanced" | "dense";
 export type Layout = "compact" | "sidebar" | "wide";
+/** The window edge that stays put while the mini player's panel is open. */
+export type MiniPlayerPanelAnchor = "top" | "bottom";
 
 export interface Tweaks {
   theme: Theme;
@@ -148,6 +150,12 @@ export interface ElectronApi {
   setMiniPlayerMode(
     enabled: boolean,
   ): Promise<{ ok: boolean; miniPlayer: boolean }>;
+  getMiniPlayerPanelAnchor(): Promise<MiniPlayerPanelAnchor>;
+  setMiniPlayerPanel(open: boolean): Promise<{
+    ok: boolean;
+    open: boolean;
+    anchor: MiniPlayerPanelAnchor;
+  }>;
   minimizeWindow(): Promise<{ ok: boolean }>;
   toggleMaximizeWindow(): Promise<{ ok: boolean; maximized?: boolean }>;
   closeWindow(): Promise<{ ok: boolean }>;
@@ -175,6 +183,8 @@ export interface ElectronApi {
 
 // Older desktop builds may not expose these methods to a newer web renderer.
 type OptionalRendererMethods =
+  | "getMiniPlayerPanelAnchor"
+  | "setMiniPlayerPanel"
   | "setDiscordActivity"
   | "clearDiscordActivity"
   | "exportTrackFiles"

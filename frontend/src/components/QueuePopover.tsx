@@ -6,7 +6,10 @@ import { usePlayer, useRemotePlayback } from "../context/Player";
 import { useDismiss } from "../lib/useDismiss";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import CoverArt from "./CoverArt";
-import { useTrackContextMenu } from "./TrackContextMenu";
+import {
+  useContextMenuClickGuard,
+  useTrackContextMenu,
+} from "./TrackContextMenu";
 
 interface ExternalQueueTrack {
   id: string;
@@ -15,17 +18,21 @@ interface ExternalQueueTrack {
   album?: string;
 }
 
+/** A queue this app doesn't own, e.g. the Lumen Radio bridge's. */
+export interface ExternalQueue {
+  title: string;
+  currentIndex: number;
+  tracks: ExternalQueueTrack[];
+  onJump?: (index: number) => void;
+}
+
+type BindTrackContext = ReturnType<typeof useTrackContextMenu>["bind"];
+
 interface Props {
   open: boolean;
   /** Element the popover anchors above; usually the queue button. */
   anchor: HTMLElement | null;
-  miniPlayerMode?: boolean;
-  externalQueue?: {
-    title: string;
-    currentIndex: number;
-    tracks: ExternalQueueTrack[];
-    onJump?: (index: number) => void;
-  };
+  externalQueue?: ExternalQueue;
   onClose: () => void;
 }
 
@@ -37,13 +44,11 @@ interface Props {
 export default function QueuePopover({
   open,
   anchor,
-  miniPlayerMode = false,
   externalQueue,
   onClose,
 }: Props) {
-  const { queue, index, jumpTo, current } = usePlayer();
   const { targetDevice } = useRemotePlayback();
-  const remoteQueue = targetDevice?.queue;
+  const position = useQueuePosition(externalQueue);
   const ref = useRef<HTMLDivElement>(null);
   // Same right-click menu as every other track list. Only for this app's
   // own queue: a remote device's or the bridge's rows aren't ours to act on.
@@ -69,34 +74,9 @@ export default function QueuePopover({
   });
 
   // The queue stops mousedown from bubbling, so the row menu never sees
-  // clicks inside it. Route them here instead: with the menu open, a click in
-  // the queue only closes the menu (the click itself is swallowed, so it
-  // can't also play a row and close the queue).
-  const swallowClick = useRef(false);
-  // The menu is portaled but still a React child of the queue, so its own
-  // clicks pass through these handlers too; leave those alone.
-  const inMenu = (e: React.SyntheticEvent) =>
-    e.target instanceof Element && !!e.target.closest(".ctx-menu");
-  const onMouseDownCapture = (e: React.MouseEvent) => {
-    if (inMenu(e)) return;
-    swallowClick.current = ctxOpen && e.button === 0;
-    if (swallowClick.current) {
-      // Only this gesture's click: if it's released elsewhere (no click
-      // here), don't let the flag eat a later one, e.g. a keyboard Enter.
-      window.addEventListener(
-        "mouseup",
-        () => window.setTimeout(() => (swallowClick.current = false), 0),
-        { once: true, capture: true },
-      );
-    }
-    if (ctxOpen) closeCtx();
-  };
-  const onClickCapture = (e: React.MouseEvent) => {
-    if (inMenu(e) || !swallowClick.current) return;
-    swallowClick.current = false;
-    e.preventDefault();
-    e.stopPropagation();
-  };
+  // clicks inside it; the guard closes it instead, and swallows the click so
+  // it can't also play a row and close the queue.
+  const clickGuard = useContextMenuClickGuard(closeCtx);
 
   // The menu belongs to a queue row; it goes when the queue does.
   useEffect(() => {
@@ -107,43 +87,16 @@ export default function QueuePopover({
 
   if (!mounted || !anchor) return null;
 
-  const anchorRect = anchor.getBoundingClientRect();
-  const stackRect = miniPlayerMode ? getMiniControlsRect(anchor) : null;
-  const rect = stackRect ?? anchorRect;
-  const width = miniPlayerMode ? rect.width : 360;
-  const maxHeight = miniPlayerMode
-    ? rect.height
-    : Math.min(440, window.innerHeight - 120);
-  const bottom = miniPlayerMode
-    ? Math.max(0, window.innerHeight - rect.bottom)
-    : Math.max(12, window.innerHeight - rect.top + 8);
+  const rect = anchor.getBoundingClientRect();
+  const width = 360;
+  const maxHeight = Math.min(440, window.innerHeight - 120);
+  const bottom = Math.max(12, window.innerHeight - rect.top + 8);
   const right = Math.max(12, window.innerWidth - rect.right);
-
-  const usingExternal = !!externalQueue;
-  const externalTracks = externalQueue?.tracks ?? [];
-  const externalIndex = clampIndex(
-    externalQueue?.currentIndex ?? 0,
-    externalTracks.length,
-  );
-  const externalCurrent = externalTracks[externalIndex];
-  const externalUpcoming = externalTracks.slice(externalIndex + 1);
-  const localUpcoming = queue.slice(index + 1);
-  const upcoming = usingExternal ? externalUpcoming : localUpcoming;
-  const isEmpty = usingExternal
-    ? externalTracks.length === 0
-    : !current && queue.length === 0;
-  const position = usingExternal
-    ? externalTracks.length > 0
-      ? `${externalIndex + 1} / ${externalTracks.length}`
-      : null
-    : current
-      ? `${(remoteQueue?.offset ?? 0) + index + 1} / ${remoteQueue?.total ?? queue.length}`
-      : null;
 
   return createPortal(
     <div
       ref={ref}
-      className={"queue-pop" + (miniPlayerMode ? " queue-pop-mini" : "")}
+      className="queue-pop"
       data-closed={!visible || undefined}
       // Mounted only to play its exit: pointer-events alone would still
       // leave these controls tabbable and exposed to assistive tech.
@@ -153,8 +106,8 @@ export default function QueuePopover({
       style={{ bottom, right, width, maxHeight }}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
-      onMouseDownCapture={onMouseDownCapture}
-      onClickCapture={onClickCapture}
+      onMouseDownCapture={clickGuard.onMouseDownCapture}
+      onClickCapture={clickGuard.onClickCapture}
     >
       <div className="queue-pop-head">
         <span className="queue-pop-title-h">{externalQueue?.title ?? "Queue"}</span>
@@ -171,84 +124,11 @@ export default function QueuePopover({
       </div>
 
       <div className="queue-pop-body">
-        {isEmpty ? (
-          <div className="queue-pop-empty">
-            <MusicalNoteIcon className="size-5" aria-hidden="true" />
-            <span>
-              {usingExternal ? "No bridge queue loaded." : "Play something to start a queue."}
-            </span>
-          </div>
-        ) : (
-          <>
-            {(usingExternal ? externalCurrent : current) && (
-              <>
-                <div className="queue-pop-heading">Now playing</div>
-                {usingExternal && externalCurrent ? (
-                  <QueueRow
-                    title={externalCurrent.title}
-                    artist={externalCurrent.artist ?? externalCurrent.album}
-                    active
-                  />
-                ) : current ? (
-                  <QueueRow
-                    title={current.title}
-                    artist={current.artist}
-                    coverUrl={trackCoverUrl(current)}
-                    active
-                    onContextMenu={
-                      canContext
-                        ? bindCtx(current, { queue, onPlay: () => jumpTo(index) })
-                        : undefined
-                    }
-                  />
-                ) : null}
-              </>
-            )}
-
-            {upcoming.length > 0 ? (
-              <>
-                <div className="queue-pop-heading">
-                  Up next · {upcoming.length}
-                </div>
-                {usingExternal
-                  ? externalUpcoming.map((t, i) => (
-                    <QueueRow
-                      key={`${t.id}-${externalIndex + 1 + i}`}
-                      title={t.title}
-                      artist={t.artist ?? t.album}
-                      onClick={
-                        externalQueue?.onJump
-                          ? () => {
-                              externalQueue.onJump?.(externalIndex + 1 + i);
-                              onClose();
-                            }
-                          : undefined
-                      }
-                    />
-                  ))
-                  : localUpcoming.map((t, i) => (
-                    <QueueRow
-                      key={`${t.id}-${index + 1 + i}`}
-                      title={t.title}
-                      artist={t.artist}
-                      coverUrl={trackCoverUrl(t)}
-                      onClick={() => {
-                        jumpTo(index + 1 + i);
-                        onClose();
-                      }}
-                      onContextMenu={
-                        canContext
-                          ? bindCtx(t, { queue, onPlay: () => jumpTo(index + 1 + i) })
-                          : undefined
-                      }
-                    />
-                  ))}
-              </>
-            ) : (
-              <div className="queue-pop-hint">Nothing queued after this.</div>
-            )}
-          </>
-        )}
+        <QueueList
+          externalQueue={externalQueue}
+          bindCtx={canContext ? bindCtx : undefined}
+          onJumped={onClose}
+        />
       </div>
       {ctxMenu}
     </div>,
@@ -261,21 +141,125 @@ function clampIndex(index: number, length: number) {
   return Math.max(0, Math.min(index, length - 1));
 }
 
-function getMiniControlsRect(anchor: HTMLElement): DOMRect | null {
-  const player = anchor.closest(".player-bar");
-  const transport = player?.querySelector(".transport-row");
-  const utility = player?.querySelector(".utility");
-  if (!(transport instanceof HTMLElement) || !(utility instanceof HTMLElement)) {
-    return null;
+/** "12 / 40": where playback is in the queue, or null with nothing playing. */
+export function useQueuePosition(externalQueue?: ExternalQueue): string | null {
+  const { queue, index, current } = usePlayer();
+  const { targetDevice } = useRemotePlayback();
+  const remoteQueue = targetDevice?.queue;
+  if (externalQueue) {
+    const total = externalQueue.tracks.length;
+    if (total === 0) return null;
+    return `${clampIndex(externalQueue.currentIndex, total) + 1} / ${total}`;
+  }
+  if (!current) return null;
+  return `${(remoteQueue?.offset ?? 0) + index + 1} / ${remoteQueue?.total ?? queue.length}`;
+}
+
+/**
+ * The now-playing row and everything after it. Click a row to jump playback
+ * there. Shared by the queue popover and the mini player's queue panel.
+ */
+export function QueueList({
+  externalQueue,
+  bindCtx,
+  onJumped,
+}: {
+  externalQueue?: ExternalQueue;
+  /** Right-click menu for this app's own queue rows. */
+  bindCtx?: BindTrackContext;
+  /** Called after a row click jumps playback. */
+  onJumped?: () => void;
+}) {
+  const { queue, index, jumpTo, current } = usePlayer();
+
+  const usingExternal = !!externalQueue;
+  const externalTracks = externalQueue?.tracks ?? [];
+  const externalIndex = clampIndex(
+    externalQueue?.currentIndex ?? 0,
+    externalTracks.length,
+  );
+  const externalCurrent = externalTracks[externalIndex];
+  const externalUpcoming = externalTracks.slice(externalIndex + 1);
+  const localUpcoming = queue.slice(index + 1);
+  const upcoming = usingExternal ? externalUpcoming : localUpcoming;
+  const isEmpty = usingExternal
+    ? externalTracks.length === 0
+    : !current && queue.length === 0;
+
+  if (isEmpty) {
+    return (
+      <div className="queue-pop-empty">
+        <MusicalNoteIcon className="size-5" aria-hidden="true" />
+        <span>
+          {usingExternal ? "No bridge queue loaded." : "Play something to start a queue."}
+        </span>
+      </div>
+    );
   }
 
-  const top = transport.getBoundingClientRect();
-  const bottom = utility.getBoundingClientRect();
-  const left = Math.min(top.left, bottom.left);
-  const right = Math.max(top.right, bottom.right);
-  const y = Math.min(top.top, bottom.top);
-  const height = Math.max(top.bottom, bottom.bottom) - y;
-  return new DOMRect(left, y, right - left, height);
+  return (
+    <>
+      {(usingExternal ? externalCurrent : current) && (
+        <>
+          <div className="queue-pop-heading">Now playing</div>
+          {usingExternal && externalCurrent ? (
+            <QueueRow
+              title={externalCurrent.title}
+              artist={externalCurrent.artist ?? externalCurrent.album}
+              active
+            />
+          ) : current ? (
+            <QueueRow
+              title={current.title}
+              artist={current.artist}
+              coverUrl={trackCoverUrl(current)}
+              active
+              onContextMenu={bindCtx?.(current, { queue, onPlay: () => jumpTo(index) })}
+            />
+          ) : null}
+        </>
+      )}
+
+      {upcoming.length > 0 ? (
+        <>
+          <div className="queue-pop-heading">
+            Up next · {upcoming.length}
+          </div>
+          {usingExternal
+            ? externalUpcoming.map((t, i) => (
+              <QueueRow
+                key={`${t.id}-${externalIndex + 1 + i}`}
+                title={t.title}
+                artist={t.artist ?? t.album}
+                onClick={
+                  externalQueue?.onJump
+                    ? () => {
+                        externalQueue.onJump?.(externalIndex + 1 + i);
+                        onJumped?.();
+                      }
+                    : undefined
+                }
+              />
+            ))
+            : localUpcoming.map((t, i) => (
+              <QueueRow
+                key={`${t.id}-${index + 1 + i}`}
+                title={t.title}
+                artist={t.artist}
+                coverUrl={trackCoverUrl(t)}
+                onClick={() => {
+                  jumpTo(index + 1 + i);
+                  onJumped?.();
+                }}
+                onContextMenu={bindCtx?.(t, { queue, onPlay: () => jumpTo(index + 1 + i) })}
+              />
+            ))}
+        </>
+      ) : (
+        <div className="queue-pop-hint">Nothing queued after this.</div>
+      )}
+    </>
+  );
 }
 
 function QueueRow({

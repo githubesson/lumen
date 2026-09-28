@@ -1,5 +1,5 @@
 /* ============================================================
-   Queue popover (anchored above the mini-player queue button)
+   Queue and device popovers (anchored above the player bar's buttons)
    ============================================================ */
 .device-pop {
   z-index: 96;
@@ -246,32 +246,6 @@
   z-index: 1;
 }
 
-.queue-pop-mini {
-  border-radius: var(--radius-xl);
-  transition: none;
-}
-
-.queue-pop-mini .queue-pop-body {
-  padding-bottom: 6px;
-}
-
-.queue-pop-mini .queue-pop-row {
-  padding: 5px 8px;
-}
-
-.queue-pop-mini .queue-pop-art {
-  width: 30px;
-  height: 30px;
-  flex-basis: 30px;
-}
-
-.queue-pop-mini .queue-pop-title {
-  font-size: 12px;
-}
-
-.queue-pop-mini .queue-pop-artist {
-  font-size: 12px;
-}
 .queue-pop[data-closed],
 .device-pop[data-closed] {
   opacity: 0;
@@ -289,11 +263,6 @@
   .queue-pop,
   .device-pop {
     transition: opacity var(--dur-menu) var(--ease-out);
-  }
-  /* Equal specificity to the rule above and declared after it, so the mini
-     player's deliberate opt-out survives reduced motion too. */
-  .queue-pop-mini {
-    transition: none;
   }
   .queue-pop[data-closed],
   .device-pop[data-closed] {

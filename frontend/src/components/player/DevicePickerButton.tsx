@@ -2,11 +2,13 @@ import { useState } from "react";
 import { Monitor as ComputerDesktopIcon } from "lucide-react";
 import { useRemotePlayback } from "../../context/Player";
 import PlaybackDevicePopover from "../PlaybackDevicePopover";
+import { usePopoverOpen, type MiniPanelToggle } from "./useMiniPlayerMode";
 
 export default function DevicePickerButton({
-  miniPlayerMode,
+  panel,
 }: {
-  miniPlayerMode: boolean;
+  /** In the mini player the picker opens in its panel instead of a popover. */
+  panel?: MiniPanelToggle;
 }) {
   const { targetDevice, commandPending, lastCommandResult } =
     useRemotePlayback();
@@ -15,7 +17,8 @@ export default function DevicePickerButton({
   // render under concurrent React (nor would it re-render the popover when it
   // lands).
   const [deviceBtn, setDeviceBtn] = useState<HTMLButtonElement | null>(null);
-  const [deviceOpen, setDeviceOpen] = useState(false);
+  const [deviceOpen, setDeviceOpen] = usePopoverOpen(!!panel);
+  const open = panel ? panel.open : deviceOpen;
   const isRemoteMode = !!targetDevice;
   const commandError =
     lastCommandResult && lastCommandResult.status !== "applied"
@@ -29,7 +32,7 @@ export default function DevicePickerButton({
         type="button"
         className={
           "t-btn device-picker-btn" +
-          (isRemoteMode || deviceOpen ? " active" : "") +
+          (isRemoteMode || open ? " active" : "") +
           (commandPending ? " pending" : "") +
           (commandError ? " error" : "")
         }
@@ -45,8 +48,9 @@ export default function DevicePickerButton({
             ? `Playback device: ${targetDevice.deviceName}`
             : "Choose playback device"
         }
-        aria-expanded={deviceOpen}
-        onClick={() => setDeviceOpen((open) => !open)}
+        aria-expanded={open}
+        aria-controls={panel?.controls}
+        onClick={panel ? panel.onToggle : () => setDeviceOpen((v) => !v)}
       >
         <ComputerDesktopIcon className="size-3.5" />
         {isRemoteMode && (
@@ -56,7 +60,6 @@ export default function DevicePickerButton({
       <PlaybackDevicePopover
         open={deviceOpen}
         anchor={deviceBtn}
-        miniPlayerMode={miniPlayerMode}
         onClose={() => setDeviceOpen(false)}
       />
     </>

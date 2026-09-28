@@ -10,7 +10,9 @@ import { useFavorites } from "../context/Favorites";
 import { useLyricsPanel } from "../context/LyricsPanel";
 import { usePlayer } from "../context/Player";
 import { canSetMiniPlayer } from "../lib/platform";
+import type { ExternalQueue } from "./QueuePopover";
 import DevicePickerButton from "./player/DevicePickerButton";
+import MiniPlayerPanel from "./player/MiniPlayerPanel";
 import NowPlaying from "./player/NowPlaying";
 import QueueButton from "./player/QueueButton";
 import Transport from "./player/Transport";
@@ -43,8 +45,25 @@ export default function MiniPlayer() {
 
   const fav = displayCurrent ? isFavorite(displayCurrent.id) : false;
   const { bind: bindCtx, menu: trackCtxMenu } = useTrackContextMenu();
-  const { miniPlayerMode, toggleMiniPlayerMode } = useMiniPlayerMode();
+  const {
+    miniPlayerMode,
+    toggleMiniPlayerMode,
+    panel,
+    swapDirection,
+    anchor,
+    barHeight,
+    panelToggle,
+  } = useMiniPlayerMode();
   const canResizeWindow = canSetMiniPlayer();
+  const lyricsToggle = miniPlayerMode ? panelToggle("lyrics") : null;
+  const externalQueue: ExternalQueue | undefined = isFH6Mode
+    ? {
+        title: "Lumen Radio Queue",
+        tracks: fh6Snapshot?.queue ?? [],
+        currentIndex: fh6Snapshot?.currentIndex ?? 0,
+        onJump: (index) => void fh6Transport("jump", { index }),
+      }
+    : undefined;
 
   return (
     <div className="player-shell">
@@ -53,6 +72,13 @@ export default function MiniPlayer() {
         aria-label="Player"
         data-has-track={displayHasTrack ? "true" : "false"}
         data-playing={displayPlaying ? "true" : "false"}
+        data-mini-panel={(miniPlayerMode && panel) || undefined}
+        data-mini-anchor={miniPlayerMode ? anchor : undefined}
+        style={
+          miniPlayerMode && barHeight
+            ? ({ "--mini-bar-h": `${barHeight}px` } as React.CSSProperties)
+            : undefined
+        }
       >
         {trackCtxMenu}
         <NowPlaying
@@ -82,7 +108,9 @@ export default function MiniPlayer() {
         />
 
         <div className="utility">
-          <DevicePickerButton miniPlayerMode={miniPlayerMode} />
+          <DevicePickerButton
+            panel={miniPlayerMode ? panelToggle("devices") : undefined}
+          />
           <FavoriteButton
             className="t-btn"
             iconClassName="shrink-0"
@@ -94,27 +122,23 @@ export default function MiniPlayer() {
           />
           <button
             type="button"
-            className={"t-btn" + (lyricsOpen ? " active" : "")}
+            className={
+              "t-btn" + ((lyricsToggle?.open ?? lyricsOpen) ? " active" : "")
+            }
             title="Lyrics"
             aria-label="Toggle lyrics panel"
-            aria-pressed={lyricsOpen}
-            disabled={!displayCurrent}
-            onClick={() => setLyricsOpen(!lyricsOpen)}
+            aria-pressed={lyricsToggle?.open ?? lyricsOpen}
+            aria-controls={lyricsToggle?.controls}
+            // The lit tab is the mini panel's close control, so it stays
+            // usable if the track goes away while lyrics are showing.
+            disabled={!displayCurrent && !lyricsToggle?.open}
+            onClick={lyricsToggle?.onToggle ?? (() => setLyricsOpen(!lyricsOpen))}
           >
             <BookOpenIcon className="size-3.5" />
           </button>
           <QueueButton
-            miniPlayerMode={miniPlayerMode}
-            externalQueue={
-              isFH6Mode
-                ? {
-                    title: "Lumen Radio Queue",
-                    tracks: fh6Snapshot?.queue ?? [],
-                    currentIndex: fh6Snapshot?.currentIndex ?? 0,
-                    onJump: (index) => void fh6Transport("jump", { index }),
-                  }
-                : undefined
-            }
+            externalQueue={externalQueue}
+            panel={miniPlayerMode ? panelToggle("queue") : undefined}
           />
           <div className="mini-divider" aria-hidden="true" />
           <VolumeControl
@@ -143,6 +167,14 @@ export default function MiniPlayer() {
             </button>
           )}
         </div>
+
+        {miniPlayerMode && panel && (
+          <MiniPlayerPanel
+            panel={panel}
+            enter={swapDirection}
+            externalQueue={externalQueue}
+          />
+        )}
       </section>
       <RemoteControlIndicator />
     </div>
