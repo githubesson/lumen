@@ -312,10 +312,13 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   const isOwner = role === "owner";
   const canEdit = isOwner || role === "editor";
   const hasSettings = isOwner || isAdmin;
-  // Rows name who added them once someone other than the owner could have.
+  // Rows name who added them on a shared playlist, or once anyone but the
+  // owner has (a playlist made private keeps its collaborators' tracks).
   const showAddedBy =
     playlist.visibility === "collaborative" ||
-    new Set((tracks ?? []).map((t) => t.added_by_id ?? t.added_by)).size > 1;
+    (tracks ?? []).some(
+      (t) => t.added_by_id != null && t.added_by_id !== playlist.owner_id,
+    );
 
   const onPlayAll = () => {
     if (queue.length > 0) play(queue[0], queue);
