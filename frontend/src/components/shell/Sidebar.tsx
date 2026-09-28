@@ -48,11 +48,13 @@ const VIEW_FOR_TYPE: Record<string, LibraryView> = {
 };
 
 /** Which Browse entry a /library URL belongs to; mirrors Library's own tab
- *  choice, with an open album or artist counting as its tab. */
+ *  choice, with an open album or artist counting as its tab. Albums first,
+ *  like Library's drill-down: an album opened from an artist keeps the
+ *  artist param, but the album is what shows. */
 function libraryViewOf(search: string): LibraryView {
   const params = new URLSearchParams(search);
-  if (params.has("artist") || params.has("tidalArtist")) return "artists";
   if (params.has("album") || params.has("tidalAlbum")) return "albums";
+  if (params.has("artist") || params.has("tidalArtist")) return "artists";
   const view = params.get("view");
   if (view === "tracks" || view === "albums" || view === "artists") return view;
   return VIEW_FOR_TYPE[params.get("type") ?? ""] ?? "tracks";
