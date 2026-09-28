@@ -1,4 +1,5 @@
 import { memo } from "react";
+import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
 import type { Playlist } from "@music-library/core";
 import { PlaylistArtwork } from "./playlist-artwork";
@@ -21,7 +22,10 @@ function PlaylistTileImpl({ playlist, size, onPress }: Props) {
   return (
     <ShelfTile
       style={offline && !downloaded ? { opacity: 0.4 } : undefined}
-      onPress={() => onPress(playlist)}
+      onPress={() => {
+        void Haptics.selectionAsync();
+        onPress(playlist);
+      }}
       accessibilityLabel={`${playlist.name}, ${playlist.visibility}`}
       artwork={
         <PlaylistArtwork
