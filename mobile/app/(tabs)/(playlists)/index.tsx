@@ -5,6 +5,7 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
   type ListRenderItemInfo,
 } from "react-native";
@@ -18,7 +19,7 @@ import {
 } from "@music-library/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { EmptyState } from "../../../components/empty-state";
-import { PlaylistRow } from "../../../components/playlist-row";
+import { PlaylistTile } from "../../../components/playlist-tile";
 import { Card, SectionLabel } from "../../../components/primitives";
 import { HeaderIconButton } from "../../../components/header-buttons";
 import {
@@ -28,6 +29,8 @@ import {
 import { qk } from "../../../lib/query-keys";
 import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
+
+const GRID_COLUMNS = 2;
 
 export default function PlaylistsScreen() {
   const theme = useTheme();
@@ -84,51 +87,46 @@ export default function PlaylistsScreen() {
     [router],
   );
 
+  const { width: windowWidth } = useWindowDimensions();
+  const tileSize = Math.floor(
+    (windowWidth - theme.space.lg * (GRID_COLUMNS + 1)) / GRID_COLUMNS,
+  );
+
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<Playlist>) => (
-      <PlaylistRow playlist={item} onPress={onPress} />
+      <PlaylistTile playlist={item} size={tileSize} onPress={onPress} />
     ),
-    [onPress],
+    [onPress, tileSize],
   );
 
   const keyExtractor = useCallback((p: Playlist) => p.id, []);
 
-  const getItemLayout = useCallback(
-    (_: ArrayLike<Playlist> | null | undefined, index: number) => ({
-      length: theme.row.height,
-      offset: theme.row.height * index,
-      index,
-    }),
-    [theme.row.height],
-  );
-
   const invites = invitesQuery.data ?? [];
   const playlists = playlistsQuery.data ?? [];
 
-  const header = (
-    <View>
-      {invites.length > 0 ? (
-        <View style={{ paddingHorizontal: theme.space.lg, gap: 6, marginBottom: theme.space.sm }}>
-          <SectionLabel>Invitations</SectionLabel>
-          <Card style={{ overflow: "hidden" }}>
-            {invites.map((invite, i) => (
-              <InviteRow
-                key={invite.playlist_id}
-                invite={invite}
-                theme={theme}
-                firstRow={i === 0}
-                pending={
-                  acceptMutation.isPending || declineMutation.isPending
-                }
-                onAccept={() => acceptMutation.mutate(invite.playlist_id)}
-                onDecline={() => declineMutation.mutate(invite.playlist_id)}
-              />
-            ))}
-          </Card>
-        </View>
-      ) : null}
-    </View>
-  );
+  // No header cell at all without invites, so the grid starts right under the
+  // title.
+  const header =
+    invites.length > 0 ? (
+      <View style={{ paddingHorizontal: theme.space.lg, gap: 6, marginBottom: theme.space.lg }}>
+        <SectionLabel>Invitations</SectionLabel>
+        <Card style={{ overflow: "hidden" }}>
+          {invites.map((invite, i) => (
+            <InviteRow
+              key={invite.playlist_id}
+              invite={invite}
+              theme={theme}
+              firstRow={i === 0}
+              pending={
+                acceptMutation.isPending || declineMutation.isPending
+              }
+              onAccept={() => acceptMutation.mutate(invite.playlist_id)}
+              onDecline={() => declineMutation.mutate(invite.playlist_id)}
+            />
+          ))}
+        </Card>
+      </View>
+    ) : null;
 
   return (
     <>
@@ -151,12 +149,17 @@ export default function PlaylistsScreen() {
         data={playlists}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
-        getItemLayout={getItemLayout}
+        numColumns={GRID_COLUMNS}
+        columnWrapperStyle={{
+          paddingHorizontal: theme.space.lg,
+          gap: theme.space.lg,
+        }}
+        ItemSeparatorComponent={GridRowGap}
         ListHeaderComponent={header}
         contentInsetAdjustmentBehavior="automatic"
         style={{ backgroundColor: theme.color.bg }}
         contentContainerStyle={{
-          paddingTop: invites.length > 0 ? theme.space.md : 0,
+          paddingTop: invites.length > 0 ? theme.space.md : theme.space.sm,
           paddingBottom: dockInset + 24,
         }}
         refreshControl={
@@ -176,6 +179,12 @@ export default function PlaylistsScreen() {
       />
     </>
   );
+}
+
+/** Vertical space between grid rows; FlatList renders it between rows, not tiles. */
+function GridRowGap() {
+  const theme = useTheme();
+  return <View style={{ height: theme.space.xl }} />;
 }
 
 function InviteRow({
