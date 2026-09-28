@@ -129,7 +129,9 @@ export default function MiniPlayer() {
             aria-label="Toggle lyrics panel"
             aria-pressed={lyricsToggle?.open ?? lyricsOpen}
             aria-controls={lyricsToggle?.controls}
-            disabled={!displayCurrent}
+            // The lit tab is the mini panel's close control, so it stays
+            // usable if the track goes away while lyrics are showing.
+            disabled={!displayCurrent && !lyricsToggle?.open}
             onClick={lyricsToggle?.onToggle ?? (() => setLyricsOpen(!lyricsOpen))}
           >
             <BookOpenIcon className="size-3.5" />
