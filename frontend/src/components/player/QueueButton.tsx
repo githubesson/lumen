@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ListMusic as QueueListIcon } from "lucide-react";
 import QueuePopover, { type ExternalQueue } from "../QueuePopover";
-import type { MiniPanelToggle } from "./useMiniPlayerMode";
+import { usePopoverOpen, type MiniPanelToggle } from "./useMiniPlayerMode";
 
 export default function QueueButton({
   externalQueue,
@@ -16,7 +16,7 @@ export default function QueueButton({
   // render under concurrent React (nor would it re-render the popover when it
   // lands).
   const [queueBtn, setQueueBtn] = useState<HTMLButtonElement | null>(null);
-  const [queueOpen, setQueueOpen] = useState(false);
+  const [queueOpen, setQueueOpen] = usePopoverOpen(!!panel);
   const open = panel ? panel.open : queueOpen;
 
   return (
@@ -34,7 +34,7 @@ export default function QueueButton({
         <QueueListIcon className="size-3.5" />
       </button>
       <QueuePopover
-        open={queueOpen && !panel}
+        open={queueOpen}
         anchor={queueBtn}
         externalQueue={externalQueue}
         onClose={() => setQueueOpen(false)}

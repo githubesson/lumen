@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Monitor as ComputerDesktopIcon } from "lucide-react";
 import { useRemotePlayback } from "../../context/Player";
 import PlaybackDevicePopover from "../PlaybackDevicePopover";
-import type { MiniPanelToggle } from "./useMiniPlayerMode";
+import { usePopoverOpen, type MiniPanelToggle } from "./useMiniPlayerMode";
 
 export default function DevicePickerButton({
   panel,
@@ -17,7 +17,7 @@ export default function DevicePickerButton({
   // render under concurrent React (nor would it re-render the popover when it
   // lands).
   const [deviceBtn, setDeviceBtn] = useState<HTMLButtonElement | null>(null);
-  const [deviceOpen, setDeviceOpen] = useState(false);
+  const [deviceOpen, setDeviceOpen] = usePopoverOpen(!!panel);
   const open = panel ? panel.open : deviceOpen;
   const isRemoteMode = !!targetDevice;
   const commandError =
@@ -58,7 +58,7 @@ export default function DevicePickerButton({
         )}
       </button>
       <PlaybackDevicePopover
-        open={deviceOpen && !panel}
+        open={deviceOpen}
         anchor={deviceBtn}
         onClose={() => setDeviceOpen(false)}
       />

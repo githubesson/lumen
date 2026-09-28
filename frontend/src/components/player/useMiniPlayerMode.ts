@@ -23,6 +23,22 @@ export interface MiniPanelToggle {
 }
 
 /**
+ * Open state for a utility button's popover. It closes whenever the button
+ * switches between its popover and the mini player's panel, so a popover
+ * left open (entering mini mode from the keyboard is no outside click)
+ * doesn't come back on its own after mini mode.
+ */
+export function usePopoverOpen(panelMode: boolean) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState(panelMode);
+  if (mode !== panelMode) {
+    setMode(panelMode);
+    setOpen(false);
+  }
+  return [open, setOpen] as const;
+}
+
+/**
  * Desktop mini player window mode. Mirrors the mode onto
  * `<html data-mini-player>` and closes the lyrics panel while it is on.
  *
