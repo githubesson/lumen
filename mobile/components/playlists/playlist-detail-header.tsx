@@ -2,14 +2,20 @@ import { useCallback, useMemo, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Alert,
+  PixelRatio,
   Pressable,
   Text,
   useWindowDimensions,
   View,
 } from "react-native";
 import * as Haptics from "expo-haptics";
+import { Image } from "expo-image";
 import { SymbolView } from "expo-symbols";
-import type { SortKey, TrackListItem } from "@music-library/core";
+import {
+  playlistCoverUrl,
+  type SortKey,
+  type TrackListItem,
+} from "@music-library/core";
 
 import { CoverArt } from "../cover-art";
 import {
@@ -45,16 +51,29 @@ const SORT_MENU_SYMBOLS: Record<SortKey, string> = {
 /** Diameter of the header's circular controls and the Play capsule height. */
 export const PLAYLIST_CONTROL_SIZE = 50;
 
-/** Artwork collage for the playlist hero. */
+/**
+ * Artwork for the playlist hero: the owner's uploaded cover, else a collage
+ * of the tracks' covers.
+ */
 export function PlaylistHero({
   theme,
   tracks,
+  customCover,
 }: {
   theme: ThemeTokens;
   tracks: TrackListItem[];
+  /** The playlist's `custom_cover`, when it has one. */
+  customCover?: { playlistId: string; version: string };
 }) {
   const { width } = useWindowDimensions();
   const size = Math.min(Math.round(width * 0.62), 300);
+  const customUri = customCover
+    ? playlistCoverUrl(
+        customCover.playlistId,
+        customCover.version,
+        Math.round(size * PixelRatio.get()),
+      )
+    : null;
   const covers = useMemo(() => {
     const seen = new Set<string>();
     const unique: TrackListItem[] = [];
@@ -99,7 +118,17 @@ export function PlaylistHero({
           justifyContent: "center",
         }}
       >
-        {cells.length === 0 ? (
+        {customUri ? (
+          <Image
+            source={{ uri: customUri }}
+            style={{ width: size, height: size }}
+            contentFit="cover"
+            transition={120}
+            cachePolicy="memory-disk"
+            priority="high"
+            recyclingKey={customUri}
+          />
+        ) : cells.length === 0 ? (
           <SymbolView
             name="music.note"
             size={Math.round(size * 0.28)}

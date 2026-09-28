@@ -1,15 +1,17 @@
 import { Link } from "react-router-dom";
 import { Play as PlayIcon } from "lucide-react";
 import type { MouseEventHandler, ReactNode } from "react";
+import CoverArt from "./CoverArt";
 
 /**
- * Generic cover-art tile (the `.card` pattern): cover or muted placeholder, title,
+ * Generic cover-art tile (the `.card` pattern): cover or lettered placeholder, title,
  * subtitle, optional play-on-hover button and rank badge. Replaces the
  * copy-pasted track/album tile markup across Home and Replay.
  */
 export default function MediaCard({
   to,
   coverUrl,
+  artLabel,
   title,
   subtitle,
   rankBadge,
@@ -19,6 +21,8 @@ export default function MediaCard({
 }: {
   to?: string;
   coverUrl?: string | null;
+  /** Initial for the placeholder when there's no cover; defaults to a string title. */
+  artLabel?: string;
   title: ReactNode;
   subtitle?: ReactNode;
   rankBadge?: ReactNode;
@@ -27,10 +31,10 @@ export default function MediaCard({
   playLabel?: string;
 }) {
   const art = (
-    <div
+    <CoverArt
       className="card-art"
-      style={coverUrl ? { backgroundImage: `url(${coverUrl})` } : undefined}
-      aria-hidden="true"
+      src={coverUrl}
+      label={artLabel ?? (typeof title === "string" ? title : "")}
     >
       {rankBadge}
       {onPlay && (
@@ -47,7 +51,7 @@ export default function MediaCard({
           <PlayIcon className="size-4" />
         </button>
       )}
-    </div>
+    </CoverArt>
   );
   const body = (
     <div>

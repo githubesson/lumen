@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/models"
 	"github.com/githubesson/lumen/internal/playlists"
 	"github.com/githubesson/lumen/internal/tidal"
 	"github.com/githubesson/lumen/internal/trackref"
@@ -24,6 +26,9 @@ type Playlists struct {
 	// AutoDownload is woken when TIDAL tracks may have joined an opted-in
 	// playlist. Nil disables the wake-up; the worker still polls.
 	AutoDownload interface{ Kick() }
+	// Covers stores and serves uploaded playlist covers the way album art
+	// is. Nil disables the cover endpoints.
+	Covers *Tracks
 }
 
 type playlistResp struct {
@@ -37,8 +42,30 @@ type playlistResp struct {
 	// saved into the library.
 	TIDALAutoDownload bool   `json:"tidal_auto_download"`
 	EffectiveRole     string `json:"effective_role,omitempty"`
-	CreatedAt         string `json:"created_at"`
-	UpdatedAt         string `json:"updated_at"`
+	// CustomCover is set when the owner uploaded a cover. It changes with
+	// the image, so clients put it in the cover URL to skip stale caches.
+	CustomCover string `json:"custom_cover,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+	// Cover is only filled in on the list, for the sidebar and cards.
+	Cover *playlistCoverResp `json:"cover,omitempty"`
+}
+
+type playlistCoverResp struct {
+	TrackID  string `json:"track_id"`
+	AlbumID  string `json:"album_id,omitempty"`
+	CoverURL string `json:"cover_url,omitempty"`
+}
+
+func toPlaylistCoverResp(c *playlists.PlaylistCover) *playlistCoverResp {
+	if c == nil {
+		return nil
+	}
+	out := &playlistCoverResp{TrackID: c.TrackID.String(), CoverURL: proxyRemoteCoverURL(c.CoverURL)}
+	if c.AlbumID != nil {
+		out.AlbumID = c.AlbumID.String()
+	}
+	return out
 }
 
 func toPlaylistResp(p *playlists.Playlist, role string) playlistResp {
@@ -51,6 +78,7 @@ func toPlaylistResp(p *playlists.Playlist, role string) playlistResp {
 		IsSmart:           p.IsSmart,
 		TIDALAutoDownload: p.TIDALAutoDownload,
 		EffectiveRole:     role,
+		CustomCover:       coverVersion(p.CoverArtPath),
 		CreatedAt:         p.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:         p.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
@@ -101,7 +129,9 @@ func (h *Playlists) List(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]playlistResp, 0, len(ps))
 	for _, p := range ps {
-		out = append(out, toPlaylistResp(&p.Playlist, p.EffectiveRole))
+		resp := toPlaylistResp(&p.Playlist, p.EffectiveRole)
+		resp.Cover = toPlaylistCoverResp(p.Cover)
+		out = append(out, resp)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -200,6 +230,128 @@ func (h *Playlists) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Cover ---
+
+// coverVersion names an uploaded cover without exposing its storage key.
+// Keys are covers/<sha256 of the image>.jpg, so the hash already changes
+// with the image.
+func coverVersion(key string) string {
+	if key == "" {
+		return ""
+	}
+	v := strings.TrimSuffix(path.Base(key), path.Ext(key))
+	if len(v) > 16 {
+		v = v[:16]
+	}
+	return v
+}
+
+// Cover serves the owner's uploaded cover to anyone who can see the
+// playlist. Playlists without one 404; clients use the first track's art.
+func (h *Playlists) Cover(w http.ResponseWriter, r *http.Request) {
+	u, ok := requireUser(w, r)
+	if !ok {
+		return
+	}
+	pid, ok := pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	if h.Covers == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	role, err := h.Store.EffectiveRole(r.Context(), pid, u.ID)
+	if err != nil || role == "" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	p, err := h.Store.Get(r.Context(), pid)
+	if err != nil || p.CoverArtPath == "" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	h.Covers.serveStorageObject(w, r, p.CoverArtPath, parseCoverMaxSize(r))
+}
+
+// PutCover replaces the playlist's cover with an uploaded image (a
+// multipart form with one `file` part), normalized and stored like album
+// art. Owner-only. Returns the updated playlist.
+func (h *Playlists) PutCover(w http.ResponseWriter, r *http.Request) {
+	u, pid, ok := h.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	if h.Covers == nil || h.Covers.Ingest == nil {
+		http.Error(w, "covers not available", http.StatusServiceUnavailable)
+		return
+	}
+	data, contentType, ok := readCoverUpload(w, r)
+	if !ok {
+		return
+	}
+	key, err := h.Covers.Ingest.StoreCoverImage(r.Context(), data, contentType)
+	if err != nil || key == "" {
+		h.Covers.log().Error("playlist cover: storing the uploaded image failed",
+			"playlist", pid, "user", u.ID, "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	// The replaced image, if nothing else uses it, goes in the orphan sweep.
+	if err := h.Store.SetCover(r.Context(), pid, key); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	h.writePlaylist(w, r, pid)
+}
+
+// DeleteCover goes back to the first track's art. Owner-only. Returns the
+// updated playlist.
+func (h *Playlists) DeleteCover(w http.ResponseWriter, r *http.Request) {
+	_, pid, ok := h.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	if err := h.Store.SetCover(r.Context(), pid, ""); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	h.writePlaylist(w, r, pid)
+}
+
+// requireOwner resolves the {id} playlist and checks the caller owns it,
+// writing the error response when they don't (404 to anyone who can't see
+// it at all).
+func (h *Playlists) requireOwner(w http.ResponseWriter, r *http.Request) (*models.User, uuid.UUID, bool) {
+	u, ok := requireUser(w, r)
+	if !ok {
+		return nil, uuid.Nil, false
+	}
+	pid, ok := pathUUID(w, r, "id")
+	if !ok {
+		return nil, uuid.Nil, false
+	}
+	role, err := h.Store.EffectiveRole(r.Context(), pid, u.ID)
+	if err != nil || role == "" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return nil, uuid.Nil, false
+	}
+	if role != "owner" {
+		http.Error(w, "owner-only", http.StatusForbidden)
+		return nil, uuid.Nil, false
+	}
+	return u, pid, true
+}
+
+func (h *Playlists) writePlaylist(w http.ResponseWriter, r *http.Request, pid uuid.UUID) {
+	p, err := h.Store.Get(r.Context(), pid)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toPlaylistResp(p, "owner"))
 }
 
 // --- Tracks ---

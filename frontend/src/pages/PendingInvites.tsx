@@ -4,6 +4,7 @@ import { Button } from "../components/Button";
 import DataState from "../components/DataState";
 import PageHeader from "../components/PageHeader";
 import { useApiResource } from "../lib/useApiResource";
+import { fmtDate } from "../lib/format";
 
 export default function PendingInvites() {
   const { data: rows, error: loadError, reload } = useApiResource<PendingInvite[]>(
@@ -100,7 +101,7 @@ function PendingInviteRow({
           style={{ fontSize: 12, color: "var(--muted-foreground)" }}
         >
           {invite.owner_name} invited you as {invite.role} ·{" "}
-          {new Date(invite.invited_at).toLocaleDateString()}
+          {fmtDate(invite.invited_at)}
         </div>
       </div>
       <div style={{ display: "flex", gap: 8 }}>

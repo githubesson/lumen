@@ -196,4 +196,56 @@ func TestReadOptimizations(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("playlist cover is the first visible track with an album", func(t *testing.T) {
+		album := uuid.New()
+		exec(`INSERT INTO albums(id,title) VALUES($1,'cover test')`, album)
+		defer pool.Exec(ctx, `DELETE FROM albums WHERE id=$1`, album)
+		// The deleted track and the owner's personal track come first and
+		// both have the album, but the viewer can't see either.
+		exec(`UPDATE tracks SET album_id=$2 WHERE id=ANY($1::uuid[])`, []uuid.UUID{tracks[1], tracks[3], tracks[4]}, album)
+		defer pool.Exec(ctx, `UPDATE tracks SET album_id=NULL WHERE id=ANY($1::uuid[])`, tracks)
+
+		mixed, err := pl.Create(ctx, viewer, "mixed", "", playlists.VisibilityPrivate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pl.Delete(ctx, mixed.ID)
+		noAlbum, err := pl.Create(ctx, viewer, "no album", "", playlists.VisibilityPrivate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pl.Delete(ctx, noAlbum.ID)
+		empty, err := pl.Create(ctx, viewer, "empty", "", playlists.VisibilityPrivate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pl.Delete(ctx, empty.ID)
+		for i, id := range []uuid.UUID{tracks[4], tracks[3], tracks[0], tracks[1]} {
+			exec(`INSERT INTO playlist_tracks(playlist_id,position,track_id) VALUES($1,$2,$3)`, mixed.ID, i, id)
+		}
+		exec(`INSERT INTO playlist_tracks(playlist_id,position,track_id) VALUES($1,0,$2)`, noAlbum.ID, tracks[0])
+
+		counter.queries.Store(0)
+		rows, err := pl.ListForUser(ctx, viewer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := counter.queries.Load(); n != 1 {
+			t.Fatalf("playlist list used %d queries", n)
+		}
+		covers := map[uuid.UUID]*playlists.PlaylistCover{}
+		for _, row := range rows {
+			covers[row.ID] = row.Cover
+		}
+		if c := covers[mixed.ID]; c == nil || c.TrackID != tracks[1] || c.AlbumID == nil || *c.AlbumID != album {
+			t.Fatalf("mixed cover = %+v, want track %s on album %s", c, tracks[1], album)
+		}
+		if c := covers[noAlbum.ID]; c == nil || c.TrackID != tracks[0] || c.AlbumID != nil {
+			t.Fatalf("no-album cover = %+v, want track %s without album", c, tracks[0])
+		}
+		if c := covers[empty.ID]; c != nil {
+			t.Fatalf("empty cover = %+v, want nil", c)
+		}
+	})
 }

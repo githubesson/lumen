@@ -407,7 +407,13 @@ export default function PlaylistDetailScreen() {
           gap: theme.space.md,
         }}
       >
-        <PlaylistHero theme={theme} tracks={tracks} />
+        <PlaylistHero
+          theme={theme}
+          tracks={tracks}
+          customCover={
+            p.custom_cover ? { playlistId: p.id, version: p.custom_cover } : undefined
+          }
+        />
         <View style={{ gap: 4, alignItems: "center" }}>
           <Text
             selectable

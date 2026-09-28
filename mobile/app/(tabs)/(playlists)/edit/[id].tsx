@@ -9,12 +9,13 @@ import {
 import { FormScreen } from "../../../../components/form-screen";
 import { HeaderTextButton } from "../../../../components/header-buttons";
 import { PlaylistFields } from "../../../../components/playlist-fields";
+import { PlaylistCoverField } from "../../../../components/playlists/playlist-cover-field";
 import { qk } from "../../../../lib/query-keys";
 import { useTheme } from "../../../../theme/theme";
 
 /**
- * Edit an existing playlist's metadata. Pushed from the detail screen and
- * hydrated once from the cached playlist query. `Save` / `Cancel`
+ * Edit an existing playlist's metadata, and for its owner the cover. Pushed
+ * from the detail screen and hydrated once from the cached playlist query. `Save` / `Cancel`
  * live in the sheet's nav bar via `HeaderButton` so hit targets stay aligned
  * when the button swaps between label and spinner.
  */
@@ -66,6 +67,11 @@ export default function EditPlaylistScreen() {
     },
   });
 
+  const playlist = playlistQuery.data;
+  // Editors reach this screen too; only the owner may change the cover.
+  const isOwner =
+    !!playlist && (!playlist.effective_role || playlist.effective_role === "owner");
+
   const canSubmit =
     hydrated &&
     name.trim().length > 0 &&
@@ -97,6 +103,9 @@ export default function EditPlaylistScreen() {
           </View>
         ) : (
           <>
+            {playlist && isOwner ? (
+              <PlaylistCoverField playlist={playlist} userId={userId} />
+            ) : null}
             <PlaylistFields
               name={name}
               description={description}

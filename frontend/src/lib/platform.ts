@@ -18,6 +18,17 @@ export function electron(): ElectronApi | undefined {
   return typeof window !== "undefined" ? window.electron : undefined;
 }
 
+/** Apple platforms, where "mod" shortcuts use ⌘ instead of Ctrl. */
+export const IS_MAC =
+  typeof navigator !== "undefined" &&
+  (/(Mac|iPhone|iPod|iPad)/i.test(navigator.platform) ||
+    /Mac/i.test(navigator.userAgent));
+
+/** How to write a "mod+<key>" shortcut on this platform: ⌘K or Ctrl+K. */
+export function modShortcut(key: string): string {
+  return IS_MAC ? `⌘${key}` : `Ctrl+${key}`;
+}
+
 /** True when running inside the Electron desktop shell. */
 export function isElectron(): boolean {
   return !!electron();

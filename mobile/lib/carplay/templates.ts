@@ -1,5 +1,6 @@
 import {
   albumCoverUrl,
+  playlistArtUrl,
   trackCoverUrl,
   type Album,
   type Playlist,
@@ -575,6 +576,8 @@ export function buildQueueTemplate({
 function playlistRow(playlist: Playlist): CarPlayListItem {
   return browseRow({ kind: "playlist", id: playlist.id }, playlist.name, {
     detailText: playlist.is_smart ? "Smart playlist" : undefined,
+    // Its own cover or its first track's; the symbol covers the rest.
+    imageUrl: playlistArtUrl(playlist, COVER_PIXELS) ?? undefined,
     symbol: playlist.is_smart ? SYMBOL.smartPlaylist : SYMBOL.playlist,
   });
 }

@@ -10,9 +10,11 @@ import {
   SkipBack as BackwardIcon,
   Clock as ClockIcon,
   Settings as Cog6ToothIcon,
+  Disc3 as DiscIcon,
   Mail as EnvelopeIcon,
   SkipForward as ForwardIcon,
   Heart as HeartIcon,
+  House as HomeIcon,
   Search as MagnifyingGlassIcon,
   Moon as MoonIcon,
   Music as MusicalNoteIcon,
@@ -21,6 +23,7 @@ import {
   Plus as PlusIcon,
   ListMusic as QueueListIcon,
   Sun as SunIcon,
+  UserRound as UserIcon,
 } from "lucide-react";
 import {
   albumCoverUrl,
@@ -440,8 +443,10 @@ export default function CommandPalette({
 
           {(!searching || searchType === "all") && <>
           <Command.Group heading="Navigate">
-            <NavItem icon={MusicalNoteIcon} label="Home" hint="/" onSelect={() => run(() => navigate("/"))} />
-            <NavItem icon={QueueListIcon} label="Library" hint="/library" onSelect={() => run(() => navigate("/library"))} />
+            <NavItem icon={HomeIcon} label="Home" hint="/" onSelect={() => run(() => navigate("/"))} />
+            <NavItem icon={MusicalNoteIcon} label="Tracks" hint="/library" onSelect={() => run(() => navigate("/library"))} />
+            <NavItem icon={DiscIcon} label="Albums" hint="/library?view=albums" onSelect={() => run(() => navigate("/library?view=albums"))} />
+            <NavItem icon={UserIcon} label="Artists" hint="/library?view=artists" onSelect={() => run(() => navigate("/library?view=artists"))} />
             <NavItem icon={HeartIcon} label="Favorites" hint="/favorites" onSelect={() => run(() => navigate("/favorites"))} />
             <NavItem icon={ClockIcon} label="Recent" hint="/recent" onSelect={() => run(() => navigate("/recent"))} />
             <NavItem icon={QueueListIcon} label="Playlists" hint="/playlists" onSelect={() => run(() => navigate("/playlists"))} />

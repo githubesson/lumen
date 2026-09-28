@@ -13,6 +13,7 @@ import { Select } from "../components/Select";
 import AdminPanel from "../components/admin/AdminPanel";
 import AdminSection from "../components/admin/AdminSection";
 import { copyText } from "../lib/clipboard";
+import { fmtDate, fmtDateTime } from "../lib/format";
 import { useApiResource } from "../lib/useApiResource";
 import { useCopiedFlag } from "../lib/useCopiedFlag";
 
@@ -245,7 +246,7 @@ export function InvitesAdminSection() {
                   </td>
                   <td className="mono" style={{ color: "var(--muted-foreground)" }}>
                     {inv.expires_at
-                      ? new Date(inv.expires_at).toLocaleString()
+                      ? fmtDateTime(inv.expires_at)
                       : "—"}
                   </td>
                   <td>
@@ -256,7 +257,7 @@ export function InvitesAdminSection() {
                     </span>
                   </td>
                   <td className="mono" style={{ color: "var(--muted-foreground)" }}>
-                    {new Date(inv.created_at).toLocaleDateString()}
+                    {fmtDate(inv.created_at)}
                   </td>
                   <td className="col-acts">
                     {!inv.revoked_at && (

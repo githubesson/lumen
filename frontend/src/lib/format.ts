@@ -24,3 +24,19 @@ import { formatDurationMs } from "@music-library/core/format";
 export function fmtDurationMs(ms: number): string {
   return formatDurationMs(ms, "0:00");
 }
+
+/**
+ * A date with the month spelled out ("Sep 4, 2026", or "4 Sept 2026" in
+ * en-GB), so it can't be misread the way 9/4/2026 can.
+ */
+export function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
+/** `fmtDate` plus the time of day. */
+export function fmtDateTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}

@@ -32,6 +32,36 @@ export function albumCoverUrl(id: string, size?: number): string {
   return withCoverSize(`/api/albums/${pathID(id)}/cover`, size);
 }
 
+/** A playlist's uploaded cover; `version` is its `custom_cover`. */
+export function playlistCoverUrl(id: string, version: string, size?: number): string {
+  const path = `/api/playlists/${pathID(id)}/cover?v=${encodeURIComponent(version)}`;
+  if (!size || !Number.isFinite(size) || size <= 0) return apiUrl(path);
+  return apiUrl(`${path}&size=${Math.round(size)}`);
+}
+
+/**
+ * The art that stands for a playlist: the owner's uploaded cover, else its
+ * first track's (only known on listed playlists). Null when it has neither.
+ */
+export function playlistArtUrl(
+  playlist: {
+    id: string;
+    custom_cover?: string;
+    cover?: { track_id: string; album_id?: string; cover_url?: string };
+  },
+  size?: number,
+): string | null {
+  if (playlist.custom_cover) {
+    return playlistCoverUrl(playlist.id, playlist.custom_cover, size);
+  }
+  const cover = playlist.cover;
+  if (!cover) return null;
+  return trackCoverUrl(
+    { id: cover.track_id, album_id: cover.album_id, cover_url: cover.cover_url },
+    size,
+  );
+}
+
 export function resolveCoverUrl(coverURL: string): string {
   return apiUrl(coverURL);
 }

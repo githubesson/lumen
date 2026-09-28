@@ -4,7 +4,11 @@ import {
   Lock as LockClosedIcon,
   Users as UsersIcon,
 } from "lucide-react";
-import { type Playlist } from "../api";
+import { playlistArtUrl, type Playlist } from "../api";
+import CoverArt from "./CoverArt";
+
+// Cards are at most 168px wide; enough for a 2x screen.
+const CARD_ART_SIZE = 384;
 
 /**
  * One canonical playlist tile so a playlist looks identical on Home and the
@@ -12,11 +16,16 @@ import { type Playlist } from "../api";
  */
 export default function PlaylistCard({ playlist }: { playlist: Playlist }) {
   const isCollab = playlist.visibility === "collaborative";
+  const art = playlistArtUrl(playlist, CARD_ART_SIZE);
   return (
     <Link to={`/playlists/${playlist.id}`} className="card">
-      <div className="card-art card-art-icon" aria-hidden="true">
-        <QueueListIcon className="size-8" />
-      </div>
+      {art ? (
+        <CoverArt className="card-art" src={art} label={playlist.name} />
+      ) : (
+        <div className="card-art card-art-icon" aria-hidden="true">
+          <QueueListIcon className="size-8" />
+        </div>
+      )}
       <div>
         <div
           className="card-title"

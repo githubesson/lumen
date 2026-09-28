@@ -113,37 +113,11 @@ func (h *Tracks) PutAlbumCover(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxCoverUploadBytes)
-	if err := r.ParseMultipartForm(maxCoverUploadBytes); err != nil {
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			http.Error(w, "image too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		http.Error(w, "bad form", http.StatusBadRequest)
+	data, contentType, ok := readCoverUpload(w, r)
+	if !ok {
 		return
 	}
-	if r.MultipartForm != nil {
-		defer r.MultipartForm.RemoveAll()
-	}
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, "no image file", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-	data, err := io.ReadAll(file)
-	if err != nil {
-		http.Error(w, "could not read upload", http.StatusBadRequest)
-		return
-	}
-	// Decode once up front to reject anything that isn't a real, supported
-	// image before it ever reaches storage.
-	if _, _, err := imagesafe.Decode(bytes.NewReader(data)); err != nil {
-		http.Error(w, "file is not a supported image (jpeg, png, webp)", http.StatusBadRequest)
-		return
-	}
-	key, err := h.Ingest.StoreCoverImage(r.Context(), data, header.Header.Get("Content-Type"))
+	key, err := h.Ingest.StoreCoverImage(r.Context(), data, contentType)
 	if err != nil || key == "" {
 		h.log().Error("album cover: storing the uploaded image failed",
 			"album", id, "user", u.ID, "err", err)
@@ -172,6 +146,41 @@ func (h *Tracks) PutAlbumCover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// readCoverUpload reads the single `file` part of a cover-upload form and
+// checks it is a real, supported image before it can reach storage. On
+// failure it has already written the error response.
+func readCoverUpload(w http.ResponseWriter, r *http.Request) (data []byte, contentType string, ok bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxCoverUploadBytes)
+	if err := r.ParseMultipartForm(maxCoverUploadBytes); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "image too large", http.StatusRequestEntityTooLarge)
+			return nil, "", false
+		}
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return nil, "", false
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "no image file", http.StatusBadRequest)
+		return nil, "", false
+	}
+	defer file.Close()
+	data, err = io.ReadAll(file)
+	if err != nil {
+		http.Error(w, "could not read upload", http.StatusBadRequest)
+		return nil, "", false
+	}
+	if _, _, err := imagesafe.Decode(bytes.NewReader(data)); err != nil {
+		http.Error(w, "file is not a supported image (jpeg, png, webp)", http.StatusBadRequest)
+		return nil, "", false
+	}
+	return data, header.Header.Get("Content-Type"), true
 }
 
 // DeleteAlbumCover clears an album's cover art, reverting it to the

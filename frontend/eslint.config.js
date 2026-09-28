@@ -33,7 +33,7 @@ export default tseslint.config(
             { pattern: "^Button$", allow: ["layout", "artist-hero-back"] },
             {
               pattern: "^CoverArt$",
-              allow: ["layout", "card-art", "mini-art", "detail-art", "share-preview-art", "artist-hero-avatar"],
+              allow: ["layout", "card-art", "mini-art", "detail-art", "hero-art", "share-preview-art", "artist-hero-avatar"],
             },
             { pattern: "^WindowControls$", allow: ["layout", "root-window-controls"] },
             { pattern: "^SearchInput$", allow: ["layout", "playlist-search"] },

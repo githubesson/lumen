@@ -440,8 +440,8 @@ func (s *Service) StoreCoverImage(ctx context.Context, data []byte, _ string) (s
 	return key, nil
 }
 
-// SweepOrphanCovers deletes objects under covers/ that no album row
-// references and that were last written more than grace ago. Covers are
+// SweepOrphanCovers deletes objects under covers/ that no album or playlist
+// row references and that were last written more than grace ago. Covers are
 // written before the ingest transaction commits and are never removed when a
 // track or album goes away, so without this sweep repeated upload/delete
 // cycles grow covers/ without bound. It returns the number of objects removed.
@@ -472,7 +472,9 @@ func (s *Service) SweepOrphanCovers(ctx context.Context, grace time.Duration) (i
 	rows, err := s.DB.Query(ctx, `
 		SELECT cover_art_path FROM albums WHERE NULLIF(cover_art_path, '') IS NOT NULL
 		UNION
-		SELECT cover_art_path FROM album_personal_covers`)
+		SELECT cover_art_path FROM album_personal_covers
+		UNION
+		SELECT cover_art_path FROM playlists WHERE NULLIF(cover_art_path, '') IS NOT NULL`)
 	if err != nil {
 		return 0, err
 	}

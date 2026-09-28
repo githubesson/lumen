@@ -230,13 +230,17 @@
   background: var(--sidebar-accent);
   font-weight: 500;
 }
-.sidebar-playlist-icon {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
-  display: grid;
-  place-items: center;
-  color: var(--muted-foreground);
+/* Cover thumbnail, so playlists stay tellable apart in the collapsed rail.
+   Sized to sit in the 16px icon column without growing the 32px row. */
+.sidebar-playlist-art {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  margin: 0 -2px;
+  border-radius: 4px;
+}
+.sidebar-playlist-art .cover-art-letter {
+  font-size: 11px;
 }
 .sidebar-playlist-name {
   flex: 1;

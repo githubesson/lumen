@@ -3,22 +3,23 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowDown as ArrowDownIcon,
   ArrowUp as ArrowUpIcon,
-  HardDriveDownload as HardDriveDownloadIcon,
+  ImageUp as ImageUpIcon,
   Lock as LockClosedIcon,
   Music as MusicalNoteIcon,
-  SquarePen as PencilSquareIcon,
   Play as PlayIcon,
   Plus as PlusIcon,
-  Trash2 as TrashIcon,
   Users as UsersIcon,
 } from "lucide-react";
 import {
   api,
   ApiError,
   errorMessage,
+  playlistCoverUrl,
   toQueueItem,
+  trackCoverUrl,
   type Collaborator,
   type Playlist,
+  type PlaylistCover,
   type TrackListItem,
 } from "../api";
 import { useAuth } from "../context/Auth";
@@ -39,7 +40,9 @@ import { useKey } from "../lib/keybindings";
 import { fmtTotalMs } from "../lib/format";
 import CollaboratorsPanel from "./playlist/CollaboratorsPanel";
 import AddTracksDialog from "./playlist/AddTracksDialog";
-import EditPlaylistDialog from "./playlist/EditPlaylistDialog";
+import PlaylistSettingsPanel, {
+  type PlaylistDetails,
+} from "./playlist/PlaylistSettingsPanel";
 import PlaylistTracksPanel from "./playlist/PlaylistTracksPanel";
 import {
   SORT_DEFAULT_ASC,
@@ -49,8 +52,12 @@ import {
 } from "./playlist/trackSort";
 import type { PlaylistTrackEntry } from "../api";
 
-type Tab = "tracks" | "collaborators";
+type Tab = "tracks" | "collaborators" | "settings";
 const PLAYLIST_SELECTION_CONTROLS_ID = "playlist-track-selection-controls";
+// The server's own upload cap, checked first to skip a doomed upload.
+const MAX_COVER_BYTES = 16 << 20;
+// Header art is 200px wide; enough for a 2x screen.
+const HEADER_ART_SIZE = 400;
 // While TIDAL tracks are queued for download, refresh so rows flip to their
 // library copies without a manual reload.
 const AUTO_DOWNLOAD_REFRESH_MS = 20_000;
@@ -63,6 +70,31 @@ interface CachedPlaylist {
 const cacheKey = (id: string | undefined) => (id ? `playlist:${id}` : undefined);
 const showsCollaborators = (p: Playlist) =>
   p.effective_role === "owner" || p.visibility === "collaborative";
+
+// The same pick as the header art, and as the server's list: the first track
+// with an album, else the first.
+function coverFor(entries: PlaylistTrackEntry[]): PlaylistCover | undefined {
+  const entry = entries.find((t) => t.album_id) ?? entries[0];
+  if (!entry) return undefined;
+  return {
+    track_id: entry.db_track_id ?? entry.track_id,
+    album_id: entry.album_id,
+    cover_url: entry.cover_url,
+  };
+}
+
+function sameListing(row: Playlist, p: Playlist, cover: PlaylistCover | undefined) {
+  return (
+    row.name === p.name &&
+    (row.description ?? "") === (p.description ?? "") &&
+    row.visibility === p.visibility &&
+    row.custom_cover === p.custom_cover &&
+    Boolean(row.tidal_auto_download) === Boolean(p.tidal_auto_download) &&
+    row.cover?.track_id === cover?.track_id &&
+    row.cover?.album_id === cover?.album_id &&
+    row.cover?.cover_url === cover?.cover_url
+  );
+}
 
 export default function PlaylistDetail() {
   const { id } = useParams<{ id: string }>();
@@ -101,12 +133,14 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("tracks");
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [showEditDialog, setShowEditDialog] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("custom");
   const [sortAsc, setSortAsc] = useState(true);
   const [savingAutoDownload, setSavingAutoDownload] = useState(false);
+  const [savingCover, setSavingCover] = useState(false);
+  const coverInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   useKey(
     "mod+f",
@@ -157,6 +191,22 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       setTracks(t.tracks);
       if (c) setCollabs(c);
       setError(null);
+      // Keep the sidebar's row (name, cover) in step without refetching the
+      // list. Only when it's out of date: update() drops list reads in flight.
+      const row = listedRef.current;
+      const cover = coverFor(t.tracks);
+      if (row && !sameListing(row, p, cover)) {
+        // Optional fields are named outright: the response omits cleared
+        // ones, and spreading it would keep the row's stale values.
+        const fresh: Playlist = {
+          ...row,
+          ...p,
+          description: p.description,
+          custom_cover: p.custom_cover,
+          cover,
+        };
+        updatePlaylists((rows) => rows?.map((r) => (r.id === p.id ? fresh : r)) ?? rows);
+      }
     } catch (err) {
       if (gen !== loadGenRef.current) return;
       if (err instanceof ApiError && err.status === 404) {
@@ -171,7 +221,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       }
       setError(errorMessage(err, "Failed to load playlist."));
     }
-  }, [id, reloadPlaylists]);
+  }, [id, reloadPlaylists, updatePlaylists]);
 
   useEffect(() => {
     // The route id selects an external playlist resource to load.
@@ -261,6 +311,11 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   const role = playlist.effective_role ?? "";
   const isOwner = role === "owner";
   const canEdit = isOwner || role === "editor";
+  const hasSettings = isOwner || isAdmin;
+  // Rows name who added them once someone other than the owner could have.
+  const showAddedBy =
+    playlist.visibility === "collaborative" ||
+    new Set((tracks ?? []).map((t) => t.added_by_id ?? t.added_by)).size > 1;
 
   const onPlayAll = () => {
     if (queue.length > 0) play(queue[0], queue);
@@ -327,6 +382,65 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     }
   };
 
+  const onSaveDetails = async (details: PlaylistDetails) => {
+    if (!id) return;
+    invalidateLoads();
+    try {
+      await api.updatePlaylist(id, details);
+    } catch (err) {
+      // The load this superseded still has to happen.
+      void load();
+      throw err;
+    }
+    // Show the new details right away, then reload (which also updates the
+    // sidebar row).
+    setPlaylist((p) => (p ? { ...p, ...details } : p));
+    await load();
+  };
+
+  const pickCover = () => coverInputRef.current?.click();
+
+  // Cover changes apply at once (like the TIDAL switch), from Settings or by
+  // clicking the header art.
+  const changeCover = async (change: () => Promise<Playlist>, fallback: string) => {
+    if (!id || savingCover) return;
+    invalidateLoads();
+    setSavingCover(true);
+    try {
+      const updated = await change();
+      setPlaylist((p) => (p ? { ...p, custom_cover: updated.custom_cover } : p));
+      // Also brings the sidebar row and cards up to date.
+      void load();
+    } catch (err) {
+      await failAction(err, fallback);
+    } finally {
+      setSavingCover(false);
+    }
+  };
+
+  const onCoverFile = (file: File) => {
+    if (!id) return;
+    if (file.size > MAX_COVER_BYTES) {
+      setError("That image is over 16 MB. Choose a smaller one.");
+      return;
+    }
+    void changeCover(() => api.setPlaylistCover(id, file), "Couldn't use that image.");
+  };
+
+  const onRemoveCover = () => {
+    if (!id) return;
+    void changeCover(() => api.removePlaylistCover(id), "Failed to remove the cover.");
+  };
+
+  // The owner renames from the title: it opens Settings on the name field.
+  const openSettingsOnName = () => {
+    setTab("settings");
+    requestAnimationFrame(() => {
+      nameInputRef.current?.focus();
+      nameInputRef.current?.select();
+    });
+  };
+
   const onDelete = async () => {
     if (
       !id ||
@@ -348,6 +462,20 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
 
   return (
     <div className="view" style={{ display: "grid", gap: 18 }}>
+      {isOwner && (
+        <input
+          ref={coverInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            // Cleared so picking the same file again still fires a change.
+            e.target.value = "";
+            if (file) onCoverFile(file);
+          }}
+        />
+      )}
       <ListPageHeader
         kind={
           <>
@@ -370,30 +498,38 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
                 <span>{role}</span>
               </>
             )}
-            {autoDownload && (
-              <>
-                <span style={{ margin: "0 8px" }}>·</span>
-                <span
-                  style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-                >
-                  <HardDriveDownloadIcon className="size-3" /> Saving TIDAL tracks
-                </span>
-              </>
-            )}
           </>
         }
-        title={playlist.name}
-        description={playlist.description || undefined}
-        heroTrack={firstCoverTrack}
-        // Plain art until the tracks say whether there's a cover, rather
-        // than a note that gets swapped for one.
-        fallbackIcon={
-          tracks && (
-            <MusicalNoteIcon
-              className="size-12"
-              style={{ color: "var(--muted-foreground)" }}
-            />
+        title={
+          isOwner ? (
+            <button
+              type="button"
+              className="detail-title-edit"
+              title="Edit details"
+              onClick={openSettingsOnName}
+            >
+              {playlist.name}
+            </button>
+          ) : (
+            playlist.name
           )
+        }
+        description={playlist.description || undefined}
+        art={
+          <PlaylistHeaderArt
+            src={
+              playlist.custom_cover
+                ? playlistCoverUrl(playlist.id, playlist.custom_cover, HEADER_ART_SIZE)
+                : firstCoverTrack
+                  ? trackCoverUrl(firstCoverTrack)
+                  : null
+            }
+            // Plain art until the tracks say whether there's a cover, rather
+            // than a note that gets swapped for one.
+            showFallbackIcon={tracks !== null}
+            onPick={isOwner ? pickCover : undefined}
+            saving={savingCover}
+          />
         }
         meta={
           <>
@@ -439,40 +575,6 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
                 Add tracks
               </Button>
             )}
-            {isAdmin && (
-              <Button
-                variant={autoDownload ? "secondary" : "ghost"}
-                onClick={() => void onToggleAutoDownload()}
-                disabled={savingAutoDownload}
-                aria-pressed={autoDownload}
-                title={
-                  autoDownload
-                    ? "TIDAL tracks in this playlist are being downloaded to the server library. Click to stop."
-                    : "Download this playlist's TIDAL tracks to the server library, now and as they're added."
-                }
-                leadingIcon={<HardDriveDownloadIcon className="size-4" />}
-              >
-                {autoDownload ? "Auto-saving TIDAL" : "Auto-save TIDAL"}
-              </Button>
-            )}
-            {isOwner && (
-              <>
-                <Button
-                  variant="ghost"
-                  onClick={() => setShowEditDialog(true)}
-                  leadingIcon={<PencilSquareIcon className="size-4" />}
-                >
-                  Edit
-                </Button>
-                <Button
-                  variant="danger"
-                  onClick={onDelete}
-                  leadingIcon={<TrashIcon className="size-4" />}
-                >
-                  Delete
-                </Button>
-              </>
-            )}
           </>
         }
       />
@@ -504,6 +606,9 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
                     ),
                   } satisfies SegmentedOption<Tab>,
                 ]
+              : []),
+            ...(hasSettings
+              ? [{ value: "settings", label: "Settings" } satisfies SegmentedOption<Tab>]
               : []),
           ]}
         />
@@ -548,19 +653,21 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
             )}
           </div>
         )}
-        <SearchInput
-          ref={searchInputRef}
-          className="playlist-search"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          onClear={() => setSearchQuery("")}
-          placeholder="Search this playlist"
-          aria-label="Search this playlist"
-        />
+        {tab === "tracks" && (
+          <SearchInput
+            ref={searchInputRef}
+            className="playlist-search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onClear={() => setSearchQuery("")}
+            placeholder="Search this playlist"
+            aria-label="Search this playlist"
+          />
+        )}
       </div>
 
       {/* Collaborators land with the tracks, so both tabs wait on them. */}
-      {tracks === null && !error && <LoadingState />}
+      {tab !== "settings" && tracks === null && !error && <LoadingState />}
       {tab === "tracks" && tracks && (
         <PlaylistTracksPanel
           tracks={filteredTracks}
@@ -570,6 +677,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
           queue={queue}
           queueById={queueById}
           canEdit={canEdit}
+          showAddedBy={showAddedBy}
           onRemove={onRemove}
           onReorder={canReorder ? onReorder : undefined}
           onPlay={(entry) => {
@@ -594,6 +702,24 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         />
       )}
 
+      {tab === "settings" && hasSettings && (
+        <PlaylistSettingsPanel
+          playlist={playlist}
+          isOwner={isOwner}
+          isAdmin={isAdmin}
+          nameInputRef={nameInputRef}
+          onSaveDetails={onSaveDetails}
+          savingCover={savingCover}
+          onPickCover={pickCover}
+          onRemoveCover={onRemoveCover}
+          autoDownload={autoDownload}
+          savingAutoDownload={savingAutoDownload}
+          queuedTidal={queuedTidal}
+          onToggleAutoDownload={() => void onToggleAutoDownload()}
+          onDelete={() => void onDelete()}
+        />
+      )}
+
       {id && (
         <AddTracksDialog
           open={showAddDialog}
@@ -607,17 +733,53 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         />
       )}
 
-      {id && (
-        <EditPlaylistDialog
-          open={showEditDialog}
-          playlist={playlist}
-          onClose={() => setShowEditDialog(false)}
-          onSaved={async () => {
-            setShowEditDialog(false);
-            await load();
-          }}
-        />
-      )}
     </div>
+  );
+}
+
+/**
+ * The playlist's header art. For the owner it's also a button that picks a
+ * new cover image, with a hint over the art on hover.
+ */
+function PlaylistHeaderArt({
+  src,
+  showFallbackIcon,
+  onPick,
+  saving,
+}: {
+  src: string | null;
+  showFallbackIcon: boolean;
+  onPick?: () => void;
+  saving: boolean;
+}) {
+  const style = src ? { backgroundImage: `url(${src})` } : undefined;
+  const fallback = !src && showFallbackIcon && (
+    <MusicalNoteIcon
+      className="size-12"
+      style={{ color: "var(--muted-foreground)" }}
+    />
+  );
+  if (!onPick) {
+    return (
+      <div className="detail-art" style={style}>
+        {fallback}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="detail-art detail-art-edit"
+      style={style}
+      onClick={onPick}
+      disabled={saving}
+      aria-label="Choose cover image"
+    >
+      {fallback}
+      <span className="detail-art-edit-hint" aria-hidden="true">
+        <ImageUpIcon className="size-5" />
+        {saving ? "Uploading…" : "Choose image"}
+      </span>
+    </button>
   );
 }

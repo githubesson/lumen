@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/githubesson/lumen/internal/dbtext"
 	"github.com/githubesson/lumen/internal/dbutil"
 )
 
@@ -49,8 +50,11 @@ type Playlist struct {
 	IsSmart     bool
 	// TIDALAutoDownload saves the playlist's TIDAL tracks into the library.
 	TIDALAutoDownload bool
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// CoverArtPath is the storage key of a cover the owner uploaded; empty
+	// uses the first track's art.
+	CoverArtPath string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type Collaborator struct {
@@ -87,9 +91,9 @@ func (s *Store) Create(ctx context.Context, ownerID uuid.UUID, name, description
 	err := s.db.QueryRow(ctx, `
 		INSERT INTO playlists (owner_id, name, description, visibility)
 		VALUES ($1, $2, NULLIF($3, ''), $4)
-		RETURNING id, owner_id, name, COALESCE(description, ''), visibility, is_smart, tidal_auto_download, created_at, updated_at`,
+		RETURNING id, owner_id, name, COALESCE(description, ''), visibility, is_smart, tidal_auto_download, COALESCE(cover_art_path, ''), created_at, updated_at`,
 		ownerID, name, description, visibility,
-	).Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.TIDALAutoDownload, &p.CreatedAt, &p.UpdatedAt)
+	).Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.TIDALAutoDownload, &p.CoverArtPath, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		// Never hand back a half-scanned row alongside an error, matching
 		// library.Store.GetTrack.
@@ -101,9 +105,9 @@ func (s *Store) Create(ctx context.Context, ownerID uuid.UUID, name, description
 func (s *Store) Get(ctx context.Context, id uuid.UUID) (*Playlist, error) {
 	p := &Playlist{}
 	err := s.db.QueryRow(ctx, `
-		SELECT id, owner_id, name, COALESCE(description, ''), visibility, is_smart, tidal_auto_download, created_at, updated_at
+		SELECT id, owner_id, name, COALESCE(description, ''), visibility, is_smart, tidal_auto_download, COALESCE(cover_art_path, ''), created_at, updated_at
 		FROM playlists WHERE id = $1`, id,
-	).Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.TIDALAutoDownload, &p.CreatedAt, &p.UpdatedAt)
+	).Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.TIDALAutoDownload, &p.CoverArtPath, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -116,6 +120,17 @@ func (s *Store) Get(ctx context.Context, id uuid.UUID) (*Playlist, error) {
 type PlaylistForUser struct {
 	Playlist
 	EffectiveRole string
+	// Cover is the track whose art stands for the playlist, nil when it has
+	// no tracks the user can see.
+	Cover *PlaylistCover
+}
+
+// PlaylistCover picks the same track as the playlist page's header: the
+// first with an album, else the first.
+type PlaylistCover struct {
+	TrackID  uuid.UUID
+	AlbumID  *uuid.UUID
+	CoverURL string // remote art for tracks without a local cover
 }
 
 // ListForUser returns playlists and roles for the user who owns them or is an accepted collaborator on.
@@ -123,14 +138,24 @@ type PlaylistForUser struct {
 // playlist is collaborative.
 func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]PlaylistForUser, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT p.id, p.owner_id, p.name, COALESCE(p.description, ''), p.visibility, p.is_smart, p.tidal_auto_download, p.created_at, p.updated_at,
-		       CASE WHEN p.owner_id = $1 THEN 'owner' ELSE pc.role END
+		SELECT p.id, p.owner_id, p.name, COALESCE(p.description, ''), p.visibility, p.is_smart, p.tidal_auto_download, COALESCE(p.cover_art_path, ''), p.created_at, p.updated_at,
+		       CASE WHEN p.owner_id = $1 THEN 'owner' ELSE pc.role END,
+		       cover.id, cover.album_id, cover.cover_url
 		FROM playlists p
 		LEFT JOIN playlist_collaborators pc
 		  ON pc.playlist_id = p.id
 		 AND pc.user_id = $1
 		 AND pc.status = 'accepted'
 		 AND p.visibility = 'collaborative'
+		LEFT JOIN LATERAL (
+			SELECT t.id, t.album_id, COALESCE(t.external_meta->>'cover_url', '') AS cover_url
+			FROM playlist_tracks pt
+			JOIN tracks t ON t.id = pt.track_id AND t.deleted_at IS NULL
+			WHERE pt.playlist_id = p.id
+			  AND (t.owner_id IS NULL OR t.owner_id = $1)
+			ORDER BY (t.album_id IS NULL), pt.position
+			LIMIT 1
+		) cover ON TRUE
 		WHERE p.owner_id = $1 OR pc.user_id IS NOT NULL
 		ORDER BY p.updated_at DESC
 		LIMIT $2`, userID, maxPlaylistRows)
@@ -141,8 +166,17 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]PlaylistFo
 	var out []PlaylistForUser
 	for rows.Next() {
 		var p PlaylistForUser
-		if err := rows.Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.TIDALAutoDownload, &p.CreatedAt, &p.UpdatedAt, &p.EffectiveRole); err != nil {
+		var coverID *uuid.UUID
+		var coverAlbumID *uuid.UUID
+		var coverURL *string
+		if err := rows.Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.TIDALAutoDownload, &p.CoverArtPath, &p.CreatedAt, &p.UpdatedAt, &p.EffectiveRole, &coverID, &coverAlbumID, &coverURL); err != nil {
 			return nil, err
+		}
+		if coverID != nil {
+			p.Cover = &PlaylistCover{TrackID: *coverID, AlbumID: coverAlbumID}
+			if coverURL != nil {
+				p.Cover.CoverURL = *coverURL
+			}
 		}
 		out = append(out, p)
 	}
@@ -176,6 +210,21 @@ func (s *Store) Update(ctx context.Context, id uuid.UUID, name, description stri
 // have not changed, and bumping it would reorder everyone's playlist list.
 func (s *Store) SetTIDALAutoDownload(ctx context.Context, id uuid.UUID, enabled bool) error {
 	tag, err := s.db.Exec(ctx, `UPDATE playlists SET tidal_auto_download = $2 WHERE id = $1`, id, enabled)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetCover points the playlist at an uploaded cover; an empty key goes back
+// to the first track's art. Owner-only, enforced by caller.
+func (s *Store) SetCover(ctx context.Context, id uuid.UUID, key string) error {
+	tag, err := s.db.Exec(ctx, `
+		UPDATE playlists SET cover_art_path = NULLIF($2, ''), updated_at = NOW()
+		WHERE id = $1`, id, dbtext.Clean(key))
 	if err != nil {
 		return err
 	}
