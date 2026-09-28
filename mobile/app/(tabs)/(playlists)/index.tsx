@@ -5,6 +5,7 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
   type ListRenderItemInfo,
 } from "react-native";
@@ -18,7 +19,7 @@ import {
 } from "@music-library/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { EmptyState } from "../../../components/empty-state";
-import { PlaylistRow } from "../../../components/playlist-row";
+import { PlaylistTile } from "../../../components/playlist-tile";
 import { Card, SectionLabel } from "../../../components/primitives";
 import { HeaderIconButton } from "../../../components/header-buttons";
 import {
@@ -28,6 +29,8 @@ import {
 import { qk } from "../../../lib/query-keys";
 import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
+
+const GRID_COLUMNS = 2;
 
 export default function PlaylistsScreen() {
   const theme = useTheme();
@@ -84,23 +87,19 @@ export default function PlaylistsScreen() {
     [router],
   );
 
+  const { width: windowWidth } = useWindowDimensions();
+  const tileSize = Math.floor(
+    (windowWidth - theme.space.lg * (GRID_COLUMNS + 1)) / GRID_COLUMNS,
+  );
+
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<Playlist>) => (
-      <PlaylistRow playlist={item} onPress={onPress} />
+      <PlaylistTile playlist={item} size={tileSize} onPress={onPress} />
     ),
-    [onPress],
+    [onPress, tileSize],
   );
 
   const keyExtractor = useCallback((p: Playlist) => p.id, []);
-
-  const getItemLayout = useCallback(
-    (_: ArrayLike<Playlist> | null | undefined, index: number) => ({
-      length: theme.row.height,
-      offset: theme.row.height * index,
-      index,
-    }),
-    [theme.row.height],
-  );
 
   const invites = invitesQuery.data ?? [];
   const playlists = playlistsQuery.data ?? [];
@@ -151,13 +150,18 @@ export default function PlaylistsScreen() {
         data={playlists}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
-        getItemLayout={getItemLayout}
+        numColumns={GRID_COLUMNS}
+        columnWrapperStyle={{
+          paddingHorizontal: theme.space.lg,
+          gap: theme.space.lg,
+        }}
         ListHeaderComponent={header}
         contentInsetAdjustmentBehavior="automatic"
         style={{ backgroundColor: theme.color.bg }}
         contentContainerStyle={{
-          paddingTop: invites.length > 0 ? theme.space.md : 0,
+          paddingTop: invites.length > 0 ? theme.space.md : theme.space.sm,
           paddingBottom: dockInset + 24,
+          rowGap: theme.space.xl,
         }}
         refreshControl={
           <RefreshControl
