@@ -7,7 +7,10 @@ import {
   useQueuePosition,
   type ExternalQueue,
 } from "../QueuePopover";
-import { useTrackContextMenu } from "../TrackContextMenu";
+import {
+  useContextMenuClickGuard,
+  useTrackContextMenu,
+} from "../TrackContextMenu";
 import { MINI_PANEL_ID, type MiniPanel } from "./useMiniPlayerMode";
 
 const TITLES: Record<MiniPanel, string> = {
@@ -79,14 +82,19 @@ function MiniQueue({ externalQueue }: { externalQueue?: ExternalQueue }) {
   // Only this app's own queue gets the row menu, as in the queue popover.
   const { bind, menu } = useTrackContextMenu();
   const canContext = !externalQueue && !targetDevice;
+  // A click that dismisses an open menu mustn't also play the row under it.
+  const clickGuard = useContextMenuClickGuard();
   return (
-    <>
+    <div
+      onMouseDownCapture={clickGuard.onMouseDownCapture}
+      onClickCapture={clickGuard.onClickCapture}
+    >
       <QueueList
         externalQueue={externalQueue}
         bindCtx={canContext ? bind : undefined}
       />
       {menu}
-    </>
+    </div>
   );
 }
 

@@ -576,3 +576,42 @@ export function useTrackContextMenu() {
 
   return { bind, menu, close, isOpen: state !== null };
 }
+
+/**
+ * For a list whose rows act on a single click, like the queue: while a
+ * context menu is open, the next click in the list only closes the menu. The
+ * click is swallowed, so it can't also play the row under it. Spread the
+ * handlers on the list's container. Pass `closeMenu` when the container stops
+ * mousedown from reaching the menu's own outside-click listener.
+ */
+export function useContextMenuClickGuard(closeMenu?: () => void) {
+  const swallowClick = useRef(false);
+  // A menu rendered as a React child of the list passes its own clicks
+  // through these handlers too; leave those alone.
+  const inMenu = (e: React.SyntheticEvent) =>
+    e.target instanceof Element && !!e.target.closest(".ctx-menu");
+  // Capture phase runs before the menu's window listener closes it, so the
+  // menu is still in the document here.
+  const onMouseDownCapture = (e: React.MouseEvent) => {
+    if (inMenu(e)) return;
+    const menuOpen = !!document.querySelector(".ctx-menu");
+    swallowClick.current = menuOpen && e.button === 0;
+    if (swallowClick.current) {
+      // Only this gesture's click: if it's released elsewhere (no click
+      // here), don't let the flag eat a later one, e.g. a keyboard Enter.
+      window.addEventListener(
+        "mouseup",
+        () => window.setTimeout(() => (swallowClick.current = false), 0),
+        { once: true, capture: true },
+      );
+    }
+    if (menuOpen) closeMenu?.();
+  };
+  const onClickCapture = (e: React.MouseEvent) => {
+    if (inMenu(e) || !swallowClick.current) return;
+    swallowClick.current = false;
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  return { onMouseDownCapture, onClickCapture };
+}

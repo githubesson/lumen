@@ -6,7 +6,10 @@ import { usePlayer, useRemotePlayback } from "../context/Player";
 import { useDismiss } from "../lib/useDismiss";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import CoverArt from "./CoverArt";
-import { useTrackContextMenu } from "./TrackContextMenu";
+import {
+  useContextMenuClickGuard,
+  useTrackContextMenu,
+} from "./TrackContextMenu";
 
 interface ExternalQueueTrack {
   id: string;
@@ -71,34 +74,9 @@ export default function QueuePopover({
   });
 
   // The queue stops mousedown from bubbling, so the row menu never sees
-  // clicks inside it. Route them here instead: with the menu open, a click in
-  // the queue only closes the menu (the click itself is swallowed, so it
-  // can't also play a row and close the queue).
-  const swallowClick = useRef(false);
-  // The menu is portaled but still a React child of the queue, so its own
-  // clicks pass through these handlers too; leave those alone.
-  const inMenu = (e: React.SyntheticEvent) =>
-    e.target instanceof Element && !!e.target.closest(".ctx-menu");
-  const onMouseDownCapture = (e: React.MouseEvent) => {
-    if (inMenu(e)) return;
-    swallowClick.current = ctxOpen && e.button === 0;
-    if (swallowClick.current) {
-      // Only this gesture's click: if it's released elsewhere (no click
-      // here), don't let the flag eat a later one, e.g. a keyboard Enter.
-      window.addEventListener(
-        "mouseup",
-        () => window.setTimeout(() => (swallowClick.current = false), 0),
-        { once: true, capture: true },
-      );
-    }
-    if (ctxOpen) closeCtx();
-  };
-  const onClickCapture = (e: React.MouseEvent) => {
-    if (inMenu(e) || !swallowClick.current) return;
-    swallowClick.current = false;
-    e.preventDefault();
-    e.stopPropagation();
-  };
+  // clicks inside it; the guard closes it instead, and swallows the click so
+  // it can't also play a row and close the queue.
+  const clickGuard = useContextMenuClickGuard(closeCtx);
 
   // The menu belongs to a queue row; it goes when the queue does.
   useEffect(() => {
@@ -128,8 +106,8 @@ export default function QueuePopover({
       style={{ bottom, right, width, maxHeight }}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
-      onMouseDownCapture={onMouseDownCapture}
-      onClickCapture={onClickCapture}
+      onMouseDownCapture={clickGuard.onMouseDownCapture}
+      onClickCapture={clickGuard.onClickCapture}
     >
       <div className="queue-pop-head">
         <span className="queue-pop-title-h">{externalQueue?.title ?? "Queue"}</span>

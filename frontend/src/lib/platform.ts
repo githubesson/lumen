@@ -35,9 +35,18 @@ export function isElectron(): boolean {
   return !!electron();
 }
 
-/** Whether the desktop shell can toggle the compact mini-player window. */
+/**
+ * Whether the desktop shell can toggle the compact mini-player window. Its
+ * queue, lyrics and device views live in a panel the window grows for, so a
+ * shell without the panel calls doesn't get a mini player at all.
+ */
 export function canSetMiniPlayer(): boolean {
-  return !!electron()?.setMiniPlayerMode;
+  const bridge = electron();
+  return (
+    !!bridge?.setMiniPlayerMode &&
+    !!bridge.getMiniPlayerPanelAnchor &&
+    !!bridge.setMiniPlayerPanel
+  );
 }
 
 /** Whether the desktop shell can export many track streams into a chosen folder. */
