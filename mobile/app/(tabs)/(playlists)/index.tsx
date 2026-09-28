@@ -104,30 +104,29 @@ export default function PlaylistsScreen() {
   const invites = invitesQuery.data ?? [];
   const playlists = playlistsQuery.data ?? [];
 
-  const header = (
-    <View>
-      {invites.length > 0 ? (
-        <View style={{ paddingHorizontal: theme.space.lg, gap: 6, marginBottom: theme.space.sm }}>
-          <SectionLabel>Invitations</SectionLabel>
-          <Card style={{ overflow: "hidden" }}>
-            {invites.map((invite, i) => (
-              <InviteRow
-                key={invite.playlist_id}
-                invite={invite}
-                theme={theme}
-                firstRow={i === 0}
-                pending={
-                  acceptMutation.isPending || declineMutation.isPending
-                }
-                onAccept={() => acceptMutation.mutate(invite.playlist_id)}
-                onDecline={() => declineMutation.mutate(invite.playlist_id)}
-              />
-            ))}
-          </Card>
-        </View>
-      ) : null}
-    </View>
-  );
+  // No header cell at all without invites, so the grid starts right under the
+  // title.
+  const header =
+    invites.length > 0 ? (
+      <View style={{ paddingHorizontal: theme.space.lg, gap: 6, marginBottom: theme.space.lg }}>
+        <SectionLabel>Invitations</SectionLabel>
+        <Card style={{ overflow: "hidden" }}>
+          {invites.map((invite, i) => (
+            <InviteRow
+              key={invite.playlist_id}
+              invite={invite}
+              theme={theme}
+              firstRow={i === 0}
+              pending={
+                acceptMutation.isPending || declineMutation.isPending
+              }
+              onAccept={() => acceptMutation.mutate(invite.playlist_id)}
+              onDecline={() => declineMutation.mutate(invite.playlist_id)}
+            />
+          ))}
+        </Card>
+      </View>
+    ) : null;
 
   return (
     <>
@@ -155,13 +154,13 @@ export default function PlaylistsScreen() {
           paddingHorizontal: theme.space.lg,
           gap: theme.space.lg,
         }}
+        ItemSeparatorComponent={GridRowGap}
         ListHeaderComponent={header}
         contentInsetAdjustmentBehavior="automatic"
         style={{ backgroundColor: theme.color.bg }}
         contentContainerStyle={{
           paddingTop: invites.length > 0 ? theme.space.md : theme.space.sm,
           paddingBottom: dockInset + 24,
-          rowGap: theme.space.xl,
         }}
         refreshControl={
           <RefreshControl
@@ -180,6 +179,12 @@ export default function PlaylistsScreen() {
       />
     </>
   );
+}
+
+/** Vertical space between grid rows; FlatList renders it between rows, not tiles. */
+function GridRowGap() {
+  const theme = useTheme();
+  return <View style={{ height: theme.space.xl }} />;
 }
 
 function InviteRow({
