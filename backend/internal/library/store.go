@@ -938,13 +938,18 @@ func (s *Store) ClearIngestErrorsForPath(ctx context.Context, path string) error
 	return err
 }
 
-// PersonalUploadPaths returns the file of every track the user owns, live or
-// soft-deleted, so deleting the account can remove the uploads too. It runs
-// in the deleting transaction, before the delete cascades those rows away.
+// PersonalUploadPaths returns every file behind the tracks the user owns, live
+// or soft-deleted, including duplicate uploads recorded as aliases, so
+// deleting the account can remove the uploads too. It runs in the deleting
+// transaction, before the delete cascades those rows away.
 func PersonalUploadPaths(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]string, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT DISTINCT file_path FROM tracks
-		WHERE owner_id = $1 AND source = 'local' AND file_path <> ''`, userID)
+		SELECT file_path FROM tracks
+		WHERE owner_id = $1 AND source = 'local' AND file_path <> ''
+		UNION
+		SELECT a.file_path FROM track_aliases a
+		JOIN tracks t ON t.id = a.track_id
+		WHERE t.owner_id = $1 AND t.source = 'local' AND a.file_path <> ''`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -1185,9 +1190,9 @@ func (s *Store) DistinctPathsUnder(ctx context.Context, prefixes []string) ([]st
 	return out, rows.Err()
 }
 
-// SoftDeleteTracksUnderPath marks every live track whose file_path starts with
-// `prefix` as deleted, except those with a file under any of the `keep`
-// prefixes, as the canonical path or as a deduplicated copy (alias). Used
+// SoftDeleteTracksUnderPath marks every live track with a file under `prefix`
+// (its canonical path, or a deduplicated copy recorded as an alias) as
+// deleted, except those with a file under any of the `keep` prefixes. Used
 // when an admin removes a music root — the files will no longer be
 // watched/scanned, so their tracks shouldn't keep appearing in the library —
 // with keep holding the roots that are still watched.
@@ -1199,7 +1204,11 @@ func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string, ke
 	}
 	tag, err := s.db.Exec(ctx, `
 		UPDATE tracks SET deleted_at = NOW()
-		WHERE deleted_at IS NULL AND source = 'local' AND starts_with(file_path, $1)
+		WHERE deleted_at IS NULL AND source = 'local'
+		  AND (starts_with(file_path, $1) OR EXISTS (
+			SELECT 1 FROM track_aliases a
+			WHERE a.track_id = tracks.id AND starts_with(a.file_path, $1)
+		  ))
 		  AND NOT EXISTS (SELECT 1 FROM unnest($2::text[]) k WHERE starts_with(file_path, k))
 		  AND NOT EXISTS (
 			SELECT 1 FROM track_aliases a, unnest($2::text[]) k

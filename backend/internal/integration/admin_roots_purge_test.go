@@ -118,4 +118,10 @@ func TestRemoveRootPurgeKeepsWatchedTracks(t *testing.T) {
 	if deleted(filepath.Join(nested, "covered.mp3")) {
 		t.Error("track under a folder the primary root still covers was purged")
 	}
+
+	// Now its last copy's folder goes too, so the track goes with it.
+	remove(ids[1])
+	if !deleted(filepath.Join(ext, "dupe.mp3")) {
+		t.Error("track whose only remaining copy was in the removed folder was kept")
+	}
 }

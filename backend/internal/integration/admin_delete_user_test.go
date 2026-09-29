@@ -66,17 +66,20 @@ func TestAdminDeleteUserRemovesUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 	own, adopted := filepath.Join(userDir, "own.mp3"), filepath.Join(userDir, "adopted.mp3")
-	for _, p := range []string{own, adopted} {
+	dupe := filepath.Join(userDir, "own-again.mp3") // a duplicate upload, kept as an alias
+	for _, p := range []string{own, adopted, dupe} {
 		if err := os.WriteFile(p, []byte("audio"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	insert := func(owner *uuid.UUID, path string) {
+	insert := func(owner *uuid.UUID, path string) uuid.UUID {
 		id := uuid.New()
 		exec(`INSERT INTO tracks(id,owner_id,title,duration_ms,file_path,file_size,format,audio_sha256) VALUES($1,$2,'t',1000,$3,5,'mp3',$4)`,
 			id, owner, path, id[:])
+		return id
 	}
-	insert(&target, own)
+	ownID := insert(&target, own)
+	exec(`INSERT INTO track_aliases(track_id, file_path) VALUES($1, $2)`, ownID, dupe)
 	insert(&target, adopted)
 	insert(nil, adopted) // a global track points at the same file
 
@@ -146,8 +149,10 @@ func TestAdminDeleteUserRemovesUploads(t *testing.T) {
 		t.Errorf("playlist marked for deletion still exists")
 	}
 
-	if _, err := os.Stat(own); !os.IsNotExist(err) {
-		t.Errorf("own upload still on disk (stat err %v)", err)
+	for _, p := range []string{own, dupe} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("upload %s still on disk (stat err %v)", filepath.Base(p), err)
+		}
 	}
 	if _, err := os.Stat(adopted); err != nil {
 		t.Errorf("adopted upload was removed: %v", err)
