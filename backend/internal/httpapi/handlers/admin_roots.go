@@ -210,20 +210,19 @@ func (h *AdminRoots) Delete(w http.ResponseWriter, r *http.Request) {
 
 	var deleted int64
 	if purge && h.Library != nil {
-		// Only purge what stops being watched. Tracks under another live root
-		// stay: that root still scans them, and a purge would only bring them
-		// back as new rows without their history or playlist places.
+		// Only purge what stops being watched. Tracks with a file (or a
+		// deduplicated copy) under another live root stay: that root still
+		// scans them, and a purge would only bring them back as new rows
+		// without their history or playlist places.
 		live, err := h.liveRootsExcept(r, row.ID)
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		if coveringRoot(row.Path, live) == "" {
-			var keep []string
-			for _, other := range live {
-				if inside, _ := pathsafe.WithinRoot(row.Path, other); inside {
-					keep = append(keep, withSeparator(other))
-				}
+			keep := make([]string, len(live))
+			for i, other := range live {
+				keep[i] = withSeparator(other)
 			}
 			n, err := h.Library.SoftDeleteTracksUnderPath(r.Context(), withSeparator(row.Path), keep)
 			if err != nil {

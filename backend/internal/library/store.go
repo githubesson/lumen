@@ -1186,10 +1186,11 @@ func (s *Store) DistinctPathsUnder(ctx context.Context, prefixes []string) ([]st
 }
 
 // SoftDeleteTracksUnderPath marks every live track whose file_path starts with
-// `prefix` as deleted, except those under any of the `keep` prefixes. Used
+// `prefix` as deleted, except those with a file under any of the `keep`
+// prefixes, as the canonical path or as a deduplicated copy (alias). Used
 // when an admin removes a music root — the files will no longer be
 // watched/scanned, so their tracks shouldn't keep appearing in the library —
-// with keep holding still-watched roots inside it.
+// with keep holding the roots that are still watched.
 func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string, keep []string) (int64, error) {
 	prefix = dbtext.Clean(prefix)
 	cleanKeep := make([]string, len(keep))
@@ -1199,7 +1200,11 @@ func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string, ke
 	tag, err := s.db.Exec(ctx, `
 		UPDATE tracks SET deleted_at = NOW()
 		WHERE deleted_at IS NULL AND source = 'local' AND starts_with(file_path, $1)
-		  AND NOT EXISTS (SELECT 1 FROM unnest($2::text[]) k WHERE starts_with(file_path, k))`,
+		  AND NOT EXISTS (SELECT 1 FROM unnest($2::text[]) k WHERE starts_with(file_path, k))
+		  AND NOT EXISTS (
+			SELECT 1 FROM track_aliases a, unnest($2::text[]) k
+			WHERE a.track_id = tracks.id AND starts_with(a.file_path, k)
+		  )`,
 		prefix, cleanKeep)
 	if err != nil {
 		return 0, err

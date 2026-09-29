@@ -102,6 +102,20 @@ func TestReaches(t *testing.T) {
 		t.Error("Reaches(mlink, mlink/a) = true, want false: the outer root is a symlink")
 	}
 	m := filepath.Join(dir, "m")
+	// Searchable but not readable: Lstat below it works, a walk can't list it.
+	if os.Geteuid() != 0 {
+		locked := filepath.Join(dir, "locked")
+		if err := os.MkdirAll(filepath.Join(locked, "in"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(locked, 0o111); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+		if Reaches(locked, filepath.Join(locked, "in"), false) {
+			t.Error("Reaches through an unreadable directory = true, want false")
+		}
+	}
 	for _, tc := range []struct {
 		inner   string
 		skipDot bool

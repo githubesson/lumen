@@ -46,6 +46,7 @@ func TestRemoveRootPurgeKeepsWatchedTracks(t *testing.T) {
 	tracks := map[string]uuid.UUID{}
 	for _, p := range []string{
 		filepath.Join(ext, "gone.mp3"),
+		filepath.Join(ext, "dupe.mp3"),
 		filepath.Join(keepDir, "kept.mp3"),
 		filepath.Join(nested, "covered.mp3"),
 	} {
@@ -54,6 +55,12 @@ func TestRemoveRootPurgeKeepsWatchedTracks(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO tracks(id,title,duration_ms,file_path,file_size,format,audio_sha256) VALUES($1,'t',1000,$2,1,'mp3',$3)`, id, p, id[:]); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// dupe.mp3 has an identical copy in the still-watched ext/keep, recorded
+	// as an alias of the same track.
+	if _, err := pool.Exec(ctx, `INSERT INTO track_aliases(track_id, file_path) VALUES($1, $2)`,
+		tracks[filepath.Join(ext, "dupe.mp3")], filepath.Join(keepDir, "dupe-copy.mp3")); err != nil {
+		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		ids := make([]uuid.UUID, 0, len(tracks))
@@ -101,6 +108,9 @@ func TestRemoveRootPurgeKeepsWatchedTracks(t *testing.T) {
 	}
 	if !deleted(filepath.Join(ext, "gone.mp3")) {
 		t.Error("track only the removed folder watched was kept")
+	}
+	if deleted(filepath.Join(ext, "dupe.mp3")) {
+		t.Error("track with a copy under a still-watched folder was purged")
 	}
 	if deleted(filepath.Join(keepDir, "kept.mp3")) {
 		t.Error("track under a still-watched folder inside the removed one was purged")
