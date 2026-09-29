@@ -102,12 +102,35 @@ func (s *Store) Delete(ctx context.Context, id uuid.UUID) error {
 	return s.DeleteWith(ctx, id, nil)
 }
 
+// removalLock serializes root removals, so each one sees the other roots as
+// any removal that got there first left them.
+const removalLock int64 = 0x6c756d656e726f6f // "lumenroo"
+
 // DeleteWith deletes a root and runs also (purging its tracks, say) in the
-// same transaction, so neither happens without the other.
-func (s *Store) DeleteWith(ctx context.Context, id uuid.UUID, also func(pgx.Tx) error) error {
+// same transaction, so neither happens without the other. also gets the
+// transaction and every other root, read under a lock that serializes
+// removals: two at once can't each count the other's root as staying.
+func (s *Store) DeleteWith(ctx context.Context, id uuid.UUID, also func(tx pgx.Tx, others []Root) error) error {
 	err := dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, removalLock); err != nil {
+			return err
+		}
 		if also != nil {
-			if err := also(tx); err != nil {
+			rows, err := tx.Query(ctx, `
+				SELECT id, path, label, enabled, created_at
+				FROM music_roots WHERE id <> $1 ORDER BY created_at ASC`, id)
+			if err != nil {
+				return err
+			}
+			others, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Root, error) {
+				var r Root
+				err := row.Scan(&r.ID, &r.Path, &r.Label, &r.Enabled, &r.CreatedAt)
+				return r, err
+			})
+			if err != nil {
+				return err
+			}
+			if err := also(tx, others); err != nil {
 				return err
 			}
 		}

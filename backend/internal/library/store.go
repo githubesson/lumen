@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -1209,9 +1210,11 @@ func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string) (i
 // watched. A file is still watched when it's under a live root inside the
 // removed one (inner), or outside the removed root and under any live root
 // (live); a live root around the removed one doesn't count for files inside
-// it, since reaching this means its scan doesn't get there. Runs in the
-// caller's transaction, alongside the root's own deletion. All prefixes must
-// end with the path separator.
+// it, since reaching this means its scan doesn't get there. An alias only
+// counts while its file is on disk: ingest unlinks duplicates under the
+// primary root and keeps just their metadata. Runs in the caller's
+// transaction, alongside the root's own deletion. All prefixes must end with
+// the path separator.
 func SoftDeleteRootTracks(ctx context.Context, tx pgx.Tx, prefix string, inner, live []string) (int64, error) {
 	clean := func(in []string) []string {
 		out := make([]string, len(in))
@@ -1220,26 +1223,51 @@ func SoftDeleteRootTracks(ctx context.Context, tx pgx.Tx, prefix string, inner, 
 		}
 		return out
 	}
-	tag, err := tx.Exec(ctx, `
-		UPDATE tracks t SET deleted_at = NOW()
-		WHERE t.deleted_at IS NULL AND t.source = 'local'
-		  AND (starts_with(t.file_path, $1) OR EXISTS (
+	prefix, inner, live = dbtext.Clean(prefix), clean(inner), clean(live)
+	const candidate = `
+		t.deleted_at IS NULL AND t.source = 'local'
+		AND (starts_with(t.file_path, $1) OR EXISTS (
 			SELECT 1 FROM track_aliases a
 			WHERE a.track_id = t.id AND starts_with(a.file_path, $1)
-		  ))
-		  AND NOT (
-			EXISTS (SELECT 1 FROM unnest($2::text[]) k WHERE starts_with(t.file_path, k))
-			OR (NOT starts_with(t.file_path, $1)
-			    AND EXISTS (SELECT 1 FROM unnest($3::text[]) k WHERE starts_with(t.file_path, k)))
-		  )
-		  AND NOT EXISTS (
-			SELECT 1 FROM track_aliases a
-			WHERE a.track_id = t.id AND (
-				EXISTS (SELECT 1 FROM unnest($2::text[]) k WHERE starts_with(a.file_path, k))
-				OR (NOT starts_with(a.file_path, $1)
-				    AND EXISTS (SELECT 1 FROM unnest($3::text[]) k WHERE starts_with(a.file_path, k)))
-			)
-		  )`, dbtext.Clean(prefix), clean(inner), clean(live))
+		))`
+	// watched($x): the path $x is under a location that stays watched.
+	watched := func(x string) string {
+		return `(EXISTS (SELECT 1 FROM unnest($2::text[]) k WHERE starts_with(` + x + `, k))
+			OR (NOT starts_with(` + x + `, $1)
+			    AND EXISTS (SELECT 1 FROM unnest($3::text[]) k WHERE starts_with(` + x + `, k))))`
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT a.track_id, a.file_path FROM track_aliases a
+		JOIN tracks t ON t.id = a.track_id
+		WHERE `+candidate+` AND `+watched("a.file_path"), prefix, inner, live)
+	if err != nil {
+		return 0, err
+	}
+	// Non-nil: a nil slice is sent as NULL, and NOT (id = ANY(NULL)) is never
+	// true, so nothing would be purged.
+	keepIDs := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		var path string
+		if err := rows.Scan(&id, &path); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+			keepIDs = append(keepIDs, id)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE tracks t SET deleted_at = NOW()
+		WHERE `+candidate+`
+		  AND NOT `+watched("t.file_path")+`
+		  AND NOT (t.id = ANY($4::uuid[]))`, prefix, inner, live, keepIDs)
 	if err != nil {
 		return 0, err
 	}

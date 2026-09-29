@@ -56,6 +56,7 @@ func TestRemoveRootPurgeKeepsWatchedTracks(t *testing.T) {
 		filepath.Join(nested, "covered.mp3"),
 		filepath.Join(hidden, "hidden.mp3"),
 		filepath.Join(primary, "loose.mp3"),
+		filepath.Join(ext, "ghost.mp3"),
 	} {
 		id := uuid.New()
 		tracks[p] = id
@@ -65,8 +66,18 @@ func TestRemoveRootPurgeKeepsWatchedTracks(t *testing.T) {
 	}
 	// dupe.mp3 has an identical copy in the still-watched ext/keep, recorded
 	// as an alias of the same track.
+	dupeCopy := filepath.Join(keepDir, "dupe-copy.mp3")
+	if err := os.WriteFile(dupeCopy, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `INSERT INTO track_aliases(track_id, file_path) VALUES($1, $2)`,
-		tracks[filepath.Join(ext, "dupe.mp3")], filepath.Join(keepDir, "dupe-copy.mp3")); err != nil {
+		tracks[filepath.Join(ext, "dupe.mp3")], dupeCopy); err != nil {
+		t.Fatal(err)
+	}
+	// ghost.mp3's alias under the primary root is metadata only: ingest
+	// unlinked that duplicate, so it doesn't keep the track.
+	if _, err := pool.Exec(ctx, `INSERT INTO track_aliases(track_id, file_path) VALUES($1, $2)`,
+		tracks[filepath.Join(ext, "ghost.mp3")], filepath.Join(primary, "ghost-copy.mp3")); err != nil {
 		t.Fatal(err)
 	}
 	// loose.mp3 is watched by the primary root; its copy in .archive isn't
@@ -125,6 +136,9 @@ func TestRemoveRootPurgeKeepsWatchedTracks(t *testing.T) {
 	if deleted(filepath.Join(ext, "dupe.mp3")) {
 		t.Error("track with a copy under a still-watched folder was purged")
 	}
+	if !deleted(filepath.Join(ext, "ghost.mp3")) {
+		t.Error("track kept for an alias whose file is gone")
+	}
 	if deleted(filepath.Join(keepDir, "kept.mp3")) {
 		t.Error("track under a still-watched folder inside the removed one was purged")
 	}
@@ -134,7 +148,7 @@ func TestRemoveRootPurgeKeepsWatchedTracks(t *testing.T) {
 
 	// A failed removal leaves both the root and its tracks as they were.
 	boom := errors.New("boom")
-	err = store.DeleteWith(ctx, ids[3], func(tx pgx.Tx) error {
+	err = store.DeleteWith(ctx, ids[3], func(tx pgx.Tx, _ []musicroots.Root) error {
 		if _, err := library.SoftDeleteRootTracks(ctx, tx, hidden+string(filepath.Separator), nil, []string{primary + string(filepath.Separator)}); err != nil {
 			return err
 		}
