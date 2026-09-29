@@ -15,6 +15,8 @@ import { PinCreateForm, usePinForm, type RootOption } from "./PinCreateForm";
  * manage its scan lifecycle + download history.
  */
 const pinName = (pin: FilenPin) => pin.label || "Filen share";
+// Unlabeled shares would all be "Filen share"; their buttons need to differ.
+const pinActionName = (pin: FilenPin) => pin.label || pin.share_url;
 
 export function FilenPinsSection({
   rootOptions,
@@ -104,7 +106,7 @@ export function FilenPinsSection({
         rowKey={(pin) =>
           (pin.id?.trim() ?? "") || `${pin.share_url}:${pin.destination_path}`
         }
-        rowName={pinName}
+        rowName={pinActionName}
         renderLead={(pin) => (
           <>
             <td>

@@ -6,8 +6,9 @@ const FOCUSABLE =
 /** Keep Tab / Shift+Tab cycling inside the dialog instead of the app behind it. */
 export function trapTab(event: KeyboardEvent, panel: HTMLElement | null) {
   if (!panel) return;
+  // Tab skips tabIndex -1 controls, so they can't be the ends of the cycle.
   const items = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (el) => el.getClientRects().length > 0,
+    (el) => el.tabIndex >= 0 && el.getClientRects().length > 0,
   );
   if (items.length === 0) {
     event.preventDefault();

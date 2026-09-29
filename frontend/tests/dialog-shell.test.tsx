@@ -29,6 +29,10 @@ function Harness({ nested = false }: { nested?: boolean }) {
           <button type="button" onClick={() => setInnerOpen(true)}>
             Last
           </button>
+          {/* Tab skips it, so it mustn't count as the end of the cycle. */}
+          <button type="button" tabIndex={-1}>
+            Skipped
+          </button>
         </div>
       </DialogShell>
       {nested && (
