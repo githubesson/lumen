@@ -309,10 +309,11 @@ type ingestErrorsResp struct {
 	Total  int                   `json:"total"`
 }
 
-// Errors lists files that failed to import: the latest error per file, with
-// the total number of failing files for when there are more than fit.
+// Errors lists files that failed to import under the folders being scanned
+// now: the latest error per file, with the total number of failing files for
+// when there are more than fit.
 func (h *Library) Errors(w http.ResponseWriter, r *http.Request) {
-	errs, total, err := h.Library.ListIngestErrors(r.Context(), 200)
+	errs, total, err := h.Library.ListIngestErrors(r.Context(), h.Ingest.AllRoots(r.Context()), 200)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

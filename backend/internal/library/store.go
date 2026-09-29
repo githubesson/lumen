@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -1176,21 +1177,36 @@ type IngestError struct {
 	Attempts  int       `json:"attempts"`
 }
 
-// ListIngestErrors returns the newest failure per file, most recent first, and
-// how many files have failed in all (which can exceed limit).
-func (s *Store) ListIngestErrors(ctx context.Context, limit int) ([]IngestError, int, error) {
+// ListIngestErrors returns the newest failure per file under roots, most
+// recent first, and how many such files have failed in all (which can exceed
+// limit). Failures outside roots are left out: a removed or paused folder is
+// never rescanned, so they could neither be retried nor cleared.
+func (s *Store) ListIngestErrors(ctx context.Context, roots []string, limit int) ([]IngestError, int, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
+	prefixes := make([]string, 0, len(roots))
+	for _, r := range roots {
+		// With the separator, /music doesn't claim /music-archive.
+		p := strings.TrimRight(dbtext.Clean(r), string(filepath.Separator))
+		prefixes = append(prefixes, p+string(filepath.Separator))
+	}
+	if len(prefixes) == 0 {
+		return []IngestError{}, 0, nil
+	}
 	rows, err := s.db.Query(ctx, `
+		WITH scoped AS (
+			SELECT id, file_path, error, created_at FROM ingest_errors
+			WHERE EXISTS (SELECT 1 FROM unnest($2::text[]) pfx WHERE starts_with(file_path, pfx))
+		)
 		SELECT id, file_path, error, created_at, attempts, total FROM (
 			SELECT DISTINCT ON (file_path) id, file_path, error, created_at,
 				COUNT(*) OVER (PARTITION BY file_path) AS attempts
-			FROM ingest_errors
+			FROM scoped
 			ORDER BY file_path, created_at DESC, id DESC
 		) latest
-		CROSS JOIN (SELECT COUNT(DISTINCT file_path) AS total FROM ingest_errors) counted
-		ORDER BY created_at DESC, id DESC LIMIT $1`, limit)
+		CROSS JOIN (SELECT COUNT(DISTINCT file_path) AS total FROM scoped) counted
+		ORDER BY created_at DESC, id DESC LIMIT $1`, limit, prefixes)
 	if err != nil {
 		return nil, 0, err
 	}
