@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 // ReplayBucket is the granularity of the listening-activity time series.
@@ -115,6 +114,10 @@ func (s *Store) ReplayStats(ctx context.Context, p ReplayStatsParams) (*ReplayDa
 	if err := s.replayTopArtists(ctx, p, data); err != nil {
 		return nil, fmt.Errorf("top artists: %w", err)
 	}
+	if len(data.TopArtists) > 0 {
+		first := data.TopArtists[0]
+		data.Summary.HeadlineArtist = &ReplayHeadlineArtist{ID: first.ID, Name: first.Name, Plays: first.Plays}
+	}
 	if err := s.replayTopAlbums(ctx, p, data); err != nil {
 		return nil, fmt.Errorf("top albums: %w", err)
 	}
@@ -182,35 +185,6 @@ func (s *Store) replaySummary(ctx context.Context, p ReplayStatsParams, out *Rep
 		return err
 	}
 
-	// Headline artist = #1 most-played primary artist (if any plays at all)
-	if out.Summary.TotalPlays > 0 {
-		var ha ReplayHeadlineArtist
-		err = s.db.QueryRow(ctx, `
-			SELECT ar.id, ar.name, COUNT(*)::int AS plays
-			FROM play_history ph
-			JOIN tracks t ON t.id = ph.track_id AND t.deleted_at IS NULL
-			    AND `+trackVisibleP1+`
-			JOIN track_artists ta ON ta.track_id = t.id AND ta.role = 'primary'
-			JOIN artists ar ON ar.id = ta.artist_id
-			WHERE ph.user_id = $1
-			  AND ($2::timestamptz IS NULL OR ph.played_at >= $2)
-			  AND ($3::timestamptz IS NULL OR ph.played_at <  $3)
-			GROUP BY ar.id, ar.name
-			ORDER BY plays DESC, ar.name ASC
-			LIMIT 1`,
-			p.ViewerID, p.From, p.To,
-		).Scan(&ha.ID, &ha.Name, &ha.Plays)
-		switch {
-		case err == nil:
-			out.Summary.HeadlineArtist = &ha
-		case errors.Is(err, pgx.ErrNoRows):
-			// A user with no play history in the window simply has no headline
-			// artist. Everything else — a cancelled context, a saturated pool —
-			// is a real failure and must not render as a silently empty Replay.
-		default:
-			return err
-		}
-	}
 	return nil
 }
 

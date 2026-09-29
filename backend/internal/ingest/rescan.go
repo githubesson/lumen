@@ -3,11 +3,15 @@ package ingest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+
+	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/musicroots"
 )
 
 // RescanProgress is updated during a walk; callers can snapshot it for
@@ -17,6 +21,7 @@ type RescanProgress struct {
 	Processed atomic.Int64
 	Inserted  atomic.Int64
 	Dedup     atomic.Int64
+	Unchanged atomic.Int64
 	Errored   atomic.Int64
 	Pruned    atomic.Int64
 	Done      atomic.Bool
@@ -36,11 +41,17 @@ func (p *RescanProgress) FailureMessage() string {
 	return ""
 }
 
-// Rescan walks every configured music root and ingests every supported audio
-// file. Safe to call again later to pick up new files — deduplication is by
-// audio SHA-256. After the walks, reconciles the DB against disk and removes
-// rows for files that no longer exist under any live root.
+type RescanOptions struct {
+	Force bool // re-read even files whose successful-ingest fingerprint matches
+}
+
+// Rescan walks the configured roots, skipping unchanged successful ingests,
+// then reconciles the DB against disk. Force a full read with RescanWithOptions.
 func (s *Service) Rescan(ctx context.Context, p *RescanProgress) error {
+	return s.RescanWithOptions(ctx, p, RescanOptions{})
+}
+
+func (s *Service) RescanWithOptions(ctx context.Context, p *RescanProgress, options RescanOptions) error {
 	defer p.Done.Store(true)
 	roots := s.AllRoots(ctx)
 	s.log().Info("rescan starting", "roots", roots)
@@ -51,9 +62,19 @@ func (s *Service) Rescan(ctx context.Context, p *RescanProgress) error {
 			continue
 		}
 		liveRoots = append(liveRoots, root)
+	}
+	var fingerprints map[string]library.IngestFingerprint
+	if !options.Force && s.Library != nil {
+		var err error
+		fingerprints, err = s.Library.IngestFingerprints(ctx, liveRoots)
+		if err != nil {
+			return fmt.Errorf("load ingest fingerprints: %w", err)
+		}
+	}
+	for _, root := range uniqueScanRoots(liveRoots) {
 		before := p.Processed.Load()
 		beforeInserted := p.Inserted.Load()
-		if err := s.rescanRoot(ctx, root, p); err != nil {
+		if err := s.rescanRoot(ctx, root, p, fingerprints); err != nil {
 			s.log().Warn("rescan root aborted", "root", root, "err", err)
 			return err
 		}
@@ -71,13 +92,14 @@ func (s *Service) Rescan(ctx context.Context, p *RescanProgress) error {
 		"processed", p.Processed.Load(),
 		"inserted", p.Inserted.Load(),
 		"dedup", p.Dedup.Load(),
+		"unchanged", p.Unchanged.Load(),
 		"errored", p.Errored.Load(),
 		"pruned", p.Pruned.Load(),
 	)
 	return nil
 }
 
-func (s *Service) rescanRoot(ctx context.Context, root string, p *RescanProgress) error {
+func (s *Service) rescanRoot(ctx context.Context, root string, p *RescanProgress, fingerprints map[string]library.IngestFingerprint) error {
 	s.log().Info("rescan walking", "root", root)
 	// Fix non-UTF-8 names before enumerating: renaming a directory during the
 	// ingest walk would strand its already-listed children until the next
@@ -106,6 +128,16 @@ func (s *Service) rescanRoot(ctx context.Context, root string, p *RescanProgress
 			return ctx.Err()
 		default:
 		}
+		abs, absErr := filepath.Abs(path)
+		if fingerprint, ok := fingerprints[abs]; absErr == nil && ok {
+			if info, err := d.Info(); err == nil && info.Mode().IsRegular() &&
+				info.Size() == fingerprint.Size && info.ModTime().UnixNano() == fingerprint.MTimeNS {
+				p.Processed.Add(1)
+				p.Dedup.Add(1)
+				p.Unchanged.Add(1)
+				return nil
+			}
+		}
 		out := s.IngestFile(ctx, path)
 		p.Processed.Add(1)
 		switch {
@@ -123,6 +155,37 @@ func (s *Service) rescanRoot(ctx context.Context, root string, p *RescanProgress
 	})
 	s.log().Info("rescan walk finished", "root", root, "supported_files_found", supportedFound)
 	return err
+}
+
+// Keep separately configured dot-directory roots: an outer scan skips them.
+// Reaches also handles symlinks and unreadable ancestors, unlike path prefixes.
+func uniqueScanRoots(roots []string) []string {
+	out := make([]string, 0, len(roots))
+	for i, root := range roots {
+		covered := false
+		for j, other := range roots {
+			if i == j {
+				continue
+			}
+			rootAbs, rootErr := filepath.Abs(root)
+			otherAbs, otherErr := filepath.Abs(other)
+			if rootErr != nil || otherErr != nil {
+				continue
+			}
+			if rootAbs == otherAbs {
+				covered = j < i
+			} else {
+				covered = musicroots.Reaches(otherAbs, rootAbs, true)
+			}
+			if covered {
+				break
+			}
+		}
+		if !covered {
+			out = append(out, root)
+		}
+	}
+	return out
 }
 
 // pruneMissing reconciles tracks + ingest_errors against disk: any row under a

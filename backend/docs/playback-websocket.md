@@ -90,6 +90,13 @@ The snapshot is refreshed when devices connect, announce, disconnect, or
 publish activity. Online presence is intentionally ephemeral and in-memory;
 playback activity remains durable in PostgreSQL.
 
+Socket writers share a recent-activity database snapshot for each connected
+user. Activity updates and clears invalidate it before notifying clients;
+concurrent readers share the next load. The cache expires after five seconds
+and is removed when the user's last connection closes. Each response still
+filters expired activity and excludes its receiving device where appropriate.
+The existing periodic session checks and database refreshes remain in place.
+
 ## Commands
 
 The controller sends a UUID command ID, target device ID, action, and strictly

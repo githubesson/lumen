@@ -97,6 +97,11 @@ func TestActivitySocketBroadcastsPersonalizedSnapshots(t *testing.T) {
 	if cleared := readActivitySocketMessage(t, ctx, deviceB); cleared.Activity != nil {
 		t.Fatalf("device B cleared activity = %+v, want nil", cleared.Activity)
 	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.currentReads != 0 || store.recentReads != 3 {
+		t.Fatalf("socket reads = %d current / %d recent, want one shared read per initial/update/clear snapshot", store.currentReads, store.recentReads)
+	}
 }
 
 func TestActivitySocketRoutesRemoteControlCommands(t *testing.T) {
@@ -349,8 +354,10 @@ func (s *activitySocketSessions) LookupUser(
 func (s *activitySocketSessions) ClearCookie(http.ResponseWriter) {}
 
 type activitySocketStore struct {
-	mu   sync.Mutex
-	rows map[string]activity.Activity
+	mu           sync.Mutex
+	rows         map[string]activity.Activity
+	currentReads int
+	recentReads  int
 }
 
 func (s *activitySocketStore) Upsert(
@@ -401,6 +408,7 @@ func (s *activitySocketStore) Current(
 ) (*activity.Activity, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.currentReads++
 	cutoff := time.Now().Add(-maxAge)
 	var latest *activity.Activity
 	for _, row := range s.rows {
@@ -422,6 +430,7 @@ func (s *activitySocketStore) ListRecent(
 ) ([]activity.Activity, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.recentReads++
 	cutoff := time.Now().Add(-maxAge)
 	out := make([]activity.Activity, 0)
 	for _, row := range s.rows {

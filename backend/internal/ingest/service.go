@@ -165,9 +165,11 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	// pool connection plus row locks for its duration, so a bulk upload of N
 	// files with covers serialized on the pool and could exhaust it.
 	var coverPath string
+	var coverErr error
 	if md.Album != "" {
 		saved, cerr := s.saveCover(ctx, md, path)
 		if cerr != nil {
+			coverErr = cerr
 			s.log().Warn("cover save failed", "path", path, "err", cerr)
 		} else {
 			coverPath = saved
@@ -288,6 +290,21 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		if err := library.UpdateTrackAudioInfoIfMissing(ctx, tx, trackID,
 			info.DurationMS, info.Bitrate, info.SampleRate, info.Channels); err != nil {
 			out.Err = fmt.Errorf("backfill audio info: %w", err)
+			s.recordErr(ctx, path, out.Err)
+			return out
+		}
+	}
+
+	if ownerID == nil {
+		var fingerprint *library.IngestFingerprint
+		// Do not remember an incomplete probe/cover or a file replaced while
+		// reading it. A later rescan must retry these even without a new mtime.
+		if after, err := os.Stat(path); err == nil && perr == nil && coverErr == nil && info.DurationMS > 0 &&
+			os.SameFile(stat, after) && stat.Size() == after.Size() && stat.ModTime().Equal(after.ModTime()) {
+			fingerprint = &library.IngestFingerprint{Size: after.Size(), MTimeNS: after.ModTime().UnixNano()}
+		}
+		if err := library.SetIngestFingerprint(ctx, tx, trackID, path, fingerprint); err != nil {
+			out.Err = fmt.Errorf("record ingest fingerprint: %w", err)
 			s.recordErr(ctx, path, out.Err)
 			return out
 		}

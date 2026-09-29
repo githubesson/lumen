@@ -591,12 +591,13 @@ func (h *Tracks) serveResizedImage(
 		http.ServeContent(w, r, path.Base(thumbKey), zeroTime(), cached)
 		return true
 	}
-	src, _, err := imagesafe.Decode(body)
+	// Most stored covers already fit the requested size. Read their header
+	// before allocating and decoding a raster that would just be discarded.
+	cfg, _, err := imagesafe.DecodeConfig(body)
 	if err != nil {
 		return false
 	}
-	bounds := src.Bounds()
-	dstW, dstH, needsResize := thumbnailDimensions(bounds.Dx(), bounds.Dy(), maxSize)
+	dstW, dstH, needsResize := thumbnailDimensions(cfg.Width, cfg.Height, maxSize)
 	if !needsResize {
 		// Hand back to the caller, which rewinds and serves the original.
 		// Re-encoding a cover already at or below maxSize costs a second lossy
@@ -607,6 +608,14 @@ func (h *Tracks) serveResizedImage(
 		// path for every cover.
 		return false
 	}
+	if _, err := body.Seek(0, io.SeekStart); err != nil {
+		return false
+	}
+	src, _, err := imagesafe.Decode(body)
+	if err != nil {
+		return false
+	}
+	bounds := src.Bounds()
 
 	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
 	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, bounds, xdraw.Over, nil)

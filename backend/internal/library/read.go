@@ -573,16 +573,12 @@ const akaSubquery = `
 		''
 	)`
 
-// trackSearchFilter is the substring search filter shared by ListTracks and
-// CountTracks: it matches the query (bound to $2) against the track title,
-// album title, any artist name, or any captured alias metadata. The two
-// queries must stay in lockstep so a paginated list and its total agree.
-const trackSearchFilter = `
-		  AND (
-			t.title ILIKE '%' || $2 || '%'
-			OR a.title ILIKE '%' || $2 || '%'
-			OR ar.name ILIKE '%' || $2 || '%'
-			OR EXISTS (
+// Search fragments bind the query to $2 and share metadata/alias matching
+// between page selection and counting.
+const trackSearchMetadata = `t.title ILIKE '%' || $2 || '%'
+			OR a.title ILIKE '%' || $2 || '%'`
+
+const trackSearchAliases = `EXISTS (
 			  SELECT 1 FROM track_aliases al
 			  WHERE al.track_id = t.id
 			    AND (
@@ -591,8 +587,17 @@ const trackSearchFilter = `
 			      OR al.album_title ILIKE '%' || $2 || '%'
 			      OR al.file_path ILIKE '%' || $2 || '%'
 			    )
+			)`
+
+// trackSearchFilter selects matching tracks without filtering the artist rows
+// used for display or sorting. ListTracks and CountTracks share this predicate.
+const trackSearchFilter = ` AND (` + trackSearchMetadata + `
+			OR EXISTS (
+				SELECT 1 FROM track_artists search_ta
+				JOIN artists search_ar ON search_ar.id = search_ta.artist_id
+				WHERE search_ta.track_id = t.id AND search_ar.name ILIKE '%' || $2 || '%'
 			)
-		  )`
+			OR ` + trackSearchAliases + `)`
 
 // scanTrackListItems drains rows whose projection matches the standard
 // TrackListItem column order (id, title, album_id, album_title, track_no,
@@ -730,11 +735,9 @@ func (s *Store) CountTracks(ctx context.Context, viewerID uuid.UUID, query strin
 	var total int64
 	if query != "" {
 		err := s.db.QueryRow(ctx, `
-			SELECT COUNT(DISTINCT t.id)
+			SELECT COUNT(*)
 			FROM tracks t
 			LEFT JOIN albums a ON a.id = t.album_id
-			LEFT JOIN track_artists ta ON ta.track_id = t.id
-			LEFT JOIN artists ar ON ar.id = ta.artist_id
 			WHERE t.deleted_at IS NULL
 			  AND t.library_visible = TRUE
 			  AND `+trackVisibleP1+trackSearchFilter, viewerID, query).Scan(&total)
@@ -765,7 +768,7 @@ func (s *Store) ListTracks(ctx context.Context, p ListTracksParams) ([]TrackList
 		rows pgx.Rows
 		err  error
 	)
-	if p.Query != "" {
+	if p.Query != "" && p.Sort == "artist" {
 		rows, err = s.db.Query(ctx, `
 			SELECT
 				t.id, t.title, t.album_id, COALESCE(a.title, ''),
@@ -785,6 +788,45 @@ func (s *Store) ListTracks(ctx context.Context, p ListTracksParams) ([]TrackList
 			GROUP BY t.id, a.title
 			ORDER BY `+trackOrder(p.Sort)+`
 			LIMIT $3 OFFSET $4`, p.ViewerID, p.Query, p.Limit, p.Offset)
+	} else if p.Sort != "artist" {
+		// These sorts use track/album columns, so select the page before
+		// joining and aggregating artists. Artist sorting still needs the
+		// aggregate over the complete visible result set.
+		pageFilter := ""
+		limitParam, offsetParam := "$2", "$3"
+		args := []any{p.ViewerID}
+		if p.Query != "" {
+			pageFilter = trackSearchFilter
+			limitParam, offsetParam = "$3", "$4"
+			args = append(args, p.Query)
+		}
+		args = append(args, p.Limit, p.Offset)
+		rows, err = s.db.Query(ctx, `
+			WITH page AS MATERIALIZED (
+				SELECT t.id
+				FROM tracks t
+				LEFT JOIN albums a ON a.id = t.album_id
+				WHERE t.deleted_at IS NULL
+				  AND t.library_visible = TRUE
+				  AND `+trackVisibleP1+pageFilter+`
+				ORDER BY `+trackOrder(p.Sort)+`
+				LIMIT `+limitParam+` OFFSET `+offsetParam+`
+			)
+			SELECT
+				t.id, t.title, t.album_id, COALESCE(a.title, ''),
+				COALESCE(t.track_no, 0), t.duration_ms,
+				COALESCE(STRING_AGG(ar.name, ', ' ORDER BY ta.position) FILTER (WHERE ta.role = 'primary'), ''),
+				`+akaSubquery+`,
+				COALESCE(t.owner_id = $1, FALSE) AS owned,
+				t.source, t.external_id, COALESCE(t.external_meta->>'cover_url', ''),
+				t.created_at
+			FROM page
+			JOIN tracks t ON t.id = page.id
+			LEFT JOIN albums a ON a.id = t.album_id
+			LEFT JOIN track_artists ta ON ta.track_id = t.id
+			LEFT JOIN artists ar ON ar.id = ta.artist_id
+			GROUP BY t.id, a.title
+			ORDER BY `+trackOrder(p.Sort), args...)
 	} else {
 		rows, err = s.db.Query(ctx, `
 			SELECT
@@ -913,18 +955,21 @@ func (s *Store) FavoriteIDs(ctx context.Context, userID uuid.UUID, trackIDs []uu
 	return out, rows.Err()
 }
 
-// ListRecent returns the user's recent play history, deduplicated so each
-// track only appears at its most-recent playback time.
+// ListRecent uses the per-track timestamps maintained atomically with play
+// history, selecting the visible page before hydrating artist metadata.
 func (s *Store) ListRecent(ctx context.Context, userID uuid.UUID, limit int) ([]TrackListItem, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	rows, err := s.db.Query(ctx, `
-		WITH last_play AS (
-			SELECT track_id, MAX(played_at) AS played_at
-			FROM play_history
-			WHERE user_id = $1
-			GROUP BY track_id
+		WITH last_play AS MATERIALIZED (
+			SELECT uts.track_id, uts.last_played_at AS played_at
+			FROM user_track_stats uts
+			JOIN tracks t ON t.id = uts.track_id
+			WHERE uts.user_id = $1 AND uts.last_played_at IS NOT NULL
+			  AND t.deleted_at IS NULL AND `+trackVisibleP1+`
+			ORDER BY uts.last_played_at DESC, uts.track_id ASC
+			LIMIT $2
 		)
 		SELECT
 			t.id, t.title, t.album_id, COALESCE(a.title, ''),
@@ -941,8 +986,7 @@ func (s *Store) ListRecent(ctx context.Context, userID uuid.UUID, limit int) ([]
 		LEFT JOIN artists ar ON ar.id = ta.artist_id
 		WHERE `+trackVisibleP1+`
 		GROUP BY t.id, a.title, lp.played_at
-		ORDER BY lp.played_at DESC
-		LIMIT $2`, userID, limit)
+		ORDER BY lp.played_at DESC, t.id ASC`, userID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -963,7 +1007,7 @@ func (s *Store) RecordPlay(ctx context.Context, userID, trackID uuid.UUID, compl
 		VALUES ($1, $2, 1, NOW())
 		ON CONFLICT (user_id, track_id) DO UPDATE
 		SET play_count = user_track_stats.play_count + 1,
-		    last_played_at = NOW()`, userID, trackID); err != nil {
+		    last_played_at = GREATEST(user_track_stats.last_played_at, EXCLUDED.last_played_at)`, userID, trackID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
