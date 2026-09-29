@@ -83,20 +83,15 @@ export function ArtistGridPinsSection({
       <PinCreateForm
         form={form}
         rootOptions={rootOptions}
-        destinationPlaceholder="ArtistGrid"
-        labelPlaceholder="ArtistGrid"
         submitLabel="Pin tracker"
         hasSource={!!tracker.trim()}
         fieldMinWidth={140}
         sourceField={
-          <Field
-            label="Tracker URL or ID"
-            hint="ArtistGrid tracker link or raw tracker id"
-          >
+          <Field label="Tracker URL or ID">
             <TextInput
               value={tracker}
               onChange={(e) => setTracker(e.target.value)}
-              placeholder="https://artistgrid.cx/..."
+              placeholder="ArtistGrid tracker link or raw tracker id"
               required
             />
           </Field>

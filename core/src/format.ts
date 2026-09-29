@@ -49,7 +49,7 @@ export function formatTotalMs(totalMs: number): string {
  */
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return "—";
-  const units = ["B", "KB", "MB", "GB"];
+  const units = ["B", "KB", "MB", "GB", "TB"];
   let i = 0;
   let v = bytes;
   while (v >= 1024 && i < units.length - 1) {

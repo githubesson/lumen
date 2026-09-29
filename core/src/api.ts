@@ -122,6 +122,11 @@ export const api = {
 
   listMusicRoots: (options: RequestOptions = {}) =>
     request<MusicRoot[]>("/api/admin/library/roots", options),
+  musicRootUsage: (opts: { refresh?: boolean } = {}, options: RequestOptions = {}) =>
+    request<MusicRootUsage>(
+      `/api/admin/library/roots/usage${opts.refresh ? "?refresh=1" : ""}`,
+      options,
+    ),
   addMusicRoot: (input: { path: string; label?: string }) =>
     request<MusicRoot>("/api/admin/library/roots", {
       method: "POST",
@@ -963,6 +968,12 @@ export interface MusicRoot {
   primary: boolean;
   exists: boolean;
   created_at?: string;
+}
+
+/** On-disk footprint of each root, keyed by `MusicRoot.path`. */
+export interface MusicRootUsage {
+  roots: Array<{ path: string; files: number; bytes: number }>;
+  measured_at: string;
 }
 
 export interface RescanStatus {

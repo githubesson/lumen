@@ -329,6 +329,8 @@ func NewRouter(d Deps) http.Handler {
 			ordinary.Delete("/albums/{id}/cover", tracksH.DeleteAlbumCover)
 
 			ordinary.Get("/admin/library/roots", adminRootsH.List)
+			// Walks every root on disk; a cold walk of a big library outlasts 30s.
+			r.With(appmw.Timeout(usageRequestTimeout)).Get("/admin/library/roots/usage", adminRootsH.Usage)
 			ordinary.Post("/admin/library/roots", adminRootsH.Add)
 			ordinary.Patch("/admin/library/roots/{id}", adminRootsH.Patch)
 			ordinary.Delete("/admin/library/roots/{id}", adminRootsH.Delete)
@@ -378,4 +380,5 @@ const (
 	imageRequestTimeout    = 2 * time.Minute
 	previewRequestTimeout  = 5 * time.Minute
 	uploadRequestTimeout   = 15 * time.Minute
+	usageRequestTimeout    = 5 * time.Minute
 )

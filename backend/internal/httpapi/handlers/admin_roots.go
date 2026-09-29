@@ -23,6 +23,8 @@ type AdminRoots struct {
 	Ingest      *ingest.Service
 	PrimaryRoot string
 	Refresh     func()
+
+	usage musicroots.UsageCache
 }
 
 type rootResp struct {
@@ -60,6 +62,41 @@ func (h *AdminRoots) List(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+type rootsUsageResp struct {
+	Roots      []musicroots.Usage `json:"roots"`
+	MeasuredAt string             `json:"measured_at"`
+}
+
+// Usage reports how many files each root holds and how much space they take,
+// paused roots included. It's a separate call from List because it walks the
+// disk: the first request (and one with ?refresh=1, sent after a rescan) can
+// take a while on a big library, and the root pickers elsewhere on the page
+// shouldn't wait for it.
+func (h *AdminRoots) Usage(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.Store.List(r.Context())
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	paths := make([]string, 0, len(rows)+1)
+	paths = append(paths, h.PrimaryRoot)
+	for _, row := range rows {
+		paths = append(paths, row.Path)
+	}
+	fresh := r.URL.Query().Get("refresh") == "1"
+	usage, at, err := h.usage.Get(r.Context(), paths, fresh)
+	if err != nil {
+		if r.Context().Err() == nil {
+			http.Error(w, "measuring folders timed out", http.StatusGatewayTimeout)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, rootsUsageResp{
+		Roots:      usage,
+		MeasuredAt: at.UTC().Format("2006-01-02T15:04:05Z"),
+	})
 }
 
 type addRootReq struct {

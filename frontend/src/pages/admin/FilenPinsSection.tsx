@@ -72,27 +72,25 @@ export function FilenPinsSection({
       <PinCreateForm
         form={form}
         rootOptions={rootOptions}
-        destinationPlaceholder="Filen"
-        labelPlaceholder="Filen share"
         submitLabel="Pin share"
         hasSource={!!filenURL.trim()}
         sourceField={
-          <Field label="Filen share URL" hint="File or folder public link">
+          <Field label="Filen share URL">
             <TextInput
               value={filenURL}
               onChange={(e) => setFilenURL(e.target.value)}
-              placeholder="https://drive.filen.io/f/..."
+              placeholder="File or folder public link"
               required
             />
           </Field>
         }
       >
-        <Field label="Password" hint="Optional">
+        <Field label="Password">
           <TextInput
             type="password"
             value={filenPassword}
             onChange={(e) => setFilenPassword(e.target.value)}
-            placeholder="Protected link password"
+            placeholder="Optional"
           />
         </Field>
       </PinCreateForm>

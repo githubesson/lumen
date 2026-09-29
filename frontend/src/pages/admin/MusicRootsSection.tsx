@@ -3,18 +3,23 @@ import {
   RefreshCw as ArrowPathIcon,
   TriangleAlert as ExclamationTriangleIcon,
   FolderPlus as FolderPlusIcon,
+  Pause as PauseIcon,
+  Play as PlayIcon,
   Trash2 as TrashIcon,
 } from "lucide-react";
 import {
   api,
   errorMessage,
   type MusicRoot,
+  type MusicRootUsage,
   type RescanStatus,
 } from "../../api";
 import { Button } from "../../components/Button";
 import ErrorBanner from "../../components/ErrorBanner";
 import { Field, TextInput } from "../../components/Field";
 import { libraryChanged } from "../../lib/events";
+import { fmtBytes } from "../../lib/format";
+import { useApiResource } from "../../lib/useApiResource";
 import { AdminSectionTitle } from "./AdminSectionTitle";
 
 function Stat({ label, value }: { label: string; value: number }) {
@@ -30,6 +35,22 @@ function Stat({ label, value }: { label: string; value: number }) {
         {value}
       </div>
     </div>
+  );
+}
+
+function basename(path: string): string {
+  return path.replace(/\/+$/, "").split("/").pop() || path;
+}
+
+/** A bar where a number will be, while the server walks the folders. */
+function Measuring() {
+  return (
+    <span
+      className="skeleton-text"
+      style={{ width: 48 }}
+      aria-label="Measuring"
+      role="img"
+    />
   );
 }
 
@@ -53,6 +74,25 @@ export function MusicRootsSection({
   const [adding, setAdding] = useState(false);
   const [rescan, setRescan] = useState<RescanStatus | null>(null);
   const pollRef = useRef<number | null>(null);
+
+  // Sizes come from a walk of the folders on disk, so they load on their own
+  // and the table shows up without waiting for them. The server caches the
+  // walk for a few minutes; a finished rescan asks it to walk again.
+  const refreshUsageRef = useRef(false);
+  const {
+    data: usage,
+    error: usageError,
+    reload: reloadUsage,
+  } = useApiResource<MusicRootUsage>(
+    (signal) => {
+      const refresh = refreshUsageRef.current;
+      refreshUsageRef.current = false;
+      return api.musicRootUsage({ refresh }, { signal });
+    },
+    "Couldn't measure the folders.",
+    { cacheKey: "admin:roots-usage" },
+  );
+  const usageByPath = new Map(usage?.roots.map((u) => [u.path, u]));
 
   const loadStatus = useCallback(async () => {
     try {
@@ -97,6 +137,17 @@ export function MusicRootsSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rescan?.running, rescan?.processed]);
 
+  const wasRunningRef = useRef(false);
+  useEffect(() => {
+    if (rescan?.running) {
+      wasRunningRef.current = true;
+    } else if (rescan && wasRunningRef.current) {
+      wasRunningRef.current = false;
+      refreshUsageRef.current = true;
+      void reloadUsage();
+    }
+  }, [rescan, reloadUsage]);
+
   const add = async (e: FormEvent) => {
     e.preventDefault();
     onError("");
@@ -106,6 +157,7 @@ export function MusicRootsSection({
       setPath("");
       setLabel("");
       await reloadRoots();
+      void reloadUsage();
     } catch (err) {
       onError(errorMessage(err, "Failed to add root."));
     } finally {
@@ -137,6 +189,7 @@ export function MusicRootsSection({
     try {
       const res = await api.deleteMusicRoot(r.id, { purge });
       await reloadRoots();
+      void reloadUsage();
       if (purge && res?.deleted_tracks) {
         libraryChanged.emit();
       }
@@ -192,26 +245,23 @@ export function MusicRootsSection({
           }}
         >
           <div style={{ flex: "1 1 320px", minWidth: 240 }}>
-            <Field
-              label="Path"
-              hint="Absolute path on the server — e.g. /mnt/external/flac"
-            >
+            <Field label="Path">
               <TextInput
                 name="path"
                 value={path}
                 onChange={(e) => setPath(e.target.value)}
-                placeholder="/mnt/library/extras"
+                placeholder="Absolute path on the server, e.g. /mnt/external/flac"
                 required
               />
             </Field>
           </div>
           <div style={{ width: 240 }}>
-            <Field label="Label" hint="Optional">
+            <Field label="Label">
               <TextInput
                 name="label"
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
-                placeholder="External drive"
+                placeholder="Optional"
               />
             </Field>
           </div>
@@ -249,12 +299,12 @@ export function MusicRootsSection({
               : "Rescan all folders"}
           </Button>
         </div>
-        <table className="table">
+        <table className="table roots-table">
           <thead>
             <tr>
-              <th>Path</th>
-              <th>Label</th>
-              <th>Status</th>
+              <th>Folder</th>
+              <th className="col-num">Files</th>
+              <th className="col-num">Size</th>
               <th className="col-acts" />
             </tr>
           </thead>
@@ -273,56 +323,77 @@ export function MusicRootsSection({
                 </td>
               </tr>
             )}
-            {roots?.map((r) => (
-              <tr key={r.id || "primary"}>
-                <td className="font-mono" style={{ color: "var(--foreground)", wordBreak: "break-all" }}>
-                  {r.path}
-                  {!r.exists && (
-                    <span
-                      title="This directory does not exist on the server"
-                      style={{
-                        marginLeft: 8,
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 4,
-                        color: "var(--warning)",
-                        fontSize: 12,
-                      }}
-                    >
-                      <ExclamationTriangleIcon className="size-3" aria-hidden="true" />
-                      missing
-                    </span>
-                  )}
-                </td>
-                <td style={{ color: "var(--muted-foreground)" }}>
-                  {r.primary ? <em>Primary (MUSIC_PATH)</em> : r.label || "—"}
-                </td>
-                <td>
-                  <span className={"badge" + (r.enabled ? " badge-accent" : "")}>
-                    {r.primary ? "primary" : r.enabled ? "active" : "paused"}
-                  </span>
-                </td>
-                <td className="col-acts">
-                  {!r.primary && (
-                    <div style={{ display: "inline-flex", gap: 6 }}>
-                      <Button size="sm" onClick={() => toggle(r)}>
-                        {r.enabled ? "Pause" : "Resume"}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="danger"
-                        onClick={() => remove(r)}
-                        leadingIcon={<TrashIcon className="size-3.5" />}
-                      >
-                        Remove
-                      </Button>
+            {roots?.map((r) => {
+              const u = usageByPath.get(r.path);
+              const measuring = !u && !usageError && r.exists;
+              return (
+                <tr key={r.id || "primary"}>
+                  <td>
+                    <div className="roots-name">
+                      <span className="track-title">
+                        {r.primary ? "Primary" : r.label || basename(r.path)}
+                      </span>
+                      {!r.primary && !r.enabled && (
+                        <span className="badge">paused</span>
+                      )}
+                      {!r.exists && (
+                        <span
+                          className="roots-missing"
+                          title="This directory does not exist on the server"
+                        >
+                          <ExclamationTriangleIcon className="size-3" aria-hidden="true" />
+                          missing
+                        </span>
+                      )}
                     </div>
-                  )}
-                </td>
-              </tr>
-            ))}
+                    <div className="track-sub font-mono" style={{ wordBreak: "break-all" }}>
+                      {r.path}
+                    </div>
+                  </td>
+                  <td className="col-num">
+                    {measuring ? <Measuring /> : u && r.exists ? u.files.toLocaleString() : "—"}
+                  </td>
+                  <td className="col-num">
+                    {measuring ? <Measuring /> : u && r.exists ? fmtBytes(u.bytes) : "—"}
+                  </td>
+                  <td className="col-acts">
+                    {!r.primary && (
+                      <div style={{ display: "inline-flex", gap: 2 }}>
+                        <button
+                          type="button"
+                          className="iconbtn"
+                          onClick={() => void toggle(r)}
+                          aria-label={`${r.enabled ? "Pause" : "Resume"} ${r.path}`}
+                          title={r.enabled ? "Pause watching" : "Resume watching"}
+                        >
+                          {r.enabled ? (
+                            <PauseIcon className="size-4" aria-hidden="true" />
+                          ) : (
+                            <PlayIcon className="size-4" aria-hidden="true" />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          className="iconbtn iconbtn-danger"
+                          onClick={() => void remove(r)}
+                          aria-label={`Remove ${r.path}`}
+                          title="Remove folder"
+                        >
+                          <TrashIcon className="size-4" aria-hidden="true" />
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
+        {usageError && (
+          <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "8px 0 0" }}>
+            {usageError}
+          </p>
+        )}
       </section>
 
       {rescan && !rescan.running && (rescan.processed ?? 0) > 0 && (

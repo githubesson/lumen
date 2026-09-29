@@ -117,6 +117,11 @@
 .iconbtn.active {
   background: var(--muted);
 }
+/* Destructive row actions stay quiet until pointed at. */
+.iconbtn-danger:hover {
+  color: var(--destructive);
+  background: var(--destructive-soft);
+}
 
 .content {
   flex: 1 1 auto;
@@ -141,4 +146,41 @@
 }
 .admin-section-wrap > * {
   min-width: 720px;
+}
+
+/* Configured music folders: name over path, then the numbers. */
+.table .col-num {
+  width: 96px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.table tbody td.col-num {
+  color: var(--foreground);
+}
+.roots-table tbody tr {
+  cursor: default;
+}
+.roots-table tbody td {
+  padding-block: 8px;
+}
+.roots-table .iconbtn {
+  color: var(--muted-foreground);
+}
+.roots-table .iconbtn:hover {
+  color: var(--foreground);
+}
+.roots-table .iconbtn-danger:hover {
+  color: var(--destructive);
+}
+.roots-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.roots-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--warning);
 }

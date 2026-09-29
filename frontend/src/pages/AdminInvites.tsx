@@ -139,7 +139,7 @@ export function InvitesAdminSection() {
             </Field>
           </div>
           <div style={{ width: 240 }}>
-            <Field label="Expires" hint="Optional">
+            <Field label="Expires (optional)">
               <TextInput
                 type="datetime-local"
                 name="expires_at"

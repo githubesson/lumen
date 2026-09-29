@@ -181,6 +181,19 @@
   border-radius: min(var(--radius-md), 12px);
 }
 
+/* A chevron in a show/hide toggle turns to point down while it's open. */
+.disclosure-chevron {
+  transition: transform 150ms var(--ease-out);
+}
+.btn[aria-expanded="true"] .disclosure-chevron {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .disclosure-chevron {
+    transition: none;
+  }
+}
+
 .section { margin-top: 28px; }
 .section:first-child { margin-top: 0; }
 .section-head {

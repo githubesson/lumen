@@ -82,28 +82,23 @@ export function APITrackerPinsSection({
       <PinCreateForm
         form={form}
         rootOptions={rootOptions}
-        destinationPlaceholder="API Trackers"
-        labelPlaceholder="API tracker"
         submitLabel="Pin tracker"
         hasSource={!!tracker.trim()}
         beforeDestination={
-          <Field label="API base URL" hint="Optional">
+          <Field label="API base URL">
             <TextInput
               value={apiBaseURL}
               onChange={(e) => setApiBaseURL(e.target.value)}
-              placeholder="https://trackers.musicfiles.su/api"
+              placeholder="Optional"
             />
           </Field>
         }
         sourceField={
-          <Field
-            label="Tracker URL or ID"
-            hint="Tracker API /v1/trackers/:id link or raw id"
-          >
+          <Field label="Tracker URL or ID">
             <TextInput
               value={tracker}
               onChange={(e) => setTracker(e.target.value)}
-              placeholder="https://trackers.musicfiles.su/api/v1/trackers/1"
+              placeholder="Tracker API /v1/trackers/:id link or raw id"
               required
             />
           </Field>
@@ -114,7 +109,7 @@ export function APITrackerPinsSection({
           setTab={setTab}
           primaryArtist={primaryArtist}
           setPrimaryArtist={setPrimaryArtist}
-          tabHint="Optional sheet name"
+          tabPlaceholder="Optional sheet name"
         />
       </PinCreateForm>
 
