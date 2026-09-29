@@ -160,7 +160,10 @@ func (h *AdminUsers) Delete(w http.ResponseWriter, r *http.Request) {
 	// a failure can't leave some playlists moved or gone and the user intact.
 	var uploads []string
 	err = dbutil.WithTx(r.Context(), h.DB, func(tx pgx.Tx) error {
-		// Lock the account first. Creating a playlist takes a key-share lock
+		if err := keepAnAdmin(r.Context(), tx, uid); err != nil {
+			return err
+		}
+		// Lock the account. Creating a playlist takes a key-share lock
 		// on its owner's row, so no playlist can appear for them from here on;
 		// one being created right now commits first and is listed below.
 		if _, err := tx.Exec(r.Context(), `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, uid); err != nil {
@@ -221,22 +224,31 @@ func (h *AdminUsers) Delete(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, errNewOwnerNotFound):
 		http.Error(w, "new_owner_id not found", http.StatusBadRequest)
 		return
+	case errors.Is(err, errLastAdmin):
+		http.Error(w, "cannot delete the last enabled admin", http.StatusBadRequest)
+		return
+	case errors.Is(err, errUserNotFound):
+		http.Error(w, "not found", http.StatusNotFound)
+		return
 	case err != nil:
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	// The account is gone whatever happens to the request now, so the file
-	// cleanup mustn't die with it (a closed tab, the request deadline).
+	// The account is gone, so say so now rather than after the file cleanup,
+	// which mustn't die with the request either (a closed tab, the deadline).
+	w.WriteHeader(http.StatusNoContent)
+	_ = http.NewResponseController(w).Flush()
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
 	defer cancel()
 	h.removeUploads(cleanupCtx, uid, uploads)
-	w.WriteHeader(http.StatusNoContent)
 }
 
 var (
 	errMissingDisposition = errors.New("an owned playlist has no disposition")
 	errNewOwnerNotFound   = errors.New("new owner not found")
+	errLastAdmin          = errors.New("no other enabled admin would remain")
+	errUserNotFound       = errors.New("user not found")
 )
 
 // removeUploads deletes a deleted user's uploaded files. Only files inside
@@ -283,36 +295,62 @@ func (h *AdminUsers) Disable(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot disable yourself", http.StatusBadRequest)
 		return
 	}
-	target, err := h.Users.ByID(r.Context(), uid)
-	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	if target.Role == models.RoleAdmin {
-		var others int
-		err := h.DB.QueryRow(r.Context(),
-			`SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = FALSE AND id <> $1`,
-			uid).Scan(&others)
+	err := dbutil.WithTx(r.Context(), h.DB, func(tx pgx.Tx) error {
+		if err := keepAnAdmin(r.Context(), tx, uid); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(r.Context(), `UPDATE users SET disabled = TRUE, updated_at = NOW() WHERE id = $1`, uid)
 		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
+			return err
 		}
-		if others == 0 {
-			http.Error(w, "cannot disable the last enabled admin", http.StatusBadRequest)
-			return
+		if tag.RowsAffected() == 0 {
+			return errUserNotFound
 		}
-	}
-	tag, err := h.DB.Exec(r.Context(), `UPDATE users SET disabled = TRUE, updated_at = NOW() WHERE id = $1`, uid)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	if tag.RowsAffected() == 0 {
+		_, err = tx.Exec(r.Context(), `DELETE FROM sessions WHERE user_id = $1`, uid)
+		return err
+	})
+	switch {
+	case errors.Is(err, errUserNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
-		return
+	case errors.Is(err, errLastAdmin):
+		http.Error(w, "cannot disable the last enabled admin", http.StatusBadRequest)
+	case err != nil:
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	default:
+		w.WriteHeader(http.StatusNoContent)
 	}
-	_, _ = h.DB.Exec(r.Context(), `DELETE FROM sessions WHERE user_id = $1`, uid)
-	w.WriteHeader(http.StatusNoContent)
+}
+
+// adminGuardLock serializes every change that could leave no enabled admin
+// (disabling or deleting one), so two admins acting on each other at once
+// can't both pass the check.
+const adminGuardLock int64 = 0x6c756d656e61646d // "lumenadm"
+
+// keepAnAdmin locks the admin guard for the rest of tx, then fails with
+// errLastAdmin if uid is an admin and no other enabled admin would remain.
+// Call it first in the transaction, so the lock order is the same everywhere.
+func keepAnAdmin(ctx context.Context, tx pgx.Tx, uid uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, adminGuardLock); err != nil {
+		return err
+	}
+	var role string
+	err := tx.QueryRow(ctx, `SELECT role FROM users WHERE id = $1`, uid).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errUserNotFound
+	}
+	if err != nil || role != string(models.RoleAdmin) {
+		return err
+	}
+	var others int
+	if err := tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = FALSE AND id <> $1`,
+		uid).Scan(&others); err != nil {
+		return err
+	}
+	if others == 0 {
+		return errLastAdmin
+	}
+	return nil
 }
 
 func (h *AdminUsers) Enable(w http.ResponseWriter, r *http.Request) {
