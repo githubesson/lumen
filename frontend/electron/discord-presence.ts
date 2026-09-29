@@ -14,6 +14,38 @@ let lastActivity: DiscordActivityPayload | null = null;
 let lastStartMs = 0;
 let retryAfter = 0;
 let failures = 0;
+// The newest update Discord couldn't take (closed, or in reconnect backoff),
+// resent once the backoff ends so presence recovers without a new event.
+let retryActivity: { payload: DiscordActivityPayload; queuedAt: number } | null = null;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelRetry(): void {
+  retryActivity = null;
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+}
+
+function scheduleRetry(payload: DiscordActivityPayload): void {
+  if (!enabled || !clientId) return;
+  retryActivity = { payload, queuedAt: Date.now() };
+  if (retryTimer) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    const pending = retryActivity;
+    retryActivity = null;
+    if (!pending) return;
+    // A playing track has moved on while it waited.
+    const waitedSec = (Date.now() - pending.queuedAt) / 1000;
+    void pushDiscordActivity(
+      pending.payload.isPlaying
+        ? { ...pending.payload, elapsedSec: (pending.payload.elapsedSec ?? 0) + waitedSec }
+        : pending.payload,
+    );
+  }, Math.max(1000, retryAfter - Date.now()));
+  retryTimer.unref?.();
+}
 
 export function configureDiscordPresence(options: {
   clientId?: string;
@@ -104,8 +136,13 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
   ok: boolean;
   error?: string;
 }> {
+  // A newer update supersedes one waiting to be retried.
+  cancelRetry();
   const discord = await ensureDiscord();
-  if (!discord) return { ok: false, error: "discord client unavailable" };
+  if (!discord) {
+    scheduleRetry(payload);
+    return { ok: false, error: "discord client unavailable" };
+  }
   try {
     const now = Date.now();
     const elapsedMs = Math.max(0, Math.floor((payload.elapsedSec ?? 0) * 1000));
@@ -151,11 +188,13 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
     lastStartMs = start;
     return { ok: true };
   } catch (error) {
+    scheduleRetry(payload);
     return { ok: false, error: (error as Error).message };
   }
 }
 
 export async function clearDiscordActivity(): Promise<void> {
+  cancelRetry();
   if (!client) return;
   try {
     await client.clearActivity();
@@ -167,6 +206,7 @@ export async function clearDiscordActivity(): Promise<void> {
 }
 
 export async function teardownDiscordPresence(): Promise<void> {
+  cancelRetry();
   const current = client;
   client = null;
   lastActivity = null;

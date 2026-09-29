@@ -25,27 +25,45 @@ type DiscordActivity = Parameters<typeof pushDiscordActivity>[0];
  * remote heartbeats repeat unchanged state; each push is an IPC round trip and
  * a Discord RPC call. A playing update is the same when its implied start time
  * is within a second (elapsed seconds are floored).
+ *
+ * Only an update Discord confirmed (or one still in flight) suppresses
+ * repeats: a failed push (Discord closed, reconnect backoff) must go out again
+ * with the next event. The main process also retries it after its backoff.
  */
 function createPresenceSender() {
-  let last: { key: string; startSec: number | null; elapsedSec: number } | null = null;
+  type Sent = { key: string; startSec: number | null; elapsedSec: number };
+  let shown: Sent | null = null;
+  let shownSeq = 0;
+  let inFlight: Sent | null = null;
+  let seq = 0;
+  const same = (a: Sent | null, b: Sent) =>
+    a?.key === b.key &&
+    (b.startSec === null
+      ? a.startSec === null && a.elapsedSec === b.elapsedSec
+      : a.startSec !== null && Math.abs(a.startSec - b.startSec) < 1.5);
   return {
-    push(activity: DiscordActivity) {
+    async push(activity: DiscordActivity) {
       const { elapsedSec = 0, ...rest } = activity;
-      const key = JSON.stringify(rest);
-      const startSec = activity.isPlaying ? Date.now() / 1000 - elapsedSec : null;
-      if (
-        last?.key === key &&
-        (startSec === null
-          ? last.startSec === null && last.elapsedSec === elapsedSec
-          : last.startSec !== null && Math.abs(last.startSec - startSec) < 1.5)
-      ) {
-        return;
+      const entry: Sent = {
+        key: JSON.stringify(rest),
+        startSec: activity.isPlaying ? Date.now() / 1000 - elapsedSec : null,
+        elapsedSec,
+      };
+      if (same(inFlight ?? shown, entry)) return;
+      const mySeq = ++seq;
+      inFlight = entry;
+      const result = await pushDiscordActivity(activity);
+      if (inFlight === entry) inFlight = null;
+      if (result?.ok && mySeq > shownSeq) {
+        shown = entry;
+        shownSeq = mySeq;
       }
-      last = { key, startSec, elapsedSec };
-      return pushDiscordActivity(activity);
     },
     clear() {
-      last = null;
+      shown = null;
+      inFlight = null;
+      // Pushes still in flight must not mark their state as shown.
+      shownSeq = ++seq;
       return clearDiscordActivity();
     },
   };

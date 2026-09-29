@@ -64,7 +64,7 @@ func toPlaylistCoverResp(c *playlists.PlaylistCover) *playlistCoverResp {
 	if c == nil {
 		return nil
 	}
-	out := &playlistCoverResp{TrackID: c.TrackID.String(), CoverURL: proxyRemoteCoverURL(c.CoverURL)}
+	out := &playlistCoverResp{TrackID: c.TrackID.String(), CoverURL: proxyRemoteCoverURL(c.CoverURL, remoteCoverWarmRow)}
 	if c.AlbumID != nil {
 		out.AlbumID = c.AlbumID.String()
 	}
@@ -437,7 +437,7 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 			AddedByName:   t.AddedByName,
 			AddedAt:       t.AddedAt.Format("2006-01-02T15:04:05Z07:00"),
 			PlayCount:     t.PlayCount,
-			CoverURL:      proxyRemoteCoverURL(t.CoverURL),
+			CoverURL:      proxyRemoteCoverURL(t.CoverURL, remoteCoverWarmRow),
 		}
 		if t.AlbumID != nil {
 			ti.AlbumID = t.AlbumID.String()

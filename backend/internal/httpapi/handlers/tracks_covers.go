@@ -442,19 +442,52 @@ func (h *Tracks) RemoteCoverProxy(w http.ResponseWriter, r *http.Request) {
 	h.serveRemoteCover(w, r, r.URL.Query().Get("url"))
 }
 
+// Sizes (the `size` a client passes) at which responses' remote covers are
+// usually drawn, so warming fetches the variant the client will request.
+const (
+	remoteCoverWarmRow  = 64  // track rows, the sidebar
+	remoteCoverWarmCard = 384 // album and artist cards
+	remoteCoverWarmFull = 0   // detail and hero art, requested without a size
+)
+
 // proxyRemoteCoverURL swaps an absolute remote cover URL for the same-origin
-// proxy path and starts warming the RAM cache so the image is hot by the time
-// the client asks for it. Empty, relative, and disallowed-host URLs pass
-// through unchanged.
-func proxyRemoteCoverURL(raw string) string {
+// proxy path and starts warming the RAM cache with the variant for warmSize
+// (see remoteCoverVariant), so the image is hot by the time the client asks
+// for it. Empty, relative, and disallowed-host URLs pass through unchanged.
+func proxyRemoteCoverURL(raw string, warmSize int) string {
 	if raw == "" || !strings.HasPrefix(raw, "http") {
 		return raw
 	}
-	if _, err := allowedRemoteCoverURL(raw); err != nil {
+	u, err := allowedRemoteCoverURL(raw)
+	if err != nil {
 		return raw
 	}
-	coverCache.warm(raw)
+	coverCache.warm(remoteCoverVariant(u, warmSize).String())
 	return "/api/covers/remote?url=" + url.QueryEscape(raw)
+}
+
+// remoteCoverVariant returns the CDN URL serving a `size=maxSize` request:
+// TIDAL's CDN encodes square dimensions in the final path segment, so a
+// thumbnail is fetched rather than buffering the original art. maxSize 0
+// (no size requested), or a URL without that shape, keeps the original.
+func remoteCoverVariant(u *url.URL, maxSize int) *url.URL {
+	if maxSize <= 0 {
+		return u
+	}
+	name := path.Base(u.Path)
+	dimensions := strings.Split(strings.TrimSuffix(name, ".jpg"), "x")
+	if len(dimensions) != 2 || !strings.HasSuffix(name, ".jpg") {
+		return u
+	}
+	width, widthErr := strconv.Atoi(dimensions[0])
+	height, heightErr := strconv.Atoi(dimensions[1])
+	if widthErr != nil || heightErr != nil || width <= 0 || width != height {
+		return u
+	}
+	size := strconv.Itoa(tidalCoverSize(roundCoverSize(maxSize)))
+	variant := *u
+	variant.Path = strings.TrimSuffix(u.Path, name) + size + "x" + size + ".jpg"
+	return &variant
 }
 
 func (h *Tracks) serveRemoteCover(w http.ResponseWriter, r *http.Request, rawURL string) {
@@ -464,18 +497,7 @@ func (h *Tracks) serveRemoteCover(w http.ResponseWriter, r *http.Request, rawURL
 		return
 	}
 	if r.URL.Query().Has("size") {
-		// TIDAL's CDN uses square dimensions in the final path segment.
-		// Fetch the requested variant rather than buffering the original art.
-		name := path.Base(u.Path)
-		dimensions := strings.Split(strings.TrimSuffix(name, ".jpg"), "x")
-		if len(dimensions) == 2 && strings.HasSuffix(name, ".jpg") {
-			width, widthErr := strconv.Atoi(dimensions[0])
-			height, heightErr := strconv.Atoi(dimensions[1])
-			if widthErr == nil && heightErr == nil && width > 0 && width == height {
-				size := strconv.Itoa(tidalCoverSize(parseCoverMaxSize(r)))
-				u.Path = strings.TrimSuffix(u.Path, name) + size + "x" + size + ".jpg"
-			}
-		}
+		u = remoteCoverVariant(u, parseCoverMaxSize(r))
 	}
 	data, ct, err := coverCache.fetchCached(u)
 	if err != nil {
@@ -582,6 +604,11 @@ func parseCoverMaxSize(r *http.Request) int {
 	if err != nil || n <= 0 {
 		return maxServedCoverDimension
 	}
+	return roundCoverSize(n)
+}
+
+// roundCoverSize rounds a positive requested size up to the thumbnail ladder.
+func roundCoverSize(n int) int {
 	for _, size := range coverThumbSizes {
 		if n <= size {
 			return size

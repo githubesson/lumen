@@ -88,7 +88,13 @@ if (!gotLock) {
       parseGitHubRepoUrl(cfg.updateRepoUrl)?.url ?? DEFAULT_UPDATE_REPO_URL;
     updateManager.configure({ branch: updateBranch, repoUrl: updateRepoUrl });
     const proxyPort = await localProxy.start(cfg.localProxyPort);
-    if (proxyPort !== cfg.localProxyPort) await saveConfigPatch({ localProxyPort: proxyPort });
+    // Best effort: remembering the port only keeps the origin (and its
+    // caches) stable across launches, so a failed write mustn't stop startup.
+    if (proxyPort !== cfg.localProxyPort) {
+      void saveConfigPatch({ localProxyPort: proxyPort }).catch((error) => {
+        console.warn("[config] could not save the local proxy port:", error);
+      });
+    }
     // With no server yet the renderer shows its first-run setup.
     await windows.openMain();
   });

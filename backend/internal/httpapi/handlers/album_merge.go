@@ -128,7 +128,7 @@ func tidalAlbumTrackResp(album tidal.Album, it tidal.Track) trackListItemResp {
 		TrackNo:       it.TrackNo,
 		DurationMS:    it.DurationMS,
 		Artist:        strings.Join(it.Artists, ", "),
-		CoverURL:      proxyRemoteCoverURL(firstNonEmpty(it.CoverURL, album.CoverURL)),
+		CoverURL:      proxyRemoteCoverURL(firstNonEmpty(it.CoverURL, album.CoverURL), remoteCoverWarmRow),
 		Unavailable:   it.Removed,
 	}
 }

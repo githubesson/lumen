@@ -80,10 +80,12 @@ export default function FH6Radio() {
   }, []);
 
   // refreshBridge is memoized on bridgeUrl, so a new bridge URL restarts this
-  // polling lifecycle; refreshPlaylists is stable.
+  // polling lifecycle; refreshPlaylists is stable. The shared playlist list
+  // loaded with the shell, so re-read it: another client may have changed it.
   useEffect(() => {
     if (!enabled) return;
     void refreshBridge();
+    void refreshPlaylists();
     const timer = window.setInterval(() => { if (!document.hidden) void refreshBridge(false); }, 2500);
     return () => window.clearInterval(timer);
   }, [enabled, refreshBridge, refreshPlaylists]);
