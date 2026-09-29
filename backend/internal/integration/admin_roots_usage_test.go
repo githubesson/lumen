@@ -55,6 +55,26 @@ func TestAdminRootsUsage(t *testing.T) {
 	}
 
 	admin := &handlers.AdminRoots{Store: roots, PrimaryRoot: primary}
+
+	// The paused nested root is still inside the always-watched primary.
+	listRec := httptest.NewRecorder()
+	admin.List(listRec, httptest.NewRequest(http.MethodGet, "/admin/library/roots", nil))
+	var listed []struct {
+		Path      string `json:"path"`
+		Primary   bool   `json:"primary"`
+		CoveredBy string `json:"covered_by"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range listed {
+		switch {
+		case r.Primary && r.CoveredBy != "":
+			t.Errorf("primary covered_by = %q, want none", r.CoveredBy)
+		case r.Path == nested && r.CoveredBy != primary:
+			t.Errorf("nested covered_by = %q, want %q", r.CoveredBy, primary)
+		}
+	}
 	get := func(query string) map[string]musicroots.Usage {
 		t.Helper()
 		w := httptest.NewRecorder()

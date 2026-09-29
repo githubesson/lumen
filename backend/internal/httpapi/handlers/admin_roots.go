@@ -11,6 +11,7 @@ import (
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/musicroots"
+	"github.com/githubesson/lumen/internal/pathsafe"
 )
 
 // AdminRoots manages the set of extra music directories an admin can
@@ -28,12 +29,15 @@ type AdminRoots struct {
 }
 
 type rootResp struct {
-	ID        string `json:"id"`
-	Path      string `json:"path"`
-	Label     string `json:"label"`
-	Enabled   bool   `json:"enabled"`
-	Primary   bool   `json:"primary"`
-	Exists    bool   `json:"exists"`
+	ID      string `json:"id"`
+	Path    string `json:"path"`
+	Label   string `json:"label"`
+	Enabled bool   `json:"enabled"`
+	Primary bool   `json:"primary"`
+	Exists  bool   `json:"exists"`
+	// CoveredBy is another watched root that contains this one, if any.
+	// Removing a covered root leaves its files scanned and streamable.
+	CoveredBy string `json:"covered_by,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
 }
 
@@ -51,6 +55,12 @@ func (h *AdminRoots) List(w http.ResponseWriter, r *http.Request) {
 		Primary: true,
 		Exists:  dirExists(h.PrimaryRoot),
 	})
+	watched := []string{h.PrimaryRoot}
+	for _, r := range rows {
+		if r.Enabled {
+			watched = append(watched, r.Path)
+		}
+	}
 	for _, r := range rows {
 		out = append(out, rootResp{
 			ID:        r.ID.String(),
@@ -58,6 +68,7 @@ func (h *AdminRoots) List(w http.ResponseWriter, r *http.Request) {
 			Label:     r.Label,
 			Enabled:   r.Enabled,
 			Exists:    dirExists(r.Path),
+			CoveredBy: coveringRoot(r.Path, watched),
 			CreatedAt: r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		})
 	}
@@ -267,6 +278,23 @@ func (h *AdminRoots) Patch(w http.ResponseWriter, r *http.Request) {
 		Exists:    dirExists(row.Path),
 		CreatedAt: row.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	})
+}
+
+// coveringRoot returns a watched root, other than path itself, that contains
+// path, or "" if there's none. Uses the same containment check as streaming,
+// so it follows the server's own path rules (separators, volumes).
+func coveringRoot(path string, watched []string) string {
+	for _, w := range watched {
+		inside, err := pathsafe.WithinRoot(w, path)
+		if err != nil || !inside {
+			continue
+		}
+		if same, _ := pathsafe.WithinRoot(path, w); same {
+			continue
+		}
+		return w
+	}
+	return ""
 }
 
 func dirExists(p string) bool {

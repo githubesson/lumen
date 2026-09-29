@@ -58,20 +58,11 @@ function Stat({
   );
 }
 
-/** A watched folder (other than root itself) that contains root, if any. */
-function coveringRoot(root: MusicRoot, roots: MusicRoot[]): MusicRoot | null {
-  const path = root.path.replace(/\/+$/, "");
-  return (
-    roots.find((other) => {
-      if (other === root || !other.enabled) return false;
-      const outer = other.path.replace(/\/+$/, "");
-      return path.startsWith(`${outer}/`);
-    }) ?? null
-  );
-}
 
+
+/** Last path segment, for either separator (the server may run on Windows). */
 function basename(path: string): string {
-  return path.replace(/\/+$/, "").split("/").pop() || path;
+  return path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || path;
 }
 
 /** A bar where a number will be, while the server walks the folders. */
@@ -251,6 +242,9 @@ export function MusicRootsSection({
     onError("");
     try {
       await api.startRescan();
+      // A small scan can finish before the first status read ever sees it
+      // running; count it as run so the sizes and errors still refresh.
+      wasRunningRef.current = true;
       await loadStatus();
     } catch (err) {
       onError(errorMessage(err, "Failed to start rescan."));
@@ -484,7 +478,7 @@ export function MusicRootsSection({
       <RemoveFolderDialog
         key={removeTarget?.id}
         root={removeTarget}
-        coveredBy={removeTarget && roots ? coveringRoot(removeTarget, roots) : null}
+        coveredBy={removeTarget?.covered_by || null}
         open={removeOpen}
         onClose={() => setRemoveOpen(false)}
         onRemoved={onRemoved}

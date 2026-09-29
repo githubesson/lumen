@@ -988,6 +988,8 @@ export interface MusicRoot {
   enabled: boolean;
   primary: boolean;
   exists: boolean;
+  /** Another watched root containing this one; its files stay watched without it. */
+  covered_by?: string;
   created_at?: string;
 }
 

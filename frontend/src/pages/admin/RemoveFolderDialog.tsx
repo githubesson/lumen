@@ -18,8 +18,8 @@ export function RemoveFolderDialog({
   onRemoved,
 }: {
   root: MusicRoot | null;
-  /** A still-watched folder that contains this one, if any. */
-  coveredBy: MusicRoot | null;
+  /** Path of a still-watched folder that contains this one, if any. */
+  coveredBy: string | null;
   open: boolean;
   onClose: () => void;
   onRemoved: (result: { purged: boolean; deletedTracks: number }) => void | Promise<void>;
@@ -102,7 +102,7 @@ export function RemoveFolderDialog({
           <p style={{ margin: 0, color: "var(--muted-foreground)" }}>
             It&apos;s inside{" "}
             <span className="font-mono" style={{ wordBreak: "break-all" }}>
-              {coveredBy.path}
+              {coveredBy}
             </span>
             , which is still watched, so its tracks stay in your library.
           </p>

@@ -4,8 +4,9 @@ import { formatDate } from "./format";
 
 export const INGEST_ERRORS_ID = "ingest-errors";
 
+/** Folder and file name, for either separator (the server may run on Windows). */
 function splitPath(path: string): { dir: string; name: string } {
-  const cut = path.lastIndexOf("/");
+  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return cut < 0 ? { dir: "", name: path } : { dir: path.slice(0, cut), name: path.slice(cut + 1) };
 }
 
