@@ -250,9 +250,10 @@ export function MusicRootsSection({
     onError("");
     try {
       await api.startRescan();
-      // A small scan can finish before the first status read ever sees it
-      // running; count it as run so the sizes and errors still refresh.
-      wasRunningRef.current = true;
+      // Running until a status read says otherwise. That starts the polling
+      // even if the first read fails, and counts a small scan that finishes
+      // before any read sees it, so the sizes and errors still refresh.
+      setRescan({ running: true });
       await loadStatus();
     } catch (err) {
       onError(errorMessage(err, "Failed to start rescan."));
