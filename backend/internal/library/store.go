@@ -1212,9 +1212,10 @@ func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string) (i
 // (live); a live root around the removed one doesn't count for files inside
 // it, since reaching this means its scan doesn't get there. An alias only
 // counts while its file is on disk: ingest unlinks duplicates under the
-// primary root and keeps just their metadata. Runs in the caller's
-// transaction, alongside the root's own deletion. All prefixes must end with
-// the path separator.
+// primary root and keeps just their metadata. A track kept only by an alias
+// gets that copy as its file, since playback opens the canonical path and
+// that one is no longer watched. Runs in the caller's transaction, alongside
+// the root's own deletion. All prefixes must end with the path separator.
 func SoftDeleteRootTracks(ctx context.Context, tx pgx.Tx, prefix string, inner, live []string) (int64, error) {
 	clean := func(in []string) []string {
 		out := make([]string, len(in))
@@ -1238,29 +1239,64 @@ func SoftDeleteRootTracks(ctx context.Context, tx pgx.Tx, prefix string, inner, 
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT a.track_id, a.file_path FROM track_aliases a
+		SELECT a.track_id, a.file_path, t.file_path, `+watched("t.file_path")+`
+		FROM track_aliases a
 		JOIN tracks t ON t.id = a.track_id
-		WHERE `+candidate+` AND `+watched("a.file_path"), prefix, inner, live)
+		WHERE `+candidate+` AND `+watched("a.file_path")+`
+		ORDER BY a.track_id, a.id`, prefix, inner, live)
 	if err != nil {
 		return 0, err
+	}
+	type promotion struct {
+		path, oldPath string
+		size          int64
 	}
 	// Non-nil: a nil slice is sent as NULL, and NOT (id = ANY(NULL)) is never
 	// true, so nothing would be purged.
 	keepIDs := []uuid.UUID{}
+	kept := map[uuid.UUID]bool{}
+	promote := map[uuid.UUID]promotion{}
 	for rows.Next() {
 		var id uuid.UUID
-		var path string
-		if err := rows.Scan(&id, &path); err != nil {
+		var path, canonical string
+		var canonicalWatched bool
+		if err := rows.Scan(&id, &path, &canonical, &canonicalWatched); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
-			keepIDs = append(keepIDs, id)
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if kept[id] {
+			continue // the first copy found is the one promoted, if any
+		}
+		kept[id] = true
+		keepIDs = append(keepIDs, id)
+		if !canonicalWatched {
+			promote[id] = promotion{path: path, oldPath: canonical, size: info.Size()}
 		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return 0, err
+	}
+	for id, p := range promote {
+		// Same audio, so normally the same container; if the extension
+		// differs, fall back to it the way ingest does for untagged files.
+		format := ""
+		if ext := filepath.Ext(p.path); !strings.EqualFold(ext, filepath.Ext(p.oldPath)) {
+			format = strings.TrimPrefix(strings.ToUpper(ext), ".")
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE tracks SET file_path = $2, file_size = $3,
+				format = COALESCE(NULLIF($4, ''), format), updated_at = NOW()
+			WHERE id = $1`, id, p.path, p.size, format); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM track_aliases WHERE track_id = $1 AND file_path = $2`, id, p.path); err != nil {
+			return 0, err
+		}
 	}
 
 	tag, err := tx.Exec(ctx, `

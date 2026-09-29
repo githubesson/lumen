@@ -136,6 +136,16 @@ func TestRemoveRootPurgeKeepsWatchedTracks(t *testing.T) {
 	if deleted(filepath.Join(ext, "dupe.mp3")) {
 		t.Error("track with a copy under a still-watched folder was purged")
 	}
+	// ...and that copy is now its file, since the old one isn't watched.
+	var dupePath string
+	var aliases int
+	if err := pool.QueryRow(ctx, `SELECT file_path, (SELECT COUNT(*) FROM track_aliases WHERE track_id = t.id) FROM tracks t WHERE id = $1`,
+		tracks[filepath.Join(ext, "dupe.mp3")]).Scan(&dupePath, &aliases); err != nil {
+		t.Fatal(err)
+	}
+	if dupePath != dupeCopy || aliases != 0 {
+		t.Errorf("kept track's file = %q with %d aliases; want the surviving copy %q promoted", dupePath, aliases, dupeCopy)
+	}
 	if !deleted(filepath.Join(ext, "ghost.mp3")) {
 		t.Error("track kept for an alias whose file is gone")
 	}
