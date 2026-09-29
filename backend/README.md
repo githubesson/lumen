@@ -53,7 +53,7 @@ filen-downloader/     Node 20 helper the Docker image bundles for Filen links
 
 ## Run (local)
 
-Requires Go 1.23+ and a Postgres 16 instance:
+Requires Go 1.24.1+ and a Postgres 16 instance:
 
 ```sh
 docker run --rm -e POSTGRES_PASSWORD=mlib -e POSTGRES_USER=mlib -e POSTGRES_DB=mlib -p 5432:5432 postgres:16
@@ -80,12 +80,41 @@ Changes made directly in Postgres or through another backend process require
 a restart of this process to refresh its snapshot. Playback still checks track
 access in Postgres and opens and stats the original file on each request.
 
+### Rescanning the library
+
+`POST /api/admin/library/rescan` skips global files whose path, size, and
+nanosecond modification time match their last successful ingest. Fingerprints
+persist across restarts; existing files receive them on their first successful
+ingest after upgrading. Files with recorded errors, incomplete metadata,
+deleted tracks, or a moved canonical path are read again. Reachable nested
+roots are scanned once; separately configured roots inside dot-directories
+remain separate scans.
+
+Use `POST /api/admin/library/rescan?force=true` to read every file again, for
+example after replacing a file while preserving its size and modification
+time, or to retry artwork processing. Both routes require an admin session.
+`GET /api/admin/library/rescan` reports `unchanged` alongside the existing
+progress counters; unchanged files also count toward `dedup` and `processed`.
+
+Migration 0023 adds catalog and recent-track indexes and repairs listening
+timestamps from play history. The repair temporarily locks play-write tables,
+and index creation can extend startup for large libraries. Migration 0024 adds
+the nullable ingestion fingerprint columns.
+
 ## Test / lint
 
 ```sh
 gofmt -l .
 go vet ./...
 go test ./...
+```
+
+Database-backed tests need a disposable PostgreSQL database. The test role
+should be able to create databases so packages can use isolated sibling
+databases:
+
+```sh
+LUMEN_REVIEW_TEST_DATABASE_URL=postgres://mlib:mlib@localhost:5432/mlib_test?sslmode=disable go test ./...
 ```
 
 ## Docker

@@ -1,6 +1,7 @@
 package activity
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -93,6 +94,7 @@ type Hub struct {
 	mu             sync.Mutex
 	nextConnection uint64
 	connections    map[uuid.UUID]map[string]*deviceConnection
+	snapshots      map[uuid.UUID]*playbackSnapshot
 	pending        map[string]*pendingCommand
 	completed      map[string]completedCommand
 	commandTimeout time.Duration
@@ -108,6 +110,7 @@ func NewHubWithCommandTimeout(timeout time.Duration) *Hub {
 	}
 	return &Hub{
 		connections:    make(map[uuid.UUID]map[string]*deviceConnection),
+		snapshots:      make(map[uuid.UUID]*playbackSnapshot),
 		pending:        make(map[string]*pendingCommand),
 		completed:      make(map[string]completedCommand),
 		commandTimeout: timeout,
@@ -133,6 +136,7 @@ func (h *Hub) Register(userID uuid.UUID, deviceID string) (*Subscription, func()
 
 	if h.connections[userID] == nil {
 		h.connections[userID] = make(map[string]*deviceConnection)
+		h.snapshots[userID] = &playbackSnapshot{}
 	}
 	if previous := h.connections[userID][deviceID]; previous != nil {
 		previous.subscription.once.Do(func() { close(previous.subscription.Done) })
@@ -165,6 +169,7 @@ func (h *Hub) unregister(sub *Subscription) {
 	delete(devices, sub.DeviceID)
 	if len(devices) == 0 {
 		delete(h.connections, sub.UserID)
+		delete(h.snapshots, sub.UserID)
 	}
 	sub.once.Do(func() { close(sub.Done) })
 	h.failPendingForTargetLocked(sub.UserID, sub.DeviceID, "offline", "target device disconnected")
@@ -255,12 +260,29 @@ func (h *Hub) Devices(userID uuid.UUID) []Device {
 func (h *Hub) NotifyActivity(userID uuid.UUID) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if snapshot := h.snapshots[userID]; snapshot != nil {
+		snapshot.invalidate()
+	}
 	for _, connection := range h.connections[userID] {
 		signal(connection.subscription.ActivityChanges)
 		if connection.announced {
 			signal(connection.subscription.DeviceChanges)
 		}
 	}
+}
+
+// RecentActivity shares one durable snapshot between a user's socket writers.
+// Its lifetime is bounded by their connections; mutations invalidate it before
+// notifications, and its short TTL also allows changes from other processes.
+// The returned rows are shared and must be treated as read-only.
+func (h *Hub) RecentActivity(ctx context.Context, userID uuid.UUID, load func() ([]Activity, error)) ([]Activity, error) {
+	h.mu.Lock()
+	snapshot := h.snapshots[userID]
+	h.mu.Unlock()
+	if snapshot == nil {
+		return load()
+	}
+	return snapshot.get(ctx, load)
 }
 
 // RouteCommand either queues a command for its online target or returns an

@@ -524,11 +524,18 @@ func (h *Activity) writePlaybackSnapshot(
 	userID uuid.UUID,
 	deviceID string,
 ) error {
-	requestCtx, cancel := context.WithTimeout(ctx, playbackSocketWriteTimeout)
-	current, err := h.Store.Current(requestCtx, userID, deviceID, playbackActivityMaxAge)
-	cancel()
+	recent, err := h.recentPlayback(ctx, userID)
 	if err != nil {
 		return err
+	}
+	var current *activity.Activity
+	cutoff := time.Now().Add(-playbackActivityMaxAge)
+	for i := range recent {
+		row := &recent[i]
+		if row.DeviceID != deviceID && !row.UpdatedAt.Before(cutoff) &&
+			(current == nil || row.UpdatedAt.After(current.UpdatedAt)) {
+			current = row
+		}
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, playbackSocketWriteTimeout)
 	defer cancel()
@@ -544,15 +551,16 @@ func (h *Activity) writeDeviceSnapshot(
 	conn *websocket.Conn,
 	userID uuid.UUID,
 ) error {
-	requestCtx, cancel := context.WithTimeout(ctx, playbackSocketWriteTimeout)
-	recent, err := h.Store.ListRecent(requestCtx, userID, playbackActivityMaxAge)
-	cancel()
+	recent, err := h.recentPlayback(ctx, userID)
 	if err != nil {
 		return err
 	}
 	activityByDevice := make(map[string]*playbackActivityResp, len(recent))
+	cutoff := time.Now().Add(-playbackActivityMaxAge)
 	for i := range recent {
-		activityByDevice[recent[i].DeviceID] = toPlaybackActivityResp(&recent[i])
+		if !recent[i].UpdatedAt.Before(cutoff) {
+			activityByDevice[recent[i].DeviceID] = toPlaybackActivityResp(&recent[i])
+		}
 	}
 
 	devices := h.Hub.Devices(userID)
@@ -576,6 +584,22 @@ func (h *Activity) writeDeviceSnapshot(
 		Type:     "devices.snapshot",
 		Protocol: playbackSocketProtocolVersion,
 		Devices:  response,
+	})
+}
+
+func (h *Activity) recentPlayback(ctx context.Context, userID uuid.UUID) ([]activity.Activity, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, playbackSocketWriteTimeout)
+	defer cancel()
+	return h.Hub.RecentActivity(requestCtx, userID, func() ([]activity.Activity, error) {
+		// Shared reads outlive one socket disconnecting, but remain bounded
+		// and stop with the server's drain context.
+		background := h.Background
+		if background == nil {
+			background = context.Background()
+		}
+		loadCtx, cancel := context.WithTimeout(background, playbackSocketWriteTimeout)
+		defer cancel()
+		return h.Store.ListRecent(loadCtx, userID, playbackActivityMaxAge)
 	})
 }
 

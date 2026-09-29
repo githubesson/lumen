@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -245,9 +246,18 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, results)
 }
 
-// Rescan kicks off a full re-scan of the music directory in the background.
+// Rescan starts a background scan, optionally forcing unchanged files to be read.
 // Calling it while a scan is in progress returns 409.
 func (h *Library) Rescan(w http.ResponseWriter, r *http.Request) {
+	var options ingest.RescanOptions
+	if raw := r.URL.Query().Get("force"); raw != "" {
+		var err error
+		options.Force, err = strconv.ParseBool(raw)
+		if err != nil {
+			http.Error(w, "invalid force", http.StatusBadRequest)
+			return
+		}
+	}
 	h.mu.Lock()
 	if h.rescan != nil && !h.rescan.Done.Load() {
 		h.mu.Unlock()
@@ -266,7 +276,7 @@ func (h *Library) Rescan(w http.ResponseWriter, r *http.Request) {
 		scanCtx = context.WithoutCancel(r.Context())
 	}
 	job := func() {
-		if err := h.Ingest.Rescan(scanCtx, p); err != nil {
+		if err := h.Ingest.RescanWithOptions(scanCtx, p, options); err != nil {
 			msg := err.Error()
 			p.Failure.Store(&msg)
 			h.log().Error("library rescan failed", "err", err)
@@ -295,6 +305,7 @@ func (h *Library) RescanStatus(w http.ResponseWriter, r *http.Request) {
 		"processed": p.Processed.Load(),
 		"inserted":  p.Inserted.Load(),
 		"dedup":     p.Dedup.Load(),
+		"unchanged": p.Unchanged.Load(),
 		"errored":   p.Errored.Load(),
 		"pruned":    p.Pruned.Load(),
 	}
