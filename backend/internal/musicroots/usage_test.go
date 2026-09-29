@@ -102,3 +102,43 @@ func TestUsageCache(t *testing.T) {
 		t.Fatalf("new roots = %+v, %v", got, err)
 	}
 }
+
+// A forced refresh must not join a walk that started before it: that walk may
+// have read the disk before whatever the refresh is meant to pick up.
+func TestUsageCacheFreshSupersedesInFlightWalk(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan int, 2)
+	calls := 0
+	c := UsageCache{walk: func(ctx context.Context, roots []string) ([]Usage, error) {
+		calls++
+		n := calls
+		started <- n
+		if n == 1 {
+			<-release
+		}
+		return []Usage{{Path: roots[0], Files: int64(n)}}, nil
+	}}
+	ctx := context.Background()
+	roots := []string{"/music"}
+
+	first := make(chan []Usage)
+	go func() {
+		got, _, _ := c.Get(ctx, roots, false)
+		first <- got
+	}()
+	<-started // the first walk is under way and blocked
+
+	fresh, _, err := c.Get(ctx, roots, true)
+	if err != nil || fresh[0].Files != 2 {
+		t.Fatalf("fresh = %+v, %v; want the second walk", fresh, err)
+	}
+	close(release)
+	if got := <-first; got[0].Files != 1 {
+		t.Fatalf("first caller got %+v, want its own walk", got)
+	}
+	// The older walk finished last but must not replace the newer result.
+	cached, _, err := c.Get(ctx, roots, false)
+	if err != nil || cached[0].Files != 2 {
+		t.Fatalf("cached = %+v, %v; want the fresh result", cached, err)
+	}
+}

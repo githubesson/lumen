@@ -111,6 +111,8 @@ type UsageCache struct {
 	result []Usage
 	at     time.Time
 	flight *usageFlight
+	// walk stands in for MeasureUsage in tests.
+	walk func(context.Context, []string) ([]Usage, error)
 }
 
 type usageFlight struct {
@@ -122,9 +124,11 @@ type usageFlight struct {
 }
 
 // Get returns the usage of roots and when it was measured. A cached result
-// for the same roots younger than the TTL is reused unless fresh is set. The
-// walk itself runs detached from ctx, so a caller that gives up (a closed
-// tab, a proxy timeout) still leaves a result behind for the next one.
+// for the same roots younger than the TTL is reused, and a walk already under
+// way is joined. fresh skips both: it's sent after a rescan, and a walk that
+// started earlier may predate what the rescan changed. The walk runs detached
+// from ctx, so a caller that gives up (a closed tab, a proxy timeout) still
+// leaves a result behind for the next one.
 func (c *UsageCache) Get(ctx context.Context, roots []string, fresh bool) ([]Usage, time.Time, error) {
 	key := strings.Join(roots, "\x00")
 	c.mu.Lock()
@@ -134,7 +138,7 @@ func (c *UsageCache) Get(ctx context.Context, roots []string, fresh bool) ([]Usa
 		return result, at, nil
 	}
 	f := c.flight
-	if f == nil || f.key != key {
+	if f == nil || f.key != key || fresh {
 		f = &usageFlight{key: key, done: make(chan struct{})}
 		c.flight = f
 		go c.measure(f, append([]string(nil), roots...))
@@ -152,12 +156,16 @@ func (c *UsageCache) Get(ctx context.Context, roots []string, fresh bool) ([]Usa
 func (c *UsageCache) measure(f *usageFlight, roots []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), usageWalkTimeout)
 	defer cancel()
-	f.result, f.err = MeasureUsage(ctx, roots)
+	walk := c.walk
+	if walk == nil {
+		walk = MeasureUsage
+	}
+	f.result, f.err = walk(ctx, roots)
 	f.at = time.Now()
 
 	c.mu.Lock()
-	// A walk superseded by one for a different root set must not overwrite
-	// the newer result.
+	// A superseded walk (other roots, or a forced refresh started after it)
+	// must not overwrite the newer result.
 	if c.flight == f {
 		c.flight = nil
 		if f.err == nil {

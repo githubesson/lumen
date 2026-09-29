@@ -117,9 +117,13 @@ export function MusicRootsSection({
   );
   const usageByPath = new Map(usage?.roots.map((u) => [u.path, u]));
 
-  const { data: ingestErrors, reload: reloadErrors } = useApiResource<IngestErrors>(
+  const {
+    data: ingestErrors,
+    error: ingestErrorsError,
+    reload: reloadErrors,
+  } = useApiResource<IngestErrors>(
     (signal) => api.listIngestErrors({ signal }),
-    "Couldn't load import errors.",
+    "the request failed",
     { cacheKey: "admin:ingest-errors" },
   );
   const [showErrors, setShowErrors] = useState(false);
@@ -435,6 +439,12 @@ export function MusicRootsSection({
         {usageError && (
           <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "8px 0 0" }}>
             {usageError}
+          </p>
+        )}
+        {/* Without this a failed load looks the same as having no failures. */}
+        {ingestErrorsError && (
+          <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "8px 0 0" }}>
+            Couldn&apos;t check for files that failed to import: {ingestErrorsError}
           </p>
         )}
         {(ingestErrors?.total ?? 0) > 0 && (
