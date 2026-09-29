@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path"
 	"strconv"
@@ -444,7 +447,31 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Tracks = append(out.Tracks, ti)
 	}
-	writeJSON(w, http.StatusOK, out)
+	writePlaylistTracks(w, r, out)
+}
+
+// Include visible track metadata in the validator: auto-downloads and edits
+// can change rows without changing the playlist's own updated_at timestamp.
+
+func writePlaylistTracks(w http.ResponseWriter, r *http.Request, out tracksResp) {
+	data, err := json.Marshal(out)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	tag := fmt.Sprintf("\"%x\"", sha256.Sum256(data))
+	w.Header().Set("ETag", tag)
+	w.Header().Set("Cache-Control", "private, no-cache")
+	for _, candidate := range strings.Split(r.Header.Get("If-None-Match"), ",") {
+		candidate = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(candidate), "W/"))
+		if candidate == tag || candidate == "*" {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 type addTracksReq struct {

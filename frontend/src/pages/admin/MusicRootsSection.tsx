@@ -163,7 +163,7 @@ export function MusicRootsSection({
     }
     if (pollRef.current) return;
     pollRef.current = window.setInterval(() => {
-      void loadStatus();
+      if (!document.hidden) void loadStatus();
     }, 1000);
     return () => {
       if (pollRef.current) {

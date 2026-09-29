@@ -4,13 +4,17 @@ export default function SeekBar({
   value,
   onSeek,
   label,
+  commitOnRelease = true,
 }: {
   value: number;
   onSeek: (v: number) => void;
   label: string;
+  commitOnRelease?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
+  const [preview, setPreview] = useState<number | null>(null);
+  const pointer = useRef<number | null>(null);
 
   const fromEvent = useCallback((clientX: number) => {
     const el = ref.current;
@@ -22,20 +26,38 @@ export default function SeekBar({
 
   useEffect(() => {
     if (!dragging) return;
-    const move = (ev: PointerEvent) => onSeek(fromEvent(ev.clientX));
-    const up = () => setDragging(false);
+    const move = (ev: PointerEvent) => {
+      if (ev.pointerId === pointer.current) {
+        const next = fromEvent(ev.clientX);
+        setPreview(next);
+        if (!commitOnRelease) onSeek(next);
+      }
+    };
+    const finish = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointer.current) return;
+      if (ev.type === "pointerup") onSeek(fromEvent(ev.clientX));
+      pointer.current = null;
+      setPreview(null);
+      setDragging(false);
+    };
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up, { once: true });
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
     return () => {
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
     };
-  }, [dragging, onSeek, fromEvent]);
+  }, [dragging, onSeek, fromEvent, commitOnRelease]);
 
   const onPointerDown: React.PointerEventHandler<HTMLDivElement> = (e) => {
     e.preventDefault();
+    if (e.button !== 0) return;
+    e.currentTarget.focus();
+    pointer.current = e.pointerId;
     setDragging(true);
-    onSeek(fromEvent(e.clientX));
+    setPreview(fromEvent(e.clientX));
+    if (!commitOnRelease) onSeek(fromEvent(e.clientX));
   };
 
   const onKeyDown: React.KeyboardEventHandler<HTMLDivElement> = (e) => {
@@ -54,7 +76,7 @@ export default function SeekBar({
     }
   };
 
-  const pct = Math.max(0, Math.min(1, value)) * 100;
+  const pct = Math.max(0, Math.min(1, preview ?? value)) * 100;
   const pctStr = pct.toFixed(3);
 
   return (

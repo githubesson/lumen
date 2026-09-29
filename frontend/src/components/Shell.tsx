@@ -9,9 +9,9 @@ import { useDesktopConfig } from "../lib/desktopConfig";
 import { useLyricsPanel } from "../context/LyricsPanel";
 import MiniPlayer from "./MiniPlayer";
 import LyricsSidebar from "./LyricsSidebar";
-import UpdateToast from "./UpdateToast";
-import UploadDialog from "./UploadDialog";
-import SettingsDialog, { type SectionId } from "./SettingsDialog";
+import { isElectron } from "../lib/platform";
+
+import type { SectionId } from "./SettingsDialog";
 import Sidebar from "./shell/Sidebar";
 import Topbar from "./shell/Topbar";
 import { OpenSettingsContext } from "./shell/openSettings";
@@ -19,6 +19,13 @@ import { useMobileNav } from "./shell/useMobileNav";
 import { useSidebarToggle } from "./shell/useSidebarToggle";
 import { claimResourceCache, clearResourceCache } from "../lib/resourceCache";
 
+const SettingsDialog = lazy(() => import("./SettingsDialog"));
+const UploadDialog = lazy(() => import("./UploadDialog"));
+const UpdateToast = lazy(() => import("./UpdateToast"));
+function DiscordPresence() {
+  useDiscordPresence();
+  return null;
+}
 const CommandPalette = lazy(() => import("./CommandPalette"));
 const EMPTY_PLAYLISTS: Playlist[] = [];
 
@@ -48,7 +55,8 @@ export default function Shell() {
   const fh6RadioEnabled = useDesktopConfig()?.fh6RadioEnabled === true;
   const { mobileNavOpen, setMobileNavOpen } = useMobileNav();
 
-  useDiscordPresence();
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [uploadLoaded, setUploadLoaded] = useState(false);
 
   // Pages cache their last results for revisits. Nothing is kept once the
   // signed-in shell goes (sign-out); a switch to another account is handled
@@ -76,6 +84,7 @@ export default function Shell() {
   }, [me?.id, me?.must_reset_password, me]);
 
   const openSettings = useCallback((section?: SectionId) => {
+    setSettingsLoaded(true);
     setSettingsSection(section);
     setTweaksOpen(true);
   }, []);
@@ -116,6 +125,7 @@ export default function Shell() {
         fh6RadioEnabled={fh6RadioEnabled}
         onAddMusic={() => {
           setMobileNavOpen(false);
+          setUploadLoaded(true);
           setUploadOpen(true);
         }}
         onOpenTweaks={() => {
@@ -141,8 +151,9 @@ export default function Shell() {
           onToggleMobileNav={() => setMobileNavOpen((open) => !open)}
           onToggleSidebar={toggleSidebar}
           onOpenPalette={() => setPaletteOpen(true)}
-          onOpenUpload={() => setUploadOpen(true)}
+          onOpenUpload={() => { setUploadLoaded(true); setUploadOpen(true); }}
           onToggleTweaks={() => {
+            setSettingsLoaded(true);
             setSettingsSection(undefined);
             setTweaksOpen((v) => !v);
           }}
@@ -154,7 +165,7 @@ export default function Shell() {
           </OpenSettingsContext.Provider>
         </div>
 
-        <UpdateToast />
+        <Suspense fallback={null}><UpdateToast /></Suspense>
       </main>
 
       <LyricsSidebar />
@@ -162,17 +173,20 @@ export default function Shell() {
       {/* Player */}
       <MiniPlayer />
 
-      <SettingsDialog
-        open={tweaksOpen}
-        section={settingsSection}
-        onClose={() => setTweaksOpen(false)}
-      />
+      {isElectron() && <DiscordPresence />}
+      <Suspense fallback={null}>
+        {settingsLoaded && <SettingsDialog
+          open={tweaksOpen}
+          section={settingsSection}
+          onClose={() => setTweaksOpen(false)}
+        />}
 
-      <UploadDialog
-        open={uploadOpen}
-        isAdmin={me?.role === "admin"}
-        onClose={() => setUploadOpen(false)}
-      />
+        {uploadLoaded && <UploadDialog
+          open={uploadOpen}
+          isAdmin={me?.role === "admin"}
+          onClose={() => setUploadOpen(false)}
+        />}
+      </Suspense>
 
       {paletteOpen && (
         <Suspense fallback={null}>
@@ -187,6 +201,7 @@ export default function Shell() {
             }}
             onOpenUpload={() => {
               setPaletteOpen(false);
+              setUploadLoaded(true);
               setUploadOpen(true);
             }}
           />

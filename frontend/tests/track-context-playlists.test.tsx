@@ -12,7 +12,7 @@ vi.mock("../../core/src/api", async (original) => ({
   api: { listPlaylists: mock.list, addPlaylistTracks: mock.add },
 }));
 vi.mock("../src/context/Auth", () => ({ useAuth: () => ({ me: { id: "user", role: "user", must_reset_password: false } }) }));
-vi.mock("../src/context/Player", () => ({ usePlayer: () => ({ play: vi.fn() }) }));
+vi.mock("../src/context/Player", () => ({ usePlayer: () => ({ play: vi.fn() }), usePlayerControls: () => ({ play: vi.fn() }) }));
 vi.mock("../src/context/Favorites", () => ({ useFavorites: () => ({ isFavorite: () => false, toggle: vi.fn() }) }));
 
 const playlist: Playlist = {

@@ -12,12 +12,18 @@ let enabled = true;
 let publicBackendUrl = "";
 let lastActivity: DiscordActivityPayload | null = null;
 let lastStartMs = 0;
+let retryAfter = 0;
+let failures = 0;
 
 export function configureDiscordPresence(options: {
   clientId?: string;
   enabled?: boolean;
   backendUrl?: string;
 }): void {
+  if ((options.clientId !== undefined && clientId !== options.clientId.trim()) || (options.enabled === true && !enabled)) {
+    retryAfter = 0;
+    failures = 0;
+  }
   if (options.clientId !== undefined) clientId = options.clientId.trim();
   if (options.backendUrl !== undefined) publicBackendUrl = options.backendUrl;
   if (options.enabled !== undefined) {
@@ -30,23 +36,32 @@ export function configureDiscordPresence(options: {
 async function ensureDiscord(): Promise<DiscordClient | null> {
   if (!enabled || !clientId) return null;
   if (client) return client;
-  if (connecting) return null;
+  if (connecting || Date.now() < retryAfter) return null;
   connecting = true;
+  let nextClient: DiscordClient | null = null;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const RPC = require("discord-rpc");
-    const nextClient = new RPC.Client({ transport: "ipc" });
+    nextClient = new RPC.Client({ transport: "ipc" });
     nextClient.on("ready", () => {
       console.log("[discord] connected as client", clientId);
     });
     nextClient.on("disconnected", () => {
       console.log("[discord] disconnected");
-      client = null;
+      if (client === nextClient) {
+        client = null;
+        retryAfter = Math.max(retryAfter, Date.now() + 30_000);
+      }
     });
     await nextClient.login({ clientId });
+    if (!enabled) { await nextClient.destroy(); return null; }
+    failures = 0;
+    retryAfter = 0;
     client = nextClient;
     return nextClient;
   } catch (error) {
+    retryAfter = Date.now() + Math.min(300_000, 30_000 * 2 ** Math.min(failures++, 4));
+    try { await nextClient?.destroy(); } catch { /* Failed connections still need cleanup. */ }
     const message = (error as Error).message || String(error);
     if (message.includes("Cannot find module") && message.includes("discord-rpc")) {
       console.warn("[discord] `discord-rpc` package not installed — run `npm install`");

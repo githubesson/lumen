@@ -218,6 +218,23 @@ func TestServeRemoteCoverServesSecondRequestFromRAMCache(t *testing.T) {
 	}
 }
 
+func TestServeRemoteCoverFetchesThumbnailVariant(t *testing.T) {
+	resetCoverCache(t)
+	oldClient := remoteCoverHTTPClient
+	defer func() { remoteCoverHTTPClient = oldClient }()
+	var fetchedPath string
+	remoteCoverHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		fetchedPath = req.URL.Path
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"image/jpeg"}}, Body: io.NopCloser(strings.NewReader("jpg")), Request: req}, nil
+	})}
+	req := httptest.NewRequest(http.MethodGet, "/api/covers/remote?size=64", nil)
+	rec := httptest.NewRecorder()
+	(&Tracks{}).serveRemoteCover(rec, req, "https://resources.tidal.com/images/aa/bb/1280x1280.jpg")
+	if rec.Code != http.StatusOK || fetchedPath != "/images/aa/bb/80x80.jpg" {
+		t.Fatalf("thumbnail status %d, fetched path %q", rec.Code, fetchedPath)
+	}
+}
+
 func TestServeRemoteCoverCoalescesConcurrentFetches(t *testing.T) {
 	resetCoverCache(t)
 	oldClient := remoteCoverHTTPClient

@@ -23,6 +23,8 @@ export function useSnippetPreview({
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const readyRef = useRef<Promise<void> | null>(null);
+  const generationRef = useRef(0);
 
   // Attach the preview source. Local tracks are a plain progressive stream;
   // TIDAL tracks stream as HLS, which Chrome/Firefox only play through
@@ -34,12 +36,13 @@ export function useSnippetPreview({
     const a = audioRef.current;
     if (!a || !previewUrl || !open) return;
     let cancelled = false;
-    if (previewIsHls) {
-      void import("hls.js")
+    generationRef.current += 1;
+    if (previewIsHls && !a.canPlayType("application/vnd.apple.mpegurl")) {
+      readyRef.current = import("hls.js/light")
         .then(({ default: HlsRuntime }) => {
           if (cancelled) return;
           if (HlsRuntime.isSupported()) {
-            const hls = new HlsRuntime();
+            const hls = new HlsRuntime({ autoStartLoad: false });
             hlsRef.current = hls;
             hls.attachMedia(a);
             hls.loadSource(previewUrl);
@@ -55,6 +58,8 @@ export function useSnippetPreview({
     }
     return () => {
       cancelled = true;
+      generationRef.current += 1;
+      readyRef.current = null;
       hlsRef.current?.destroy();
       hlsRef.current = null;
       a.pause();
@@ -106,6 +111,7 @@ export function useSnippetPreview({
   const togglePlay = async () => {
     const a = audioRef.current;
     if (!a) return;
+    const generation = generationRef.current;
     if (isPlaying) {
       a.pause();
       setIsPlaying(false);
@@ -113,10 +119,13 @@ export function useSnippetPreview({
     }
     // Start from the window's beginning every time — hearing exactly what
     // the embed will play is the whole point of the preview button.
-    a.currentTime = startSec;
     try {
+      await readyRef.current;
+      if (generation !== generationRef.current) return;
+      a.currentTime = startSec;
+      hlsRef.current?.startLoad(startSec);
       await a.play();
-      setIsPlaying(true);
+      if (generation === generationRef.current) setIsPlaying(true);
     } catch {
       setIsPlaying(false);
     }

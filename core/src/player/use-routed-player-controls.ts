@@ -41,11 +41,12 @@ export function useRoutedPlayerControls({
   canPlayLocally,
   onRemoteQueueApplied,
 }: RoutedPlayerControlsOptions): PlayerControls {
+  const localPlay = controls.play;
   const play = useCallback<PlayerControls["play"]>(
     (track, queue) => {
       if (!targetDevice) {
         if (canPlayLocally && !canPlayLocally(track)) return false;
-        return controls.play(track, queue);
+        return localPlay(track, queue);
       }
       const nextQueue = buildRemoteQueue(track, queue);
       void sendCommand("play_track", {
@@ -55,7 +56,7 @@ export function useRoutedPlayerControls({
         if (result.status === "applied") onRemoteQueueApplied?.(nextQueue);
       });
     },
-    [canPlayLocally, controls, onRemoteQueueApplied, sendCommand, targetDevice],
+    [canPlayLocally, localPlay, onRemoteQueueApplied, sendCommand, targetDevice],
   );
 
   return useMemo<PlayerControls>(

@@ -4,7 +4,7 @@ import {
   Maximize2 as ArrowsPointingOutIcon,
   MicVocal as BookOpenIcon,
 } from "lucide-react";
-import { useTrackContextMenu } from "./TrackContextMenu";
+import { useTrackContextMenu } from "../lib/useTrackContextMenu";
 import { FavoriteButton } from "./TrackRowCells";
 import { useFavorites } from "../context/Favorites";
 import { useLyricsPanel } from "../context/LyricsPanel";

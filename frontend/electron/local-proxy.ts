@@ -31,7 +31,7 @@ const FONT_FILE_ORIGIN = "https://fonts.gstatic.com";
 
 export interface LocalProxy {
   readonly port: number;
-  start(): Promise<number>;
+  start(preferredPort?: number): Promise<number>;
   close(): void;
 }
 
@@ -189,7 +189,7 @@ export function createLocalProxy(options: {
       const data = await fsp.readFile(filePath);
       res.writeHead(200, {
         "Content-Type": mimeFor(filePath),
-        "Cache-Control": "no-cache",
+        "Cache-Control": normalized.startsWith("assets/") ? "public, max-age=31536000, immutable" : "no-cache",
         ...headers,
       });
       res.end(data);
@@ -213,7 +213,7 @@ export function createLocalProxy(options: {
     get port() {
       return port;
     },
-    start() {
+    start(preferredPort = 48637) {
       return new Promise<number>((resolve, reject) => {
         const nextServer = http.createServer((req, res) => {
           if (req.url?.startsWith("/api/")) proxyApi(req, res);
@@ -223,13 +223,21 @@ export function createLocalProxy(options: {
           if (req.url?.startsWith("/api/")) proxyWebSocket(req, socket, head);
           else socket.destroy();
         });
-        nextServer.once("error", reject);
-        nextServer.listen(0, "127.0.0.1", () => {
+        const onError = (error: NodeJS.ErrnoException) => {
+          if (error.code === "EADDRINUSE" && preferredPort !== 0) {
+            preferredPort = 0;
+            nextServer.listen(0, "127.0.0.1");
+          } else reject(error);
+        };
+        nextServer.on("error", onError);
+        nextServer.once("listening", () => {
           const address = nextServer.address();
           port = address && typeof address === "object" ? address.port : 0;
           server = nextServer;
           resolve(port);
         });
+        const validPort = Number.isInteger(preferredPort) && preferredPort >= 0 && preferredPort <= 65535 ? preferredPort : 48637;
+        nextServer.listen(validPort, "127.0.0.1");
       });
     },
     close() {

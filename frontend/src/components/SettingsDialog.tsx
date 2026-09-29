@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useLastFMConnection } from "@music-library/core";
 import { useTheme, type Density, type Layout, type Theme } from "../context/Theme";
-import { useAudioOutput } from "../lib/audioOutput";
+import { useAudioOutputDevices } from "../lib/audioOutput";
 import { useKey, useModalKeyScope } from "../lib/keybindings";
 import { trapTab } from "../lib/focusTrap";
 import { openExternal } from "../lib/platform";
@@ -89,7 +89,7 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
     setDensity,
     setLayout,
   } = useTheme();
-  const audioOut = useAudioOutput();
+  const audioOut = useAudioOutputDevices(open);
   const {
     status: lastFM,
     busy: lastFMBusy,

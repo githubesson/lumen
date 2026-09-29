@@ -6,7 +6,7 @@ import {
   parseGitHubRepoUrl,
   type UpdateBranch,
 } from "./updater";
-import { loadConfig } from "./config";
+import { loadConfig, saveConfigPatch } from "./config";
 import {
   configureDiscordPresence,
   teardownDiscordPresence,
@@ -83,7 +83,8 @@ if (!gotLock) {
     const updateRepoUrl =
       parseGitHubRepoUrl(cfg.updateRepoUrl)?.url ?? DEFAULT_UPDATE_REPO_URL;
     updateManager.configure({ branch: updateBranch, repoUrl: updateRepoUrl });
-    await localProxy.start();
+    const proxyPort = await localProxy.start(cfg.localProxyPort);
+    if (proxyPort !== cfg.localProxyPort) await saveConfigPatch({ localProxyPort: proxyPort });
     // With no server yet the renderer shows its first-run setup.
     await windows.openMain();
   });

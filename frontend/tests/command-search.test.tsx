@@ -22,10 +22,10 @@ vi.mock("../src/context/Theme", () => ({
   useTheme: () => ({ theme: "light", toggle: vi.fn() }),
 }));
 vi.mock("../src/context/Player", () => ({
-  usePlayer: () => ({ play: vi.fn() }),
+  usePlayer: () => ({ play: vi.fn() }), usePlayerControls: () => ({ play: vi.fn() }),
   useRemotePlayback: () => ({}),
 }));
-vi.mock("../src/components/TrackContextMenu", () => ({
+vi.mock("../src/lib/useTrackContextMenu", () => ({
   useTrackContextMenu: () => ({ bind: vi.fn(), close: vi.fn(), menu: null }),
 }));
 
@@ -143,4 +143,22 @@ it("opens the full search with the selected type", async () => {
   expect(screen.getByRole("status", { hidden: true }).textContent).toBe(
     "?q=hello&type=artist",
   );
+});
+
+it("preserves results during typing but prevents stale activation, including failed searches", async () => {
+  let fail!: (error: Error) => void;
+  mock.search.mockResolvedValueOnce({ tracks: [{ id: "old", title: "Previous song", duration_ms: 1000 }], albums: [], artists: [] })
+    .mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+  openPalette();
+  expect(screen.getByRole("dialog", { name: "Command palette" })).toBeTruthy();
+  fireEvent.change(screen.getByRole("combobox"), { target: { value: "previous" } });
+  await waitFor(() => expect(screen.getByText("Previous song")).toBeTruthy());
+  fireEvent.change(screen.getByRole("combobox"), { target: { value: "different" } });
+  expect(screen.getByRole("option", { name: /Previous song/ }).getAttribute("aria-disabled")).toBe("true");
+  fireEvent.click(screen.getByRole("option", { name: /Previous song/ }));
+  expect(mock.close).not.toHaveBeenCalled();
+  await waitFor(() => expect(mock.search).toHaveBeenCalledTimes(2));
+  await act(async () => { fail(new Error("Offline")); });
+  expect(screen.queryByText("Previous song")).toBeNull();
+  expect(screen.getByText("Search failed.")).toBeTruthy();
 });

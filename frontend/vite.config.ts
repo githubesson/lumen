@@ -54,14 +54,13 @@ export default defineConfig({
     outDir: "dist",
     rollupOptions: {
       output: {
-        manualChunks(id) {
-          if (
-            /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(
-              id,
-            )
-          ) {
-            return "vendor";
-          }
+        codeSplitting: {
+          groups: [
+            { name: "vendor", test: /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/, priority: 20 },
+            { name: "initial-deps", test: /[\\/]node_modules[\\/]/, tags: ["$initial"], priority: 10 },
+            { name: "initial-shared", tags: ["$initial"], minShareCount: 2, priority: 5 },
+            { name: "deferred-shared", minShareCount: 2, entriesAware: true, entriesAwareMergeThreshold: 20_000 },
+          ],
         },
       },
     },

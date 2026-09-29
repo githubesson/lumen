@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   type ReactNode,
 } from "react";
 import {
@@ -29,6 +30,7 @@ import { useHtmlAudioAdapter } from "../adapters/html-audio-adapter";
 import { AudioOutputProvider } from "../lib/audioOutput";
 import { useKey } from "../lib/keybindings";
 import { isElectron } from "../lib/platform";
+import { useAuth } from "./Auth";
 
 type Ctx = PlayerState & PlayerControls;
 type RemotePlaybackCtxValue = {
@@ -54,6 +56,7 @@ type RemotePlaybackCtxValue = {
 const EMPTY_REMOTE_QUEUE: PlayerState["queue"] = [];
 
 const PlayerCtx = createContext<Ctx | null>(null);
+const PlayerControlsCtx = createContext<PlayerControls | null>(null);
 const PlayerTimeCtx = createContext<TimeState | null>(null);
 const RemotePlaybackCtx = createContext<RemotePlaybackCtxValue | null>(null);
 // Exposed so platform-integration hooks (Discord RPC, etc.) can subscribe to
@@ -77,6 +80,7 @@ const webStorage = asyncifySyncStorage({
  * adapter drives.
  */
 export function PlayerProvider({ children }: { children: ReactNode }) {
+  const { status, me } = useAuth();
   const { adapter, audioRefs } = useHtmlAudioAdapter();
   const { state, controls, time } = usePlayerCore({
     adapter,
@@ -90,6 +94,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     adapter,
     controls,
     controlEnabled: true,
+    enabled: status === "authed" && !me?.must_reset_password,
   });
   const remoteSession = usePlaybackRemoteSession();
   const { remoteDevices, targetDevice, targetDeviceId, setTargetDeviceId } =
@@ -218,6 +223,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   });
   const shownVolume = targetDevice ? controlled.volume : state.volume;
 
+  const latestControls = useRef(routedControls);
+  useEffect(() => { latestControls.current = routedControls; }, [routedControls]);
+  const stableControls = useMemo<PlayerControls>(() => ({
+    play: (...args) => latestControls.current.play(...args),
+    resume: (...args) => latestControls.current.resume(...args),
+    pause: (...args) => latestControls.current.pause(...args),
+    toggle: (...args) => latestControls.current.toggle(...args),
+    next: (...args) => latestControls.current.next(...args),
+    prev: (...args) => latestControls.current.prev(...args),
+    jumpTo: (...args) => latestControls.current.jumpTo(...args),
+    seek: (...args) => latestControls.current.seek(...args),
+    setVolume: (...args) => latestControls.current.setVolume(...args),
+    setMuted: (...args) => latestControls.current.setMuted(...args),
+    toggleMute: (...args) => latestControls.current.toggleMute(...args),
+    setShuffle: (...args) => latestControls.current.setShuffle(...args),
+    toggleShuffle: (...args) => latestControls.current.toggleShuffle(...args),
+    setRepeat: (...args) => latestControls.current.setRepeat(...args),
+    cycleRepeat: (...args) => latestControls.current.cycleRepeat(...args),
+  }), []);
+
   // Keyboard bindings use the same routing as buttons and command-palette actions.
   useKey("space", (event) => {
     event.preventDefault();
@@ -277,23 +302,25 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   return (
     <RemotePlaybackCtx.Provider value={remoteValue}>
-      <PlayerCtx.Provider value={value}>
-        <PlayerTimeCtx.Provider value={displayedTime}>
-          <PlayerAdapterCtx.Provider value={adapter}>
-            {/* The adapter owns these ref objects and only ever reads them
-                from event handlers/effects; handing them to a child provider
-                and to `ref` props is not a render-time `.current` read, which
-                is what react-hooks/refs is guarding against. */}
-            {/* eslint-disable-next-line react-hooks/refs */}
-            <AudioOutputProvider audioRefs={audioRefs}>
-              {children}
-              <audio ref={audioRefs[0]} preload="auto" />
+      <PlayerControlsCtx.Provider value={stableControls}>
+        <PlayerCtx.Provider value={value}>
+          <PlayerTimeCtx.Provider value={displayedTime}>
+            <PlayerAdapterCtx.Provider value={adapter}>
+              {/* The adapter owns these ref objects and only ever reads them
+                  from event handlers/effects; handing them to a child provider
+                  and to `ref` props is not a render-time `.current` read, which
+                  is what react-hooks/refs is guarding against. */}
               {/* eslint-disable-next-line react-hooks/refs */}
-              <audio ref={audioRefs[1]} preload="auto" />
-            </AudioOutputProvider>
-          </PlayerAdapterCtx.Provider>
-        </PlayerTimeCtx.Provider>
-      </PlayerCtx.Provider>
+              <AudioOutputProvider audioRefs={audioRefs}>
+                {children}
+                <audio ref={audioRefs[0]} preload="auto" />
+                {/* eslint-disable-next-line react-hooks/refs */}
+                <audio ref={audioRefs[1]} preload="auto" />
+              </AudioOutputProvider>
+            </PlayerAdapterCtx.Provider>
+          </PlayerTimeCtx.Provider>
+        </PlayerCtx.Provider>
+      </PlayerControlsCtx.Provider>
     </RemotePlaybackCtx.Provider>
   );
 }
@@ -301,6 +328,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 export function usePlayer() {
   const ctx = useContext(PlayerCtx);
   if (!ctx) throw new Error("usePlayer requires PlayerProvider");
+  return ctx;
+}
+
+export function usePlayerControls() {
+  const ctx = useContext(PlayerControlsCtx);
+  if (!ctx) throw new Error("usePlayerControls requires PlayerProvider");
   return ctx;
 }
 

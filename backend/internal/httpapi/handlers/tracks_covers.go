@@ -463,6 +463,20 @@ func (h *Tracks) serveRemoteCover(w http.ResponseWriter, r *http.Request, rawURL
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	if r.URL.Query().Has("size") {
+		// TIDAL's CDN uses square dimensions in the final path segment.
+		// Fetch the requested variant rather than buffering the original art.
+		name := path.Base(u.Path)
+		dimensions := strings.Split(strings.TrimSuffix(name, ".jpg"), "x")
+		if len(dimensions) == 2 && strings.HasSuffix(name, ".jpg") {
+			width, widthErr := strconv.Atoi(dimensions[0])
+			height, heightErr := strconv.Atoi(dimensions[1])
+			if widthErr == nil && heightErr == nil && width > 0 && width == height {
+				size := strconv.Itoa(tidalCoverSize(parseCoverMaxSize(r)))
+				u.Path = strings.TrimSuffix(u.Path, name) + size + "x" + size + ".jpg"
+			}
+		}
+	}
 	data, ct, err := coverCache.fetchCached(u)
 	if err != nil {
 		var statusErr *remoteCoverStatusError

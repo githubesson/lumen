@@ -75,6 +75,34 @@ function liveClock() {
   return { clock, adapter, emit: (event: AudioAdapterEvent) => listeners.get(event)?.() };
 }
 
+it("coalesces a volume drag while publishing track changes immediately", async () => {
+  vi.useFakeTimers();
+  const { rerender, socket } = await setup();
+  socket.sent = [];
+  for (const volume of [0.1, 0.2, 0.3]) {
+    rerender({ ...state, volume });
+    act(() => vi.advanceTimersByTime(50));
+  }
+  expect(socket.sent).toHaveLength(0);
+  act(() => vi.advanceTimersByTime(150));
+  expect(socket.sent).toHaveLength(1);
+  expect(socket.sent[0]).toMatchObject({ activity: { volume: 0.3 } });
+  rerender({ ...state, volume: 0.3, current: tracks[71], index: 71 });
+  expect(socket.sent).toHaveLength(2);
+});
+
+it("does not connect until playback activity is enabled", async () => {
+  vi.stubGlobal("WebSocket", Socket);
+  const { rerender } = renderHook((enabled: boolean) => usePlaybackActivityPublisher({ state, time, storage, deviceName: "Test", enabled }), { initialProps: false });
+  await act(async () => {});
+  expect(Socket.instances).toHaveLength(0);
+  rerender(true);
+  await act(async () => {});
+  expect(Socket.instances).toHaveLength(1);
+  rerender(false);
+  expect(Socket.instances[0].readyState).toBe(3);
+});
+
 it("publishes live audio time while the source UI clock is frozen, including reconnect", async () => {
   const { adapter, clock } = liveClock();
   const { socket } = await setup(adapter);

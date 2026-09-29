@@ -31,7 +31,7 @@ interface AudioOutputCtx {
   /** Persist and apply a new sinkId. */
   selectDevice: (id: string) => Promise<void>;
   /** Re-run `enumerateDevices`. Triggers a one-shot mic grant so labels populate. */
-  refresh: () => Promise<void>;
+  refresh: (requestLabels?: boolean) => Promise<void>;
 }
 
 const AudioOutputContext = createContext<AudioOutputCtx | null>(null);
@@ -126,10 +126,10 @@ export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
     [audioRefs],
   );
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (requestLabels = true) => {
     if (!supported) return;
     try {
-      await unlockLabels();
+      if (requestLabels) await unlockLabels();
       const list = await listOutputs();
       setDevices(list);
     } catch (e) {
@@ -155,8 +155,8 @@ export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
     [applySink],
   );
 
-  // In Electron localStorage is tied to the random proxy port, so the
-  // canonical sink id lives in config.json. Load it once at startup.
+  // Desktop configuration remains canonical across port-collision fallbacks
+  // and upgrades from versions that used a random proxy port.
   useEffect(() => {
     if (!isElectron()) return;
     let cancelled = false;
@@ -195,21 +195,6 @@ export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
     };
   }, [supported, applySink, audioRefs]);
 
-  // Keep the device list fresh when hardware is plugged/unplugged.
-  useEffect(() => {
-    if (!supported) return;
-    // Device enumeration synchronizes React with the browser media-device API.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void refresh();
-    const onChange = () => {
-      void refresh();
-    };
-    navigator.mediaDevices.addEventListener("devicechange", onChange);
-    return () => {
-      navigator.mediaDevices.removeEventListener("devicechange", onChange);
-    };
-  }, [supported, refresh]);
-
   const value = useMemo<AudioOutputCtx>(
     () => ({ supported, devices, deviceId, error, selectDevice, refresh }),
     [supported, devices, deviceId, error, selectDevice, refresh],
@@ -225,4 +210,18 @@ export function useAudioOutput(): AudioOutputCtx {
   const ctx = useContext(AudioOutputContext);
   if (!ctx) throw new Error("useAudioOutput requires AudioOutputProvider");
   return ctx;
+}
+
+/** Only settings needs enumeration; hardware changes never reopen the mic. */
+export function useAudioOutputDevices(open: boolean): AudioOutputCtx {
+  const output = useAudioOutput();
+  const { supported, refresh } = output;
+  useEffect(() => {
+    if (!open || !supported) return;
+    void refresh();
+    const onChange = () => { void refresh(false); };
+    navigator.mediaDevices.addEventListener("devicechange", onChange);
+    return () => navigator.mediaDevices.removeEventListener("devicechange", onChange);
+  }, [open, supported, refresh]);
+  return output;
 }

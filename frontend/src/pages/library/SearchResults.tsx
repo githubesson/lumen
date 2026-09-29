@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   api,
   type Page,
@@ -57,18 +57,18 @@ export default function SearchResults({
     taggedWarning.search === `${type}\u0000${query.trim()}` ? taggedWarning.text : null;
   const { items, total, hasMore, loadingMore, error, stale, sentinelRef, reload } =
     usePaginatedList(fetcher, query, { pageSize: 25, resourceKey: type, keepPrevious: true });
-  const tracks =
+  const tracks = useMemo(() =>
     items?.flatMap((result) =>
       result.type === "track" ? [result.item] : [],
-    ) ?? [];
-  const albums =
+    ) ?? [], [items]);
+  const albums = useMemo(() =>
     items?.flatMap((result) =>
       result.type === "album" ? [result.item] : [],
-    ) ?? [];
-  const artists =
+    ) ?? [], [items]);
+  const artists = useMemo(() =>
     items?.flatMap((result) =>
       result.type === "artist" ? [result.item] : [],
-    ) ?? [];
+    ) ?? [], [items]);
   // The debounced query is still blank for a beat after the first keystroke,
   // and a stale empty page (a type with no hits) says nothing about the next
   // query, so both show as loading rather than "No matching results".

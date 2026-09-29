@@ -18,9 +18,9 @@ import PlaylistCard from "../components/PlaylistCard";
 import Section from "../components/Section";
 import ShelfScroller from "../components/ShelfScroller";
 import { Button } from "../components/Button";
-import { useTrackContextMenu } from "../components/TrackContextMenu";
+import { useTrackContextMenu } from "../lib/useTrackContextMenu";
 import { useAuth } from "../context/Auth";
-import { usePlayer } from "../context/Player";
+import { usePlayerControls } from "../context/Player";
 import { useFavorites } from "../context/Favorites";
 import { usePlaylists } from "../context/Playlists";
 import { useApiResource } from "../lib/useApiResource";
@@ -30,7 +30,7 @@ const EMPTY_TRACKS: TrackListItem[] = [];
 
 export default function Home() {
   const { me } = useAuth();
-  const { play } = usePlayer();
+  const { play } = usePlayerControls();
   const recentResource = useApiResource(
     (signal) => api.listRecent(20, { signal }), "Could not load recently played tracks.",
     { cacheKey: "recent:20" },
@@ -116,7 +116,7 @@ export default function Home() {
           {recent.slice(0, 12).map((t) => (
             <MediaCard
               key={t.id}
-              coverUrl={trackCoverUrl(t)}
+              coverUrl={trackCoverUrl(t, 384)}
               title={displayText(t.title)}
               subtitle={displayText(t.artist, "Unknown artist")}
               onPlay={() => play(t, recent)}
@@ -138,7 +138,7 @@ export default function Home() {
                   ? `/library?view=albums&album=${encodeURIComponent(a.albumID)}&by=${encodeURIComponent(a.artist)}`
                   : undefined
               }
-              coverUrl={a.albumID ? albumCoverUrl(a.albumID) : coverUrl(a.coverTrackId)}
+              coverUrl={a.albumID ? albumCoverUrl(a.albumID, 384) : coverUrl(a.coverTrackId, 384)}
               title={displayText(a.title)}
               subtitle={displayText(a.artist)}
             />
@@ -152,7 +152,7 @@ export default function Home() {
           {favs.slice(0, 12).map((t) => (
             <MediaCard
               key={t.id}
-              coverUrl={trackCoverUrl(t)}
+              coverUrl={trackCoverUrl(t, 384)}
               title={displayText(t.title)}
               subtitle={displayText(t.artist, "Unknown artist")}
               onPlay={() => play(t, favs)}
@@ -189,7 +189,7 @@ function HeroAlbum({
   /** Queue for a track with no local album to play through. */
   fallbackQueue: TrackListItem[];
 }) {
-  const { play } = usePlayer();
+  const { play } = usePlayerControls();
   const albumID = track.album_id;
   const album = useApiResource(
     (signal) => (albumID ? api.getAlbum(albumID, { signal }) : Promise.resolve(null)),

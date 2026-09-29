@@ -571,13 +571,17 @@ export function usePlaybackActivityPublisher({
     publish,
     state.current?.id,
     state.isPlaying,
-    state.volume,
-    state.muted,
     state.queue,
     state.index,
     state.shuffle,
     state.repeat,
   ]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const timer = setTimeout(publish, 200);
+    return () => clearTimeout(timer);
+  }, [enabled, publish, state.volume, state.muted]);
 
   useEffect(() => {
     if (!adapter) return;

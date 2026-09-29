@@ -22,9 +22,9 @@ export function AlbumCard({
         className="card-art"
         src={
           "cover_url" in a && a.cover_url
-            ? resolveCoverUrl(a.cover_url)
+            ? resolveCoverUrl(a.cover_url, 384)
             : a.has_cover
-              ? albumCoverUrl(a.id)
+              ? albumCoverUrl(a.id, 384)
               : null
         }
         label={a.title}
@@ -57,7 +57,7 @@ export function ArtistCard({
       <CoverArt
         className="card-art"
         src={
-          "cover_url" in a && a.cover_url ? resolveCoverUrl(a.cover_url) : null
+          "cover_url" in a && a.cover_url ? resolveCoverUrl(a.cover_url, 384) : null
         }
         label={a.name}
         radius={999}

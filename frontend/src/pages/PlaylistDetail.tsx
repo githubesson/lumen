@@ -1,3 +1,4 @@
+import { reconcileItems } from "../lib/reconcileItems";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -23,7 +24,7 @@ import {
   type TrackListItem,
 } from "../api";
 import { useAuth } from "../context/Auth";
-import { usePlayer } from "../context/Player";
+import { usePlayerControls } from "../context/Player";
 import { Button } from "../components/Button";
 import { Select } from "../components/Select";
 import SegmentedControl, {
@@ -107,7 +108,7 @@ export default function PlaylistDetail() {
 
 function PlaylistDetailView({ id }: { id: string | undefined }) {
   const navigate = useNavigate();
-  const { play, current, isPlaying } = usePlayer();
+  const { play } = usePlayerControls();
   const { isFavorite, toggle: toggleFav } = useFavorites();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
@@ -163,19 +164,28 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   // load is out (seeded from the cache or sidebar), so a mutation and its
   // reload can overtake it, and its older rows mustn't land on top.
   const loadGenRef = useRef(0);
+  const trackMutationRef = useRef(false);
+  const trackEtagRef = useRef<string>();
+  const routeIdRef = useRef(id);
+  useEffect(() => {
+    routeIdRef.current = id;
+    return () => { routeIdRef.current = undefined; };
+  }, [id]);
   const invalidateLoads = () => {
     loadGenRef.current += 1;
+    trackEtagRef.current = undefined;
   };
   const load = useCallback(async () => {
     if (!id) return;
     const gen = ++loadGenRef.current;
+    trackEtagRef.current = undefined;
     try {
       // Fetch collaborators alongside when the row we already have says the
       // tab exists, so its count lands with everything else.
       const known = listedRef.current;
       const [p, t, early] = await Promise.all([
         api.getPlaylist(id),
-        api.listPlaylistTracks(id),
+        api.listPlaylistTracksIfChanged(id),
         known && showsCollaborators(known)
           ? api.listCollaborators(id).catch(() => undefined)
           : null,
@@ -189,13 +199,14 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         : [];
       if (gen !== loadGenRef.current) return;
       setPlaylist(p);
-      setTracks(t.tracks);
+      trackEtagRef.current = t.etag;
+      setTracks((previous) => reconcileItems(previous ?? [], t.tracks ?? []));
       if (c) setCollabs(c);
       setError(null);
       // Keep the sidebar's row (name, cover) in step without refetching the
       // list. Only when it's out of date: update() drops list reads in flight.
       const row = listedRef.current;
-      const cover = coverFor(t.tracks);
+      const cover = coverFor(t.tracks ?? []);
       if (row && !sameListing(row, p, cover)) {
         // Optional fields are named outright: the response omits cleared
         // ones, and spreading it would keep the row's stale values.
@@ -243,18 +254,29 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   );
   useEffect(() => {
     if (!id || !autoDownload || queuedTidal === 0) return;
-    const timer = window.setInterval(() => {
-      // Quiet refresh: a transient failure must not replace the page with
-      // the load error banner.
+    let controller: AbortController | null = null;
+    const refresh = () => {
+      if (document.hidden || controller || trackMutationRef.current) return;
       const gen = loadGenRef.current;
-      api
-        .listPlaylistTracks(id)
-        .then((t) => {
-          if (gen === loadGenRef.current) setTracks(t.tracks);
+      const request = new AbortController();
+      controller = request;
+      void api.listPlaylistTracksIfChanged(id, trackEtagRef.current, { signal: request.signal })
+        .then((response) => {
+          if (!request.signal.aborted && gen === loadGenRef.current) {
+            trackEtagRef.current = response.etag;
+            if (response.tracks) setTracks((previous) => reconcileItems(previous ?? [], response.tracks!));
+          }
         })
-        .catch(() => {});
-    }, AUTO_DOWNLOAD_REFRESH_MS);
-    return () => window.clearInterval(timer);
+        .catch(() => {})
+        .finally(() => { if (controller === request) controller = null; });
+    };
+    const timer = window.setInterval(refresh, AUTO_DOWNLOAD_REFRESH_MS);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+      controller?.abort();
+    };
   }, [id, autoDownload, queuedTidal]);
 
   // All hooks must run unconditionally — keep them above every early return so
@@ -332,36 +354,50 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     setError(errorMessage(err, fallback));
   };
 
-  const onRemove = async (position: number) => {
-    if (!id) return;
+  // Track mutations only reconcile rows; playlist details and collaborators
+  // do not need another read. A lock keeps server positions unambiguous.
+  const commitTracks = async (next: PlaylistTrackEntry[], mutate: () => Promise<unknown>, fallback: string) => {
+    if (!id || trackMutationRef.current) return;
+    trackMutationRef.current = true;
     invalidateLoads();
+    const gen = loadGenRef.current;
+    setTracks(next);
     try {
-      await api.removePlaylistTrack(id, position);
-      await load();
+      await mutate();
+      if (routeIdRef.current !== id) return;
+      // A details action may have read rows before this mutation completed.
+      // Reconcile that rare overlap using the page's normal race-safe load.
+      if (gen !== loadGenRef.current) { await load(); return; }
+      const fresh = await api.listPlaylistTracksIfChanged(id);
+      if (gen !== loadGenRef.current) return;
+      trackEtagRef.current = fresh.etag;
+      const rows = fresh.tracks ?? next;
+      setTracks((previous) => reconcileItems(previous ?? [], rows));
+      updatePlaylists((listed) => listed?.map((row) => row.id === id ? { ...row, cover: coverFor(rows) } : row) ?? listed);
+      setError(null);
     } catch (err) {
-      await failAction(err, "Failed to remove track.");
+      if (gen === loadGenRef.current) {
+        try {
+          const fresh = await api.listPlaylistTracksIfChanged(id);
+          if (gen === loadGenRef.current && fresh.tracks) setTracks(fresh.tracks);
+        } catch { if (gen === loadGenRef.current) setTracks(tracks); }
+        if (gen === loadGenRef.current) setError(errorMessage(err, fallback));
+      }
+    } finally {
+      trackMutationRef.current = false;
     }
   };
-  // Drag-reorder commits the full visible order, like mobile's reorder mode.
-  // Optimistic: swap locally, PUT the new order, reload for fresh positions.
+  const onRemove = async (position: number) => {
+    if (!id || !tracks) return;
+    const next = tracks.filter((track) => track.position !== position).map((track, index) => track.position === index ? track : { ...track, position: index });
+    await commitTracks(next, () => api.removePlaylistTrack(id, position), "Failed to remove track.");
+  };
   const onReorder = async (from: number, to: number) => {
     if (!id || !tracks || from === to) return;
-    const previous = tracks;
     const next = [...tracks];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
-    invalidateLoads();
-    setTracks(next);
-    try {
-      await api.reorderPlaylist(
-        id,
-        next.map((t) => t.track_id),
-      );
-      await load();
-    } catch (err) {
-      setTracks(previous);
-      await failAction(err, "Failed to reorder tracks.");
-    }
+    await commitTracks(next.map((track, position) => ({ ...track, position })), () => api.reorderPlaylist(id, next.map((track) => track.track_id)), "Failed to reorder tracks.");
   };
 
   // Dragging only makes sense against the saved order with nothing filtered
@@ -689,8 +725,6 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
           }}
           onToggleFav={(id) => void toggleFav(id)}
           isFav={isFavorite}
-          currentTrackId={current?.id ?? null}
-          isPlaying={isPlaying}
           selectionControlsHostId={PLAYLIST_SELECTION_CONTROLS_ID}
         />
       )}

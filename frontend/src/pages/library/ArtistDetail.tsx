@@ -492,9 +492,9 @@ function ReleaseCard({
   onOpen: (id: string) => void;
 }) {
   const src = release.cover_url
-    ? resolveCoverUrl(release.cover_url)
+    ? resolveCoverUrl(release.cover_url, 384)
     : release.has_cover !== false
-      ? albumCoverUrl(release.id)
+      ? albumCoverUrl(release.id, 384)
       : null;
   return (
     <button type="button" className="card" onClick={() => onOpen(release.id)}>

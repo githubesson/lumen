@@ -25,7 +25,7 @@ import EmptyState from "../../components/EmptyState";
 import ErrorBanner from "../../components/ErrorBanner";
 import ListPageHeader from "../../components/ListPageHeader";
 import SearchInput from "../../components/SearchInput";
-import { usePlayer } from "../../context/Player";
+import { usePlayerControls } from "../../context/Player";
 import { useAuth } from "../../context/Auth";
 import { useKey } from "../../lib/keybindings";
 import { playableTracks } from "../../lib/track";
@@ -48,7 +48,7 @@ export function AlbumDetailView({
   // Bumped whenever the album is saved so the cover <img> reloads — the cover
   // URL is stable even when an admin replaces the artwork.
   const [coverNonce, setCoverNonce] = useState(0);
-  const { play } = usePlayer();
+  const { play } = usePlayerControls();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
   const search = useDetailTrackSearch("album", tracks);
@@ -192,7 +192,7 @@ export function TidalAlbumDetailView({
   // Kept apart from the load error: a later successful read clears that one,
   // but it says nothing about a download or cancel that failed.
   const [actionError, setActionError] = useState<string | null>(null);
-  const { play } = usePlayer();
+  const { play } = usePlayerControls();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
   // Only the newest read may commit: a revisit's mount read is still out

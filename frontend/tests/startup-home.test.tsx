@@ -16,8 +16,8 @@ vi.mock("../../core/src/api", async (original) => ({
   ...await original<typeof import("../../core/src/api")>(),
   api: { listRecent: mock.recent, listTracks: mock.tracks, listFavorites: mock.favorites, listPlaylists: mock.playlists },
 }));
-vi.mock("../src/context/Player", () => ({ usePlayer: () => ({ play: vi.fn() }) }));
-vi.mock("../src/components/TrackContextMenu", () => ({ useTrackContextMenu: () => ({ bind: vi.fn(), menu: null }) }));
+vi.mock("../src/context/Player", () => ({ usePlayer: () => ({ play: vi.fn() }), usePlayerControls: () => ({ play: vi.fn() }) }));
+vi.mock("../src/lib/useTrackContextMenu", () => ({ useTrackContextMenu: () => ({ bind: vi.fn(), menu: null }) }));
 vi.mock("../src/components/MediaCard", () => ({
   default: ({ title }: { title: string }) => <div>{title}</div>,
   MediaCardPlaceholders: () => null,

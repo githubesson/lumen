@@ -15,10 +15,10 @@ import CoverArt from "./CoverArt";
 import { EditTrackDialog } from "./edit/EditTrackDialog";
 import { MoveToAlbumDialog } from "./edit/MoveToAlbumDialog";
 import Tooltip from "./Tooltip";
-import { useTrackContextMenu } from "./TrackContextMenu";
+import { useTrackContextMenu } from "../lib/useTrackContextMenu";
 import { useAuth } from "../context/Auth";
 import { useFavorites } from "../context/Favorites";
-import { usePlayer } from "../context/Player";
+import { usePlayer, usePlayerControls } from "../context/Player";
 import { useTrackSelection } from "../lib/useTrackSelection";
 import { useWindowedSlice } from "../lib/useWindowedSlice";
 import {
@@ -65,7 +65,8 @@ export default function TrackList({
   extraColumn,
   selectionControlsHostId,
 }: Props) {
-  const { play, current, isPlaying } = usePlayer();
+  const { current, isPlaying } = usePlayer();
+  const { play } = usePlayerControls();
   const { isFavorite, toggle } = useFavorites();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
@@ -90,6 +91,7 @@ export default function TrackList({
     items: tracks,
     getId: trackId,
     toExportItems: exportTracks,
+    disabled: !selectable,
   });
 
   const selectedLocalTracks = useMemo(
@@ -361,7 +363,7 @@ export const TrackRow = memo(function TrackRow({
         <td className="col-art">
           <CoverArt
             className="mini-art"
-            src={trackCoverUrl(track)}
+            src={trackCoverUrl(track, 64)}
             label={track.album_title || track.title}
           />
         </td>

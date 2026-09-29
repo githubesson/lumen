@@ -425,8 +425,15 @@ export const api = {
     requestVoid(`/api/tracks/${trackPathID(id)}/favorite`, { method: "POST" }),
   unfavorite: (id: string) =>
     requestVoid(`/api/tracks/${trackPathID(id)}/favorite`, { method: "DELETE" }),
-  listFavorites: (options: RequestOptions = {}) =>
-    request<TrackListItem[]>(`/api/favorites`, options),
+  listFavorites: async (options: RequestOptions = {}) => {
+    const tracks: TrackListItem[] = [];
+    const limit = 200;
+    for (let offset = 0; ; offset += limit) {
+      const page = await request<TrackListItem[]>(`/api/favorites?limit=${limit}&offset=${offset}`, options);
+      tracks.push(...page);
+      if (page.length < limit) return tracks;
+    }
+  },
   listRecent: (limit = 100, options: RequestOptions = {}) =>
     request<TrackListItem[]>(`/api/recent?limit=${limit}`, options),
 
@@ -505,6 +512,16 @@ export const api = {
 
   listPlaylistTracks: (id: string, options: RequestOptions = {}) =>
     request<PlaylistTracks>(`/api/playlists/${pathID(id)}/tracks`, options),
+  listPlaylistTracksIfChanged: async (id: string, etag?: string, options: RequestOptions = {}) => {
+    const response = await rawFetch(`/api/playlists/${pathID(id)}/tracks`, {
+      ...options,
+      headers: etag ? { "If-None-Match": etag } : {},
+    }, { allowNotModified: true });
+    return {
+      etag: response.headers.get("ETag") ?? undefined,
+      tracks: response.status === 304 ? null : (await response.json() as PlaylistTracks).tracks,
+    };
+  },
   addPlaylistTracks: (id: string, trackIds: string[]) =>
     requestVoid(`/api/playlists/${pathID(id)}/tracks`, {
       method: "POST",

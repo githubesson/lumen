@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Command } from "cmdk";
+import { Description as DialogDescription, Title as DialogTitle } from "@radix-ui/react-dialog";
 import { useNavigate } from "react-router-dom";
 import {
   SlidersHorizontal as AdjustmentsHorizontalIcon,
@@ -42,7 +43,7 @@ import {
 import CoverArt from "./CoverArt";
 import SegmentedControl from "./SegmentedControl";
 import { displayText } from "../lib/format";
-import { useTrackContextMenu } from "./TrackContextMenu";
+import { useTrackContextMenu } from "../lib/useTrackContextMenu";
 import { useAuth } from "../context/Auth";
 import { usePlayer, useRemotePlayback } from "../context/Player";
 import { useTheme } from "../context/Theme";
@@ -129,9 +130,6 @@ export default function CommandPalette({
       setLoading(false);
       return;
     }
-    setTracks([]);
-    setAlbums([]);
-    setArtists([]);
     setSearchError(null);
     setLoading(true);
     const id = ++reqId.current;
@@ -148,6 +146,10 @@ export default function CommandPalette({
       } catch (err) {
         if (controller.signal.aborted) return;
         if (id === reqId.current) {
+          // A failed query must not reactivate the previous query's results.
+          setTracks([]);
+          setAlbums([]);
+          setArtists([]);
           setSearchError(errorMessage(err, "Search failed."));
           setLoading(false);
         }
@@ -167,6 +169,7 @@ export default function CommandPalette({
   const close = () => onOpenChange(false);
 
   const run = (fn: () => void) => {
+    if (searching && loading) return;
     fn();
     close();
   };
@@ -287,6 +290,8 @@ export default function CommandPalette({
       shouldFilter={!searching}
       loop
     >
+      <DialogTitle className="sr-only">Command palette</DialogTitle>
+      <DialogDescription className="sr-only">Search your music or run a command.</DialogDescription>
       <div className="cmdk-input-row">
         <MagnifyingGlassIcon className="size-4 shrink-0 text-muted-foreground" />
         <Command.Input
@@ -335,6 +340,7 @@ export default function CommandPalette({
             <Command.Group heading="Albums">
               {albums.map((a) => (
                 <Command.Item
+                  disabled={loading}
                   key={`album-${a.id}`}
                   value={`album ${a.id} ${a.title} ${a.artist_name ?? ""}`}
                   onSelect={() =>
@@ -347,7 +353,7 @@ export default function CommandPalette({
                 >
                   <CoverArt
                     className="cmdk-art"
-                    src={a.cover_url ? resolveCoverUrl(a.cover_url) : a.has_cover ? albumCoverUrl(a.id) : null}
+                    src={a.cover_url ? resolveCoverUrl(a.cover_url, 64) : a.has_cover ? albumCoverUrl(a.id, 64) : null}
                     label={a.title}
                     forcePlaceholder={!a.cover_url && !a.has_cover}
                   />
@@ -371,6 +377,7 @@ export default function CommandPalette({
             <Command.Group heading="Artists">
               {artists.map((a) => (
                 <Command.Item
+                  disabled={loading}
                   key={`artist-${a.id}`}
                   value={`artist ${a.id} ${a.name}`}
                   onSelect={() =>
@@ -384,7 +391,7 @@ export default function CommandPalette({
                   <CoverArt
                     className="cmdk-art"
                     label={a.name}
-                    src={a.cover_url ? resolveCoverUrl(a.cover_url) : null}
+                    src={a.cover_url ? resolveCoverUrl(a.cover_url, 64) : null}
                     radius={999}
                     forcePlaceholder={!a.cover_url}
                   />
@@ -411,6 +418,7 @@ export default function CommandPalette({
             <Command.Group heading="Tracks">
               {tracks.map((t) => (
                 <Command.Item
+                  disabled={loading}
                   key={`track-${t.id}`}
                   value={`track ${t.id} ${t.title} ${t.artist ?? ""} ${t.album_title ?? ""}`}
                   onSelect={() =>
@@ -420,7 +428,7 @@ export default function CommandPalette({
                 >
                   <CoverArt
                     className="cmdk-art"
-                    src={trackCoverUrl(t)}
+                    src={trackCoverUrl(t, 64)}
                     label={t.album_title || t.title}
                   />
                   <span className="cmdk-item-main">

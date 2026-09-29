@@ -2,16 +2,17 @@ import { Suspense, lazy, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./context/Auth";
 import Login from "./pages/Login";
-import Register from "./pages/Register";
 import ForceReset from "./pages/ForceReset";
-import SharePreview from "./pages/SharePreview";
 import Shell from "./components/Shell";
 import WindowControls from "./components/WindowControls";
 import StartupConnection from "./components/StartupConnection";
-import Welcome from "./pages/Welcome";
 import { useDesktopConfig } from "./lib/desktopConfig";
 import { isElectron } from "./lib/platform";
 import { PlaylistsProvider } from "./context/Playlists";
+
+const Register = lazy(() => import("./pages/Register"));
+const SharePreview = lazy(() => import("./pages/SharePreview"));
+const Welcome = lazy(() => import("./pages/Welcome"));
 
 const loadHome = () => import("./pages/Home");
 const Home = lazy(loadHome);
@@ -59,10 +60,10 @@ export default function App() {
       return (
         <>
           <WindowControls className="root-window-controls" />
-          <Welcome
+          <Suspense fallback={<PageFallback />}><Welcome
             mode={desktopConfig.backendUrl ? "change" : "first-run"}
             onCancel={() => setChangingServer(false)}
-          />
+          /></Suspense>
         </>
       );
     }
@@ -81,7 +82,7 @@ export default function App() {
   return (
     <>
       {!me && <WindowControls className="root-window-controls" />}
-      <Routes>
+      <Suspense fallback={<PageFallback />}><Routes>
         <Route path="/login" element={me ? <Navigate to="/" replace /> : <Login onChangeServer={changeServer} />} />
         <Route path="/register" element={<Register />} />
         <Route path="/shared/track/:id" element={<SharePreview />} />
@@ -130,7 +131,7 @@ export default function App() {
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      </Routes></Suspense>
     </>
   );
 }

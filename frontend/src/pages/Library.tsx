@@ -1,6 +1,5 @@
-import UploadDialog from "../components/UploadDialog";
 import { useAuth } from "../context/Auth";
-import { useCallback, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Play as PlayIcon } from "lucide-react";
 import {
@@ -13,7 +12,6 @@ import {
   type Page,
   type TrackListItem,
 } from "../api";
-import { useDebouncedValue } from "@music-library/core/use-debounced-value";
 import { displayText } from "../lib/format";
 import TrackList from "../components/TrackList";
 import CoverArt from "../components/CoverArt";
@@ -23,10 +21,10 @@ import LoadingState from "../components/LoadingState";
 import ListMeta from "../components/list/ListMeta";
 import LoadMoreSentinel from "../components/list/LoadMoreSentinel";
 import PageHeader from "../components/PageHeader";
-import { useTrackContextMenu } from "../components/TrackContextMenu";
+import { useTrackContextMenu } from "../lib/useTrackContextMenu";
 import BrowseToolbar from "../components/library/BrowseToolbar";
 import { TrackSelectionToolbarPlaceholder } from "../components/TrackSelectionToolbar";
-import { usePlayer } from "../context/Player";
+import { usePlayerControls } from "../context/Player";
 import {
   usePaginatedList,
   type PageRequest,
@@ -42,6 +40,8 @@ import {
   AlbumDetailView,
   TidalAlbumDetailView,
 } from "./library/LibraryDetail";
+
+const UploadDialog = lazy(() => import("../components/UploadDialog"));
 
 const POLL_INTERVAL_MS = 15 * 60 * 1000;
 const LIBRARY_SELECTION_CONTROLS_ID = "library-track-selection-controls";
@@ -205,7 +205,7 @@ function LibraryBrowse({
 }) {
   const [displayMode, setDisplayMode] = useState<"grid" | "list">("list");
   const [sort, setSort] = useState<SortKey>("recent");
-  const requestQuery = useDebouncedValue(query, 250);
+  const requestQuery = query;
 
   return (
     <div className="view">
@@ -282,7 +282,6 @@ function TracksView({
     query,
     { pageSize: 100, pollIntervalMs: POLL_INTERVAL_MS, resourceKey: sort, keepPrevious: true, cacheKey: "library:tracks" },
   );
-  const { play } = usePlayer();
 
   const sorted = items ?? [];
   const showList = items !== null && items.length > 0 && displayMode === "list";
@@ -306,7 +305,7 @@ function TracksView({
           />
         )}
         {items && items.length > 0 && displayMode === "grid" && (
-          <TracksGrid tracks={sorted} onPlay={(t) => play(t, sorted)} />
+          <TracksGrid tracks={sorted} />
         )}
         <LoadMoreSentinel
           innerRef={sentinelRef}
@@ -360,14 +359,13 @@ function ArtistsView({
   );
 }
 
-function TracksGrid({
+const TracksGrid = memo(function TracksGrid({
   tracks,
-  onPlay,
 }: {
   tracks: TrackListItem[];
-  onPlay: (t: TrackListItem) => void;
 }) {
   const { bind, menu } = useTrackContextMenu();
+  const { play } = usePlayerControls();
   return (
     <div className="grid-cards">
       {menu}
@@ -379,13 +377,13 @@ function TracksGrid({
         >
           <CoverArt
             className="card-art"
-            src={trackCoverUrl(t)}
+            src={trackCoverUrl(t, 384)}
             label={t.album_title || t.title}
           >
             <button
               type="button"
               className="card-play"
-              onClick={() => onPlay(t)}
+              onClick={() => play(t, tracks)}
               aria-label={`Play ${t.title}`}
             >
               <PlayIcon className="size-4" />
@@ -404,22 +402,23 @@ function TracksGrid({
       ))}
     </div>
   );
-}
+});
 
 function LibraryEmptyState() {
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadLoaded, setUploadLoaded] = useState(false);
   const { me } = useAuth();
   return (
     <>
       <EmptyState title="Your library is empty." hint={
         <>
           Drop audio files into a watched folder on the server, or{" "}
-          <button type="button" className="section-link" style={{ color: "var(--primary)" }} onClick={() => setUploadOpen(true)}>
+          <button type="button" className="section-link" style={{ color: "var(--primary)" }} onClick={() => { setUploadLoaded(true); setUploadOpen(true); }}>
             upload them
           </button>. New files are ingested automatically.
         </>
       } />
-      <UploadDialog open={uploadOpen} isAdmin={me?.role === "admin"} onClose={() => setUploadOpen(false)} />
+      {uploadLoaded && <Suspense fallback={null}><UploadDialog open={uploadOpen} isAdmin={me?.role === "admin"} onClose={() => setUploadOpen(false)} /></Suspense>}
     </>
   );
 }

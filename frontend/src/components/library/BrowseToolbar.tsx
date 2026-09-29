@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { SEARCH_TYPE_OPTIONS, type SearchType } from "../../api";
 import { List as Bars3BottomLeftIcon, LayoutGrid as Squares2X2Icon } from "lucide-react";
 import SearchInput from "../SearchInput";
@@ -145,15 +146,32 @@ export default function BrowseToolbar({
 
       {/* Last, so the per-view controls come and go to its left and the box
           you're typing in never moves (a query hides them all). */}
-      <SearchInput
+      <LibrarySearchInput
         // Shrinks (to 180px) before it wraps, so selection mode widening the
         // bar doesn't push the search box onto its own row.
         style={{ flex: "1 1 180px", maxWidth: 260 }}
         value={query}
-        onChange={(e) => onQueryChange(e.target.value)}
+        onQueryChange={onQueryChange}
         aria-label="Search music"
         placeholder={`Search ${SEARCH_NOUN[searchType]}, local + TIDAL`}
       />
     </div>
   );
+}
+
+function LibrarySearchInput({ value, onQueryChange, ...props }: Omit<React.ComponentProps<typeof SearchInput>, "value" | "onChange"> & { value: string; onQueryChange: (query: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  const latestChange = useRef(onQueryChange);
+  useEffect(() => { latestChange.current = onQueryChange; }, [onQueryChange]);
+  useEffect(() => {
+    // Browser back/forward and external navigation replace the draft.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDraft(value);
+  }, [value]);
+  useEffect(() => {
+    if (draft === value) return;
+    const timer = setTimeout(() => latestChange.current(draft), 250);
+    return () => clearTimeout(timer);
+  }, [draft, value]);
+  return <SearchInput {...props} value={draft} onChange={(event) => setDraft(event.target.value)} />;
 }
