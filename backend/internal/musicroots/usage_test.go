@@ -93,6 +93,14 @@ func TestReaches(t *testing.T) {
 	if err := os.Symlink(filepath.Join(dir, "other"), filepath.Join(dir, "m", "link")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink(filepath.Join(dir, "m"), filepath.Join(dir, "mlink")); err != nil {
+		t.Fatal(err)
+	}
+	// Walks don't enter a symlink given as their root, so nothing is reached
+	// through one (except the root itself).
+	if Reaches(filepath.Join(dir, "mlink"), filepath.Join(dir, "mlink", "a"), false) {
+		t.Error("Reaches(mlink, mlink/a) = true, want false: the outer root is a symlink")
+	}
 	m := filepath.Join(dir, "m")
 	for _, tc := range []struct {
 		inner   string
