@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -939,33 +940,6 @@ func (s *Store) ClearIngestErrorsForPath(ctx context.Context, path string) error
 	return err
 }
 
-// PersonalUploadPaths returns every file behind the tracks the user owns, live
-// or soft-deleted, including duplicate uploads recorded as aliases, so
-// deleting the account can remove the uploads too. It runs in the deleting
-// transaction, before the delete cascades those rows away.
-func PersonalUploadPaths(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]string, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT file_path FROM tracks
-		WHERE owner_id = $1 AND source = 'local' AND file_path <> ''
-		UNION
-		SELECT a.file_path FROM track_aliases a
-		JOIN tracks t ON t.id = a.track_id
-		WHERE t.owner_id = $1 AND t.source = 'local' AND a.file_path <> ''`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
-}
-
 // FilePathInUse reports whether any track (any owner, soft-deleted included)
 // or alias still points at path, so a file isn't removed from under one.
 func (s *Store) FilePathInUse(ctx context.Context, path string) (bool, error) {
@@ -1322,25 +1296,35 @@ type IngestError struct {
 
 // ListIngestErrors returns the newest failure per file under roots, most
 // recent first, and how many such files have failed in all (which can exceed
-// limit). Failures outside roots are left out: a removed or paused folder is
-// never rescanned, so they could neither be retried nor cleared.
+// limit). Failures a scan of roots never reaches are left out, since they
+// could neither be retried nor cleared: those outside every root (a removed
+// or paused folder) and those inside a dot-directory below one.
 func (s *Store) ListIngestErrors(ctx context.Context, roots []string, limit int) ([]IngestError, int, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
+	sep := string(filepath.Separator)
 	prefixes := make([]string, 0, len(roots))
 	for _, r := range roots {
 		// With the separator, /music doesn't claim /music-archive.
-		p := strings.TrimRight(dbtext.Clean(r), string(filepath.Separator))
-		prefixes = append(prefixes, p+string(filepath.Separator))
+		p := strings.TrimRight(dbtext.Clean(r), sep)
+		prefixes = append(prefixes, p+sep)
 	}
 	if len(prefixes) == 0 {
 		return []IngestError{}, 0, nil
 	}
+	// A folder whose name starts with a dot, anywhere below the root: scans
+	// skip those, so failures inside one are never retried from that root.
+	q := regexp.QuoteMeta(sep)
+	dotDir := `(^|` + q + `)\.[^` + q + `]*` + q
 	rows, err := s.db.Query(ctx, `
 		WITH scoped AS (
 			SELECT id, file_path, error, created_at FROM ingest_errors
-			WHERE EXISTS (SELECT 1 FROM unnest($2::text[]) pfx WHERE starts_with(file_path, pfx))
+			WHERE EXISTS (
+				SELECT 1 FROM unnest($2::text[]) pfx
+				WHERE starts_with(file_path, pfx)
+				  AND substr(file_path, length(pfx) + 1) !~ $3
+			)
 		)
 		SELECT id, file_path, error, created_at, attempts, total FROM (
 			SELECT DISTINCT ON (file_path) id, file_path, error, created_at,
@@ -1349,7 +1333,7 @@ func (s *Store) ListIngestErrors(ctx context.Context, roots []string, limit int)
 			ORDER BY file_path, created_at DESC, id DESC
 		) latest
 		CROSS JOIN (SELECT COUNT(DISTINCT file_path) AS total FROM scoped) counted
-		ORDER BY created_at DESC, id DESC LIMIT $1`, limit, prefixes)
+		ORDER BY created_at DESC, id DESC LIMIT $1`, limit, prefixes, dotDir)
 	if err != nil {
 		return nil, 0, err
 	}

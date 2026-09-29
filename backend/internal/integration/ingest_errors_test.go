@@ -29,6 +29,9 @@ func TestListIngestErrorsOnePerFile(t *testing.T) {
 	// Outside the listed roots: a removed folder, and a sibling that only
 	// shares the root's name as a prefix.
 	const gone, sibling = "/ingest-errors-gone/c.flac", root + "-archive/d.flac"
+	// Scans skip dot-directories, so this one is never retried; a dot *file*
+	// is scanned like any other.
+	const inDotDir, dotFile = root + "/.archive/e.flac", root + "/.f.flac"
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM ingest_errors WHERE file_path LIKE '/ingest-errors-%'`)
 	})
@@ -42,6 +45,8 @@ func TestListIngestErrorsOnePerFile(t *testing.T) {
 		{a, "third"},
 		{gone, "removed root"},
 		{sibling, "sibling"},
+		{inDotDir, "dot dir"},
+		{dotFile, "dot file"},
 	} {
 		if err := lib.RecordIngestError(ctx, rec.path, rec.msg); err != nil {
 			t.Fatal(err)
@@ -52,21 +57,25 @@ func TestListIngestErrorsOnePerFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("got %d rows, want one per file under the root: %+v", len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("got %d rows, want one per scanned file under the root: %+v", len(got), got)
 	}
-	// Newest first: a's latest failure was recorded after b's.
-	if got[0].FilePath != a || got[0].Error != "third" || got[0].Attempts != 3 {
-		t.Errorf("first = %+v, want a's latest error with 3 attempts", got[0])
+	// Newest first: the dot file was recorded last, and a's latest failure
+	// after b's.
+	if got[0].FilePath != dotFile {
+		t.Errorf("first = %+v, want the dot file", got[0])
 	}
-	if got[1].FilePath != b || got[1].Attempts != 1 {
-		t.Errorf("second = %+v, want b with 1 attempt", got[1])
+	if got[1].FilePath != a || got[1].Error != "third" || got[1].Attempts != 3 {
+		t.Errorf("second = %+v, want a's latest error with 3 attempts", got[1])
 	}
-	if total != 2 {
-		t.Errorf("total = %d, want the 2 files under the root", total)
+	if got[2].FilePath != b || got[2].Attempts != 1 {
+		t.Errorf("third = %+v, want b with 1 attempt", got[2])
+	}
+	if total != 3 {
+		t.Errorf("total = %d, want the 3 scanned files under the root", total)
 	}
 
-	if _, total, err := lib.ListIngestErrors(ctx, []string{root + "/"}, 1); err != nil || total != 2 {
+	if _, total, err := lib.ListIngestErrors(ctx, []string{root + "/"}, 1); err != nil || total != 3 {
 		t.Errorf("limited total = %d, %v; want the full count", total, err)
 	}
 	if got, total, err := lib.ListIngestErrors(ctx, nil, 10); err != nil || len(got) != 0 || total != 0 {

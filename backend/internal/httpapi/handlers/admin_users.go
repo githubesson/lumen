@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,7 +17,6 @@ import (
 	"github.com/githubesson/lumen/internal/dbutil"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/models"
-	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/playlists"
 	"github.com/githubesson/lumen/internal/users"
 )
@@ -158,7 +158,6 @@ func (h *AdminUsers) Delete(w http.ResponseWriter, r *http.Request) {
 
 	// Every handover and the delete itself commit together or not at all, so
 	// a failure can't leave some playlists moved or gone and the user intact.
-	var uploads []string
 	err = dbutil.WithTx(r.Context(), h.DB, func(tx pgx.Tx) error {
 		if err := keepAnAdmin(r.Context(), tx, uid); err != nil {
 			return err
@@ -201,12 +200,6 @@ func (h *AdminUsers) Delete(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 		}
-		// Their uploads' paths, read before the delete cascades their tracks.
-		if h.Library != nil && h.MusicRoot != "" {
-			if uploads, err = library.PersonalUploadPaths(r.Context(), tx, uid); err != nil {
-				return err
-			}
-		}
 		// `users.id` has ON DELETE CASCADE for sessions and their own tracks;
 		// invites.created_by / tracks.added_by become NULL.
 		_, err = tx.Exec(r.Context(), `DELETE FROM users WHERE id = $1`, uid)
@@ -241,7 +234,7 @@ func (h *AdminUsers) Delete(w http.ResponseWriter, r *http.Request) {
 	_ = http.NewResponseController(w).Flush()
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
 	defer cancel()
-	h.removeUploads(cleanupCtx, uid, uploads)
+	h.removeUploads(cleanupCtx, uid)
 }
 
 var (
@@ -251,31 +244,41 @@ var (
 	errUserNotFound       = errors.New("user not found")
 )
 
-// removeUploads deletes a deleted user's uploaded files. Only files inside
-// their own MUSIC_ROOT/.users/<id>/ that no remaining track or alias points
-// at are removed: a personal upload can have been adopted by a global track,
-// and that file must stay. Failures are logged, not surfaced, since the
-// account is already gone and .users/ is never scanned, so a leftover file is
-// only wasted space.
-func (h *AdminUsers) removeUploads(ctx context.Context, uid uuid.UUID, paths []string) {
-	if len(paths) == 0 {
+// removeUploads empties a deleted user's upload folder, MUSIC_ROOT/.users/<id>/,
+// except for files a remaining track or alias still points at: a personal
+// upload can have been adopted by a global track, and that file must stay.
+// It checks every file there rather than the ones the user's rows named,
+// since a duplicate upload ingest couldn't unlink has no row at all. Failures
+// are logged, not surfaced: the account is already gone and .users/ is never
+// scanned, so a leftover file is only wasted space.
+func (h *AdminUsers) removeUploads(ctx context.Context, uid uuid.UUID) {
+	if h.Library == nil || h.MusicRoot == "" {
 		return
 	}
 	userDir := filepath.Join(h.MusicRoot, ".users", uid.String())
-	for _, p := range paths {
-		if inDir, _ := pathsafe.WithinRoot(userDir, p); !inDir {
-			continue
+	var dirs []string
+	_ = filepath.WalkDir(userDir, func(p string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return nil
+		case d.IsDir():
+			dirs = append(dirs, p)
+			return nil
+		case !d.Type().IsRegular():
+			return nil // symlinks and the like: not uploads, not ours to follow
 		}
-		inUse, err := h.Library.FilePathInUse(ctx, p)
-		if err != nil || inUse {
-			continue
+		if inUse, err := h.Library.FilePathInUse(ctx, p); err != nil || inUse {
+			return nil
 		}
 		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
 			slog.Warn("delete user: removing an uploaded file failed", "path", p, "user", uid, "err", err)
 		}
+		return nil
+	})
+	// Deepest first. Only empty folders go, which leaves adopted files in place.
+	for i := len(dirs) - 1; i >= 0; i-- {
+		_ = os.Remove(dirs[i])
 	}
-	// Only succeeds once it's empty, which leaves adopted files in place.
-	_ = os.Remove(userDir)
 }
 
 // DisableUser sets disabled=true; existing sessions are revoked. Refuses to

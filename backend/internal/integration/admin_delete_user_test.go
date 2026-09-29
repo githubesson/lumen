@@ -67,7 +67,12 @@ func TestAdminDeleteUserRemovesUploads(t *testing.T) {
 	}
 	own, adopted := filepath.Join(userDir, "own.mp3"), filepath.Join(userDir, "adopted.mp3")
 	dupe := filepath.Join(userDir, "own-again.mp3") // a duplicate upload, kept as an alias
-	for _, p := range []string{own, adopted, dupe} {
+	// A duplicate of a global track that ingest failed to unlink: no row at all.
+	stray := filepath.Join(userDir, "album", "stray.mp3")
+	if err := os.MkdirAll(filepath.Dir(stray), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{own, adopted, dupe, stray} {
 		if err := os.WriteFile(p, []byte("audio"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -149,7 +154,7 @@ func TestAdminDeleteUserRemovesUploads(t *testing.T) {
 		t.Errorf("playlist marked for deletion still exists")
 	}
 
-	for _, p := range []string{own, dupe} {
+	for _, p := range []string{own, dupe, stray} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Errorf("upload %s still on disk (stat err %v)", filepath.Base(p), err)
 		}
