@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/githubesson/lumen/internal/dbutil"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/models"
 	"github.com/githubesson/lumen/internal/pathsafe"
@@ -137,74 +139,105 @@ func (h *AdminUsers) Delete(w http.ResponseWriter, r *http.Request) {
 		dispoByID[pid] = d
 	}
 
-	owned, err := h.Playlists.OwnedPlaylists(r.Context(), uid)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	// Validate all owned playlists have a disposition.
-	missing := false
-	for _, p := range owned {
-		if _, ok := dispoByID[p.ID]; !ok {
-			missing = true
-			break
+	newOwners := map[uuid.UUID]uuid.UUID{}
+	for pid, d := range dispoByID {
+		if d.Action != "transfer" {
+			continue
 		}
-	}
-	if missing {
-		h.writePreview(w, r, target, owned)
-		return
-	}
-
-	// Apply dispositions in a single tx per playlist — simpler, and keeps the
-	// final user delete small.
-	for _, p := range owned {
-		d := dispoByID[p.ID]
-		switch d.Action {
-		case "transfer":
-			newOwner, err := uuid.Parse(d.NewOwnerID)
-			if err != nil {
-				http.Error(w, "bad new_owner_id", http.StatusBadRequest)
-				return
-			}
-			if newOwner == uid {
-				http.Error(w, "cannot transfer to the user being deleted", http.StatusBadRequest)
-				return
-			}
-			if _, err := h.Users.ByID(r.Context(), newOwner); err != nil {
-				http.Error(w, "new_owner_id not found", http.StatusBadRequest)
-				return
-			}
-			if err := h.Playlists.TransferOwnership(r.Context(), p.ID, newOwner); err != nil {
-				http.Error(w, "internal error", http.StatusInternalServerError)
-				return
-			}
-		case "delete":
-			if err := h.Playlists.Delete(r.Context(), p.ID); err != nil {
-				http.Error(w, "internal error", http.StatusInternalServerError)
-				return
-			}
+		newOwner, err := uuid.Parse(d.NewOwnerID)
+		if err != nil {
+			http.Error(w, "bad new_owner_id", http.StatusBadRequest)
+			return
 		}
+		if newOwner == uid {
+			http.Error(w, "cannot transfer to the user being deleted", http.StatusBadRequest)
+			return
+		}
+		newOwners[pid] = newOwner
 	}
 
-	// Their uploads' paths, read before the delete cascades their track rows.
+	// Every handover and the delete itself commit together or not at all, so
+	// a failure can't leave some playlists moved or gone and the user intact.
 	var uploads []string
-	if h.Library != nil && h.MusicRoot != "" {
-		if uploads, err = h.Library.PersonalUploadPaths(r.Context(), uid); err != nil {
+	err = dbutil.WithTx(r.Context(), h.DB, func(tx pgx.Tx) error {
+		// Lock the account first. Creating a playlist takes a key-share lock
+		// on its owner's row, so no playlist can appear for them from here on;
+		// one being created right now commits first and is listed below.
+		if _, err := tx.Exec(r.Context(), `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, uid); err != nil {
+			return err
+		}
+		rows, err := tx.Query(r.Context(), `SELECT id FROM playlists WHERE owner_id = $1 FOR UPDATE`, uid)
+		if err != nil {
+			return err
+		}
+		owned, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return err
+		}
+		for _, pid := range owned {
+			if _, ok := dispoByID[pid]; !ok {
+				return errMissingDisposition
+			}
+		}
+		for _, pid := range owned {
+			newOwner, transfer := newOwners[pid]
+			if !transfer {
+				if _, err := tx.Exec(r.Context(), `DELETE FROM playlists WHERE id = $1`, pid); err != nil {
+					return err
+				}
+				continue
+			}
+			var exists bool
+			if err := tx.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)`, newOwner).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return errNewOwnerNotFound
+			}
+			if err := playlists.TransferOwnershipTx(r.Context(), tx, pid, newOwner); err != nil {
+				return err
+			}
+		}
+		// Their uploads' paths, read before the delete cascades their tracks.
+		if h.Library != nil && h.MusicRoot != "" {
+			if uploads, err = library.PersonalUploadPaths(r.Context(), tx, uid); err != nil {
+				return err
+			}
+		}
+		// `users.id` has ON DELETE CASCADE for sessions and their own tracks;
+		// invites.created_by / tracks.added_by become NULL.
+		_, err = tx.Exec(r.Context(), `DELETE FROM users WHERE id = $1`, uid)
+		return err
+	})
+	switch {
+	case errors.Is(err, errMissingDisposition):
+		owned, err := h.Playlists.OwnedPlaylists(r.Context(), uid)
+		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-	}
-
-	// Finally, delete the user. `users.id` has ON DELETE CASCADE for sessions
-	// and their own tracks; invites.created_by / tracks.added_by become NULL.
-	if _, err := h.DB.Exec(r.Context(), `DELETE FROM users WHERE id = $1`, uid); err != nil {
+		h.writePreview(w, r, target, owned)
+		return
+	case errors.Is(err, errNewOwnerNotFound):
+		http.Error(w, "new_owner_id not found", http.StatusBadRequest)
+		return
+	case err != nil:
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	h.removeUploads(r.Context(), uid, uploads)
+
+	// The account is gone whatever happens to the request now, so the file
+	// cleanup mustn't die with it (a closed tab, the request deadline).
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+	defer cancel()
+	h.removeUploads(cleanupCtx, uid, uploads)
 	w.WriteHeader(http.StatusNoContent)
 }
+
+var (
+	errMissingDisposition = errors.New("an owned playlist has no disposition")
+	errNewOwnerNotFound   = errors.New("new owner not found")
+)
 
 // removeUploads deletes a deleted user's uploaded files. Only files inside
 // their own MUSIC_ROOT/.users/<id>/ that no remaining track or alias points

@@ -215,7 +215,7 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event) {
 			_ = w.svc.Library.SoftDeleteByPath(ctx, ev.Name)
 		}
 		if prefix := deletedTreePrefix(ev.Name); prefix != "" {
-			if _, err := w.svc.Library.SoftDeleteTracksUnderPath(ctx, prefix); err != nil {
+			if _, err := w.svc.Library.SoftDeleteTracksUnderPath(ctx, prefix, nil); err != nil {
 				w.svc.Logger.Warn("fsnotify subtree soft delete failed", "path", ev.Name, "err", err)
 			}
 		}

@@ -939,9 +939,10 @@ func (s *Store) ClearIngestErrorsForPath(ctx context.Context, path string) error
 }
 
 // PersonalUploadPaths returns the file of every track the user owns, live or
-// soft-deleted, so deleting the account can remove the uploads too.
-func (s *Store) PersonalUploadPaths(ctx context.Context, userID uuid.UUID) ([]string, error) {
-	rows, err := s.db.Query(ctx, `
+// soft-deleted, so deleting the account can remove the uploads too. It runs
+// in the deleting transaction, before the delete cascades those rows away.
+func PersonalUploadPaths(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]string, error) {
+	rows, err := tx.Query(ctx, `
 		SELECT DISTINCT file_path FROM tracks
 		WHERE owner_id = $1 AND source = 'local' AND file_path <> ''`, userID)
 	if err != nil {
@@ -1185,14 +1186,21 @@ func (s *Store) DistinctPathsUnder(ctx context.Context, prefixes []string) ([]st
 }
 
 // SoftDeleteTracksUnderPath marks every live track whose file_path starts with
-// `prefix` as deleted. Used when an admin removes a music root — the files
-// will no longer be watched/scanned, so their tracks shouldn't keep appearing
-// in the library.
-func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string) (int64, error) {
+// `prefix` as deleted, except those under any of the `keep` prefixes. Used
+// when an admin removes a music root — the files will no longer be
+// watched/scanned, so their tracks shouldn't keep appearing in the library —
+// with keep holding still-watched roots inside it.
+func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string, keep []string) (int64, error) {
 	prefix = dbtext.Clean(prefix)
+	cleanKeep := make([]string, len(keep))
+	for i, k := range keep {
+		cleanKeep[i] = dbtext.Clean(k)
+	}
 	tag, err := s.db.Exec(ctx, `
 		UPDATE tracks SET deleted_at = NOW()
-		WHERE deleted_at IS NULL AND source = 'local' AND starts_with(file_path, $1)`, prefix)
+		WHERE deleted_at IS NULL AND source = 'local' AND starts_with(file_path, $1)
+		  AND NOT EXISTS (SELECT 1 FROM unnest($2::text[]) k WHERE starts_with(file_path, k))`,
+		prefix, cleanKeep)
 	if err != nil {
 		return 0, err
 	}

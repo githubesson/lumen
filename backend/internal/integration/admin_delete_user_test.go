@@ -2,10 +2,12 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,8 +23,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Deleting an account removes the files the user uploaded, except one a
-// global track has adopted.
+// Deleting an account is all or nothing, and removes the files the user
+// uploaded except one a global track has adopted.
 func TestAdminDeleteUserRemovesUploads(t *testing.T) {
 	url := os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL")
 	if url == "" {
@@ -78,6 +80,14 @@ func TestAdminDeleteUserRemovesUploads(t *testing.T) {
 	insert(&target, adopted)
 	insert(nil, adopted) // a global track points at the same file
 
+	keepPL, dropPL := uuid.New(), uuid.New()
+	for _, id := range []uuid.UUID{keepPL, dropPL} {
+		exec(`INSERT INTO playlists(id, owner_id, name) VALUES($1, $2, 'p')`, id, target)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM playlists WHERE id = ANY($1)`, []uuid.UUID{keepPL, dropPL})
+	})
+
 	sessions := auth.NewSessionStore(pool, "session", false, time.Hour)
 	token, _, err := sessions.Create(ctx, admin, httptest.NewRequest(http.MethodGet, "/", nil))
 	if err != nil {
@@ -93,12 +103,47 @@ func TestAdminDeleteUserRemovesUploads(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(middleware.Authenticate(sessions), middleware.RequireUser)
 	router.Delete("/admin/users/{id}", h.Delete)
-	req := httptest.NewRequest(http.MethodDelete, "/admin/users/"+target.String(), nil)
-	req.AddCookie(&http.Cookie{Name: "session", Value: token})
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	del := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodDelete, "/admin/users/"+target.String(), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: "session", Value: token})
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w
+	}
+	count := func(sql string, args ...any) int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, sql, args...).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	// The second handover fails, so nothing happens: the first playlist isn't
+	// deleted and the account stays.
+	bad := fmt.Sprintf(`{"playlist_dispositions":[{"playlist_id":%q,"action":"delete"},{"playlist_id":%q,"action":"transfer","new_owner_id":%q}]}`,
+		dropPL, keepPL, uuid.New())
+	if w := del(bad); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad handover status = %d: %s", w.Code, w.Body.String())
+	}
+	if n := count(`SELECT COUNT(*) FROM playlists WHERE id = ANY($1) AND owner_id = $2`, []uuid.UUID{keepPL, dropPL}, target); n != 2 {
+		t.Fatalf("after a failed delete the user owns %d of 2 playlists; want nothing changed", n)
+	}
+	if _, err := os.Stat(own); err != nil {
+		t.Fatalf("failed delete removed an upload: %v", err)
+	}
+
+	good := fmt.Sprintf(`{"playlist_dispositions":[{"playlist_id":%q,"action":"delete"},{"playlist_id":%q,"action":"transfer","new_owner_id":%q}]}`,
+		dropPL, keepPL, admin)
+	if w := del(good); w.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d: %s", w.Code, w.Body.String())
+	}
+	if n := count(`SELECT COUNT(*) FROM playlists WHERE id = $1 AND owner_id = $2`, keepPL, admin); n != 1 {
+		t.Errorf("handed-over playlist not owned by the admin")
+	}
+	if n := count(`SELECT COUNT(*) FROM playlists WHERE id = $1`, dropPL); n != 0 {
+		t.Errorf("playlist marked for deletion still exists")
 	}
 
 	if _, err := os.Stat(own); !os.IsNotExist(err) {

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/githubesson/lumen/internal/dbutil"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
@@ -208,14 +210,26 @@ func (h *AdminRoots) Delete(w http.ResponseWriter, r *http.Request) {
 
 	var deleted int64
 	if purge && h.Library != nil {
-		prefix := row.Path
-		if !strings.HasSuffix(prefix, string(filepath.Separator)) {
-			prefix += string(filepath.Separator)
-		}
-		if n, err := h.Library.SoftDeleteTracksUnderPath(r.Context(), prefix); err != nil {
+		// Only purge what stops being watched. Tracks under another live root
+		// stay: that root still scans them, and a purge would only bring them
+		// back as new rows without their history or playlist places.
+		live, err := h.liveRootsExcept(r, row.ID)
+		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
-		} else {
+		}
+		if coveringRoot(row.Path, live) == "" {
+			var keep []string
+			for _, other := range live {
+				if inside, _ := pathsafe.WithinRoot(row.Path, other); inside {
+					keep = append(keep, withSeparator(other))
+				}
+			}
+			n, err := h.Library.SoftDeleteTracksUnderPath(r.Context(), withSeparator(row.Path), keep)
+			if err != nil {
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
 			deleted = n
 		}
 	}
@@ -278,6 +292,31 @@ func (h *AdminRoots) Patch(w http.ResponseWriter, r *http.Request) {
 		Exists:    dirExists(row.Path),
 		CreatedAt: row.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	})
+}
+
+// liveRootsExcept returns the roots that are scanned (the primary and every
+// enabled extra root), leaving out the one with id skip.
+func (h *AdminRoots) liveRootsExcept(r *http.Request, skip uuid.UUID) ([]string, error) {
+	rows, err := h.Store.List(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	live := []string{h.PrimaryRoot}
+	for _, row := range rows {
+		if row.Enabled && row.ID != skip {
+			live = append(live, row.Path)
+		}
+	}
+	return live, nil
+}
+
+// withSeparator ends a directory path with the separator, so as a prefix it
+// matches what's inside it and not siblings sharing its name (/music-archive).
+func withSeparator(dir string) string {
+	if strings.HasSuffix(dir, string(filepath.Separator)) {
+		return dir
+	}
+	return dir + string(filepath.Separator)
 }
 
 // coveringRoot returns a watched root, other than path itself, whose scan
