@@ -60,6 +60,59 @@ func TestMeasureUsageNestedRoots(t *testing.T) {
 	}
 }
 
+// A nested root behind a symlink isn't reached by the outer walk (walks
+// don't follow symlinks), so it needs its own.
+func TestMeasureUsageNestedBehindSymlink(t *testing.T) {
+	dir := t.TempDir()
+	music := filepath.Join(dir, "music")
+	writeFile(t, filepath.Join(music, "a.flac"), 10)
+	writeFile(t, filepath.Join(dir, "real", "artist", "b.flac"), 200)
+	if err := os.Symlink(filepath.Join(dir, "real"), filepath.Join(music, "link")); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(music, "link", "artist")
+	got, err := MeasureUsage(context.Background(), []string{music, nested})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Files != 1 || got[0].Bytes != 10 {
+		t.Errorf("outer = %+v, want only its own file", got[0])
+	}
+	if got[1].Files != 1 || got[1].Bytes != 200 {
+		t.Errorf("nested = %+v, want 1 file / 200 bytes", got[1])
+	}
+}
+
+func TestReaches(t *testing.T) {
+	dir := t.TempDir()
+	for _, d := range []string{"m/a/b", "m/.hidden/c", "other"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(dir, "other"), filepath.Join(dir, "m", "link")); err != nil {
+		t.Fatal(err)
+	}
+	m := filepath.Join(dir, "m")
+	for _, tc := range []struct {
+		inner   string
+		skipDot bool
+		want    bool
+	}{
+		{"m", true, true},
+		{"m/a/b", true, true},
+		{"m/.hidden/c", false, true},
+		{"m/.hidden/c", true, false},
+		{"m/link", false, false},
+		{"m/missing", false, false},
+		{"other", false, false},
+	} {
+		if got := Reaches(m, filepath.Join(dir, tc.inner), tc.skipDot); got != tc.want {
+			t.Errorf("Reaches(m, %s, skipDot=%v) = %v, want %v", tc.inner, tc.skipDot, got, tc.want)
+		}
+	}
+}
+
 func TestMeasureUsageCancelled(t *testing.T) {
 	dir := t.TempDir()
 	// The walk checks ctx every 1024 entries.

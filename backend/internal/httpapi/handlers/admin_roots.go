@@ -280,19 +280,18 @@ func (h *AdminRoots) Patch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// coveringRoot returns a watched root, other than path itself, that contains
-// path, or "" if there's none. Uses the same containment check as streaming,
-// so it follows the server's own path rules (separators, volumes).
+// coveringRoot returns a watched root, other than path itself, whose scan
+// reaches path, or "" if there's none. The scan skips dot-directories and
+// doesn't follow symlinks, so a folder past either isn't covered even when
+// its path is inside another root.
 func coveringRoot(path string, watched []string) string {
 	for _, w := range watched {
-		inside, err := pathsafe.WithinRoot(w, path)
-		if err != nil || !inside {
-			continue
-		}
 		if same, _ := pathsafe.WithinRoot(path, w); same {
 			continue
 		}
-		return w
+		if musicroots.Reaches(w, path, true) {
+			return w
+		}
 	}
 	return ""
 }

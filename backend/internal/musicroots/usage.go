@@ -20,9 +20,10 @@ type Usage struct {
 
 // MeasureUsage totals each root. A root nested inside another
 // (/mnt/music/<artist> under /mnt/music, a common layout) is not walked a
-// second time: the outer walk credits every file to each root containing it.
-// Missing or unreadable roots and entries count as empty; the only error is
-// ctx ending mid-walk.
+// second time when the outer walk gets to it: that walk credits every file to
+// each root containing it. One behind a symlink gets its own walk, since walks
+// don't follow symlinks. Missing or unreadable roots and entries count as
+// empty; the only error is ctx ending mid-walk.
 func MeasureUsage(ctx context.Context, roots []string) ([]Usage, error) {
 	out := make([]Usage, len(roots))
 	norm := make([]string, len(roots))
@@ -72,13 +73,19 @@ func MeasureUsage(ctx context.Context, roots []string) ([]Usage, error) {
 }
 
 // walkedElsewhere reports whether root i is covered by another root's walk:
-// it sits inside a different root, or repeats an earlier one.
+// a different root's walk gets to it, or it repeats an earlier root.
 func walkedElsewhere(i int, roots []string) bool {
 	for j, other := range roots {
 		if j == i || !within(roots[i], other) {
 			continue
 		}
-		if roots[i] != other || j < i {
+		if roots[i] == other {
+			if j < i {
+				return true
+			}
+			continue
+		}
+		if Reaches(other, roots[i], false) {
 			return true
 		}
 	}
