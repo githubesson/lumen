@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/githubesson/lumen/internal/musicroots"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -38,7 +40,10 @@ func TestRemoveRootPurgeKeepsWatchedTracks(t *testing.T) {
 	primary, ext := t.TempDir(), t.TempDir()
 	keepDir := filepath.Join(ext, "keep")
 	nested := filepath.Join(primary, "artist")
-	for _, d := range []string{keepDir, nested} {
+	// The primary root's scan skips dot-directories, so this one is only
+	// watched through its own root.
+	hidden := filepath.Join(primary, ".archive")
+	for _, d := range []string{keepDir, nested, hidden} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -49,6 +54,8 @@ func TestRemoveRootPurgeKeepsWatchedTracks(t *testing.T) {
 		filepath.Join(ext, "dupe.mp3"),
 		filepath.Join(keepDir, "kept.mp3"),
 		filepath.Join(nested, "covered.mp3"),
+		filepath.Join(hidden, "hidden.mp3"),
+		filepath.Join(primary, "loose.mp3"),
 	} {
 		id := uuid.New()
 		tracks[p] = id
@@ -62,6 +69,12 @@ func TestRemoveRootPurgeKeepsWatchedTracks(t *testing.T) {
 		tracks[filepath.Join(ext, "dupe.mp3")], filepath.Join(keepDir, "dupe-copy.mp3")); err != nil {
 		t.Fatal(err)
 	}
+	// loose.mp3 is watched by the primary root; its copy in .archive isn't
+	// the only one.
+	if _, err := pool.Exec(ctx, `INSERT INTO track_aliases(track_id, file_path) VALUES($1, $2)`,
+		tracks[filepath.Join(primary, "loose.mp3")], filepath.Join(hidden, "loose-copy.mp3")); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		ids := make([]uuid.UUID, 0, len(tracks))
 		for _, id := range tracks {
@@ -72,7 +85,7 @@ func TestRemoveRootPurgeKeepsWatchedTracks(t *testing.T) {
 
 	store := musicroots.NewStore(pool)
 	var ids []uuid.UUID
-	for _, p := range []string{ext, keepDir, nested} {
+	for _, p := range []string{ext, keepDir, nested, hidden} {
 		row, err := store.Add(ctx, p, "")
 		if err != nil {
 			t.Fatal(err)
@@ -117,6 +130,34 @@ func TestRemoveRootPurgeKeepsWatchedTracks(t *testing.T) {
 	}
 	if deleted(filepath.Join(nested, "covered.mp3")) {
 		t.Error("track under a folder the primary root still covers was purged")
+	}
+
+	// A failed removal leaves both the root and its tracks as they were.
+	boom := errors.New("boom")
+	err = store.DeleteWith(ctx, ids[3], func(tx pgx.Tx) error {
+		if _, err := library.SoftDeleteRootTracks(ctx, tx, hidden+string(filepath.Separator), nil, []string{primary + string(filepath.Separator)}); err != nil {
+			return err
+		}
+		return boom
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("DeleteWith err = %v, want boom", err)
+	}
+	if _, err := store.Get(ctx, ids[3]); err != nil {
+		t.Fatalf("root gone after a failed removal: %v", err)
+	}
+	if deleted(filepath.Join(hidden, "hidden.mp3")) {
+		t.Fatal("purge survived a failed removal")
+	}
+
+	// .archive isn't covered by the primary root (its scan skips dot-dirs),
+	// so its tracks go, except one whose other copy the primary still scans.
+	remove(ids[3])
+	if !deleted(filepath.Join(hidden, "hidden.mp3")) {
+		t.Error("track only the removed dot-dir root watched was kept")
+	}
+	if deleted(filepath.Join(primary, "loose.mp3")) {
+		t.Error("track watched by the primary root was purged for its copy in .archive")
 	}
 
 	// Now its last copy's folder goes too, so the track goes with it.

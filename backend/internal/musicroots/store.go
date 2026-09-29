@@ -13,6 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/githubesson/lumen/internal/dbutil"
 )
 
 var ErrNotFound = errors.New("music root not found")
@@ -97,17 +99,35 @@ func (s *Store) Add(ctx context.Context, path, label string) (Root, error) {
 }
 
 func (s *Store) Delete(ctx context.Context, id uuid.UUID) error {
+	return s.DeleteWith(ctx, id, nil)
+}
+
+// DeleteWith deletes a root and runs also (purging its tracks, say) in the
+// same transaction, so neither happens without the other.
+func (s *Store) DeleteWith(ctx context.Context, id uuid.UUID, also func(pgx.Tx) error) error {
+	err := dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+		if also != nil {
+			if err := also(tx); err != nil {
+				return err
+			}
+		}
+		tag, err := tx.Exec(ctx, `DELETE FROM music_roots WHERE id = $1`, id)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+	// Dropped after the commit rather than held across it, so a long purge
+	// doesn't stall every EnabledPaths reader. A load that ran before the
+	// commit and cached the old paths is cleared here, and loads take the
+	// lock, so none can republish them afterwards.
 	s.pathsMu.Lock()
-	defer s.pathsMu.Unlock()
 	s.enabledPaths = nil
-	tag, err := s.db.Exec(ctx, `DELETE FROM music_roots WHERE id = $1`, id)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	s.pathsMu.Unlock()
+	return err
 }
 
 // Get returns a single root by id. Used before deletion so callers can cascade

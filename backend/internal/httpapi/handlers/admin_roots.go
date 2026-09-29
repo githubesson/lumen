@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/githubesson/lumen/internal/dbutil"
 	"github.com/githubesson/lumen/internal/ingest"
@@ -209,31 +210,38 @@ func (h *AdminRoots) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var deleted int64
+	var purgeTracks func(pgx.Tx) error
 	if purge && h.Library != nil {
 		// Only purge what stops being watched. Tracks with a file (or a
-		// deduplicated copy) under another live root stay: that root still
-		// scans them, and a purge would only bring them back as new rows
-		// without their history or playlist places.
+		// deduplicated copy) another live root still scans stay: a purge would
+		// only bring them back as new rows without their history or playlist
+		// places. A live root around this one that scans into it means
+		// nothing stops being watched.
 		live, err := h.liveRootsExcept(r, row.ID)
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		if coveringRoot(row.Path, live) == "" {
+			var inner []string
 			keep := make([]string, len(live))
 			for i, other := range live {
 				keep[i] = withSeparator(other)
+				if in, _ := pathsafe.WithinRoot(row.Path, other); in {
+					inner = append(inner, keep[i])
+				}
 			}
-			n, err := h.Library.SoftDeleteTracksUnderPath(r.Context(), withSeparator(row.Path), keep)
-			if err != nil {
-				http.Error(w, "internal error", http.StatusInternalServerError)
-				return
+			purgeTracks = func(tx pgx.Tx) error {
+				n, err := library.SoftDeleteRootTracks(r.Context(), tx, withSeparator(row.Path), inner, keep)
+				deleted = n
+				return err
 			}
-			deleted = n
 		}
 	}
 
-	if err := h.Store.Delete(r.Context(), id); err != nil {
+	// The purge and the root's removal commit together, so a failure can't
+	// leave the tracks gone and the root still configured.
+	if err := h.Store.DeleteWith(r.Context(), id, purgeTracks); err != nil {
 		if errors.Is(err, musicroots.ErrNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return

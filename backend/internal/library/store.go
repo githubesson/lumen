@@ -1190,31 +1190,56 @@ func (s *Store) DistinctPathsUnder(ctx context.Context, prefixes []string) ([]st
 	return out, rows.Err()
 }
 
-// SoftDeleteTracksUnderPath marks every live track with a file under `prefix`
-// (its canonical path, or a deduplicated copy recorded as an alias) as
-// deleted, except those with a file under any of the `keep` prefixes. Used
-// when an admin removes a music root — the files will no longer be
-// watched/scanned, so their tracks shouldn't keep appearing in the library —
-// with keep holding the roots that are still watched.
-func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string, keep []string) (int64, error) {
+// SoftDeleteTracksUnderPath marks every live track whose file_path starts with
+// `prefix` as deleted. Used when a watched directory disappears from disk.
+func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string) (int64, error) {
 	prefix = dbtext.Clean(prefix)
-	cleanKeep := make([]string, len(keep))
-	for i, k := range keep {
-		cleanKeep[i] = dbtext.Clean(k)
-	}
 	tag, err := s.db.Exec(ctx, `
 		UPDATE tracks SET deleted_at = NOW()
-		WHERE deleted_at IS NULL AND source = 'local'
-		  AND (starts_with(file_path, $1) OR EXISTS (
+		WHERE deleted_at IS NULL AND source = 'local' AND starts_with(file_path, $1)`, prefix)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// SoftDeleteRootTracks soft-deletes the tracks that stop being watched when
+// the root at prefix is removed: those with a file (the canonical path or a
+// deduplicated copy recorded as an alias) under prefix, and no file still
+// watched. A file is still watched when it's under a live root inside the
+// removed one (inner), or outside the removed root and under any live root
+// (live); a live root around the removed one doesn't count for files inside
+// it, since reaching this means its scan doesn't get there. Runs in the
+// caller's transaction, alongside the root's own deletion. All prefixes must
+// end with the path separator.
+func SoftDeleteRootTracks(ctx context.Context, tx pgx.Tx, prefix string, inner, live []string) (int64, error) {
+	clean := func(in []string) []string {
+		out := make([]string, len(in))
+		for i, p := range in {
+			out[i] = dbtext.Clean(p)
+		}
+		return out
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE tracks t SET deleted_at = NOW()
+		WHERE t.deleted_at IS NULL AND t.source = 'local'
+		  AND (starts_with(t.file_path, $1) OR EXISTS (
 			SELECT 1 FROM track_aliases a
-			WHERE a.track_id = tracks.id AND starts_with(a.file_path, $1)
+			WHERE a.track_id = t.id AND starts_with(a.file_path, $1)
 		  ))
-		  AND NOT EXISTS (SELECT 1 FROM unnest($2::text[]) k WHERE starts_with(file_path, k))
+		  AND NOT (
+			EXISTS (SELECT 1 FROM unnest($2::text[]) k WHERE starts_with(t.file_path, k))
+			OR (NOT starts_with(t.file_path, $1)
+			    AND EXISTS (SELECT 1 FROM unnest($3::text[]) k WHERE starts_with(t.file_path, k)))
+		  )
 		  AND NOT EXISTS (
-			SELECT 1 FROM track_aliases a, unnest($2::text[]) k
-			WHERE a.track_id = tracks.id AND starts_with(a.file_path, k)
-		  )`,
-		prefix, cleanKeep)
+			SELECT 1 FROM track_aliases a
+			WHERE a.track_id = t.id AND (
+				EXISTS (SELECT 1 FROM unnest($2::text[]) k WHERE starts_with(a.file_path, k))
+				OR (NOT starts_with(a.file_path, $1)
+				    AND EXISTS (SELECT 1 FROM unnest($3::text[]) k WHERE starts_with(a.file_path, k)))
+			)
+		  )`, dbtext.Clean(prefix), clean(inner), clean(live))
 	if err != nil {
 		return 0, err
 	}
