@@ -106,7 +106,13 @@ func NewRouter(d Deps) http.Handler {
 	}
 	searchH := &handlers.Search{Library: d.Library, TIDAL: d.TIDAL}
 	tidalH := &handlers.TIDAL{TIDAL: d.TIDAL, Library: d.Library}
-	adminUsersH := &handlers.AdminUsers{DB: d.DB, Users: d.Users, Playlists: d.Playlists}
+	adminUsersH := &handlers.AdminUsers{
+		DB:        d.DB,
+		Users:     d.Users,
+		Playlists: d.Playlists,
+		Library:   d.Library,
+		MusicRoot: d.MusicRoot,
+	}
 	adminRootsH := &handlers.AdminRoots{
 		Store:       d.MusicRoots,
 		Library:     d.Library,

@@ -1,13 +1,20 @@
 package handlers
 
 import (
+	"context"
+	"errors"
+	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/models"
+	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/playlists"
 	"github.com/githubesson/lumen/internal/users"
 )
@@ -16,6 +23,10 @@ type AdminUsers struct {
 	DB        *pgxpool.Pool
 	Users     *users.Store
 	Playlists *playlists.Store
+	// Library and MusicRoot let Delete remove the user's uploaded files; with
+	// either unset the files are left on disk.
+	Library   *library.Store
+	MusicRoot string
 }
 
 type ownedPlaylistItem struct {
@@ -176,13 +187,50 @@ func (h *AdminUsers) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Finally, delete the user. `users.id` has ON DELETE CASCADE for sessions;
-	// invites.created_by / tracks.added_by become NULL.
+	// Their uploads' paths, read before the delete cascades their track rows.
+	var uploads []string
+	if h.Library != nil && h.MusicRoot != "" {
+		if uploads, err = h.Library.PersonalUploadPaths(r.Context(), uid); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Finally, delete the user. `users.id` has ON DELETE CASCADE for sessions
+	// and their own tracks; invites.created_by / tracks.added_by become NULL.
 	if _, err := h.DB.Exec(r.Context(), `DELETE FROM users WHERE id = $1`, uid); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	h.removeUploads(r.Context(), uid, uploads)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeUploads deletes a deleted user's uploaded files. Only files inside
+// their own MUSIC_ROOT/.users/<id>/ that no remaining track or alias points
+// at are removed: a personal upload can have been adopted by a global track,
+// and that file must stay. Failures are logged, not surfaced, since the
+// account is already gone and .users/ is never scanned, so a leftover file is
+// only wasted space.
+func (h *AdminUsers) removeUploads(ctx context.Context, uid uuid.UUID, paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	userDir := filepath.Join(h.MusicRoot, ".users", uid.String())
+	for _, p := range paths {
+		if inDir, _ := pathsafe.WithinRoot(userDir, p); !inDir {
+			continue
+		}
+		inUse, err := h.Library.FilePathInUse(ctx, p)
+		if err != nil || inUse {
+			continue
+		}
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("delete user: removing an uploaded file failed", "path", p, "user", uid, "err", err)
+		}
+	}
+	// Only succeeds once it's empty, which leaves adopted files in place.
+	_ = os.Remove(userDir)
 }
 
 // DisableUser sets disabled=true; existing sessions are revoked. Refuses to

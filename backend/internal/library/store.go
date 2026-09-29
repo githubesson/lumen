@@ -938,6 +938,38 @@ func (s *Store) ClearIngestErrorsForPath(ctx context.Context, path string) error
 	return err
 }
 
+// PersonalUploadPaths returns the file of every track the user owns, live or
+// soft-deleted, so deleting the account can remove the uploads too.
+func (s *Store) PersonalUploadPaths(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT DISTINCT file_path FROM tracks
+		WHERE owner_id = $1 AND source = 'local' AND file_path <> ''`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// FilePathInUse reports whether any track (any owner, soft-deleted included)
+// or alias still points at path, so a file isn't removed from under one.
+func (s *Store) FilePathInUse(ctx context.Context, path string) (bool, error) {
+	path = dbtext.Clean(path)
+	var inUse bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM tracks WHERE file_path = $1)
+		    OR EXISTS (SELECT 1 FROM track_aliases WHERE file_path = $1)`, path).Scan(&inUse)
+	return inUse, err
+}
+
 // TrackHasFilePath reports whether a live local track row still points at path.
 // Importers use this before applying source-specific metadata to a dedup hit,
 // where the returned track id may belong to a different canonical file.

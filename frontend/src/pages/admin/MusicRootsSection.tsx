@@ -204,6 +204,8 @@ export function MusicRootsSection({
       setLabel("");
       await reloadRoots();
       void reloadUsage();
+      // Import errors are listed for the folders being scanned, which just changed.
+      void reloadErrors();
     } catch (err) {
       onError(errorMessage(err, "Failed to add root."));
     } finally {
@@ -216,6 +218,7 @@ export function MusicRootsSection({
     try {
       await api.setMusicRootEnabled(r.id, !r.enabled);
       await reloadRoots();
+      void reloadErrors();
     } catch (err) {
       onError(errorMessage(err, "Failed to update root."));
     }
@@ -237,6 +240,7 @@ export function MusicRootsSection({
     setRemoveOpen(false);
     await reloadRoots();
     void reloadUsage();
+    void reloadErrors();
     if (purged && deletedTracks) {
       libraryChanged.emit();
     }
