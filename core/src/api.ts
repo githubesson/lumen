@@ -140,10 +140,15 @@ export const api = {
 
   listMusicRoots: (options: RequestOptions = {}) =>
     request<MusicRoot[]>("/api/admin/library/roots", options),
+  /**
+   * Walks every folder on disk; the server allows 5 minutes for a cold walk of
+   * a big library, so the client waits a little longer than that.
+   */
   musicRootUsage: (opts: { refresh?: boolean } = {}, options: RequestOptions = {}) =>
     request<MusicRootUsage>(
       `/api/admin/library/roots/usage${opts.refresh ? "?refresh=1" : ""}`,
       options,
+      { timeoutMs: 5 * 60_000 + 15_000 },
     ),
   addMusicRoot: (input: { path: string; label?: string }) =>
     request<MusicRoot>("/api/admin/library/roots", {

@@ -192,7 +192,8 @@
   align-items: center;
   gap: 8px;
 }
-/* A stat number that opens its detail, e.g. "Errored 3" → the failed files. */
+/* A stat number that opens its detail ("Errored 3" → the failed files), or an
+   inline "Try again". */
 .stat-link {
   font: inherit;
   color: inherit;

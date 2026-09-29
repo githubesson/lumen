@@ -8,6 +8,8 @@ export type RequestOptions = Pick<RequestInit, "signal">;
 
 type RequestBehavior = {
   notifyUnauthorized?: boolean;
+  /** Overrides the default 30s deadline, for routes the server lets run longer. */
+  timeoutMs?: number;
 };
 
 export type SearchStream = "local" | "tidal" | `${"local" | "tidal"}_album` | `${"local" | "tidal"}_artist`;
@@ -94,7 +96,7 @@ export async function rawFetch(
   const timeout = new AbortController();
   const timer = isForm
     ? undefined
-    : setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
+    : setTimeout(() => timeout.abort(), behavior.timeoutMs ?? REQUEST_TIMEOUT_MS);
   const callerSignal = init.signal ?? undefined;
   const onCallerAbort = () => timeout.abort();
   callerSignal?.addEventListener("abort", onCallerAbort, { once: true });

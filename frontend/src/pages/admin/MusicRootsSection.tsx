@@ -438,13 +438,19 @@ export function MusicRootsSection({
         </table>
         {usageError && (
           <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "8px 0 0" }}>
-            {usageError}
+            {usageError}{" "}
+            <button type="button" className="stat-link" onClick={() => void reloadUsage()}>
+              Try again
+            </button>
           </p>
         )}
         {/* Without this a failed load looks the same as having no failures. */}
         {ingestErrorsError && (
           <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "8px 0 0" }}>
-            Couldn&apos;t check for files that failed to import: {ingestErrorsError}
+            Couldn&apos;t check for files that failed to import: {ingestErrorsError}{" "}
+            <button type="button" className="stat-link" onClick={() => void reloadErrors()}>
+              Try again
+            </button>
           </p>
         )}
         {(ingestErrors?.total ?? 0) > 0 && (
