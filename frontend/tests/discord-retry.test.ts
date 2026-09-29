@@ -9,6 +9,7 @@ function load(login: ReturnType<typeof vi.fn>, request = vi.fn().mockResolvedVal
   const clock = { now: 0 };
   const timers: Array<{ at: number; fn: () => void; cleared: boolean }> = [];
   const destroy = vi.fn().mockResolvedValue(undefined);
+  const handlers = new Map<string, () => void>();
   const exports = {} as typeof import("../electron/discord-presence");
   runInNewContext(compiled, {
     exports, Date: { now: () => clock.now }, console: { log() {}, warn() {} },
@@ -19,7 +20,7 @@ function load(login: ReturnType<typeof vi.fn>, request = vi.fn().mockResolvedVal
       return timer;
     },
     clearTimeout: (timer: { cleared: boolean }) => { timer.cleared = true; },
-    require: () => ({ Client: class { on() {} login = login; destroy = destroy; request = request; } }),
+    require: () => ({ Client: class { on(event: string, fn: () => void) { handlers.set(event, fn); } login = login; destroy = destroy; request = request; } }),
   });
   /** Advance the clock and run timers that came due. */
   const advance = async (to: number) => {
@@ -31,7 +32,7 @@ function load(login: ReturnType<typeof vi.fn>, request = vi.fn().mockResolvedVal
     }
     await new Promise((resolve) => setImmediate(resolve));
   };
-  return { exports, clock, destroy, request, advance, pendingTimers: () => timers.filter((t) => !t.cleared) };
+  return { exports, clock, destroy, request, advance, handlers, pendingTimers: () => timers.filter((t) => !t.cleared) };
 }
 
 it("backs off failed Discord connections and destroys each failed client", async () => {
@@ -76,4 +77,20 @@ it("drops a pending resend when presence is cleared", async () => {
   await exports.clearDiscordActivity();
   await advance(30_000);
   expect(request).not.toHaveBeenCalled();
+});
+
+it("reconnects after Discord disconnects mid-track and restores the same presence", async () => {
+  const login = vi.fn().mockResolvedValue(undefined);
+  const { exports, request, advance, handlers } = load(login);
+  exports.configureDiscordPresence({ clientId: "fixture" });
+  await exports.pushDiscordActivity({ title: "Song", isPlaying: true, elapsedSec: 0 });
+  expect(request).toHaveBeenCalledOnce();
+  handlers.get("disconnected")!();
+  await advance(30_000);
+  expect(login).toHaveBeenCalledTimes(2);
+  expect(request).toHaveBeenCalledTimes(2);
+  const activity = request.mock.calls[1][1].activity;
+  expect(activity.details).toBe("Song");
+  // Still the original start time: the track kept playing through the outage.
+  expect(activity.timestamps.start).toBe(0);
 });

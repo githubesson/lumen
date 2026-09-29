@@ -100,6 +100,20 @@ export default function TrackContextMenu({
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Another client may have changed the playlists since the shell loaded
+  // them, so revalidate on open. The add buttons wait for the fresh list so a
+  // click can't land on a row that moves under the cursor when it arrives.
+  const [playlistsFresh, setPlaylistsFresh] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void reloadPlaylists().then(() => {
+      if (active) setPlaylistsFresh(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, [reloadPlaylists]);
+
   // Adding tracks changes the server's playlist order. Refresh after closing
   // so a second click cannot land on a different playlist under the cursor.
   useEffect(() => {
@@ -458,7 +472,7 @@ export default function TrackContextMenu({
                 role="menuitem"
                 className="ctx-item"
                 onClick={() => void runAddToPlaylist(p)}
-                disabled={busy || added}
+                disabled={busy || added || !playlistsFresh}
               >
                 {added ? (
                   <CheckIcon className="size-3.5" />

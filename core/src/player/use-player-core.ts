@@ -151,13 +151,34 @@ export function usePlayerCore({
     adapter.setMuted(muted);
   }, [adapter, volume, muted]);
 
+  // Debounced: a slider drag changes the volume on every pointer move.
+  const pendingVolumeRef = useRef<number | null>(null);
   useEffect(() => {
     if (!volumeHydrated) return;
+    pendingVolumeRef.current = volume;
     const timer = setTimeout(() => {
+      pendingVolumeRef.current = null;
       void storage.setItem(VOLUME_STORAGE_KEY, String(volume)).catch(() => {});
     }, 200);
     return () => clearTimeout(timer);
   }, [storage, volume, volumeHydrated]);
+  // Write a change still inside the debounce when the player unmounts or
+  // the page is closed, so the next launch doesn't restore the old volume.
+  useEffect(() => {
+    const pending = pendingVolumeRef;
+    const flush = () => {
+      const value = pending.current;
+      if (value === null) return;
+      pending.current = null;
+      void storage.setItem(VOLUME_STORAGE_KEY, String(value)).catch(() => {});
+    };
+    const target = globalThis as { addEventListener?: typeof addEventListener; removeEventListener?: typeof removeEventListener };
+    target.addEventListener?.("pagehide", flush);
+    return () => {
+      target.removeEventListener?.("pagehide", flush);
+      flush();
+    };
+  }, [storage]);
 
   // Zero the visible clock the moment a different track is chosen. Without
   // this the wall-clock interpolation keeps advancing from the previous

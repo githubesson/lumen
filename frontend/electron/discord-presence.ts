@@ -83,6 +83,15 @@ async function ensureDiscord(): Promise<DiscordClient | null> {
       if (client === nextClient) {
         client = null;
         retryAfter = Math.max(retryAfter, Date.now() + 30_000);
+        // Steady playback sends no new updates, so reconnect after the
+        // backoff and restore what Discord was showing.
+        if (lastActivity) {
+          scheduleRetry(
+            lastActivity.isPlaying
+              ? { ...lastActivity, elapsedSec: Math.max(0, (Date.now() - lastStartMs) / 1000) }
+              : lastActivity,
+          );
+        }
       }
     });
     await nextClient.login({ clientId });

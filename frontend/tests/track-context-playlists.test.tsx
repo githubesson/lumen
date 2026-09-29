@@ -37,27 +37,29 @@ function renderMenu() {
 beforeEach(() => { vi.clearAllMocks(); mock.list.mockResolvedValue([playlist]); mock.add.mockResolvedValue(undefined); });
 afterEach(cleanup);
 
-it("shares the pending shell request across repeated menu openings", async () => {
+it("revalidates the shared list on open and holds adds until the fresh list lands", async () => {
   let resolve!: (rows: Playlist[]) => void;
-  mock.list.mockReturnValue(new Promise<Playlist[]>((done) => { resolve = done; }));
+  mock.list
+    .mockResolvedValueOnce([playlist])
+    .mockReturnValueOnce(new Promise<Playlist[]>((done) => { resolve = done; }));
   renderMenu();
+  await act(async () => {});
   fireEvent.click(screen.getByText("Toggle menu"));
-  expect(screen.getByText("Loading…")).toBeTruthy();
-  expect(mock.list).toHaveBeenCalledTimes(1);
-  await act(async () => { resolve([playlist]); });
-  expect(screen.getByRole("menuitem", { name: "Editable" })).toBeTruthy();
-  fireEvent.click(screen.getByText("Toggle menu"));
-  fireEvent.click(screen.getByText("Toggle menu"));
-  expect(screen.getByRole("menuitem", { name: "Editable" })).toBeTruthy();
-  expect(mock.list).toHaveBeenCalledTimes(1);
+  expect(mock.list).toHaveBeenCalledTimes(2);
+  const stale = screen.getByRole("menuitem", { name: "Editable" }) as HTMLButtonElement;
+  expect(stale.disabled).toBe(true);
+  await act(async () => { resolve([{ ...playlist, name: "Renamed elsewhere" }]); });
+  const fresh = screen.getByRole("menuitem", { name: "Renamed elsewhere" }) as HTMLButtonElement;
+  expect(fresh.disabled).toBe(false);
 });
 
 it("keeps click targets in place across several adds and refreshes once on close", async () => {
   const rows = ["Alpha", "Bravo", "Charlie"].map((name) => ({ ...playlist, id: name, name }));
-  mock.list.mockResolvedValueOnce(rows).mockResolvedValue([rows[2], rows[1], rows[0]]);
+  mock.list.mockResolvedValueOnce(rows).mockResolvedValueOnce(rows).mockResolvedValue([rows[2], rows[1], rows[0]]);
   renderMenu();
   await act(async () => {});
   fireEvent.click(screen.getByText("Toggle menu"));
+  await act(async () => {});
   const order = () => screen.getAllByRole("menuitem")
     .map((element) => element.textContent)
     .filter((name) => rows.some((row) => row.name === name));
@@ -66,11 +68,11 @@ it("keeps click targets in place across several adds and refreshes once on close
   await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Bravo" })); });
   expect(order()).toEqual(["Alpha", "Bravo", "Charlie"]);
   expect(mock.add.mock.calls).toEqual([["Charlie", ["track"]], ["Bravo", ["track"]]]);
-  expect(mock.list).toHaveBeenCalledTimes(1);
+  expect(mock.list).toHaveBeenCalledTimes(2);
 
   await act(async () => { fireEvent.keyDown(window, { key: "Escape" }); });
   expect(screen.queryByRole("menu")).toBeNull();
-  expect(mock.list).toHaveBeenCalledTimes(2);
+  expect(mock.list).toHaveBeenCalledTimes(3);
   expect([...document.querySelectorAll("aside span")].map((element) => element.textContent))
     .toEqual(["Charlie", "Bravo", "Alpha"]);
 });
@@ -80,9 +82,10 @@ it("does not refresh on close if no add succeeded", async () => {
   renderMenu();
   await act(async () => {});
   fireEvent.click(screen.getByText("Toggle menu"));
+  await act(async () => {});
   await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Editable" })); });
   fireEvent.keyDown(window, { key: "Escape" });
-  expect(mock.list).toHaveBeenCalledTimes(1);
+  expect(mock.list).toHaveBeenCalledTimes(2);
 });
 
 it("refreshes when an in-flight add succeeds after the menu closes", async () => {
@@ -91,20 +94,22 @@ it("refreshes when an in-flight add succeeds after the menu closes", async () =>
   renderMenu();
   await act(async () => {});
   fireEvent.click(screen.getByText("Toggle menu"));
+  await act(async () => {});
   fireEvent.click(screen.getByRole("menuitem", { name: "Editable" }));
   fireEvent.keyDown(window, { key: "Escape" });
-  expect(mock.list).toHaveBeenCalledTimes(1);
-  await act(async () => { resolve(); });
   expect(mock.list).toHaveBeenCalledTimes(2);
+  await act(async () => { resolve(); });
+  expect(mock.list).toHaveBeenCalledTimes(3);
 });
 
 it("lets the menu retry a failed shared request", async () => {
-  mock.list.mockRejectedValueOnce(new Error("Offline"));
+  mock.list.mockRejectedValueOnce(new Error("Offline")).mockRejectedValueOnce(new Error("Offline"));
   renderMenu();
   await act(async () => {});
   fireEvent.click(screen.getByText("Toggle menu"));
+  await act(async () => {});
   expect(screen.getByRole("alert").textContent).toBe("Could not load playlists.");
   await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Retry playlists" })); });
   expect(screen.getByRole("menuitem", { name: "Editable" })).toBeTruthy();
-  expect(mock.list).toHaveBeenCalledTimes(2);
+  expect(mock.list).toHaveBeenCalledTimes(3);
 });
