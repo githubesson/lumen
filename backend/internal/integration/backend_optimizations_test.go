@@ -135,18 +135,12 @@ func TestRecentTimestampRepairAndReplayQueries(t *testing.T) {
 	}
 	exec(`INSERT INTO user_track_stats(user_id,track_id,play_count,last_played_at,favorited,rating)
 		VALUES($1,$2,2,$3,TRUE,4),($1,$4,0,$3,TRUE,5)`, viewer, played, old, favorite)
-	// Run the actual migration's reconciliation against legacy rows while
-	// keeping this database's already-created indexes in place.
-	migration, err := os.ReadFile("../db/migrations/0023_catalog_read_indexes.up.sql")
+	// Run the actual timestamp repair against legacy rows.
+	migration, err := os.ReadFile("../db/migrations/0023_recent_track_timestamps.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	sql := string(migration)
-	start, end := strings.Index(sql, "LOCK TABLE"), strings.LastIndex(sql, "CREATE INDEX user_track_stats_recent_idx")
-	if start < 0 || end <= start {
-		t.Fatal("missing timestamp reconciliation in migration")
-	}
-	exec(sql[start:end])
+	exec(string(migration))
 	var at *time.Time
 	var favorited bool
 	var rating, plays int
@@ -194,69 +188,95 @@ func TestRecentTimestampRepairAndReplayQueries(t *testing.T) {
 func TestRescanFingerprintsForceAndNestedRoots(t *testing.T) {
 	ctx, pool := openRedteamDB(t)
 	lib := library.NewStore(pool)
-	root := t.TempDir()
-	nested := filepath.Join(root, "artist")
-	if err := os.MkdirAll(nested, 0700); err != nil {
-		t.Fatal(err)
-	}
-	file := filepath.Join(nested, "fingerprint.flac")
-	// A FLAC STREAMINFO block with a two-second stereo stream and a small
-	// audio payload exercises the native parsers without requiring ffmpeg.
-	data := make([]byte, 4+4+34+32)
-	copy(data, "fLaC")
-	data[4], data[7] = 0x80, 34
-	binary.BigEndian.PutUint64(data[18:26], uint64(44100)<<44|uint64(1)<<41|uint64(15)<<36|88200)
-	copy(data[42:], "fingerprint-audio-payload")
-	if err := os.WriteFile(file, data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM tracks WHERE starts_with(file_path,$1)`, root+string(filepath.Separator))
-		pool.Exec(context.Background(), `DELETE FROM albums a WHERE title='Others' AND NOT EXISTS(SELECT 1 FROM tracks t WHERE t.album_id=a.id)`)
-	})
-	svc := &ingest.Service{
-		DB: pool, Library: lib, Storage: storage.NewLocal(root), MusicRoot: root,
-		Roots:  func(context.Context) []string { return []string{nested, root, root} },
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-	first := svc.IngestFile(ctx, file)
-	if first.Err != nil || !first.Inserted {
-		t.Fatalf("first ingest = %+v", first)
-	}
-	fingerprints, err := lib.IngestFingerprints(ctx, []string{root})
-	if err != nil || len(fingerprints) != 1 {
-		t.Fatalf("successful fingerprint = %+v, %v", fingerprints, err)
-	}
-	scan := func(force bool, wantUnchanged int64) {
-		t.Helper()
-		p := &ingest.RescanProgress{}
-		if err := svc.RescanWithOptions(ctx, p, ingest.RescanOptions{Force: force}); err != nil {
-			t.Fatal(err)
-		}
-		if p.Total.Load() != 1 || p.Processed.Load() != 1 || p.Unchanged.Load() != wantUnchanged || p.Errored.Load() != 0 {
-			t.Fatalf("scan force=%v total=%d processed=%d unchanged=%d errors=%d", force, p.Total.Load(), p.Processed.Load(), p.Unchanged.Load(), p.Errored.Load())
-		}
-	}
-	scan(false, 1)
-	scan(true, 0)
-	changed := time.Now().Add(time.Hour)
-	if err := os.Chtimes(file, changed, changed); err != nil {
-		t.Fatal(err)
-	}
-	scan(false, 0)
-	scan(false, 1)
-	if err := lib.RecordIngestError(ctx, file, "retry despite unchanged metadata"); err != nil {
-		t.Fatal(err)
-	}
-	scan(false, 0)
-	scan(false, 1)
-	// Moving the canonical row must not associate its old fingerprint with
-	// another path, even when a copied file retains its size and mtime.
-	if _, err := pool.Exec(ctx, `UPDATE tracks SET file_path=$2 WHERE id=$1`, first.TrackID, filepath.Join(nested, "moved.flac")); err != nil {
-		t.Fatal(err)
-	}
-	got, err := lib.IngestFingerprints(ctx, []string{root})
-	if err != nil || !reflect.DeepEqual(got, map[string]library.IngestFingerprint{}) {
-		t.Fatalf("moved track reused its old fingerprint: %+v, %v", got, err)
+	for _, style := range []string{"absolute", "relative"} {
+		t.Run(style, func(t *testing.T) {
+			root := t.TempDir()
+			absoluteRoot := root
+			if style == "relative" {
+				cwd, err := os.Getwd()
+				if err != nil {
+					t.Fatal(err)
+				}
+				root, err = filepath.Rel(cwd, root)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			nested := filepath.Join(root, "artist")
+			if err := os.MkdirAll(nested, 0700); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(nested, "fingerprint.flac")
+			// A FLAC STREAMINFO block with a two-second stereo stream and a small
+			// audio payload exercises the native parsers without requiring ffmpeg.
+			data := make([]byte, 4+4+34+32)
+			copy(data, "fLaC")
+			data[4], data[7] = 0x80, 34
+			binary.BigEndian.PutUint64(data[18:26], uint64(44100)<<44|uint64(1)<<41|uint64(15)<<36|88200)
+			copy(data[42:], "fingerprint-audio-payload")
+			if err := os.WriteFile(file, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				pool.Exec(context.Background(), `DELETE FROM tracks WHERE starts_with(file_path,$1)`, root+string(filepath.Separator))
+				pool.Exec(context.Background(), `DELETE FROM albums a WHERE title='Others' AND NOT EXISTS(SELECT 1 FROM tracks t WHERE t.album_id=a.id)`)
+			})
+			svc := &ingest.Service{
+				DB: pool, Library: lib, Storage: storage.NewLocal(root), MusicRoot: root,
+				Roots:  func(context.Context) []string { return []string{nested, root, root} },
+				Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			}
+			first := svc.IngestFile(ctx, file)
+			if first.Err != nil || !first.Inserted {
+				t.Fatalf("first ingest = %+v", first)
+			}
+			absFile, err := filepath.Abs(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, scanRoot := range []string{root, absoluteRoot} {
+				fingerprints, err := lib.IngestFingerprints(ctx, []string{scanRoot})
+				if err != nil || len(fingerprints) != 1 || fingerprints[absFile].Size != int64(len(data)) {
+					t.Fatalf("successful fingerprint root=%q = %+v, %v", scanRoot, fingerprints, err)
+				}
+			}
+			var storedPath, fingerprintPath string
+			if err := pool.QueryRow(ctx, `SELECT file_path, ingested_file_path FROM tracks WHERE id=$1`, first.TrackID).
+				Scan(&storedPath, &fingerprintPath); err != nil || storedPath != file || fingerprintPath != file {
+				t.Fatalf("stored paths = %q/%q, want %q: %v", storedPath, fingerprintPath, file, err)
+			}
+			scan := func(force bool, wantUnchanged int64) {
+				t.Helper()
+				p := &ingest.RescanProgress{}
+				if err := svc.RescanWithOptions(ctx, p, ingest.RescanOptions{Force: force}); err != nil {
+					t.Fatal(err)
+				}
+				if p.Total.Load() != 1 || p.Processed.Load() != 1 || p.Unchanged.Load() != wantUnchanged || p.Errored.Load() != 0 {
+					t.Fatalf("scan force=%v total=%d processed=%d unchanged=%d errors=%d", force, p.Total.Load(), p.Processed.Load(), p.Unchanged.Load(), p.Errored.Load())
+				}
+			}
+			scan(false, 1)
+			scan(true, 0)
+			changed := time.Now().Add(time.Hour)
+			if err := os.Chtimes(file, changed, changed); err != nil {
+				t.Fatal(err)
+			}
+			scan(false, 0)
+			scan(false, 1)
+			if err := lib.RecordIngestError(ctx, file, "retry despite unchanged metadata"); err != nil {
+				t.Fatal(err)
+			}
+			scan(false, 0)
+			scan(false, 1)
+			// Moving the canonical row must not associate its old fingerprint with
+			// another path, even when a copied file retains its size and mtime.
+			if _, err := pool.Exec(ctx, `UPDATE tracks SET file_path=$2 WHERE id=$1`, first.TrackID, filepath.Join(nested, "moved.flac")); err != nil {
+				t.Fatal(err)
+			}
+			got, err := lib.IngestFingerprints(ctx, []string{root})
+			if err != nil || !reflect.DeepEqual(got, map[string]library.IngestFingerprint{}) {
+				t.Fatalf("moved track reused its old fingerprint: %+v, %v", got, err)
+			}
+		})
 	}
 }

@@ -96,10 +96,11 @@ time, or to retry artwork processing. Both routes require an admin session.
 `GET /api/admin/library/rescan` reports `unchanged` alongside the existing
 progress counters; unchanged files also count toward `dedup` and `processed`.
 
-Migration 0023 adds catalog and recent-track indexes and repairs listening
-timestamps from play history. The repair temporarily locks play-write tables,
-and index creation can extend startup for large libraries. Migration 0024 adds
-the nullable ingestion fingerprint columns.
+Migration 0023 repairs listening timestamps from play history and temporarily
+locks play-write tables. Migration 0024 adds the nullable ingestion fingerprint
+columns. Migrations 0025–0029 build catalog and recent-track indexes
+concurrently in separate statements. Index creation can extend startup for
+large libraries while allowing writes to continue during each build.
 
 ## Test / lint
 
@@ -114,6 +115,7 @@ should be able to create databases so packages can use isolated sibling
 databases:
 
 ```sh
+PGPASSWORD=mlib createdb --host=localhost --username=mlib mlib_test
 LUMEN_REVIEW_TEST_DATABASE_URL=postgres://mlib:mlib@localhost:5432/mlib_test?sslmode=disable go test ./...
 ```
 

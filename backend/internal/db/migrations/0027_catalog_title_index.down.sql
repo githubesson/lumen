@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY tracks_visible_title_idx;

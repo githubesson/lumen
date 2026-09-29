@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY tracks_visible_recent_idx;

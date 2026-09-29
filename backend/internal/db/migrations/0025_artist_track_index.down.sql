@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY track_artists_artist_track_idx;

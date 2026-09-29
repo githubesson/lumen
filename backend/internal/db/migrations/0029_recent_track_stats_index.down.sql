@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY user_track_stats_recent_idx;

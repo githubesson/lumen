@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,6 +35,28 @@ func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
 }
 
 func Migrate(url string) error {
+	// A blocking advisory-lock query can hold a transaction snapshot that
+	// CREATE INDEX CONCURRENTLY waits for, deadlocking simultaneous starters.
+	// Poll a separate session lock before opening migrate's driver so waiting
+	// processes leave no statement or transaction open between attempts.
+	gate, err := pgx.Connect(context.Background(), url)
+	if err != nil {
+		return fmt.Errorf("migration gate connect: %w", err)
+	}
+	defer gate.Close(context.Background()) // closing releases the session lock
+	for {
+		var locked bool
+		// The two-int namespace is distinct from migrate's bigint lock key.
+		if err := gate.QueryRow(context.Background(), `SELECT pg_try_advisory_lock($1, $2)`,
+			int32(0x6c756d6e), int32(1)).Scan(&locked); err != nil {
+			return fmt.Errorf("migration gate lock: %w", err)
+		}
+		if locked {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	src, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {
 		return fmt.Errorf("iofs: %w", err)
