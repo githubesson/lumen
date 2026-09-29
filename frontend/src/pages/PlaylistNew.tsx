@@ -6,9 +6,11 @@ import { Field, TextInput } from "../components/Field";
 import ErrorBanner from "../components/ErrorBanner";
 import PageHeader from "../components/PageHeader";
 import RadioCardOption from "../components/RadioCardOption";
+import { usePlaylists } from "../context/Playlists";
 
 export default function PlaylistNew() {
   const navigate = useNavigate();
+  const { reload: reloadPlaylists } = usePlaylists();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState<Visibility>("private");
@@ -21,6 +23,7 @@ export default function PlaylistNew() {
     setBusy(true);
     try {
       const p = await api.createPlaylist({ name: name.trim(), description, visibility });
+      void reloadPlaylists();
       navigate(`/playlists/${p.id}`, { replace: true });
     } catch (err) {
       setError(errorMessage(err, "Failed to create playlist."));
@@ -99,4 +102,3 @@ export default function PlaylistNew() {
     </div>
   );
 }
-

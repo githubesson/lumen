@@ -47,7 +47,8 @@ import PlaylistTracksPanel from "./playlist/PlaylistTracksPanel";
 import {
   SORT_DEFAULT_ASC,
   SORT_OPTIONS,
-  compareEntries,
+  compareIndexedEntries,
+  usePlaylistTrackKeys,
   type SortKey,
 } from "./playlist/trackSort";
 import type { PlaylistTrackEntry } from "../api";
@@ -259,12 +260,16 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   // All hooks must run unconditionally — keep them above every early return so
   // an error/loading state never changes the hook count between renders.
   // What the table shows; the play queue follows this order too.
+  const q = searchQuery.trim().toLowerCase();
+  const { titleKeys, searchKeys } = usePlaylistTrackKeys(tracks, sortKey, q);
   const sortedTracks = useMemo(() => {
     const base = tracks ?? [];
     if (sortKey === "custom") return base;
-    const sorted = [...base].sort((a, b) => compareEntries(a, b, sortKey));
+    const sorted = [...base].sort((a, b) =>
+      compareIndexedEntries(a, b, sortKey, titleKeys!),
+    );
     return sortAsc ? sorted : sorted.reverse();
-  }, [tracks, sortKey, sortAsc]);
+  }, [tracks, sortKey, sortAsc, titleKeys]);
   const queue = useMemo(() => sortedTracks.map(toQueueItem), [sortedTracks]);
   const queueById = useMemo(() => {
     const map = new Map<string, TrackListItem>();
@@ -277,17 +282,12 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     const entry = base.find((t) => t.album_id) ?? base[0];
     return entry ? toQueueItem(entry) : null;
   }, [tracks]);
-  const q = searchQuery.trim().toLowerCase();
   const filteredTracks = useMemo(
     () =>
       q
-        ? sortedTracks.filter((t) =>
-            `${t.title} ${t.artist ?? ""} ${t.album_title ?? ""}`
-              .toLowerCase()
-              .includes(q),
-          )
+        ? sortedTracks.filter((t) => searchKeys!.get(t)!.includes(q))
         : sortedTracks,
-    [sortedTracks, q],
+    [sortedTracks, q, searchKeys],
   );
 
   // With nothing to show, the error is the page; otherwise (a cached or

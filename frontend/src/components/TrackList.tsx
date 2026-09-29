@@ -230,14 +230,8 @@ export default function TrackList({
                   showCover={showCover}
                   showAlbum={showAlbum}
                   showSourceBadge={showSourceBadge}
-                  extra={
-                    extraColumn
-                      ? {
-                          content: extraColumn.render(t),
-                          className: extraColumn.className,
-                        }
-                      : undefined
-                  }
+                  renderExtra={extraColumn?.render}
+                  extraClassName={extraColumn?.className}
                   isNow={current?.id === t.id}
                   isPlaying={isPlaying && current?.id === t.id}
                   fav={isFavorite(t.id)}
@@ -284,7 +278,8 @@ interface TrackRowProps {
   showCover: boolean;
   showAlbum: boolean;
   showSourceBadge: boolean;
-  extra?: { content: ReactNode; className?: string };
+  renderExtra?: (track: TrackListItem) => ReactNode;
+  extraClassName?: string;
   isNow: boolean;
   isPlaying: boolean;
   fav: boolean;
@@ -311,7 +306,8 @@ export const TrackRow = memo(function TrackRow({
   showCover,
   showAlbum,
   showSourceBadge,
-  extra,
+  renderExtra,
+  extraClassName,
   isNow,
   isPlaying,
   fav,
@@ -418,8 +414,8 @@ export const TrackRow = memo(function TrackRow({
           {track.album_title ? displayText(track.album_title) : "—"}
         </td>
       )}
-      {extra && (
-        <td className={extra.className ?? "col-extra"}>{extra.content}</td>
+      {renderExtra && (
+        <td className={extraClassName ?? "col-extra"}>{renderExtra(track)}</td>
       )}
       <td className="col-dur">{fmtDurationMs(track.duration_ms)}</td>
       <td className="col-acts">

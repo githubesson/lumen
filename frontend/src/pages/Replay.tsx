@@ -37,6 +37,7 @@ import {
 } from "@music-library/core/replay/period";
 import { displayText, pluralize } from "../lib/format";
 import { usePlayer } from "../context/Player";
+import { usePlaylists } from "../context/Playlists";
 
 /** The web has room for the fuller wording ("45 min", not the phone's "45m"). */
 function formatListeningTime(ms: number): string {
@@ -65,6 +66,7 @@ function buildOptions(availableYears: number[]): PeriodOption[] {
 export default function Replay() {
   const navigate = useNavigate();
   const { play } = usePlayer();
+  const { reload: reloadPlaylists } = usePlaylists();
 
   const [period, setPeriod] = useState<Period>({ kind: "this-year" });
   // The response is stored with the period it answers, and read back only when
@@ -167,6 +169,7 @@ export default function Replay() {
         name,
         limit: 50,
       });
+      void reloadPlaylists();
       navigate(`/playlists/${playlist.id}`);
     } catch (err) {
       setCreateError(errorMessage(err, "Failed to create playlist."));

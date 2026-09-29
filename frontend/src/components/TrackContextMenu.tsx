@@ -38,6 +38,7 @@ import { useDismiss } from "../lib/useDismiss";
 import { useAuth } from "../context/Auth";
 import { useFavorites } from "../context/Favorites";
 import { usePlayer } from "../context/Player";
+import { usePlaylists } from "../context/Playlists";
 import { useShare } from "../context/Share";
 import { useTrackInfo } from "../context/TrackInfo";
 
@@ -92,7 +93,9 @@ export default function TrackContextMenu({
   const ref = useRef<HTMLDivElement>(null);
   const [coords, setCoords] = useState({ x, y });
 
-  const [playlists, setPlaylists] = useState<Playlist[] | null>(null);
+  const { data: playlists, error: playlistsError, reload: reloadPlaylists } = usePlaylists();
+  const playlistsChanged = useRef(false);
+  const menuClosed = useRef(false);
   const [addingId, setAddingId] = useState<string | null>(null);
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [downloading, setDownloading] = useState(false);
@@ -100,23 +103,18 @@ export default function TrackContextMenu({
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load playlists once on mount. Viewers can't really "add to" other
-  // people's playlists, but the API enforces that — we list whatever
-  // listPlaylists returns.
+  // Adding tracks changes the server's playlist order. Refresh after closing
+  // so a second click cannot land on a different playlist under the cursor.
   useEffect(() => {
-    let cancelled = false;
-    api
-      .listPlaylists()
-      .then((p) => {
-        if (!cancelled) setPlaylists(p ?? []);
-      })
-      .catch(() => {
-        if (!cancelled) setPlaylists([]);
-      });
+    menuClosed.current = false;
     return () => {
-      cancelled = true;
+      menuClosed.current = true;
+      if (playlistsChanged.current) {
+        playlistsChanged.current = false;
+        void reloadPlaylists();
+      }
     };
-  }, []);
+  }, [reloadPlaylists]);
 
   // Close on outside click or Escape.
   useDismiss(ref, { onDismiss: onClose });
@@ -164,6 +162,12 @@ export default function TrackContextMenu({
     setError(null);
     try {
       await api.addPlaylistTracks(p.id, [track.id]);
+      // An add can finish after Escape, an outside click, or navigation.
+      if (menuClosed.current) {
+        void reloadPlaylists();
+        return;
+      }
+      playlistsChanged.current = true;
       setAddedIds((prev) => new Set(prev).add(p.id));
     } catch (err) {
       setError(errorMessage(err, "Add failed."));
@@ -433,7 +437,15 @@ export default function TrackContextMenu({
       <div className="ctx-sep" />
 
       <div className="ctx-heading">Add to playlist</div>
-      {playlists === null && <div className="ctx-hint">Loading…</div>}
+      {playlists === null && !playlistsError && <div className="ctx-hint">Loading…</div>}
+      {playlistsError && (
+        <>
+          <div className="ctx-hint" role="alert">{playlistsError}</div>
+          <button type="button" role="menuitem" className="ctx-item" onClick={() => void reloadPlaylists()}>
+            Retry playlists
+          </button>
+        </>
+      )}
       {playlists !== null && editablePlaylists.length === 0 && (
         <div className="ctx-hint">No playlists you can edit.</div>
       )}
