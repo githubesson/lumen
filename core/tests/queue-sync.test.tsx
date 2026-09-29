@@ -226,6 +226,22 @@ it("adopts queues from device snapshots and reconciles shuffle and repeat", asyn
   expect(result.current.devicesReady).toBe(false);
 });
 
+it("keeps unchanged devices identical across repeated snapshots", async () => {
+  const { socket, result } = await setup();
+  const device = (id: string, position: number) => ({
+    device_id: id, device_name: id, online: true, control_enabled: true, capabilities: ["queue"],
+    connected_at: "", activity: { device_id: id, device_name: id, position_sec: position, is_playing: true, updated_at: "" },
+  });
+  act(() => socket.receive({ type: "devices.snapshot", devices: [device("phone", 1), device("desktop", 1)] }));
+  const first = result.current;
+  act(() => socket.receive({ type: "devices.snapshot", devices: [device("phone", 1), device("desktop", 1)] }));
+  expect(result.current).toBe(first);
+  act(() => socket.receive({ type: "devices.snapshot", devices: [device("phone", 1), device("desktop", 2)] }));
+  expect(result.current.devices).not.toBe(first.devices);
+  expect(result.current.devices[0]).toBe(first.devices[0]);
+  expect(result.current.devices[1].activity?.position_sec).toBe(2);
+});
+
 it("republishes its queue after a socket reconnect", async () => {
   const { socket } = await setup();
   const queue = socket.queue();

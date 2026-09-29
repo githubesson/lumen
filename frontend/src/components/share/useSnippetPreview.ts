@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type Hls from "hls.js";
 import { streamUrl, type TrackDetail } from "../../api";
+import { usesNativeHls } from "../../lib/nativeHls";
 
 /**
  * Plays the selected window of a track through a hidden <audio> element, so
@@ -28,8 +29,8 @@ export function useSnippetPreview({
 
   // Attach the preview source. Local tracks are a plain progressive stream;
   // TIDAL tracks stream as HLS, which Chrome/Firefox only play through
-  // hls.js (lazy-imported, same as the main player adapter). Safari falls
-  // back to native HLS via a direct src assignment.
+  // hls.js (lazy-imported, same as the main player adapter). Safari plays
+  // HLS natively via a direct src assignment.
   const previewUrl = track ? streamUrl(track.id) : null;
   const previewIsHls = track?.source === "tidal";
   useEffect(() => {
@@ -37,7 +38,7 @@ export function useSnippetPreview({
     if (!a || !previewUrl || !open) return;
     let cancelled = false;
     generationRef.current += 1;
-    if (previewIsHls && !a.canPlayType("application/vnd.apple.mpegurl")) {
+    if (previewIsHls && !usesNativeHls(a)) {
       readyRef.current = import("hls.js/light")
         .then(({ default: HlsRuntime }) => {
           if (cancelled) return;
@@ -84,13 +85,17 @@ export function useSnippetPreview({
 
   // When the selected window moves while the preview is playing, snap playback
   // to the new start. Without this the preview would keep running through
-  // audio the user has already excluded from the window.
+  // audio the user has already excluded from the window. Waits for a drag to
+  // settle: every seek aborts and restarts the stream's loading.
   useEffect(() => {
     const a = audioRef.current;
     if (!a || !isPlaying) return;
-    if (a.currentTime < startSec || a.currentTime >= endSec) {
-      a.currentTime = startSec;
-    }
+    const timer = setTimeout(() => {
+      if (a.currentTime < startSec || a.currentTime >= endSec) {
+        a.currentTime = startSec;
+      }
+    }, 150);
+    return () => clearTimeout(timer);
   }, [startSec, endSec, isPlaying]);
 
   // Auto-stop when the preview window ends. timeupdate fires ~4×/sec which

@@ -427,7 +427,8 @@ export const api = {
     requestVoid(`/api/tracks/${trackPathID(id)}/favorite`, { method: "DELETE" }),
   listFavorites: async (options: RequestOptions = {}) => {
     const tracks: TrackListItem[] = [];
-    const limit = 200;
+    // The server's largest page; fewer round trips for long lists.
+    const limit = 500;
     for (let offset = 0; ; offset += limit) {
       const page = await request<TrackListItem[]>(`/api/favorites?limit=${limit}&offset=${offset}`, options);
       tracks.push(...page);

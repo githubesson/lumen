@@ -550,7 +550,7 @@ export function usePlayerCore({
     };
     const offTime = adapter.on("timeupdate", () => {
       // Gently resync the anchor on every native update to prevent drift, but
-      // don't touch React state here — the rAF loop owns currentTime.
+      // don't touch React state here — the 250 ms sampler owns currentTime.
       syncAnchor();
       syncListenedTime();
       // Fire a single /play ping once past 30s OR >=50% of duration.

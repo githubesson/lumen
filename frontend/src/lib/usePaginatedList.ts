@@ -3,6 +3,7 @@ import { errorMessage, type Page, type SearchOffsets } from "../api";
 import { libraryChanged } from "./events";
 import { readCache, writeCache } from "./resourceCache";
 import { reconcileItems } from "./reconcileItems";
+import { findScrollParent } from "./useWindowedSlice";
 
 interface Options {
   resourceKey?: string;
@@ -229,8 +230,11 @@ export function usePaginatedList<T>(
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
-    let root = el.parentElement;
-    while (root && !/(auto|scroll)/.test(getComputedStyle(root).overflowY)) root = root.parentElement;
+    // The page scrolls inside `.content`, so rootMargin must apply to that
+    // scroller; an explicit root that isn't height-constrained (e.g. `.view`,
+    // whose overflow-x makes overflow-y compute to auto) would contain the
+    // sentinel at any scroll position and load every page.
+    const root = findScrollParent(el);
     const obs = new IntersectionObserver(
       (entries) => {
         if (!entries.some((e) => e.isIntersecting)) return;

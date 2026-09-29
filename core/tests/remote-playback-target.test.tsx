@@ -64,3 +64,16 @@ it("ignores unrelated device departures and permits manually returning to local"
   act(() => result.current.setTargetDeviceId(null));
   expect(result.current.targetDevice).toBeNull();
 });
+
+it("keeps the remote list identical when only this device's own entry changes", () => {
+  const self: PlaybackDevice = { ...device, deviceId: "local", deviceName: "Local" };
+  const { result, rerender } = renderHook(useRemotePlaybackTarget, {
+    initialProps: { ...session, devices: [device, self] },
+  });
+  const first = result.current.remoteDevices;
+  rerender({ ...session, devices: [device, { ...self, activity: null, connectedAt: "later" }] });
+  expect(result.current.remoteDevices).toBe(first);
+  const renamed = { ...device, deviceName: "Renamed" };
+  rerender({ ...session, devices: [renamed, self] });
+  expect(result.current.remoteDevices).toEqual([renamed]);
+});

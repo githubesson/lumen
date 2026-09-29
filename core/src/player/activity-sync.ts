@@ -516,7 +516,16 @@ export function usePlaybackActivityPublisher({
           return;
         }
         if (message.type === "devices.snapshot") {
-          updateRemoteSession({ devices: normalizeDevices(message.devices), devicesReady: true });
+          // The server resends the full list on every heartbeat, this
+          // device's own included. Keep unchanged devices (and an unchanged
+          // list) identical so views only re-render for real changes.
+          const devices = reuseUnchangedDevices(
+            remoteSessionSnapshot.devices,
+            normalizeDevices(message.devices),
+          );
+          if (devices !== remoteSessionSnapshot.devices || !remoteSessionSnapshot.devicesReady) {
+            updateRemoteSession({ devices, devicesReady: true });
+          }
           return;
         }
         if (message.type === "playback.command_result") {
@@ -731,6 +740,21 @@ function normalizeDevices(
           ? device.activity
           : null,
     }));
+}
+
+function reuseUnchangedDevices(
+  previous: PlaybackDevice[],
+  next: PlaybackDevice[],
+): PlaybackDevice[] {
+  const byId = new Map(previous.map((device) => [device.deviceId, device]));
+  const merged = next.map((device) => {
+    const old = byId.get(device.deviceId);
+    return old && JSON.stringify(old) === JSON.stringify(device) ? old : device;
+  });
+  return merged.length === previous.length &&
+    merged.every((device, index) => device === previous[index])
+    ? previous
+    : merged;
 }
 
 function updateRemoteSession(

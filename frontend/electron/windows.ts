@@ -96,6 +96,11 @@ export function createWindowManager(options: {
         sandbox: true,
         nodeIntegration: false,
         preload: MAIN_PRELOAD,
+        // The app has no free-text fields that need a spellchecker.
+        spellcheck: false,
+        // Cache compiled code on first run: the proxy origin is stable and
+        // /assets/* is served immutable, so the cache stays valid.
+        v8CacheOptions: "bypassHeatCheck",
       },
     });
     hardenNavigation(mainWindow);

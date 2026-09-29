@@ -154,3 +154,17 @@ it("discards remote artwork results from a previously selected device", async ()
   await act(async () => resolveCover({ url: "https://covers.test/old", expires_at: now.getTime() / 1000 + 3600 }));
   expect(mock.push).not.toHaveBeenCalled();
 });
+
+it("sends a track change once, not again for the metadata and play events that follow", async () => {
+  mock.player = { current: local, isPlaying: true };
+  mock.elapsed.mockReturnValue(0);
+  renderHook(() => useDiscordPresence());
+  await act(async () => {});
+  expect(mock.push).toHaveBeenCalledOnce();
+  await act(async () => mock.events.get("loadedmetadata")?.());
+  await act(async () => mock.events.get("play")?.());
+  expect(mock.push).toHaveBeenCalledOnce();
+  mock.elapsed.mockReturnValue(42);
+  await act(async () => mock.events.get("seeked")?.());
+  expect(mock.push).toHaveBeenCalledTimes(2);
+});

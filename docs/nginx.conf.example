@@ -99,8 +99,12 @@ server {
     proxy_read_timeout 1h;   # long enough for a full album side in one request
     proxy_send_timeout 1h;
 
+    # Same level and minimum size as frontend/nginx.conf; the type list is a
+    # superset of the one the frontend container compresses.
     gzip on;
     gzip_vary on;
+    gzip_comp_level 6;
+    gzip_min_length 1024;
     gzip_types text/plain text/css application/json application/javascript
                application/xml+rss application/atom+xml image/svg+xml;
 
@@ -140,7 +144,12 @@ server {
         proxy_pass http://music_library_backend;
     }
 
-    # Everything else → SPA.
+    # Everything else → SPA. The frontend container (frontend/nginx.conf)
+    # already sends Cache-Control: a year and immutable for the hashed
+    # /assets/*, no-cache for index.html and the SPA fallback. proxy_pass
+    # forwards those headers untouched, so none are added here: add_header
+    # would send a second Cache-Control and, since add_header inheritance is
+    # all-or-nothing, drop the HSTS header above from every SPA response.
     location / {
         proxy_pass http://music_library_frontend;
     }

@@ -67,14 +67,17 @@ async function unlockLabels(): Promise<void> {
   }
 }
 
-async function listOutputs(): Promise<OutputDevice[]> {
-  const all = await navigator.mediaDevices.enumerateDevices();
-  return all
-    .filter((d) => d.kind === "audiooutput")
-    .map((d, i) => ({
+async function listOutputs(): Promise<{ devices: OutputDevice[]; labelled: boolean }> {
+  const all = (await navigator.mediaDevices.enumerateDevices()).filter(
+    (d) => d.kind === "audiooutput",
+  );
+  return {
+    labelled: all.every((d) => d.label !== ""),
+    devices: all.map((d, i) => ({
       deviceId: d.deviceId,
       label: d.label || (d.deviceId === "default" ? "System default" : `Output ${i + 1}`),
-    }));
+    })),
+  };
 }
 
 export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
@@ -129,9 +132,14 @@ export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
   const refresh = useCallback(async (requestLabels = true) => {
     if (!supported) return;
     try {
-      if (requestLabels) await unlockLabels();
-      const list = await listOutputs();
-      setDevices(list);
+      const listed = await listOutputs();
+      // Only open the microphone while the browser is hiding device names.
+      if (requestLabels && !listed.labelled) {
+        await unlockLabels();
+        setDevices((await listOutputs()).devices);
+      } else {
+        setDevices(listed.devices);
+      }
     } catch (e) {
       setError((e as Error).message);
     }
@@ -162,15 +170,18 @@ export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
     let cancelled = false;
     getTweaks()
       .then(({ audioSinkId }) => {
-        if (cancelled || !audioSinkId) return;
+        if (cancelled || !audioSinkId || audioSinkId === desiredRef.current) return;
         desiredRef.current = audioSinkId;
         setDeviceId(audioSinkId);
+        // The elements may already have mounted (and taken the default);
+        // if not, the mount effect below applies desiredRef when they do.
+        void applySink(audioSinkId);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applySink]);
 
   // Apply the persisted sinkId once the audio element mounts. The element
   // is owned by `PlayerProvider`, so the ref may resolve a tick after we do.
@@ -186,7 +197,9 @@ export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
         return;
       }
       const id = desiredRef.current || DEFAULT_DEVICE_ID;
-      void applySink(id === DEFAULT_DEVICE_ID ? "" : id);
+      // A fresh element already plays to the default device.
+      if (id === DEFAULT_DEVICE_ID) return;
+      void applySink(id);
     };
     tryApply();
     return () => {
@@ -212,16 +225,20 @@ export function useAudioOutput(): AudioOutputCtx {
   return ctx;
 }
 
-/** Only settings needs enumeration; hardware changes never reopen the mic. */
-export function useAudioOutputDevices(open: boolean): AudioOutputCtx {
+/**
+ * Enumerates output devices while `active` (the Settings output row mounts it,
+ * so only showing that row can ask for the microphone). Hardware changes
+ * re-list without reopening the mic.
+ */
+export function useAudioOutputDevices(active = true): AudioOutputCtx {
   const output = useAudioOutput();
   const { supported, refresh } = output;
   useEffect(() => {
-    if (!open || !supported) return;
+    if (!active || !supported) return;
     void refresh();
     const onChange = () => { void refresh(false); };
     navigator.mediaDevices.addEventListener("devicechange", onChange);
     return () => navigator.mediaDevices.removeEventListener("devicechange", onChange);
-  }, [open, supported, refresh]);
+  }, [active, supported, refresh]);
   return output;
 }

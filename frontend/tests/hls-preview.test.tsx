@@ -62,3 +62,24 @@ it("uses native HLS for the current and prepared sources when available", () => 
     "/api/tracks/tidal%3Aone/stream", "/api/tracks/tidal%3Atwo/stream",
   ]);
 });
+it("keeps hls.js in Chromium, which also reports native HLS support", async () => {
+  silenceAudio(true);
+  Object.defineProperty(navigator, "vendor", { value: "Google Inc.", configurable: true });
+  try {
+    let player!: ReturnType<typeof useHtmlAudioAdapter>;
+    function Player() {
+      const value = useHtmlAudioAdapter();
+      useEffect(() => { player = value; });
+      return <><audio ref={value.audioRefs[0]} /><audio ref={value.audioRefs[1]} /></>;
+    }
+    render(<Player />);
+    await act(async () => {
+      player.adapter.load("/api/tracks/tidal%3Aone/stream");
+      await Promise.resolve();
+    });
+    await act(async () => {});
+    expect(mock.instances).toHaveLength(1);
+  } finally {
+    delete (navigator as { vendor?: string }).vendor;
+  }
+});

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { type ReplayActivityBucket, type ReplayBucket } from "../api";
 
 interface Props {
@@ -6,56 +6,49 @@ interface Props {
   bucket: ReplayBucket;
 }
 
+// Built once: `toLocaleDateString` sets up a new formatter on every call, and
+// every bar needs a tooltip (and some a label).
+const monthDay = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+const monthDayYear = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+const weekdayDate = new Intl.DateTimeFormat(undefined, {
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+const shortMonthYear = new Intl.DateTimeFormat(undefined, { month: "short", year: "2-digit" });
+const longMonthYear = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" });
+
 function labelFor(date: Date, bucket: ReplayBucket): string {
   switch (bucket) {
     case "day":
-      return date.toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-      });
     case "week":
-      return date.toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-      });
+      return monthDay.format(date);
     case "month":
-      return date.toLocaleDateString(undefined, {
-        month: "short",
-        year: "2-digit",
-      });
+      return shortMonthYear.format(date);
   }
 }
 
 function tooltipFor(date: Date, bucket: ReplayBucket): string {
   switch (bucket) {
     case "day":
-      return date.toLocaleDateString(undefined, {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      });
+      return weekdayDate.format(date);
     case "week": {
       const end = new Date(date);
       end.setDate(end.getDate() + 6);
-      return `Week of ${date.toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-      })} – ${end.toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      })}`;
+      return `Week of ${monthDay.format(date)} – ${monthDayYear.format(end)}`;
     }
     case "month":
-      return date.toLocaleDateString(undefined, {
-        month: "long",
-        year: "numeric",
-      });
+      return longMonthYear.format(date);
   }
 }
 
-export default function ActivityChart({ buckets, bucket }: Props) {
+/** Memoized: Replay re-renders for player and button state it doesn't show. */
+const ActivityChart = memo(function ActivityChart({ buckets, bucket }: Props) {
   const max = useMemo(
     () => buckets.reduce((m, b) => Math.max(m, b.plays), 0),
     [buckets],
@@ -94,4 +87,6 @@ export default function ActivityChart({ buckets, bucket }: Props) {
       </div>
     </div>
   );
-}
+});
+
+export default ActivityChart;

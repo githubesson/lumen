@@ -1,13 +1,15 @@
-import { useEffect, useState } from "react";
-import { usePlayer, usePlayerTime } from "../../context/Player";
+import { usePlayerControls, usePlayerTime } from "../../context/Player";
 import { fmtDurationSec } from "../../lib/format";
 import SeekBar from "./SeekBar";
 
+/**
+ * Seeks somewhere other than local playback. Without a position, the bar
+ * shows `usePlayerTime`, which already follows (and ticks for) a remote
+ * target, so it needs no clock of its own.
+ */
 export type ProgressOverride = {
-  currentTime: number;
-  duration: number;
-  isPlaying?: boolean;
-  updatedAt?: string;
+  currentTime?: number;
+  duration?: number;
   onSeek: (seconds: number) => void;
 };
 
@@ -19,23 +21,8 @@ export default function ProgressBar({
   override?: ProgressOverride;
 }) {
   const { currentTime, duration } = usePlayerTime();
-  const { seek } = usePlayer();
-  const [clock, setClock] = useState(() => Date.now());
-  useEffect(() => {
-    if (!override?.isPlaying) return;
-    const interval = setInterval(() => setClock(Date.now()), 500);
-    return () => clearInterval(interval);
-  }, [override?.isPlaying]);
-  const updatedAt = override?.updatedAt
-    ? Date.parse(override.updatedAt)
-    : Number.NaN;
-  const elapsed =
-    override?.isPlaying && Number.isFinite(updatedAt)
-      ? Math.max(0, (clock - updatedAt) / 1000)
-      : 0;
-  const shownCurrentTime = override
-    ? Math.min(override.duration || Infinity, override.currentTime + elapsed)
-    : currentTime;
+  const { seek } = usePlayerControls();
+  const shownCurrentTime = override?.currentTime ?? currentTime;
   const shownDuration = override?.duration ?? duration;
   const progress = shownDuration > 0 ? shownCurrentTime / shownDuration : 0;
   const remainingTime =

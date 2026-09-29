@@ -387,27 +387,33 @@ export function useDetailTrackSearch(
     },
   );
 
+  // Built once per track list, not per keystroke. Only computed once a
+  // search starts, so pages that are never searched skip it.
+  const searchActive = normalizedQuery.length > 0;
+  const searchKeys = useMemo(
+    () => (searchActive ? (tracks ?? []).map(trackSearchKey) : null),
+    [tracks, searchActive],
+  );
   const filteredTracks = useMemo(() => {
     const base = tracks ?? [];
-    if (!normalizedQuery) return base;
-    return base.filter((track) => trackMatchesQuery(track, normalizedQuery));
-  }, [tracks, normalizedQuery]);
+    if (!normalizedQuery || !searchKeys) return base;
+    return base.filter((_, index) => searchKeys[index].includes(normalizedQuery));
+  }, [tracks, normalizedQuery, searchKeys]);
 
   return {
     query,
     setQuery,
     inputRef,
     filteredTracks,
-    searchActive: normalizedQuery.length > 0,
+    searchActive,
   };
 }
 
-function trackMatchesQuery(track: TrackListItem, query: string): boolean {
+function trackSearchKey(track: TrackListItem): string {
   return [track.title, track.artist, track.album_title, track.aka, track.source]
     .filter(Boolean)
     .join(" ")
-    .toLowerCase()
-    .includes(query);
+    .toLowerCase();
 }
 
 export function DetailTrackSearchBar({

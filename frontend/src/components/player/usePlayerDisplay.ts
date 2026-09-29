@@ -94,13 +94,8 @@ export function usePlayerDisplay() {
 
   const progressOverride: ProgressOverride | undefined =
     isRemoteMode && remoteActivity
-      ? {
-          currentTime: remoteActivity.position_sec,
-          duration: remoteActivity.duration_sec ?? 0,
-          isPlaying: remoteActivity.is_playing,
-          updatedAt: remoteActivity.updated_at,
-          onSeek: seek,
-        }
+      ? // The player clock already follows the target device.
+        { onSeek: seek }
       : isFH6Mode
       ? {
           currentTime: (fh6Track?.position_ms ?? 0) / 1000,

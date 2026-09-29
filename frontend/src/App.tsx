@@ -70,7 +70,21 @@ export default function App() {
   }
   const changeServer = isElectron() ? () => setChangingServer(true) : undefined;
 
-  if (status === "loading" || (!me && refreshError && pathname !== "/register" && !pathname.startsWith("/shared/"))) {
+  // A public share link needs no session: render it without waiting for /me
+  // (a 401 for most visitors) or showing the connection screen.
+  if (pathname.startsWith("/shared/")) {
+    return (
+      <>
+        {!me && <WindowControls className="root-window-controls" />}
+        <Suspense fallback={<PageFallback />}><Routes>
+          <Route path="/shared/track/:id" element={<SharePreview />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes></Suspense>
+      </>
+    );
+  }
+
+  if (status === "loading" || (!me && refreshError && pathname !== "/register")) {
     return (
       <>
         <WindowControls className="root-window-controls" />
@@ -85,7 +99,6 @@ export default function App() {
       <Suspense fallback={<PageFallback />}><Routes>
         <Route path="/login" element={me ? <Navigate to="/" replace /> : <Login onChangeServer={changeServer} />} />
         <Route path="/register" element={<Register />} />
-        <Route path="/shared/track/:id" element={<SharePreview />} />
 
         <Route element={me ? (
           <PlaylistsProvider key={`${me.id}:${me.must_reset_password}`}><Shell /></PlaylistsProvider>

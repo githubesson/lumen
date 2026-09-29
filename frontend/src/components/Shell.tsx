@@ -4,7 +4,6 @@ import { api, type Playlist } from "../api";
 import { useAuth } from "../context/Auth";
 import { usePlaylists } from "../context/Playlists";
 import { useKey } from "../lib/keybindings";
-import { useDiscordPresence } from "../lib/discordPresence";
 import { useDesktopConfig } from "../lib/desktopConfig";
 import { useLyricsPanel } from "../context/LyricsPanel";
 import MiniPlayer from "./MiniPlayer";
@@ -22,10 +21,8 @@ import { claimResourceCache, clearResourceCache } from "../lib/resourceCache";
 const SettingsDialog = lazy(() => import("./SettingsDialog"));
 const UploadDialog = lazy(() => import("./UploadDialog"));
 const UpdateToast = lazy(() => import("./UpdateToast"));
-function DiscordPresence() {
-  useDiscordPresence();
-  return null;
-}
+// Desktop-only, so the web build never downloads it.
+const DiscordPresence = lazy(() => import("../lib/discordPresence"));
 const CommandPalette = lazy(() => import("./CommandPalette"));
 const EMPTY_PLAYLISTS: Playlist[] = [];
 
@@ -165,7 +162,8 @@ export default function Shell() {
           </OpenSettingsContext.Provider>
         </div>
 
-        <Suspense fallback={null}><UpdateToast /></Suspense>
+        {/* Update prompts only exist in the desktop app. */}
+        {isElectron() && <Suspense fallback={null}><UpdateToast /></Suspense>}
       </main>
 
       <LyricsSidebar />
@@ -173,7 +171,7 @@ export default function Shell() {
       {/* Player */}
       <MiniPlayer />
 
-      {isElectron() && <DiscordPresence />}
+      {isElectron() && <Suspense fallback={null}><DiscordPresence /></Suspense>}
       <Suspense fallback={null}>
         {settingsLoaded && <SettingsDialog
           open={tweaksOpen}

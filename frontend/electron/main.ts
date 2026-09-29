@@ -51,6 +51,11 @@ registerIpcHandlers({
   },
 });
 
+// Before ready on purpose: Electron builds its default menu during startup
+// unless one was already set, so doing this in whenReady() built one only to
+// throw it away. Electron allows setApplicationMenu(null) before ready.
+Menu.setApplicationMenu(null);
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
@@ -64,7 +69,6 @@ if (!gotLock) {
   });
 
   void app.whenReady().then(async () => {
-    Menu.setApplicationMenu(null);
     installMediaPermissionHandlers(localProxy);
     const cfg = await loadConfig();
     backendUrl = cfg.backendUrl ?? "";

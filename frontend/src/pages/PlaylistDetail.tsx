@@ -164,7 +164,14 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   // load is out (seeded from the cache or sidebar), so a mutation and its
   // reload can overtake it, and its older rows mustn't land on top.
   const loadGenRef = useRef(0);
-  const trackMutationRef = useRef(false);
+  // Track edits (remove, reorder) run one at a time: each one's positions
+  // refer to the rows the edit before it left. While any are pending, the
+  // table shows the optimistic rows and loads leave them alone.
+  const trackMutationsRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingTrackMutationsRef = useRef(0);
+  const trackMutationEpochRef = useRef(0);
+  const trackMutationErrorRef = useRef<string | null>(null);
+  const trackMutationGenRef = useRef(0);
   const trackEtagRef = useRef<string>();
   const routeIdRef = useRef(id);
   useEffect(() => {
@@ -199,8 +206,10 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         : [];
       if (gen !== loadGenRef.current) return;
       setPlaylist(p);
-      trackEtagRef.current = t.etag;
-      setTracks((previous) => reconcileItems(previous ?? [], t.tracks ?? []));
+      if (pendingTrackMutationsRef.current === 0) {
+        trackEtagRef.current = t.etag;
+        setTracks((previous) => reconcileItems(previous ?? [], t.tracks ?? []));
+      }
       if (c) setCollabs(c);
       setError(null);
       // Keep the sidebar's row (name, cover) in step without refetching the
@@ -256,7 +265,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     if (!id || !autoDownload || queuedTidal === 0) return;
     let controller: AbortController | null = null;
     const refresh = () => {
-      if (document.hidden || controller || trackMutationRef.current) return;
+      if (document.hidden || controller || pendingTrackMutationsRef.current > 0) return;
       const gen = loadGenRef.current;
       const request = new AbortController();
       controller = request;
@@ -355,37 +364,62 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   };
 
   // Track mutations only reconcile rows; playlist details and collaborators
-  // do not need another read. A lock keeps server positions unambiguous.
-  const commitTracks = async (next: PlaylistTrackEntry[], mutate: () => Promise<unknown>, fallback: string) => {
-    if (!id || trackMutationRef.current) return;
-    trackMutationRef.current = true;
+  // do not need another read. Later edits queue behind earlier ones instead
+  // of being dropped. If one fails, the edits queued behind it were computed
+  // from rows that no longer match the server, so they're discarded and the
+  // page reloads once the queue drains.
+  const commitTracks = (next: PlaylistTrackEntry[], mutate: () => Promise<unknown>, fallback: string) => {
+    if (!id) return Promise.resolve();
+    const epoch = trackMutationEpochRef.current;
+    pendingTrackMutationsRef.current += 1;
     invalidateLoads();
-    const gen = loadGenRef.current;
+    trackMutationGenRef.current = loadGenRef.current;
     setTracks(next);
-    try {
-      await mutate();
-      if (routeIdRef.current !== id) return;
-      // A details action may have read rows before this mutation completed.
-      // Reconcile that rare overlap using the page's normal race-safe load.
-      if (gen !== loadGenRef.current) { await load(); return; }
-      const fresh = await api.listPlaylistTracksIfChanged(id);
-      if (gen !== loadGenRef.current) return;
-      trackEtagRef.current = fresh.etag;
-      const rows = fresh.tracks ?? next;
-      setTracks((previous) => reconcileItems(previous ?? [], rows));
-      updatePlaylists((listed) => listed?.map((row) => row.id === id ? { ...row, cover: coverFor(rows) } : row) ?? listed);
-      setError(null);
-    } catch (err) {
-      if (gen === loadGenRef.current) {
+    const run = async () => {
+      // Still sent after navigating away: the edit was the user's intent.
+      if (epoch !== trackMutationEpochRef.current || trackMutationErrorRef.current !== null) {
+        trackMutationErrorRef.current ??= fallback;
+      } else {
         try {
-          const fresh = await api.listPlaylistTracksIfChanged(id);
-          if (gen === loadGenRef.current && fresh.tracks) setTracks(fresh.tracks);
-        } catch { if (gen === loadGenRef.current) setTracks(tracks); }
-        if (gen === loadGenRef.current) setError(errorMessage(err, fallback));
+          await mutate();
+        } catch (err) {
+          trackMutationEpochRef.current += 1;
+          trackMutationErrorRef.current = errorMessage(err, fallback);
+        }
       }
-    } finally {
-      trackMutationRef.current = false;
-    }
+      pendingTrackMutationsRef.current -= 1;
+      if (pendingTrackMutationsRef.current > 0 || routeIdRef.current !== id) return;
+      const failure = trackMutationErrorRef.current;
+      trackMutationErrorRef.current = null;
+      if (failure !== null) {
+        await load();
+        // Edits made while this reload was out still saw the failed rows.
+        trackMutationEpochRef.current += 1;
+        setError(failure);
+        return;
+      }
+      // A details action reloaded while edits were pending: its load left
+      // the rows alone, so read everything again after the last edit.
+      if (loadGenRef.current !== trackMutationGenRef.current) {
+        await load();
+        return;
+      }
+      const gen = loadGenRef.current;
+      try {
+        const fresh = await api.listPlaylistTracksIfChanged(id);
+        if (gen !== loadGenRef.current || pendingTrackMutationsRef.current > 0) return;
+        trackEtagRef.current = fresh.etag;
+        const rows = fresh.tracks ?? next;
+        setTracks((previous) => reconcileItems(previous ?? [], rows));
+        updatePlaylists((listed) => listed?.map((row) => row.id === id ? { ...row, cover: coverFor(rows) } : row) ?? listed);
+        setError(null);
+      } catch {
+        // The edits went through; the optimistic rows already match them.
+      }
+    };
+    const job = trackMutationsRef.current.then(run);
+    trackMutationsRef.current = job.catch(() => {});
+    return job;
   };
   const onRemove = async (position: number) => {
     if (!id || !tracks) return;
@@ -397,7 +431,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     const next = [...tracks];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
-    await commitTracks(next.map((track, position) => ({ ...track, position })), () => api.reorderPlaylist(id, next.map((track) => track.track_id)), "Failed to reorder tracks.");
+    await commitTracks(next.map((track, position) => track.position === position ? track : { ...track, position }), () => api.reorderPlaylist(id, next.map((track) => track.track_id)), "Failed to reorder tracks.");
   };
 
   // Dragging only makes sense against the saved order with nothing filtered

@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useLastFMConnection } from "@music-library/core";
 import { useTheme, type Density, type Layout, type Theme } from "../context/Theme";
-import { useAudioOutputDevices } from "../lib/audioOutput";
+import { useAudioOutput, useAudioOutputDevices } from "../lib/audioOutput";
 import { useKey, useModalKeyScope } from "../lib/keybindings";
 import { trapTab } from "../lib/focusTrap";
 import { openExternal } from "../lib/platform";
@@ -89,7 +89,7 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
     setDensity,
     setLayout,
   } = useTheme();
-  const audioOut = useAudioOutputDevices(open);
+  const { supported: audioOutputSupported } = useAudioOutput();
   const {
     status: lastFM,
     busy: lastFMBusy,
@@ -267,31 +267,12 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
       id: "playback",
       title: "Playback",
       icon: SpeakerIcon,
-      settings: audioOut.supported
+      settings: audioOutputSupported
         ? [
             {
               id: "output",
               keywords: "output device audio speaker headphones sound",
-              render: () => (
-                <SettingRow
-                  label="Output device"
-                  description="Where Lumen plays audio."
-                  error={audioOut.error}
-                >
-                  <Select
-                    variant="minimal"
-                    aria-label="Audio output device"
-                    value={audioOut.deviceId}
-                    options={[
-                      { value: "", label: "System default" },
-                      ...audioOut.devices
-                        .filter((d) => d.deviceId && d.deviceId !== "default")
-                        .map((d) => ({ value: d.deviceId, label: d.label })),
-                    ]}
-                    onChange={(id) => void audioOut.selectDevice(id)}
-                  />
-                </SettingRow>
-              ),
+              render: () => <OutputDeviceSetting />,
             },
           ]
         : [],
@@ -558,4 +539,31 @@ function focusOrOpener(el: HTMLElement): boolean {
     }
   }
   return false;
+}
+
+/** Mounted only while its row is shown, so listing devices (which may ask
+ *  for the microphone to reveal their names) waits for the Playback section
+ *  or a search that finds it. */
+function OutputDeviceSetting() {
+  const audioOut = useAudioOutputDevices();
+  return (
+    <SettingRow
+      label="Output device"
+      description="Where Lumen plays audio."
+      error={audioOut.error}
+    >
+      <Select
+        variant="minimal"
+        aria-label="Audio output device"
+        value={audioOut.deviceId}
+        options={[
+          { value: "", label: "System default" },
+          ...audioOut.devices
+            .filter((d) => d.deviceId && d.deviceId !== "default")
+            .map((d) => ({ value: d.deviceId, label: d.label })),
+        ]}
+        onChange={(id) => void audioOut.selectDevice(id)}
+      />
+    </SettingRow>
+  );
 }

@@ -6,12 +6,12 @@ import TrackList from "../components/TrackList";
 import ListPageHeader from "../components/ListPageHeader";
 import ErrorBanner from "../components/ErrorBanner";
 import EmptyState from "../components/EmptyState";
-import { usePlayer } from "../context/Player";
+import { usePlayerControls } from "../context/Player";
 import { useApiResource } from "../lib/useApiResource";
 import { pluralize } from "../lib/format";
 
 export default function Recent() {
-  const { play } = usePlayer();
+  const { play } = usePlayerControls();
   const { data: tracks, error } = useApiResource<TrackListItem[]>(
     (signal) => api.listRecent(100, { signal }),
     "Failed to load recent plays.",

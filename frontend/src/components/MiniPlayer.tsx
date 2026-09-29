@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useRef } from "react";
 import RemoteControlIndicator from "./RemoteControlIndicator";
 import {
   Minimize2 as ArrowsPointingInIcon,
@@ -56,14 +57,25 @@ export default function MiniPlayer() {
   } = useMiniPlayerMode();
   const canResizeWindow = canSetMiniPlayer();
   const lyricsToggle = miniPlayerMode ? panelToggle("lyrics") : null;
-  const externalQueue: ExternalQueue | undefined = isFH6Mode
-    ? {
-        title: "Lumen Radio Queue",
-        tracks: fh6Snapshot?.queue ?? [],
-        currentIndex: fh6Snapshot?.currentIndex ?? 0,
-        onJump: (index) => void fh6Transport("jump", { index }),
-      }
-    : undefined;
+  // Kept stable between bridge polls so the memoized queue list can skip them.
+  const fh6TransportRef = useRef(fh6Transport);
+  useEffect(() => {
+    fh6TransportRef.current = fh6Transport;
+  });
+  const fh6Queue = fh6Snapshot?.queue;
+  const fh6Index = fh6Snapshot?.currentIndex;
+  const externalQueue = useMemo<ExternalQueue | undefined>(
+    () =>
+      isFH6Mode
+        ? {
+            title: "Lumen Radio Queue",
+            tracks: fh6Queue ?? [],
+            currentIndex: fh6Index ?? 0,
+            onJump: (index) => void fh6TransportRef.current("jump", { index }),
+          }
+        : undefined,
+    [isFH6Mode, fh6Queue, fh6Index],
+  );
 
   return (
     <div className="player-shell">

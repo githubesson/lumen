@@ -61,12 +61,12 @@ describe("complete favorites", () => {
   it("includes favorites beyond the server's default page", async () => {
     const fetchMock = vi.fn(async (path: string) => {
       const offset = Number(new URL(path, "https://test.invalid").searchParams.get("offset"));
-      return Response.json(Array.from({ length: offset === 0 ? 200 : 17 }, (_, index) => ({ id: String(offset + index) })));
+      return Response.json(Array.from({ length: offset === 0 ? 500 : 17 }, (_, index) => ({ id: String(offset + index) })));
     });
     vi.stubGlobal("fetch", fetchMock);
-    expect(await api.listFavorites()).toHaveLength(217);
+    expect(await api.listFavorites()).toHaveLength(517);
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
-      "/api/favorites?limit=200&offset=0", "/api/favorites?limit=200&offset=200",
+      "/api/favorites?limit=500&offset=0", "/api/favorites?limit=500&offset=500",
     ]);
   });
   it("handles an unchanged playlist without parsing an empty response", async () => {

@@ -30,13 +30,13 @@ import { useHtmlAudioAdapter } from "../adapters/html-audio-adapter";
 import { AudioOutputProvider } from "../lib/audioOutput";
 import { useKey } from "../lib/keybindings";
 import { isElectron } from "../lib/platform";
+import { usePageVisible } from "../lib/usePageVisible";
 import { useAuth } from "./Auth";
 
 type Ctx = PlayerState & PlayerControls;
 type RemotePlaybackCtxValue = {
   deviceId: string | null;
   connected: boolean;
-  devices: PlaybackDevice[];
   remoteDevices: PlaybackDevice[];
   targetDeviceId: string | null;
   targetDevice: PlaybackDevice | null;
@@ -82,9 +82,13 @@ const webStorage = asyncifySyncStorage({
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const { status, me } = useAuth();
   const { adapter, audioRefs } = useHtmlAudioAdapter();
+  // Nothing shows the clock while the page is hidden; like mobile's
+  // app-state gate, stop sampling it until the page is visible again.
+  const pageVisible = usePageVisible();
   const { state, controls, time } = usePlayerCore({
     adapter,
     storage: webStorage,
+    interpolateProgress: pageVisible,
   });
   usePlaybackActivityPublisher({
     state,
@@ -123,12 +127,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  // Destructured so this callback's identity tracks only the fields it reads.
-  // Depending on `state` wholesale would also rebuild it on every queue change,
-  // and it is handed to consumers through the remote-playback context.
-  const { isPlaying, muted, repeat, shuffle, volume } = state;
+  // Read through a ref so this callback, handed to consumers through the
+  // remote-playback context, keeps its identity while playback state moves
+  // (every volume step would otherwise re-render every device-aware view).
+  const selectTargetInputs = useRef({ controls, remoteDevices, state });
+  useEffect(() => {
+    selectTargetInputs.current = { controls, remoteDevices, state };
+  });
   const selectTarget = useCallback(
     (nextDeviceId: string | null) => {
+      const { controls, remoteDevices, state } = selectTargetInputs.current;
+      const { isPlaying, muted, repeat, shuffle, volume } = state;
       if (nextDeviceId && isPlaying) controls.pause();
       setTargetDeviceId(nextDeviceId);
       seedControlled(
@@ -138,17 +147,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         ),
       );
     },
-    [
-      controls,
-      isPlaying,
-      muted,
-      remoteDevices,
-      repeat,
-      seedControlled,
-      setTargetDeviceId,
-      shuffle,
-      volume,
-    ],
+    [seedControlled, setTargetDeviceId],
   );
 
   // Destructure the media-session inputs so the effect tracks exactly what it
@@ -272,9 +271,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     () => ({ ...displayedState, ...routedControls }),
     [displayedState, routedControls],
   );
+  const { deviceId: remoteDeviceId, connected: remoteConnected } = remoteSession;
   const remoteValue = useMemo<RemotePlaybackCtxValue>(
     () => ({
-      ...remoteSession,
+      // Fields named outright: the session's full device list (this device
+      // included) changes on every heartbeat and nothing here reads it.
+      deviceId: remoteDeviceId,
+      connected: remoteConnected,
       remoteDevices,
       targetDeviceId,
       targetDevice,
@@ -291,8 +294,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       commandPending,
       controlled,
       lastCommandResult,
+      remoteConnected,
+      remoteDeviceId,
       remoteDevices,
-      remoteSession,
       selectTarget,
       sendCommand,
       targetDevice,

@@ -13,10 +13,18 @@ it("prefetches within the scroll container and retains loaded pages on backgroun
     observe() {}
     disconnect() {}
   });
+  // `.content` scrolls; `.view` inside it has overflow-x hidden, which makes
+  // its overflow-y compute to auto although it never scrolls. Rooting the
+  // observer there made the sentinel always visible and loaded every page.
   const scroll = document.createElement("div");
   scroll.style.overflowY = "auto";
+  Object.defineProperty(scroll, "clientHeight", { value: 400 });
+  Object.defineProperty(scroll, "scrollHeight", { value: 4000 });
+  const view = document.createElement("div");
+  view.style.overflowY = "auto";
   const sentinel = document.createElement("div");
-  scroll.append(sentinel);
+  view.append(sentinel);
+  scroll.append(view);
   document.body.append(scroll);
   const all = Array.from({ length: 6 }, (_, index) => ({ id: String(index), title: "Song" }));
   const fetcher = vi.fn(async ({ offset, limit }: { offset: number; limit: number }) => ({ items: all.slice(offset, offset + limit).map((item) => ({ ...item })), total: all.length }));
