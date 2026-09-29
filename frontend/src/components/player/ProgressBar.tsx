@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { usePlayerControls, usePlayerTime } from "../../context/Player";
 import { fmtDurationSec } from "../../lib/format";
 import SeekBar from "./SeekBar";
@@ -5,11 +6,13 @@ import SeekBar from "./SeekBar";
 /**
  * Seeks somewhere other than local playback. Without a position, the bar
  * shows `usePlayerTime`, which already follows (and ticks for) a remote
- * target, so it needs no clock of its own.
+ * target. A polled position (Lumen Radio) passes `sampledAt`, when it was
+ * read, while playing, and the bar advances it until the next poll.
  */
 export type ProgressOverride = {
   currentTime?: number;
   duration?: number;
+  sampledAt?: number;
   onSeek: (seconds: number) => void;
 };
 
@@ -22,7 +25,18 @@ export default function ProgressBar({
 }) {
   const { currentTime, duration } = usePlayerTime();
   const { seek } = usePlayerControls();
-  const shownCurrentTime = override?.currentTime ?? currentTime;
+  const sampledAt = override?.sampledAt;
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (sampledAt === undefined) return;
+    const interval = setInterval(() => setClock(Date.now()), 250);
+    return () => clearInterval(interval);
+  }, [sampledAt]);
+  const elapsed = sampledAt !== undefined ? Math.max(0, (clock - sampledAt) / 1000) : 0;
+  const shownCurrentTime =
+    override?.currentTime !== undefined
+      ? Math.min(override.duration || Infinity, override.currentTime + elapsed)
+      : currentTime;
   const shownDuration = override?.duration ?? duration;
   const progress = shownDuration > 0 ? shownCurrentTime / shownDuration : 0;
   const remainingTime =

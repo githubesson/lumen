@@ -113,3 +113,15 @@ it("lets the menu retry a failed shared request", async () => {
   expect(screen.getByRole("menuitem", { name: "Editable" })).toBeTruthy();
   expect(mock.list).toHaveBeenCalledTimes(3);
 });
+
+it("keeps stale rows disabled after a failed refresh until a retry succeeds", async () => {
+  mock.list.mockResolvedValueOnce([playlist]).mockRejectedValueOnce(new Error("Offline"));
+  renderMenu();
+  await act(async () => {});
+  fireEvent.click(screen.getByText("Toggle menu"));
+  await act(async () => {});
+  expect(screen.getByRole("alert").textContent).toBe("Could not load playlists.");
+  expect((screen.getByRole("menuitem", { name: "Editable" }) as HTMLButtonElement).disabled).toBe(true);
+  await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Retry playlists" })); });
+  expect((screen.getByRole("menuitem", { name: "Editable" }) as HTMLButtonElement).disabled).toBe(false);
+});

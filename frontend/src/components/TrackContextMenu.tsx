@@ -90,7 +90,12 @@ export default function TrackContextMenu({
   const ref = useRef<HTMLDivElement>(null);
   const [coords, setCoords] = useState({ x, y });
 
-  const { data: playlists, error: playlistsError, reload: reloadPlaylists } = usePlaylists();
+  const {
+    data: playlists,
+    error: playlistsError,
+    loading: playlistsLoading,
+    reload: reloadPlaylists,
+  } = usePlaylists();
   const playlistsChanged = useRef(false);
   const menuClosed = useRef(false);
   const [addingId, setAddingId] = useState<string | null>(null);
@@ -101,8 +106,9 @@ export default function TrackContextMenu({
   const [error, setError] = useState<string | null>(null);
 
   // Another client may have changed the playlists since the shell loaded
-  // them, so revalidate on open. The add buttons wait for the fresh list so a
-  // click can't land on a row that moves under the cursor when it arrives.
+  // them, so revalidate on open. The add buttons wait for a successful fresh
+  // read: a row can't move under the cursor when it arrives, and after a
+  // failed read (or during a retry) the stale rows can't be acted on.
   const [playlistsFresh, setPlaylistsFresh] = useState(false);
   useEffect(() => {
     let active = true;
@@ -113,6 +119,8 @@ export default function TrackContextMenu({
       active = false;
     };
   }, [reloadPlaylists]);
+
+  const canAddToPlaylists = playlistsFresh && !playlistsLoading && !playlistsError;
 
   // Adding tracks changes the server's playlist order. Refresh after closing
   // so a second click cannot land on a different playlist under the cursor.
@@ -472,7 +480,7 @@ export default function TrackContextMenu({
                 role="menuitem"
                 className="ctx-item"
                 onClick={() => void runAddToPlaylist(p)}
-                disabled={busy || added || !playlistsFresh}
+                disabled={busy || added || !canAddToPlaylists}
               >
                 {added ? (
                   <CheckIcon className="size-3.5" />

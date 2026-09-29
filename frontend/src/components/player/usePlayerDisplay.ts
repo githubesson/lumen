@@ -100,6 +100,8 @@ export function usePlayerDisplay() {
       ? {
           currentTime: (fh6Track?.position_ms ?? 0) / 1000,
           duration: (fh6Track?.duration_ms ?? 0) / 1000,
+          // The bridge is polled every 2.5 s; advance between polls.
+          sampledAt: fh6Playing ? fh6Snapshot?.receivedAt : undefined,
           onSeek: (seconds) =>
             void fh6Transport("seek", {
               position_ms: Math.round(seconds * 1000),

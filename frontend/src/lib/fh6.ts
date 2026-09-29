@@ -52,6 +52,8 @@ export interface FH6Snapshot {
   state: FH6BridgeState | null;
   queue?: FH6QueueTrack[];
   currentIndex?: number;
+  /** When this snapshot arrived (ms since epoch), set by `useFH6Snapshot`. */
+  receivedAt?: number;
 }
 
 export const FH6_DEFAULT_BRIDGE_URL = "http://127.0.0.1:8420";
@@ -68,7 +70,9 @@ export function useFH6Snapshot(): FH6Snapshot | null {
   const [snapshot, setSnapshot] = useState<FH6Snapshot | null>(null);
   useEffect(() => {
     const onSnapshot = (event: Event) => {
-      setSnapshot((event as CustomEvent<FH6Snapshot | null>).detail);
+      const detail = (event as CustomEvent<FH6Snapshot | null>).detail;
+      // Stamped so the progress bar can advance the position between polls.
+      setSnapshot(detail ? { ...detail, receivedAt: Date.now() } : null);
     };
     window.addEventListener(SNAPSHOT_EVENT, onSnapshot);
     return () => window.removeEventListener(SNAPSHOT_EVENT, onSnapshot);
