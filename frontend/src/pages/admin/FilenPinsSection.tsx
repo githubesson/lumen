@@ -14,6 +14,8 @@ import { PinCreateForm, usePinForm, type RootOption } from "./PinCreateForm";
  * Filen shares: pin a Filen file/folder link to a configured source folder and
  * manage its scan lifecycle + download history.
  */
+const pinName = (pin: FilenPin) => pin.label || "Filen share";
+
 export function FilenPinsSection({
   rootOptions,
   defaultRootPath,
@@ -102,10 +104,11 @@ export function FilenPinsSection({
         rowKey={(pin) =>
           (pin.id?.trim() ?? "") || `${pin.share_url}:${pin.destination_path}`
         }
+        rowName={pinName}
         renderLead={(pin) => (
           <>
             <td>
-              <div className="track-title">{pin.label || "Filen share"}</div>
+              <div className="track-title">{pinName(pin)}</div>
               <div
                 className="track-sub mono"
                 style={{ wordBreak: "break-all" }}

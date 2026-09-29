@@ -117,8 +117,12 @@
 .iconbtn.active {
   background: var(--muted);
 }
+.iconbtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 /* Destructive row actions stay quiet until pointed at. */
-.iconbtn-danger:hover {
+.iconbtn-danger:hover:not(:disabled) {
   color: var(--destructive);
   background: var(--destructive-soft);
 }
@@ -148,7 +152,25 @@
   min-width: 720px;
 }
 
-/* Configured music folders: name over path, then the numbers. */
+/* Row actions in admin tables: icon buttons that stay muted until hovered. */
+.admin-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+.admin-actions .iconbtn {
+  color: var(--muted-foreground);
+}
+.admin-actions .iconbtn:hover:not(:disabled),
+.admin-actions .iconbtn.active {
+  color: var(--foreground);
+}
+.admin-actions .iconbtn-danger:hover:not(:disabled) {
+  color: var(--destructive);
+}
+.table .col-acts:has(.admin-actions) {
+  white-space: nowrap;
+}
+
 .table .col-num {
   width: 96px;
   text-align: right;
@@ -157,27 +179,34 @@
 .table tbody td.col-num {
   color: var(--foreground);
 }
-.roots-table tbody tr {
+/* Admin tables whose rows aren't clickable, with two-line cells. */
+.table-static tbody tr {
   cursor: default;
 }
-.roots-table tbody td {
+.table-static tbody td {
   padding-block: 8px;
 }
-.roots-table .iconbtn {
-  color: var(--muted-foreground);
-}
-.roots-table .iconbtn:hover {
-  color: var(--foreground);
-}
-.roots-table .iconbtn-danger:hover {
-  color: var(--destructive);
-}
-.roots-name {
+/* A row title with its exception badges (paused, missing, admin…). */
+.row-name {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.roots-missing {
+/* A stat number that opens its detail, e.g. "Errored 3" → the failed files. */
+.stat-link {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 4px;
+}
+.stat-link:hover {
+  text-decoration-style: solid;
+}
+.row-warning {
   display: inline-flex;
   align-items: center;
   gap: 4px;

@@ -1166,31 +1166,43 @@ func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string) (i
 	return tag.RowsAffected(), nil
 }
 
+// IngestError is the latest failure for one file. Every failed attempt (each
+// rescan retries) adds a row, so Attempts counts them.
 type IngestError struct {
-	ID        int64
-	FilePath  string
-	Error     string
-	CreatedAt time.Time
+	ID        int64     `json:"id"`
+	FilePath  string    `json:"file_path"`
+	Error     string    `json:"error"`
+	CreatedAt time.Time `json:"created_at"`
+	Attempts  int       `json:"attempts"`
 }
 
-func (s *Store) ListIngestErrors(ctx context.Context, limit int) ([]IngestError, error) {
+// ListIngestErrors returns the newest failure per file, most recent first, and
+// how many files have failed in all (which can exceed limit).
+func (s *Store) ListIngestErrors(ctx context.Context, limit int) ([]IngestError, int, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	rows, err := s.db.Query(ctx, `
-		SELECT id, file_path, error, created_at FROM ingest_errors
-		ORDER BY created_at DESC LIMIT $1`, limit)
+		SELECT id, file_path, error, created_at, attempts, total FROM (
+			SELECT DISTINCT ON (file_path) id, file_path, error, created_at,
+				COUNT(*) OVER (PARTITION BY file_path) AS attempts
+			FROM ingest_errors
+			ORDER BY file_path, created_at DESC, id DESC
+		) latest
+		CROSS JOIN (SELECT COUNT(DISTINCT file_path) AS total FROM ingest_errors) counted
+		ORDER BY created_at DESC, id DESC LIMIT $1`, limit)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
-	var out []IngestError
+	out := []IngestError{}
+	total := 0
 	for rows.Next() {
 		var e IngestError
-		if err := rows.Scan(&e.ID, &e.FilePath, &e.Error, &e.CreatedAt); err != nil {
-			return nil, err
+		if err := rows.Scan(&e.ID, &e.FilePath, &e.Error, &e.CreatedAt, &e.Attempts, &total); err != nil {
+			return nil, 0, err
 		}
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }

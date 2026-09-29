@@ -1,7 +1,6 @@
-import { useId, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import {
   RefreshCw as ArrowPathIcon,
-  ChevronRight as ChevronRightIcon,
   RotateCcw as RetryIcon,
 } from "lucide-react";
 import {
@@ -11,6 +10,7 @@ import {
   type TidalAutoDownloadStatus,
 } from "../../api";
 import { Button } from "../../components/Button";
+import Disclosure from "../../components/admin/Disclosure";
 import ErrorBanner from "../../components/ErrorBanner";
 import { Field, TextInput } from "../../components/Field";
 import { Select } from "../../components/Select";
@@ -44,8 +44,6 @@ export function TidalAutoDownloadCard({ roots }: { roots: MusicRoot[] | null }) 
   const setRootId = (value: string) => setEdits((e) => ({ ...e, rootId: value }));
   const setSubdir = (value: string) => setEdits((e) => ({ ...e, subdir: value }));
   const [busy, setBusy] = useState<"save" | "retry" | null>(null);
-  const [showRecent, setShowRecent] = useState(false);
-  const recentId = useId();
   const [actionError, setActionError] = useState<string | null>(null);
   const error = actionError ?? loadError;
 
@@ -212,65 +210,47 @@ export function TidalAutoDownloadCard({ roots }: { roots: MusicRoot[] | null }) 
         </div>
       )}
       {recent.length > 0 && (
-        <div style={{ display: "grid", gap: 8 }}>
-          <div>
-            {/* Pulled left by the button's padding so the chevron lines up
-                with the card's content edge. */}
-            <Button
-              variant="ghost"
-              size="sm"
-              style={{ marginLeft: -10 }}
-              aria-expanded={showRecent}
-              aria-controls={recentId}
-              onClick={() => setShowRecent((open) => !open)}
-              leadingIcon={
-                <ChevronRightIcon className="size-3.5 disclosure-chevron" aria-hidden="true" />
-              }
-            >
-              Recent downloads
-              <span style={{ color: "var(--muted-foreground)" }}>{recent.length}</span>
-            </Button>
-          </div>
-          <table id={recentId} className="table" hidden={!showRecent}>
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Track</th>
-                <th>File</th>
-                <th>Updated</th>
+        <Disclosure label="Recent downloads" count={recent.length}>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Track</th>
+              <th>File</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {recent.map((row) => (
+              <tr key={row.tidal_id}>
+                <td>
+                  <span className={"badge" + (row.status === "failed" ? "" : " badge-accent")}>
+                    {row.status === "existing" ? "in library" : row.status}
+                  </span>
+                  {row.error && (
+                    <div style={{ color: "var(--destructive)", fontSize: 12, marginTop: 4 }}>
+                      {row.error}
+                      {row.next_attempt_at && ` · retry ${formatDate(row.next_attempt_at)}`}
+                    </div>
+                  )}
+                </td>
+                <td>
+                  <div>{row.title || `TIDAL ${row.tidal_id}`}</div>
+                  {row.artist && (
+                    <div style={{ color: "var(--muted-foreground)", fontSize: 12 }}>
+                      {row.artist}
+                    </div>
+                  )}
+                </td>
+                <td className="font-mono" style={{ wordBreak: "break-all" }}>
+                  {row.file_path || "-"}
+                </td>
+                <td className="mono">{formatDate(row.updated_at)}</td>
               </tr>
-            </thead>
-            <tbody>
-              {recent.map((row) => (
-                <tr key={row.tidal_id}>
-                  <td>
-                    <span className={"badge" + (row.status === "failed" ? "" : " badge-accent")}>
-                      {row.status === "existing" ? "in library" : row.status}
-                    </span>
-                    {row.error && (
-                      <div style={{ color: "var(--destructive)", fontSize: 12, marginTop: 4 }}>
-                        {row.error}
-                        {row.next_attempt_at && ` · retry ${formatDate(row.next_attempt_at)}`}
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <div>{row.title || `TIDAL ${row.tidal_id}`}</div>
-                    {row.artist && (
-                      <div style={{ color: "var(--muted-foreground)", fontSize: 12 }}>
-                        {row.artist}
-                      </div>
-                    )}
-                  </td>
-                  <td className="font-mono" style={{ wordBreak: "break-all" }}>
-                    {row.file_path || "-"}
-                  </td>
-                  <td className="mono">{formatDate(row.updated_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </table>
+        </Disclosure>
       )}
     </section>
   );

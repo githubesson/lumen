@@ -10,6 +10,7 @@ import {
 import {
   api,
   errorMessage,
+  type IngestErrors,
   type MusicRoot,
   type MusicRootUsage,
   type RescanStatus,
@@ -21,8 +22,21 @@ import { libraryChanged } from "../../lib/events";
 import { fmtBytes } from "../../lib/format";
 import { useApiResource } from "../../lib/useApiResource";
 import { AdminSectionTitle } from "./AdminSectionTitle";
+import { INGEST_ERRORS_ID, IngestErrorsList } from "./IngestErrorsList";
+import { RemoveFolderDialog } from "./RemoveFolderDialog";
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({
+  label,
+  value,
+  onClick,
+  title,
+}: {
+  label: string;
+  value: number;
+  /** Makes the number a link to more detail. */
+  onClick?: () => void;
+  title?: string;
+}) {
   return (
     <div>
       <div
@@ -32,9 +46,27 @@ function Stat({ label, value }: { label: string; value: number }) {
         {label}
       </div>
       <div style={{ fontSize: 18, fontWeight: 600, color: "var(--foreground)" }}>
-        {value}
+        {onClick ? (
+          <button type="button" className="stat-link" onClick={onClick} title={title}>
+            {value}
+          </button>
+        ) : (
+          value
+        )}
       </div>
     </div>
+  );
+}
+
+/** A watched folder (other than root itself) that contains root, if any. */
+function coveringRoot(root: MusicRoot, roots: MusicRoot[]): MusicRoot | null {
+  const path = root.path.replace(/\/+$/, "");
+  return (
+    roots.find((other) => {
+      if (other === root || !other.enabled) return false;
+      const outer = other.path.replace(/\/+$/, "");
+      return path.startsWith(`${outer}/`);
+    }) ?? null
   );
 }
 
@@ -94,6 +126,24 @@ export function MusicRootsSection({
   );
   const usageByPath = new Map(usage?.roots.map((u) => [u.path, u]));
 
+  const { data: ingestErrors, reload: reloadErrors } = useApiResource<IngestErrors>(
+    (signal) => api.listIngestErrors({ signal }),
+    "Couldn't load import errors.",
+    { cacheKey: "admin:ingest-errors" },
+  );
+  const [showErrors, setShowErrors] = useState(false);
+  const openErrors = () => {
+    setShowErrors(true);
+    // After the list is un-hidden, so there's something to scroll to.
+    requestAnimationFrame(() => {
+      document.getElementById(INGEST_ERRORS_ID)?.scrollIntoView({ block: "nearest" });
+    });
+  };
+
+  // Stays set through the dialog's exit fade, so its text doesn't blank out.
+  const [removeTarget, setRemoveTarget] = useState<MusicRoot | null>(null);
+  const [removeOpen, setRemoveOpen] = useState(false);
+
   const loadStatus = useCallback(async () => {
     try {
       setRescan(await api.rescanStatus());
@@ -145,8 +195,9 @@ export function MusicRootsSection({
       wasRunningRef.current = false;
       refreshUsageRef.current = true;
       void reloadUsage();
+      void reloadErrors();
     }
-  }, [rescan, reloadUsage]);
+  }, [rescan, reloadUsage, reloadErrors]);
 
   const add = async (e: FormEvent) => {
     e.preventDefault();
@@ -175,26 +226,24 @@ export function MusicRootsSection({
     }
   };
 
-  const remove = async (r: MusicRoot) => {
-    if (
-      !window.confirm(
-        `Stop watching ${r.path}?\n\nThe watcher will no longer pick up changes in this folder.`,
-      )
-    )
-      return;
-    const purge = window.confirm(
-      `Also remove every track from "${r.path}" from your library?\n\nOK — delete those tracks from the library (you can re-add them by scanning the folder again).\nCancel — keep the existing DB entries even though the folder is gone.`,
-    );
+  const remove = (r: MusicRoot) => {
     onError("");
-    try {
-      const res = await api.deleteMusicRoot(r.id, { purge });
-      await reloadRoots();
-      void reloadUsage();
-      if (purge && res?.deleted_tracks) {
-        libraryChanged.emit();
-      }
-    } catch (err) {
-      onError(errorMessage(err, "Failed to remove root."));
+    setRemoveTarget(r);
+    setRemoveOpen(true);
+  };
+
+  const onRemoved = async ({
+    purged,
+    deletedTracks,
+  }: {
+    purged: boolean;
+    deletedTracks: number;
+  }) => {
+    setRemoveOpen(false);
+    await reloadRoots();
+    void reloadUsage();
+    if (purged && deletedTracks) {
+      libraryChanged.emit();
     }
   };
 
@@ -299,7 +348,7 @@ export function MusicRootsSection({
               : "Rescan all folders"}
           </Button>
         </div>
-        <table className="table roots-table">
+        <table className="table table-static">
           <thead>
             <tr>
               <th>Folder</th>
@@ -329,7 +378,7 @@ export function MusicRootsSection({
               return (
                 <tr key={r.id || "primary"}>
                   <td>
-                    <div className="roots-name">
+                    <div className="row-name">
                       <span className="track-title">
                         {r.primary ? "Primary" : r.label || basename(r.path)}
                       </span>
@@ -338,7 +387,7 @@ export function MusicRootsSection({
                       )}
                       {!r.exists && (
                         <span
-                          className="roots-missing"
+                          className="row-warning"
                           title="This directory does not exist on the server"
                         >
                           <ExclamationTriangleIcon className="size-3" aria-hidden="true" />
@@ -358,7 +407,7 @@ export function MusicRootsSection({
                   </td>
                   <td className="col-acts">
                     {!r.primary && (
-                      <div style={{ display: "inline-flex", gap: 2 }}>
+                      <div className="admin-actions">
                         <button
                           type="button"
                           className="iconbtn"
@@ -375,7 +424,7 @@ export function MusicRootsSection({
                         <button
                           type="button"
                           className="iconbtn iconbtn-danger"
-                          onClick={() => void remove(r)}
+                          onClick={() => remove(r)}
                           aria-label={`Remove ${r.path}`}
                           title="Remove folder"
                         >
@@ -394,6 +443,15 @@ export function MusicRootsSection({
             {usageError}
           </p>
         )}
+        {(ingestErrors?.total ?? 0) > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <IngestErrorsList
+              data={ingestErrors}
+              open={showErrors}
+              onOpenChange={setShowErrors}
+            />
+          </div>
+        )}
       </section>
 
       {rescan && !rescan.running && (rescan.processed ?? 0) > 0 && (
@@ -408,11 +466,29 @@ export function MusicRootsSection({
             <Stat label="Processed" value={rescan.processed ?? 0} />
             <Stat label="Inserted" value={rescan.inserted ?? 0} />
             <Stat label="Dedup" value={rescan.dedup ?? 0} />
-            <Stat label="Errored" value={rescan.errored ?? 0} />
+            <Stat
+              label="Errored"
+              value={rescan.errored ?? 0}
+              onClick={
+                (rescan.errored ?? 0) > 0 && (ingestErrors?.total ?? 0) > 0
+                  ? openErrors
+                  : undefined
+              }
+              title="Show the files that failed"
+            />
             <Stat label="Pruned" value={rescan.pruned ?? 0} />
           </div>
         </section>
       )}
+
+      <RemoveFolderDialog
+        key={removeTarget?.id}
+        root={removeTarget}
+        coveredBy={removeTarget && roots ? coveringRoot(removeTarget, roots) : null}
+        open={removeOpen}
+        onClose={() => setRemoveOpen(false)}
+        onRemoved={onRemoved}
+      />
     </>
   );
 }

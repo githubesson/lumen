@@ -15,6 +15,8 @@ import {
   TrackerFields,
 } from "./PinCreateForm";
 
+const pinName = (pin: APITrackerPin) => pin.label || pin.tracker_name || `Tracker ${pin.tracker_id}`;
+
 export function APITrackerPinsSection({
   rootOptions,
   defaultRootPath,
@@ -121,11 +123,12 @@ export function APITrackerPinsSection({
           (pin.id?.trim() ?? "") ||
           `${pin.api_base_url}:${pin.tracker_id}:${pin.destination_path}`
         }
+        rowName={pinName}
         renderLead={(pin) => (
           <>
             <td>
               <div className="track-title">
-                {pin.label || pin.tracker_name || `Tracker ${pin.tracker_id}`}
+                {pinName(pin)}
               </div>
               <div
                 className="track-sub mono"
