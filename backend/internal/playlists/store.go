@@ -822,12 +822,16 @@ func (s *Store) SuggestedHeir(ctx context.Context, playlistID uuid.UUID) (uuid.U
 // collaborator, their collaborator row is removed.
 func (s *Store) TransferOwnership(ctx context.Context, playlistID, newOwner uuid.UUID) error {
 	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `UPDATE playlists SET owner_id = $2, updated_at = NOW() WHERE id = $1`, playlistID, newOwner); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `DELETE FROM playlist_collaborators WHERE playlist_id = $1 AND user_id = $2`, playlistID, newOwner); err != nil {
-			return err
-		}
-		return nil
+		return TransferOwnershipTx(ctx, tx, playlistID, newOwner)
 	})
+}
+
+// TransferOwnershipTx is TransferOwnership inside the caller's transaction,
+// for when the handover is one step of something larger (deleting a user).
+func TransferOwnershipTx(ctx context.Context, tx pgx.Tx, playlistID, newOwner uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `UPDATE playlists SET owner_id = $2, updated_at = NOW() WHERE id = $1`, playlistID, newOwner); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `DELETE FROM playlist_collaborators WHERE playlist_id = $1 AND user_id = $2`, playlistID, newOwner)
+	return err
 }

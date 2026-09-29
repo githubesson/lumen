@@ -79,8 +79,6 @@ export function PinCreateForm({
   sourceField,
   beforeDestination,
   children,
-  destinationPlaceholder,
-  labelPlaceholder,
   submitLabel,
   hasSource,
   fieldMinWidth = 160,
@@ -90,8 +88,6 @@ export function PinCreateForm({
   sourceField: ReactNode;
   beforeDestination?: ReactNode;
   children?: ReactNode;
-  destinationPlaceholder: string;
-  labelPlaceholder: string;
   submitLabel: string;
   hasSource: boolean;
   fieldMinWidth?: number;
@@ -128,18 +124,15 @@ export function PinCreateForm({
         }}
       >
         {beforeDestination}
-        <Field
-          label="Destination subfolder"
-          hint="Relative to the selected source"
-        >
+        <Field label="Destination subfolder">
           <TextInput
             value={form.destinationSubdir}
             onChange={(e) => form.setDestinationSubdir(e.target.value)}
-            placeholder={destinationPlaceholder}
+            placeholder="Relative to source"
           />
         </Field>
         {children}
-        <Field label="Every" hint="Minutes">
+        <Field label="Every (minutes)">
           <TextInput
             type="number"
             min={5}
@@ -158,11 +151,11 @@ export function PinCreateForm({
         }}
       >
         <div style={{ flex: "1 1 260px" }}>
-          <Field label="Label" hint="Optional display name">
+          <Field label="Label">
             <TextInput
               value={form.label}
               onChange={(e) => form.setLabel(e.target.value)}
-              placeholder={labelPlaceholder}
+              placeholder="Optional display name"
             />
           </Field>
         </div>
@@ -184,28 +177,28 @@ export function TrackerFields({
   setTab,
   primaryArtist,
   setPrimaryArtist,
-  tabHint = "Optional",
+  tabPlaceholder = "Optional",
 }: {
   tab: string;
   setTab: (value: string) => void;
   primaryArtist: string;
   setPrimaryArtist: (value: string) => void;
-  tabHint?: string;
+  tabPlaceholder?: string;
 }) {
   return (
     <>
-      <Field label="Tab" hint={tabHint}>
+      <Field label="Tab">
         <TextInput
           value={tab}
           onChange={(e) => setTab(e.target.value)}
-          placeholder="Leaks"
+          placeholder={tabPlaceholder}
         />
       </Field>
-      <Field label="Primary artist" hint="Optional override">
+      <Field label="Primary artist">
         <TextInput
           value={primaryArtist}
           onChange={(e) => setPrimaryArtist(e.target.value)}
-          placeholder="Artist"
+          placeholder="Optional override"
         />
       </Field>
     </>

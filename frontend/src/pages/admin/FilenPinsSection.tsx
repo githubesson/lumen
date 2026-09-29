@@ -14,6 +14,10 @@ import { PinCreateForm, usePinForm, type RootOption } from "./PinCreateForm";
  * Filen shares: pin a Filen file/folder link to a configured source folder and
  * manage its scan lifecycle + download history.
  */
+const pinName = (pin: FilenPin) => pin.label || "Filen share";
+// Unlabeled shares would all be "Filen share"; their buttons need to differ.
+const pinActionName = (pin: FilenPin) => pin.label || pin.share_url;
+
 export function FilenPinsSection({
   rootOptions,
   defaultRootPath,
@@ -72,27 +76,25 @@ export function FilenPinsSection({
       <PinCreateForm
         form={form}
         rootOptions={rootOptions}
-        destinationPlaceholder="Filen"
-        labelPlaceholder="Filen share"
         submitLabel="Pin share"
         hasSource={!!filenURL.trim()}
         sourceField={
-          <Field label="Filen share URL" hint="File or folder public link">
+          <Field label="Filen share URL">
             <TextInput
               value={filenURL}
               onChange={(e) => setFilenURL(e.target.value)}
-              placeholder="https://drive.filen.io/f/..."
+              placeholder="File or folder public link"
               required
             />
           </Field>
         }
       >
-        <Field label="Password" hint="Optional">
+        <Field label="Password">
           <TextInput
             type="password"
             value={filenPassword}
             onChange={(e) => setFilenPassword(e.target.value)}
-            placeholder="Protected link password"
+            placeholder="Optional"
           />
         </Field>
       </PinCreateForm>
@@ -104,10 +106,11 @@ export function FilenPinsSection({
         rowKey={(pin) =>
           (pin.id?.trim() ?? "") || `${pin.share_url}:${pin.destination_path}`
         }
+        rowName={pinActionName}
         renderLead={(pin) => (
           <>
             <td>
-              <div className="track-title">{pin.label || "Filen share"}</div>
+              <div className="track-title">{pinName(pin)}</div>
               <div
                 className="track-sub mono"
                 style={{ wordBreak: "break-all" }}

@@ -19,6 +19,8 @@ import {
  * ArtistGrid trackers: pin a tracker to a configured source folder, manage its
  * scan lifecycle, and inspect recent downloads.
  */
+const pinName = (pin: ArtistGridPin) => pin.label || pin.tracker_id;
+
 export function ArtistGridPinsSection({
   rootOptions,
   defaultRootPath,
@@ -36,7 +38,7 @@ export function ArtistGridPinsSection({
     listDownloads: api.listArtistGridDownloads,
     kind: "tracker",
     confirmRemove: (pin) =>
-      `Remove tracker pin ${pin.label || pin.tracker_id}?\n\nDownloaded files stay on disk and remain in the library.`,
+      `Remove tracker pin ${pinName(pin)}?\n\nDownloaded files stay on disk and remain in the library.`,
     onError,
   });
 
@@ -83,20 +85,15 @@ export function ArtistGridPinsSection({
       <PinCreateForm
         form={form}
         rootOptions={rootOptions}
-        destinationPlaceholder="ArtistGrid"
-        labelPlaceholder="ArtistGrid"
         submitLabel="Pin tracker"
         hasSource={!!tracker.trim()}
         fieldMinWidth={140}
         sourceField={
-          <Field
-            label="Tracker URL or ID"
-            hint="ArtistGrid tracker link or raw tracker id"
-          >
+          <Field label="Tracker URL or ID">
             <TextInput
               value={tracker}
               onChange={(e) => setTracker(e.target.value)}
-              placeholder="https://artistgrid.cx/..."
+              placeholder="ArtistGrid tracker link or raw tracker id"
               required
             />
           </Field>
@@ -117,10 +114,11 @@ export function ArtistGridPinsSection({
         rowKey={(pin) =>
           (pin.id?.trim() ?? "") || `${pin.tracker_id}:${pin.destination_path}`
         }
+        rowName={pinName}
         renderLead={(pin) => (
           <>
             <td>
-              <div className="track-title">{pin.label || pin.tracker_id}</div>
+              <div className="track-title">{pinName(pin)}</div>
               <div className="track-sub mono">
                 {pin.tracker_id}
                 {pin.tab ? ` / ${pin.tab}` : ""}

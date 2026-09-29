@@ -223,6 +223,45 @@ describe("TIDAL account management", () => {
   });
 });
 
+describe("request deadlines", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  // Resolves with a body, or rejects once the request's signal aborts.
+  const hangingFetch = () =>
+    vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        }),
+    );
+
+  it("gives folder usage longer than the default 30s", async () => {
+    vi.useFakeTimers();
+    const fetchMock = hangingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const aborted = vi.fn();
+    api.musicRootUsage().catch(aborted);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(aborted).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(aborted).toHaveBeenCalled();
+  });
+
+  it("still aborts ordinary requests at 30s", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", hangingFetch());
+    const aborted = vi.fn();
+    api.listMusicRoots().catch(aborted);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(aborted).toHaveBeenCalled();
+  });
+});
+
 describe("search continuation and library sort", () => {
   afterEach(() => { vi.unstubAllGlobals(); });
   it("continues only the nonexhausted source using its own offset", async () => {

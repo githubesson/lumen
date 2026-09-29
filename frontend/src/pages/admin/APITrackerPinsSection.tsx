@@ -15,6 +15,8 @@ import {
   TrackerFields,
 } from "./PinCreateForm";
 
+const pinName = (pin: APITrackerPin) => pin.label || pin.tracker_name || `Tracker ${pin.tracker_id}`;
+
 export function APITrackerPinsSection({
   rootOptions,
   defaultRootPath,
@@ -82,28 +84,23 @@ export function APITrackerPinsSection({
       <PinCreateForm
         form={form}
         rootOptions={rootOptions}
-        destinationPlaceholder="API Trackers"
-        labelPlaceholder="API tracker"
         submitLabel="Pin tracker"
         hasSource={!!tracker.trim()}
         beforeDestination={
-          <Field label="API base URL" hint="Optional">
+          <Field label="API base URL">
             <TextInput
               value={apiBaseURL}
               onChange={(e) => setApiBaseURL(e.target.value)}
-              placeholder="https://trackers.musicfiles.su/api"
+              placeholder="Optional"
             />
           </Field>
         }
         sourceField={
-          <Field
-            label="Tracker URL or ID"
-            hint="Tracker API /v1/trackers/:id link or raw id"
-          >
+          <Field label="Tracker URL or ID">
             <TextInput
               value={tracker}
               onChange={(e) => setTracker(e.target.value)}
-              placeholder="https://trackers.musicfiles.su/api/v1/trackers/1"
+              placeholder="Tracker API /v1/trackers/:id link or raw id"
               required
             />
           </Field>
@@ -114,7 +111,7 @@ export function APITrackerPinsSection({
           setTab={setTab}
           primaryArtist={primaryArtist}
           setPrimaryArtist={setPrimaryArtist}
-          tabHint="Optional sheet name"
+          tabPlaceholder="Optional sheet name"
         />
       </PinCreateForm>
 
@@ -126,11 +123,12 @@ export function APITrackerPinsSection({
           (pin.id?.trim() ?? "") ||
           `${pin.api_base_url}:${pin.tracker_id}:${pin.destination_path}`
         }
+        rowName={pinName}
         renderLead={(pin) => (
           <>
             <td>
               <div className="track-title">
-                {pin.label || pin.tracker_name || `Tracker ${pin.tracker_id}`}
+                {pinName(pin)}
               </div>
               <div
                 className="track-sub mono"

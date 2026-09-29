@@ -1,12 +1,21 @@
 package handlers
 
 import (
+	"context"
+	"errors"
+	"io/fs"
+	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/githubesson/lumen/internal/dbutil"
+	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/models"
 	"github.com/githubesson/lumen/internal/playlists"
 	"github.com/githubesson/lumen/internal/users"
@@ -16,6 +25,10 @@ type AdminUsers struct {
 	DB        *pgxpool.Pool
 	Users     *users.Store
 	Playlists *playlists.Store
+	// Library and MusicRoot let Delete remove the user's uploaded files; with
+	// either unset the files are left on disk.
+	Library   *library.Store
+	MusicRoot string
 }
 
 type ownedPlaylistItem struct {
@@ -126,63 +139,146 @@ func (h *AdminUsers) Delete(w http.ResponseWriter, r *http.Request) {
 		dispoByID[pid] = d
 	}
 
-	owned, err := h.Playlists.OwnedPlaylists(r.Context(), uid)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+	newOwners := map[uuid.UUID]uuid.UUID{}
+	for pid, d := range dispoByID {
+		if d.Action != "transfer" {
+			continue
+		}
+		newOwner, err := uuid.Parse(d.NewOwnerID)
+		if err != nil {
+			http.Error(w, "bad new_owner_id", http.StatusBadRequest)
+			return
+		}
+		if newOwner == uid {
+			http.Error(w, "cannot transfer to the user being deleted", http.StatusBadRequest)
+			return
+		}
+		newOwners[pid] = newOwner
 	}
 
-	// Validate all owned playlists have a disposition.
-	missing := false
-	for _, p := range owned {
-		if _, ok := dispoByID[p.ID]; !ok {
-			missing = true
-			break
+	// Every handover and the delete itself commit together or not at all, so
+	// a failure can't leave some playlists moved or gone and the user intact.
+	err = dbutil.WithTx(r.Context(), h.DB, func(tx pgx.Tx) error {
+		if err := keepAnAdmin(r.Context(), tx, uid); err != nil {
+			return err
 		}
-	}
-	if missing {
+		// Lock the account. Creating a playlist takes a key-share lock
+		// on its owner's row, so no playlist can appear for them from here on;
+		// one being created right now commits first and is listed below.
+		if _, err := tx.Exec(r.Context(), `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, uid); err != nil {
+			return err
+		}
+		rows, err := tx.Query(r.Context(), `SELECT id FROM playlists WHERE owner_id = $1 FOR UPDATE`, uid)
+		if err != nil {
+			return err
+		}
+		owned, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return err
+		}
+		for _, pid := range owned {
+			if _, ok := dispoByID[pid]; !ok {
+				return errMissingDisposition
+			}
+		}
+		for _, pid := range owned {
+			newOwner, transfer := newOwners[pid]
+			if !transfer {
+				if _, err := tx.Exec(r.Context(), `DELETE FROM playlists WHERE id = $1`, pid); err != nil {
+					return err
+				}
+				continue
+			}
+			var exists bool
+			if err := tx.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)`, newOwner).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return errNewOwnerNotFound
+			}
+			if err := playlists.TransferOwnershipTx(r.Context(), tx, pid, newOwner); err != nil {
+				return err
+			}
+		}
+		// `users.id` has ON DELETE CASCADE for sessions and their own tracks;
+		// invites.created_by / tracks.added_by become NULL.
+		_, err = tx.Exec(r.Context(), `DELETE FROM users WHERE id = $1`, uid)
+		return err
+	})
+	switch {
+	case errors.Is(err, errMissingDisposition):
+		owned, err := h.Playlists.OwnedPlaylists(r.Context(), uid)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 		h.writePreview(w, r, target, owned)
 		return
-	}
-
-	// Apply dispositions in a single tx per playlist — simpler, and keeps the
-	// final user delete small.
-	for _, p := range owned {
-		d := dispoByID[p.ID]
-		switch d.Action {
-		case "transfer":
-			newOwner, err := uuid.Parse(d.NewOwnerID)
-			if err != nil {
-				http.Error(w, "bad new_owner_id", http.StatusBadRequest)
-				return
-			}
-			if newOwner == uid {
-				http.Error(w, "cannot transfer to the user being deleted", http.StatusBadRequest)
-				return
-			}
-			if _, err := h.Users.ByID(r.Context(), newOwner); err != nil {
-				http.Error(w, "new_owner_id not found", http.StatusBadRequest)
-				return
-			}
-			if err := h.Playlists.TransferOwnership(r.Context(), p.ID, newOwner); err != nil {
-				http.Error(w, "internal error", http.StatusInternalServerError)
-				return
-			}
-		case "delete":
-			if err := h.Playlists.Delete(r.Context(), p.ID); err != nil {
-				http.Error(w, "internal error", http.StatusInternalServerError)
-				return
-			}
-		}
-	}
-
-	// Finally, delete the user. `users.id` has ON DELETE CASCADE for sessions;
-	// invites.created_by / tracks.added_by become NULL.
-	if _, err := h.DB.Exec(r.Context(), `DELETE FROM users WHERE id = $1`, uid); err != nil {
+	case errors.Is(err, errNewOwnerNotFound):
+		http.Error(w, "new_owner_id not found", http.StatusBadRequest)
+		return
+	case errors.Is(err, errLastAdmin):
+		http.Error(w, "cannot delete the last enabled admin", http.StatusBadRequest)
+		return
+	case errors.Is(err, errUserNotFound):
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	case err != nil:
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+
+	// The account is gone, so say so now rather than after the file cleanup,
+	// which mustn't die with the request either (a closed tab, the deadline).
 	w.WriteHeader(http.StatusNoContent)
+	_ = http.NewResponseController(w).Flush()
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+	defer cancel()
+	h.removeUploads(cleanupCtx, uid)
+}
+
+var (
+	errMissingDisposition = errors.New("an owned playlist has no disposition")
+	errNewOwnerNotFound   = errors.New("new owner not found")
+	errLastAdmin          = errors.New("no other enabled admin would remain")
+	errUserNotFound       = errors.New("user not found")
+)
+
+// removeUploads empties a deleted user's upload folder, MUSIC_ROOT/.users/<id>/,
+// except for files a remaining track or alias still points at: a personal
+// upload can have been adopted by a global track, and that file must stay.
+// It checks every file there rather than the ones the user's rows named,
+// since a duplicate upload ingest couldn't unlink has no row at all. Failures
+// are logged, not surfaced: the account is already gone and .users/ is never
+// scanned, so a leftover file is only wasted space.
+func (h *AdminUsers) removeUploads(ctx context.Context, uid uuid.UUID) {
+	if h.Library == nil || h.MusicRoot == "" {
+		return
+	}
+	userDir := filepath.Join(h.MusicRoot, ".users", uid.String())
+	var dirs []string
+	_ = filepath.WalkDir(userDir, func(p string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return nil
+		case d.IsDir():
+			dirs = append(dirs, p)
+			return nil
+		case !d.Type().IsRegular():
+			return nil // symlinks and the like: not uploads, not ours to follow
+		}
+		if inUse, err := h.Library.FilePathInUse(ctx, p); err != nil || inUse {
+			return nil
+		}
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("delete user: removing an uploaded file failed", "path", p, "user", uid, "err", err)
+		}
+		return nil
+	})
+	// Deepest first. Only empty folders go, which leaves adopted files in place.
+	for i := len(dirs) - 1; i >= 0; i-- {
+		_ = os.Remove(dirs[i])
+	}
 }
 
 // DisableUser sets disabled=true; existing sessions are revoked. Refuses to
@@ -202,36 +298,62 @@ func (h *AdminUsers) Disable(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot disable yourself", http.StatusBadRequest)
 		return
 	}
-	target, err := h.Users.ByID(r.Context(), uid)
-	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	if target.Role == models.RoleAdmin {
-		var others int
-		err := h.DB.QueryRow(r.Context(),
-			`SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = FALSE AND id <> $1`,
-			uid).Scan(&others)
+	err := dbutil.WithTx(r.Context(), h.DB, func(tx pgx.Tx) error {
+		if err := keepAnAdmin(r.Context(), tx, uid); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(r.Context(), `UPDATE users SET disabled = TRUE, updated_at = NOW() WHERE id = $1`, uid)
 		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
+			return err
 		}
-		if others == 0 {
-			http.Error(w, "cannot disable the last enabled admin", http.StatusBadRequest)
-			return
+		if tag.RowsAffected() == 0 {
+			return errUserNotFound
 		}
-	}
-	tag, err := h.DB.Exec(r.Context(), `UPDATE users SET disabled = TRUE, updated_at = NOW() WHERE id = $1`, uid)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	if tag.RowsAffected() == 0 {
+		_, err = tx.Exec(r.Context(), `DELETE FROM sessions WHERE user_id = $1`, uid)
+		return err
+	})
+	switch {
+	case errors.Is(err, errUserNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
-		return
+	case errors.Is(err, errLastAdmin):
+		http.Error(w, "cannot disable the last enabled admin", http.StatusBadRequest)
+	case err != nil:
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	default:
+		w.WriteHeader(http.StatusNoContent)
 	}
-	_, _ = h.DB.Exec(r.Context(), `DELETE FROM sessions WHERE user_id = $1`, uid)
-	w.WriteHeader(http.StatusNoContent)
+}
+
+// adminGuardLock serializes every change that could leave no enabled admin
+// (disabling or deleting one), so two admins acting on each other at once
+// can't both pass the check.
+const adminGuardLock int64 = 0x6c756d656e61646d // "lumenadm"
+
+// keepAnAdmin locks the admin guard for the rest of tx, then fails with
+// errLastAdmin if uid is an admin and no other enabled admin would remain.
+// Call it first in the transaction, so the lock order is the same everywhere.
+func keepAnAdmin(ctx context.Context, tx pgx.Tx, uid uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, adminGuardLock); err != nil {
+		return err
+	}
+	var role string
+	err := tx.QueryRow(ctx, `SELECT role FROM users WHERE id = $1`, uid).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errUserNotFound
+	}
+	if err != nil || role != string(models.RoleAdmin) {
+		return err
+	}
+	var others int
+	if err := tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = FALSE AND id <> $1`,
+		uid).Scan(&others); err != nil {
+		return err
+	}
+	if others == 0 {
+		return errLastAdmin
+	}
+	return nil
 }
 
 func (h *AdminUsers) Enable(w http.ResponseWriter, r *http.Request) {

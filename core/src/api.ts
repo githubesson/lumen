@@ -105,6 +105,24 @@ export const api = {
 
   listAdminUsers: (options: RequestOptions = {}) =>
     request<AdminUser[]>("/api/admin/users", options),
+  disableUser: (id: string) =>
+    requestVoid(`/api/admin/users/${pathID(id)}/disable`, { method: "POST" }),
+  enableUser: (id: string) =>
+    requestVoid(`/api/admin/users/${pathID(id)}/enable`, { method: "POST" }),
+  userDeparturePreview: (id: string, options: RequestOptions = {}) =>
+    request<UserDeparturePreview>(
+      `/api/admin/users/${pathID(id)}/departure-preview`,
+      options,
+    ),
+  /**
+   * Every playlist the user owns needs a disposition; a 409 (carrying a fresh
+   * preview) means one was missing, e.g. a playlist created meanwhile.
+   */
+  deleteUser: (id: string, dispositions: PlaylistDisposition[]) =>
+    requestVoid(`/api/admin/users/${pathID(id)}`, {
+      method: "DELETE",
+      body: JSON.stringify({ playlist_dispositions: dispositions }),
+    }),
 
   listInvites: (options: RequestOptions = {}) =>
     request<Invite[]>("/api/admin/invites", options),
@@ -122,6 +140,16 @@ export const api = {
 
   listMusicRoots: (options: RequestOptions = {}) =>
     request<MusicRoot[]>("/api/admin/library/roots", options),
+  /**
+   * Walks every folder on disk; the server allows 5 minutes for a cold walk of
+   * a big library, so the client waits a little longer than that.
+   */
+  musicRootUsage: (opts: { refresh?: boolean } = {}, options: RequestOptions = {}) =>
+    request<MusicRootUsage>(
+      `/api/admin/library/roots/usage${opts.refresh ? "?refresh=1" : ""}`,
+      options,
+      { timeoutMs: 5 * 60_000 + 15_000 },
+    ),
   addMusicRoot: (input: { path: string; label?: string }) =>
     request<MusicRoot>("/api/admin/library/roots", {
       method: "POST",
@@ -139,6 +167,9 @@ export const api = {
       { method: "DELETE" },
     );
   },
+
+  listIngestErrors: (options: RequestOptions = {}) =>
+    request<IngestErrors>("/api/admin/library/errors", options),
 
   startRescan: () =>
     requestVoid("/api/admin/library/rescan", { method: "POST" }),
@@ -962,7 +993,48 @@ export interface MusicRoot {
   enabled: boolean;
   primary: boolean;
   exists: boolean;
+  /** Another watched root containing this one; its files stay watched without it. */
+  covered_by?: string;
   created_at?: string;
+}
+
+/** Files that failed to import: the latest error per file, newest first. */
+export interface IngestErrors {
+  errors: IngestError[];
+  /** Failing files in all; can exceed `errors.length`. */
+  total: number;
+}
+
+export interface IngestError {
+  id: number;
+  file_path: string;
+  error: string;
+  created_at: string;
+  /** Failed attempts for this file (each rescan retries it). */
+  attempts: number;
+}
+
+/** What deleting a user would orphan: the playlists they own. */
+export interface UserDeparturePreview {
+  user_id: string;
+  username: string;
+  owned_playlists: Array<{
+    playlist_id: string;
+    name: string;
+    /** Longest-standing collaborator, when there is one. */
+    suggested_heir_id?: string;
+    has_collaborators: boolean;
+  }>;
+}
+
+export type PlaylistDisposition =
+  | { playlist_id: string; action: "transfer"; new_owner_id: string }
+  | { playlist_id: string; action: "delete" };
+
+/** On-disk footprint of each root, keyed by `MusicRoot.path`. */
+export interface MusicRootUsage {
+  roots: Array<{ path: string; files: number; bytes: number }>;
+  measured_at: string;
 }
 
 export interface RescanStatus {

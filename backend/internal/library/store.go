@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -937,6 +940,17 @@ func (s *Store) ClearIngestErrorsForPath(ctx context.Context, path string) error
 	return err
 }
 
+// FilePathInUse reports whether any track (any owner, soft-deleted included)
+// or alias still points at path, so a file isn't removed from under one.
+func (s *Store) FilePathInUse(ctx context.Context, path string) (bool, error) {
+	path = dbtext.Clean(path)
+	var inUse bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM tracks WHERE file_path = $1)
+		    OR EXISTS (SELECT 1 FROM track_aliases WHERE file_path = $1)`, path).Scan(&inUse)
+	return inUse, err
+}
+
 // TrackHasFilePath reports whether a live local track row still points at path.
 // Importers use this before applying source-specific metadata to a dedup hit,
 // where the returned track id may belong to a different canonical file.
@@ -1152,9 +1166,7 @@ func (s *Store) DistinctPathsUnder(ctx context.Context, prefixes []string) ([]st
 }
 
 // SoftDeleteTracksUnderPath marks every live track whose file_path starts with
-// `prefix` as deleted. Used when an admin removes a music root — the files
-// will no longer be watched/scanned, so their tracks shouldn't keep appearing
-// in the library.
+// `prefix` as deleted. Used when a watched directory disappears from disk.
 func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string) (int64, error) {
 	prefix = dbtext.Clean(prefix)
 	tag, err := s.db.Exec(ctx, `
@@ -1166,31 +1178,174 @@ func (s *Store) SoftDeleteTracksUnderPath(ctx context.Context, prefix string) (i
 	return tag.RowsAffected(), nil
 }
 
-type IngestError struct {
-	ID        int64
-	FilePath  string
-	Error     string
-	CreatedAt time.Time
+// SoftDeleteRootTracks soft-deletes the tracks that stop being watched when
+// the root at prefix is removed: those with a file (the canonical path or a
+// deduplicated copy recorded as an alias) under prefix, and no file still
+// watched. A file is still watched when it's under a live root inside the
+// removed one (inner), or outside the removed root and under any live root
+// (live); a live root around the removed one doesn't count for files inside
+// it, since reaching this means its scan doesn't get there. An alias only
+// counts while its file is on disk: ingest unlinks duplicates under the
+// primary root and keeps just their metadata. A track kept only by an alias
+// gets that copy as its file, since playback opens the canonical path and
+// that one is no longer watched. Runs in the caller's transaction, alongside
+// the root's own deletion. All prefixes must end with the path separator.
+func SoftDeleteRootTracks(ctx context.Context, tx pgx.Tx, prefix string, inner, live []string) (int64, error) {
+	clean := func(in []string) []string {
+		out := make([]string, len(in))
+		for i, p := range in {
+			out[i] = dbtext.Clean(p)
+		}
+		return out
+	}
+	prefix, inner, live = dbtext.Clean(prefix), clean(inner), clean(live)
+	const candidate = `
+		t.deleted_at IS NULL AND t.source = 'local'
+		AND (starts_with(t.file_path, $1) OR EXISTS (
+			SELECT 1 FROM track_aliases a
+			WHERE a.track_id = t.id AND starts_with(a.file_path, $1)
+		))`
+	// watched($x): the path $x is under a location that stays watched.
+	watched := func(x string) string {
+		return `(EXISTS (SELECT 1 FROM unnest($2::text[]) k WHERE starts_with(` + x + `, k))
+			OR (NOT starts_with(` + x + `, $1)
+			    AND EXISTS (SELECT 1 FROM unnest($3::text[]) k WHERE starts_with(` + x + `, k))))`
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT a.track_id, a.file_path, t.file_path, `+watched("t.file_path")+`
+		FROM track_aliases a
+		JOIN tracks t ON t.id = a.track_id
+		WHERE `+candidate+` AND `+watched("a.file_path")+`
+		ORDER BY a.track_id, a.id`, prefix, inner, live)
+	if err != nil {
+		return 0, err
+	}
+	type promotion struct {
+		path, oldPath string
+		size          int64
+	}
+	// Non-nil: a nil slice is sent as NULL, and NOT (id = ANY(NULL)) is never
+	// true, so nothing would be purged.
+	keepIDs := []uuid.UUID{}
+	kept := map[uuid.UUID]bool{}
+	promote := map[uuid.UUID]promotion{}
+	for rows.Next() {
+		var id uuid.UUID
+		var path, canonical string
+		var canonicalWatched bool
+		if err := rows.Scan(&id, &path, &canonical, &canonicalWatched); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if kept[id] {
+			continue // the first copy found is the one promoted, if any
+		}
+		kept[id] = true
+		keepIDs = append(keepIDs, id)
+		if !canonicalWatched {
+			promote[id] = promotion{path: path, oldPath: canonical, size: info.Size()}
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for id, p := range promote {
+		// Same audio, so normally the same container; if the extension
+		// differs, fall back to it the way ingest does for untagged files.
+		format := ""
+		if ext := filepath.Ext(p.path); !strings.EqualFold(ext, filepath.Ext(p.oldPath)) {
+			format = strings.TrimPrefix(strings.ToUpper(ext), ".")
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE tracks SET file_path = $2, file_size = $3,
+				format = COALESCE(NULLIF($4, ''), format), updated_at = NOW()
+			WHERE id = $1`, id, p.path, p.size, format); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM track_aliases WHERE track_id = $1 AND file_path = $2`, id, p.path); err != nil {
+			return 0, err
+		}
+	}
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE tracks t SET deleted_at = NOW()
+		WHERE `+candidate+`
+		  AND NOT `+watched("t.file_path")+`
+		  AND NOT (t.id = ANY($4::uuid[]))`, prefix, inner, live, keepIDs)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
-func (s *Store) ListIngestErrors(ctx context.Context, limit int) ([]IngestError, error) {
+// IngestError is the latest failure for one file. Every failed attempt (each
+// rescan retries) adds a row, so Attempts counts them.
+type IngestError struct {
+	ID        int64     `json:"id"`
+	FilePath  string    `json:"file_path"`
+	Error     string    `json:"error"`
+	CreatedAt time.Time `json:"created_at"`
+	Attempts  int       `json:"attempts"`
+}
+
+// ListIngestErrors returns the newest failure per file under roots, most
+// recent first, and how many such files have failed in all (which can exceed
+// limit). Failures a scan of roots never reaches are left out, since they
+// could neither be retried nor cleared: those outside every root (a removed
+// or paused folder) and those inside a dot-directory below one.
+func (s *Store) ListIngestErrors(ctx context.Context, roots []string, limit int) ([]IngestError, int, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
+	sep := string(filepath.Separator)
+	prefixes := make([]string, 0, len(roots))
+	for _, r := range roots {
+		// With the separator, /music doesn't claim /music-archive.
+		p := strings.TrimRight(dbtext.Clean(r), sep)
+		prefixes = append(prefixes, p+sep)
+	}
+	if len(prefixes) == 0 {
+		return []IngestError{}, 0, nil
+	}
+	// A folder whose name starts with a dot, anywhere below the root: scans
+	// skip those, so failures inside one are never retried from that root.
+	q := regexp.QuoteMeta(sep)
+	dotDir := `(^|` + q + `)\.[^` + q + `]*` + q
 	rows, err := s.db.Query(ctx, `
-		SELECT id, file_path, error, created_at FROM ingest_errors
-		ORDER BY created_at DESC LIMIT $1`, limit)
+		WITH scoped AS (
+			SELECT id, file_path, error, created_at FROM ingest_errors
+			WHERE EXISTS (
+				SELECT 1 FROM unnest($2::text[]) pfx
+				WHERE starts_with(file_path, pfx)
+				  AND substr(file_path, length(pfx) + 1) !~ $3
+			)
+		)
+		SELECT id, file_path, error, created_at, attempts, total FROM (
+			SELECT DISTINCT ON (file_path) id, file_path, error, created_at,
+				COUNT(*) OVER (PARTITION BY file_path) AS attempts
+			FROM scoped
+			ORDER BY file_path, created_at DESC, id DESC
+		) latest
+		CROSS JOIN (SELECT COUNT(DISTINCT file_path) AS total FROM scoped) counted
+		ORDER BY created_at DESC, id DESC LIMIT $1`, limit, prefixes, dotDir)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
-	var out []IngestError
+	out := []IngestError{}
+	total := 0
 	for rows.Next() {
 		var e IngestError
-		if err := rows.Scan(&e.ID, &e.FilePath, &e.Error, &e.CreatedAt); err != nil {
-			return nil, err
+		if err := rows.Scan(&e.ID, &e.FilePath, &e.Error, &e.CreatedAt, &e.Attempts, &total); err != nil {
+			return nil, 0, err
 		}
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }

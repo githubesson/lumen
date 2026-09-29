@@ -304,14 +304,21 @@ func (h *Library) RescanStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, status)
 }
 
-// Errors lists recent ingest failures.
+type ingestErrorsResp struct {
+	Errors []library.IngestError `json:"errors"`
+	Total  int                   `json:"total"`
+}
+
+// Errors lists files that failed to import under the folders being scanned
+// now: the latest error per file, with the total number of failing files for
+// when there are more than fit.
 func (h *Library) Errors(w http.ResponseWriter, r *http.Request) {
-	errs, err := h.Library.ListIngestErrors(r.Context(), 200)
+	errs, total, err := h.Library.ListIngestErrors(r.Context(), h.Ingest.AllRoots(r.Context()), 200)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, errs)
+	writeJSON(w, http.StatusOK, ingestErrorsResp{Errors: errs, Total: total})
 }
 
 // removeFailedUpload deletes a personal upload whose ingest failed. Ingest

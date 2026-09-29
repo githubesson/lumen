@@ -12,6 +12,7 @@ import { Field, TextInput } from "../components/Field";
 import { Select } from "../components/Select";
 import AdminPanel from "../components/admin/AdminPanel";
 import AdminSection from "../components/admin/AdminSection";
+import Disclosure from "../components/admin/Disclosure";
 import { copyText } from "../lib/clipboard";
 import { fmtDate, fmtDateTime } from "../lib/format";
 import { useApiResource } from "../lib/useApiResource";
@@ -84,6 +85,9 @@ export function InvitesAdminSection() {
     if (await copyText(text)) flashCopied();
   };
 
+  const active = (rows ?? []).filter((inv) => statusOf(inv) === "active");
+  const past = (rows ?? []).filter((inv) => statusOf(inv) !== "active");
+
   return (
     <AdminPanel>
       <p
@@ -139,7 +143,7 @@ export function InvitesAdminSection() {
             </Field>
           </div>
           <div style={{ width: 240 }}>
-            <Field label="Expires" hint="Optional">
+            <Field label="Expires (optional)">
               <TextInput
                 type="datetime-local"
                 name="expires_at"
@@ -209,74 +213,97 @@ export function InvitesAdminSection() {
 
       {error && <ErrorBanner message={error} />}
 
-      <AdminSection title="All invites">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Role</th>
-              <th>Uses</th>
-              <th>Expires</th>
-              <th>Status</th>
-              <th>Created</th>
-              <th className="col-acts" />
-            </tr>
-          </thead>
-          <tbody>
-            {rows === null && (
-              <tr>
-                <td colSpan={6} className="mono" style={{ color: "var(--muted-foreground)" }}>
-                  Loading…
-                </td>
-              </tr>
-            )}
-            {rows?.length === 0 && (
-              <tr>
-                <td colSpan={6} style={{ color: "var(--muted-foreground)" }}>
-                  No invites yet. Create one above to get started.
-                </td>
-              </tr>
-            )}
-            {rows?.map((inv) => {
-              const s = statusOf(inv);
-              return (
-                <tr key={inv.id}>
-                  <td style={{ color: "var(--foreground)" }}>{inv.target_role}</td>
-                  <td className="mono" style={{ color: "var(--muted-foreground)" }}>
-                    {inv.uses} / {inv.max_uses}
-                  </td>
-                  <td className="mono" style={{ color: "var(--muted-foreground)" }}>
-                    {inv.expires_at
-                      ? fmtDateTime(inv.expires_at)
-                      : "—"}
-                  </td>
-                  <td>
-                    <span
-                      className={"badge" + (s === "active" ? " badge-accent" : "")}
-                    >
-                      {s}
-                    </span>
-                  </td>
-                  <td className="mono" style={{ color: "var(--muted-foreground)" }}>
-                    {fmtDate(inv.created_at)}
-                  </td>
-                  <td className="col-acts">
-                    {!inv.revoked_at && (
-                      <Button
-                        size="sm"
-                        variant="danger"
-                        onClick={() => revoke(inv.id)}
-                        leadingIcon={<TrashIcon className="size-3.5" />}
-                      >
-                        Revoke
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <AdminSection title="Active invites">
+        <InviteTable
+          rows={active}
+          emptyLabel={
+            rows === null
+              ? "Loading…"
+              : "No active invites. Create one above to get started."
+          }
+          onRevoke={revoke}
+        />
+        {past.length > 0 && (
+          <Disclosure label="Used, expired and revoked" count={past.length}>
+            <InviteTable rows={past} showStatus />
+          </Disclosure>
+        )}
       </AdminSection>
     </AdminPanel>
+  );
+}
+
+/**
+ * Invites table. Active invites need no status column but can be revoked; the
+ * past ones say why they stopped working.
+ */
+function InviteTable({
+  rows,
+  emptyLabel,
+  showStatus = false,
+  onRevoke,
+}: {
+  rows: Invite[];
+  emptyLabel?: string;
+  showStatus?: boolean;
+  onRevoke?: (id: string) => void;
+}) {
+  const columns = (showStatus ? 5 : 4) + (onRevoke ? 1 : 0);
+  return (
+    <table className="table table-static">
+      <thead>
+        <tr>
+          <th>Role</th>
+          <th>Uses</th>
+          <th>Expires</th>
+          {showStatus && <th>Status</th>}
+          <th>Created</th>
+          {onRevoke && <th className="col-acts" />}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0 && emptyLabel && (
+          <tr>
+            <td colSpan={columns} style={{ color: "var(--muted-foreground)" }}>
+              {emptyLabel}
+            </td>
+          </tr>
+        )}
+        {rows.map((inv) => (
+          <tr key={inv.id}>
+            <td style={{ color: "var(--foreground)" }}>{inv.target_role}</td>
+            <td className="mono" style={{ color: "var(--muted-foreground)" }}>
+              {inv.uses} / {inv.max_uses}
+            </td>
+            <td className="mono" style={{ color: "var(--muted-foreground)" }}>
+              {inv.expires_at ? fmtDateTime(inv.expires_at) : "—"}
+            </td>
+            {showStatus && (
+              <td>
+                <span className="badge">{statusOf(inv)}</span>
+              </td>
+            )}
+            <td className="mono" style={{ color: "var(--muted-foreground)" }}>
+              {fmtDate(inv.created_at)}
+            </td>
+            {onRevoke && (
+              <td className="col-acts">
+                <div className="admin-actions">
+                  <button
+                    type="button"
+                    className="iconbtn iconbtn-danger"
+                    onClick={() => onRevoke(inv.id)}
+                    aria-label={`Revoke ${inv.target_role} invite created ${fmtDate(inv.created_at)}`}
+                    title="Revoke"
+                  >
+                    <TrashIcon className="size-4" aria-hidden="true" />
+                  </button>
+                </div>
+              </td>
+            )}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }

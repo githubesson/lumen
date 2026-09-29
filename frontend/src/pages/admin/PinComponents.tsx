@@ -1,7 +1,8 @@
 import { ReactNode } from "react";
 import {
   RefreshCw as ArrowPathIcon,
-  CloudDownload as CloudArrowDownIcon,
+  History as HistoryIcon,
+  Pause as PauseIcon,
   Play as PlayIcon,
   Trash2 as TrashIcon,
 } from "lucide-react";
@@ -16,7 +17,10 @@ import {
   type PinManager,
 } from "./usePinManager";
 
-/** Per-pin status cell: enabled badge + (missing id | last error | counts). */
+/**
+ * Per-pin status cell: a badge only when paused, then the missing id, last
+ * error or download counts.
+ */
 function PinStatusCell({
   pin,
   hasPinID,
@@ -28,9 +32,7 @@ function PinStatusCell({
 }) {
   return (
     <div style={{ display: "grid", gap: 4, justifyItems: "start" }}>
-      <span className={"badge" + (pin.enabled ? " badge-accent" : "")}>
-        {pin.enabled ? "active" : "paused"}
-      </span>
+      {!pin.enabled && <span className="badge">paused</span>}
       {!hasPinID ? (
         <span style={{ color: "var(--destructive)", fontSize: 12 }}>
           missing pin id
@@ -51,54 +53,71 @@ function PinStatusCell({
   );
 }
 
-/** Scan / Pause-Resume / History / Remove action cluster. */
+/** Scan / Pause-Resume / History / Remove, as quiet icon buttons. */
 function PinActions<Pin extends PinLike, Download extends DownloadLike>({
   pin,
   pinID,
+  name,
   hasPinID,
   busy,
   manager,
 }: {
   pin: Pin;
   pinID: string;
+  /** What the row is called, for the buttons' accessible names. */
+  name: string;
   hasPinID: boolean;
   busy: boolean;
   manager: PinManager<Pin, Download>;
 }) {
+  const historyOpen = hasPinID && manager.historyPinID === pinID;
   return (
-    <div style={{ display: "inline-flex", gap: 6 }}>
-      <Button
-        size="sm"
+    <div className="admin-actions">
+      <button
+        type="button"
+        className="iconbtn"
         onClick={() => manager.scanPin(pin)}
         disabled={busy || !hasPinID || !pin.root_exists}
-        leadingIcon={<PlayIcon className="size-3.5" />}
+        aria-label={`Scan ${name} now`}
+        title={pin.root_exists ? "Scan now" : "The source folder is missing"}
       >
-        Scan
-      </Button>
-      <Button
-        size="sm"
+        <ArrowPathIcon className="size-4" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        className="iconbtn"
         onClick={() => manager.togglePin(pin)}
         disabled={busy || !hasPinID}
+        aria-label={`${pin.enabled ? "Pause" : "Resume"} ${name}`}
+        title={pin.enabled ? "Pause scheduled scans" : "Resume scheduled scans"}
       >
-        {pin.enabled ? "Pause" : "Resume"}
-      </Button>
-      <Button
-        size="sm"
+        {pin.enabled ? (
+          <PauseIcon className="size-4" aria-hidden="true" />
+        ) : (
+          <PlayIcon className="size-4" aria-hidden="true" />
+        )}
+      </button>
+      <button
+        type="button"
+        className={"iconbtn" + (historyOpen ? " active" : "")}
         onClick={() => manager.toggleHistory(pinID)}
         disabled={busy || !hasPinID}
-        leadingIcon={<CloudArrowDownIcon className="size-3.5" />}
+        aria-label={`Download history for ${name}`}
+        aria-pressed={historyOpen}
+        title="Download history"
       >
-        History
-      </Button>
-      <Button
-        size="sm"
-        variant="danger"
+        <HistoryIcon className="size-4" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        className="iconbtn iconbtn-danger"
         onClick={() => manager.removePin(pin)}
         disabled={busy || !hasPinID}
-        leadingIcon={<TrashIcon className="size-3.5" />}
+        aria-label={`Remove ${name}`}
+        title="Remove"
       >
-        Remove
-      </Button>
+        <TrashIcon className="size-4" aria-hidden="true" />
+      </button>
     </div>
   );
 }
@@ -113,17 +132,20 @@ export function PinTable<Pin extends PinLike, Download extends DownloadLike>({
   emptyLabel,
   nameHeader,
   rowKey,
+  rowName,
   renderLead,
 }: {
   manager: PinManager<Pin, Download>;
   emptyLabel: string;
   nameHeader: string;
   rowKey: (pin: Pin) => string;
+  /** The row's display name, reused in its buttons' accessible names. */
+  rowName: (pin: Pin) => string;
   renderLead: (pin: Pin) => ReactNode;
 }) {
   const { pins, busyPins, downloadsByPin } = manager;
   return (
-    <table className="table">
+    <table className="table table-static">
       <thead>
         <tr>
           <th>{nameHeader}</th>
@@ -164,10 +186,11 @@ export function PinTable<Pin extends PinLike, Download extends DownloadLike>({
               <td>
                 <PinStatusCell pin={pin} hasPinID={hasPinID} counts={counts} />
               </td>
-              <td className="col-acts" style={{ minWidth: 340 }}>
+              <td className="col-acts">
                 <PinActions
                   pin={pin}
                   pinID={pinID}
+                  name={rowName(pin)}
                   hasPinID={hasPinID}
                   busy={busy}
                   manager={manager}

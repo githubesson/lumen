@@ -7,10 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/githubesson/lumen/internal/dbutil"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/musicroots"
+	"github.com/githubesson/lumen/internal/pathsafe"
 )
 
 // AdminRoots manages the set of extra music directories an admin can
@@ -23,15 +26,20 @@ type AdminRoots struct {
 	Ingest      *ingest.Service
 	PrimaryRoot string
 	Refresh     func()
+
+	usage musicroots.UsageCache
 }
 
 type rootResp struct {
-	ID        string `json:"id"`
-	Path      string `json:"path"`
-	Label     string `json:"label"`
-	Enabled   bool   `json:"enabled"`
-	Primary   bool   `json:"primary"`
-	Exists    bool   `json:"exists"`
+	ID      string `json:"id"`
+	Path    string `json:"path"`
+	Label   string `json:"label"`
+	Enabled bool   `json:"enabled"`
+	Primary bool   `json:"primary"`
+	Exists  bool   `json:"exists"`
+	// CoveredBy is another watched root that contains this one, if any.
+	// Removing a covered root leaves its files scanned and streamable.
+	CoveredBy string `json:"covered_by,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
 }
 
@@ -49,6 +57,12 @@ func (h *AdminRoots) List(w http.ResponseWriter, r *http.Request) {
 		Primary: true,
 		Exists:  dirExists(h.PrimaryRoot),
 	})
+	watched := []string{h.PrimaryRoot}
+	for _, r := range rows {
+		if r.Enabled {
+			watched = append(watched, r.Path)
+		}
+	}
 	for _, r := range rows {
 		out = append(out, rootResp{
 			ID:        r.ID.String(),
@@ -56,10 +70,46 @@ func (h *AdminRoots) List(w http.ResponseWriter, r *http.Request) {
 			Label:     r.Label,
 			Enabled:   r.Enabled,
 			Exists:    dirExists(r.Path),
+			CoveredBy: coveringRoot(r.Path, watched),
 			CreatedAt: r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+type rootsUsageResp struct {
+	Roots      []musicroots.Usage `json:"roots"`
+	MeasuredAt string             `json:"measured_at"`
+}
+
+// Usage reports how many files each root holds and how much space they take,
+// paused roots included. It's a separate call from List because it walks the
+// disk: the first request (and one with ?refresh=1, sent after a rescan) can
+// take a while on a big library, and the root pickers elsewhere on the page
+// shouldn't wait for it.
+func (h *AdminRoots) Usage(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.Store.List(r.Context())
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	paths := make([]string, 0, len(rows)+1)
+	paths = append(paths, h.PrimaryRoot)
+	for _, row := range rows {
+		paths = append(paths, row.Path)
+	}
+	fresh := r.URL.Query().Get("refresh") == "1"
+	usage, at, err := h.usage.Get(r.Context(), paths, fresh)
+	if err != nil {
+		if r.Context().Err() == nil {
+			http.Error(w, "measuring folders timed out", http.StatusGatewayTimeout)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, rootsUsageResp{
+		Roots:      usage,
+		MeasuredAt: at.UTC().Format("2006-01-02T15:04:05Z"),
+	})
 }
 
 type addRootReq struct {
@@ -159,20 +209,41 @@ func (h *AdminRoots) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var deleted int64
+	var purgeTracks func(pgx.Tx, []musicroots.Root) error
 	if purge && h.Library != nil {
-		prefix := row.Path
-		if !strings.HasSuffix(prefix, string(filepath.Separator)) {
-			prefix += string(filepath.Separator)
-		}
-		if n, err := h.Library.SoftDeleteTracksUnderPath(r.Context(), prefix); err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		} else {
+		// Only purge what stops being watched. Tracks with a file (or a
+		// deduplicated copy) another live root still scans stay: a purge would
+		// only bring them back as new rows without their history or playlist
+		// places. A live root around this one that scans into it means
+		// nothing stops being watched. The other roots come from inside the
+		// removal's transaction, so concurrent removals see each other.
+		purgeTracks = func(tx pgx.Tx, others []musicroots.Root) error {
+			live := []string{h.PrimaryRoot}
+			for _, o := range others {
+				if o.Enabled {
+					live = append(live, o.Path)
+				}
+			}
+			if coveringRoot(row.Path, live) != "" {
+				return nil
+			}
+			var inner []string
+			keep := make([]string, len(live))
+			for i, other := range live {
+				keep[i] = withSeparator(other)
+				if in, _ := pathsafe.WithinRoot(row.Path, other); in {
+					inner = append(inner, keep[i])
+				}
+			}
+			n, err := library.SoftDeleteRootTracks(r.Context(), tx, withSeparator(row.Path), inner, keep)
 			deleted = n
+			return err
 		}
 	}
 
-	if err := h.Store.Delete(r.Context(), id); err != nil {
+	// The purge and the root's removal commit together, so a failure can't
+	// leave the tracks gone and the root still configured.
+	if err := h.Store.DeleteWith(r.Context(), id, purgeTracks); err != nil {
 		if errors.Is(err, musicroots.ErrNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
@@ -230,6 +301,31 @@ func (h *AdminRoots) Patch(w http.ResponseWriter, r *http.Request) {
 		Exists:    dirExists(row.Path),
 		CreatedAt: row.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	})
+}
+
+// withSeparator ends a directory path with the separator, so as a prefix it
+// matches what's inside it and not siblings sharing its name (/music-archive).
+func withSeparator(dir string) string {
+	if strings.HasSuffix(dir, string(filepath.Separator)) {
+		return dir
+	}
+	return dir + string(filepath.Separator)
+}
+
+// coveringRoot returns a watched root, other than path itself, whose scan
+// reaches path, or "" if there's none. The scan skips dot-directories and
+// doesn't follow symlinks, so a folder past either isn't covered even when
+// its path is inside another root.
+func coveringRoot(path string, watched []string) string {
+	for _, w := range watched {
+		if same, _ := pathsafe.WithinRoot(path, w); same {
+			continue
+		}
+		if musicroots.Reaches(w, path, true) {
+			return w
+		}
+	}
+	return ""
 }
 
 func dirExists(p string) bool {

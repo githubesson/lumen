@@ -10,6 +10,7 @@ import {
   type TidalAutoDownloadStatus,
 } from "../../api";
 import { Button } from "../../components/Button";
+import Disclosure from "../../components/admin/Disclosure";
 import ErrorBanner from "../../components/ErrorBanner";
 import { Field, TextInput } from "../../components/Field";
 import { Select } from "../../components/Select";
@@ -95,6 +96,7 @@ export function TidalAutoDownloadCard({ roots }: { roots: MusicRoot[] | null }) 
   };
 
   const summary = status?.summary;
+  const recent = status?.recent ?? [];
   const stats: Array<[string, number | undefined]> = [
     ["Playlists", summary?.playlists],
     ["Queued", summary?.queued],
@@ -202,59 +204,54 @@ export function TidalAutoDownloadCard({ roots }: { roots: MusicRoot[] | null }) 
         </div>
       )}
 
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Status</th>
-            <th>Track</th>
-            <th>File</th>
-            <th>Updated</th>
-          </tr>
-        </thead>
-        <tbody>
-          {!status && (
+      {status && recent.length === 0 && (
+        <div style={{ color: "var(--muted-foreground)", fontSize: 14 }}>
+          Nothing downloaded yet.
+        </div>
+      )}
+      {recent.length > 0 && (
+        <Disclosure label="Recent downloads" count={recent.length}>
+        <table className="table">
+          <thead>
             <tr>
-              <td colSpan={4} className="mono" style={{ color: "var(--muted-foreground)" }}>
-                Loading...
-              </td>
+              <th>Status</th>
+              <th>Track</th>
+              <th>File</th>
+              <th>Updated</th>
             </tr>
-          )}
-          {status?.recent.length === 0 && (
-            <tr>
-              <td colSpan={4} style={{ color: "var(--muted-foreground)" }}>
-                Nothing downloaded yet.
-              </td>
-            </tr>
-          )}
-          {status?.recent.map((row) => (
-            <tr key={row.tidal_id}>
-              <td>
-                <span className={"badge" + (row.status === "failed" ? "" : " badge-accent")}>
-                  {row.status === "existing" ? "in library" : row.status}
-                </span>
-                {row.error && (
-                  <div style={{ color: "var(--destructive)", fontSize: 12, marginTop: 4 }}>
-                    {row.error}
-                    {row.next_attempt_at && ` · retry ${formatDate(row.next_attempt_at)}`}
-                  </div>
-                )}
-              </td>
-              <td>
-                <div>{row.title || `TIDAL ${row.tidal_id}`}</div>
-                {row.artist && (
-                  <div style={{ color: "var(--muted-foreground)", fontSize: 12 }}>
-                    {row.artist}
-                  </div>
-                )}
-              </td>
-              <td className="font-mono" style={{ wordBreak: "break-all" }}>
-                {row.file_path || "-"}
-              </td>
-              <td className="mono">{formatDate(row.updated_at)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {recent.map((row) => (
+              <tr key={row.tidal_id}>
+                <td>
+                  <span className={"badge" + (row.status === "failed" ? "" : " badge-accent")}>
+                    {row.status === "existing" ? "in library" : row.status}
+                  </span>
+                  {row.error && (
+                    <div style={{ color: "var(--destructive)", fontSize: 12, marginTop: 4 }}>
+                      {row.error}
+                      {row.next_attempt_at && ` · retry ${formatDate(row.next_attempt_at)}`}
+                    </div>
+                  )}
+                </td>
+                <td>
+                  <div>{row.title || `TIDAL ${row.tidal_id}`}</div>
+                  {row.artist && (
+                    <div style={{ color: "var(--muted-foreground)", fontSize: 12 }}>
+                      {row.artist}
+                    </div>
+                  )}
+                </td>
+                <td className="font-mono" style={{ wordBreak: "break-all" }}>
+                  {row.file_path || "-"}
+                </td>
+                <td className="mono">{formatDate(row.updated_at)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        </Disclosure>
+      )}
     </section>
   );
 }

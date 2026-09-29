@@ -11,6 +11,7 @@ import {
   periodKey,
   periodRange,
 } from "../src/replay/period";
+import { formatBytes } from "../src/format";
 import { compareSortableTracks, sortTitleKey } from "../src/track-sort";
 import { canShareTrack, isLocalTrack, isTidalTrack } from "../src/track";
 import { withFavorite, withFavoriteId } from "../src/favorites/favorite-toggle";
@@ -150,6 +151,16 @@ describe("formatListeningTime", () => {
   it("guards non-positive input", () => {
     expect(formatListeningTime(0)).toBe("0m");
     expect(formatListeningTime(-1, "verbose")).toBe("0 min");
+  });
+});
+
+describe("formatBytes", () => {
+  it("scales through TB for whole libraries", () => {
+    expect(formatBytes(50)).toBe("50 B");
+    expect(formatBytes(1536)).toBe("1.5 KB");
+    expect(formatBytes(150 * 1024 ** 3)).toBe("150 GB");
+    expect(formatBytes(1.5 * 1024 ** 4)).toBe("1.5 TB");
+    expect(formatBytes(0)).toBe("—");
   });
 });
 

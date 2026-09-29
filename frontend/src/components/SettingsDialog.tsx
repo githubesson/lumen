@@ -12,6 +12,7 @@ import { useLastFMConnection } from "@music-library/core";
 import { useTheme, type Density, type Layout, type Theme } from "../context/Theme";
 import { useAudioOutput } from "../lib/audioOutput";
 import { useKey, useModalKeyScope } from "../lib/keybindings";
+import { trapTab } from "../lib/focusTrap";
 import { openExternal } from "../lib/platform";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import { Button } from "./Button";
@@ -523,33 +524,6 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
       </div>
     </div>
   );
-}
-
-const FOCUSABLE =
-  'button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
-
-/** Keep Tab / Shift+Tab cycling inside the dialog instead of the app behind it. */
-function trapTab(event: KeyboardEvent, panel: HTMLElement | null) {
-  if (!panel) return;
-  const items = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (el) => el.getClientRects().length > 0,
-  );
-  if (items.length === 0) {
-    event.preventDefault();
-    panel.focus();
-    return;
-  }
-  const first = items[0];
-  const last = items[items.length - 1];
-  const current = document.activeElement;
-  const inside = current instanceof Node && panel.contains(current);
-  if (event.shiftKey && (!inside || current === first || current === panel)) {
-    event.preventDefault();
-    last.focus();
-  } else if (!event.shiftKey && (!inside || current === last)) {
-    event.preventDefault();
-    first.focus();
-  }
 }
 
 /**
