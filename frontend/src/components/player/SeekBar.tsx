@@ -4,13 +4,23 @@ export default function SeekBar({
   value,
   onSeek,
   label,
+  commitOnRelease = true,
 }: {
   value: number;
   onSeek: (v: number) => void;
   label: string;
+  commitOnRelease?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
+  const [preview, setPreview] = useState<number | null>(null);
+  const pointer = useRef<number | null>(null);
+
+  const endDrag = useCallback(() => {
+    pointer.current = null;
+    setPreview(null);
+    setDragging(false);
+  }, []);
 
   const fromEvent = useCallback((clientX: number) => {
     const el = ref.current;
@@ -22,20 +32,47 @@ export default function SeekBar({
 
   useEffect(() => {
     if (!dragging) return;
-    const move = (ev: PointerEvent) => onSeek(fromEvent(ev.clientX));
-    const up = () => setDragging(false);
+    const move = (ev: PointerEvent) => {
+      if (ev.pointerId === pointer.current) {
+        const next = fromEvent(ev.clientX);
+        setPreview(next);
+        if (!commitOnRelease) onSeek(next);
+      }
+    };
+    const finish = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointer.current) return;
+      if (ev.type === "pointerup") onSeek(fromEvent(ev.clientX));
+      endDrag();
+    };
+    // Switching away mid-drag never delivers a release: drop the preview
+    // rather than leave the thumb stuck there.
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up, { once: true });
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+    window.addEventListener("blur", endDrag);
     return () => {
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      window.removeEventListener("blur", endDrag);
     };
-  }, [dragging, onSeek, fromEvent]);
+  }, [dragging, onSeek, fromEvent, commitOnRelease, endDrag]);
 
   const onPointerDown: React.PointerEventHandler<HTMLDivElement> = (e) => {
     e.preventDefault();
+    if (e.button !== 0) return;
+    e.currentTarget.focus();
+    // Keep the drag's events (above all its release) coming when the
+    // pointer leaves the bar or the window.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Not a live pointer (synthetic events); the window listeners remain.
+    }
+    pointer.current = e.pointerId;
     setDragging(true);
-    onSeek(fromEvent(e.clientX));
+    setPreview(fromEvent(e.clientX));
+    if (!commitOnRelease) onSeek(fromEvent(e.clientX));
   };
 
   const onKeyDown: React.KeyboardEventHandler<HTMLDivElement> = (e) => {
@@ -54,7 +91,7 @@ export default function SeekBar({
     }
   };
 
-  const pct = Math.max(0, Math.min(1, value)) * 100;
+  const pct = Math.max(0, Math.min(1, preview ?? value)) * 100;
   const pctStr = pct.toFixed(3);
 
   return (
@@ -68,6 +105,10 @@ export default function SeekBar({
       aria-valuemax={100}
       aria-valuenow={Math.round(pct)}
       onPointerDown={onPointerDown}
+      onLostPointerCapture={(e) => {
+        // After a release this is a no-op; otherwise the drag was lost.
+        if (e.pointerId === pointer.current) endDrag();
+      }}
       onKeyDown={onKeyDown}
     >
       <div

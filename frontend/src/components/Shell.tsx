@@ -1,25 +1,35 @@
-import { Suspense, lazy, useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { Outlet } from "react-router-dom";
 import { api, type Playlist } from "../api";
 import { useAuth } from "../context/Auth";
 import { usePlaylists } from "../context/Playlists";
 import { useKey } from "../lib/keybindings";
-import { useDiscordPresence } from "../lib/discordPresence";
 import { useDesktopConfig } from "../lib/desktopConfig";
 import { useLyricsPanel } from "../context/LyricsPanel";
 import MiniPlayer from "./MiniPlayer";
 import LyricsSidebar from "./LyricsSidebar";
-import UpdateToast from "./UpdateToast";
-import UploadDialog from "./UploadDialog";
-import SettingsDialog, { type SectionId } from "./SettingsDialog";
+import { isElectron } from "../lib/platform";
+
+import type { SectionId } from "./SettingsDialog";
 import Sidebar from "./shell/Sidebar";
 import Topbar from "./shell/Topbar";
 import { OpenSettingsContext } from "./shell/openSettings";
 import { useMobileNav } from "./shell/useMobileNav";
 import { useSidebarToggle } from "./shell/useSidebarToggle";
 import { claimResourceCache, clearResourceCache } from "../lib/resourceCache";
+import { openWhenLoaded, type LazyChunk } from "../lib/lazyChunk";
+import {
+  CommandPalette,
+  commandPaletteChunk,
+  SettingsDialog,
+  settingsDialogChunk,
+  UploadDialog,
+  uploadDialogChunk,
+} from "./lazyDialogs";
 
-const CommandPalette = lazy(() => import("./CommandPalette"));
+const UpdateToast = lazy(() => import("./UpdateToast"));
+// Desktop-only, so the web build never downloads it.
+const DiscordPresence = lazy(() => import("../lib/discordPresence"));
 const EMPTY_PLAYLISTS: Playlist[] = [];
 
 // The last pending-invite count, so the sidebar's Invites row is there from
@@ -48,7 +58,8 @@ export default function Shell() {
   const fh6RadioEnabled = useDesktopConfig()?.fh6RadioEnabled === true;
   const { mobileNavOpen, setMobileNavOpen } = useMobileNav();
 
-  useDiscordPresence();
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [uploadLoaded, setUploadLoaded] = useState(false);
 
   // Pages cache their last results for revisits. Nothing is kept once the
   // signed-in shell goes (sign-out); a switch to another account is handled
@@ -75,10 +86,48 @@ export default function Shell() {
     // this, otherwise the sidebar stays empty after a forced reset.
   }, [me?.id, me?.must_reset_password, me]);
 
-  const openSettings = useCallback((section?: SectionId) => {
-    setSettingsSection(section);
-    setTweaksOpen(true);
+  // Dialogs load on first open. One pending open per dialog: a newer
+  // request replaces it, and a dismissal while its chunk loads cancels it.
+  const pendingOpens = useRef<Record<string, () => boolean>>({});
+  const openLazy = useCallback((key: string, chunk: LazyChunk<unknown>, commit: () => void) => {
+    pendingOpens.current[key]?.();
+    pendingOpens.current[key] = openWhenLoaded(chunk, commit);
   }, []);
+  useEffect(() => {
+    const pending = pendingOpens.current;
+    return () => Object.values(pending).forEach((cancel) => cancel());
+  }, []);
+  // Settings and Upload are small: fetch them once the page is idle so a
+  // first open is instant.
+  useEffect(() => {
+    const preload = () => {
+      void settingsDialogChunk.load().catch(() => {});
+      void uploadDialogChunk.load().catch(() => {});
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(preload, { timeout: 5000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const timer = window.setTimeout(preload, 3000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const openSettings = useCallback((section?: SectionId) => {
+    openLazy("settings", settingsDialogChunk, () => {
+      setSettingsLoaded(true);
+      setSettingsSection(section);
+      setTweaksOpen(true);
+    });
+  }, [openLazy]);
+  const openUpload = useCallback(() => {
+    openLazy("upload", uploadDialogChunk, () => {
+      setUploadLoaded(true);
+      setUploadOpen(true);
+    });
+  }, [openLazy]);
+  const openPalette = useCallback(() => {
+    openLazy("palette", commandPaletteChunk, () => setPaletteOpen(true));
+  }, [openLazy]);
 
   const toggleSidebar = useSidebarToggle();
 
@@ -86,9 +135,17 @@ export default function Shell() {
     "mod+k",
     (e) => {
       e.preventDefault();
-      // The palette layers below Settings; hand over instead of hiding behind it.
+      // The palette layers below Settings; hand over instead of hiding behind
+      // it, including a Settings open still waiting on its chunk.
+      pendingOpens.current.settings?.();
       setTweaksOpen(false);
-      setPaletteOpen((o) => !o);
+      if (paletteOpen) {
+        setPaletteOpen(false);
+      } else if (pendingOpens.current.palette?.()) {
+        // A second press while the palette chunk loads toggles it back off.
+      } else {
+        openPalette();
+      }
     },
     {
       id: "palette:toggle",
@@ -116,7 +173,7 @@ export default function Shell() {
         fh6RadioEnabled={fh6RadioEnabled}
         onAddMusic={() => {
           setMobileNavOpen(false);
-          setUploadOpen(true);
+          openUpload();
         }}
         onOpenTweaks={() => {
           setMobileNavOpen(false);
@@ -140,11 +197,11 @@ export default function Shell() {
           tweaksOpen={tweaksOpen}
           onToggleMobileNav={() => setMobileNavOpen((open) => !open)}
           onToggleSidebar={toggleSidebar}
-          onOpenPalette={() => setPaletteOpen(true)}
-          onOpenUpload={() => setUploadOpen(true)}
+          onOpenPalette={openPalette}
+          onOpenUpload={openUpload}
           onToggleTweaks={() => {
-            setSettingsSection(undefined);
-            setTweaksOpen((v) => !v);
+            if (tweaksOpen) setTweaksOpen(false);
+            else openSettings();
           }}
         />
 
@@ -154,7 +211,8 @@ export default function Shell() {
           </OpenSettingsContext.Provider>
         </div>
 
-        <UpdateToast />
+        {/* Update prompts only exist in the desktop app. */}
+        {isElectron() && <Suspense fallback={null}><UpdateToast /></Suspense>}
       </main>
 
       <LyricsSidebar />
@@ -162,17 +220,20 @@ export default function Shell() {
       {/* Player */}
       <MiniPlayer />
 
-      <SettingsDialog
-        open={tweaksOpen}
-        section={settingsSection}
-        onClose={() => setTweaksOpen(false)}
-      />
+      {isElectron() && <Suspense fallback={null}><DiscordPresence /></Suspense>}
+      <Suspense fallback={null}>
+        {settingsLoaded && <SettingsDialog
+          open={tweaksOpen}
+          section={settingsSection}
+          onClose={() => setTweaksOpen(false)}
+        />}
 
-      <UploadDialog
-        open={uploadOpen}
-        isAdmin={me?.role === "admin"}
-        onClose={() => setUploadOpen(false)}
-      />
+        {uploadLoaded && <UploadDialog
+          open={uploadOpen}
+          isAdmin={me?.role === "admin"}
+          onClose={() => setUploadOpen(false)}
+        />}
+      </Suspense>
 
       {paletteOpen && (
         <Suspense fallback={null}>
@@ -187,7 +248,7 @@ export default function Shell() {
             }}
             onOpenUpload={() => {
               setPaletteOpen(false);
-              setUploadOpen(true);
+              openUpload();
             }}
           />
         </Suspense>

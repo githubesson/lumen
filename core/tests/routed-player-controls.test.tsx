@@ -73,6 +73,14 @@ function setup(targetDevice: PlaybackDevice | null = null) {
 }
 
 describe("routed player controls", () => {
+  it("keeps play stable when unrelated local controls change", () => {
+    const { result, rerender, options, controls } = setup();
+    const play = result.current.play;
+    rerender({ ...options, controls: { ...controls, pause: vi.fn() } });
+    expect(result.current.play).toBe(play);
+    act(() => result.current.play(track, [track]));
+    expect(controls.play).toHaveBeenCalledWith(track, [track]);
+  });
   it("delegates every local control and enforces the local play gate", () => {
     const { result, options, controls } = setup();
     for (const name of [

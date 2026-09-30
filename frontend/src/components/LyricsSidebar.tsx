@@ -1,18 +1,19 @@
 import { MicVocal as BookOpenIcon, X as XMarkIcon } from "lucide-react";
-import { trackCoverUrl } from "../api";
+import { trackCoverUrl, type TrackListItem } from "../api";
 import { useLyricsPanel } from "../context/LyricsPanel";
 import { usePlayer, usePlayerTime } from "../context/Player";
 import { displayText } from "../lib/format";
 import { lyricsDurationSeconds, useTrackLyrics } from "../lib/useTrackLyrics";
+import { useTransitionMount } from "../lib/useTransitionMount";
 import CoverArt from "./CoverArt";
 import PlayerLyricsLine from "./PlayerLyricsLine";
 
 export default function LyricsSidebar() {
   const { open, setOpen } = useLyricsPanel();
   const { current } = usePlayer();
-  const { currentTime, duration } = usePlayerTime();
-  const { lyrics, loading, error } = useTrackLyrics(current, open);
-  const trackDurationSeconds = lyricsDurationSeconds(current, duration);
+  // Keep the content for the sidebar's exit transition, then release its
+  // playback-clock subscription while the panel is closed.
+  const { mounted } = useTransitionMount(open, 280);
 
   const coverSrc =
     current && current.has_cover !== false ? trackCoverUrl(current) : null;
@@ -65,17 +66,23 @@ export default function LyricsSidebar() {
       )}
 
       <div className="lyrics-sidebar-body">
-        {!current ? null : (
-          <PlayerLyricsLine
-            variant="sidebar"
-            lyrics={lyrics}
-            loading={loading}
-            error={error}
-            currentTime={currentTime}
-            durationSeconds={trackDurationSeconds}
-          />
-        )}
+        {mounted && current && <LyricsContent track={current} />}
       </div>
     </aside>
+  );
+}
+
+function LyricsContent({ track }: { track: TrackListItem }) {
+  const { currentTime, duration } = usePlayerTime();
+  const { lyrics, loading, error } = useTrackLyrics(track, true);
+  return (
+    <PlayerLyricsLine
+      variant="sidebar"
+      lyrics={lyrics}
+      loading={loading}
+      error={error}
+      currentTime={currentTime}
+      durationSeconds={lyricsDurationSeconds(track, duration)}
+    />
   );
 }

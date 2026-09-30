@@ -1,3 +1,4 @@
+import { reconcileItems } from "../lib/reconcileItems";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -23,7 +24,7 @@ import {
   type TrackListItem,
 } from "../api";
 import { useAuth } from "../context/Auth";
-import { usePlayer } from "../context/Player";
+import { usePlayerControls } from "../context/Player";
 import { Button } from "../components/Button";
 import { Select } from "../components/Select";
 import SegmentedControl, {
@@ -47,7 +48,8 @@ import PlaylistTracksPanel from "./playlist/PlaylistTracksPanel";
 import {
   SORT_DEFAULT_ASC,
   SORT_OPTIONS,
-  compareEntries,
+  compareIndexedEntries,
+  usePlaylistTrackKeys,
   type SortKey,
 } from "./playlist/trackSort";
 import type { PlaylistTrackEntry } from "../api";
@@ -106,7 +108,7 @@ export default function PlaylistDetail() {
 
 function PlaylistDetailView({ id }: { id: string | undefined }) {
   const navigate = useNavigate();
-  const { play, current, isPlaying } = usePlayer();
+  const { play } = usePlayerControls();
   const { isFavorite, toggle: toggleFav } = useFavorites();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
@@ -162,19 +164,38 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   // load is out (seeded from the cache or sidebar), so a mutation and its
   // reload can overtake it, and its older rows mustn't land on top.
   const loadGenRef = useRef(0);
+  // Track edits (remove, reorder) run one at a time: each one's positions
+  // refer to the rows the edit before it left. While any are pending, the
+  // table shows the optimistic rows and loads leave them alone.
+  const trackMutationsRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingTrackMutationsRef = useRef(0);
+  const trackMutationEpochRef = useRef(0);
+  const trackMutationErrorRef = useRef<string | null>(null);
+  const trackMutationGenRef = useRef(0);
+  // Whether a full load (details, rows, collaborators) has committed since
+  // mount. An edit can supersede the mount load; the edit then reloads it.
+  const fullLoadDoneRef = useRef(false);
+  const trackEtagRef = useRef<string>();
+  const routeIdRef = useRef(id);
+  useEffect(() => {
+    routeIdRef.current = id;
+    return () => { routeIdRef.current = undefined; };
+  }, [id]);
   const invalidateLoads = () => {
     loadGenRef.current += 1;
+    trackEtagRef.current = undefined;
   };
   const load = useCallback(async () => {
     if (!id) return;
     const gen = ++loadGenRef.current;
+    trackEtagRef.current = undefined;
     try {
       // Fetch collaborators alongside when the row we already have says the
       // tab exists, so its count lands with everything else.
       const known = listedRef.current;
       const [p, t, early] = await Promise.all([
         api.getPlaylist(id),
-        api.listPlaylistTracks(id),
+        api.listPlaylistTracksIfChanged(id),
         known && showsCollaborators(known)
           ? api.listCollaborators(id).catch(() => undefined)
           : null,
@@ -187,14 +208,18 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
           : await api.listCollaborators(id).catch(() => undefined)
         : [];
       if (gen !== loadGenRef.current) return;
+      fullLoadDoneRef.current = true;
       setPlaylist(p);
-      setTracks(t.tracks);
+      if (pendingTrackMutationsRef.current === 0) {
+        trackEtagRef.current = t.etag;
+        setTracks((previous) => reconcileItems(previous ?? [], t.tracks ?? []));
+      }
       if (c) setCollabs(c);
       setError(null);
       // Keep the sidebar's row (name, cover) in step without refetching the
       // list. Only when it's out of date: update() drops list reads in flight.
       const row = listedRef.current;
-      const cover = coverFor(t.tracks);
+      const cover = coverFor(t.tracks ?? []);
       if (row && !sameListing(row, p, cover)) {
         // Optional fields are named outright: the response omits cleared
         // ones, and spreading it would keep the row's stale values.
@@ -242,29 +267,44 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   );
   useEffect(() => {
     if (!id || !autoDownload || queuedTidal === 0) return;
-    const timer = window.setInterval(() => {
-      // Quiet refresh: a transient failure must not replace the page with
-      // the load error banner.
+    let controller: AbortController | null = null;
+    const refresh = () => {
+      if (document.hidden || controller || pendingTrackMutationsRef.current > 0) return;
       const gen = loadGenRef.current;
-      api
-        .listPlaylistTracks(id)
-        .then((t) => {
-          if (gen === loadGenRef.current) setTracks(t.tracks);
+      const request = new AbortController();
+      controller = request;
+      void api.listPlaylistTracksIfChanged(id, trackEtagRef.current, { signal: request.signal })
+        .then((response) => {
+          if (!request.signal.aborted && gen === loadGenRef.current) {
+            trackEtagRef.current = response.etag;
+            if (response.tracks) setTracks((previous) => reconcileItems(previous ?? [], response.tracks!));
+          }
         })
-        .catch(() => {});
-    }, AUTO_DOWNLOAD_REFRESH_MS);
-    return () => window.clearInterval(timer);
+        .catch(() => {})
+        .finally(() => { if (controller === request) controller = null; });
+    };
+    const timer = window.setInterval(refresh, AUTO_DOWNLOAD_REFRESH_MS);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+      controller?.abort();
+    };
   }, [id, autoDownload, queuedTidal]);
 
   // All hooks must run unconditionally — keep them above every early return so
   // an error/loading state never changes the hook count between renders.
   // What the table shows; the play queue follows this order too.
+  const q = searchQuery.trim().toLowerCase();
+  const { titleKeys, searchKeys } = usePlaylistTrackKeys(tracks, sortKey, q);
   const sortedTracks = useMemo(() => {
     const base = tracks ?? [];
     if (sortKey === "custom") return base;
-    const sorted = [...base].sort((a, b) => compareEntries(a, b, sortKey));
+    const sorted = [...base].sort((a, b) =>
+      compareIndexedEntries(a, b, sortKey, titleKeys!),
+    );
     return sortAsc ? sorted : sorted.reverse();
-  }, [tracks, sortKey, sortAsc]);
+  }, [tracks, sortKey, sortAsc, titleKeys]);
   const queue = useMemo(() => sortedTracks.map(toQueueItem), [sortedTracks]);
   const queueById = useMemo(() => {
     const map = new Map<string, TrackListItem>();
@@ -277,17 +317,12 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     const entry = base.find((t) => t.album_id) ?? base[0];
     return entry ? toQueueItem(entry) : null;
   }, [tracks]);
-  const q = searchQuery.trim().toLowerCase();
   const filteredTracks = useMemo(
     () =>
       q
-        ? sortedTracks.filter((t) =>
-            `${t.title} ${t.artist ?? ""} ${t.album_title ?? ""}`
-              .toLowerCase()
-              .includes(q),
-          )
+        ? sortedTracks.filter((t) => searchKeys!.get(t)!.includes(q))
         : sortedTracks,
-    [sortedTracks, q],
+    [sortedTracks, q, searchKeys],
   );
 
   // With nothing to show, the error is the page; otherwise (a cached or
@@ -332,36 +367,82 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     setError(errorMessage(err, fallback));
   };
 
-  const onRemove = async (position: number) => {
-    if (!id) return;
+  // Track mutations only reconcile rows; playlist details and collaborators
+  // do not need another read. Later edits queue behind earlier ones instead
+  // of being dropped. If one fails, the edits queued behind it were computed
+  // from rows that no longer match the server, so they're discarded and the
+  // page reloads once the queue drains.
+  const commitTracks = (next: PlaylistTrackEntry[], mutate: () => Promise<unknown>, fallback: string) => {
+    if (!id) return Promise.resolve();
+    const epoch = trackMutationEpochRef.current;
+    pendingTrackMutationsRef.current += 1;
     invalidateLoads();
-    try {
-      await api.removePlaylistTrack(id, position);
-      await load();
-    } catch (err) {
-      await failAction(err, "Failed to remove track.");
-    }
+    trackMutationGenRef.current = loadGenRef.current;
+    setTracks(next);
+    const run = async () => {
+      // Still sent after navigating away: the edit was the user's intent.
+      if (epoch !== trackMutationEpochRef.current || trackMutationErrorRef.current !== null) {
+        trackMutationErrorRef.current ??= fallback;
+      } else {
+        try {
+          await mutate();
+        } catch (err) {
+          trackMutationEpochRef.current += 1;
+          trackMutationErrorRef.current = errorMessage(err, fallback);
+        }
+      }
+      pendingTrackMutationsRef.current -= 1;
+      if (pendingTrackMutationsRef.current > 0) return;
+      const failure = trackMutationErrorRef.current;
+      trackMutationErrorRef.current = null;
+      if (routeIdRef.current !== id) {
+        // Left the page: its cache holds the optimistic rows. After a
+        // failure, drop it so a revisit doesn't paint an edit that failed.
+        if (failure !== null) dropCache(cacheKey(id));
+        return;
+      }
+      if (failure !== null) {
+        await load();
+        // Edits made while this reload was out still saw the failed rows.
+        trackMutationEpochRef.current += 1;
+        setError(failure);
+        return;
+      }
+      // A details action reloaded while edits were pending (its load left
+      // the rows alone), or an edit superseded the mount load: read
+      // everything again after the last edit.
+      if (loadGenRef.current !== trackMutationGenRef.current || !fullLoadDoneRef.current) {
+        await load();
+        return;
+      }
+      const gen = loadGenRef.current;
+      try {
+        const fresh = await api.listPlaylistTracksIfChanged(id);
+        if (gen !== loadGenRef.current || pendingTrackMutationsRef.current > 0) return;
+        trackEtagRef.current = fresh.etag;
+        const rows = fresh.tracks ?? next;
+        setTracks((previous) => reconcileItems(previous ?? [], rows));
+        updatePlaylists((listed) => listed?.map((row) => row.id === id ? { ...row, cover: coverFor(rows) } : row) ?? listed);
+        setError(null);
+      } catch {
+        // The edits went through; the optimistic rows already match them.
+      }
+    };
+    const job = trackMutationsRef.current.then(run);
+    trackMutationsRef.current = job.catch(() => {});
+    return job;
   };
-  // Drag-reorder commits the full visible order, like mobile's reorder mode.
-  // Optimistic: swap locally, PUT the new order, reload for fresh positions.
+  const onRemove = async (position: number) => {
+    if (!id || !tracks) return;
+    const next = tracks.filter((track) => track.position !== position).map((track, index) => track.position === index ? track : { ...track, position: index });
+    await commitTracks(next, () => api.removePlaylistTrack(id, position), "Failed to remove track.");
+  };
   const onReorder = async (from: number, to: number) => {
     if (!id || !tracks || from === to) return;
-    const previous = tracks;
     const next = [...tracks];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
-    invalidateLoads();
-    setTracks(next);
-    try {
-      await api.reorderPlaylist(
-        id,
-        next.map((t) => t.track_id),
-      );
-      await load();
-    } catch (err) {
-      setTracks(previous);
-      await failAction(err, "Failed to reorder tracks.");
-    }
+    await commitTracks(next.map((track, position) => track.position === position ? track : { ...track, position }), () => api.reorderPlaylist(id, next.map((track) => track.track_id)), "Failed to reorder tracks.");
   };
 
   // Dragging only makes sense against the saved order with nothing filtered
@@ -689,8 +770,6 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
           }}
           onToggleFav={(id) => void toggleFav(id)}
           isFav={isFavorite}
-          currentTrackId={current?.id ?? null}
-          isPlaying={isPlaying}
           selectionControlsHostId={PLAYLIST_SELECTION_CONTROLS_ID}
         />
       )}

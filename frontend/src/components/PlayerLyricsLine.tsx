@@ -4,7 +4,7 @@ import {
   activeLineIndex,
   activeWordIndexForLine,
 } from "@music-library/core/lyrics";
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, type Ref } from "react";
 import type { LyricsResult } from "../api";
 import IosSpinner from "./IosSpinner";
 
@@ -39,6 +39,37 @@ function renderLyricWords(text: string, activeWordIndex: number | null) {
     );
   });
 }
+
+/** One synced line. Memoized: per clock tick only the active line's word
+ *  highlight changes, so the other lines skip rendering. */
+const SyncedLyricLine = memo(function SyncedLyricLine({
+  text,
+  section,
+  state,
+  activeWordIndex,
+  lineRef,
+}: {
+  text: string;
+  section: boolean;
+  state: "active" | "past" | "upcoming";
+  activeWordIndex: number | null;
+  lineRef: Ref<HTMLParagraphElement> | null;
+}) {
+  return (
+    <p
+      ref={lineRef}
+      className={
+        "player-lyrics-scroll-line " +
+        state +
+        (section ? " player-lyrics-section" : "")
+      }
+    >
+      {state === "active" && !section
+        ? renderLyricWords(text, activeWordIndex)
+        : text}
+    </p>
+  );
+});
 
 function SidebarLyricsView({
   lyrics,
@@ -110,27 +141,16 @@ function SidebarLyricsView({
     return (
       <div ref={scrollRef} className="player-lyrics-scroll">
         {syncedLyrics.map((line, index) => {
-          const state =
-            index === currentIndex
-              ? "active"
-              : index < currentIndex
-                ? "past"
-                : "upcoming";
-
+          const active = index === currentIndex;
           return (
-            <p
+            <SyncedLyricLine
               key={`${line.time}-${index}`}
-              ref={index === currentIndex ? activeLineRef : null}
-              className={
-                "player-lyrics-scroll-line " +
-                state +
-                (line.section ? " player-lyrics-section" : "")
-              }
-            >
-              {index === currentIndex && !line.section
-                ? renderLyricWords(line.text, activeWordIndex)
-                : line.text}
-            </p>
+              text={line.text}
+              section={!!line.section}
+              state={active ? "active" : index < currentIndex ? "past" : "upcoming"}
+              activeWordIndex={active ? activeWordIndex : null}
+              lineRef={active ? activeLineRef : null}
+            />
           );
         })}
       </div>

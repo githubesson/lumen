@@ -19,7 +19,7 @@ vi.mock("../../core/src/api", async (original) => ({
   api: { searchPage: mock.search },
 }));
 vi.mock("../src/context/Player", () => ({
-  usePlayer: () => ({ play: vi.fn() }),
+  usePlayer: () => ({ play: vi.fn() }), usePlayerControls: () => ({ play: vi.fn() }),
 }));
 vi.mock("../src/components/TrackList", () => ({
   default: ({ tracks }: { tracks: { title: string }[] }) => (
@@ -187,7 +187,7 @@ it("uses explicit remote artwork even when the local cover flag is false", async
   );
   await act(async () => {});
   expect(container.querySelector(".card-art img")?.getAttribute("src")).toBe(
-    "/api/tidal/cover?url=fixture",
+    "/api/tidal/cover?url=fixture&size=384",
   );
 });
 

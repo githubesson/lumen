@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage, type Page, type SearchOffsets } from "../api";
 import { libraryChanged } from "./events";
 import { readCache, writeCache } from "./resourceCache";
+import { reconcileItems } from "./reconcileItems";
+import { findScrollParent } from "./useWindowedSlice";
 
 interface Options {
   resourceKey?: string;
@@ -96,13 +98,14 @@ export function usePaginatedList<T>(
   }, [fetcher, requestKey, pageCacheKey]);
 
   const loadPage = useCallback(
-    async (offset: number, reset: boolean) => {
+    async (offset: number, reset: boolean, preserve = false, force = false) => {
+      if (preserve && loadingRef.current && !force) return;
       if (reset) {
         tokenRef.current += 1;
         activeRequestRef.current?.abort();
         setLoadingMore(false);
-        setHasMore(false);
-        nextOffsets.current = undefined;
+        if (!preserve) setHasMore(false);
+        if (!preserve) nextOffsets.current = undefined;
       } else {
         if (loadingRef.current) return;
         setLoadingMore(true);
@@ -114,24 +117,44 @@ export function usePaginatedList<T>(
       const controller = new AbortController();
       activeRequestRef.current = controller;
       try {
-        const page = await fetcherRef.current({
+        const target = preserve ? itemsRef.current?.length ?? 0 : 0;
+        // Revalidate long lists in larger batches. Fetchers/server caps still
+        // control source-specific limits (and cursors for mixed search).
+        const limit = preserve ? Math.max(pageSize, Math.min(target, 1000)) : pageSize;
+        let page = await fetcherRef.current({
           searchOffsets: reset ? undefined : nextOffsets.current,
-          limit: pageSize,
+          limit,
           offset,
           q: query.trim() || undefined,
           signal: controller.signal,
         });
+        const firstPageItems = limit > pageSize ? page.items.slice(0, pageSize) : page.items;
+        const collected = [...page.items];
+        while (collected.length < target && !controller.signal.aborted) {
+          const more = page.nextOffsets !== undefined
+            ? Object.keys(page.nextOffsets).length > 0
+            : collected.length < page.total;
+          if (!more || page.items.length === 0) break;
+          page = await fetcherRef.current({
+            searchOffsets: page.nextOffsets,
+            limit,
+            offset: collected.length,
+            q: query.trim() || undefined,
+            signal: controller.signal,
+          });
+          collected.push(...page.items);
+        }
         if (controller.signal.aborted || token !== tokenRef.current) return;
         nextOffsets.current = page.nextOffsets;
         const more = page.nextOffsets !== undefined
           ? Object.keys(page.nextOffsets).length > 0
-          : offset + page.items.length < page.total;
+          : offset + collected.length < page.total;
         setHasMore(more);
         const nextTotal = page.nextOffsets !== undefined && more ? null : page.total;
         setTotal(nextTotal);
-        if (reset) writeCache(cacheKey, { items: page.items, total: nextTotal } satisfies CachedPage<T>);
+        if (reset) writeCache(cacheKey, { items: firstPageItems, total: nextTotal } satisfies CachedPage<T>);
         setItems((prev) =>
-          reset || !prev ? page.items : [...prev, ...page.items],
+          reset || !prev ? reconcileItems(prev ?? [], collected) : [...prev, ...page.items],
         );
         setLoadedKey(key);
         setError(null);
@@ -184,16 +207,21 @@ export function usePaginatedList<T>(
     [],
   );
 
-  // Bulk library updates and periodic polling both reset pagination.
+  // Revalidate the loaded range without dropping later pages or scroll position.
   useEffect(() => {
-    const unsub = libraryChanged.on(() => void loadPage(0, true));
+    const refresh = () => {
+      if (!document.hidden) void loadPage(0, true, true);
+    };
+    const unsub = libraryChanged.on(() => void loadPage(0, true, true, true));
     let poll: number | null = null;
     if (opts.pollIntervalMs && opts.pollIntervalMs > 0) {
-      poll = window.setInterval(() => void loadPage(0, true), opts.pollIntervalMs);
+      poll = window.setInterval(refresh, opts.pollIntervalMs);
+      document.addEventListener("visibilitychange", refresh);
     }
     return () => {
       unsub();
       if (poll !== null) window.clearInterval(poll);
+      document.removeEventListener("visibilitychange", refresh);
     };
   }, [loadPage, opts.pollIntervalMs]);
 
@@ -202,6 +230,11 @@ export function usePaginatedList<T>(
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
+    // The page scrolls inside `.content`, so rootMargin must apply to that
+    // scroller; an explicit root that isn't height-constrained (e.g. `.view`,
+    // whose overflow-x makes overflow-y compute to auto) would contain the
+    // sentinel at any scroll position and load every page.
+    const root = findScrollParent(el);
     const obs = new IntersectionObserver(
       (entries) => {
         if (!entries.some((e) => e.isIntersecting)) return;
@@ -209,12 +242,12 @@ export function usePaginatedList<T>(
         if (items === null || !hasMore) return;
         void loadPage(items.length, false);
       },
-      { rootMargin, root: null },
+      { rootMargin, root },
     );
     obs.observe(el);
     return () => obs.disconnect();
   }, [loadPage, items, hasMore, rootMargin]);
 
   const stale = items !== null && loadedKey !== requestKey;
-  return { items, total, hasMore, loadingMore, error, stale, sentinelRef, reload: () => loadPage(0, true) };
+  return { items, total, hasMore, loadingMore, error, stale, sentinelRef, reload: () => loadPage(0, true, true, true) };
 }

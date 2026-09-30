@@ -7,6 +7,7 @@ export class ApiError extends Error {
 export type RequestOptions = Pick<RequestInit, "signal">;
 
 type RequestBehavior = {
+  allowNotModified?: boolean;
   notifyUnauthorized?: boolean;
   /** Overrides the default 30s deadline, for routes the server lets run longer. */
   timeoutMs?: number;
@@ -119,7 +120,7 @@ export async function rawFetch(
     callerSignal?.removeEventListener("abort", onCallerAbort);
   }
 
-  if (!response.ok) {
+  if (!response.ok && !(behavior.allowNotModified && response.status === 304)) {
     if (response.status === 401 && generation === authGeneration && behavior.notifyUnauthorized !== false) {
       onUnauthorized?.();
     }

@@ -62,7 +62,13 @@ export function playlistArtUrl(
   );
 }
 
-export function resolveCoverUrl(coverURL: string): string {
+export function resolveCoverUrl(coverURL: string, size?: number): string {
+  // Our cover endpoints support resizing. Leave signed and external URLs intact.
+  if (size && Number.isFinite(size) && size > 0 && coverURL.startsWith("/api/") && !coverURL.includes("sig=")) {
+    const url = new URL(coverURL, "https://lumen.invalid");
+    url.searchParams.set("size", String(Math.round(size)));
+    return apiUrl(url.pathname + url.search);
+  }
   return apiUrl(coverURL);
 }
 
@@ -71,7 +77,7 @@ export function trackCoverUrl(track: {
   album_id?: string | null;
   cover_url?: string | null;
 }, size?: number): string {
-  if (track.cover_url) return resolveCoverUrl(track.cover_url);
+  if (track.cover_url) return resolveCoverUrl(track.cover_url, size);
   return track.album_id ? albumCoverUrl(track.album_id, size) : coverUrl(track.id, size);
 }
 

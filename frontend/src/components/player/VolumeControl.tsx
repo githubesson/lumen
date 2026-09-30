@@ -32,7 +32,7 @@ export default function VolumeControl({
           <SpeakerWaveIcon className="size-3.5" />
         )}
       </button>
-      <SeekBar value={muted ? 0 : volume} onSeek={onSeek} label="Volume" />
+      <SeekBar commitOnRelease={false} value={muted ? 0 : volume} onSeek={onSeek} label="Volume" />
     </div>
   );
 }

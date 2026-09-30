@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, type RefObject } from "react";
 import type Hls from "hls.js";
 import type { AudioAdapter, AudioAdapterEvent } from "@music-library/core";
+import { usesNativeHls } from "../lib/nativeHls";
 
 /**
  * Wraps an `HTMLAudioElement` in the shared `AudioAdapter` interface. The
@@ -108,11 +109,11 @@ export function useHtmlAudioAdapter(): {
         hlsRef.current = null;
         a.removeAttribute("src");
         a.load();
-        if (shouldUseHLS(url)) {
+        if (shouldUseHLS(url) && !usesNativeHls(a)) {
           // hls.js is by far the largest renderer dependency. Load it only for
           // an HLS source, and make play() wait for this one-time import so the
           // player's immediate load() -> play() sequence remains race-safe.
-          const pending = import("hls.js")
+          const pending = import("hls.js/light")
             .then(({ default: HlsRuntime }) => {
               if (
                 generation !== loadGenerationRef.current ||
@@ -186,8 +187,8 @@ export function useHtmlAudioAdapter(): {
         next.volume = active.volume;
         next.muted = active.muted;
 
-        if (shouldUseHLS(url)) {
-          const pending = import("hls.js")
+        if (shouldUseHLS(url) && !usesNativeHls(next)) {
+          const pending = import("hls.js/light")
             .then(({ default: HlsRuntime }) => {
               if (
                 generation !== preparedGenerationRef.current ||

@@ -7,6 +7,7 @@ import type { Tweaks } from "../src/contracts/desktop";
 export type { Theme, Density, Layout, Tweaks } from "../src/contracts/desktop";
 
 export interface Config {
+  localProxyPort?: number;
   backendUrl?: string;
   discordClientId?: string;
   discordEnabled?: boolean;

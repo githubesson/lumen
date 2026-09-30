@@ -31,7 +31,7 @@ interface AudioOutputCtx {
   /** Persist and apply a new sinkId. */
   selectDevice: (id: string) => Promise<void>;
   /** Re-run `enumerateDevices`. Triggers a one-shot mic grant so labels populate. */
-  refresh: () => Promise<void>;
+  refresh: (requestLabels?: boolean) => Promise<void>;
 }
 
 const AudioOutputContext = createContext<AudioOutputCtx | null>(null);
@@ -67,14 +67,17 @@ async function unlockLabels(): Promise<void> {
   }
 }
 
-async function listOutputs(): Promise<OutputDevice[]> {
-  const all = await navigator.mediaDevices.enumerateDevices();
-  return all
-    .filter((d) => d.kind === "audiooutput")
-    .map((d, i) => ({
+async function listOutputs(): Promise<{ devices: OutputDevice[]; labelled: boolean }> {
+  const all = (await navigator.mediaDevices.enumerateDevices()).filter(
+    (d) => d.kind === "audiooutput",
+  );
+  return {
+    labelled: all.every((d) => d.label !== ""),
+    devices: all.map((d, i) => ({
       deviceId: d.deviceId,
       label: d.label || (d.deviceId === "default" ? "System default" : `Output ${i + 1}`),
-    }));
+    })),
+  };
 }
 
 export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
@@ -126,12 +129,17 @@ export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
     [audioRefs],
   );
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (requestLabels = true) => {
     if (!supported) return;
     try {
-      await unlockLabels();
-      const list = await listOutputs();
-      setDevices(list);
+      const listed = await listOutputs();
+      // Only open the microphone while the browser is hiding device names.
+      if (requestLabels && !listed.labelled) {
+        await unlockLabels();
+        setDevices((await listOutputs()).devices);
+      } else {
+        setDevices(listed.devices);
+      }
     } catch (e) {
       setError((e as Error).message);
     }
@@ -155,22 +163,25 @@ export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
     [applySink],
   );
 
-  // In Electron localStorage is tied to the random proxy port, so the
-  // canonical sink id lives in config.json. Load it once at startup.
+  // Desktop configuration remains canonical across port-collision fallbacks
+  // and upgrades from versions that used a random proxy port.
   useEffect(() => {
     if (!isElectron()) return;
     let cancelled = false;
     getTweaks()
       .then(({ audioSinkId }) => {
-        if (cancelled || !audioSinkId) return;
+        if (cancelled || !audioSinkId || audioSinkId === desiredRef.current) return;
         desiredRef.current = audioSinkId;
         setDeviceId(audioSinkId);
+        // The elements may already have mounted (and taken the default);
+        // if not, the mount effect below applies desiredRef when they do.
+        void applySink(audioSinkId);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applySink]);
 
   // Apply the persisted sinkId once the audio element mounts. The element
   // is owned by `PlayerProvider`, so the ref may resolve a tick after we do.
@@ -186,7 +197,9 @@ export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
         return;
       }
       const id = desiredRef.current || DEFAULT_DEVICE_ID;
-      void applySink(id === DEFAULT_DEVICE_ID ? "" : id);
+      // A fresh element already plays to the default device.
+      if (id === DEFAULT_DEVICE_ID) return;
+      void applySink(id);
     };
     tryApply();
     return () => {
@@ -194,21 +207,6 @@ export function AudioOutputProvider({ audioRefs, children }: ProviderProps) {
       if (frame !== null) cancelAnimationFrame(frame);
     };
   }, [supported, applySink, audioRefs]);
-
-  // Keep the device list fresh when hardware is plugged/unplugged.
-  useEffect(() => {
-    if (!supported) return;
-    // Device enumeration synchronizes React with the browser media-device API.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void refresh();
-    const onChange = () => {
-      void refresh();
-    };
-    navigator.mediaDevices.addEventListener("devicechange", onChange);
-    return () => {
-      navigator.mediaDevices.removeEventListener("devicechange", onChange);
-    };
-  }, [supported, refresh]);
 
   const value = useMemo<AudioOutputCtx>(
     () => ({ supported, devices, deviceId, error, selectDevice, refresh }),
@@ -225,4 +223,22 @@ export function useAudioOutput(): AudioOutputCtx {
   const ctx = useContext(AudioOutputContext);
   if (!ctx) throw new Error("useAudioOutput requires AudioOutputProvider");
   return ctx;
+}
+
+/**
+ * Enumerates output devices while `active` (the Settings output row mounts it,
+ * so only showing that row can ask for the microphone). Hardware changes
+ * re-list without reopening the mic.
+ */
+export function useAudioOutputDevices(active = true): AudioOutputCtx {
+  const output = useAudioOutput();
+  const { supported, refresh } = output;
+  useEffect(() => {
+    if (!active || !supported) return;
+    void refresh();
+    const onChange = () => { void refresh(false); };
+    navigator.mediaDevices.addEventListener("devicechange", onChange);
+    return () => navigator.mediaDevices.removeEventListener("devicechange", onChange);
+  }, [active, supported, refresh]);
+  return output;
 }

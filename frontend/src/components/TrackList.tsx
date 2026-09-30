@@ -15,10 +15,10 @@ import CoverArt from "./CoverArt";
 import { EditTrackDialog } from "./edit/EditTrackDialog";
 import { MoveToAlbumDialog } from "./edit/MoveToAlbumDialog";
 import Tooltip from "./Tooltip";
-import { useTrackContextMenu } from "./TrackContextMenu";
+import { useTrackContextMenu } from "../lib/useTrackContextMenu";
 import { useAuth } from "../context/Auth";
 import { useFavorites } from "../context/Favorites";
-import { usePlayer } from "../context/Player";
+import { usePlayer, usePlayerControls } from "../context/Player";
 import { useTrackSelection } from "../lib/useTrackSelection";
 import { useWindowedSlice } from "../lib/useWindowedSlice";
 import {
@@ -65,7 +65,8 @@ export default function TrackList({
   extraColumn,
   selectionControlsHostId,
 }: Props) {
-  const { play, current, isPlaying } = usePlayer();
+  const { current, isPlaying } = usePlayer();
+  const { play } = usePlayerControls();
   const { isFavorite, toggle } = useFavorites();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
@@ -90,6 +91,7 @@ export default function TrackList({
     items: tracks,
     getId: trackId,
     toExportItems: exportTracks,
+    disabled: !selectable,
   });
 
   const selectedLocalTracks = useMemo(
@@ -230,14 +232,8 @@ export default function TrackList({
                   showCover={showCover}
                   showAlbum={showAlbum}
                   showSourceBadge={showSourceBadge}
-                  extra={
-                    extraColumn
-                      ? {
-                          content: extraColumn.render(t),
-                          className: extraColumn.className,
-                        }
-                      : undefined
-                  }
+                  renderExtra={extraColumn?.render}
+                  extraClassName={extraColumn?.className}
                   isNow={current?.id === t.id}
                   isPlaying={isPlaying && current?.id === t.id}
                   fav={isFavorite(t.id)}
@@ -284,7 +280,8 @@ interface TrackRowProps {
   showCover: boolean;
   showAlbum: boolean;
   showSourceBadge: boolean;
-  extra?: { content: ReactNode; className?: string };
+  renderExtra?: (track: TrackListItem) => ReactNode;
+  extraClassName?: string;
   isNow: boolean;
   isPlaying: boolean;
   fav: boolean;
@@ -311,7 +308,8 @@ export const TrackRow = memo(function TrackRow({
   showCover,
   showAlbum,
   showSourceBadge,
-  extra,
+  renderExtra,
+  extraClassName,
   isNow,
   isPlaying,
   fav,
@@ -365,7 +363,7 @@ export const TrackRow = memo(function TrackRow({
         <td className="col-art">
           <CoverArt
             className="mini-art"
-            src={trackCoverUrl(track)}
+            src={trackCoverUrl(track, 64)}
             label={track.album_title || track.title}
           />
         </td>
@@ -418,8 +416,8 @@ export const TrackRow = memo(function TrackRow({
           {track.album_title ? displayText(track.album_title) : "—"}
         </td>
       )}
-      {extra && (
-        <td className={extra.className ?? "col-extra"}>{extra.content}</td>
+      {renderExtra && (
+        <td className={extraClassName ?? "col-extra"}>{renderExtra(track)}</td>
       )}
       <td className="col-dur">{fmtDurationMs(track.duration_ms)}</td>
       <td className="col-acts">

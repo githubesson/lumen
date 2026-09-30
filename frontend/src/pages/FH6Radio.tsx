@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { usePlaylists } from "../context/Playlists";
+import { useEffect, useState } from "react";
 import {
   RefreshCw as ArrowPathIcon,
   CircleCheck as CheckCircleIcon,
@@ -8,7 +9,6 @@ import { Button } from "../components/Button";
 import ErrorBanner from "../components/ErrorBanner";
 import { TextInput } from "../components/Field";
 import { Select } from "../components/Select";
-import { api, type Playlist } from "../api";
 import { getFH6Status, isElectron, syncFH6Session } from "../lib/platform";
 import { useDesktopConfig } from "../lib/desktopConfig";
 import { useOpenSettings } from "../components/shell/openSettings";
@@ -80,12 +80,13 @@ export default function FH6Radio() {
   }, []);
 
   // refreshBridge is memoized on bridgeUrl, so a new bridge URL restarts this
-  // polling lifecycle; refreshPlaylists is stable.
+  // polling lifecycle; refreshPlaylists is stable. The shared playlist list
+  // loaded with the shell, so re-read it: another client may have changed it.
   useEffect(() => {
     if (!enabled) return;
     void refreshBridge();
     void refreshPlaylists();
-    const timer = window.setInterval(() => void refreshBridge(false), 2500);
+    const timer = window.setInterval(() => { if (!document.hidden) void refreshBridge(false); }, 2500);
     return () => window.clearInterval(timer);
   }, [enabled, refreshBridge, refreshPlaylists]);
 
@@ -320,19 +321,6 @@ function StatusPill({ ok, label }: { ok: boolean; label: string }) {
 
 /** Playlists offered as a Lumen Radio source. */
 function usePlaylistOptions() {
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [playlistsLoading, setPlaylistsLoading] = useState(false);
-
-  const refreshPlaylists = useCallback(async () => {
-    setPlaylistsLoading(true);
-    try {
-      setPlaylists(await api.listPlaylists());
-    } catch {
-      setPlaylists([]);
-    } finally {
-      setPlaylistsLoading(false);
-    }
-  }, []);
-
-  return { playlists, playlistsLoading, refreshPlaylists };
+  const { data, loading: playlistsLoading, reload: refreshPlaylists } = usePlaylists();
+  return { playlists: data ?? [], playlistsLoading, refreshPlaylists };
 }

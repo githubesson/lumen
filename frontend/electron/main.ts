@@ -6,7 +6,7 @@ import {
   parseGitHubRepoUrl,
   type UpdateBranch,
 } from "./updater";
-import { loadConfig } from "./config";
+import { loadConfig, saveConfigPatch } from "./config";
 import {
   configureDiscordPresence,
   teardownDiscordPresence,
@@ -51,6 +51,11 @@ registerIpcHandlers({
   },
 });
 
+// Before ready on purpose: Electron builds its default menu during startup
+// unless one was already set, so doing this in whenReady() built one only to
+// throw it away. Electron allows setApplicationMenu(null) before ready.
+Menu.setApplicationMenu(null);
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
@@ -64,7 +69,6 @@ if (!gotLock) {
   });
 
   void app.whenReady().then(async () => {
-    Menu.setApplicationMenu(null);
     installMediaPermissionHandlers(localProxy);
     const cfg = await loadConfig();
     backendUrl = cfg.backendUrl ?? "";
@@ -83,7 +87,14 @@ if (!gotLock) {
     const updateRepoUrl =
       parseGitHubRepoUrl(cfg.updateRepoUrl)?.url ?? DEFAULT_UPDATE_REPO_URL;
     updateManager.configure({ branch: updateBranch, repoUrl: updateRepoUrl });
-    await localProxy.start();
+    const proxyPort = await localProxy.start(cfg.localProxyPort);
+    // Best effort: remembering the port only keeps the origin (and its
+    // caches) stable across launches, so a failed write mustn't stop startup.
+    if (proxyPort !== cfg.localProxyPort) {
+      void saveConfigPatch({ localProxyPort: proxyPort }).catch((error) => {
+        console.warn("[config] could not save the local proxy port:", error);
+      });
+    }
     // With no server yet the renderer shows its first-run setup.
     await windows.openMain();
   });

@@ -76,24 +76,31 @@ export async function exportTracksAsFiles(
   }> = [];
   let failed = 0;
   const errors: string[] = [];
-  for (const track of tracks) {
-    try {
-      let detail: TrackDetail | null = null;
+  const results: typeof prepared = new Array(tracks.length);
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(4, tracks.length) }, async () => {
+    while (cursor < tracks.length) {
+      const index = cursor++;
+      const track = tracks[index];
       try {
-        detail = await api.getTrack(track.id);
-      } catch {
-        // Stream URL is enough; detail only improves the filename.
-      }
-      const ext =
-        extensionForFormat(detail?.format) ?? (await extensionFromStream(track.id));
-      prepared.push({ track, detail, ext });
-    } catch (e) {
-      failed += 1;
-      if (errors.length < 5) {
-        errors.push(`${track.title}: ${(e as Error).message}`);
+        let detail: TrackDetail | null = null;
+        try {
+          detail = await api.getTrack(track.id);
+        } catch {
+          // Stream URL is enough; detail only improves the filename.
+        }
+        const ext =
+          extensionForFormat(detail?.format) ?? (await extensionFromStream(track.id));
+        results[index] = { track, detail, ext };
+      } catch (e) {
+        failed += 1;
+        if (errors.length < 5) {
+          errors.push(`${track.title}: ${(e as Error).message}`);
+        }
       }
     }
-  }
+  }));
+  prepared.push(...results.filter(Boolean));
 
   if (canExportTrackFiles()) {
     const res = await exportTrackFiles(

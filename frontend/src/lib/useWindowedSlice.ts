@@ -65,14 +65,18 @@ export function useWindowedSlice(
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
-    const scroller = findScrollParent(el);
+    let scroller = findScrollParent(el);
     let rafId: number | null = null;
 
     const computeRange = () => {
       rafId = null;
       const listEl = listRef.current;
       if (!listEl) return;
-      const scroller = findScrollParent(listEl);
+      // Re-walk the ancestors only when the cached scroller stops scrolling
+      // (or none was found yet), not on every frame.
+      if (!scroller?.isConnected || scroller.scrollHeight <= scroller.clientHeight + 1) {
+        scroller = findScrollParent(listEl);
+      }
       const listRect = listEl.getBoundingClientRect();
       let viewportTop: number;
       let viewportHeight: number;
@@ -98,12 +102,19 @@ export function useWindowedSlice(
       if (rafId !== null) return;
       rafId = requestAnimationFrame(computeRange);
     };
+    // Scrolls in unrelated containers (sidebar, lyrics, popovers) can't move
+    // the list, so they don't need a layout read.
+    const onScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && !target.contains(el)) return;
+      scheduleCompute();
+    };
 
     computeRange();
 
     // Capture ancestor scrolls, including a container that only becomes
     // scrollable after resize. Momentum events share one computation per frame.
-    window.addEventListener("scroll", scheduleCompute, { passive: true, capture: true });
+    window.addEventListener("scroll", onScroll, { passive: true, capture: true });
 
     // Viewport resize → ResizeObserver instead of window `resize`. The raw
     // event fires 60–100× per second during a drag, and even with rAF
@@ -119,7 +130,7 @@ export function useWindowedSlice(
     }
 
     return () => {
-      window.removeEventListener("scroll", scheduleCompute, true);
+      window.removeEventListener("scroll", onScroll, true);
       ro?.disconnect();
       if (rafId !== null) cancelAnimationFrame(rafId);
     };

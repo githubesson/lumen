@@ -31,7 +31,7 @@ const FONT_FILE_ORIGIN = "https://fonts.gstatic.com";
 
 export interface LocalProxy {
   readonly port: number;
-  start(): Promise<number>;
+  start(preferredPort?: number): Promise<number>;
   close(): void;
 }
 
@@ -45,6 +45,15 @@ export function createLocalProxy(options: {
 
   function mimeFor(filePath: string): string {
     return MIME[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
+  }
+
+  // The proxy listens on a predictable port, so a DNS-rebinding page
+  // (attacker.example:48637 resolving to 127.0.0.1) could otherwise use it as
+  // a relay to the backend. Browsers send the page's own hostname as Host, so
+  // only the loopback names the app itself loads from are accepted.
+  function isAllowedHost(req: IncomingMessage): boolean {
+    const host = req.headers.host?.toLowerCase();
+    return host === `127.0.0.1:${port}` || host === `localhost:${port}`;
   }
 
   function proxyApi(req: IncomingMessage, res: ServerResponse): void {
@@ -189,7 +198,7 @@ export function createLocalProxy(options: {
       const data = await fsp.readFile(filePath);
       res.writeHead(200, {
         "Content-Type": mimeFor(filePath),
-        "Cache-Control": "no-cache",
+        "Cache-Control": normalized.startsWith("assets/") ? "public, max-age=31536000, immutable" : "no-cache",
         ...headers,
       });
       res.end(data);
@@ -213,23 +222,43 @@ export function createLocalProxy(options: {
     get port() {
       return port;
     },
-    start() {
+    start(preferredPort = 48637) {
       return new Promise<number>((resolve, reject) => {
         const nextServer = http.createServer((req, res) => {
-          if (req.url?.startsWith("/api/")) proxyApi(req, res);
+          if (!isAllowedHost(req)) {
+            res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+            res.end("Forbidden");
+          } else if (req.url?.startsWith("/api/")) proxyApi(req, res);
           else void serveStatic(req, res);
         });
         nextServer.on("upgrade", (req, socket, head) => {
-          if (req.url?.startsWith("/api/")) proxyWebSocket(req, socket, head);
+          if (isAllowedHost(req) && req.url?.startsWith("/api/")) proxyWebSocket(req, socket, head);
           else socket.destroy();
         });
-        nextServer.once("error", reject);
-        nextServer.listen(0, "127.0.0.1", () => {
+        const validPort = Number.isInteger(preferredPort) && preferredPort >= 0 && preferredPort <= 65535 ? preferredPort : 48637;
+        let listenPort = validPort;
+        let listening = false;
+        // Any failure on the preferred port falls back to an OS-chosen one:
+        // besides EADDRINUSE, Windows answers EACCES for ports inside the
+        // Hyper-V/WSL/Docker excluded ranges (EADDRNOTAVAIL is possible too).
+        // Only a failure on port 0 is fatal.
+        const onError = (error: NodeJS.ErrnoException) => {
+          // Later server errors (e.g. accept failures) are not listen failures.
+          if (listening) return;
+          if (listenPort !== 0) {
+            listenPort = 0;
+            nextServer.listen(0, "127.0.0.1");
+          } else reject(error);
+        };
+        nextServer.on("error", onError);
+        nextServer.once("listening", () => {
+          listening = true;
           const address = nextServer.address();
           port = address && typeof address === "object" ? address.port : 0;
           server = nextServer;
           resolve(port);
         });
+        nextServer.listen(validPort, "127.0.0.1");
       });
     },
     close() {

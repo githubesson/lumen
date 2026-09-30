@@ -1,15 +1,15 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Music as MusicalNoteIcon, X as XMarkIcon } from "lucide-react";
-import { trackCoverUrl } from "../api";
-import { usePlayer, useRemotePlayback } from "../context/Player";
+import { trackCoverUrl, type TrackListItem } from "../api";
+import { usePlayer, usePlayerControls, useRemotePlayback } from "../context/Player";
 import { useDismiss } from "../lib/useDismiss";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import CoverArt from "./CoverArt";
 import {
   useContextMenuClickGuard,
   useTrackContextMenu,
-} from "./TrackContextMenu";
+} from "../lib/useTrackContextMenu";
 
 interface ExternalQueueTrack {
   id: string;
@@ -170,7 +170,20 @@ export function QueueList({
   /** Called after a row click jumps playback. */
   onJumped?: () => void;
 }) {
-  const { queue, index, jumpTo, current } = usePlayer();
+  const { queue, index, current } = usePlayer();
+  const { jumpTo } = usePlayerControls();
+  return <QueueContents queue={queue} index={index} current={current} jumpTo={jumpTo} externalQueue={externalQueue} bindCtx={bindCtx} onJumped={onJumped} />;
+}
+
+const QueueContents = memo(function QueueContents({ queue, index, current, jumpTo, externalQueue, bindCtx, onJumped }: {
+  queue: TrackListItem[];
+  index: number;
+  current: TrackListItem | null;
+  jumpTo: (index: number) => void;
+  externalQueue?: ExternalQueue;
+  bindCtx?: BindTrackContext;
+  onJumped?: () => void;
+}) {
 
   const usingExternal = !!externalQueue;
   const externalTracks = externalQueue?.tracks ?? [];
@@ -212,7 +225,7 @@ export function QueueList({
             <QueueRow
               title={current.title}
               artist={current.artist}
-              coverUrl={trackCoverUrl(current)}
+              coverUrl={trackCoverUrl(current, 64)}
               active
               onContextMenu={bindCtx?.(current, { queue, onPlay: () => jumpTo(index) })}
             />
@@ -246,7 +259,7 @@ export function QueueList({
                 key={`${t.id}-${index + 1 + i}`}
                 title={t.title}
                 artist={t.artist}
-                coverUrl={trackCoverUrl(t)}
+                coverUrl={trackCoverUrl(t, 64)}
                 onClick={() => {
                   jumpTo(index + 1 + i);
                   onJumped?.();
@@ -260,7 +273,7 @@ export function QueueList({
       )}
     </>
   );
-}
+});
 
 function QueueRow({
   title,

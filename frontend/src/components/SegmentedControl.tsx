@@ -40,6 +40,7 @@ export default function SegmentedControl<V extends string>({
   // style to transition *from* by the time the real values arrive -- one
   // painted frame of `data-initial` is what prevents that.
   const [ready, setReady] = useState(false);
+  const optionKeys = JSON.stringify(options.map((option) => option.value));
 
   useLayoutEffect(() => {
     const list = listRef.current;
@@ -62,11 +63,12 @@ export default function SegmentedControl<V extends string>({
     }
     const ro = new ResizeObserver(measure);
     ro.observe(list);
+    list.querySelectorAll("button").forEach((button) => ro.observe(button));
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
-  }, [value, options]);
+  }, [value, optionKeys]);
 
   return (
     <div

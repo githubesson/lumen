@@ -5,8 +5,10 @@ import DataState from "../components/DataState";
 import PageHeader from "../components/PageHeader";
 import { useApiResource } from "../lib/useApiResource";
 import { fmtDate } from "../lib/format";
+import { usePlaylists } from "../context/Playlists";
 
 export default function PendingInvites() {
+  const { reload: reloadPlaylists } = usePlaylists();
   const { data: rows, error: loadError, reload } = useApiResource<PendingInvite[]>(
     async () => (await api.listPendingInvites()) ?? [],
     "Failed to load invites.",
@@ -18,6 +20,7 @@ export default function PendingInvites() {
   const accept = async (id: string) => {
     try {
       await api.acceptInvite(id);
+      void reloadPlaylists();
       await reload();
     } catch (err) {
       setActionError(errorMessage(err, "Failed to accept."));

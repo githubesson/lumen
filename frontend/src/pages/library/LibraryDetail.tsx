@@ -25,7 +25,7 @@ import EmptyState from "../../components/EmptyState";
 import ErrorBanner from "../../components/ErrorBanner";
 import ListPageHeader from "../../components/ListPageHeader";
 import SearchInput from "../../components/SearchInput";
-import { usePlayer } from "../../context/Player";
+import { usePlayerControls } from "../../context/Player";
 import { useAuth } from "../../context/Auth";
 import { useKey } from "../../lib/keybindings";
 import { playableTracks } from "../../lib/track";
@@ -48,7 +48,7 @@ export function AlbumDetailView({
   // Bumped whenever the album is saved so the cover <img> reloads — the cover
   // URL is stable even when an admin replaces the artwork.
   const [coverNonce, setCoverNonce] = useState(0);
-  const { play } = usePlayer();
+  const { play } = usePlayerControls();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
   const search = useDetailTrackSearch("album", tracks);
@@ -192,7 +192,7 @@ export function TidalAlbumDetailView({
   // Kept apart from the load error: a later successful read clears that one,
   // but it says nothing about a download or cancel that failed.
   const [actionError, setActionError] = useState<string | null>(null);
-  const { play } = usePlayer();
+  const { play } = usePlayerControls();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
   // Only the newest read may commit: a revisit's mount read is still out
@@ -387,27 +387,33 @@ export function useDetailTrackSearch(
     },
   );
 
+  // Built once per track list, not per keystroke. Only computed once a
+  // search starts, so pages that are never searched skip it.
+  const searchActive = normalizedQuery.length > 0;
+  const searchKeys = useMemo(
+    () => (searchActive ? (tracks ?? []).map(trackSearchKey) : null),
+    [tracks, searchActive],
+  );
   const filteredTracks = useMemo(() => {
     const base = tracks ?? [];
-    if (!normalizedQuery) return base;
-    return base.filter((track) => trackMatchesQuery(track, normalizedQuery));
-  }, [tracks, normalizedQuery]);
+    if (!normalizedQuery || !searchKeys) return base;
+    return base.filter((_, index) => searchKeys[index].includes(normalizedQuery));
+  }, [tracks, normalizedQuery, searchKeys]);
 
   return {
     query,
     setQuery,
     inputRef,
     filteredTracks,
-    searchActive: normalizedQuery.length > 0,
+    searchActive,
   };
 }
 
-function trackMatchesQuery(track: TrackListItem, query: string): boolean {
+function trackSearchKey(track: TrackListItem): string {
   return [track.title, track.artist, track.album_title, track.aka, track.source]
     .filter(Boolean)
     .join(" ")
-    .toLowerCase()
-    .includes(query);
+    .toLowerCase();
 }
 
 export function DetailTrackSearchBar({

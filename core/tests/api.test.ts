@@ -56,6 +56,31 @@ describe("share snippet requests", () => {
   });
 });
 
+describe("complete favorites", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("includes favorites beyond the server's default page", async () => {
+    const fetchMock = vi.fn(async (path: string) => {
+      const offset = Number(new URL(path, "https://test.invalid").searchParams.get("offset"));
+      return Response.json(Array.from({ length: offset === 0 ? 500 : 17 }, (_, index) => ({ id: String(offset + index) })));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await api.listFavorites()).toHaveLength(517);
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+      "/api/favorites?limit=500&offset=0", "/api/favorites?limit=500&offset=500",
+    ]);
+  });
+  it("reports a non-JSON playlist response as an ApiError", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>", { status: 200, headers: { "Content-Type": "text/html" } })));
+    await expect(api.listPlaylistTracksIfChanged("playlist")).rejects.toMatchObject({ status: 200, message: "Unexpected non-JSON response from the server." });
+  });
+  it("handles an unchanged playlist without parsing an empty response", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 304, headers: { ETag: '"rows"' } }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await api.listPlaylistTracksIfChanged("playlist", '"rows"')).toEqual({ tracks: null, etag: '"rows"' });
+    expect(fetchMock).toHaveBeenCalledWith("/api/playlists/playlist/tracks", expect.objectContaining({ headers: expect.objectContaining({ "If-None-Match": '"rows"' }) }));
+  });
+});
+
 describe("share link parsing", () => {
   afterEach(() => setBaseUrl(""));
 

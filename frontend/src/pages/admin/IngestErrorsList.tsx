@@ -1,6 +1,6 @@
+import { memo } from "react";
 import type { IngestErrors } from "../../api";
 import Disclosure from "../../components/admin/Disclosure";
-import { formatDate } from "./format";
 
 export const INGEST_ERRORS_ID = "ingest-errors";
 
@@ -10,11 +10,27 @@ function splitPath(path: string): { dir: string; name: string } {
   return cut < 0 ? { dir: "", name: path } : { dir: path.slice(0, cut), name: path.slice(cut + 1) };
 }
 
+// One formatter for every row, where `toLocaleString` would set one up per
+// call. Same fields and bad-date fallback as `formatDate` in ./format.
+const lastTriedFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+function formatLastTried(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : lastTriedFormat.format(date);
+}
+
 /**
  * Files that failed to import, behind a collapsed toggle: the latest error per
  * file and how many times it has failed. Renders nothing while there are none.
+ * Memoized because its section re-renders every second while a rescan runs;
+ * keep its props stable (the fetched list, a boolean and a state setter).
  */
-export function IngestErrorsList({
+export const IngestErrorsList = memo(function IngestErrorsList({
   data,
   open,
   onOpenChange,
@@ -63,7 +79,7 @@ export function IngestErrorsList({
                   )}
                 </td>
                 <td className="mono" style={{ whiteSpace: "nowrap" }}>
-                  {formatDate(e.created_at)}
+                  {formatLastTried(e.created_at)}
                 </td>
               </tr>
             );
@@ -72,4 +88,4 @@ export function IngestErrorsList({
       </table>
     </Disclosure>
   );
-}
+});

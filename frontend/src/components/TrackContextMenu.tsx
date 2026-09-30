@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -33,13 +32,12 @@ import {
   extensionFromStream,
   triggerDownload,
 } from "../lib/download";
-import { canShareTrack, isLocalTrack } from "../lib/track";
+import { isLocalTrack } from "../lib/track";
 import { useDismiss } from "../lib/useDismiss";
 import { useAuth } from "../context/Auth";
 import { useFavorites } from "../context/Favorites";
-import { usePlayer } from "../context/Player";
-import { useShare } from "../context/Share";
-import { useTrackInfo } from "../context/TrackInfo";
+import { usePlayerControls } from "../context/Player";
+import { usePlaylists } from "../context/Playlists";
 
 interface Props {
   /** Track the menu acts on. */
@@ -81,7 +79,7 @@ export default function TrackContextMenu({
   onShare,
   onClose,
 }: Props) {
-  const { play } = usePlayer();
+  const { play } = usePlayerControls();
   const navigate = useNavigate();
   const { isFavorite, toggle: toggleFav } = useFavorites();
   const { me } = useAuth();
@@ -92,7 +90,14 @@ export default function TrackContextMenu({
   const ref = useRef<HTMLDivElement>(null);
   const [coords, setCoords] = useState({ x, y });
 
-  const [playlists, setPlaylists] = useState<Playlist[] | null>(null);
+  const {
+    data: playlists,
+    error: playlistsError,
+    loading: playlistsLoading,
+    reload: reloadPlaylists,
+  } = usePlaylists();
+  const playlistsChanged = useRef(false);
+  const menuClosed = useRef(false);
   const [addingId, setAddingId] = useState<string | null>(null);
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [downloading, setDownloading] = useState(false);
@@ -100,23 +105,35 @@ export default function TrackContextMenu({
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load playlists once on mount. Viewers can't really "add to" other
-  // people's playlists, but the API enforces that — we list whatever
-  // listPlaylists returns.
+  // Another client may have changed the playlists since the shell loaded
+  // them, so revalidate on open. The add buttons wait for a successful fresh
+  // read: a row can't move under the cursor when it arrives, and after a
+  // failed read (or during a retry) the stale rows can't be acted on.
+  const [playlistsFresh, setPlaylistsFresh] = useState(false);
   useEffect(() => {
-    let cancelled = false;
-    api
-      .listPlaylists()
-      .then((p) => {
-        if (!cancelled) setPlaylists(p ?? []);
-      })
-      .catch(() => {
-        if (!cancelled) setPlaylists([]);
-      });
+    let active = true;
+    void reloadPlaylists().then(() => {
+      if (active) setPlaylistsFresh(true);
+    });
     return () => {
-      cancelled = true;
+      active = false;
     };
-  }, []);
+  }, [reloadPlaylists]);
+
+  const canAddToPlaylists = playlistsFresh && !playlistsLoading && !playlistsError;
+
+  // Adding tracks changes the server's playlist order. Refresh after closing
+  // so a second click cannot land on a different playlist under the cursor.
+  useEffect(() => {
+    menuClosed.current = false;
+    return () => {
+      menuClosed.current = true;
+      if (playlistsChanged.current) {
+        playlistsChanged.current = false;
+        void reloadPlaylists();
+      }
+    };
+  }, [reloadPlaylists]);
 
   // Close on outside click or Escape.
   useDismiss(ref, { onDismiss: onClose });
@@ -164,6 +181,12 @@ export default function TrackContextMenu({
     setError(null);
     try {
       await api.addPlaylistTracks(p.id, [track.id]);
+      // An add can finish after Escape, an outside click, or navigation.
+      if (menuClosed.current) {
+        void reloadPlaylists();
+        return;
+      }
+      playlistsChanged.current = true;
       setAddedIds((prev) => new Set(prev).add(p.id));
     } catch (err) {
       setError(errorMessage(err, "Add failed."));
@@ -433,7 +456,15 @@ export default function TrackContextMenu({
       <div className="ctx-sep" />
 
       <div className="ctx-heading">Add to playlist</div>
-      {playlists === null && <div className="ctx-hint">Loading…</div>}
+      {playlists === null && !playlistsError && <div className="ctx-hint">Loading…</div>}
+      {playlistsError && (
+        <>
+          <div className="ctx-hint" role="alert">{playlistsError}</div>
+          <button type="button" role="menuitem" className="ctx-item" onClick={() => void reloadPlaylists()}>
+            Retry playlists
+          </button>
+        </>
+      )}
       {playlists !== null && editablePlaylists.length === 0 && (
         <div className="ctx-hint">No playlists you can edit.</div>
       )}
@@ -449,7 +480,7 @@ export default function TrackContextMenu({
                 role="menuitem"
                 className="ctx-item"
                 onClick={() => void runAddToPlaylist(p)}
-                disabled={busy || added}
+                disabled={busy || added || !canAddToPlaylists}
               >
                 {added ? (
                   <CheckIcon className="size-3.5" />
@@ -490,128 +521,5 @@ export default function TrackContextMenu({
   );
 }
 
-/**
- * Convenience hook that packages up the state + event handlers for binding
- * a right-click menu to any element that renders a track. Returns:
- *
- *   - `bind(track, { queue?, onEdit? })` — spread the return value onto the
- *     element's `onContextMenu` to open the menu.
- *   - `menu` — the JSX to render inside the component tree (it portals
- *     itself, so placement doesn't matter).
- *
- * Usage:
- *   const { bind, menu } = useTrackContextMenu();
- *   <div onContextMenu={bind(track, { queue })}>…</div>
- *   {menu}
- */
-export function useTrackContextMenu() {
-  const [state, setState] = useState<{
-    track: TrackListItem;
-    x: number;
-    y: number;
-    queue?: TrackListItem[];
-    onPlay?: () => void;
-    onEdit?: () => void;
-    onMoveToAlbum?: () => void;
-    onInfo?: () => void;
-    onShare?: () => void;
-  } | null>(null);
 
-  // Default onInfo wiring: every right-click menu gets "Song info" as long
-  // as a TrackInfoProvider is mounted (it is in main.tsx). Callers can still
-  // override per-call via opts.onInfo — useful if a specific surface wants
-  // a different dialog or a no-op.
-  const trackInfo = useTrackInfo();
-  const share = useShare();
-
-  const bind = useCallback(
-    (
-      track: TrackListItem,
-      opts: {
-        queue?: TrackListItem[];
-        onPlay?: () => void;
-        onEdit?: () => void;
-        onMoveToAlbum?: () => void;
-        onInfo?: () => void;
-        onShare?: () => void;
-      } = {},
-    ) =>
-      (e: { preventDefault: () => void; clientX: number; clientY: number }) => {
-        e.preventDefault();
-        setState({
-          track,
-          x: e.clientX,
-          y: e.clientY,
-          queue: opts.queue,
-          onPlay: opts.onPlay,
-          onEdit: opts.onEdit,
-          onMoveToAlbum: opts.onMoveToAlbum,
-          onInfo:
-            opts.onInfo ??
-            (trackInfo ? () => trackInfo.open(track.id) : undefined),
-          onShare:
-            opts.onShare ??
-            (share && canShareTrack(track) ? () => share.open(track.id) : undefined),
-        });
-      },
-    [trackInfo, share],
-  );
-
-  const close = useCallback(() => setState(null), []);
-
-  const menu = state ? (
-    <TrackContextMenu
-      track={state.track}
-      x={state.x}
-      y={state.y}
-      queue={state.queue}
-      onPlay={state.onPlay}
-      onEdit={state.onEdit}
-      onMoveToAlbum={state.onMoveToAlbum}
-      onInfo={state.onInfo}
-      onShare={state.onShare}
-      onClose={close}
-    />
-  ) : null;
-
-  return { bind, menu, close, isOpen: state !== null };
-}
-
-/**
- * For a list whose rows act on a single click, like the queue: while a
- * context menu is open, the next click in the list only closes the menu. The
- * click is swallowed, so it can't also play the row under it. Spread the
- * handlers on the list's container. Pass `closeMenu` when the container stops
- * mousedown from reaching the menu's own outside-click listener.
- */
-export function useContextMenuClickGuard(closeMenu?: () => void) {
-  const swallowClick = useRef(false);
-  // A menu rendered as a React child of the list passes its own clicks
-  // through these handlers too; leave those alone.
-  const inMenu = (e: React.SyntheticEvent) =>
-    e.target instanceof Element && !!e.target.closest(".ctx-menu");
-  // Capture phase runs before the menu's window listener closes it, so the
-  // menu is still in the document here.
-  const onMouseDownCapture = (e: React.MouseEvent) => {
-    if (inMenu(e)) return;
-    const menuOpen = !!document.querySelector(".ctx-menu");
-    swallowClick.current = menuOpen && e.button === 0;
-    if (swallowClick.current) {
-      // Only this gesture's click: if it's released elsewhere (no click
-      // here), don't let the flag eat a later one, e.g. a keyboard Enter.
-      window.addEventListener(
-        "mouseup",
-        () => window.setTimeout(() => (swallowClick.current = false), 0),
-        { once: true, capture: true },
-      );
-    }
-    if (menuOpen) closeMenu?.();
-  };
-  const onClickCapture = (e: React.MouseEvent) => {
-    if (inMenu(e) || !swallowClick.current) return;
-    swallowClick.current = false;
-    e.preventDefault();
-    e.stopPropagation();
-  };
-  return { onMouseDownCapture, onClickCapture };
-}
+export { useTrackContextMenu, useContextMenuClickGuard } from "../lib/useTrackContextMenu";

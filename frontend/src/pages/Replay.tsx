@@ -36,7 +36,8 @@ import {
   type Period,
 } from "@music-library/core/replay/period";
 import { displayText, pluralize } from "../lib/format";
-import { usePlayer } from "../context/Player";
+import { usePlayerControls } from "../context/Player";
+import { usePlaylists } from "../context/Playlists";
 
 /** The web has room for the fuller wording ("45 min", not the phone's "45m"). */
 function formatListeningTime(ms: number): string {
@@ -64,7 +65,8 @@ function buildOptions(availableYears: number[]): PeriodOption[] {
 
 export default function Replay() {
   const navigate = useNavigate();
-  const { play } = usePlayer();
+  const { play } = usePlayerControls();
+  const { reload: reloadPlaylists } = usePlaylists();
 
   const [period, setPeriod] = useState<Period>({ kind: "this-year" });
   // The response is stored with the period it answers, and read back only when
@@ -167,6 +169,7 @@ export default function Replay() {
         name,
         limit: 50,
       });
+      void reloadPlaylists();
       navigate(`/playlists/${playlist.id}`);
     } catch (err) {
       setCreateError(errorMessage(err, "Failed to create playlist."));
@@ -206,18 +209,31 @@ export default function Replay() {
   const showLoading = !data && !error;
   // Meanwhile, hold the results area at the height it last had, so the page
   // doesn't collapse to a loading line (dragging the scroll position with it)
-  // and grow back. A layout effect, so the observer is gone before the
+  // and grow back. Layout effects, so the observer is gone before the
   // browser lays out the emptied area and can't record it as the new height.
+  // The height lives in a ref: resizing the window mustn't re-render the page.
   const hasData = data !== null;
   const resultsRef = useRef<HTMLDivElement>(null);
-  const [reservedHeight, setReservedHeight] = useState(0);
+  const lastHeightRef = useRef(0);
   useLayoutEffect(() => {
     const el = resultsRef.current;
     if (!el || !hasData || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => setReservedHeight(el.offsetHeight));
+    const ro = new ResizeObserver(() => {
+      lastHeightRef.current = el.offsetHeight;
+    });
     ro.observe(el);
     return () => ro.disconnect();
   }, [hasData]);
+  // Set on the element before the browser lays out or paints the commit that
+  // swaps in the loading state, so the page never sees the collapsed height.
+  useLayoutEffect(() => {
+    const el = resultsRef.current;
+    if (!el || !showLoading) return;
+    el.style.minHeight = `${lastHeightRef.current}px`;
+    return () => {
+      el.style.minHeight = "";
+    };
+  }, [showLoading]);
   const totalGenrePlays = useMemo(
     () => (data?.top_genres ?? []).reduce((acc, g) => acc + g.plays, 0),
     [data?.top_genres],
@@ -340,7 +356,7 @@ export default function Replay() {
           label -- and since the block below is keyed on the period, the key
           change remounted that stale subtree and replayed its entrance,
           presenting old results as freshly arrived. */}
-      <div ref={resultsRef} style={{ minHeight: showLoading ? reservedHeight : undefined }}>
+      <div ref={resultsRef}>
         {showLoading ? (
           <LoadingState />
         ) : summary && summary.total_plays === 0 ? (

@@ -75,6 +75,34 @@ function liveClock() {
   return { clock, adapter, emit: (event: AudioAdapterEvent) => listeners.get(event)?.() };
 }
 
+it("coalesces a volume drag while publishing track changes immediately", async () => {
+  vi.useFakeTimers();
+  const { rerender, socket } = await setup();
+  socket.sent = [];
+  for (const volume of [0.1, 0.2, 0.3]) {
+    rerender({ ...state, volume });
+    act(() => vi.advanceTimersByTime(50));
+  }
+  expect(socket.sent).toHaveLength(0);
+  act(() => vi.advanceTimersByTime(150));
+  expect(socket.sent).toHaveLength(1);
+  expect(socket.sent[0]).toMatchObject({ activity: { volume: 0.3 } });
+  rerender({ ...state, volume: 0.3, current: tracks[71], index: 71 });
+  expect(socket.sent).toHaveLength(2);
+});
+
+it("does not connect until playback activity is enabled", async () => {
+  vi.stubGlobal("WebSocket", Socket);
+  const { rerender } = renderHook((enabled: boolean) => usePlaybackActivityPublisher({ state, time, storage, deviceName: "Test", enabled }), { initialProps: false });
+  await act(async () => {});
+  expect(Socket.instances).toHaveLength(0);
+  rerender(true);
+  await act(async () => {});
+  expect(Socket.instances).toHaveLength(1);
+  rerender(false);
+  expect(Socket.instances[0].readyState).toBe(3);
+});
+
 it("publishes live audio time while the source UI clock is frozen, including reconnect", async () => {
   const { adapter, clock } = liveClock();
   const { socket } = await setup(adapter);
@@ -196,6 +224,44 @@ it("adopts queues from device snapshots and reconciles shuffle and repeat", asyn
   act(() => socket.close());
   expect(result.current.devices).toEqual([]);
   expect(result.current.devicesReady).toBe(false);
+});
+
+it("keeps unchanged devices identical across repeated snapshots", async () => {
+  const { socket, result } = await setup();
+  const device = (id: string, position: number) => ({
+    device_id: id, device_name: id, online: true, control_enabled: true, capabilities: ["queue"],
+    connected_at: "", activity: { device_id: id, device_name: id, position_sec: position, is_playing: true, updated_at: "" },
+  });
+  act(() => socket.receive({ type: "devices.snapshot", devices: [device("phone", 1), device("desktop", 1)] }));
+  const first = result.current;
+  act(() => socket.receive({ type: "devices.snapshot", devices: [device("phone", 1), device("desktop", 1)] }));
+  expect(result.current).toBe(first);
+  act(() => socket.receive({ type: "devices.snapshot", devices: [device("phone", 1), device("desktop", 2)] }));
+  expect(result.current.devices).not.toBe(first.devices);
+  expect(result.current.devices[0]).toBe(first.devices[0]);
+  expect(result.current.devices[1].activity?.position_sec).toBe(2);
+});
+
+it("takes its activity down over the socket when publishing is disabled", async () => {
+  vi.stubGlobal("WebSocket", Socket);
+  setBaseUrl("https://lumen.test");
+  vi.spyOn(api, "upsertPlaybackActivity").mockResolvedValue(undefined as never);
+  const clearRest = vi.spyOn(api, "clearPlaybackActivity").mockResolvedValue(undefined as never);
+  const controls = Object.fromEntries([
+    "play", "resume", "pause", "toggle", "next", "prev", "jumpTo", "seek",
+    "setVolume", "setMuted", "toggleMute", "setShuffle", "toggleShuffle", "setRepeat", "cycleRepeat",
+  ].map((key) => [key, vi.fn()])) as unknown as PlayerControls;
+  const { rerender } = renderHook((enabled: boolean) => {
+    usePlaybackActivityPublisher({ state, time, storage, deviceName: "Test", controls, enabled });
+  }, { initialProps: true });
+  await act(async () => {});
+  const socket = Socket.instances[0];
+  act(() => socket.open());
+  act(() => rerender(true));
+  expect(socket.sent.some((message) => message.type === "activity.update")).toBe(true);
+  act(() => rerender(false));
+  expect(socket.sent.at(-1)).toMatchObject({ type: "activity.clear" });
+  expect(clearRest).not.toHaveBeenCalled();
 });
 
 it("republishes its queue after a socket reconnect", async () => {

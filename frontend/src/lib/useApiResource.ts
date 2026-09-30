@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorMessage } from "../api";
 import { readCache, writeCache } from "./resourceCache";
 
@@ -116,5 +116,10 @@ export function useApiResource<T>(
     });
   }, []);
 
-  return { data, error, loading, reload, update };
+  // Stable while nothing changes: providers hand this object straight to
+  // context (PlaylistsProvider re-renders on every navigation).
+  return useMemo(
+    () => ({ data, error, loading, reload, update }),
+    [data, error, loading, reload, update],
+  );
 }

@@ -10,7 +10,7 @@ import {
 import {
   useContextMenuClickGuard,
   useTrackContextMenu,
-} from "../TrackContextMenu";
+} from "../../lib/useTrackContextMenu";
 import { MINI_PANEL_ID, type MiniPanel } from "./useMiniPlayerMode";
 
 const TITLES: Record<MiniPanel, string> = {

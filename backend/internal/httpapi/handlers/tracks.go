@@ -125,7 +125,7 @@ func makeTrackListItemResp(it library.TrackListItem, favorited, canonical bool) 
 		Aka:        it.Aka,
 		Favorited:  favorited,
 		Owned:      it.Owned,
-		CoverURL:   proxyRemoteCoverURL(it.CoverURL),
+		CoverURL:   proxyRemoteCoverURL(it.CoverURL, remoteCoverWarmRow),
 	}
 	if source == trackref.SourceLocal {
 		r.SourceID = it.ID.String()
@@ -345,7 +345,7 @@ func makeTrackDetailResp(t *library.TrackDetail, isFav bool) trackDetailResp {
 		Channels:      t.Channels,
 		FileSize:      t.FileSize,
 		HasCover:      t.CoverArtPath != "" || t.CoverURL != "",
-		CoverURL:      proxyRemoteCoverURL(t.CoverURL),
+		CoverURL:      proxyRemoteCoverURL(t.CoverURL, remoteCoverWarmFull),
 		Favorited:     isFav,
 		Artists:       make([]trackArtistResp, 0, len(t.Artists)),
 	}

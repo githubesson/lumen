@@ -62,6 +62,7 @@ function select(device: PlaybackDevice | null) {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"], now });
   vi.clearAllMocks();
+  mock.push.mockResolvedValue({ ok: true });
   mock.elapsed.mockReturnValue(7);
   mock.duration.mockReturnValue(500);
   mock.sign.mockResolvedValue({ url: "https://covers.test/signed", expires_at: now.getTime() / 1000 + 3600 });
@@ -153,4 +154,31 @@ it("discards remote artwork results from a previously selected device", async ()
   mock.push.mockClear();
   await act(async () => resolveCover({ url: "https://covers.test/old", expires_at: now.getTime() / 1000 + 3600 }));
   expect(mock.push).not.toHaveBeenCalled();
+});
+
+it("sends a track change once, not again for the metadata and play events that follow", async () => {
+  mock.player = { current: local, isPlaying: true };
+  mock.elapsed.mockReturnValue(0);
+  renderHook(() => useDiscordPresence());
+  await act(async () => {});
+  expect(mock.push).toHaveBeenCalledOnce();
+  await act(async () => mock.events.get("loadedmetadata")?.());
+  await act(async () => mock.events.get("play")?.());
+  expect(mock.push).toHaveBeenCalledOnce();
+  mock.elapsed.mockReturnValue(42);
+  await act(async () => mock.events.get("seeked")?.());
+  expect(mock.push).toHaveBeenCalledTimes(2);
+});
+
+it("sends an update again when Discord didn't take the previous one", async () => {
+  mock.player = { current: local, isPlaying: true };
+  mock.elapsed.mockReturnValue(0);
+  mock.push.mockResolvedValueOnce({ ok: false, error: "discord client unavailable" });
+  renderHook(() => useDiscordPresence());
+  await act(async () => {});
+  expect(mock.push).toHaveBeenCalledOnce();
+  await act(async () => mock.events.get("play")?.());
+  expect(mock.push).toHaveBeenCalledTimes(2);
+  await act(async () => mock.events.get("play")?.());
+  expect(mock.push).toHaveBeenCalledTimes(2);
 });

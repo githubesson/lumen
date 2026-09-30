@@ -232,7 +232,7 @@ func (h *Search) searchStream(ctx context.Context, viewer uuid.UUID, query strin
 	case "artist":
 		items, count, err := h.TIDAL.SearchArtists(ctx, query, limit, stream.offset)
 		for _, item := range items {
-			out.Artists = append(out.Artists, searchArtistResp{artistListResp: artistListResp{ID: trackref.Remote(trackref.SourceTIDAL, item.ID), Name: item.Name}, Source: trackref.SourceTIDAL, SourceID: item.ID, CoverURL: proxyRemoteCoverURL(item.CoverURL)})
+			out.Artists = append(out.Artists, searchArtistResp{artistListResp: artistListResp{ID: trackref.Remote(trackref.SourceTIDAL, item.ID), Name: item.Name}, Source: trackref.SourceTIDAL, SourceID: item.ID, CoverURL: proxyRemoteCoverURL(item.CoverURL, remoteCoverWarmRow)})
 		}
 		return out, count, err
 	}
@@ -240,11 +240,11 @@ func (h *Search) searchStream(ctx context.Context, viewer uuid.UUID, query strin
 }
 
 func makeSearchTIDALAlbumResp(item tidal.Album) searchAlbumResp {
-	return searchAlbumResp{albumListResp: albumListResp{ID: trackref.Remote(trackref.SourceTIDAL, item.ID), Title: item.Title, ArtistName: item.Artist, ReleaseYear: item.ReleaseYear, TrackCount: item.TrackCount, DurationMS: int64(item.DurationMS), HasCover: item.CoverURL != ""}, Source: trackref.SourceTIDAL, SourceID: item.ID, CoverURL: proxyRemoteCoverURL(item.CoverURL)}
+	return searchAlbumResp{albumListResp: albumListResp{ID: trackref.Remote(trackref.SourceTIDAL, item.ID), Title: item.Title, ArtistName: item.Artist, ReleaseYear: item.ReleaseYear, TrackCount: item.TrackCount, DurationMS: int64(item.DurationMS), HasCover: item.CoverURL != ""}, Source: trackref.SourceTIDAL, SourceID: item.ID, CoverURL: proxyRemoteCoverURL(item.CoverURL, remoteCoverWarmRow)}
 }
 
 func makeTIDALTrackResp(it tidal.Track) trackListItemResp {
-	return trackListItemResp{ID: trackref.Remote(trackref.SourceTIDAL, it.ID), Source: trackref.SourceTIDAL, SourceID: it.ID, SourceAlbumID: it.AlbumID, Title: it.Title, AlbumTitle: it.AlbumTitle, TrackNo: it.TrackNo, DurationMS: it.DurationMS, Artist: strings.Join(it.Artists, ", "), CoverURL: proxyRemoteCoverURL(it.CoverURL)}
+	return trackListItemResp{ID: trackref.Remote(trackref.SourceTIDAL, it.ID), Source: trackref.SourceTIDAL, SourceID: it.ID, SourceAlbumID: it.AlbumID, Title: it.Title, AlbumTitle: it.AlbumTitle, TrackNo: it.TrackNo, DurationMS: it.DurationMS, Artist: strings.Join(it.Artists, ", "), CoverURL: proxyRemoteCoverURL(it.CoverURL, remoteCoverWarmRow)}
 }
 
 func parseSources(raw string) []string {

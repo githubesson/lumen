@@ -6,11 +6,11 @@ import ListPageHeader from "../components/ListPageHeader";
 import ErrorBanner from "../components/ErrorBanner";
 import EmptyState from "../components/EmptyState";
 import { useFavorites } from "../context/Favorites";
-import { usePlayer } from "../context/Player";
+import { usePlayerControls } from "../context/Player";
 import { pluralize } from "../lib/format";
 
 export default function Favorites() {
-  const { play } = usePlayer();
+  const { play } = usePlayerControls();
   // The favorites context loaded this list at sign-in: show it at once and
   // refresh it behind (it doesn't pick up hearts added since). Empty while
   // loading, or after a failed load, means not known yet -- not "no

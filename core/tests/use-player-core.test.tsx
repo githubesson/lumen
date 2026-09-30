@@ -435,4 +435,22 @@ describe("usePlayerCore", () => {
     act(() => emit("timeupdate"));
     expect(api.recordPlay).toHaveBeenCalledTimes(1);
   });
+
+  it("writes a volume change still inside the debounce when the player unmounts", async () => {
+    const storage = createMemoryStorage();
+    const { result, unmount } = await setup({ storage });
+    act(() => result.current.controls.setVolume(0.3));
+    unmount();
+    await act(async () => {});
+    expect(await storage.getItem("mlib-volume")).toBe("0.3");
+  });
+
+  it("writes a pending volume change when the page is hidden for closing", async () => {
+    const storage = createMemoryStorage();
+    const { result } = await setup({ storage });
+    act(() => result.current.controls.setVolume(0.7));
+    act(() => { window.dispatchEvent(new Event("pagehide")); });
+    expect(await storage.getItem("mlib-volume")).toBe("0.7");
+  });
 });
+

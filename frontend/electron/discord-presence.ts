@@ -12,12 +12,53 @@ let enabled = true;
 let publicBackendUrl = "";
 let lastActivity: DiscordActivityPayload | null = null;
 let lastStartMs = 0;
+let retryAfter = 0;
+let failures = 0;
+// The newest update Discord couldn't take (closed, or in reconnect backoff),
+// resent once the backoff ends so presence recovers without a new event.
+let retryActivity: { payload: DiscordActivityPayload; queuedAt: number } | null = null;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+// Bumped by every push and clear. A push that settles after a newer one
+// started must neither queue a retry nor record itself as the activity.
+let pushGeneration = 0;
+
+function cancelRetry(): void {
+  retryActivity = null;
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+}
+
+function scheduleRetry(payload: DiscordActivityPayload): void {
+  if (!enabled || !clientId) return;
+  retryActivity = { payload, queuedAt: Date.now() };
+  if (retryTimer) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    const pending = retryActivity;
+    retryActivity = null;
+    if (!pending) return;
+    // A playing track has moved on while it waited.
+    const waitedSec = (Date.now() - pending.queuedAt) / 1000;
+    void pushDiscordActivity(
+      pending.payload.isPlaying
+        ? { ...pending.payload, elapsedSec: (pending.payload.elapsedSec ?? 0) + waitedSec }
+        : pending.payload,
+    );
+  }, Math.max(1000, retryAfter - Date.now()));
+  retryTimer.unref?.();
+}
 
 export function configureDiscordPresence(options: {
   clientId?: string;
   enabled?: boolean;
   backendUrl?: string;
 }): void {
+  if ((options.clientId !== undefined && clientId !== options.clientId.trim()) || (options.enabled === true && !enabled)) {
+    retryAfter = 0;
+    failures = 0;
+  }
   if (options.clientId !== undefined) clientId = options.clientId.trim();
   if (options.backendUrl !== undefined) publicBackendUrl = options.backendUrl;
   if (options.enabled !== undefined) {
@@ -30,23 +71,41 @@ export function configureDiscordPresence(options: {
 async function ensureDiscord(): Promise<DiscordClient | null> {
   if (!enabled || !clientId) return null;
   if (client) return client;
-  if (connecting) return null;
+  if (connecting || Date.now() < retryAfter) return null;
   connecting = true;
+  let nextClient: DiscordClient | null = null;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const RPC = require("discord-rpc");
-    const nextClient = new RPC.Client({ transport: "ipc" });
+    nextClient = new RPC.Client({ transport: "ipc" });
     nextClient.on("ready", () => {
       console.log("[discord] connected as client", clientId);
     });
     nextClient.on("disconnected", () => {
       console.log("[discord] disconnected");
-      client = null;
+      if (client === nextClient) {
+        client = null;
+        retryAfter = Math.max(retryAfter, Date.now() + 30_000);
+        // Steady playback sends no new updates, so reconnect after the
+        // backoff and restore what Discord was showing.
+        if (lastActivity) {
+          scheduleRetry(
+            lastActivity.isPlaying
+              ? { ...lastActivity, elapsedSec: Math.max(0, (Date.now() - lastStartMs) / 1000) }
+              : lastActivity,
+          );
+        }
+      }
     });
     await nextClient.login({ clientId });
+    if (!enabled) { await nextClient.destroy(); return null; }
+    failures = 0;
+    retryAfter = 0;
     client = nextClient;
     return nextClient;
   } catch (error) {
+    retryAfter = Date.now() + Math.min(300_000, 30_000 * 2 ** Math.min(failures++, 4));
+    try { await nextClient?.destroy(); } catch { /* Failed connections still need cleanup. */ }
     const message = (error as Error).message || String(error);
     if (message.includes("Cannot find module") && message.includes("discord-rpc")) {
       console.warn("[discord] `discord-rpc` package not installed — run `npm install`");
@@ -89,8 +148,16 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
   ok: boolean;
   error?: string;
 }> {
+  // A newer update supersedes one waiting to be retried.
+  cancelRetry();
+  const generation = ++pushGeneration;
   const discord = await ensureDiscord();
-  if (!discord) return { ok: false, error: "discord client unavailable" };
+  // A newer push or a clear arrived while connecting: this one is stale.
+  if (generation !== pushGeneration) return { ok: false, error: "superseded" };
+  if (!discord) {
+    scheduleRetry(payload);
+    return { ok: false, error: "discord client unavailable" };
+  }
   try {
     const now = Date.now();
     const elapsedMs = Math.max(0, Math.floor((payload.elapsedSec ?? 0) * 1000));
@@ -132,26 +199,36 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
         instance: false,
       },
     });
-    lastActivity = payload;
-    lastStartMs = start;
+    if (generation === pushGeneration) {
+      lastActivity = payload;
+      lastStartMs = start;
+    }
     return { ok: true };
   } catch (error) {
+    if (generation === pushGeneration) scheduleRetry(payload);
     return { ok: false, error: (error as Error).message };
   }
 }
 
 export async function clearDiscordActivity(): Promise<void> {
+  pushGeneration += 1;
+  cancelRetry();
+  // Forget the activity before awaiting: a disconnect during the clear
+  // would otherwise queue it to be restored after the reconnect backoff.
+  lastActivity = null;
+  lastStartMs = 0;
   if (!client) return;
   try {
     await client.clearActivity();
   } catch {
     // Discord may have exited between the renderer request and this call.
   }
-  lastActivity = null;
-  lastStartMs = 0;
+  cancelRetry();
 }
 
 export async function teardownDiscordPresence(): Promise<void> {
+  pushGeneration += 1;
+  cancelRetry();
   const current = client;
   client = null;
   lastActivity = null;

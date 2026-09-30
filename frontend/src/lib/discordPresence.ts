@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getLatestPlaybackActivity,
   remoteActivityTime,
@@ -16,6 +16,58 @@ import {
   isElectron,
   pushDiscordActivity,
 } from "./platform";
+
+type DiscordActivity = Parameters<typeof pushDiscordActivity>[0];
+
+/**
+ * Sends presence over IPC, skipping updates Discord already shows. One track
+ * change reports three times (the track effect, `loadedmetadata`, `play`) and
+ * remote heartbeats repeat unchanged state; each push is an IPC round trip and
+ * a Discord RPC call. A playing update is the same when its implied start time
+ * is within a second (elapsed seconds are floored).
+ *
+ * Only an update Discord confirmed (or one still in flight) suppresses
+ * repeats: a failed push (Discord closed, reconnect backoff) must go out again
+ * with the next event. The main process also retries it after its backoff.
+ */
+function createPresenceSender() {
+  type Sent = { key: string; startSec: number | null; elapsedSec: number };
+  let shown: Sent | null = null;
+  let shownSeq = 0;
+  let inFlight: Sent | null = null;
+  let seq = 0;
+  const same = (a: Sent | null, b: Sent) =>
+    a?.key === b.key &&
+    (b.startSec === null
+      ? a.startSec === null && a.elapsedSec === b.elapsedSec
+      : a.startSec !== null && Math.abs(a.startSec - b.startSec) < 1.5);
+  return {
+    async push(activity: DiscordActivity) {
+      const { elapsedSec = 0, ...rest } = activity;
+      const entry: Sent = {
+        key: JSON.stringify(rest),
+        startSec: activity.isPlaying ? Date.now() / 1000 - elapsedSec : null,
+        elapsedSec,
+      };
+      if (same(inFlight ?? shown, entry)) return;
+      const mySeq = ++seq;
+      inFlight = entry;
+      const result = await pushDiscordActivity(activity);
+      if (inFlight === entry) inFlight = null;
+      if (result?.ok && mySeq > shownSeq) {
+        shown = entry;
+        shownSeq = mySeq;
+      }
+    },
+    clear() {
+      shown = null;
+      inFlight = null;
+      // Pushes still in flight must not mark their state as shown.
+      shownSeq = ++seq;
+      return clearDiscordActivity();
+    },
+  };
+}
 
 interface SignedCoverCacheEntry {
   url: string;
@@ -45,6 +97,7 @@ export function useDiscordPresence() {
   const remoteActivityPushedRef = useRef(false);
   const remoteActivityPendingRef = useRef(false);
   const remotePushGenerationRef = useRef(0);
+  const [presence] = useState(createPresenceSender);
   const pushLocalActivityRef = useRef<
     (overrides?: { isPlaying?: boolean; elapsedSec?: number }) => void
   >(() => {});
@@ -87,7 +140,7 @@ export function useDiscordPresence() {
       remoteActivityPendingRef.current = !!activity;
       if (!activity) {
         remoteActivityPushedRef.current = false;
-        await clearDiscordActivity();
+        await presence.clear();
         return;
       }
 
@@ -108,7 +161,7 @@ export function useDiscordPresence() {
       }
       remoteActivityPendingRef.current = false;
       remoteActivityPushedRef.current = true;
-      await pushDiscordActivity({
+      await presence.push({
         trackId: activity.track_id,
         title: activity.title,
         artist: activity.artist || undefined,
@@ -119,7 +172,7 @@ export function useDiscordPresence() {
         isPlaying: activity.is_playing,
       });
     },
-    [],
+    [presence],
   );
 
   // Push on every interesting adapter event. The adapter fires these directly
@@ -152,7 +205,7 @@ export function useDiscordPresence() {
         ) {
           return;
         }
-        await pushDiscordActivity({
+        await presence.push({
           trackId,
           title: track.title,
           artist: track.artist ?? undefined,
@@ -203,7 +256,7 @@ export function useDiscordPresence() {
       offSeeked();
       offMeta();
     };
-  }, [adapter, pushRemoteActivity]);
+  }, [adapter, presence, pushRemoteActivity]);
 
   // Track, play-state and target changes re-evaluate which device owns presence.
   // A new local track starts at elapsedSec=0 until the adapter reports more.
@@ -239,10 +292,16 @@ export function useDiscordPresence() {
   // to a ghost track forever.
   useEffect(() => {
     if (!isElectron()) return;
-    const onUnload = () => void clearDiscordActivity();
+    const onUnload = () => void presence.clear();
     window.addEventListener("beforeunload", onUnload);
     return () => window.removeEventListener("beforeunload", onUnload);
-  }, []);
+  }, [presence]);
+}
+
+/** Renders nothing; mounts the presence sync (lazy-loaded by the shell). */
+export default function DiscordPresence() {
+  useDiscordPresence();
+  return null;
 }
 
 function activityToTrack(activity: PlaybackActivity): TrackListItem {

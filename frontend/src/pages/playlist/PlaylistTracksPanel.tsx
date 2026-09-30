@@ -1,3 +1,4 @@
+import { usePlayer } from "../../context/Player";
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { Trash2 as TrashIcon } from "lucide-react";
 import {
@@ -8,7 +9,7 @@ import {
   type TrackListItem,
 } from "../../api";
 import EmptyState from "../../components/EmptyState";
-import { useTrackContextMenu } from "../../components/TrackContextMenu";
+import { useTrackContextMenu } from "../../lib/useTrackContextMenu";
 import {
   FavoriteButton,
   SelectAllHeaderCell,
@@ -46,8 +47,6 @@ export default function PlaylistTracksPanel({
   onPlay,
   onToggleFav,
   isFav,
-  currentTrackId,
-  isPlaying,
   selectionControlsHostId,
 }: {
   tracks: PlaylistTrackEntry[];
@@ -64,10 +63,10 @@ export default function PlaylistTracksPanel({
   onPlay: (t: PlaylistTrackEntry) => void;
   onToggleFav: (id: string) => void;
   isFav: (id: string) => boolean;
-  currentTrackId: string | null;
-  isPlaying: boolean;
   selectionControlsHostId?: string;
 }) {
+  const { current, isPlaying } = usePlayer();
+  const currentTrackId = current?.id ?? null;
   if (totalCount === 0) {
     return (
       <EmptyState

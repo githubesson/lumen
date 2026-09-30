@@ -457,6 +457,9 @@ export function usePlaybackActivityPublisher({
     let disposed = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
+    // Counters, not DOM nodes: the teardown below wants their live values.
+    const revisions = revisionRef;
+    const published = publishedRef;
 
     const connect = () => {
       if (disposed) return;
@@ -516,7 +519,16 @@ export function usePlaybackActivityPublisher({
           return;
         }
         if (message.type === "devices.snapshot") {
-          updateRemoteSession({ devices: normalizeDevices(message.devices), devicesReady: true });
+          // The server resends the full list on every heartbeat, this
+          // device's own included. Keep unchanged devices (and an unchanged
+          // list) identical so views only re-render for real changes.
+          const devices = reuseUnchangedDevices(
+            remoteSessionSnapshot.devices,
+            normalizeDevices(message.devices),
+          );
+          if (devices !== remoteSessionSnapshot.devices || !remoteSessionSnapshot.devicesReady) {
+            updateRemoteSession({ devices, devicesReady: true });
+          }
           return;
         }
         if (message.type === "playback.command_result") {
@@ -549,6 +561,21 @@ export function usePlaybackActivityPublisher({
       disposed = true;
       if (retryTimer) clearTimeout(retryTimer);
       if (socketRef.current) {
+        // Publishing is stopping (sign-out, a forced password reset) while
+        // the session still holds: take this device's activity down now
+        // rather than leave it on other devices until the lease runs out.
+        // The unload effect below falls back to REST if this can't send.
+        if (
+          published.current &&
+          sendSocketMessage(socketRef.current, {
+            type: "activity.clear",
+            protocol: PLAYBACK_SYNC_PROTOCOL,
+            revision: ++revisions.current,
+            device_id: deviceId,
+          })
+        ) {
+          published.current = false;
+        }
         socketRef.current.close(1000, "player disposed");
         socketRef.current = null;
       }
@@ -571,13 +598,17 @@ export function usePlaybackActivityPublisher({
     publish,
     state.current?.id,
     state.isPlaying,
-    state.volume,
-    state.muted,
     state.queue,
     state.index,
     state.shuffle,
     state.repeat,
   ]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const timer = setTimeout(publish, 200);
+    return () => clearTimeout(timer);
+  }, [enabled, publish, state.volume, state.muted]);
 
   useEffect(() => {
     if (!adapter) return;
@@ -603,10 +634,12 @@ export function usePlaybackActivityPublisher({
         // Socket teardown can race its closing handshake, so the REST delete
         // remains the best-effort unload cleanup. The server lease is the
         // authoritative fallback if the platform suspends networking first.
+        // Also runs when publishing is disabled without unmounting.
+        publishedRef.current = false;
         void api.clearPlaybackActivity(deviceId).catch(() => {});
       }
     };
-  }, [deviceId]);
+  }, [deviceId, enabled]);
 
   return deviceId;
 }
@@ -727,6 +760,21 @@ function normalizeDevices(
           ? device.activity
           : null,
     }));
+}
+
+function reuseUnchangedDevices(
+  previous: PlaybackDevice[],
+  next: PlaybackDevice[],
+): PlaybackDevice[] {
+  const byId = new Map(previous.map((device) => [device.deviceId, device]));
+  const merged = next.map((device) => {
+    const old = byId.get(device.deviceId);
+    return old && JSON.stringify(old) === JSON.stringify(device) ? old : device;
+  });
+  return merged.length === previous.length &&
+    merged.every((device, index) => device === previous[index])
+    ? previous
+    : merged;
 }
 
 function updateRemoteSession(

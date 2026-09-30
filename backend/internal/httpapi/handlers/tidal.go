@@ -149,7 +149,7 @@ func makeTIDALAlbumResp(album tidal.Album) tidalAlbumResp {
 		ReleaseYear: album.ReleaseYear,
 		TrackCount:  album.TrackCount,
 		DurationMS:  album.DurationMS,
-		CoverURL:    proxyRemoteCoverURL(album.CoverURL),
+		CoverURL:    proxyRemoteCoverURL(album.CoverURL, remoteCoverWarmFull),
 		Tracks:      make([]trackListItemResp, 0, len(album.Tracks)),
 	}
 	for _, it := range album.Tracks {
@@ -191,7 +191,7 @@ func (h *TIDAL) Artist(w http.ResponseWriter, r *http.Request) {
 		Warnings []string                `json:"warnings,omitempty"`
 	}{Albums: []searchAlbumResp{}, Tracks: []trackListItemResp{}, Warnings: result.Warnings}
 	if result.Artist != nil {
-		out.Artist = &tidalArtistProfileResp{Name: result.Artist.Name, CoverURL: proxyRemoteCoverURL(result.Artist.CoverURL)}
+		out.Artist = &tidalArtistProfileResp{Name: result.Artist.Name, CoverURL: proxyRemoteCoverURL(result.Artist.CoverURL, remoteCoverWarmFull)}
 	}
 	for _, album := range result.Albums {
 		out.Albums = append(out.Albums, makeSearchTIDALAlbumResp(album))

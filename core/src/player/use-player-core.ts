@@ -151,10 +151,34 @@ export function usePlayerCore({
     adapter.setMuted(muted);
   }, [adapter, volume, muted]);
 
+  // Debounced: a slider drag changes the volume on every pointer move.
+  const pendingVolumeRef = useRef<number | null>(null);
   useEffect(() => {
     if (!volumeHydrated) return;
-    void storage.setItem(VOLUME_STORAGE_KEY, String(volume));
+    pendingVolumeRef.current = volume;
+    const timer = setTimeout(() => {
+      pendingVolumeRef.current = null;
+      void storage.setItem(VOLUME_STORAGE_KEY, String(volume)).catch(() => {});
+    }, 200);
+    return () => clearTimeout(timer);
   }, [storage, volume, volumeHydrated]);
+  // Write a change still inside the debounce when the player unmounts or
+  // the page is closed, so the next launch doesn't restore the old volume.
+  useEffect(() => {
+    const pending = pendingVolumeRef;
+    const flush = () => {
+      const value = pending.current;
+      if (value === null) return;
+      pending.current = null;
+      void storage.setItem(VOLUME_STORAGE_KEY, String(value)).catch(() => {});
+    };
+    const target = globalThis as { addEventListener?: typeof addEventListener; removeEventListener?: typeof removeEventListener };
+    target.addEventListener?.("pagehide", flush);
+    return () => {
+      target.removeEventListener?.("pagehide", flush);
+      flush();
+    };
+  }, [storage]);
 
   // Zero the visible clock the moment a different track is chosen. Without
   // this the wall-clock interpolation keeps advancing from the previous
@@ -547,7 +571,7 @@ export function usePlayerCore({
     };
     const offTime = adapter.on("timeupdate", () => {
       // Gently resync the anchor on every native update to prevent drift, but
-      // don't touch React state here — the rAF loop owns currentTime.
+      // don't touch React state here — the 250 ms sampler owns currentTime.
       syncAnchor();
       syncListenedTime();
       // Fire a single /play ping once past 30s OR >=50% of duration.
@@ -655,13 +679,10 @@ export function usePlayerCore({
 
   useEffect(() => () => adapter.clearPrepared?.(), [adapter]);
 
-  // rAF-driven smoothing: while playing, interpolate between the adapter's
-  // last-known position and the current wall-clock moment. Native update
-  // cadence is ~2–4 Hz on most platforms, so reading position directly each
-  // frame still looks jerky — the wall clock gives us 60fps motion.
+  // The exposed clock is quantized to 250 ms. Sample at that cadence while
+  // retaining the audio/wall-clock anchor between native updates.
   useEffect(() => {
     if (!isPlaying || !interpolateProgress) return;
-    let raf = 0;
     const tick = () => {
       const { audioTime, wallTime } = anchorRef.current;
       const elapsed = (performance.now() - wallTime) / 1000;
@@ -669,10 +690,9 @@ export function usePlayerCore({
       const d = adapter.duration();
       const next = quantizeTime(estimated, d);
       setCurrentTime((prev) => (prev === next ? prev : next));
-      raf = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    const timer = setInterval(tick, 250);
+    return () => clearInterval(timer);
   }, [adapter, interpolateProgress, isPlaying]);
 
   const state = useMemo<PlayerState>(

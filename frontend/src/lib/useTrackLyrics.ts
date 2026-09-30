@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TrackListItem } from "@music-library/core";
 import type { LyricsResult } from "../api";
 import {
@@ -15,12 +15,19 @@ export function useTrackLyrics(track: TrackListItem | null, enabled: boolean) {
   const [lyrics, setLyrics] = useState<LyricsResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Keyed on what the lyrics depend on, not the track object: while another
+  // device is controlled, every device snapshot delivers a new object.
+  const key = track ? lyricsCacheKey(track) : null;
+  const trackRef = useRef(track);
+  useEffect(() => {
+    trackRef.current = track;
+  });
 
   useEffect(() => {
-    if (!enabled || !track) {
+    const track = trackRef.current;
+    if (!enabled || !track || key === null) {
       // Closing the view or clearing the external player track resets its
       // resource state before the next open.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLyrics(null);
       setError(null);
       setLoading(false);
@@ -28,11 +35,12 @@ export function useTrackLyrics(track: TrackListItem | null, enabled: boolean) {
     }
 
     let cancelled = false;
-    const key = lyricsCacheKey(track);
     const cached = peekLyricsCache(key);
 
     if (cached) {
+      // A cached answer for the new track replaces the previous track's.
       if (cached.status === "hit") {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setLyrics(cached.lyrics);
         setError(null);
       } else {
@@ -71,7 +79,7 @@ export function useTrackLyrics(track: TrackListItem | null, enabled: boolean) {
     return () => {
       cancelled = true;
     };
-  }, [enabled, track]);
+  }, [enabled, key]);
 
   return { lyrics, loading, error };
 }

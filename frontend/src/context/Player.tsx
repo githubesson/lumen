@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   type ReactNode,
 } from "react";
 import {
@@ -29,12 +30,13 @@ import { useHtmlAudioAdapter } from "../adapters/html-audio-adapter";
 import { AudioOutputProvider } from "../lib/audioOutput";
 import { useKey } from "../lib/keybindings";
 import { isElectron } from "../lib/platform";
+import { usePageVisible } from "../lib/usePageVisible";
+import { useAuth } from "./Auth";
 
 type Ctx = PlayerState & PlayerControls;
 type RemotePlaybackCtxValue = {
   deviceId: string | null;
   connected: boolean;
-  devices: PlaybackDevice[];
   remoteDevices: PlaybackDevice[];
   targetDeviceId: string | null;
   targetDevice: PlaybackDevice | null;
@@ -54,6 +56,7 @@ type RemotePlaybackCtxValue = {
 const EMPTY_REMOTE_QUEUE: PlayerState["queue"] = [];
 
 const PlayerCtx = createContext<Ctx | null>(null);
+const PlayerControlsCtx = createContext<PlayerControls | null>(null);
 const PlayerTimeCtx = createContext<TimeState | null>(null);
 const RemotePlaybackCtx = createContext<RemotePlaybackCtxValue | null>(null);
 // Exposed so platform-integration hooks (Discord RPC, etc.) can subscribe to
@@ -77,10 +80,15 @@ const webStorage = asyncifySyncStorage({
  * adapter drives.
  */
 export function PlayerProvider({ children }: { children: ReactNode }) {
+  const { status, me } = useAuth();
   const { adapter, audioRefs } = useHtmlAudioAdapter();
+  // Nothing shows the clock while the page is hidden; like mobile's
+  // app-state gate, stop sampling it until the page is visible again.
+  const pageVisible = usePageVisible();
   const { state, controls, time } = usePlayerCore({
     adapter,
     storage: webStorage,
+    interpolateProgress: pageVisible,
   });
   usePlaybackActivityPublisher({
     state,
@@ -90,6 +98,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     adapter,
     controls,
     controlEnabled: true,
+    enabled: status === "authed" && !me?.must_reset_password,
   });
   const remoteSession = usePlaybackRemoteSession();
   const { remoteDevices, targetDevice, targetDeviceId, setTargetDeviceId } =
@@ -118,12 +127,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  // Destructured so this callback's identity tracks only the fields it reads.
-  // Depending on `state` wholesale would also rebuild it on every queue change,
-  // and it is handed to consumers through the remote-playback context.
-  const { isPlaying, muted, repeat, shuffle, volume } = state;
+  // Read through a ref so this callback, handed to consumers through the
+  // remote-playback context, keeps its identity while playback state moves
+  // (every volume step would otherwise re-render every device-aware view).
+  const selectTargetInputs = useRef({ controls, remoteDevices, state });
+  useEffect(() => {
+    selectTargetInputs.current = { controls, remoteDevices, state };
+  });
   const selectTarget = useCallback(
     (nextDeviceId: string | null) => {
+      const { controls, remoteDevices, state } = selectTargetInputs.current;
+      const { isPlaying, muted, repeat, shuffle, volume } = state;
       if (nextDeviceId && isPlaying) controls.pause();
       setTargetDeviceId(nextDeviceId);
       seedControlled(
@@ -133,17 +147,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         ),
       );
     },
-    [
-      controls,
-      isPlaying,
-      muted,
-      remoteDevices,
-      repeat,
-      seedControlled,
-      setTargetDeviceId,
-      shuffle,
-      volume,
-    ],
+    [seedControlled, setTargetDeviceId],
   );
 
   // Destructure the media-session inputs so the effect tracks exactly what it
@@ -218,6 +222,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   });
   const shownVolume = targetDevice ? controlled.volume : state.volume;
 
+  const latestControls = useRef(routedControls);
+  useEffect(() => { latestControls.current = routedControls; }, [routedControls]);
+  const stableControls = useMemo<PlayerControls>(() => ({
+    play: (...args) => latestControls.current.play(...args),
+    resume: (...args) => latestControls.current.resume(...args),
+    pause: (...args) => latestControls.current.pause(...args),
+    toggle: (...args) => latestControls.current.toggle(...args),
+    next: (...args) => latestControls.current.next(...args),
+    prev: (...args) => latestControls.current.prev(...args),
+    jumpTo: (...args) => latestControls.current.jumpTo(...args),
+    seek: (...args) => latestControls.current.seek(...args),
+    setVolume: (...args) => latestControls.current.setVolume(...args),
+    setMuted: (...args) => latestControls.current.setMuted(...args),
+    toggleMute: (...args) => latestControls.current.toggleMute(...args),
+    setShuffle: (...args) => latestControls.current.setShuffle(...args),
+    toggleShuffle: (...args) => latestControls.current.toggleShuffle(...args),
+    setRepeat: (...args) => latestControls.current.setRepeat(...args),
+    cycleRepeat: (...args) => latestControls.current.cycleRepeat(...args),
+  }), []);
+
   // Keyboard bindings use the same routing as buttons and command-palette actions.
   useKey("space", (event) => {
     event.preventDefault();
@@ -247,9 +271,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     () => ({ ...displayedState, ...routedControls }),
     [displayedState, routedControls],
   );
+  const { deviceId: remoteDeviceId, connected: remoteConnected } = remoteSession;
   const remoteValue = useMemo<RemotePlaybackCtxValue>(
     () => ({
-      ...remoteSession,
+      // Fields named outright: the session's full device list (this device
+      // included) changes on every heartbeat and nothing here reads it.
+      deviceId: remoteDeviceId,
+      connected: remoteConnected,
       remoteDevices,
       targetDeviceId,
       targetDevice,
@@ -266,8 +294,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       commandPending,
       controlled,
       lastCommandResult,
+      remoteConnected,
+      remoteDeviceId,
       remoteDevices,
-      remoteSession,
       selectTarget,
       sendCommand,
       targetDevice,
@@ -277,23 +306,25 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   return (
     <RemotePlaybackCtx.Provider value={remoteValue}>
-      <PlayerCtx.Provider value={value}>
-        <PlayerTimeCtx.Provider value={displayedTime}>
-          <PlayerAdapterCtx.Provider value={adapter}>
-            {/* The adapter owns these ref objects and only ever reads them
-                from event handlers/effects; handing them to a child provider
-                and to `ref` props is not a render-time `.current` read, which
-                is what react-hooks/refs is guarding against. */}
-            {/* eslint-disable-next-line react-hooks/refs */}
-            <AudioOutputProvider audioRefs={audioRefs}>
-              {children}
-              <audio ref={audioRefs[0]} preload="auto" />
+      <PlayerControlsCtx.Provider value={stableControls}>
+        <PlayerCtx.Provider value={value}>
+          <PlayerTimeCtx.Provider value={displayedTime}>
+            <PlayerAdapterCtx.Provider value={adapter}>
+              {/* The adapter owns these ref objects and only ever reads them
+                  from event handlers/effects; handing them to a child provider
+                  and to `ref` props is not a render-time `.current` read, which
+                  is what react-hooks/refs is guarding against. */}
               {/* eslint-disable-next-line react-hooks/refs */}
-              <audio ref={audioRefs[1]} preload="auto" />
-            </AudioOutputProvider>
-          </PlayerAdapterCtx.Provider>
-        </PlayerTimeCtx.Provider>
-      </PlayerCtx.Provider>
+              <AudioOutputProvider audioRefs={audioRefs}>
+                {children}
+                <audio ref={audioRefs[0]} preload="auto" />
+                {/* eslint-disable-next-line react-hooks/refs */}
+                <audio ref={audioRefs[1]} preload="auto" />
+              </AudioOutputProvider>
+            </PlayerAdapterCtx.Provider>
+          </PlayerTimeCtx.Provider>
+        </PlayerCtx.Provider>
+      </PlayerControlsCtx.Provider>
     </RemotePlaybackCtx.Provider>
   );
 }
@@ -301,6 +332,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 export function usePlayer() {
   const ctx = useContext(PlayerCtx);
   if (!ctx) throw new Error("usePlayer requires PlayerProvider");
+  return ctx;
+}
+
+export function usePlayerControls() {
+  const ctx = useContext(PlayerControlsCtx);
+  if (!ctx) throw new Error("usePlayerControls requires PlayerProvider");
   return ctx;
 }
 

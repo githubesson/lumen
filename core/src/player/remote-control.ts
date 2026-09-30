@@ -60,10 +60,19 @@ export function filterRemoteDevices(
  * first device list: neither condition confirms that the target went offline.
  */
 export function useRemotePlaybackTarget(session: PlaybackRemoteSessionSnapshot) {
-  const remoteDevices = useMemo(
+  const filteredDevices = useMemo(
     () => filterRemoteDevices(session.devices, session.deviceId),
     [session.devices, session.deviceId],
   );
+  // A change to this device's own entry (its heartbeat echo) rebuilds
+  // `session.devices`; keep the filtered list when its members are the same.
+  // When they differ, this render already uses the new list.
+  const [stableDevices, setStableDevices] = useState(filteredDevices);
+  const sameMembers =
+    stableDevices.length === filteredDevices.length &&
+    filteredDevices.every((device, index) => device === stableDevices[index]);
+  if (!sameMembers) setStableDevices(filteredDevices);
+  const remoteDevices = sameMembers ? stableDevices : filteredDevices;
   const [selectedDevice, setSelectedDevice] = useState<PlaybackDevice | null>(null);
   const targetDevice = session.connected && session.devicesReady
     ? remoteDevices.find((device) => device.deviceId === selectedDevice?.deviceId) ?? null
