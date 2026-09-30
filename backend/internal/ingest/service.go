@@ -354,9 +354,10 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	switch {
 	case inserted, dropPath == "":
 	case adopted:
-		// The replaced copy goes only while the adopted file is still the
-		// one that was read; otherwise the track still lists it as an alias.
-		s.removeDedupFile(ctx, dropPath, canonicalPath, trackID, stat)
+		// The replaced copy goes only while it still holds the track's audio
+		// and the adopted file is still the one that was read; otherwise
+		// the track still lists it as an alias.
+		s.removeDedupFile(ctx, dropPath, canonicalPath, trackID, &replacedCheck{adopted: stat, audio: shaHex})
 	default:
 		s.removeDedupFile(ctx, dropPath, canonicalPath, trackID, nil)
 	}
@@ -389,12 +390,18 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	return out
 }
 
+// replacedCheck guards removing the file an adopted duplicate replaced.
+type replacedCheck struct {
+	adopted os.FileInfo // the adopted, now canonical, file as it was read
+	audio   string      // hex audio hash the replaced file must still carry
+}
+
 // removeDedupFile unlinks a duplicate audio file after the DB transaction has
 // safely recorded its alias metadata. The canonical track row's file_path is
-// the file we serve, so it is never removed. With canonicalWas, the canonical
-// file must also still be that file (unchangedSince), checked last, right
-// before the unlink.
-func (s *Service) removeDedupFile(ctx context.Context, duplicatePath, canonicalPath string, trackID uuid.UUID, canonicalWas os.FileInfo) {
+// the file we serve, so it is never removed. With check, the duplicate must
+// also still carry the track's audio and the canonical file must still be the
+// one that was read, the latter checked last, right before the unlink.
+func (s *Service) removeDedupFile(ctx context.Context, duplicatePath, canonicalPath string, trackID uuid.UUID, check *replacedCheck) {
 	dupAbs, err := filepath.Abs(duplicatePath)
 	if err != nil {
 		s.log().Warn("dedup cleanup skipped: duplicate path could not be resolved",
@@ -448,10 +455,17 @@ func (s *Service) removeDedupFile(ctx context.Context, duplicatePath, canonicalP
 			"path", dupAbs, "track", trackID)
 		return
 	}
-	if canonicalWas != nil && !unchangedSince(canonAbs, canonicalWas) {
-		s.log().Warn("dedup cleanup skipped: canonical file changed since it was read",
-			"path", dupAbs, "canonical_path", canonAbs, "track", trackID)
-		return
+	if check != nil {
+		if sum, err := AudioSHA256(ctx, dupAbs); err != nil || sum != check.audio {
+			s.log().Warn("dedup cleanup skipped: replaced file no longer holds the track's audio",
+				"path", dupAbs, "canonical_path", canonAbs, "track", trackID, "err", err)
+			return
+		}
+		if !unchangedSince(canonAbs, check.adopted) {
+			s.log().Warn("dedup cleanup skipped: canonical file changed since it was read",
+				"path", dupAbs, "canonical_path", canonAbs, "track", trackID)
+			return
+		}
 	}
 	if err := os.Remove(dupAbs); err != nil && !errors.Is(err, os.ErrNotExist) {
 		s.log().Warn("dedup cleanup failed",

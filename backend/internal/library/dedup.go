@@ -286,25 +286,12 @@ func (s *Store) AdoptFullerAliases(ctx context.Context) (int, error) {
 	return adopted, nil
 }
 
-// adoptAlias swaps one alias's metadata with its track's, rechecking under the
-// row lock that the alias is still fuller and the track still unedited.
+// adoptAlias swaps one alias's metadata with its track's. The alias's artists
+// and album are created before the track row is locked, the order ingest
+// takes those locks in; under the lock, the alias must be unchanged, still
+// fuller and the track still unedited.
 func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64) (bool, error) {
-	st, err := trackMetadata(ctx, tx, trackID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if st.edited {
-		return false, nil
-	}
-	cur, curFull, ownerID := st.cur, st.full, st.ownerID
-	var alias AliasInput
-	err = tx.QueryRow(ctx, `
-		SELECT COALESCE(title, ''), COALESCE(artist_names, ''), COALESCE(album_title, '')
-		FROM track_aliases WHERE id = $1 AND track_id = $2`, aliasID, trackID).
-		Scan(&alias.Title, &alias.ArtistNames, &alias.AlbumTitle)
+	alias, err := loadAlias(ctx, tx, trackID, aliasID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -319,12 +306,19 @@ func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64
 			names = append(names, name)
 		}
 	}
-	if !aliasFullness(len(names), alias.AlbumTitle).Fuller(curFull) {
-		return false, nil
+	if len(names) > MaxTrackArtists {
+		return false, nil // aliases weren't capped; ingest would have refused these credits
 	}
-
 	roles, ok, err := legacyAliasRoles(ctx, tx, alias.Title, names)
 	if err != nil || !ok {
+		return false, err
+	}
+	var ownerID *uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT owner_id FROM tracks WHERE id = $1`, trackID).Scan(&ownerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
 		return false, err
 	}
 	artistIDs := make([]uuid.UUID, len(names))
@@ -333,13 +327,6 @@ func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64
 			return false, err
 		}
 	}
-	if err := relinkArtists(ctx, tx, trackID, artistIDs, roles, slices.Contains(roles, "composer")); err != nil {
-		return false, err
-	}
-	// At most one alias holds swapped tags: undo an earlier swap first.
-	if err := unswapTags(ctx, tx, trackID, &cur); err != nil {
-		return false, err
-	}
 	var albumID *uuid.UUID
 	if alias.AlbumTitle != "" {
 		id, err := aliasAlbum(ctx, tx, alias.AlbumTitle, names, ownerID)
@@ -347,6 +334,31 @@ func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64
 			return false, err
 		}
 		albumID = &id
+	}
+
+	st, err := trackMetadata(ctx, tx, trackID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if st.edited || !aliasFullness(len(names), alias.AlbumTitle).Fuller(st.full) {
+		return false, nil
+	}
+	if again, err := loadAlias(ctx, tx, trackID, aliasID); err != nil || again != alias {
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = nil
+		}
+		return false, err
+	}
+	cur := st.cur
+	if err := relinkArtists(ctx, tx, trackID, artistIDs, roles, slices.Contains(roles, "composer")); err != nil {
+		return false, err
+	}
+	// At most one alias holds swapped tags: undo an earlier swap first.
+	if err := unswapTags(ctx, tx, trackID, &cur); err != nil {
+		return false, err
 	}
 	// A composer credit replaced above replaces the composer column too.
 	composer := ""
@@ -367,6 +379,16 @@ func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64
 		return false, err
 	}
 	return true, nil
+}
+
+// loadAlias reads an alias's recorded title, artists and album.
+func loadAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64) (AliasInput, error) {
+	var a AliasInput
+	err := tx.QueryRow(ctx, `
+		SELECT COALESCE(title, ''), COALESCE(artist_names, ''), COALESCE(album_title, '')
+		FROM track_aliases WHERE id = $1 AND track_id = $2`, aliasID, trackID).
+		Scan(&a.Title, &a.ArtistNames, &a.AlbumTitle)
+	return a, err
 }
 
 // legacyAliasRoles credits the names of an alias recorded before aliases left

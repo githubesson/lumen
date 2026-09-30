@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -262,6 +263,23 @@ func TestDuplicateWithFullerMetadataBecomesCanonical(t *testing.T) {
 		t.Fatalf("edited track:\n got %+v\nwant %+v", got, wantEdited)
 	}
 
+	// The replaced copy is removed only while it still holds the track's
+	// audio: rewritten since it was ingested, it stays.
+	changedAudio := audio + "-changed"
+	changedOriginal := filepath.Join(primary, "changed original.flac")
+	writeFLAC(t, changedOriginal, changedAudio)
+	changedID := ingestOK(changedOriginal, nil).TrackID
+	writeFLAC(t, changedOriginal, changedAudio+"-rewritten")
+	changedTagged := filepath.Join(primary, "changed tagged.flac")
+	writeFLAC(t, changedTagged, changedAudio, tags...)
+	ingestOK(changedTagged, nil)
+	if got := snapshotTrack(t, ctx, pool, changedID); got.FilePath != changedTagged {
+		t.Fatalf("changed original: tagged copy not adopted: %+v", got)
+	}
+	if _, err := os.Stat(changedOriginal); err != nil {
+		t.Fatalf("rewritten original was removed: %v", err)
+	}
+
 	// A fuller copy in a read-only root lends its tags, but the managed copy
 	// under the primary root stays the track's file, and both stay on disk.
 	crossAudio := audio + "-cross"
@@ -470,6 +488,16 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 		mentioned, "Songs of "+nobody, artistA+", "+nobody)
 	mentionedBefore := snapshotTrack(t, ctx, pool, mentioned)
 	ambiguousBefore := snapshotTrack(t, ctx, pool, ambiguous)
+	// More names than a track can credit (aliases were never capped): skipped,
+	// without stopping the rest of the repair.
+	crowded := redteamTrack(t, ctx, pool, nil, &others)
+	many := make([]string, library.MaxTrackArtists+1)
+	for i := range many {
+		many[i] = fmt.Sprintf("Many %s %d", sfx, i)
+	}
+	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names) VALUES(TRUE,$1,'/gone/crowded.flac','Crowded',$2)`,
+		crowded, strings.Join(many, ", "))
+	crowdedBefore := snapshotTrack(t, ctx, pool, crowded)
 	// Just as full as that ambiguous alias but settled: the next one is tried.
 	retry := redteamTrack(t, ctx, pool, nil, &others)
 	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names) VALUES(TRUE,$1,'/gone/retry-a.flac','Retry A',$2)`,
@@ -558,7 +586,7 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	if got := snapshotTrack(t, ctx, pool, featuring).Artists; !reflect.DeepEqual(got, []string{artistA + ":primary", guest + ":featured"}) {
 		t.Fatalf("featuring credits = %v", got)
 	}
-	for id, before := range map[uuid.UUID]trackSnapshot{ambiguous: ambiguousBefore, onOthers: onOthersBefore, mentioned: mentionedBefore} {
+	for id, before := range map[uuid.UUID]trackSnapshot{ambiguous: ambiguousBefore, onOthers: onOthersBefore, mentioned: mentionedBefore, crowded: crowdedBefore} {
 		if got := snapshotTrack(t, ctx, pool, id); !reflect.DeepEqual(got, before) {
 			t.Fatalf("track changed:\n got %+v\nwant %+v", got, before)
 		}
