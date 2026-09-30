@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -255,8 +256,10 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	}
 
 	// dropPath is the copy removed after commit: normally the incoming
-	// duplicate, but the old canonical file when the duplicate replaces it.
+	// duplicate, but the old canonical file when the duplicate replaces it,
+	// and none when the duplicate only lends its tags.
 	canonicalPath, dropPath := "", path
+	adopted := false
 	if inserted && len(artistIDs) > 0 {
 		if err := library.LinkTrackArtists(ctx, tx, trackID, artistIDs, artistRoles); err != nil {
 			out.Err = fmt.Errorf("link artists: %w", err)
@@ -281,20 +284,31 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		// its owner's own track — never a global one.
 		if ownerID == nil || (canonicalOwner != nil && *canonicalOwner == *ownerID) {
 			// Only a file still as it was read may replace the canonical
-			// one, whose copy is then removed.
+			// one, whose copy is then removed. A managed copy under the
+			// primary root isn't traded for one in a read-only root, which
+			// may be unmounted or removed: that copy only lends its tags.
 			oldPath := ""
 			if unchangedSince(path, stat) {
+				keepFile := s.inPrimaryRoot(canonicalPath) && !s.inPrimaryRoot(path)
+				// The tag library reports a Vorbis file's artist as its
+				// composer when it has none, so only a separate composer
+				// credit replaces the track's.
+				adoptInsert := trackInsert
+				if !slices.Contains(artistRoles, "composer") {
+					adoptInsert.Composer = ""
+				}
 				var aerr error
-				oldPath, aerr = library.AdoptDuplicate(ctx, tx, trackID,
+				oldPath, adopted, aerr = library.AdoptDuplicate(ctx, tx, trackID,
 					library.Fullness{HasArtists: len(artistIDs) > 0, HasAlbum: albumID != nil && !catchAll},
-					trackInsert, artistIDs, artistRoles)
+					adoptInsert, artistIDs, artistRoles, keepFile)
 				if aerr != nil {
 					out.Err = fmt.Errorf("adopt duplicate: %w", aerr)
 					s.recordErr(ctx, path, out.Err)
 					return out
 				}
 			}
-			if oldPath != "" {
+			if adopted {
+				// oldPath is "" when the track kept its own file.
 				canonicalPath, dropPath = path, oldPath
 			} else if err := library.RecordAlias(ctx, tx, trackID, library.AliasInput{
 				FilePath:    path,
@@ -338,7 +352,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	}
 
 	switch {
-	case inserted:
+	case inserted, dropPath == "":
 	case dropPath != path && !unchangedSince(path, stat):
 		// Changed after adoption committed: keep the old copy, which the
 		// track still lists as an alias, rather than trust this one alone.
@@ -366,7 +380,9 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	switch {
 	case inserted:
 		s.log().Info("ingested", "path", path, "track", trackID, "title", md.Title)
-	case dropPath != path:
+	case adopted && dropPath == "":
+		s.log().Info("dedup hit has fuller metadata, now shown; both files kept", "path", path, "track", trackID, "title", md.Title)
+	case adopted:
 		s.log().Info("dedup hit has fuller metadata, now canonical", "path", path, "replaced", dropPath, "track", trackID, "title", md.Title)
 	default:
 		s.log().Debug("dedup hit", "path", path, "track", trackID)
@@ -438,6 +454,20 @@ func (s *Service) removeDedupFile(ctx context.Context, duplicatePath, canonicalP
 	}
 	s.log().Info("dedup duplicate file removed",
 		"path", dupAbs, "canonical_path", canonAbs, "track", trackID)
+}
+
+// inPrimaryRoot reports whether p lies under the primary music root, the only
+// root ingest removes files from.
+func (s *Service) inPrimaryRoot(p string) bool {
+	if strings.TrimSpace(s.MusicRoot) == "" || p == "" {
+		return false
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return false
+	}
+	in, _ := pathsafe.WithinRoot(s.MusicRoot, abs)
+	return in
 }
 
 // unchangedSince reports whether path is still the file before described: the

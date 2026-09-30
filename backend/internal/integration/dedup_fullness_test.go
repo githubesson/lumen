@@ -260,6 +260,52 @@ func TestDuplicateWithFullerMetadataBecomesCanonical(t *testing.T) {
 		t.Fatalf("edited track:\n got %+v\nwant %+v", got, wantEdited)
 	}
 
+	// A fuller copy in a read-only root lends its tags, but the managed copy
+	// under the primary root stays the track's file, and both stay on disk.
+	crossAudio := audio + "-cross"
+	crossBare := filepath.Join(primary, "cross bare.flac")
+	writeFLAC(t, crossBare, crossAudio)
+	crossID := ingestOK(crossBare, nil).TrackID
+	crossTagged := filepath.Join(extra, "cross tagged.flac")
+	writeFLAC(t, crossTagged, crossAudio, tags...)
+	wantCross := trackSnapshot{
+		Title: "Blue Hunnids", FilePath: crossBare, Album: album,
+		Artists: []string{artistA + ":primary", artistB + ":featured"},
+		Aliases: []string{crossTagged + "|cross bare||Others"},
+	}
+	for range 2 { // again, as the next rescan would
+		ingestOK(crossTagged, nil)
+		if got := snapshotTrack(t, ctx, pool, crossID); !reflect.DeepEqual(got, wantCross) {
+			t.Fatalf("cross-root copy:\n got %+v\nwant %+v", got, wantCross)
+		}
+	}
+	for _, p := range []string{crossBare, crossTagged} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+	}
+	if v, _ := getTrackVersions(t, ctx, pool, lib, user, crossID); v.FileName != "cross tagged.flac" ||
+		len(v.Aliases) != 1 || v.Aliases[0]["file_name"] != "cross bare.flac" {
+		t.Fatalf("cross-root versions = %+v", v)
+	}
+
+	// A composer credit stays when the adopted copy names none.
+	composedAudio := audio + "-composed"
+	composed := filepath.Join(primary, "composed.flac")
+	writeFLAC(t, composed, composedAudio, "TITLE=Composed", "ARTIST="+artistA, "COMPOSER="+producer)
+	composedID := ingestOK(composed, nil).TrackID
+	composedAlbum := filepath.Join(primary, "composed album.flac")
+	writeFLAC(t, composedAlbum, composedAudio, "TITLE=Composed", "ARTIST="+artistA, "ALBUM="+album)
+	ingestOK(composedAlbum, nil)
+	var composer string
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(composer, '') FROM tracks WHERE id=$1`, composedID).Scan(&composer); err != nil || composer != producer {
+		t.Fatalf("composer = %q, %v", composer, err)
+	}
+	if got := snapshotTrack(t, ctx, pool, composedID); got.Album != album ||
+		!reflect.DeepEqual(got.Artists, []string{artistA + ":primary", producer + ":composer"}) {
+		t.Fatalf("composed track = %+v", got)
+	}
+
 	// A real album called Others (it has an album artist) beats the catch-all,
 	// even on a copy without track artists.
 	othersAudio := audio + "-others"
@@ -406,6 +452,11 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO artists(name) VALUES($1)`, nobody); err != nil {
 		t.Fatal(err)
 	}
+	// Named in the title, but not as a guest: still ambiguous.
+	mentioned := redteamTrack(t, ctx, pool, nil, &others)
+	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names) VALUES(TRUE,$1,'/gone/mentioned.flac',$2,$3)`,
+		mentioned, "Songs of "+nobody, artistA+", "+nobody)
+	mentionedBefore := snapshotTrack(t, ctx, pool, mentioned)
 	ambiguousBefore := snapshotTrack(t, ctx, pool, ambiguous)
 	// Just as full as that ambiguous alias but settled: the next one is tried.
 	retry := redteamTrack(t, ctx, pool, nil, &others)
@@ -491,7 +542,7 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	if got := snapshotTrack(t, ctx, pool, featuring).Artists; !reflect.DeepEqual(got, []string{artistA + ":primary", guest + ":featured"}) {
 		t.Fatalf("featuring credits = %v", got)
 	}
-	for id, before := range map[uuid.UUID]trackSnapshot{ambiguous: ambiguousBefore, onOthers: onOthersBefore} {
+	for id, before := range map[uuid.UUID]trackSnapshot{ambiguous: ambiguousBefore, onOthers: onOthersBefore, mentioned: mentionedBefore} {
 		if got := snapshotTrack(t, ctx, pool, id); !reflect.DeepEqual(got, before) {
 			t.Fatalf("track changed:\n got %+v\nwant %+v", got, before)
 		}
@@ -535,11 +586,11 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 		t.Fatal(err)
 	}
 	finalPath := "/music/final-" + sfx + ".flac"
-	old, err := library.AdoptDuplicate(ctx, tx, partial, library.Fullness{HasArtists: true, HasAlbum: true},
+	old, adopted, err := library.AdoptDuplicate(ctx, tx, partial, library.Fullness{HasArtists: true, HasAlbum: true},
 		library.TrackInsert{Title: "Final", AlbumID: &album, FilePath: finalPath, FileSize: 1, Format: "flac"},
-		[]uuid.UUID{byB}, []string{"primary"})
-	if err != nil {
-		t.Fatal(err)
+		[]uuid.UUID{byB}, []string{"primary"}, false)
+	if err != nil || !adopted {
+		t.Fatal(adopted, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)

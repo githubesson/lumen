@@ -33,3 +33,22 @@ func TestFullnessRanking(t *testing.T) {
 		}
 	}
 }
+
+func TestTitleCredits(t *testing.T) {
+	for _, tc := range []struct {
+		title, name string
+		want        bool
+	}{
+		{"Blue Hunnids (with Luh Tyler)", "Luh Tyler", true},
+		{"Song [feat. A & B]", "B", true},
+		{"Song ft. A, B and C", "c", true},
+		{"Song (Featuring Guest)", "guest", true},
+		{"I Will Survive", "Will", false},
+		{"Songs of Guest", "Guest", false},
+		{"Song (with Guestlist)", "Guest", false},
+	} {
+		if got := titleCredits(tc.title, tc.name); got != tc.want {
+			t.Errorf("titleCredits(%q, %q) = %v, want %v", tc.title, tc.name, got, tc.want)
+		}
+	}
+}

@@ -3,6 +3,8 @@ package library
 import (
 	"context"
 	"errors"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -82,24 +84,28 @@ func trackMetadata(ctx context.Context, q pgx.Tx, trackID uuid.UUID) (trackState
 	return st, err
 }
 
-// AdoptDuplicate makes a deduplicated copy the track's canonical file when its
-// metadata (ranked by full) is fuller than the track's and wasn't edited on
-// purpose: the track takes the copy's path and tags, and its old
-// title/artists/album are kept as an alias. Returns the old file path, which
-// the caller may remove, or "" when nothing changed.
-func AdoptDuplicate(ctx context.Context, q pgx.Tx, trackID uuid.UUID, full Fullness, t TrackInsert, artistIDs []uuid.UUID, roles []string) (string, error) {
+// AdoptDuplicate lets a deduplicated copy take a track over when its metadata
+// (ranked by full) is fuller than the track's and wasn't edited on purpose:
+// the track takes the copy's tags, and its old title/artists/album are kept
+// as an alias. Normally the copy becomes the track's file too, and the old
+// path is returned for the caller to remove. With keepFile the track keeps
+// its file (the caller won't trade a managed copy for one in a read-only
+// root): the copy stays an alias, holding the old tags and marked
+// tags_swapped. adopted is false when nothing changed.
+func AdoptDuplicate(ctx context.Context, q pgx.Tx, trackID uuid.UUID, full Fullness, t TrackInsert,
+	artistIDs []uuid.UUID, roles []string, keepFile bool) (oldPath string, adopted bool, err error) {
 	if !full.Fuller(Fullness{}) {
-		return "", nil // nothing is less full
+		return "", false, nil // nothing is less full
 	}
 	st, err := trackMetadata(ctx, q, trackID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
+		return "", false, nil
 	}
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if st.edited || !full.Fuller(st.full) {
-		return "", nil
+		return "", false, nil
 	}
 	cur := st.cur
 
@@ -109,7 +115,10 @@ func AdoptDuplicate(ctx context.Context, q pgx.Tx, trackID uuid.UUID, full Fulln
 	t.Comments = dbtext.Clean(t.Comments)
 	t.Format = dbtext.Clean(t.Format)
 	if err := cleanTrackFilePath(&t); err != nil {
-		return "", err
+		return "", false, err
+	}
+	if err := unswapTags(ctx, q, trackID, &cur); err != nil {
+		return "", false, err
 	}
 	// Same audio, so the probed duration/bitrate/etc. stay as they are. Tags
 	// the copy lacks keep the track's values, since the alias can't hold
@@ -123,50 +132,77 @@ func AdoptDuplicate(ctx context.Context, q pgx.Tx, trackID uuid.UUID, full Fulln
 				THEN COALESCE(NULLIF($5,0), disc_no) ELSE NULLIF($5,0) END,
 			genre = COALESCE(NULLIF($6,''), genre), year = COALESCE(NULLIF($7,0), year),
 			composer = COALESCE(NULLIF($8,''), composer), comments = COALESCE(NULLIF($9,''), comments),
-			file_path = $10, file_size = $11, format = $12,
+			file_path = CASE WHEN $13 THEN file_path ELSE $10 END,
+			file_size = CASE WHEN $13 THEN file_size ELSE $11 END,
+			format = CASE WHEN $13 THEN format ELSE $12 END,
 			updated_at = NOW()
 		WHERE id = $1`,
 		trackID, t.AlbumID, t.Title, t.TrackNo, t.DiscNo, t.Genre, t.Year, t.Composer,
-		t.Comments, t.FilePath, t.FileSize, t.Format); err != nil {
-		return "", err
+		t.Comments, t.FilePath, t.FileSize, t.Format, keepFile); err != nil {
+		return "", false, err
 	}
-	if _, err := q.Exec(ctx, `DELETE FROM track_artists WHERE track_id = $1`, trackID); err != nil {
-		return "", err
+	if err := relinkArtists(ctx, q, trackID, artistIDs, roles, t.Composer != ""); err != nil {
+		return "", false, err
 	}
-	if err := LinkTrackArtists(ctx, q, trackID, artistIDs, roles); err != nil {
-		return "", err
+	if keepFile {
+		if _, err := q.Exec(ctx, `
+			INSERT INTO track_aliases (track_id, file_path, title, artist_names, album_title, tags_swapped)
+			VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), TRUE)
+			ON CONFLICT (track_id, file_path) DO UPDATE SET
+				title = EXCLUDED.title, artist_names = EXCLUDED.artist_names,
+				album_title = EXCLUDED.album_title, tags_swapped = TRUE, unranked = FALSE`,
+			trackID, t.FilePath, cur.Title, cur.ArtistNames, cur.AlbumTitle); err != nil {
+			return "", false, err
+		}
+		return "", true, nil
 	}
 	// The new canonical file may have been recorded as an alias by an earlier
 	// ingest; the old one becomes an alias now that it no longer is canonical.
 	if _, err := q.Exec(ctx, `DELETE FROM track_aliases WHERE track_id = $1 AND file_path = $2`, trackID, t.FilePath); err != nil {
-		return "", err
-	}
-	// If AdoptFullerAliases swapped this track's tags with an alias's, the
-	// current tags came from that alias's file and the alias holds this
-	// file's. Put each back with its file before this one becomes an alias.
-	var swappedID int64
-	var swapped AliasInput
-	err = q.QueryRow(ctx, `
-		SELECT id, COALESCE(title, ''), COALESCE(artist_names, ''), COALESCE(album_title, '')
-		FROM track_aliases WHERE track_id = $1 AND tags_swapped`, trackID).
-		Scan(&swappedID, &swapped.Title, &swapped.ArtistNames, &swapped.AlbumTitle)
-	switch {
-	case err == nil:
-		if _, err := q.Exec(ctx, `
-			UPDATE track_aliases
-			SET title = NULLIF($2, ''), artist_names = NULLIF($3, ''), album_title = NULLIF($4, ''),
-			    tags_swapped = FALSE
-			WHERE id = $1`, swappedID, cur.Title, cur.ArtistNames, cur.AlbumTitle); err != nil {
-			return "", err
-		}
-		cur.Title, cur.ArtistNames, cur.AlbumTitle = swapped.Title, swapped.ArtistNames, swapped.AlbumTitle
-	case !errors.Is(err, pgx.ErrNoRows):
-		return "", err
+		return "", false, err
 	}
 	if err := RecordAlias(ctx, q, trackID, cur); err != nil {
-		return "", err
+		return "", false, err
 	}
-	return cur.FilePath, nil
+	return cur.FilePath, true, nil
+}
+
+// unswapTags undoes a tag swap before another: when the track's tags came from
+// a tags_swapped alias's file, that alias gets them back (they're cur's) and
+// cur takes the tags the track's own file carries, which the alias held.
+func unswapTags(ctx context.Context, q pgx.Tx, trackID uuid.UUID, cur *AliasInput) error {
+	var id int64
+	var own AliasInput
+	err := q.QueryRow(ctx, `
+		SELECT id, COALESCE(title, ''), COALESCE(artist_names, ''), COALESCE(album_title, '')
+		FROM track_aliases WHERE track_id = $1 AND tags_swapped`, trackID).
+		Scan(&id, &own.Title, &own.ArtistNames, &own.AlbumTitle)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := q.Exec(ctx, `
+		UPDATE track_aliases
+		SET title = NULLIF($2, ''), artist_names = NULLIF($3, ''), album_title = NULLIF($4, ''),
+		    tags_swapped = FALSE
+		WHERE id = $1`, id, cur.Title, cur.ArtistNames, cur.AlbumTitle); err != nil {
+		return err
+	}
+	cur.Title, cur.ArtistNames, cur.AlbumTitle = own.Title, own.ArtistNames, own.AlbumTitle
+	return nil
+}
+
+// relinkArtists replaces a track's credits with the given ones. Its composer
+// credits stay unless the new tags name a composer, matching how the
+// composer column keeps its value when a copy lacks the tag.
+func relinkArtists(ctx context.Context, q pgx.Tx, trackID uuid.UUID, artistIDs []uuid.UUID, roles []string, newComposer bool) error {
+	if _, err := q.Exec(ctx, `
+		DELETE FROM track_artists WHERE track_id = $1 AND ($2 OR role <> 'composer')`, trackID, newComposer); err != nil {
+		return err
+	}
+	return LinkTrackArtists(ctx, q, trackID, artistIDs, roles)
 }
 
 // AdoptFullerAliases repairs tracks deduplicated before ingest compared
@@ -291,10 +327,11 @@ func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64
 			return false, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM track_artists WHERE track_id = $1`, trackID); err != nil {
+	if err := relinkArtists(ctx, tx, trackID, artistIDs, roles, slices.Contains(roles, "composer")); err != nil {
 		return false, err
 	}
-	if err := LinkTrackArtists(ctx, tx, trackID, artistIDs, roles); err != nil {
+	// At most one alias holds swapped tags: undo an earlier swap first.
+	if err := unswapTags(ctx, tx, trackID, &cur); err != nil {
 		return false, err
 	}
 	var albumID *uuid.UUID
@@ -337,7 +374,7 @@ func legacyAliasRoles(ctx context.Context, tx pgx.Tx, title string, names []stri
 	}
 	roles[0] = "primary"
 	last := names[len(names)-1]
-	if len(names) == 1 || strings.Contains(strings.ToLower(title), strings.ToLower(last)) {
+	if len(names) == 1 || titleCredits(title, last) {
 		return roles, true, nil
 	}
 	var composer, performer int
@@ -355,6 +392,26 @@ func legacyAliasRoles(ctx context.Context, tx pgx.Tx, title string, names []stri
 		return roles, true, nil
 	}
 	return nil, false, nil
+}
+
+// creditMarker finds a title's guest credits: what follows "with", "feat.",
+// "ft." or "featuring", up to the end of its brackets.
+var creditMarker = regexp.MustCompile(`(?i)(?:^|[\s(\[])(?:with|feat\.?|ft\.?|featuring)\s+([^)\]]+)`)
+
+// creditSeparator splits a credit list the way ingest splits artist tags.
+var creditSeparator = regexp.MustCompile(`(?i)\s*(?:,|&|\band\b|\bx\b)\s*`)
+
+// titleCredits reports whether a title credits name as a guest, as in
+// "Song (with A & B)"; merely containing the name doesn't count.
+func titleCredits(title, name string) bool {
+	for _, m := range creditMarker.FindAllStringSubmatch(title, -1) {
+		for _, credited := range creditSeparator.Split(m[1], -1) {
+			if strings.EqualFold(strings.TrimSpace(credited), strings.TrimSpace(name)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // aliasAlbum finds the album an alias's file was filed under. Aliases don't
