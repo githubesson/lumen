@@ -1,5 +1,5 @@
 import { useAuth } from "../context/Auth";
-import { lazy, memo, Suspense, useCallback, useState } from "react";
+import { memo, Suspense, useCallback, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Play as PlayIcon } from "lucide-react";
 import {
@@ -23,6 +23,8 @@ import LoadMoreSentinel from "../components/list/LoadMoreSentinel";
 import PageHeader from "../components/PageHeader";
 import { useTrackContextMenu } from "../lib/useTrackContextMenu";
 import BrowseToolbar from "../components/library/BrowseToolbar";
+import { UploadDialog, uploadDialogChunk } from "../components/lazyDialogs";
+import { openWhenLoaded } from "../lib/lazyChunk";
 import { TrackSelectionToolbarPlaceholder } from "../components/TrackSelectionToolbar";
 import { usePlayerControls } from "../context/Player";
 import {
@@ -41,7 +43,6 @@ import {
   TidalAlbumDetailView,
 } from "./library/LibraryDetail";
 
-const UploadDialog = lazy(() => import("../components/UploadDialog"));
 
 const POLL_INTERVAL_MS = 15 * 60 * 1000;
 const LIBRARY_SELECTION_CONTROLS_ID = "library-track-selection-controls";
@@ -413,7 +414,7 @@ function LibraryEmptyState() {
       <EmptyState title="Your library is empty." hint={
         <>
           Drop audio files into a watched folder on the server, or{" "}
-          <button type="button" className="section-link" style={{ color: "var(--primary)" }} onClick={() => { setUploadLoaded(true); setUploadOpen(true); }}>
+          <button type="button" className="section-link" style={{ color: "var(--primary)" }} onClick={() => openWhenLoaded(uploadDialogChunk, () => { setUploadLoaded(true); setUploadOpen(true); })}>
             upload them
           </button>. New files are ingested automatically.
         </>

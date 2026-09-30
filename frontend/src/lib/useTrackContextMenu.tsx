@@ -1,28 +1,14 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { TrackListItem } from "../api";
 import { canShareTrack } from "./track";
+import { lazyChunk, openWhenLoaded } from "./lazyChunk";
 import { useShare } from "../context/Share";
 import { useTrackInfo } from "../context/TrackInfo";
 
-// The menu is its own chunk. It's fetched once a menu can be opened and
-// only shown once loaded: while the chunk is still out, the menu's own
-// dismiss listeners don't exist, so a request is held here instead.
-let menuModule: Promise<typeof import("../components/TrackContextMenu")> | null = null;
-let menuLoaded = false;
-function loadTrackContextMenu() {
-  menuModule ??= import("../components/TrackContextMenu").then(
-    (module) => {
-      menuLoaded = true;
-      return module;
-    },
-    (error: unknown) => {
-      menuModule = null;
-      throw error;
-    },
-  );
-  return menuModule;
-}
-const TrackContextMenu = lazy(loadTrackContextMenu);
+// The menu is its own chunk, fetched once a menu can be opened; opens go
+// through `openWhenLoaded` so a dismissal while it loads is honored.
+const menuChunk = lazyChunk(() => import("../components/TrackContextMenu"));
+const TrackContextMenu = lazy(menuChunk.load);
 
 /**
  * Convenience hook that packages up the state + event handlers for binding
@@ -59,39 +45,14 @@ export function useTrackContextMenu() {
   const share = useShare();
 
   useEffect(() => {
-    void loadTrackContextMenu().catch(() => {});
+    void menuChunk.load().catch(() => {});
   }, []);
 
-  // Bumped by each open request and by a dismissal gesture while the chunk
-  // loads, so only the latest undismissed request opens.
-  const openRequestRef = useRef(0);
+  const cancelPendingOpen = useRef<() => void>(() => {});
+  useEffect(() => () => cancelPendingOpen.current(), []);
   const open = useCallback((next: NonNullable<typeof state>) => {
-    const request = ++openRequestRef.current;
-    if (menuLoaded) {
-      setState(next);
-      return;
-    }
-    const dismiss = () => {
-      if (openRequestRef.current === request) openRequestRef.current += 1;
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") dismiss();
-    };
-    const stopWatching = () => {
-      window.removeEventListener("pointerdown", dismiss, true);
-      window.removeEventListener("keydown", onKeyDown, true);
-      window.removeEventListener("blur", dismiss);
-    };
-    window.addEventListener("pointerdown", dismiss, true);
-    window.addEventListener("keydown", onKeyDown, true);
-    window.addEventListener("blur", dismiss);
-    loadTrackContextMenu().then(
-      () => {
-        stopWatching();
-        if (openRequestRef.current === request) setState(next);
-      },
-      stopWatching,
-    );
+    cancelPendingOpen.current();
+    cancelPendingOpen.current = openWhenLoaded(menuChunk, () => setState(next));
   }, []);
 
   const bind = useCallback(
@@ -128,7 +89,7 @@ export function useTrackContextMenu() {
   );
 
   const close = useCallback(() => {
-    openRequestRef.current += 1;
+    cancelPendingOpen.current();
     setState(null);
   }, []);
 

@@ -442,12 +442,14 @@ func (h *Tracks) RemoteCoverProxy(w http.ResponseWriter, r *http.Request) {
 	h.serveRemoteCover(w, r, r.URL.Query().Get("url"))
 }
 
-// Sizes (the `size` a client passes) at which responses' remote covers are
-// usually drawn, so warming fetches the variant the client will request.
+// Sizes (the `size` a client passes) for warming a response's remote covers,
+// so the warm fetches the variant the client will request. A listing drawn
+// at more than one size (rows and cards, the command palette and search
+// cards) warms the row variant: a warm nobody uses then costs a few KB, and a
+// larger size is fetched on demand like any cold cover.
 const (
-	remoteCoverWarmRow  = 64  // track rows, the sidebar
-	remoteCoverWarmCard = 384 // album and artist cards
-	remoteCoverWarmFull = 0   // detail and hero art, requested without a size
+	remoteCoverWarmRow  = 64 // rows, the sidebar, the command palette
+	remoteCoverWarmFull = 0  // detail and hero art, requested without a size
 )
 
 // proxyRemoteCoverURL swaps an absolute remote cover URL for the same-origin

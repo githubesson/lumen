@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { Outlet } from "react-router-dom";
 import { api, type Playlist } from "../api";
 import { useAuth } from "../context/Auth";
@@ -17,13 +17,19 @@ import { OpenSettingsContext } from "./shell/openSettings";
 import { useMobileNav } from "./shell/useMobileNav";
 import { useSidebarToggle } from "./shell/useSidebarToggle";
 import { claimResourceCache, clearResourceCache } from "../lib/resourceCache";
+import { openWhenLoaded, type LazyChunk } from "../lib/lazyChunk";
+import {
+  CommandPalette,
+  commandPaletteChunk,
+  SettingsDialog,
+  settingsDialogChunk,
+  UploadDialog,
+  uploadDialogChunk,
+} from "./lazyDialogs";
 
-const SettingsDialog = lazy(() => import("./SettingsDialog"));
-const UploadDialog = lazy(() => import("./UploadDialog"));
 const UpdateToast = lazy(() => import("./UpdateToast"));
 // Desktop-only, so the web build never downloads it.
 const DiscordPresence = lazy(() => import("../lib/discordPresence"));
-const CommandPalette = lazy(() => import("./CommandPalette"));
 const EMPTY_PLAYLISTS: Playlist[] = [];
 
 // The last pending-invite count, so the sidebar's Invites row is there from
@@ -80,11 +86,48 @@ export default function Shell() {
     // this, otherwise the sidebar stays empty after a forced reset.
   }, [me?.id, me?.must_reset_password, me]);
 
-  const openSettings = useCallback((section?: SectionId) => {
-    setSettingsLoaded(true);
-    setSettingsSection(section);
-    setTweaksOpen(true);
+  // Dialogs load on first open. One pending open per dialog: a newer
+  // request replaces it, and a dismissal while its chunk loads cancels it.
+  const pendingOpens = useRef<Record<string, () => void>>({});
+  const openLazy = useCallback((key: string, chunk: LazyChunk<unknown>, commit: () => void) => {
+    pendingOpens.current[key]?.();
+    pendingOpens.current[key] = openWhenLoaded(chunk, commit);
   }, []);
+  useEffect(() => {
+    const pending = pendingOpens.current;
+    return () => Object.values(pending).forEach((cancel) => cancel());
+  }, []);
+  // Settings and Upload are small: fetch them once the page is idle so a
+  // first open is instant.
+  useEffect(() => {
+    const preload = () => {
+      void settingsDialogChunk.load().catch(() => {});
+      void uploadDialogChunk.load().catch(() => {});
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(preload, { timeout: 5000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const timer = window.setTimeout(preload, 3000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const openSettings = useCallback((section?: SectionId) => {
+    openLazy("settings", settingsDialogChunk, () => {
+      setSettingsLoaded(true);
+      setSettingsSection(section);
+      setTweaksOpen(true);
+    });
+  }, [openLazy]);
+  const openUpload = useCallback(() => {
+    openLazy("upload", uploadDialogChunk, () => {
+      setUploadLoaded(true);
+      setUploadOpen(true);
+    });
+  }, [openLazy]);
+  const openPalette = useCallback(() => {
+    openLazy("palette", commandPaletteChunk, () => setPaletteOpen(true));
+  }, [openLazy]);
 
   const toggleSidebar = useSidebarToggle();
 
@@ -94,7 +137,8 @@ export default function Shell() {
       e.preventDefault();
       // The palette layers below Settings; hand over instead of hiding behind it.
       setTweaksOpen(false);
-      setPaletteOpen((o) => !o);
+      if (paletteOpen) setPaletteOpen(false);
+      else openPalette();
     },
     {
       id: "palette:toggle",
@@ -122,8 +166,7 @@ export default function Shell() {
         fh6RadioEnabled={fh6RadioEnabled}
         onAddMusic={() => {
           setMobileNavOpen(false);
-          setUploadLoaded(true);
-          setUploadOpen(true);
+          openUpload();
         }}
         onOpenTweaks={() => {
           setMobileNavOpen(false);
@@ -147,12 +190,11 @@ export default function Shell() {
           tweaksOpen={tweaksOpen}
           onToggleMobileNav={() => setMobileNavOpen((open) => !open)}
           onToggleSidebar={toggleSidebar}
-          onOpenPalette={() => setPaletteOpen(true)}
-          onOpenUpload={() => { setUploadLoaded(true); setUploadOpen(true); }}
+          onOpenPalette={openPalette}
+          onOpenUpload={openUpload}
           onToggleTweaks={() => {
-            setSettingsLoaded(true);
-            setSettingsSection(undefined);
-            setTweaksOpen((v) => !v);
+            if (tweaksOpen) setTweaksOpen(false);
+            else openSettings();
           }}
         />
 
@@ -199,8 +241,7 @@ export default function Shell() {
             }}
             onOpenUpload={() => {
               setPaletteOpen(false);
-              setUploadLoaded(true);
-              setUploadOpen(true);
+              openUpload();
             }}
           />
         </Suspense>
