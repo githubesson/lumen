@@ -27,9 +27,10 @@ type Fullness struct {
 	HasAlbum   bool
 }
 
-// FullnessOf ranks metadata as ingest would store it: performers, and the
-// album title (the catch-all for a copy without artists doesn't count).
-func FullnessOf(artists int, album string) Fullness {
+// aliasFullness ranks an alias's recorded performers and album title. Aliases
+// don't keep the album artist, so an "Others" album on a copy without artists
+// is taken for the catch-all (ingest knows for certain, and ranks directly).
+func aliasFullness(artists int, album string) Fullness {
 	catchAll := album == CatchAllAlbum && artists == 0
 	return Fullness{HasArtists: artists > 0, HasAlbum: album != "" && !catchAll}
 }
@@ -180,8 +181,10 @@ func AdoptDuplicate(ctx context.Context, q pgx.Tx, trackID uuid.UUID, full Fulln
 // later aliases were compared when recorded, and rerunning it would undo
 // deliberate edits to merged tracks. Returns how many tracks changed.
 func (s *Store) AdoptFullerAliases(ctx context.Context) (int, error) {
+	// Every fuller alias, fullest and then oldest first per track: when one's
+	// credits are ambiguous, the next may still settle the track.
 	rows, err := s.db.Query(ctx, `
-		SELECT DISTINCT ON (t.id) t.id, al.id
+		SELECT t.id, al.id
 		FROM track_aliases al
 		JOIN tracks t ON t.id = al.track_id
 		WHERE al.unranked
@@ -192,17 +195,22 @@ func (s *Store) AdoptFullerAliases(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	type candidate struct {
-		trackID uuid.UUID
-		aliasID int64
+		trackID  uuid.UUID
+		aliasIDs []int64
 	}
 	var candidates []candidate
 	for rows.Next() {
-		var c candidate
-		if err := rows.Scan(&c.trackID, &c.aliasID); err != nil {
+		var trackID uuid.UUID
+		var aliasID int64
+		if err := rows.Scan(&trackID, &aliasID); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		candidates = append(candidates, c)
+		if n := len(candidates); n > 0 && candidates[n-1].trackID == trackID {
+			candidates[n-1].aliasIDs = append(candidates[n-1].aliasIDs, aliasID)
+		} else {
+			candidates = append(candidates, candidate{trackID, []int64{aliasID}})
+		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -213,9 +221,13 @@ func (s *Store) AdoptFullerAliases(ctx context.Context) (int, error) {
 	for _, c := range candidates {
 		changed := false
 		err := dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
-			var err error
-			changed, err = adoptAlias(ctx, tx, c.trackID, c.aliasID)
-			return err
+			for _, aliasID := range c.aliasIDs {
+				var err error
+				if changed, err = adoptAlias(ctx, tx, c.trackID, aliasID); err != nil || changed {
+					return err
+				}
+			}
+			return nil
 		})
 		if err != nil {
 			return adopted, err
@@ -265,7 +277,7 @@ func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64
 			names = append(names, name)
 		}
 	}
-	if !FullnessOf(len(names), alias.AlbumTitle).Fuller(curFull) {
+	if !aliasFullness(len(names), alias.AlbumTitle).Fuller(curFull) {
 		return false, nil
 	}
 

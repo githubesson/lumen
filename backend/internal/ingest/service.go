@@ -156,7 +156,8 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	// Catch-all: tracks that arrive with no artist metadata AND no album tag
 	// get filed under an "Others" album so they don't vanish from the albums
 	// view. Users can still re-tag them later via the track edit dialog.
-	if len(md.Artists) == 0 && md.Album == "" {
+	catchAll := len(md.Artists) == 0 && md.Album == ""
+	if catchAll {
 		md.Album = library.CatchAllAlbum
 	}
 
@@ -285,7 +286,8 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 			if unchangedSince(path, stat) {
 				var aerr error
 				oldPath, aerr = library.AdoptDuplicate(ctx, tx, trackID,
-					library.FullnessOf(len(artistIDs), md.Album), trackInsert, artistIDs, artistRoles)
+					library.Fullness{HasArtists: len(artistIDs) > 0, HasAlbum: albumID != nil && !catchAll},
+					trackInsert, artistIDs, artistRoles)
 				if aerr != nil {
 					out.Err = fmt.Errorf("adopt duplicate: %w", aerr)
 					s.recordErr(ctx, path, out.Err)

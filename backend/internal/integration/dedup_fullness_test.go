@@ -260,6 +260,24 @@ func TestDuplicateWithFullerMetadataBecomesCanonical(t *testing.T) {
 		t.Fatalf("edited track:\n got %+v\nwant %+v", got, wantEdited)
 	}
 
+	// A real album called Others (it has an album artist) beats the catch-all,
+	// even on a copy without track artists.
+	othersAudio := audio + "-others"
+	othersBare := filepath.Join(primary, "others bare.flac")
+	writeFLAC(t, othersBare, othersAudio)
+	othersID := ingestOK(othersBare, nil).TrackID
+	othersTagged := filepath.Join(primary, "others tagged.flac")
+	writeFLAC(t, othersTagged, othersAudio, "TITLE=On Others", "ALBUM="+library.CatchAllAlbum, "ALBUMARTIST="+artistB)
+	ingestOK(othersTagged, nil)
+	var othersTitle, othersAlbumArtist string
+	if err := pool.QueryRow(ctx, `
+		SELECT t.title, COALESCE(ar.name, '') FROM tracks t
+		JOIN albums a ON a.id = t.album_id LEFT JOIN artists ar ON ar.id = a.album_artist_id
+		WHERE t.id = $1`, othersID).Scan(&othersTitle, &othersAlbumArtist); err != nil ||
+		othersTitle != "On Others" || othersAlbumArtist != artistB {
+		t.Fatalf("real Others copy = %q by %q, %v", othersTitle, othersAlbumArtist, err)
+	}
+
 	// A personal upload's edit goes when the global file takes the row over,
 	// so a fuller global copy can still replace it.
 	promoAudio := audio + "-promoted"
@@ -389,6 +407,12 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 		t.Fatal(err)
 	}
 	ambiguousBefore := snapshotTrack(t, ctx, pool, ambiguous)
+	// Just as full as that ambiguous alias but settled: the next one is tried.
+	retry := redteamTrack(t, ctx, pool, nil, &others)
+	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names) VALUES(TRUE,$1,'/gone/retry-a.flac','Retry A',$2)`,
+		retry, artistA+", "+nobody)
+	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names) VALUES(TRUE,$1,'/gone/retry-b.flac','Retry B',$2)`,
+		retry, artistA+", "+artistB)
 	// An album really called "Others" (it has an album artist) counts as one.
 	tx, err = pool.Begin(ctx)
 	if err != nil {
@@ -459,6 +483,10 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	}
 	if got := snapshotTrack(t, ctx, pool, produced).Artists; !reflect.DeepEqual(got, []string{artistA + ":primary", producer + ":composer"}) {
 		t.Fatalf("produced credits = %v", got)
+	}
+	if got := snapshotTrack(t, ctx, pool, retry); got.Title != "Retry B" ||
+		!reflect.DeepEqual(got.Artists, []string{artistA + ":primary", artistB + ":featured"}) {
+		t.Fatalf("retried track = %+v", got)
 	}
 	if got := snapshotTrack(t, ctx, pool, featuring).Artists; !reflect.DeepEqual(got, []string{artistA + ":primary", guest + ":featured"}) {
 		t.Fatalf("featuring credits = %v", got)

@@ -15,8 +15,8 @@ func TestFullnessRanking(t *testing.T) {
 		{"real album named like the catch-all", 1, CatchAllAlbum, Fullness{HasArtists: true, HasAlbum: true}},
 		{"full", 1, "Leaks", Fullness{HasArtists: true, HasAlbum: true}},
 	} {
-		if got := FullnessOf(tc.artists, tc.album); got != tc.want {
-			t.Errorf("%s: FullnessOf(%d, %q) = %+v, want %+v", tc.name, tc.artists, tc.album, got, tc.want)
+		if got := aliasFullness(tc.artists, tc.album); got != tc.want {
+			t.Errorf("%s: aliasFullness(%d, %q) = %+v, want %+v", tc.name, tc.artists, tc.album, got, tc.want)
 		}
 	}
 	// Artists outrank an album, and ties keep the current metadata.
