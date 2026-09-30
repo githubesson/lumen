@@ -2,12 +2,17 @@ package artistgrid
 
 import (
 	"context"
+	"encoding/binary"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/githubesson/lumen/internal/db"
+	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/storage"
 	"github.com/google/uuid"
 )
 
@@ -107,5 +112,108 @@ func TestPreviousStillPresentAfterDedup(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// writeTestFLAC writes a minimal FLAC carrying audio, tagged with Vorbis
+// comments ("KEY=value"). Files sharing audio dedup into one track.
+func writeTestFLAC(t *testing.T, path, audio string, comments ...string) {
+	t.Helper()
+	block := func(typ byte, last bool, body []byte) []byte {
+		h := []byte{typ, byte(len(body) >> 16), byte(len(body) >> 8), byte(len(body))}
+		if last {
+			h[0] |= 0x80
+		}
+		return append(h, body...)
+	}
+	le := binary.LittleEndian.AppendUint32
+	streaminfo := make([]byte, 34)
+	binary.BigEndian.PutUint64(streaminfo[10:18], uint64(44100)<<44|uint64(1)<<41|uint64(15)<<36|88200)
+	data := append([]byte("fLaC"), block(0, len(comments) == 0, streaminfo)...)
+	if len(comments) > 0 {
+		vc := le(nil, 4)
+		vc = append(vc, "test"...)
+		vc = le(vc, uint32(len(comments)))
+		for _, c := range comments {
+			vc = le(vc, uint32(len(c)))
+			vc = append(vc, c...)
+		}
+		data = append(data, block(4, true, vc)...)
+	}
+	data = append(data, audio...)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A download whose tags beat an existing copy's becomes that track's file,
+// so the tracker's metadata applies to it as it would to a new track.
+func TestIngestPathAppliesTrackerMetadataToAdoptedDownload(t *testing.T) {
+	url := os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("set LUMEN_REVIEW_TEST_DATABASE_URL to an isolated PostgreSQL database")
+	}
+	if err := db.Migrate(url); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	pool, err := db.Open(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	lib := library.NewStore(pool)
+	root := t.TempDir()
+	sfx := uuid.NewString()[:8]
+	artist, album, era := "AG Artist "+sfx, "AG Album "+sfx, "AG Era "+sfx
+	t.Cleanup(func() {
+		bg := context.Background()
+		pool.Exec(bg, `DELETE FROM tracks WHERE starts_with(file_path,$1)`, root)
+		pool.Exec(bg, `DELETE FROM albums a WHERE title IN ($1,$2,'Others') AND NOT EXISTS(SELECT 1 FROM tracks t WHERE t.album_id=a.id)`, album, era)
+		pool.Exec(bg, `DELETE FROM artists WHERE name = $1`, artist)
+	})
+	svc := &ingest.Service{
+		DB: pool, Library: lib, Storage: storage.NewLocal(root), MusicRoot: root,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	scanner := Scanner{Ingest: svc, Library: lib}
+	audio := "artistgrid-adopt-" + sfx
+	og := filepath.Join(root, "og.flac")
+	writeTestFLAC(t, og, audio)
+	first := svc.IngestFile(ctx, og)
+	if first.Err != nil || !first.Inserted {
+		t.Fatalf("original ingest = %+v", first)
+	}
+	title := func() string {
+		t.Helper()
+		var got string
+		if err := pool.QueryRow(ctx, `SELECT title FROM tracks WHERE id=$1`, first.TrackID).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	// No fuller than the original: stays an alias, so the tracker's metadata
+	// isn't this track's to apply.
+	bare := filepath.Join(root, "dl", "bare.flac")
+	writeTestFLAC(t, bare, audio)
+	if id, inserted := scanner.ingestPath(ctx, bare, TrackContext{Title: "Not applied"}, true); id == nil || *id != first.TrackID || inserted {
+		t.Fatalf("bare download = %v, %v", id, inserted)
+	}
+	if got := title(); got != "og" {
+		t.Fatalf("title after a non-adopted download = %q", got)
+	}
+
+	tagged := filepath.Join(root, "dl", "tagged.flac")
+	writeTestFLAC(t, tagged, audio, "TITLE=Tagged", "ARTIST="+artist, "ALBUM="+album)
+	id, inserted := scanner.ingestPath(ctx, tagged, TrackContext{Title: "Tracker title", Artist: artist, Album: era}, true)
+	if id == nil || *id != first.TrackID || inserted {
+		t.Fatalf("tagged download = %v, %v", id, inserted)
+	}
+	if got := title(); got != "Tracker title" {
+		t.Fatalf("title after an adopted download = %q", got)
 	}
 }

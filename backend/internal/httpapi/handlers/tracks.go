@@ -72,10 +72,18 @@ type trackDetailResp struct {
 	Channels      int               `json:"channels,omitempty"`
 	FileSize      int64             `json:"file_size"`
 	Artists       []trackArtistResp `json:"artists"`
-	Aliases       []trackAliasResp  `json:"aliases,omitempty"`
 	HasCover      bool              `json:"has_cover"`
 	CoverURL      string            `json:"cover_url,omitempty"`
 	Favorited     bool              `json:"favorited"`
+	// Only Get fills these: the file the track plays; where the shown tags
+	// came from when that's another file, or that they were edited on
+	// purpose; and the other metadata versions dedup folded into it, at most
+	// library.MaxTrackAliases of AliasCount.
+	FileName       string           `json:"file_name,omitempty"`
+	TagsFileName   string           `json:"tags_file_name,omitempty"`
+	MetadataEdited bool             `json:"metadata_edited,omitempty"`
+	Aliases        []trackAliasResp `json:"aliases,omitempty"`
+	AliasCount     int              `json:"alias_count,omitempty"`
 }
 
 type trackListItemResp struct {
@@ -100,7 +108,7 @@ type trackListItemResp struct {
 }
 
 type trackAliasResp struct {
-	FilePath    string `json:"file_path"`
+	FileName    string `json:"file_name"` // base name only; server paths stay private
 	Title       string `json:"title,omitempty"`
 	ArtistNames string `json:"artist_names,omitempty"`
 	AlbumTitle  string `json:"album_title,omitempty"`
@@ -312,7 +320,44 @@ func (h *Tracks) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, isFav := favs[t.ID]
-	writeJSON(w, http.StatusOK, makeTrackDetailResp(t, isFav))
+	resp := makeTrackDetailResp(t, isFav)
+	if resp.Source == trackref.SourceLocal {
+		versions, err := h.Library.TrackVersions(r.Context(), t.ID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		playing := fileName(t.FilePath)
+		resp.FileName, resp.AliasCount, resp.MetadataEdited = playing, versions.Total, versions.Edited
+		for _, al := range versions.Aliases {
+			name := fileName(al.FilePath)
+			if al.TagsSwapped {
+				// Name each version after the file its tags came from. An
+				// edit since then means the shown tags came from no file.
+				name = playing
+				if !versions.Edited {
+					resp.TagsFileName = fileName(al.FilePath)
+				}
+			}
+			resp.Aliases = append(resp.Aliases, trackAliasResp{
+				FileName:    name,
+				Title:       al.Title,
+				ArtistNames: al.ArtistNames,
+				AlbumTitle:  al.AlbumTitle,
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// fileName is the last element of a stored file path, split on either slash
+// style: a library indexed on Windows keeps backslashes that filepath.Base
+// doesn't split on elsewhere, and the rest of the path must not leak.
+func fileName(p string) string {
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }
 
 func makeTrackDetailResp(t *library.TrackDetail, isFav bool) trackDetailResp {
@@ -357,14 +402,6 @@ func makeTrackDetailResp(t *library.TrackDetail, isFav bool) trackDetailResp {
 			ID:   a.ID.String(),
 			Name: a.Name,
 			Role: a.Role,
-		})
-	}
-	for _, al := range t.Aliases {
-		resp.Aliases = append(resp.Aliases, trackAliasResp{
-			FilePath:    al.FilePath,
-			Title:       al.Title,
-			ArtistNames: al.ArtistNames,
-			AlbumTitle:  al.AlbumTitle,
 		})
 	}
 	return resp

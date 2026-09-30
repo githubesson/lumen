@@ -99,7 +99,7 @@ func parse(rs io.ReadSeeker, path string) (*Metadata, error) {
 		DiscTotal:   dscTotal,
 		Year:        m.Year(),
 		Genre:       strings.TrimSpace(m.Genre()),
-		Composer:    strings.TrimSpace(m.Composer()),
+		Composer:    composerTag(m),
 		Comment:     strings.TrimSpace(m.Comment()),
 		Format:      string(m.Format()),
 	}
@@ -128,6 +128,18 @@ func fallbackOnlyContainer(path string) bool {
 		return true
 	}
 	return false
+}
+
+// composerTag is the file's composer tag. For Vorbis comments (FLAC, Ogg) the
+// tag library falls back to PERFORMER and then ARTIST when there's no
+// COMPOSER, which would credit the performer as composer; only a COMPOSER
+// comment counts.
+func composerTag(m tag.Metadata) string {
+	if m.Format() == tag.VORBIS {
+		c, _ := m.Raw()["composer"].(string)
+		return strings.TrimSpace(c)
+	}
+	return strings.TrimSpace(m.Composer())
 }
 
 // splitArtists parses combined artist strings like "Alice feat. Bob & Carol"

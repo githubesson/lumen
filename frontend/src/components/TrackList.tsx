@@ -17,6 +17,7 @@ import { MoveToAlbumDialog } from "./edit/MoveToAlbumDialog";
 import Tooltip from "./Tooltip";
 import { useTrackContextMenu } from "../lib/useTrackContextMenu";
 import { useAuth } from "../context/Auth";
+import { useTrackInfo } from "../context/TrackInfo";
 import { useFavorites } from "../context/Favorites";
 import { usePlayer, usePlayerControls } from "../context/Player";
 import { useTrackSelection } from "../lib/useTrackSelection";
@@ -326,6 +327,7 @@ export const TrackRow = memo(function TrackRow({
     () => (track.aka ? track.aka.split(" • ") : null),
     [track.aka],
   );
+  const trackInfo = useTrackInfo();
 
   return (
     <tr
@@ -390,16 +392,24 @@ export const TrackRow = memo(function TrackRow({
                   {akaParts.map((t) => (
                     <div key={t}>{t}</div>
                   ))}
+                  {trackInfo && (
+                    <div className="track-aka-tip-hint">Click to compare versions</div>
+                  )}
                 </div>
               }
             >
-              <span
+              <button
+                type="button"
                 className="track-aka-hint"
-                aria-label={`also known as ${track.aka}`}
-                onClick={(e) => e.stopPropagation()}
+                aria-label={`Compare versions, also known as ${track.aka}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  trackInfo?.open(track.id);
+                }}
+                onDoubleClick={(e) => e.stopPropagation()}
               >
                 (+{akaParts.length})
-              </span>
+              </button>
             </Tooltip>
           )}
         </div>

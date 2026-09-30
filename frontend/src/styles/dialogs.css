@@ -26,3 +26,63 @@
   overflow: auto;
   overscroll-behavior: contain;
 }
+
+/* Track info: metadata versions merged by dedup, compared field by field */
+.track-versions-caption {
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.track-versions {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+/* Separate borders: collapsed ones don't move with the sticky label cells. */
+.track-versions table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.track-versions th,
+.track-versions td {
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: baseline;
+  overflow-wrap: anywhere;
+}
+.track-versions tbody > tr > * { border-top: 1px solid var(--border); }
+/* Scrolled columns settle flush against the sticky labels. */
+.track-versions thead th {
+  scroll-snap-align: start;
+  scroll-margin-left: 72px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+/* Field labels stay put while wide comparisons scroll sideways. */
+.track-versions thead td,
+.track-versions tbody th {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--popover);
+  border-right: 1px solid var(--border);
+}
+.track-versions tbody th {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.track-versions [data-shown] { background: var(--muted); }
+/* The default badge fill matches the shown column's; outline it instead. */
+.track-versions .badge {
+  background: var(--popover);
+  border-color: var(--border);
+}
+.track-versions tbody td { color: var(--foreground); }
+.track-versions tbody td[data-same] { color: var(--muted-foreground); }

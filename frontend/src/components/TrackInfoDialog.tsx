@@ -13,7 +13,7 @@ interface Props {
 /**
  * TrackInfoDialog is a read-only metadata view for a single track. Fetches the
  * full TrackDetail on open so the server-side enriched fields (bitrate, sample
- * rate, aliases from dedup hits, etc.) are visible in one place. Deliberately
+ * rate, other versions from dedup hits, etc.) are visible in one place. Deliberately
  * separate from EditTrackDialog so non-admins can see the same information
  * without accidentally opening an editor they can't submit.
  */
@@ -42,6 +42,10 @@ export function TrackInfoDialog({
   ) : (
     <div className="dialog-scroll" style={{ padding: 16, fontSize: 14 }}>
       <HeaderBlock track={track} />
+
+      {track.aliases && track.aliases.length > 0 && (
+        <Versions track={track} />
+      )}
 
       <Section label="Identity">
         <Field k="Title" v={track.title} />
@@ -75,30 +79,8 @@ export function TrackInfoDialog({
         <Field k="Channels" v={track.channels ? String(track.channels) : "—"} />
         <Field k="Duration" v={fmtDurationMs(track.duration_ms)} />
         <Field k="File size" v={fmtBytes(track.file_size)} />
+        {track.file_name && <Field k="File" v={track.file_name} />}
       </Section>
-
-      {track.aliases && track.aliases.length > 0 && (
-        <Section label={`Also known as (${track.aliases.length})`}>
-          <div style={{ display: "grid", gap: 10 }}>
-            {track.aliases.map((a, i) => (
-              <div
-                key={i}
-                className="surface-inset"
-                style={{ padding: 10, display: "grid", gap: 4 }}
-              >
-                {a.title && <Field k="Title" v={a.title} mono={false} />}
-                {a.artist_names && (
-                  <Field k="Artists" v={a.artist_names} mono={false} />
-                )}
-                {a.album_title && (
-                  <Field k="Album" v={a.album_title} mono={false} />
-                )}
-                <Field k="File" v={a.file_path} mono />
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
     </div>
   );
 
@@ -119,6 +101,106 @@ function HeaderBlock({ track }: { track: TrackDetail }) {
         {track.album_title ? ` · ${track.album_title}` : ""}
       </div>
     </div>
+  );
+}
+
+interface Version {
+  title: string;
+  artists: string;
+  album: string;
+  file: string;
+}
+
+const versionFields: { key: keyof Version; label: string }[] = [
+  { key: "title", label: "Title" },
+  { key: "artists", label: "Artists" },
+  { key: "album", label: "Album" },
+  { key: "file", label: "File" },
+];
+
+const sameValue = (a: string, b: string) =>
+  a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * Versions compares every copy of the track's audio that ingest merged into
+ * it, field by field: the copy whose tags are shown, then the others. An
+ * alternate's value that matches the shown one is faded, so what differs
+ * stands out.
+ */
+function Versions({ track }: { track: TrackDetail }) {
+  const shown: Version = {
+    title: track.title,
+    artists: track.artists
+      .filter((a) => a.role !== "composer")
+      .map((a) => a.name)
+      .join(", "),
+    album: track.album_title ?? "",
+    file: track.metadata_edited
+      ? "Edited"
+      : (track.tags_file_name ?? track.file_name ?? ""),
+  };
+  const versions: Version[] = [
+    shown,
+    ...(track.aliases ?? []).map((a) => ({
+      title: a.title ?? "",
+      artists: a.artist_names ?? "",
+      album: a.album_title ?? "",
+      file: a.file_name,
+    })),
+  ];
+  // The server sends only the first few of a long list.
+  const total = Math.max(track.alias_count ?? 0, versions.length - 1) + 1;
+  return (
+    <Section label={`Versions (${total})`}>
+      <div className="track-versions-caption">
+        Same audio, different tags; the fullest is shown. Faded values match
+        it.
+        {total > versions.length &&
+          ` Showing ${versions.length} of ${total}.`}
+      </div>
+      <div className="track-versions">
+        <table style={{ minWidth: 72 + versions.length * 128 }}>
+          <colgroup>
+            <col style={{ width: 72 }} />
+          </colgroup>
+          <thead>
+            <tr>
+              <td />
+              {versions.map((_, i) => (
+                <th key={i} scope="col" data-shown={i === 0 ? "" : undefined}>
+                  {i === 0 ? (
+                    <span className="badge">Shown</span>
+                  ) : (
+                    `Version ${i + 1}`
+                  )}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {versionFields.map(({ key, label }) => (
+              <tr key={key}>
+                <th scope="row">{label}</th>
+                {versions.map((v, i) => {
+                  const same = i > 0 && sameValue(v[key], shown[key]);
+                  return (
+                    <td
+                      key={i}
+                      data-shown={i === 0 ? "" : undefined}
+                      data-same={same ? "" : undefined}
+                      title={same ? "Same as the shown version" : undefined}
+                    >
+                      {v[key] || "—"}
+                      {same && <span className="sr-only"> (same as shown)</span>}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Section>
   );
 }
 
@@ -155,7 +237,7 @@ function Section({
   );
 }
 
-function Field({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+function Field({ k, v }: { k: string; v: string }) {
   return (
     <div
       style={{
@@ -166,14 +248,7 @@ function Field({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
       }}
     >
       <div style={{ color: "var(--muted-foreground)", fontSize: 12 }}>{k}</div>
-      <div
-        className={mono ? "mono" : undefined}
-        style={{
-          color: "var(--foreground)",
-          wordBreak: "break-all",
-          fontSize: mono ? 11 : undefined,
-        }}
-      >
+      <div style={{ color: "var(--foreground)", wordBreak: "break-all" }}>
         {v}
       </div>
     </div>

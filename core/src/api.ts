@@ -713,8 +713,9 @@ export interface TrackArtist {
   role: string;
 }
 
+/** Another copy of the track's audio whose tags lost out to the shown ones. */
 export interface TrackAlias {
-  file_path: string;
+  file_name: string;
   title?: string;
   artist_names?: string;
   album_title?: string;
@@ -742,10 +743,19 @@ export interface TrackDetail {
   channels?: number;
   file_size: number;
   artists: TrackArtist[];
-  aliases?: TrackAlias[];
   has_cover: boolean;
   cover_url?: string;
   favorited: boolean;
+  /** The file the track plays; only on GET /api/tracks/:id for local tracks. */
+  file_name?: string;
+  /** Where the shown tags came from, when that's another copy's file. */
+  tags_file_name?: string;
+  /** The shown tags were edited on purpose rather than read from a file. */
+  metadata_edited?: boolean;
+  /** Other metadata versions, oldest first and capped; only on GET /api/tracks/:id. */
+  aliases?: TrackAlias[];
+  /** How many other versions there are in all, `aliases` being the first few. */
+  alias_count?: number;
 }
 
 export type Visibility = "private" | "collaborative";

@@ -66,12 +66,21 @@
 
 .track-aka-hint {
   margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
   font-size: 12px;
   font-weight: 400;
   color: var(--muted-foreground);
-  cursor: help;
+  cursor: pointer;
 }
 .track-aka-hint:hover,
 .track-aka-hint:focus-visible {
   color: var(--foreground);
+}
+.track-aka-tip-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
 }

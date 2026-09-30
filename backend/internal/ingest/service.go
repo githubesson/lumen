@@ -157,7 +157,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	// get filed under an "Others" album so they don't vanish from the albums
 	// view. Users can still re-tag them later via the track edit dialog.
 	if len(md.Artists) == 0 && md.Album == "" {
-		md.Album = "Others"
+		md.Album = library.CatchAllAlbum
 	}
 
 	// Write the cover to storage *before* opening the transaction. A storage
@@ -197,10 +197,9 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		artistRoles = append(artistRoles, a.Role)
 	}
 
-	var albumID *uuid.UUID
+	var albumID, albumArtistID *uuid.UUID
 	if md.Album != "" {
 		albumArtistName := md.AlbumArtist
-		var albumArtistID *uuid.UUID
 		isCompilation := strings.EqualFold(albumArtistName, "Various Artists")
 		if albumArtistName != "" && !isCompilation {
 			aid, err := library.UpsertArtist(ctx, tx, albumArtistName)
@@ -227,7 +226,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		albumID = &aid
 	}
 
-	trackID, inserted, replacedPath, err := library.InsertTrack(ctx, tx, library.TrackInsert{
+	trackInsert := library.TrackInsert{
 		OwnerID:     ownerID,
 		AlbumID:     albumID,
 		Title:       md.Title,
@@ -245,14 +244,19 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		SampleRate:  info.SampleRate,
 		Channels:    info.Channels,
 		AudioSHA256: shaBytes,
-	})
+	}
+	trackID, inserted, replacedPath, err := library.InsertTrack(ctx, tx, trackInsert)
 	if err != nil {
 		out.Err = fmt.Errorf("insert track: %w", err)
 		s.recordErr(ctx, path, out.Err)
 		return out
 	}
 
-	canonicalPath := ""
+	// dropPath is the copy removed after commit: normally the incoming
+	// duplicate, but the old canonical file when the duplicate replaces it,
+	// and none when the duplicate only lends its tags.
+	canonicalPath, dropPath := "", path
+	adopted := false
 	if inserted && len(artistIDs) > 0 {
 		if err := library.LinkTrackArtists(ctx, tx, trackID, artistIDs, artistRoles); err != nil {
 			out.Err = fmt.Errorf("link artists: %w", err)
@@ -268,13 +272,45 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 			s.recordErr(ctx, path, out.Err)
 			return out
 		}
-		// A dedup hit folded this file into an existing track. Keep the
-		// dupe's filename / title / artists / album searchable by recording
-		// them as an alias; the canonical row stays untouched. Aliases are
-		// shown to everyone who can see the track, so a personal upload only
-		// records one on its owner's own track — never on a global one.
+		// A dedup hit folded this file into an existing track. If its tags
+		// identify the track better (an untagged original arrived first),
+		// it becomes the canonical file and the old metadata the alias.
+		// Otherwise keep the dupe's filename / title / artists / album
+		// searchable by recording them as an alias. Aliases are shown to
+		// everyone who can see the track, so a personal upload only touches
+		// its owner's own track — never a global one.
 		if ownerID == nil || (canonicalOwner != nil && *canonicalOwner == *ownerID) {
-			if err := library.RecordAlias(ctx, tx, trackID, library.AliasInput{
+			// Only a file still as it was read may replace the canonical
+			// one, whose copy is then removed. A managed copy under the
+			// primary root isn't traded for one in a read-only root, which
+			// may be unmounted or removed: that copy only lends its tags.
+			oldPath := ""
+			if unchangedSince(path, stat) {
+				keepFile := s.inPrimaryRoot(canonicalPath) && !s.inPrimaryRoot(path)
+				// Performers only, as the stored ranking counts them.
+				performers := 0
+				for _, role := range artistRoles {
+					if role != "composer" {
+						performers++
+					}
+				}
+				var aerr error
+				oldPath, adopted, aerr = library.AdoptDuplicate(ctx, tx, trackID,
+					library.Fullness{
+						HasArtists: performers > 0,
+						HasAlbum:   albumID != nil && !library.IsCatchAll(md.Album, albumArtistID, performers),
+					},
+					trackInsert, artistIDs, artistRoles, keepFile)
+				if aerr != nil {
+					out.Err = fmt.Errorf("adopt duplicate: %w", aerr)
+					s.recordErr(ctx, path, out.Err)
+					return out
+				}
+			}
+			if adopted {
+				// oldPath is "" when the track kept its own file.
+				canonicalPath, dropPath = path, oldPath
+			} else if err := library.RecordAlias(ctx, tx, trackID, library.AliasInput{
 				FilePath:    path,
 				Title:       md.Title,
 				ArtistNames: joinArtistNames(md.Artists),
@@ -299,9 +335,8 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		var fingerprint *library.IngestFingerprint
 		// Do not remember an incomplete probe/cover or a file replaced while
 		// reading it. A later rescan must retry these even without a new mtime.
-		if after, err := os.Stat(path); err == nil && perr == nil && coverErr == nil && info.DurationMS > 0 &&
-			os.SameFile(stat, after) && stat.Size() == after.Size() && stat.ModTime().Equal(after.ModTime()) {
-			fingerprint = &library.IngestFingerprint{Size: after.Size(), MTimeNS: after.ModTime().UnixNano()}
+		if perr == nil && coverErr == nil && info.DurationMS > 0 && unchangedSince(path, stat) {
+			fingerprint = &library.IngestFingerprint{Size: stat.Size(), MTimeNS: stat.ModTime().UnixNano()}
 		}
 		if err := library.SetIngestFingerprint(ctx, tx, trackID, path, fingerprint); err != nil {
 			out.Err = fmt.Errorf("record ingest fingerprint: %w", err)
@@ -316,13 +351,20 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		return out
 	}
 
-	if !inserted {
-		s.removeDedupFile(ctx, path, canonicalPath, trackID)
+	switch {
+	case inserted, dropPath == "":
+	case adopted:
+		// The replaced copy goes only while it still holds the track's audio
+		// and the adopted file is still the one that was read; otherwise
+		// the track still lists it as an alias.
+		s.removeDedupFile(ctx, dropPath, canonicalPath, trackID, &replacedCheck{adopted: stat, audio: shaHex})
+	default:
+		s.removeDedupFile(ctx, dropPath, canonicalPath, trackID, nil)
 	}
 	if replacedPath != "" {
 		// A personal upload was promoted to global and now points at this
 		// file; its old copy under .users/ is redundant.
-		s.removeDedupFile(ctx, replacedPath, path, trackID)
+		s.removeDedupFile(ctx, replacedPath, path, trackID, nil)
 	}
 
 	out.TrackID = trackID
@@ -335,18 +377,31 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 			s.log().Warn("clearing ingest errors failed", "path", path, "err", cerr)
 		}
 	}
-	if inserted {
+	switch {
+	case inserted:
 		s.log().Info("ingested", "path", path, "track", trackID, "title", md.Title)
-	} else {
+	case adopted && dropPath == "":
+		s.log().Info("dedup hit has fuller metadata, now shown; both files kept", "path", path, "track", trackID, "title", md.Title)
+	case adopted:
+		s.log().Info("dedup hit has fuller metadata, now canonical", "path", path, "replaced", dropPath, "track", trackID, "title", md.Title)
+	default:
 		s.log().Debug("dedup hit", "path", path, "track", trackID)
 	}
 	return out
 }
 
+// replacedCheck guards removing the file an adopted duplicate replaced.
+type replacedCheck struct {
+	adopted os.FileInfo // the adopted, now canonical, file as it was read
+	audio   string      // hex audio hash the replaced file must still carry
+}
+
 // removeDedupFile unlinks a duplicate audio file after the DB transaction has
 // safely recorded its alias metadata. The canonical track row's file_path is
-// the file we serve, so it is never removed.
-func (s *Service) removeDedupFile(ctx context.Context, duplicatePath, canonicalPath string, trackID uuid.UUID) {
+// the file we serve, so it is never removed. With check, the duplicate must
+// also still carry the track's audio and the canonical file must still be the
+// one that was read, the latter checked last, right before the unlink.
+func (s *Service) removeDedupFile(ctx context.Context, duplicatePath, canonicalPath string, trackID uuid.UUID, check *replacedCheck) {
 	dupAbs, err := filepath.Abs(duplicatePath)
 	if err != nil {
 		s.log().Warn("dedup cleanup skipped: duplicate path could not be resolved",
@@ -400,6 +455,18 @@ func (s *Service) removeDedupFile(ctx context.Context, duplicatePath, canonicalP
 			"path", dupAbs, "track", trackID)
 		return
 	}
+	if check != nil {
+		if sum, err := AudioSHA256(ctx, dupAbs); err != nil || sum != check.audio {
+			s.log().Warn("dedup cleanup skipped: replaced file no longer holds the track's audio",
+				"path", dupAbs, "canonical_path", canonAbs, "track", trackID, "err", err)
+			return
+		}
+		if !unchangedSince(canonAbs, check.adopted) {
+			s.log().Warn("dedup cleanup skipped: canonical file changed since it was read",
+				"path", dupAbs, "canonical_path", canonAbs, "track", trackID)
+			return
+		}
+	}
 	if err := os.Remove(dupAbs); err != nil && !errors.Is(err, os.ErrNotExist) {
 		s.log().Warn("dedup cleanup failed",
 			"path", dupAbs, "canonical_path", canonAbs, "track", trackID, "err", err)
@@ -407,6 +474,28 @@ func (s *Service) removeDedupFile(ctx context.Context, duplicatePath, canonicalP
 	}
 	s.log().Info("dedup duplicate file removed",
 		"path", dupAbs, "canonical_path", canonAbs, "track", trackID)
+}
+
+// inPrimaryRoot reports whether p lies under the primary music root, the only
+// root ingest removes files from.
+func (s *Service) inPrimaryRoot(p string) bool {
+	if strings.TrimSpace(s.MusicRoot) == "" || p == "" {
+		return false
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return false
+	}
+	in, _ := pathsafe.WithinRoot(s.MusicRoot, abs)
+	return in
+}
+
+// unchangedSince reports whether path is still the file before described: the
+// same file, size and modification time, as the rescan fingerprint assumes.
+func unchangedSince(path string, before os.FileInfo) bool {
+	after, err := os.Stat(path)
+	return err == nil && os.SameFile(before, after) &&
+		before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
 }
 
 func sameCleanPath(a, b string) bool {
@@ -616,16 +705,13 @@ func (s *Service) recordErr(ctx context.Context, path string, err error) {
 	s.log().Warn("ingest error", "path", path, "err", err)
 }
 
-// joinArtistNames renders the parsed artist list as a single display string
-// suitable for full-text search on an alias row. Roles are dropped — search
-// only cares about the name substrings.
+// joinArtistNames renders the parsed performers as the display string an
+// alias row keeps, first the primary. Composers are left out: the string has
+// no roles, and the versions view and the merge repair read it as performers.
 func joinArtistNames(refs []ArtistRef) string {
-	if len(refs) == 0 {
-		return ""
-	}
 	names := make([]string, 0, len(refs))
 	for _, r := range refs {
-		if r.Name != "" {
+		if r.Name != "" && r.Role != "composer" {
 			names = append(names, r.Name)
 		}
 	}
