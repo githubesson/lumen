@@ -101,11 +101,10 @@ it("reconnects after Discord disconnects mid-track and restores the same presenc
 
 it("doesn't restore a cleared track when Discord disconnects during the clear", async () => {
   const login = vi.fn().mockResolvedValue(undefined);
-  let handlers!: Map<string, () => void>;
-  const clearActivity = vi.fn(async () => { handlers.get("disconnected")!(); });
-  const loaded = load(login, undefined, clearActivity);
-  handlers = loaded.handlers;
-  const { exports, request, advance } = loaded;
+  const during = { clear: () => {} };
+  const clearActivity = vi.fn(async () => { during.clear(); });
+  const { exports, request, advance, handlers } = load(login, undefined, clearActivity);
+  during.clear = () => handlers.get("disconnected")!();
   exports.configureDiscordPresence({ clientId: "fixture" });
   await exports.pushDiscordActivity({ title: "Song", isPlaying: true, elapsedSec: 0 });
   await exports.clearDiscordActivity();
