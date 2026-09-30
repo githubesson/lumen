@@ -293,10 +293,11 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	sfx := uuid.NewString()[:8]
 	albumTitle, artistA, artistB, stranger := "Legacy "+sfx, "Legacy A "+sfx, "Legacy B "+sfx, "Stranger "+sfx
 	soloTitle, credited, producer := "Solo "+sfx, "Credited "+sfx, "Producer "+sfx
+	guest, nobody := "Guest "+sfx, "Nobody "+sfx
 	t.Cleanup(func() {
 		bg := context.Background()
 		pool.Exec(bg, `DELETE FROM albums a WHERE title IN ($1,$2,'Others') AND NOT EXISTS(SELECT 1 FROM tracks t WHERE t.album_id=a.id)`, albumTitle, soloTitle)
-		pool.Exec(bg, `DELETE FROM artists WHERE name IN ($1,$2,$3,$4,$5)`, artistA, artistB, stranger, credited, producer)
+		pool.Exec(bg, `DELETE FROM artists WHERE name IN ($1,$2,$3,$4,$5,$6,$7)`, artistA, artistB, stranger, credited, producer, guest, nobody)
 	})
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -375,6 +376,45 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	produced := redteamTrack(t, ctx, pool, nil, &others)
 	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names) VALUES(TRUE,$1,'/gone/produced.flac','Produced',$2)`,
 		produced, artistA+", "+producer)
+	// Named in the alias's own title: a featured guest, credits or not.
+	featuring := redteamTrack(t, ctx, pool, nil, &others)
+	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names) VALUES(TRUE,$1,'/gone/with.flac',$2,$3)`,
+		featuring, "Song (with "+guest+")", artistA+", "+guest)
+	// Nothing says whether the last name was a guest or a composer tag: left
+	// for someone to resolve in the versions view.
+	ambiguous := redteamTrack(t, ctx, pool, nil, &others)
+	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names) VALUES(TRUE,$1,'/gone/ambiguous.flac','Ambiguous',$2)`,
+		ambiguous, artistA+", "+nobody)
+	if _, err := pool.Exec(ctx, `INSERT INTO artists(name) VALUES($1)`, nobody); err != nil {
+		t.Fatal(err)
+	}
+	ambiguousBefore := snapshotTrack(t, ctx, pool, ambiguous)
+	// An album really called "Others" (it has an album artist) counts as one.
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	realOthers, err := library.UpsertAlbum(ctx, tx, library.CatchAllAlbum, &byB, 0, false, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	onOthers := redteamTrack(t, ctx, pool, nil, &realOthers)
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := library.ReplaceTrackArtists(ctx, tx, onOthers, []string{artistB}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names,album_title) VALUES(TRUE,$1,'/gone/on-others.flac','Elsewhere',$2,$3)`,
+		onOthers, artistA, albumTitle)
+	onOthersBefore := snapshotTrack(t, ctx, pool, onOthers)
 	fullBefore := snapshotTrack(t, ctx, pool, full)
 	solo := redteamTrack(t, ctx, pool, nil, &others)
 	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names,album_title) VALUES(TRUE,$1,'/gone/solo.flac','Solo',$2,$3)`,
@@ -419,6 +459,14 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	}
 	if got := snapshotTrack(t, ctx, pool, produced).Artists; !reflect.DeepEqual(got, []string{artistA + ":primary", producer + ":composer"}) {
 		t.Fatalf("produced credits = %v", got)
+	}
+	if got := snapshotTrack(t, ctx, pool, featuring).Artists; !reflect.DeepEqual(got, []string{artistA + ":primary", guest + ":featured"}) {
+		t.Fatalf("featuring credits = %v", got)
+	}
+	for id, before := range map[uuid.UUID]trackSnapshot{ambiguous: ambiguousBefore, onOthers: onOthersBefore} {
+		if got := snapshotTrack(t, ctx, pool, id); !reflect.DeepEqual(got, before) {
+			t.Fatalf("track changed:\n got %+v\nwant %+v", got, before)
+		}
 	}
 	var soloGot uuid.UUID
 	if err := pool.QueryRow(ctx, `SELECT album_id FROM tracks WHERE id=$1`, solo).Scan(&soloGot); err != nil || soloGot != soloAlbum {

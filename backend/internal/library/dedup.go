@@ -14,6 +14,8 @@ import (
 
 // CatchAllAlbum is the album ingest files a track under when its file has
 // neither an artist nor an album tag. It doesn't count as knowing the album.
+// A real album can share the title, so the catch-all is only that title with
+// no album artist, on a copy without artists: exactly what ingest assigns.
 const CatchAllAlbum = "Others"
 
 // Fullness ranks how well one copy's metadata identifies a track: artists
@@ -25,9 +27,11 @@ type Fullness struct {
 	HasAlbum   bool
 }
 
-// FullnessOf ranks metadata as ingest would store it.
+// FullnessOf ranks metadata as ingest would store it: performers, and the
+// album title (the catch-all for a copy without artists doesn't count).
 func FullnessOf(artists int, album string) Fullness {
-	return Fullness{HasArtists: artists > 0, HasAlbum: album != "" && album != CatchAllAlbum}
+	catchAll := album == CatchAllAlbum && artists == 0
+	return Fullness{HasArtists: artists > 0, HasAlbum: album != "" && !catchAll}
 }
 
 // Fuller reports whether f identifies the track strictly better than other.
@@ -43,9 +47,11 @@ func (f Fullness) Fuller(other Fullness) bool {
 // ROW(...) > ROW(...) comparison is Fuller, since false sorts before true.
 const (
 	trackHasArtists = `EXISTS (SELECT 1 FROM track_artists fa WHERE fa.track_id = t.id AND fa.role <> 'composer')`
-	trackHasAlbum   = `EXISTS (SELECT 1 FROM albums fal WHERE fal.id = t.album_id AND fal.title <> '` + CatchAllAlbum + `')`
+	trackHasAlbum   = `EXISTS (SELECT 1 FROM albums fal WHERE fal.id = t.album_id
+		AND NOT (fal.title = '` + CatchAllAlbum + `' AND fal.album_artist_id IS NULL AND NOT ` + trackHasArtists + `))`
 	aliasHasArtists = `COALESCE(al.artist_names, '') <> ''`
-	aliasHasAlbum   = `COALESCE(al.album_title, '') NOT IN ('', '` + CatchAllAlbum + `')`
+	aliasHasAlbum   = `COALESCE(al.album_title, '') <> ''
+		AND NOT (al.album_title = '` + CatchAllAlbum + `' AND NOT ` + aliasHasArtists + `)`
 )
 
 // trackState is a track's current title/artists/album in alias form, how
@@ -263,8 +269,8 @@ func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64
 		return false, nil
 	}
 
-	roles, err := legacyAliasRoles(ctx, tx, names)
-	if err != nil {
+	roles, ok, err := legacyAliasRoles(ctx, tx, alias.Title, names)
+	if err != nil || !ok {
 		return false, err
 	}
 	artistIDs := make([]uuid.UUID, len(names))
@@ -303,33 +309,40 @@ func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64
 }
 
 // legacyAliasRoles credits the names of an alias recorded before aliases left
-// composers out: the first is the primary artist and the rest are featured,
-// except that ingest appended a composer tag last. The last name counts as
-// that composer when the library credits the person only as a composer.
-func legacyAliasRoles(ctx context.Context, tx pgx.Tx, names []string) ([]string, error) {
-	roles := make([]string, len(names))
+// composers out. The first is the primary artist and any middle ones are
+// featured; ingest appended a composer tag last, so the last name is either.
+// It's featured when the alias's own title names them ("(with X)"),
+// otherwise the library's credits must settle it: only ever a composer, or
+// only ever a performer. ok is false when nothing does, and the alias is
+// left for someone to resolve by hand.
+func legacyAliasRoles(ctx context.Context, tx pgx.Tx, title string, names []string) (roles []string, ok bool, err error) {
+	roles = make([]string, len(names))
 	for i := range roles {
 		roles[i] = "featured"
 	}
 	if len(names) == 0 {
-		return roles, nil
+		return roles, true, nil
 	}
 	roles[0] = "primary"
-	if len(names) == 1 {
-		return roles, nil
+	last := names[len(names)-1]
+	if len(names) == 1 || strings.Contains(strings.ToLower(title), strings.ToLower(last)) {
+		return roles, true, nil
 	}
-	var composerOnly bool
-	err := tx.QueryRow(ctx, `
-		SELECT COALESCE(BOOL_AND(ta.role = 'composer'), FALSE)
+	var composer, performer int
+	err = tx.QueryRow(ctx, `
+		SELECT COUNT(*) FILTER (WHERE ta.role = 'composer'), COUNT(*) FILTER (WHERE ta.role <> 'composer')
 		FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
-		WHERE LOWER(ar.name) = LOWER($1)`, dbtext.Clean(names[len(names)-1])).Scan(&composerOnly)
-	if err != nil {
-		return nil, err
-	}
-	if composerOnly {
+		WHERE LOWER(ar.name) = LOWER($1)`, dbtext.Clean(last)).Scan(&composer, &performer)
+	switch {
+	case err != nil:
+		return nil, false, err
+	case composer > 0 && performer == 0:
 		roles[len(roles)-1] = "composer"
+		return roles, true, nil
+	case performer > 0 && composer == 0:
+		return roles, true, nil
 	}
-	return roles, nil
+	return nil, false, nil
 }
 
 // aliasAlbum finds the album an alias's file was filed under. Aliases don't

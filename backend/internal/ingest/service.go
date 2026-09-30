@@ -279,12 +279,18 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		// everyone who can see the track, so a personal upload only touches
 		// its owner's own track — never a global one.
 		if ownerID == nil || (canonicalOwner != nil && *canonicalOwner == *ownerID) {
-			oldPath, err := library.AdoptDuplicate(ctx, tx, trackID,
-				library.FullnessOf(len(artistIDs), md.Album), trackInsert, artistIDs, artistRoles)
-			if err != nil {
-				out.Err = fmt.Errorf("adopt duplicate: %w", err)
-				s.recordErr(ctx, path, out.Err)
-				return out
+			// Only a file still as it was read may replace the canonical
+			// one, whose copy is then removed.
+			oldPath := ""
+			if unchangedSince(path, stat) {
+				var aerr error
+				oldPath, aerr = library.AdoptDuplicate(ctx, tx, trackID,
+					library.FullnessOf(len(artistIDs), md.Album), trackInsert, artistIDs, artistRoles)
+				if aerr != nil {
+					out.Err = fmt.Errorf("adopt duplicate: %w", aerr)
+					s.recordErr(ctx, path, out.Err)
+					return out
+				}
 			}
 			if oldPath != "" {
 				canonicalPath, dropPath = path, oldPath
@@ -313,9 +319,8 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		var fingerprint *library.IngestFingerprint
 		// Do not remember an incomplete probe/cover or a file replaced while
 		// reading it. A later rescan must retry these even without a new mtime.
-		if after, err := os.Stat(path); err == nil && perr == nil && coverErr == nil && info.DurationMS > 0 &&
-			os.SameFile(stat, after) && stat.Size() == after.Size() && stat.ModTime().Equal(after.ModTime()) {
-			fingerprint = &library.IngestFingerprint{Size: after.Size(), MTimeNS: after.ModTime().UnixNano()}
+		if perr == nil && coverErr == nil && info.DurationMS > 0 && unchangedSince(path, stat) {
+			fingerprint = &library.IngestFingerprint{Size: stat.Size(), MTimeNS: stat.ModTime().UnixNano()}
 		}
 		if err := library.SetIngestFingerprint(ctx, tx, trackID, path, fingerprint); err != nil {
 			out.Err = fmt.Errorf("record ingest fingerprint: %w", err)
@@ -330,7 +335,14 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		return out
 	}
 
-	if !inserted {
+	switch {
+	case inserted:
+	case dropPath != path && !unchangedSince(path, stat):
+		// Changed after adoption committed: keep the old copy, which the
+		// track still lists as an alias, rather than trust this one alone.
+		s.log().Warn("adopted duplicate changed while ingesting; keeping the replaced copy",
+			"path", path, "replaced", dropPath, "track", trackID)
+	default:
 		s.removeDedupFile(ctx, dropPath, canonicalPath, trackID)
 	}
 	if replacedPath != "" {
@@ -424,6 +436,14 @@ func (s *Service) removeDedupFile(ctx context.Context, duplicatePath, canonicalP
 	}
 	s.log().Info("dedup duplicate file removed",
 		"path", dupAbs, "canonical_path", canonAbs, "track", trackID)
+}
+
+// unchangedSince reports whether path is still the file before described: the
+// same file, size and modification time, as the rescan fingerprint assumes.
+func unchangedSince(path string, before os.FileInfo) bool {
+	after, err := os.Stat(path)
+	return err == nil && os.SameFile(before, after) &&
+		before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
 }
 
 func sameCleanPath(a, b string) bool {

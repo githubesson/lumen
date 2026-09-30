@@ -324,10 +324,10 @@ func (h *Tracks) Get(w http.ResponseWriter, r *http.Request) {
 			writeStoreError(w, err)
 			return
 		}
-		playing := filepath.Base(t.FilePath)
+		playing := fileName(t.FilePath)
 		resp.FileName, resp.AliasCount = playing, total
 		for _, al := range aliases {
-			name := filepath.Base(al.FilePath)
+			name := fileName(al.FilePath)
 			if al.TagsSwapped {
 				// Name each version after the file its tags came from.
 				resp.FileName, name = name, playing
@@ -341,6 +341,16 @@ func (h *Tracks) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// fileName is the last element of a stored file path, split on either slash
+// style: a library indexed on Windows keeps backslashes that filepath.Base
+// doesn't split on elsewhere, and the rest of the path must not leak.
+func fileName(p string) string {
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }
 
 func makeTrackDetailResp(t *library.TrackDetail, isFav bool) trackDetailResp {
