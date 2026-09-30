@@ -32,7 +32,6 @@ type TrackDetail struct {
 	ExternalAlbumID string
 	CoverURL        string
 	Artists         []TrackArtist
-	Aliases         []TrackAlias
 	CoverArtPath    string
 	OwnerID         *uuid.UUID // nil for global tracks
 	CreatedAt       time.Time
@@ -73,13 +72,35 @@ func (s *Store) GetTrackPlayback(ctx context.Context, id, viewerID uuid.UUID) (*
 }
 
 // TrackAlias is alternate metadata captured from a file that was deduplicated
-// into an existing track. It is retained for admin/internal use only; normal
-// read endpoints deliberately do not populate or serialize it.
+// into an existing track. Only TrackAliases loads it, for the signed-in track
+// detail endpoint, which serializes file names but never server paths.
 type TrackAlias struct {
 	FilePath    string
 	Title       string
 	ArtistNames string
 	AlbumTitle  string
+}
+
+// TrackAliases lists a track's other metadata versions, oldest first. Callers
+// check the viewer can see the track.
+func (s *Store) TrackAliases(ctx context.Context, trackID uuid.UUID) ([]TrackAlias, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT file_path, COALESCE(title, ''), COALESCE(artist_names, ''), COALESCE(album_title, '')
+		FROM track_aliases WHERE track_id = $1
+		ORDER BY created_at, id`, trackID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TrackAlias
+	for rows.Next() {
+		var a TrackAlias
+		if err := rows.Scan(&a.FilePath, &a.Title, &a.ArtistNames, &a.AlbumTitle); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // albumCoverFor is the cover of album "a" as seen by userExpr (a SQL

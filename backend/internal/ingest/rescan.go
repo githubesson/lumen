@@ -84,6 +84,15 @@ func (s *Service) RescanWithOptions(ctx context.Context, p *RescanProgress, opti
 			"inserted", p.Inserted.Load()-beforeInserted,
 		)
 	}
+	// Tracks merged before ingest compared duplicates may still show an
+	// untagged original's metadata while a tagged copy sits in an alias.
+	if s.Library != nil {
+		if n, err := s.Library.AdoptFullerAliases(ctx); err != nil {
+			s.log().Warn("adopting fuller aliases failed", "err", err)
+		} else if n > 0 {
+			s.log().Info("adopted fuller alias metadata", "tracks", n)
+		}
+	}
 	if err := s.pruneMissing(ctx, liveRoots, p); err != nil {
 		s.log().Warn("prune missing failed", "err", err)
 	}

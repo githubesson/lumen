@@ -72,10 +72,13 @@ type trackDetailResp struct {
 	Channels      int               `json:"channels,omitempty"`
 	FileSize      int64             `json:"file_size"`
 	Artists       []trackArtistResp `json:"artists"`
-	Aliases       []trackAliasResp  `json:"aliases,omitempty"`
 	HasCover      bool              `json:"has_cover"`
 	CoverURL      string            `json:"cover_url,omitempty"`
 	Favorited     bool              `json:"favorited"`
+	// Only Get fills these: the file the track plays, and the other
+	// metadata versions dedup folded into it.
+	FileName string           `json:"file_name,omitempty"`
+	Aliases  []trackAliasResp `json:"aliases,omitempty"`
 }
 
 type trackListItemResp struct {
@@ -100,7 +103,7 @@ type trackListItemResp struct {
 }
 
 type trackAliasResp struct {
-	FilePath    string `json:"file_path"`
+	FileName    string `json:"file_name"` // base name only; server paths stay private
 	Title       string `json:"title,omitempty"`
 	ArtistNames string `json:"artist_names,omitempty"`
 	AlbumTitle  string `json:"album_title,omitempty"`
@@ -312,7 +315,24 @@ func (h *Tracks) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, isFav := favs[t.ID]
-	writeJSON(w, http.StatusOK, makeTrackDetailResp(t, isFav))
+	resp := makeTrackDetailResp(t, isFav)
+	if resp.Source == trackref.SourceLocal {
+		aliases, err := h.Library.TrackAliases(r.Context(), t.ID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		resp.FileName = filepath.Base(t.FilePath)
+		for _, al := range aliases {
+			resp.Aliases = append(resp.Aliases, trackAliasResp{
+				FileName:    filepath.Base(al.FilePath),
+				Title:       al.Title,
+				ArtistNames: al.ArtistNames,
+				AlbumTitle:  al.AlbumTitle,
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func makeTrackDetailResp(t *library.TrackDetail, isFav bool) trackDetailResp {
@@ -357,14 +377,6 @@ func makeTrackDetailResp(t *library.TrackDetail, isFav bool) trackDetailResp {
 			ID:   a.ID.String(),
 			Name: a.Name,
 			Role: a.Role,
-		})
-	}
-	for _, al := range t.Aliases {
-		resp.Aliases = append(resp.Aliases, trackAliasResp{
-			FilePath:    al.FilePath,
-			Title:       al.Title,
-			ArtistNames: al.ArtistNames,
-			AlbumTitle:  al.AlbumTitle,
 		})
 	}
 	return resp

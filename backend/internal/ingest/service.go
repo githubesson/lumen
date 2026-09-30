@@ -157,7 +157,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	// get filed under an "Others" album so they don't vanish from the albums
 	// view. Users can still re-tag them later via the track edit dialog.
 	if len(md.Artists) == 0 && md.Album == "" {
-		md.Album = "Others"
+		md.Album = library.CatchAllAlbum
 	}
 
 	// Write the cover to storage *before* opening the transaction. A storage
@@ -227,7 +227,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		albumID = &aid
 	}
 
-	trackID, inserted, replacedPath, err := library.InsertTrack(ctx, tx, library.TrackInsert{
+	trackInsert := library.TrackInsert{
 		OwnerID:     ownerID,
 		AlbumID:     albumID,
 		Title:       md.Title,
@@ -245,14 +245,17 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		SampleRate:  info.SampleRate,
 		Channels:    info.Channels,
 		AudioSHA256: shaBytes,
-	})
+	}
+	trackID, inserted, replacedPath, err := library.InsertTrack(ctx, tx, trackInsert)
 	if err != nil {
 		out.Err = fmt.Errorf("insert track: %w", err)
 		s.recordErr(ctx, path, out.Err)
 		return out
 	}
 
-	canonicalPath := ""
+	// dropPath is the copy removed after commit: normally the incoming
+	// duplicate, but the old canonical file when the duplicate replaces it.
+	canonicalPath, dropPath := "", path
 	if inserted && len(artistIDs) > 0 {
 		if err := library.LinkTrackArtists(ctx, tx, trackID, artistIDs, artistRoles); err != nil {
 			out.Err = fmt.Errorf("link artists: %w", err)
@@ -268,13 +271,24 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 			s.recordErr(ctx, path, out.Err)
 			return out
 		}
-		// A dedup hit folded this file into an existing track. Keep the
-		// dupe's filename / title / artists / album searchable by recording
-		// them as an alias; the canonical row stays untouched. Aliases are
-		// shown to everyone who can see the track, so a personal upload only
-		// records one on its owner's own track — never on a global one.
+		// A dedup hit folded this file into an existing track. If its tags
+		// identify the track better (an untagged original arrived first),
+		// it becomes the canonical file and the old metadata the alias.
+		// Otherwise keep the dupe's filename / title / artists / album
+		// searchable by recording them as an alias. Aliases are shown to
+		// everyone who can see the track, so a personal upload only touches
+		// its owner's own track — never a global one.
 		if ownerID == nil || (canonicalOwner != nil && *canonicalOwner == *ownerID) {
-			if err := library.RecordAlias(ctx, tx, trackID, library.AliasInput{
+			oldPath, err := library.AdoptDuplicate(ctx, tx, trackID,
+				library.FullnessOf(len(artistIDs), md.Album), trackInsert, artistIDs, artistRoles)
+			if err != nil {
+				out.Err = fmt.Errorf("adopt duplicate: %w", err)
+				s.recordErr(ctx, path, out.Err)
+				return out
+			}
+			if oldPath != "" {
+				canonicalPath, dropPath = path, oldPath
+			} else if err := library.RecordAlias(ctx, tx, trackID, library.AliasInput{
 				FilePath:    path,
 				Title:       md.Title,
 				ArtistNames: joinArtistNames(md.Artists),
@@ -317,7 +331,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	}
 
 	if !inserted {
-		s.removeDedupFile(ctx, path, canonicalPath, trackID)
+		s.removeDedupFile(ctx, dropPath, canonicalPath, trackID)
 	}
 	if replacedPath != "" {
 		// A personal upload was promoted to global and now points at this
@@ -335,9 +349,12 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 			s.log().Warn("clearing ingest errors failed", "path", path, "err", cerr)
 		}
 	}
-	if inserted {
+	switch {
+	case inserted:
 		s.log().Info("ingested", "path", path, "track", trackID, "title", md.Title)
-	} else {
+	case dropPath != path:
+		s.log().Info("dedup hit has fuller metadata, now canonical", "path", path, "replaced", dropPath, "track", trackID, "title", md.Title)
+	default:
 		s.log().Debug("dedup hit", "path", path, "track", trackID)
 	}
 	return out
