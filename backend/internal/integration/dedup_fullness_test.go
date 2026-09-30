@@ -312,6 +312,15 @@ func TestDuplicateWithFullerMetadataBecomesCanonical(t *testing.T) {
 	othersBare := filepath.Join(primary, "others bare.flac")
 	writeFLAC(t, othersBare, othersAudio)
 	othersID := ingestOK(othersBare, nil).TrackID
+	// Tagged with just the catch-all's title, a copy lands on the catch-all
+	// row: no fuller than the untagged original.
+	othersExplicit := filepath.Join(primary, "others explicit.flac")
+	writeFLAC(t, othersExplicit, othersAudio, "TITLE=Explicit", "ALBUM="+library.CatchAllAlbum)
+	ingestOK(othersExplicit, nil)
+	var stillBare string
+	if err := pool.QueryRow(ctx, `SELECT title FROM tracks WHERE id=$1`, othersID).Scan(&stillBare); err != nil || stillBare != "others bare" {
+		t.Fatalf("explicit catch-all copy adopted: title %q, %v", stillBare, err)
+	}
 	othersTagged := filepath.Join(primary, "others tagged.flac")
 	writeFLAC(t, othersTagged, othersAudio, "TITLE=On Others", "ALBUM="+library.CatchAllAlbum, "ALBUMARTIST="+artistB)
 	ingestOK(othersTagged, nil)

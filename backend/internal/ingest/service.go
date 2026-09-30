@@ -157,8 +157,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	// Catch-all: tracks that arrive with no artist metadata AND no album tag
 	// get filed under an "Others" album so they don't vanish from the albums
 	// view. Users can still re-tag them later via the track edit dialog.
-	catchAll := len(md.Artists) == 0 && md.Album == ""
-	if catchAll {
+	if len(md.Artists) == 0 && md.Album == "" {
 		md.Album = library.CatchAllAlbum
 	}
 
@@ -199,10 +198,9 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		artistRoles = append(artistRoles, a.Role)
 	}
 
-	var albumID *uuid.UUID
+	var albumID, albumArtistID *uuid.UUID
 	if md.Album != "" {
 		albumArtistName := md.AlbumArtist
-		var albumArtistID *uuid.UUID
 		isCompilation := strings.EqualFold(albumArtistName, "Various Artists")
 		if albumArtistName != "" && !isCompilation {
 			aid, err := library.UpsertArtist(ctx, tx, albumArtistName)
@@ -299,7 +297,10 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 				}
 				var aerr error
 				oldPath, adopted, aerr = library.AdoptDuplicate(ctx, tx, trackID,
-					library.Fullness{HasArtists: len(artistIDs) > 0, HasAlbum: albumID != nil && !catchAll},
+					library.Fullness{
+						HasArtists: len(artistIDs) > 0,
+						HasAlbum:   albumID != nil && !library.IsCatchAll(md.Album, albumArtistID, len(artistIDs)),
+					},
 					adoptInsert, artistIDs, artistRoles, keepFile)
 				if aerr != nil {
 					out.Err = fmt.Errorf("adopt duplicate: %w", aerr)

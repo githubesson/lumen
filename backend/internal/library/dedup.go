@@ -29,12 +29,18 @@ type Fullness struct {
 	HasAlbum   bool
 }
 
+// IsCatchAll reports whether an album is the catch-all as ingest files it:
+// the CatchAllAlbum title without an album artist, on a copy without
+// artists. A file tagged just that way lands on the same row, so it counts
+// too. trackHasAlbum and aliasHasAlbum are the same test in SQL.
+func IsCatchAll(album string, albumArtistID *uuid.UUID, artists int) bool {
+	return album == CatchAllAlbum && albumArtistID == nil && artists == 0
+}
+
 // aliasFullness ranks an alias's recorded performers and album title. Aliases
-// don't keep the album artist, so an "Others" album on a copy without artists
-// is taken for the catch-all (ingest knows for certain, and ranks directly).
+// don't keep the album artist, so it's taken to be absent.
 func aliasFullness(artists int, album string) Fullness {
-	catchAll := album == CatchAllAlbum && artists == 0
-	return Fullness{HasArtists: artists > 0, HasAlbum: album != "" && !catchAll}
+	return Fullness{HasArtists: artists > 0, HasAlbum: album != "" && !IsCatchAll(album, nil, artists)}
 }
 
 // Fuller reports whether f identifies the track strictly better than other.
