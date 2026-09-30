@@ -16,6 +16,12 @@ export default function SeekBar({
   const [preview, setPreview] = useState<number | null>(null);
   const pointer = useRef<number | null>(null);
 
+  const endDrag = useCallback(() => {
+    pointer.current = null;
+    setPreview(null);
+    setDragging(false);
+  }, []);
+
   const fromEvent = useCallback((clientX: number) => {
     const el = ref.current;
     if (!el) return 0;
@@ -36,24 +42,33 @@ export default function SeekBar({
     const finish = (ev: PointerEvent) => {
       if (ev.pointerId !== pointer.current) return;
       if (ev.type === "pointerup") onSeek(fromEvent(ev.clientX));
-      pointer.current = null;
-      setPreview(null);
-      setDragging(false);
+      endDrag();
     };
+    // Switching away mid-drag never delivers a release: drop the preview
+    // rather than leave the thumb stuck there.
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", finish);
+    window.addEventListener("blur", endDrag);
     return () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
+      window.removeEventListener("blur", endDrag);
     };
-  }, [dragging, onSeek, fromEvent, commitOnRelease]);
+  }, [dragging, onSeek, fromEvent, commitOnRelease, endDrag]);
 
   const onPointerDown: React.PointerEventHandler<HTMLDivElement> = (e) => {
     e.preventDefault();
     if (e.button !== 0) return;
     e.currentTarget.focus();
+    // Keep the drag's events (above all its release) coming when the
+    // pointer leaves the bar or the window.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Not a live pointer (synthetic events); the window listeners remain.
+    }
     pointer.current = e.pointerId;
     setDragging(true);
     setPreview(fromEvent(e.clientX));
@@ -90,6 +105,10 @@ export default function SeekBar({
       aria-valuemax={100}
       aria-valuenow={Math.round(pct)}
       onPointerDown={onPointerDown}
+      onLostPointerCapture={(e) => {
+        // After a release this is a no-op; otherwise the drag was lost.
+        if (e.pointerId === pointer.current) endDrag();
+      }}
       onKeyDown={onKeyDown}
     >
       <div

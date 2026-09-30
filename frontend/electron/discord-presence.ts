@@ -18,6 +18,9 @@ let failures = 0;
 // resent once the backoff ends so presence recovers without a new event.
 let retryActivity: { payload: DiscordActivityPayload; queuedAt: number } | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
+// Bumped by every push and clear. A push that settles after a newer one
+// started must neither queue a retry nor record itself as the activity.
+let pushGeneration = 0;
 
 function cancelRetry(): void {
   retryActivity = null;
@@ -147,9 +150,10 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
 }> {
   // A newer update supersedes one waiting to be retried.
   cancelRetry();
+  const generation = ++pushGeneration;
   const discord = await ensureDiscord();
   if (!discord) {
-    scheduleRetry(payload);
+    if (generation === pushGeneration) scheduleRetry(payload);
     return { ok: false, error: "discord client unavailable" };
   }
   try {
@@ -193,16 +197,19 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
         instance: false,
       },
     });
-    lastActivity = payload;
-    lastStartMs = start;
+    if (generation === pushGeneration) {
+      lastActivity = payload;
+      lastStartMs = start;
+    }
     return { ok: true };
   } catch (error) {
-    scheduleRetry(payload);
+    if (generation === pushGeneration) scheduleRetry(payload);
     return { ok: false, error: (error as Error).message };
   }
 }
 
 export async function clearDiscordActivity(): Promise<void> {
+  pushGeneration += 1;
   cancelRetry();
   // Forget the activity before awaiting: a disconnect during the clear
   // would otherwise queue it to be restored after the reconnect backoff.
@@ -218,6 +225,7 @@ export async function clearDiscordActivity(): Promise<void> {
 }
 
 export async function teardownDiscordPresence(): Promise<void> {
+  pushGeneration += 1;
   cancelRetry();
   const current = client;
   client = null;

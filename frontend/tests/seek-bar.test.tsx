@@ -34,3 +34,19 @@ it("keeps live volume adjustment available", () => {
   pointer(window, "pointermove", 70);
   expect(seek).toHaveBeenLastCalledWith(0.7);
 });
+it("drops the preview without seeking when the drag is lost (window blur or lost capture)", () => {
+  const seek = vi.fn();
+  render(<SeekBar label="Position" value={0.1} onSeek={seek} />);
+  const slider = screen.getByRole("slider");
+  vi.spyOn(slider, "getBoundingClientRect").mockReturnValue({ left: 0, width: 100 } as DOMRect);
+  pointer(slider, "pointerdown", 20);
+  pointer(window, "pointermove", 70);
+  fireEvent.blur(window);
+  expect(slider.getAttribute("aria-valuenow")).toBe("10");
+  pointer(slider, "pointerdown", 20);
+  pointer(window, "pointermove", 60);
+  pointer(slider, "lostpointercapture", 60);
+  expect(slider.getAttribute("aria-valuenow")).toBe("10");
+  pointer(window, "pointerup", 60);
+  expect(seek).not.toHaveBeenCalled();
+});

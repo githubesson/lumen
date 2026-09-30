@@ -907,7 +907,9 @@ func (s *Store) ListFavorites(ctx context.Context, userID uuid.UUID, limit, offs
 		  AND uts.favorited = TRUE
 		  AND `+trackVisibleP1+`
 		GROUP BY t.id, a.title, uts.favorited_at
-		ORDER BY uts.favorited_at DESC NULLS LAST
+		-- The id breaks ties (equal or null timestamps) so OFFSET pages
+		-- neither repeat nor skip favorites.
+		ORDER BY uts.favorited_at DESC NULLS LAST, t.id
 		LIMIT $2 OFFSET $3`, userID, limit, offset)
 	if err != nil {
 		return nil, err

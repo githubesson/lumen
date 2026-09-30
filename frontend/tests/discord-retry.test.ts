@@ -112,3 +112,31 @@ it("doesn't restore a cleared track when Discord disconnects during the clear", 
   await advance(30_000);
   expect(request).toHaveBeenCalledOnce();
 });
+
+it("doesn't retry an older update that fails after a newer one, or after a clear", async () => {
+  const login = vi.fn().mockResolvedValue(undefined);
+  const failures: Array<(error: Error) => void> = [];
+  const request = vi.fn()
+    .mockResolvedValueOnce(undefined)
+    .mockImplementationOnce(() => new Promise((_, reject) => { failures.push(reject); }))
+    .mockResolvedValueOnce(undefined)
+    .mockImplementationOnce(() => new Promise((_, reject) => { failures.push(reject); }));
+  const { exports, advance, pendingTimers } = load(login, request);
+  exports.configureDiscordPresence({ clientId: "fixture" });
+  await exports.pushDiscordActivity({ title: "Connect", isPlaying: true });
+
+  const older = exports.pushDiscordActivity({ title: "Older", isPlaying: true });
+  await exports.pushDiscordActivity({ title: "Newer", isPlaying: true });
+  failures[0](new Error("socket hiccup"));
+  expect(await older).toMatchObject({ ok: false });
+  expect(pendingTimers()).toHaveLength(0);
+
+  const cleared = exports.pushDiscordActivity({ title: "Cleared", isPlaying: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  await exports.clearDiscordActivity();
+  failures[1](new Error("socket hiccup"));
+  expect(await cleared).toMatchObject({ ok: false });
+  expect(pendingTimers()).toHaveLength(0);
+  await advance(60_000);
+  expect(request).toHaveBeenCalledTimes(4);
+});
