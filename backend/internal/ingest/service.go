@@ -14,7 +14,6 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -288,13 +287,6 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 			oldPath := ""
 			if unchangedSince(path, stat) {
 				keepFile := s.inPrimaryRoot(canonicalPath) && !s.inPrimaryRoot(path)
-				// The tag library reports a Vorbis file's artist as its
-				// composer when it has none, so only a separate composer
-				// credit replaces the track's.
-				adoptInsert := trackInsert
-				if !slices.Contains(artistRoles, "composer") {
-					adoptInsert.Composer = ""
-				}
 				// Performers only, as the stored ranking counts them.
 				performers := 0
 				for _, role := range artistRoles {
@@ -308,7 +300,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 						HasArtists: performers > 0,
 						HasAlbum:   albumID != nil && !library.IsCatchAll(md.Album, albumArtistID, performers),
 					},
-					adoptInsert, artistIDs, artistRoles, keepFile)
+					trackInsert, artistIDs, artistRoles, keepFile)
 				if aerr != nil {
 					out.Err = fmt.Errorf("adopt duplicate: %w", aerr)
 					s.recordErr(ctx, path, out.Err)
