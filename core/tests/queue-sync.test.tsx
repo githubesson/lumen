@@ -242,6 +242,28 @@ it("keeps unchanged devices identical across repeated snapshots", async () => {
   expect(result.current.devices[1].activity?.position_sec).toBe(2);
 });
 
+it("takes its activity down over the socket when publishing is disabled", async () => {
+  vi.stubGlobal("WebSocket", Socket);
+  setBaseUrl("https://lumen.test");
+  vi.spyOn(api, "upsertPlaybackActivity").mockResolvedValue(undefined as never);
+  const clearRest = vi.spyOn(api, "clearPlaybackActivity").mockResolvedValue(undefined as never);
+  const controls = Object.fromEntries([
+    "play", "resume", "pause", "toggle", "next", "prev", "jumpTo", "seek",
+    "setVolume", "setMuted", "toggleMute", "setShuffle", "toggleShuffle", "setRepeat", "cycleRepeat",
+  ].map((key) => [key, vi.fn()])) as unknown as PlayerControls;
+  const { rerender } = renderHook((enabled: boolean) => {
+    usePlaybackActivityPublisher({ state, time, storage, deviceName: "Test", controls, enabled });
+  }, { initialProps: true });
+  await act(async () => {});
+  const socket = Socket.instances[0];
+  act(() => socket.open());
+  act(() => rerender(true));
+  expect(socket.sent.some((message) => message.type === "activity.update")).toBe(true);
+  act(() => rerender(false));
+  expect(socket.sent.at(-1)).toMatchObject({ type: "activity.clear" });
+  expect(clearRest).not.toHaveBeenCalled();
+});
+
 it("republishes its queue after a socket reconnect", async () => {
   const { socket } = await setup();
   const queue = socket.queue();

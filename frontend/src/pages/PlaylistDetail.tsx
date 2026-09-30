@@ -172,6 +172,9 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   const trackMutationEpochRef = useRef(0);
   const trackMutationErrorRef = useRef<string | null>(null);
   const trackMutationGenRef = useRef(0);
+  // Whether a full load (details, rows, collaborators) has committed since
+  // mount. An edit can supersede the mount load; the edit then reloads it.
+  const fullLoadDoneRef = useRef(false);
   const trackEtagRef = useRef<string>();
   const routeIdRef = useRef(id);
   useEffect(() => {
@@ -205,6 +208,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
           : await api.listCollaborators(id).catch(() => undefined)
         : [];
       if (gen !== loadGenRef.current) return;
+      fullLoadDoneRef.current = true;
       setPlaylist(p);
       if (pendingTrackMutationsRef.current === 0) {
         trackEtagRef.current = t.etag;
@@ -388,9 +392,15 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         }
       }
       pendingTrackMutationsRef.current -= 1;
-      if (pendingTrackMutationsRef.current > 0 || routeIdRef.current !== id) return;
+      if (pendingTrackMutationsRef.current > 0) return;
       const failure = trackMutationErrorRef.current;
       trackMutationErrorRef.current = null;
+      if (routeIdRef.current !== id) {
+        // Left the page: its cache holds the optimistic rows. After a
+        // failure, drop it so a revisit doesn't paint an edit that failed.
+        if (failure !== null) dropCache(cacheKey(id));
+        return;
+      }
       if (failure !== null) {
         await load();
         // Edits made while this reload was out still saw the failed rows.
@@ -398,9 +408,10 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         setError(failure);
         return;
       }
-      // A details action reloaded while edits were pending: its load left
-      // the rows alone, so read everything again after the last edit.
-      if (loadGenRef.current !== trackMutationGenRef.current) {
+      // A details action reloaded while edits were pending (its load left
+      // the rows alone), or an edit superseded the mount load: read
+      // everything again after the last edit.
+      if (loadGenRef.current !== trackMutationGenRef.current || !fullLoadDoneRef.current) {
         await load();
         return;
       }

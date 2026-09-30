@@ -126,6 +126,8 @@ it("doesn't retry an older update that fails after a newer one, or after a clear
   await exports.pushDiscordActivity({ title: "Connect", isPlaying: true });
 
   const older = exports.pushDiscordActivity({ title: "Older", isPlaying: true });
+  // Let the older update reach Discord before the newer one starts.
+  await new Promise((resolve) => setImmediate(resolve));
   await exports.pushDiscordActivity({ title: "Newer", isPlaying: true });
   failures[0](new Error("socket hiccup"));
   expect(await older).toMatchObject({ ok: false });
@@ -139,4 +141,17 @@ it("doesn't retry an older update that fails after a newer one, or after a clear
   expect(pendingTimers()).toHaveLength(0);
   await advance(60_000);
   expect(request).toHaveBeenCalledTimes(4);
+});
+
+it("doesn't show an update that was cleared while Discord was still connecting", async () => {
+  let finishLogin!: () => void;
+  const login = vi.fn(() => new Promise<void>((resolve) => { finishLogin = resolve; }));
+  const { exports, request, pendingTimers } = load(login);
+  exports.configureDiscordPresence({ clientId: "fixture" });
+  const push = exports.pushDiscordActivity({ title: "Song", isPlaying: true });
+  await exports.clearDiscordActivity();
+  finishLogin();
+  expect(await push).toMatchObject({ ok: false });
+  expect(request).not.toHaveBeenCalled();
+  expect(pendingTimers()).toHaveLength(0);
 });

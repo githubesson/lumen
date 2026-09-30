@@ -457,6 +457,9 @@ export function usePlaybackActivityPublisher({
     let disposed = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
+    // Counters, not DOM nodes: the teardown below wants their live values.
+    const revisions = revisionRef;
+    const published = publishedRef;
 
     const connect = () => {
       if (disposed) return;
@@ -558,6 +561,21 @@ export function usePlaybackActivityPublisher({
       disposed = true;
       if (retryTimer) clearTimeout(retryTimer);
       if (socketRef.current) {
+        // Publishing is stopping (sign-out, a forced password reset) while
+        // the session still holds: take this device's activity down now
+        // rather than leave it on other devices until the lease runs out.
+        // The unload effect below falls back to REST if this can't send.
+        if (
+          published.current &&
+          sendSocketMessage(socketRef.current, {
+            type: "activity.clear",
+            protocol: PLAYBACK_SYNC_PROTOCOL,
+            revision: ++revisions.current,
+            device_id: deviceId,
+          })
+        ) {
+          published.current = false;
+        }
         socketRef.current.close(1000, "player disposed");
         socketRef.current = null;
       }
@@ -616,10 +634,12 @@ export function usePlaybackActivityPublisher({
         // Socket teardown can race its closing handshake, so the REST delete
         // remains the best-effort unload cleanup. The server lease is the
         // authoritative fallback if the platform suspends networking first.
+        // Also runs when publishing is disabled without unmounting.
+        publishedRef.current = false;
         void api.clearPlaybackActivity(deviceId).catch(() => {});
       }
     };
-  }, [deviceId]);
+  }, [deviceId, enabled]);
 
   return deviceId;
 }

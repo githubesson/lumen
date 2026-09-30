@@ -152,8 +152,10 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
   cancelRetry();
   const generation = ++pushGeneration;
   const discord = await ensureDiscord();
+  // A newer push or a clear arrived while connecting: this one is stale.
+  if (generation !== pushGeneration) return { ok: false, error: "superseded" };
   if (!discord) {
-    if (generation === pushGeneration) scheduleRetry(payload);
+    scheduleRetry(payload);
     return { ok: false, error: "discord client unavailable" };
   }
   try {
