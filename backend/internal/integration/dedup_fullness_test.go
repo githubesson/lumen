@@ -118,7 +118,7 @@ func TestDuplicateWithFullerMetadataBecomesCanonical(t *testing.T) {
 	tags := []string{"TITLE=Blue Hunnids", "ARTIST=" + artistA + " & " + artistB, "ALBUM=" + album}
 
 	og := filepath.Join(primary, "Freestyle.flac")
-	writeFLAC(t, og, audio)
+	writeFLAC(t, og, audio, "DATE=2021", "GENRE=Leak", "TRACKNUMBER=3")
 	first := ingestOK(og, nil)
 	if !first.Inserted {
 		t.Fatalf("first ingest = %+v", first)
@@ -126,6 +126,10 @@ func TestDuplicateWithFullerMetadataBecomesCanonical(t *testing.T) {
 	bare := trackSnapshot{Title: "Freestyle", FilePath: og, Album: "Others", Artists: []string{}, Aliases: []string{}}
 	if got := snapshotTrack(t, ctx, pool, first.TrackID); !reflect.DeepEqual(got, bare) {
 		t.Fatalf("untagged track = %+v", got)
+	}
+	var ogTrackNo int
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(track_no, 0) FROM tracks WHERE id=$1`, first.TrackID).Scan(&ogTrackNo); err != nil || ogTrackNo != 3 {
+		t.Fatalf("original track_no = %d, %v", ogTrackNo, err)
 	}
 
 	// A personal upload never rewrites the global track it dedups into.
@@ -157,6 +161,14 @@ func TestDuplicateWithFullerMetadataBecomesCanonical(t *testing.T) {
 	}
 	if _, err := os.Stat(tagged); err != nil {
 		t.Fatalf("adopted copy removed: %v", err)
+	}
+	// Tags the tagged copy lacks keep the original's values, except the
+	// track number, which belonged to the album it no longer is on.
+	var year, trackNo *int
+	var genre *string
+	if err := pool.QueryRow(ctx, `SELECT year, genre, track_no FROM tracks WHERE id=$1`, first.TrackID).Scan(&year, &genre, &trackNo); err != nil ||
+		year == nil || *year != 2021 || genre == nil || *genre != "Leak" || trackNo != nil {
+		t.Fatalf("kept tags: year=%v genre=%v track_no=%v, %v", year, genre, trackNo, err)
 	}
 	var fingerprinted string
 	if err := pool.QueryRow(ctx, `SELECT COALESCE(ingested_file_path,'') FROM tracks WHERE id=$1`, first.TrackID).Scan(&fingerprinted); err != nil || fingerprinted != tagged {

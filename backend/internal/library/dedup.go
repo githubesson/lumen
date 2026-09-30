@@ -97,12 +97,19 @@ func AdoptDuplicate(ctx context.Context, q pgx.Tx, trackID uuid.UUID, full Fulln
 	if err := cleanTrackFilePath(&t); err != nil {
 		return "", err
 	}
-	// Same audio, so the probed duration/bitrate/etc. stay as they are.
+	// Same audio, so the probed duration/bitrate/etc. stay as they are. Tags
+	// the copy lacks keep the track's values, since the alias can't hold
+	// them; track and disc numbers only while the album stays the same.
 	if _, err := q.Exec(ctx, `
 		UPDATE tracks SET
-			album_id = $2, title = $3, track_no = NULLIF($4,0), disc_no = NULLIF($5,0),
-			genre = NULLIF($6,''), year = NULLIF($7,0), composer = NULLIF($8,''),
-			comments = NULLIF($9,''), file_path = $10, file_size = $11, format = $12,
+			album_id = $2, title = $3,
+			track_no = CASE WHEN album_id IS NOT DISTINCT FROM $2
+				THEN COALESCE(NULLIF($4,0), track_no) ELSE NULLIF($4,0) END,
+			disc_no = CASE WHEN album_id IS NOT DISTINCT FROM $2
+				THEN COALESCE(NULLIF($5,0), disc_no) ELSE NULLIF($5,0) END,
+			genre = COALESCE(NULLIF($6,''), genre), year = COALESCE(NULLIF($7,0), year),
+			composer = COALESCE(NULLIF($8,''), composer), comments = COALESCE(NULLIF($9,''), comments),
+			file_path = $10, file_size = $11, format = $12,
 			updated_at = NOW()
 		WHERE id = $1`,
 		trackID, t.AlbumID, t.Title, t.TrackNo, t.DiscNo, t.Genre, t.Year, t.Composer,
