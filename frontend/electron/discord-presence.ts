@@ -204,14 +204,17 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
 
 export async function clearDiscordActivity(): Promise<void> {
   cancelRetry();
+  // Forget the activity before awaiting: a disconnect during the clear
+  // would otherwise queue it to be restored after the reconnect backoff.
+  lastActivity = null;
+  lastStartMs = 0;
   if (!client) return;
   try {
     await client.clearActivity();
   } catch {
     // Discord may have exited between the renderer request and this call.
   }
-  lastActivity = null;
-  lastStartMs = 0;
+  cancelRetry();
 }
 
 export async function teardownDiscordPresence(): Promise<void> {

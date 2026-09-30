@@ -4,7 +4,11 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { expect, it, vi } from "vitest";
 
-function load(login: ReturnType<typeof vi.fn>, request = vi.fn().mockResolvedValue(undefined)) {
+function load(
+  login: ReturnType<typeof vi.fn>,
+  request = vi.fn().mockResolvedValue(undefined),
+  clearActivity = vi.fn().mockResolvedValue(undefined),
+) {
   const compiled = ts.transpileModule(readFileSync(new URL("../electron/discord-presence.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const clock = { now: 0 };
   const timers: Array<{ at: number; fn: () => void; cleared: boolean }> = [];
@@ -20,7 +24,7 @@ function load(login: ReturnType<typeof vi.fn>, request = vi.fn().mockResolvedVal
       return timer;
     },
     clearTimeout: (timer: { cleared: boolean }) => { timer.cleared = true; },
-    require: () => ({ Client: class { on(event: string, fn: () => void) { handlers.set(event, fn); } login = login; destroy = destroy; request = request; } }),
+    require: () => ({ Client: class { on(event: string, fn: () => void) { handlers.set(event, fn); } login = login; destroy = destroy; request = request; clearActivity = clearActivity; } }),
   });
   /** Advance the clock and run timers that came due. */
   const advance = async (to: number) => {
@@ -93,4 +97,19 @@ it("reconnects after Discord disconnects mid-track and restores the same presenc
   expect(activity.details).toBe("Song");
   // Still the original start time: the track kept playing through the outage.
   expect(activity.timestamps.start).toBe(0);
+});
+
+it("doesn't restore a cleared track when Discord disconnects during the clear", async () => {
+  const login = vi.fn().mockResolvedValue(undefined);
+  let handlers!: Map<string, () => void>;
+  const clearActivity = vi.fn(async () => { handlers.get("disconnected")!(); });
+  const loaded = load(login, undefined, clearActivity);
+  handlers = loaded.handlers;
+  const { exports, request, advance } = loaded;
+  exports.configureDiscordPresence({ clientId: "fixture" });
+  await exports.pushDiscordActivity({ title: "Song", isPlaying: true, elapsedSec: 0 });
+  await exports.clearDiscordActivity();
+  expect(clearActivity).toHaveBeenCalledOnce();
+  await advance(30_000);
+  expect(request).toHaveBeenCalledOnce();
 });
