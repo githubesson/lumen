@@ -48,8 +48,10 @@ export function useTrackContextMenu() {
     void menuChunk.load().catch(() => {});
   }, []);
 
-  const cancelPendingOpen = useRef<() => void>(() => {});
-  useEffect(() => () => cancelPendingOpen.current(), []);
+  const cancelPendingOpen = useRef<() => boolean>(() => false);
+  useEffect(() => () => {
+    cancelPendingOpen.current();
+  }, []);
   const open = useCallback((next: NonNullable<typeof state>) => {
     cancelPendingOpen.current();
     cancelPendingOpen.current = openWhenLoaded(menuChunk, () => setState(next));

@@ -69,6 +69,10 @@ describe("complete favorites", () => {
       "/api/favorites?limit=500&offset=0", "/api/favorites?limit=500&offset=500",
     ]);
   });
+  it("reports a non-JSON playlist response as an ApiError", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>", { status: 200, headers: { "Content-Type": "text/html" } })));
+    await expect(api.listPlaylistTracksIfChanged("playlist")).rejects.toMatchObject({ status: 200, message: "Unexpected non-JSON response from the server." });
+  });
   it("handles an unchanged playlist without parsing an empty response", async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 304, headers: { ETag: '"rows"' } }));
     vi.stubGlobal("fetch", fetchMock);

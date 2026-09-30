@@ -88,7 +88,7 @@ export default function Shell() {
 
   // Dialogs load on first open. One pending open per dialog: a newer
   // request replaces it, and a dismissal while its chunk loads cancels it.
-  const pendingOpens = useRef<Record<string, () => void>>({});
+  const pendingOpens = useRef<Record<string, () => boolean>>({});
   const openLazy = useCallback((key: string, chunk: LazyChunk<unknown>, commit: () => void) => {
     pendingOpens.current[key]?.();
     pendingOpens.current[key] = openWhenLoaded(chunk, commit);
@@ -135,10 +135,17 @@ export default function Shell() {
     "mod+k",
     (e) => {
       e.preventDefault();
-      // The palette layers below Settings; hand over instead of hiding behind it.
+      // The palette layers below Settings; hand over instead of hiding behind
+      // it, including a Settings open still waiting on its chunk.
+      pendingOpens.current.settings?.();
       setTweaksOpen(false);
-      if (paletteOpen) setPaletteOpen(false);
-      else openPalette();
+      if (paletteOpen) {
+        setPaletteOpen(false);
+      } else if (pendingOpens.current.palette?.()) {
+        // A second press while the palette chunk loads toggles it back off.
+      } else {
+        openPalette();
+      }
     },
     {
       id: "palette:toggle",

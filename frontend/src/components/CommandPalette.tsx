@@ -168,8 +168,8 @@ export default function CommandPalette({
 
   const close = () => onOpenChange(false);
 
+  // Music results are disabled while a search is out; commands stay usable.
   const run = (fn: () => void) => {
-    if (searching && loading) return;
     fn();
     close();
   };

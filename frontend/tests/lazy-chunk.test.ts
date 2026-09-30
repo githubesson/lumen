@@ -32,6 +32,7 @@ it.each([
   const commit = vi.fn();
   const cancel = openWhenLoaded(chunk, commit);
   dismiss(cancel);
+  expect(cancel()).toBe(false);
   resolve();
   await chunk.load();
   expect(commit).not.toHaveBeenCalled();
@@ -54,4 +55,14 @@ it("retries the import after a failed load", async () => {
   await chunk.load();
   expect(chunk.loaded).toBe(true);
   expect(importer).toHaveBeenCalledTimes(2);
+});
+
+it("reports whether cancelling stopped a pending open", async () => {
+  const { chunk, resolve } = deferredChunk();
+  const cancel = openWhenLoaded(chunk, vi.fn());
+  expect(cancel()).toBe(true);
+  expect(cancel()).toBe(false);
+  resolve();
+  await chunk.load();
+  expect(openWhenLoaded(chunk, vi.fn())()).toBe(false);
 });

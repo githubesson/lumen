@@ -162,3 +162,12 @@ it("preserves results during typing but prevents stale activation, including fai
   expect(screen.queryByText("Previous song")).toBeNull();
   expect(screen.getByText("Search failed.")).toBeTruthy();
 });
+
+it("runs commands while a music search is still loading", async () => {
+  mock.search.mockReturnValue(new Promise(() => {}));
+  openPalette();
+  fireEvent.change(screen.getByRole("combobox"), { target: { value: "favorites" } });
+  await waitFor(() => expect(mock.search).toHaveBeenCalled());
+  fireEvent.click(screen.getByRole("option", { name: /^Favorites/ }));
+  expect(mock.close).toHaveBeenCalledWith(false);
+});

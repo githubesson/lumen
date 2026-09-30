@@ -518,10 +518,13 @@ export const api = {
       ...options,
       headers: etag ? { "If-None-Match": etag } : {},
     }, { allowNotModified: true });
-    return {
-      etag: response.headers.get("ETag") ?? undefined,
-      tracks: response.status === 304 ? null : (await response.json() as PlaylistTracks).tracks,
-    };
+    const nextEtag = response.headers.get("ETag") ?? undefined;
+    if (response.status === 304) return { etag: nextEtag, tracks: null };
+    // Same contract as `request`: anything but JSON is an ApiError.
+    if (response.status === 204 || !(response.headers.get("content-type") ?? "").includes("application/json")) {
+      throw new ApiError(response.status, "Unexpected non-JSON response from the server.");
+    }
+    return { etag: nextEtag, tracks: (await response.json() as PlaylistTracks).tracks };
   },
   addPlaylistTracks: (id: string, trackIds: string[]) =>
     requestVoid(`/api/playlists/${pathID(id)}/tracks`, {

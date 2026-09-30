@@ -32,12 +32,13 @@ export function lazyChunk<T>(importer: () => Promise<T>): LazyChunk<T> {
  * Runs `commit` once `chunk` has loaded, straight away when it already has.
  * Until then the UI it opens has no dismiss handlers of its own, so an
  * Escape, a pointer press or the window losing focus cancels the request
- * instead of letting it appear later. Returns a function that cancels it.
+ * instead of letting it appear later. Returns a function that cancels it and
+ * reports whether an open was still pending.
  */
-export function openWhenLoaded(chunk: LazyChunk<unknown>, commit: () => void): () => void {
+export function openWhenLoaded(chunk: LazyChunk<unknown>, commit: () => void): () => boolean {
   if (chunk.loaded) {
     commit();
-    return () => {};
+    return () => false;
   }
   let active = true;
   const onKeyDown = (event: KeyboardEvent) => {
@@ -49,8 +50,10 @@ export function openWhenLoaded(chunk: LazyChunk<unknown>, commit: () => void): (
     window.removeEventListener("blur", cancel);
   };
   function cancel() {
+    const wasPending = active;
     active = false;
     stopWatching();
+    return wasPending;
   }
   window.addEventListener("pointerdown", cancel, true);
   window.addEventListener("keydown", onKeyDown, true);
@@ -58,9 +61,15 @@ export function openWhenLoaded(chunk: LazyChunk<unknown>, commit: () => void): (
   chunk.load().then(
     () => {
       stopWatching();
-      if (active) commit();
+      if (active) {
+        active = false;
+        commit();
+      }
     },
-    stopWatching,
+    () => {
+      active = false;
+      stopWatching();
+    },
   );
   return cancel;
 }
