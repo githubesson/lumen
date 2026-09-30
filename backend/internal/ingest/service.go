@@ -295,11 +295,18 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 				if !slices.Contains(artistRoles, "composer") {
 					adoptInsert.Composer = ""
 				}
+				// Performers only, as the stored ranking counts them.
+				performers := 0
+				for _, role := range artistRoles {
+					if role != "composer" {
+						performers++
+					}
+				}
 				var aerr error
 				oldPath, adopted, aerr = library.AdoptDuplicate(ctx, tx, trackID,
 					library.Fullness{
-						HasArtists: len(artistIDs) > 0,
-						HasAlbum:   albumID != nil && !library.IsCatchAll(md.Album, albumArtistID, len(artistIDs)),
+						HasArtists: performers > 0,
+						HasAlbum:   albumID != nil && !library.IsCatchAll(md.Album, albumArtistID, performers),
 					},
 					adoptInsert, artistIDs, artistRoles, keepFile)
 				if aerr != nil {
