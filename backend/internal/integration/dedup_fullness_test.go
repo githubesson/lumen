@@ -228,6 +228,25 @@ func TestDuplicateWithFullerMetadataBecomesCanonical(t *testing.T) {
 	if strings.Contains(rec.Body.String(), primary) || strings.Contains(rec.Body.String(), extra) {
 		t.Fatalf("GET track leaks a server path: %s", rec.Body)
 	}
+
+	// Metadata edited on purpose isn't replaced by a fuller copy's tags.
+	handFixed := filepath.Join(primary, "Hand Fixed.flac")
+	writeFLAC(t, handFixed, audio+"-edited")
+	editedID := ingestOK(handFixed, nil).TrackID
+	fixedTitle := "Hand fixed"
+	if err := lib.UpdateTrack(ctx, editedID, library.TrackPatch{Title: &fixedTitle}); err != nil {
+		t.Fatal(err)
+	}
+	editedCopy := filepath.Join(primary, "edited copy.flac")
+	writeFLAC(t, editedCopy, audio+"-edited", tags...)
+	ingestOK(editedCopy, nil)
+	wantEdited := trackSnapshot{
+		Title: fixedTitle, FilePath: handFixed, Album: "Others", Artists: []string{},
+		Aliases: []string{editedCopy + "|Blue Hunnids|" + artistA + ", " + artistB + "|" + album},
+	}
+	if got := snapshotTrack(t, ctx, pool, editedID); !reflect.DeepEqual(got, wantEdited) {
+		t.Fatalf("edited track:\n got %+v\nwant %+v", got, wantEdited)
+	}
 }
 
 // Tracks merged before ingest compared copies are repaired from their alias
@@ -237,10 +256,11 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	lib := library.NewStore(pool)
 	sfx := uuid.NewString()[:8]
 	albumTitle, artistA, artistB, stranger := "Legacy "+sfx, "Legacy A "+sfx, "Legacy B "+sfx, "Stranger "+sfx
+	soloTitle, credited := "Solo "+sfx, "Credited "+sfx
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM albums a WHERE title IN ($1,'Others') AND NOT EXISTS(SELECT 1 FROM tracks t WHERE t.album_id=a.id)`, albumTitle)
-		pool.Exec(bg, `DELETE FROM artists WHERE name IN ($1,$2,$3)`, artistA, artistB, stranger)
+		pool.Exec(bg, `DELETE FROM albums a WHERE title IN ($1,$2,'Others') AND NOT EXISTS(SELECT 1 FROM tracks t WHERE t.album_id=a.id)`, albumTitle, soloTitle)
+		pool.Exec(bg, `DELETE FROM artists WHERE name IN ($1,$2,$3,$4)`, artistA, artistB, stranger, credited)
 	})
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -265,6 +285,16 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := library.UpsertAlbum(ctx, tx, albumTitle, &byStranger, 0, false, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	// The only album with its title, credited to an album artist who isn't
+	// among the alias's artists.
+	byCredited, err := library.UpsertArtist(ctx, tx, credited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	soloAlbum, err := library.UpsertAlbum(ctx, tx, soloTitle, &byCredited, 0, false, "", nil)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -300,6 +330,18 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	exec(`INSERT INTO track_aliases(track_id,file_path,title,artist_names,album_title) VALUES($1,'/gone/other.flac','Other',$2,$3)`,
 		full, artistA, albumTitle)
 	fullBefore := snapshotTrack(t, ctx, pool, full)
+	solo := redteamTrack(t, ctx, pool, nil, &others)
+	exec(`INSERT INTO track_aliases(track_id,file_path,title,artist_names,album_title) VALUES($1,'/gone/solo.flac','Solo',$2,$3)`,
+		solo, artistA, soloTitle)
+	// Metadata edited on purpose stays, fuller alias or not.
+	edited := redteamTrack(t, ctx, pool, nil, &others)
+	handFixed := "Hand fixed " + sfx
+	if err := lib.UpdateTrack(ctx, edited, library.TrackPatch{Title: &handFixed}); err != nil {
+		t.Fatal(err)
+	}
+	exec(`INSERT INTO track_aliases(track_id,file_path,title,artist_names,album_title) VALUES($1,'/gone/edited.flac','Tagged',$2,$3)`,
+		edited, artistA, albumTitle)
+	editedBefore := snapshotTrack(t, ctx, pool, edited)
 
 	n, err := lib.AdoptFullerAliases(ctx)
 	if err != nil || n < 1 {
@@ -319,6 +361,13 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	}
 	if got := snapshotTrack(t, ctx, pool, full); !reflect.DeepEqual(got, fullBefore) {
 		t.Fatalf("full track changed:\n got %+v\nwant %+v", got, fullBefore)
+	}
+	var soloGot uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT album_id FROM tracks WHERE id=$1`, solo).Scan(&soloGot); err != nil || soloGot != soloAlbum {
+		t.Fatalf("solo album = %s, want the existing %s: %v", soloGot, soloAlbum, err)
+	}
+	if got := snapshotTrack(t, ctx, pool, edited); !reflect.DeepEqual(got, editedBefore) {
+		t.Fatalf("edited track changed:\n got %+v\nwant %+v", got, editedBefore)
 	}
 	if n, err := lib.AdoptFullerAliases(ctx); err != nil || n != 0 {
 		t.Fatalf("second pass = %d, %v", n, err)

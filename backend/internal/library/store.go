@@ -778,7 +778,10 @@ func (s *Store) UpdateTrack(ctx context.Context, id uuid.UUID, p TrackPatch) err
 		}
 	}
 
-	if set.Count() > 1 { // anything beyond "updated_at = NOW()"
+	if set.Count() > 1 || p.Artists != nil { // anything beyond "updated_at = NOW()"
+		// Metadata set on purpose outranks a duplicate file's tags: dedup
+		// never replaces it (AdoptDuplicate, AdoptFullerAliases).
+		set.AddRaw("metadata_edited_at = NOW()")
 		setClause, args := set.Build()
 		args = append(args, id)
 		stmt := fmt.Sprintf(

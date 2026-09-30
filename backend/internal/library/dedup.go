@@ -18,7 +18,8 @@ const CatchAllAlbum = "Others"
 
 // Fullness ranks how well one copy's metadata identifies a track: artists
 // first, then a real album. When several files share the same audio, the
-// fullest copy's metadata is the one shown, and the others become aliases.
+// fullest copy's metadata is the one shown, and the others become aliases,
+// unless someone set the track's metadata on purpose (metadata_edited_at).
 type Fullness struct {
 	HasArtists bool
 	HasAlbum   bool
@@ -47,16 +48,20 @@ const (
 	aliasHasAlbum   = `COALESCE(al.album_title, '') NOT IN ('', '` + CatchAllAlbum + `')`
 )
 
-// trackMetadata is a track's current title/artists/album in alias form, plus
-// how full that metadata is. Locks the track row.
-func trackMetadata(ctx context.Context, q pgx.Tx, trackID uuid.UUID) (AliasInput, Fullness, *uuid.UUID, error) {
-	var (
-		cur     AliasInput
-		full    Fullness
-		ownerID *uuid.UUID
-	)
+// trackState is a track's current title/artists/album in alias form, how
+// full that metadata is, and whether it was edited on purpose.
+type trackState struct {
+	cur     AliasInput
+	full    Fullness
+	ownerID *uuid.UUID
+	edited  bool
+}
+
+// trackMetadata loads a live local track's trackState. Locks the track row.
+func trackMetadata(ctx context.Context, q pgx.Tx, trackID uuid.UUID) (trackState, error) {
+	var st trackState
 	err := q.QueryRow(ctx, `
-		SELECT t.file_path, t.title, t.owner_id,
+		SELECT t.file_path, t.title, t.owner_id, t.metadata_edited_at IS NOT NULL,
 		       COALESCE((SELECT STRING_AGG(ar.name, ', ' ORDER BY ta.position, ar.name)
 		                 FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
 		                 WHERE ta.track_id = t.id), ''),
@@ -65,29 +70,31 @@ func trackMetadata(ctx context.Context, q pgx.Tx, trackID uuid.UUID) (AliasInput
 		FROM tracks t
 		WHERE t.id = $1 AND t.deleted_at IS NULL AND t.source = 'local'
 		FOR UPDATE`, trackID).
-		Scan(&cur.FilePath, &cur.Title, &ownerID, &cur.ArtistNames, &cur.AlbumTitle, &full.HasArtists, &full.HasAlbum)
-	return cur, full, ownerID, err
+		Scan(&st.cur.FilePath, &st.cur.Title, &st.ownerID, &st.edited,
+			&st.cur.ArtistNames, &st.cur.AlbumTitle, &st.full.HasArtists, &st.full.HasAlbum)
+	return st, err
 }
 
 // AdoptDuplicate makes a deduplicated copy the track's canonical file when its
-// metadata (ranked by full) is fuller than the track's: the track takes the
-// copy's path and tags, and its old title/artists/album are kept as an alias.
-// Returns the old file path, which the caller may remove, or "" when the copy
-// isn't fuller and nothing changed.
+// metadata (ranked by full) is fuller than the track's and wasn't edited on
+// purpose: the track takes the copy's path and tags, and its old
+// title/artists/album are kept as an alias. Returns the old file path, which
+// the caller may remove, or "" when nothing changed.
 func AdoptDuplicate(ctx context.Context, q pgx.Tx, trackID uuid.UUID, full Fullness, t TrackInsert, artistIDs []uuid.UUID, roles []string) (string, error) {
 	if !full.Fuller(Fullness{}) {
 		return "", nil // nothing is less full
 	}
-	cur, curFull, _, err := trackMetadata(ctx, q, trackID)
+	st, err := trackMetadata(ctx, q, trackID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
 		return "", err
 	}
-	if !full.Fuller(curFull) {
+	if st.edited || !full.Fuller(st.full) {
 		return "", nil
 	}
+	cur := st.cur
 
 	t.Title = dbtext.Clean(t.Title)
 	t.Genre = dbtext.Clean(t.Genre)
@@ -138,13 +145,15 @@ func AdoptDuplicate(ctx context.Context, q pgx.Tx, trackID uuid.UUID, full Fulln
 // the tagged copy only became an alias. The fullest such alias swaps its
 // title, artists and album with the track's. The file stays put: ingest
 // normally removed the tagged copy, which is why only what the alias recorded
-// can move. Returns how many tracks changed.
+// can move. Tracks whose metadata was edited on purpose are left alone, so a
+// deliberate removal of an artist or album sticks. Returns how many tracks
+// changed.
 func (s *Store) AdoptFullerAliases(ctx context.Context) (int, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT DISTINCT ON (t.id) t.id, al.id
 		FROM track_aliases al
 		JOIN tracks t ON t.id = al.track_id
-		WHERE t.deleted_at IS NULL AND t.source = 'local'
+		WHERE t.deleted_at IS NULL AND t.source = 'local' AND t.metadata_edited_at IS NULL
 		  AND ROW(`+aliasHasArtists+`, `+aliasHasAlbum+`) > ROW(`+trackHasArtists+`, `+trackHasAlbum+`)
 		ORDER BY t.id, `+aliasHasArtists+` DESC, `+aliasHasAlbum+` DESC, al.id`)
 	if err != nil {
@@ -187,15 +196,19 @@ func (s *Store) AdoptFullerAliases(ctx context.Context) (int, error) {
 }
 
 // adoptAlias swaps one alias's metadata with its track's, rechecking under the
-// row lock that the alias is still fuller.
+// row lock that the alias is still fuller and the track still unedited.
 func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64) (bool, error) {
-	cur, curFull, ownerID, err := trackMetadata(ctx, tx, trackID)
+	st, err := trackMetadata(ctx, tx, trackID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
+	if st.edited {
+		return false, nil
+	}
+	cur, curFull, ownerID := st.cur, st.full, st.ownerID
 	var alias AliasInput
 	err = tx.QueryRow(ctx, `
 		SELECT COALESCE(title, ''), COALESCE(artist_names, ''), COALESCE(album_title, '')
@@ -246,9 +259,10 @@ func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64
 
 // aliasAlbum finds the album an alias's file was filed under. Aliases don't
 // record the album artist, but ingest created the album when it read the
-// file: prefer one by the alias's primary artist, then by another of its
-// artists, then one without an album artist. Creates it by the primary
-// artist if none exists.
+// file (and albums are never deleted): prefer one by the alias's primary
+// artist, then by another of its artists, then one without an album artist.
+// The only album with that title must be the one ingest created, whoever its
+// album artist is. Creates one by the primary artist if nothing matches.
 func aliasAlbum(ctx context.Context, tx pgx.Tx, title string, artists []string, ownerID *uuid.UUID) (uuid.UUID, error) {
 	lower := make([]string, len(artists))
 	for i, name := range artists {
@@ -262,7 +276,8 @@ func aliasAlbum(ctx context.Context, tx pgx.Tx, title string, artists []string, 
 	err := tx.QueryRow(ctx, `
 		SELECT al.id FROM albums al
 		LEFT JOIN artists ar ON ar.id = al.album_artist_id
-		WHERE al.title = $1 AND (al.album_artist_id IS NULL OR LOWER(ar.name) = ANY($2::text[]))
+		WHERE al.title = $1 AND (al.album_artist_id IS NULL OR LOWER(ar.name) = ANY($2::text[])
+		      OR NOT EXISTS (SELECT 1 FROM albums o WHERE o.title = $1 AND o.id <> al.id))
 		ORDER BY LOWER(ar.name) = $3 DESC NULLS LAST, ar.id IS NOT NULL DESC, al.created_at, al.id
 		LIMIT 1`, dbtext.Clean(title), lower, primary).Scan(&id)
 	if err == nil || !errors.Is(err, pgx.ErrNoRows) {
