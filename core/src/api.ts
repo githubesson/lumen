@@ -746,10 +746,15 @@ export interface TrackDetail {
   has_cover: boolean;
   cover_url?: string;
   favorited: boolean;
-  /** The file the track plays; only on GET /api/tracks/:id for local tracks. */
+  /**
+   * The file the shown tags came from (normally the one it plays); only on
+   * GET /api/tracks/:id for local tracks.
+   */
   file_name?: string;
-  /** Other metadata versions, oldest first; only on GET /api/tracks/:id. */
+  /** Other metadata versions, oldest first and capped; only on GET /api/tracks/:id. */
   aliases?: TrackAlias[];
+  /** How many other versions there are in all, `aliases` being the first few. */
+  alias_count?: number;
 }
 
 export type Visibility = "private" | "collaborative";

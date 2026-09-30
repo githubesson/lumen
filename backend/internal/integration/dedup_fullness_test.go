@@ -62,6 +62,35 @@ func writeFLAC(t *testing.T, path, audio string, comments ...string) {
 	}
 }
 
+type trackVersions struct {
+	FileName   string              `json:"file_name"`
+	Aliases    []map[string]string `json:"aliases"`
+	AliasCount int                 `json:"alias_count"`
+}
+
+// getTrackVersions fetches GET /tracks/{id} as viewer through the real
+// handler, returning its versions and the raw body.
+func getTrackVersions(t *testing.T, ctx context.Context, pool *pgxpool.Pool, lib *library.Store, viewer, id uuid.UUID) (trackVersions, string) {
+	t.Helper()
+	sessions := auth.NewSessionStore(pool, "session", false, time.Hour)
+	token, _, err := sessions.Create(ctx, viewer, httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := chi.NewRouter()
+	router.Use(middleware.Authenticate(sessions), middleware.RequireUser)
+	router.Get("/tracks/{id}", (&handlers.Tracks{Library: lib}).Get)
+	req := httptest.NewRequest(http.MethodGet, "/tracks/"+id.String(), nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: token})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	var v trackVersions
+	if err := json.Unmarshal(rec.Body.Bytes(), &v); rec.Code != http.StatusOK || err != nil {
+		t.Fatalf("GET track = %d %s: %v", rec.Code, rec.Body, err)
+	}
+	return v, rec.Body.String()
+}
+
 type trackSnapshot struct {
 	Title, FilePath, Album string
 	Artists                []string
@@ -198,35 +227,17 @@ func TestDuplicateWithFullerMetadataBecomesCanonical(t *testing.T) {
 	}
 
 	// The track info dialog lists every version by file name, never by path.
-	sessions := auth.NewSessionStore(pool, "session", false, time.Hour)
-	token, _, err := sessions.Create(ctx, user, httptest.NewRequest(http.MethodGet, "/", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	router := chi.NewRouter()
-	router.Use(middleware.Authenticate(sessions), middleware.RequireUser)
-	router.Get("/tracks/{id}", (&handlers.Tracks{Library: lib, Ingest: svc}).Get)
-	req := httptest.NewRequest(http.MethodGet, "/tracks/"+first.TrackID.String(), nil)
-	req.AddCookie(&http.Cookie{Name: "session", Value: token})
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	var detail struct {
-		FileName string `json:"file_name"`
-		Aliases  []map[string]string
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &detail); rec.Code != http.StatusOK || err != nil {
-		t.Fatalf("GET track = %d %s: %v", rec.Code, rec.Body, err)
-	}
+	detail, body := getTrackVersions(t, ctx, pool, lib, user, first.TrackID)
 	wantAliases := []map[string]string{
 		{"file_name": "Freestyle.flac", "title": "Freestyle", "album_title": "Others"},
 		{"file_name": "Freestyle (1).flac", "title": "Freestyle (1)", "album_title": "Others"},
 		{"file_name": "partial.flac", "title": "Other Title", "artist_names": artistB},
 	}
-	if detail.FileName != "Blue Hunnids.flac" || !reflect.DeepEqual(detail.Aliases, wantAliases) {
-		t.Fatalf("GET track versions = %q %+v", detail.FileName, detail.Aliases)
+	if detail.FileName != "Blue Hunnids.flac" || detail.AliasCount != 3 || !reflect.DeepEqual(detail.Aliases, wantAliases) {
+		t.Fatalf("GET track versions = %+v", detail)
 	}
-	if strings.Contains(rec.Body.String(), primary) || strings.Contains(rec.Body.String(), extra) {
-		t.Fatalf("GET track leaks a server path: %s", rec.Body)
+	if strings.Contains(body, primary) || strings.Contains(body, extra) {
+		t.Fatalf("GET track leaks a server path: %s", body)
 	}
 
 	// Metadata edited on purpose isn't replaced by a fuller copy's tags.
@@ -313,8 +324,8 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	exec(`INSERT INTO track_aliases(track_id,file_path,title,album_title) VALUES($1,'/gone/bare.flac','Bare','Others')`, merged)
-	exec(`INSERT INTO track_aliases(track_id,file_path,title,artist_names,album_title) VALUES($1,'/gone/tagged.flac','Tagged',$2,$3)`,
+	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,album_title) VALUES(TRUE,$1,'/gone/bare.flac','Bare','Others')`, merged)
+	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names,album_title) VALUES(TRUE,$1,'/gone/tagged.flac','Tagged',$2,$3)`,
 		merged, artistA+", "+artistB, albumTitle)
 	// A track that already has artists and an album keeps them.
 	tx, err = pool.Begin(ctx)
@@ -327,11 +338,11 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	exec(`INSERT INTO track_aliases(track_id,file_path,title,artist_names,album_title) VALUES($1,'/gone/other.flac','Other',$2,$3)`,
+	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names,album_title) VALUES(TRUE,$1,'/gone/other.flac','Other',$2,$3)`,
 		full, artistA, albumTitle)
 	fullBefore := snapshotTrack(t, ctx, pool, full)
 	solo := redteamTrack(t, ctx, pool, nil, &others)
-	exec(`INSERT INTO track_aliases(track_id,file_path,title,artist_names,album_title) VALUES($1,'/gone/solo.flac','Solo',$2,$3)`,
+	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names,album_title) VALUES(TRUE,$1,'/gone/solo.flac','Solo',$2,$3)`,
 		solo, artistA, soloTitle)
 	// Metadata edited on purpose stays, fuller alias or not.
 	edited := redteamTrack(t, ctx, pool, nil, &others)
@@ -339,9 +350,18 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	if err := lib.UpdateTrack(ctx, edited, library.TrackPatch{Title: &handFixed}); err != nil {
 		t.Fatal(err)
 	}
-	exec(`INSERT INTO track_aliases(track_id,file_path,title,artist_names,album_title) VALUES($1,'/gone/edited.flac','Tagged',$2,$3)`,
+	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names,album_title) VALUES(TRUE,$1,'/gone/edited.flac','Tagged',$2,$3)`,
 		edited, artistA, albumTitle)
 	editedBefore := snapshotTrack(t, ctx, pool, edited)
+	// A tagged copy that arrived first, merged with an untagged one that only
+	// named artists.
+	partial := redteamTrack(t, ctx, pool, nil, &others)
+	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names) VALUES(TRUE,$1,'/gone/partial.flac','Partial',$2)`,
+		partial, artistA)
+	var partialPath, partialTitle string
+	if err := pool.QueryRow(ctx, `SELECT file_path, title FROM tracks WHERE id=$1`, partial).Scan(&partialPath, &partialTitle); err != nil {
+		t.Fatal(err)
+	}
 
 	n, err := lib.AdoptFullerAliases(ctx)
 	if err != nil || n < 1 {
@@ -369,7 +389,64 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	if got := snapshotTrack(t, ctx, pool, edited); !reflect.DeepEqual(got, editedBefore) {
 		t.Fatalf("edited track changed:\n got %+v\nwant %+v", got, editedBefore)
 	}
+	// Versions are named after the file their tags came from, so the
+	// swapped pair trade file names.
+	viewer := redteamUser(t, ctx, pool)
+	versions, _ := getTrackVersions(t, ctx, pool, lib, viewer, merged)
+	wantVersions := trackVersions{FileName: "tagged.flac", AliasCount: 2, Aliases: []map[string]string{
+		{"file_name": filepath.Base(mergedPath), "title": mergedTitle, "album_title": "Others"},
+		{"file_name": "bare.flac", "title": "Bare", "album_title": "Others"},
+	}}
+	if !reflect.DeepEqual(versions, wantVersions) {
+		t.Fatalf("repaired versions:\n got %+v\nwant %+v", versions, wantVersions)
+	}
+
+	// The repair runs once: a fuller alias recorded later (compared at
+	// ingest) doesn't trigger it again.
+	late := redteamTrack(t, ctx, pool, nil, &others)
+	exec(`INSERT INTO track_aliases(track_id,file_path,title,artist_names,album_title) VALUES($1,'/gone/late.flac','Late',$2,$3)`,
+		late, artistA, albumTitle)
+	lateBefore := snapshotTrack(t, ctx, pool, late)
 	if n, err := lib.AdoptFullerAliases(ctx); err != nil || n != 0 {
 		t.Fatalf("second pass = %d, %v", n, err)
+	}
+	if got := snapshotTrack(t, ctx, pool, late); !reflect.DeepEqual(got, lateBefore) {
+		t.Fatalf("second pass changed a track:\n got %+v\nwant %+v", got, lateBefore)
+	}
+
+	// A fuller copy adopted later puts each swapped set of tags back with the
+	// file it came from before recording the old file as an alias.
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalPath := "/music/final-" + sfx + ".flac"
+	old, err := library.AdoptDuplicate(ctx, tx, partial, library.Fullness{HasArtists: true, HasAlbum: true},
+		library.TrackInsert{Title: "Final", AlbumID: &album, FilePath: finalPath, FileSize: 1, Format: "flac"},
+		[]uuid.UUID{byB}, []string{"primary"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	wantPartial := trackSnapshot{
+		Title: "Final", FilePath: finalPath, Album: albumTitle, Artists: []string{artistB + ":primary"},
+		Aliases: []string{"/gone/partial.flac|Partial|" + artistA + "|", partialPath + "|" + partialTitle + "||Others"},
+	}
+	if got := snapshotTrack(t, ctx, pool, partial); old != partialPath || !reflect.DeepEqual(got, wantPartial) {
+		t.Fatalf("adopted after a swap (old %q):\n got %+v\nwant %+v", old, got, wantPartial)
+	}
+	var stillSwapped bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM track_aliases WHERE track_id=$1 AND tags_swapped)`, partial).Scan(&stillSwapped); err != nil || stillSwapped {
+		t.Fatalf("swap left marked: %v, %v", stillSwapped, err)
+	}
+
+	// The versions returned per track are capped.
+	exec(`INSERT INTO track_aliases(track_id,file_path,title) SELECT $1, '/gone/copy-' || i, 'Copy ' || i FROM generate_series(1, $2::int) i`,
+		late, library.MaxTrackAliases+5)
+	versions, _ = getTrackVersions(t, ctx, pool, lib, viewer, late)
+	if len(versions.Aliases) != library.MaxTrackAliases || versions.AliasCount != library.MaxTrackAliases+6 {
+		t.Fatalf("capped versions: %d of %d", len(versions.Aliases), versions.AliasCount)
 	}
 }

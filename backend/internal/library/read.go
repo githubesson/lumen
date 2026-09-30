@@ -79,28 +79,40 @@ type TrackAlias struct {
 	Title       string
 	ArtistNames string
 	AlbumTitle  string
+	// TagsSwapped: AdoptFullerAliases swapped this alias's tags with the
+	// track's, so they came from the track's file, and the track's from
+	// FilePath.
+	TagsSwapped bool
 }
 
-// TrackAliases lists a track's other metadata versions, oldest first. Callers
-// check the viewer can see the track.
-func (s *Store) TrackAliases(ctx context.Context, trackID uuid.UUID) ([]TrackAlias, error) {
+// MaxTrackAliases bounds how many versions TrackAliases returns: re-uploading
+// the same audio under new names adds an alias each time.
+const MaxTrackAliases = 20
+
+// TrackAliases lists up to MaxTrackAliases of a track's other metadata
+// versions, a swapped one first and then oldest first, and how many it has in
+// all. Callers check the viewer can see the track.
+func (s *Store) TrackAliases(ctx context.Context, trackID uuid.UUID) ([]TrackAlias, int, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT file_path, COALESCE(title, ''), COALESCE(artist_names, ''), COALESCE(album_title, '')
+		SELECT file_path, COALESCE(title, ''), COALESCE(artist_names, ''), COALESCE(album_title, ''),
+		       tags_swapped, COUNT(*) OVER ()
 		FROM track_aliases WHERE track_id = $1
-		ORDER BY created_at, id`, trackID)
+		ORDER BY tags_swapped DESC, created_at, id
+		LIMIT $2`, trackID, MaxTrackAliases)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	var out []TrackAlias
+	total := 0
 	for rows.Next() {
 		var a TrackAlias
-		if err := rows.Scan(&a.FilePath, &a.Title, &a.ArtistNames, &a.AlbumTitle); err != nil {
-			return nil, err
+		if err := rows.Scan(&a.FilePath, &a.Title, &a.ArtistNames, &a.AlbumTitle, &a.TagsSwapped, &total); err != nil {
+			return nil, 0, err
 		}
 		out = append(out, a)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 // albumCoverFor is the cover of album "a" as seen by userExpr (a SQL

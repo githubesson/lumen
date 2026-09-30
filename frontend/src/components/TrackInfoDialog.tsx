@@ -146,11 +146,15 @@ function Versions({ track }: { track: TrackDetail }) {
       file: a.file_name,
     })),
   ];
+  // The server sends only the first few of a long list.
+  const total = Math.max(track.alias_count ?? 0, versions.length - 1) + 1;
   return (
-    <Section label={`Versions (${versions.length})`}>
+    <Section label={`Versions (${total})`}>
       <div className="track-versions-caption">
         Same audio, different tags; the fullest is shown. Faded values match
         it.
+        {total > versions.length &&
+          ` Showing ${versions.length} of ${total}.`}
       </div>
       <div className="track-versions">
         <table style={{ minWidth: 72 + versions.length * 128 }}>

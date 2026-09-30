@@ -134,6 +134,28 @@ func AdoptDuplicate(ctx context.Context, q pgx.Tx, trackID uuid.UUID, full Fulln
 	if _, err := q.Exec(ctx, `DELETE FROM track_aliases WHERE track_id = $1 AND file_path = $2`, trackID, t.FilePath); err != nil {
 		return "", err
 	}
+	// If AdoptFullerAliases swapped this track's tags with an alias's, the
+	// current tags came from that alias's file and the alias holds this
+	// file's. Put each back with its file before this one becomes an alias.
+	var swappedID int64
+	var swapped AliasInput
+	err = q.QueryRow(ctx, `
+		SELECT id, COALESCE(title, ''), COALESCE(artist_names, ''), COALESCE(album_title, '')
+		FROM track_aliases WHERE track_id = $1 AND tags_swapped`, trackID).
+		Scan(&swappedID, &swapped.Title, &swapped.ArtistNames, &swapped.AlbumTitle)
+	switch {
+	case err == nil:
+		if _, err := q.Exec(ctx, `
+			UPDATE track_aliases
+			SET title = NULLIF($2, ''), artist_names = NULLIF($3, ''), album_title = NULLIF($4, ''),
+			    tags_swapped = FALSE
+			WHERE id = $1`, swappedID, cur.Title, cur.ArtistNames, cur.AlbumTitle); err != nil {
+			return "", err
+		}
+		cur.Title, cur.ArtistNames, cur.AlbumTitle = swapped.Title, swapped.ArtistNames, swapped.AlbumTitle
+	case !errors.Is(err, pgx.ErrNoRows):
+		return "", err
+	}
 	if err := RecordAlias(ctx, q, trackID, cur); err != nil {
 		return "", err
 	}
@@ -143,17 +165,21 @@ func AdoptDuplicate(ctx context.Context, q pgx.Tx, trackID uuid.UUID, full Fulln
 // AdoptFullerAliases repairs tracks deduplicated before ingest compared
 // copies, where an untagged original that arrived first kept the track while
 // the tagged copy only became an alias. The fullest such alias swaps its
-// title, artists and album with the track's. The file stays put: ingest
-// normally removed the tagged copy, which is why only what the alias recorded
-// can move. Tracks whose metadata was edited on purpose are left alone, so a
-// deliberate removal of an artist or album sticks. Returns how many tracks
-// changed.
+// title, artists and album with the track's, and is marked tags_swapped. The
+// file stays put: ingest normally removed the tagged copy, which is why only
+// what the alias recorded can move. Tracks whose metadata was edited on
+// purpose are left alone.
+//
+// It runs once per alias recorded before ingest compared copies (unranked):
+// later aliases were compared when recorded, and rerunning it would undo
+// deliberate edits to merged tracks. Returns how many tracks changed.
 func (s *Store) AdoptFullerAliases(ctx context.Context) (int, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT DISTINCT ON (t.id) t.id, al.id
 		FROM track_aliases al
 		JOIN tracks t ON t.id = al.track_id
-		WHERE t.deleted_at IS NULL AND t.source = 'local' AND t.metadata_edited_at IS NULL
+		WHERE al.unranked
+		  AND t.deleted_at IS NULL AND t.source = 'local' AND t.metadata_edited_at IS NULL
 		  AND ROW(`+aliasHasArtists+`, `+aliasHasAlbum+`) > ROW(`+trackHasArtists+`, `+trackHasAlbum+`)
 		ORDER BY t.id, `+aliasHasArtists+` DESC, `+aliasHasAlbum+` DESC, al.id`)
 	if err != nil {
@@ -191,6 +217,11 @@ func (s *Store) AdoptFullerAliases(ctx context.Context) (int, error) {
 		if changed {
 			adopted++
 		}
+	}
+	// Every unranked alias has now been checked; a failure above returns
+	// first, so the ones not reached get another chance.
+	if _, err := s.db.Exec(ctx, `UPDATE track_aliases SET unranked = FALSE WHERE unranked`); err != nil {
+		return adopted, err
 	}
 	return adopted, nil
 }
@@ -250,7 +281,8 @@ func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE track_aliases
-		SET title = NULLIF($2, ''), artist_names = NULLIF($3, ''), album_title = NULLIF($4, '')
+		SET title = NULLIF($2, ''), artist_names = NULLIF($3, ''), album_title = NULLIF($4, ''),
+		    tags_swapped = TRUE
 		WHERE id = $1`, aliasID, cur.Title, cur.ArtistNames, cur.AlbumTitle); err != nil {
 		return false, err
 	}

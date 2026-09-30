@@ -75,10 +75,12 @@ type trackDetailResp struct {
 	HasCover      bool              `json:"has_cover"`
 	CoverURL      string            `json:"cover_url,omitempty"`
 	Favorited     bool              `json:"favorited"`
-	// Only Get fills these: the file the track plays, and the other
-	// metadata versions dedup folded into it.
-	FileName string           `json:"file_name,omitempty"`
-	Aliases  []trackAliasResp `json:"aliases,omitempty"`
+	// Only Get fills these: the file the shown tags came from (normally the
+	// one it plays), and the other metadata versions dedup folded into it,
+	// at most library.MaxTrackAliases of AliasCount.
+	FileName   string           `json:"file_name,omitempty"`
+	Aliases    []trackAliasResp `json:"aliases,omitempty"`
+	AliasCount int              `json:"alias_count,omitempty"`
 }
 
 type trackListItemResp struct {
@@ -317,15 +319,21 @@ func (h *Tracks) Get(w http.ResponseWriter, r *http.Request) {
 	_, isFav := favs[t.ID]
 	resp := makeTrackDetailResp(t, isFav)
 	if resp.Source == trackref.SourceLocal {
-		aliases, err := h.Library.TrackAliases(r.Context(), t.ID)
+		aliases, total, err := h.Library.TrackAliases(r.Context(), t.ID)
 		if err != nil {
 			writeStoreError(w, err)
 			return
 		}
-		resp.FileName = filepath.Base(t.FilePath)
+		playing := filepath.Base(t.FilePath)
+		resp.FileName, resp.AliasCount = playing, total
 		for _, al := range aliases {
+			name := filepath.Base(al.FilePath)
+			if al.TagsSwapped {
+				// Name each version after the file its tags came from.
+				resp.FileName, name = name, playing
+			}
 			resp.Aliases = append(resp.Aliases, trackAliasResp{
-				FileName:    filepath.Base(al.FilePath),
+				FileName:    name,
 				Title:       al.Title,
 				ArtistNames: al.ArtistNames,
 				AlbumTitle:  al.AlbumTitle,
