@@ -457,7 +457,7 @@ func InsertTrack(ctx context.Context, q pgx.Tx, t TrackInsert) (id uuid.UUID, in
 					bpm = NULLIF($10,0), isrc = NULLIF($11,''), comments = NULLIF($12,''),
 					file_path = $13, file_size = $14, format = $15, bitrate = NULLIF($16,0),
 					sample_rate = NULLIF($17,0), channels = NULLIF($18,0)::smallint,
-					updated_at = NOW()
+					metadata_edited_at = NULL, updated_at = NOW()
 				WHERE id = $1`,
 				personalID, t.AlbumID, t.Title, t.TrackNo, t.DiscNo, t.DurationMS, t.Genre, t.Year, t.Composer,
 				t.BPM, t.ISRC, t.Comments, t.FilePath, t.FileSize, t.Format, t.Bitrate, t.SampleRate,
@@ -465,8 +465,8 @@ func InsertTrack(ctx context.Context, q pgx.Tx, t TrackInsert) (id uuid.UUID, in
 			); err != nil {
 				return uuid.Nil, false, "", err
 			}
-			// Artists and aliases came from the uploader's tags; the caller
-			// relinks artists from the global file.
+			// Artists and aliases came from the uploader's tags, and any edit
+			// was theirs; the caller relinks artists from the global file.
 			if _, err := q.Exec(ctx, `DELETE FROM track_artists WHERE track_id = $1`, personalID); err != nil {
 				return uuid.Nil, false, "", err
 			}

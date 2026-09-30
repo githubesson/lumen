@@ -123,12 +123,12 @@ func TestDuplicateWithFullerMetadataBecomesCanonical(t *testing.T) {
 	lib := library.NewStore(pool)
 	primary, extra := t.TempDir(), t.TempDir()
 	sfx := uuid.NewString()[:8]
-	album, artistA, artistB := "Fullness "+sfx, "Artist A "+sfx, "Artist B "+sfx
+	album, artistA, artistB, producer := "Fullness "+sfx, "Artist A "+sfx, "Artist B "+sfx, "Producer "+sfx
 	t.Cleanup(func() {
 		bg := context.Background()
 		pool.Exec(bg, `DELETE FROM tracks WHERE starts_with(file_path,$1) OR starts_with(file_path,$2)`, primary, extra)
 		pool.Exec(bg, `DELETE FROM albums a WHERE title IN ($1,'Others') AND NOT EXISTS(SELECT 1 FROM tracks t WHERE t.album_id=a.id)`, album)
-		pool.Exec(bg, `DELETE FROM artists WHERE name IN ($1,$2)`, artistA, artistB)
+		pool.Exec(bg, `DELETE FROM artists WHERE name IN ($1,$2,$3)`, artistA, artistB, producer)
 	})
 	svc := &ingest.Service{
 		DB: pool, Library: lib, Storage: storage.NewLocal(primary), MusicRoot: primary,
@@ -213,7 +213,8 @@ func TestDuplicateWithFullerMetadataBecomesCanonical(t *testing.T) {
 	bareCopy := filepath.Join(extra, "Freestyle (1).flac")
 	writeFLAC(t, bareCopy, audio)
 	partial := filepath.Join(extra, "partial.flac")
-	writeFLAC(t, partial, audio, "TITLE=Other Title", "ARTIST="+artistB)
+	// Aliases keep performers only: a composer would read as one.
+	writeFLAC(t, partial, audio, "TITLE=Other Title", "ARTIST="+artistB, "COMPOSER="+producer)
 	ingestOK(bareCopy, nil)
 	ingestOK(partial, nil)
 	want.Aliases = append(want.Aliases, bareCopy+"|Freestyle (1)||Others", partial+"|Other Title|"+artistB+"|")
@@ -258,6 +259,30 @@ func TestDuplicateWithFullerMetadataBecomesCanonical(t *testing.T) {
 	if got := snapshotTrack(t, ctx, pool, editedID); !reflect.DeepEqual(got, wantEdited) {
 		t.Fatalf("edited track:\n got %+v\nwant %+v", got, wantEdited)
 	}
+
+	// A personal upload's edit goes when the global file takes the row over,
+	// so a fuller global copy can still replace it.
+	promoAudio := audio + "-promoted"
+	upload2 := filepath.Join(primary, ".users", user.String(), "promo.flac")
+	writeFLAC(t, upload2, promoAudio)
+	personal := ingestOK(upload2, &user)
+	personalTitle := "Uploader title"
+	if err := lib.UpdateTrack(ctx, personal.TrackID, library.TrackPatch{Title: &personalTitle}); err != nil {
+		t.Fatal(err)
+	}
+	globalBare := filepath.Join(primary, "promo.flac")
+	writeFLAC(t, globalBare, promoAudio)
+	if out := ingestOK(globalBare, nil); out.TrackID != personal.TrackID || !out.Inserted {
+		t.Fatalf("promotion = %+v", out)
+	}
+	globalTagged := filepath.Join(primary, "promo tagged.flac")
+	writeFLAC(t, globalTagged, promoAudio, tags...)
+	ingestOK(globalTagged, nil)
+	var promotedTitle, promotedPath string
+	if err := pool.QueryRow(ctx, `SELECT title, file_path FROM tracks WHERE id=$1`, personal.TrackID).Scan(&promotedTitle, &promotedPath); err != nil ||
+		promotedTitle != "Blue Hunnids" || promotedPath != globalTagged {
+		t.Fatalf("promoted track = %q at %q, %v", promotedTitle, promotedPath, err)
+	}
 }
 
 // Tracks merged before ingest compared copies are repaired from their alias
@@ -267,11 +292,11 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	lib := library.NewStore(pool)
 	sfx := uuid.NewString()[:8]
 	albumTitle, artistA, artistB, stranger := "Legacy "+sfx, "Legacy A "+sfx, "Legacy B "+sfx, "Stranger "+sfx
-	soloTitle, credited := "Solo "+sfx, "Credited "+sfx
+	soloTitle, credited, producer := "Solo "+sfx, "Credited "+sfx, "Producer "+sfx
 	t.Cleanup(func() {
 		bg := context.Background()
 		pool.Exec(bg, `DELETE FROM albums a WHERE title IN ($1,$2,'Others') AND NOT EXISTS(SELECT 1 FROM tracks t WHERE t.album_id=a.id)`, albumTitle, soloTitle)
-		pool.Exec(bg, `DELETE FROM artists WHERE name IN ($1,$2,$3,$4)`, artistA, artistB, stranger, credited)
+		pool.Exec(bg, `DELETE FROM artists WHERE name IN ($1,$2,$3,$4,$5)`, artistA, artistB, stranger, credited, producer)
 	})
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -340,6 +365,16 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	}
 	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names,album_title) VALUES(TRUE,$1,'/gone/other.flac','Other',$2,$3)`,
 		full, artistA, albumTitle)
+	// Credited only as a composer elsewhere: an older alias listing them last
+	// got them from a composer tag.
+	var producerID uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO artists(name) VALUES($1) RETURNING id`, producer).Scan(&producerID); err != nil {
+		t.Fatal(err)
+	}
+	exec(`INSERT INTO track_artists(track_id,artist_id,role,position) VALUES($1,$2,'composer',1)`, full, producerID)
+	produced := redteamTrack(t, ctx, pool, nil, &others)
+	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names) VALUES(TRUE,$1,'/gone/produced.flac','Produced',$2)`,
+		produced, artistA+", "+producer)
 	fullBefore := snapshotTrack(t, ctx, pool, full)
 	solo := redteamTrack(t, ctx, pool, nil, &others)
 	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names,album_title) VALUES(TRUE,$1,'/gone/solo.flac','Solo',$2,$3)`,
@@ -381,6 +416,9 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	}
 	if got := snapshotTrack(t, ctx, pool, full); !reflect.DeepEqual(got, fullBefore) {
 		t.Fatalf("full track changed:\n got %+v\nwant %+v", got, fullBefore)
+	}
+	if got := snapshotTrack(t, ctx, pool, produced).Artists; !reflect.DeepEqual(got, []string{artistA + ":primary", producer + ":composer"}) {
+		t.Fatalf("produced credits = %v", got)
 	}
 	var soloGot uuid.UUID
 	if err := pool.QueryRow(ctx, `SELECT album_id FROM tracks WHERE id=$1`, solo).Scan(&soloGot); err != nil || soloGot != soloAlbum {

@@ -64,7 +64,7 @@ func trackMetadata(ctx context.Context, q pgx.Tx, trackID uuid.UUID) (trackState
 		SELECT t.file_path, t.title, t.owner_id, t.metadata_edited_at IS NOT NULL,
 		       COALESCE((SELECT STRING_AGG(ar.name, ', ' ORDER BY ta.position, ar.name)
 		                 FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
-		                 WHERE ta.track_id = t.id), ''),
+		                 WHERE ta.track_id = t.id AND ta.role <> 'composer'), ''),
 		       COALESCE((SELECT a.title FROM albums a WHERE a.id = t.album_id), ''),
 		       `+trackHasArtists+`, `+trackHasAlbum+`
 		FROM tracks t
@@ -252,7 +252,7 @@ func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64
 		return false, err
 	}
 	// Ingest splits artist tags on ", " before joining names with it, so
-	// splitting again recovers them. Composers come back as featured.
+	// splitting again recovers them.
 	var names []string
 	for _, name := range strings.Split(alias.ArtistNames, ", ") {
 		if name = strings.TrimSpace(name); name != "" {
@@ -263,7 +263,20 @@ func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64
 		return false, nil
 	}
 
-	if err := ReplaceTrackArtists(ctx, tx, trackID, names); err != nil {
+	roles, err := legacyAliasRoles(ctx, tx, names)
+	if err != nil {
+		return false, err
+	}
+	artistIDs := make([]uuid.UUID, len(names))
+	for i, name := range names {
+		if artistIDs[i], err = UpsertArtist(ctx, tx, name); err != nil {
+			return false, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM track_artists WHERE track_id = $1`, trackID); err != nil {
+		return false, err
+	}
+	if err := LinkTrackArtists(ctx, tx, trackID, artistIDs, roles); err != nil {
 		return false, err
 	}
 	var albumID *uuid.UUID
@@ -287,6 +300,36 @@ func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64
 		return false, err
 	}
 	return true, nil
+}
+
+// legacyAliasRoles credits the names of an alias recorded before aliases left
+// composers out: the first is the primary artist and the rest are featured,
+// except that ingest appended a composer tag last. The last name counts as
+// that composer when the library credits the person only as a composer.
+func legacyAliasRoles(ctx context.Context, tx pgx.Tx, names []string) ([]string, error) {
+	roles := make([]string, len(names))
+	for i := range roles {
+		roles[i] = "featured"
+	}
+	if len(names) == 0 {
+		return roles, nil
+	}
+	roles[0] = "primary"
+	if len(names) == 1 {
+		return roles, nil
+	}
+	var composerOnly bool
+	err := tx.QueryRow(ctx, `
+		SELECT COALESCE(BOOL_AND(ta.role = 'composer'), FALSE)
+		FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
+		WHERE LOWER(ar.name) = LOWER($1)`, dbtext.Clean(names[len(names)-1])).Scan(&composerOnly)
+	if err != nil {
+		return nil, err
+	}
+	if composerOnly {
+		roles[len(roles)-1] = "composer"
+	}
+	return roles, nil
 }
 
 // aliasAlbum finds the album an alias's file was filed under. Aliases don't

@@ -633,16 +633,13 @@ func (s *Service) recordErr(ctx context.Context, path string, err error) {
 	s.log().Warn("ingest error", "path", path, "err", err)
 }
 
-// joinArtistNames renders the parsed artist list as a single display string
-// suitable for full-text search on an alias row. Roles are dropped — search
-// only cares about the name substrings.
+// joinArtistNames renders the parsed performers as the display string an
+// alias row keeps, first the primary. Composers are left out: the string has
+// no roles, and the versions view and the merge repair read it as performers.
 func joinArtistNames(refs []ArtistRef) string {
-	if len(refs) == 0 {
-		return ""
-	}
 	names := make([]string, 0, len(refs))
 	for _, r := range refs {
-		if r.Name != "" {
+		if r.Name != "" && r.Role != "composer" {
 			names = append(names, r.Name)
 		}
 	}

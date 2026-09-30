@@ -412,8 +412,20 @@ func (s *Scanner) ingestPath(ctx context.Context, p string, trackCtx TrackContex
 	if out.Err != nil || out.TrackID == uuid.Nil {
 		return nil, false
 	}
-	if applyTrackerMetadata && out.Inserted && s.Library != nil {
-		s.applyTrackerMetadata(ctx, out.TrackID, trackCtx)
+	// Ownership, not out.Inserted: a download whose tags beat an existing
+	// copy's becomes that track's file on a dedup hit, and the tracker's
+	// metadata then belongs on it too.
+	if applyTrackerMetadata && s.Library != nil {
+		owns := out.Inserted
+		if !owns {
+			var err error
+			if owns, err = s.Library.TrackHasFilePath(ctx, out.TrackID, out.Path); err != nil && s.Logger != nil {
+				s.Logger.Warn("artistgrid track path check failed", "track", out.TrackID, "path", out.Path, "err", err)
+			}
+		}
+		if owns {
+			s.applyTrackerMetadata(ctx, out.TrackID, trackCtx)
+		}
 	}
 	return &out.TrackID, out.Inserted
 }
