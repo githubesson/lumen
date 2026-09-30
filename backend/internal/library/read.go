@@ -72,7 +72,7 @@ func (s *Store) GetTrackPlayback(ctx context.Context, id, viewerID uuid.UUID) (*
 }
 
 // TrackAlias is alternate metadata captured from a file that was deduplicated
-// into an existing track. Only TrackAliases loads it, for the signed-in track
+// into an existing track. Only TrackVersions loads it, for the signed-in track
 // detail endpoint, which serializes file names but never server paths.
 type TrackAlias struct {
 	FilePath    string
@@ -85,14 +85,25 @@ type TrackAlias struct {
 	TagsSwapped bool
 }
 
-// MaxTrackAliases bounds how many versions TrackAliases returns: re-uploading
+// MaxTrackAliases bounds how many versions TrackVersions returns: re-uploading
 // the same audio under new names adds an alias each time.
 const MaxTrackAliases = 20
 
-// TrackAliases lists up to MaxTrackAliases of a track's other metadata
-// versions, a swapped one first and then oldest first, and how many it has in
-// all. Callers check the viewer can see the track.
-func (s *Store) TrackAliases(ctx context.Context, trackID uuid.UUID) ([]TrackAlias, int, error) {
+// TrackVersionSet is what the versions view shows besides the track itself.
+type TrackVersionSet struct {
+	Aliases []TrackAlias // up to MaxTrackAliases: a swapped one first, then oldest first
+	Total   int          // how many aliases there are in all
+	Edited  bool         // the track's metadata was set on purpose, not read from a file
+}
+
+// TrackVersions lists a track's other metadata versions. Callers check the
+// viewer can see the track.
+func (s *Store) TrackVersions(ctx context.Context, trackID uuid.UUID) (TrackVersionSet, error) {
+	var vs TrackVersionSet
+	if err := s.db.QueryRow(ctx, `SELECT metadata_edited_at IS NOT NULL FROM tracks WHERE id = $1`, trackID).
+		Scan(&vs.Edited); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return vs, err
+	}
 	rows, err := s.db.Query(ctx, `
 		SELECT file_path, COALESCE(title, ''), COALESCE(artist_names, ''), COALESCE(album_title, ''),
 		       tags_swapped, COUNT(*) OVER ()
@@ -100,19 +111,17 @@ func (s *Store) TrackAliases(ctx context.Context, trackID uuid.UUID) ([]TrackAli
 		ORDER BY tags_swapped DESC, created_at, id
 		LIMIT $2`, trackID, MaxTrackAliases)
 	if err != nil {
-		return nil, 0, err
+		return vs, err
 	}
 	defer rows.Close()
-	var out []TrackAlias
-	total := 0
 	for rows.Next() {
 		var a TrackAlias
-		if err := rows.Scan(&a.FilePath, &a.Title, &a.ArtistNames, &a.AlbumTitle, &a.TagsSwapped, &total); err != nil {
-			return nil, 0, err
+		if err := rows.Scan(&a.FilePath, &a.Title, &a.ArtistNames, &a.AlbumTitle, &a.TagsSwapped, &vs.Total); err != nil {
+			return vs, err
 		}
-		out = append(out, a)
+		vs.Aliases = append(vs.Aliases, a)
 	}
-	return out, total, rows.Err()
+	return vs, rows.Err()
 }
 
 // albumCoverFor is the cover of album "a" as seen by userExpr (a SQL

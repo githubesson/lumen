@@ -746,11 +746,12 @@ export interface TrackDetail {
   has_cover: boolean;
   cover_url?: string;
   favorited: boolean;
-  /**
-   * The file the shown tags came from (normally the one it plays); only on
-   * GET /api/tracks/:id for local tracks.
-   */
+  /** The file the track plays; only on GET /api/tracks/:id for local tracks. */
   file_name?: string;
+  /** Where the shown tags came from, when that's another copy's file. */
+  tags_file_name?: string;
+  /** The shown tags were edited on purpose rather than read from a file. */
+  metadata_edited?: boolean;
   /** Other metadata versions, oldest first and capped; only on GET /api/tracks/:id. */
   aliases?: TrackAlias[];
   /** How many other versions there are in all, `aliases` being the first few. */

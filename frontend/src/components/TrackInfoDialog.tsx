@@ -135,7 +135,9 @@ function Versions({ track }: { track: TrackDetail }) {
       .map((a) => a.name)
       .join(", "),
     album: track.album_title ?? "",
-    file: track.file_name ?? "",
+    file: track.metadata_edited
+      ? "Edited"
+      : (track.tags_file_name ?? track.file_name ?? ""),
   };
   const versions: Version[] = [
     shown,

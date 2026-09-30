@@ -75,12 +75,15 @@ type trackDetailResp struct {
 	HasCover      bool              `json:"has_cover"`
 	CoverURL      string            `json:"cover_url,omitempty"`
 	Favorited     bool              `json:"favorited"`
-	// Only Get fills these: the file the shown tags came from (normally the
-	// one it plays), and the other metadata versions dedup folded into it,
-	// at most library.MaxTrackAliases of AliasCount.
-	FileName   string           `json:"file_name,omitempty"`
-	Aliases    []trackAliasResp `json:"aliases,omitempty"`
-	AliasCount int              `json:"alias_count,omitempty"`
+	// Only Get fills these: the file the track plays; where the shown tags
+	// came from when that's another file, or that they were edited on
+	// purpose; and the other metadata versions dedup folded into it, at most
+	// library.MaxTrackAliases of AliasCount.
+	FileName       string           `json:"file_name,omitempty"`
+	TagsFileName   string           `json:"tags_file_name,omitempty"`
+	MetadataEdited bool             `json:"metadata_edited,omitempty"`
+	Aliases        []trackAliasResp `json:"aliases,omitempty"`
+	AliasCount     int              `json:"alias_count,omitempty"`
 }
 
 type trackListItemResp struct {
@@ -319,18 +322,22 @@ func (h *Tracks) Get(w http.ResponseWriter, r *http.Request) {
 	_, isFav := favs[t.ID]
 	resp := makeTrackDetailResp(t, isFav)
 	if resp.Source == trackref.SourceLocal {
-		aliases, total, err := h.Library.TrackAliases(r.Context(), t.ID)
+		versions, err := h.Library.TrackVersions(r.Context(), t.ID)
 		if err != nil {
 			writeStoreError(w, err)
 			return
 		}
 		playing := fileName(t.FilePath)
-		resp.FileName, resp.AliasCount = playing, total
-		for _, al := range aliases {
+		resp.FileName, resp.AliasCount, resp.MetadataEdited = playing, versions.Total, versions.Edited
+		for _, al := range versions.Aliases {
 			name := fileName(al.FilePath)
 			if al.TagsSwapped {
-				// Name each version after the file its tags came from.
-				resp.FileName, name = name, playing
+				// Name each version after the file its tags came from. An
+				// edit since then means the shown tags came from no file.
+				name = playing
+				if !versions.Edited {
+					resp.TagsFileName = fileName(al.FilePath)
+				}
 			}
 			resp.Aliases = append(resp.Aliases, trackAliasResp{
 				FileName:    name,

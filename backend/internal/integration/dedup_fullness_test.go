@@ -63,9 +63,11 @@ func writeFLAC(t *testing.T, path, audio string, comments ...string) {
 }
 
 type trackVersions struct {
-	FileName   string              `json:"file_name"`
-	Aliases    []map[string]string `json:"aliases"`
-	AliasCount int                 `json:"alias_count"`
+	FileName       string              `json:"file_name"`
+	TagsFileName   string              `json:"tags_file_name"`
+	MetadataEdited bool                `json:"metadata_edited"`
+	Aliases        []map[string]string `json:"aliases"`
+	AliasCount     int                 `json:"alias_count"`
 }
 
 // getTrackVersions fetches GET /tracks/{id} as viewer through the real
@@ -284,7 +286,7 @@ func TestDuplicateWithFullerMetadataBecomesCanonical(t *testing.T) {
 			t.Fatalf("%s: %v", p, err)
 		}
 	}
-	if v, _ := getTrackVersions(t, ctx, pool, lib, user, crossID); v.FileName != "cross tagged.flac" ||
+	if v, _ := getTrackVersions(t, ctx, pool, lib, user, crossID); v.FileName != "cross bare.flac" || v.TagsFileName != "cross tagged.flac" ||
 		len(v.Aliases) != 1 || v.Aliases[0]["file_name"] != "cross bare.flac" {
 		t.Fatalf("cross-root versions = %+v", v)
 	}
@@ -572,12 +574,23 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	// swapped pair trade file names.
 	viewer := redteamUser(t, ctx, pool)
 	versions, _ := getTrackVersions(t, ctx, pool, lib, viewer, merged)
-	wantVersions := trackVersions{FileName: "tagged.flac", AliasCount: 2, Aliases: []map[string]string{
-		{"file_name": filepath.Base(mergedPath), "title": mergedTitle, "album_title": "Others"},
-		{"file_name": "bare.flac", "title": "Bare", "album_title": "Others"},
-	}}
+	wantVersions := trackVersions{FileName: filepath.Base(mergedPath), TagsFileName: "tagged.flac", AliasCount: 2,
+		Aliases: []map[string]string{
+			{"file_name": filepath.Base(mergedPath), "title": mergedTitle, "album_title": "Others"},
+			{"file_name": "bare.flac", "title": "Bare", "album_title": "Others"},
+		}}
 	if !reflect.DeepEqual(versions, wantVersions) {
 		t.Fatalf("repaired versions:\n got %+v\nwant %+v", versions, wantVersions)
+	}
+	// Edited since: the shown tags came from no file.
+	editedTitle := "Edited after repair"
+	if err := lib.UpdateTrack(ctx, merged, library.TrackPatch{Title: &editedTitle}); err != nil {
+		t.Fatal(err)
+	}
+	versions, _ = getTrackVersions(t, ctx, pool, lib, viewer, merged)
+	wantVersions.TagsFileName, wantVersions.MetadataEdited = "", true
+	if !reflect.DeepEqual(versions, wantVersions) {
+		t.Fatalf("edited versions:\n got %+v\nwant %+v", versions, wantVersions)
 	}
 
 	// The repair runs once: a fuller alias recorded later (compared at
