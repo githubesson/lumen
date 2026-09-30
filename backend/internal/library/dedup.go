@@ -342,9 +342,15 @@ func adoptAlias(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, aliasID int64
 		}
 		albumID = &id
 	}
+	// A composer credit replaced above replaces the composer column too.
+	composer := ""
+	if i := slices.Index(roles, "composer"); i >= 0 {
+		composer = dbtext.Clean(names[i])
+	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE tracks SET title = COALESCE(NULLIF($2, ''), title), album_id = $3, updated_at = NOW()
-		WHERE id = $1`, trackID, alias.Title, albumID); err != nil {
+		UPDATE tracks SET title = COALESCE(NULLIF($2, ''), title), album_id = $3,
+			composer = COALESCE(NULLIF($4, ''), composer), updated_at = NOW()
+		WHERE id = $1`, trackID, alias.Title, albumID, composer); err != nil {
 		return false, err
 	}
 	if _, err := tx.Exec(ctx, `

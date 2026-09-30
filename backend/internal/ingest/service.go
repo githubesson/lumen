@@ -353,18 +353,17 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 
 	switch {
 	case inserted, dropPath == "":
-	case dropPath != path && !unchangedSince(path, stat):
-		// Changed after adoption committed: keep the old copy, which the
-		// track still lists as an alias, rather than trust this one alone.
-		s.log().Warn("adopted duplicate changed while ingesting; keeping the replaced copy",
-			"path", path, "replaced", dropPath, "track", trackID)
+	case adopted:
+		// The replaced copy goes only while the adopted file is still the
+		// one that was read; otherwise the track still lists it as an alias.
+		s.removeDedupFile(ctx, dropPath, canonicalPath, trackID, stat)
 	default:
-		s.removeDedupFile(ctx, dropPath, canonicalPath, trackID)
+		s.removeDedupFile(ctx, dropPath, canonicalPath, trackID, nil)
 	}
 	if replacedPath != "" {
 		// A personal upload was promoted to global and now points at this
 		// file; its old copy under .users/ is redundant.
-		s.removeDedupFile(ctx, replacedPath, path, trackID)
+		s.removeDedupFile(ctx, replacedPath, path, trackID, nil)
 	}
 
 	out.TrackID = trackID
@@ -392,8 +391,10 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 
 // removeDedupFile unlinks a duplicate audio file after the DB transaction has
 // safely recorded its alias metadata. The canonical track row's file_path is
-// the file we serve, so it is never removed.
-func (s *Service) removeDedupFile(ctx context.Context, duplicatePath, canonicalPath string, trackID uuid.UUID) {
+// the file we serve, so it is never removed. With canonicalWas, the canonical
+// file must also still be that file (unchangedSince), checked last, right
+// before the unlink.
+func (s *Service) removeDedupFile(ctx context.Context, duplicatePath, canonicalPath string, trackID uuid.UUID, canonicalWas os.FileInfo) {
 	dupAbs, err := filepath.Abs(duplicatePath)
 	if err != nil {
 		s.log().Warn("dedup cleanup skipped: duplicate path could not be resolved",
@@ -445,6 +446,11 @@ func (s *Service) removeDedupFile(ctx context.Context, duplicatePath, canonicalP
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		s.log().Warn("dedup cleanup skipped: duplicate path is not a regular file",
 			"path", dupAbs, "track", trackID)
+		return
+	}
+	if canonicalWas != nil && !unchangedSince(canonAbs, canonicalWas) {
+		s.log().Warn("dedup cleanup skipped: canonical file changed since it was read",
+			"path", dupAbs, "canonical_path", canonAbs, "track", trackID)
 		return
 	}
 	if err := os.Remove(dupAbs); err != nil && !errors.Is(err, os.ErrNotExist) {

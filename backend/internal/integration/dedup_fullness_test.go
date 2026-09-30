@@ -440,6 +440,7 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	produced := redteamTrack(t, ctx, pool, nil, &others)
 	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names) VALUES(TRUE,$1,'/gone/produced.flac','Produced',$2)`,
 		produced, artistA+", "+producer)
+	exec(`UPDATE tracks SET composer = 'Old composer' WHERE id = $1`, produced)
 	// Named in the alias's own title: a featured guest, credits or not.
 	featuring := redteamTrack(t, ctx, pool, nil, &others)
 	exec(`INSERT INTO track_aliases(unranked,track_id,file_path,title,artist_names) VALUES(TRUE,$1,'/gone/with.flac',$2,$3)`,
@@ -534,6 +535,10 @@ func TestAdoptFullerAliasesRepairsEarlierMerges(t *testing.T) {
 	}
 	if got := snapshotTrack(t, ctx, pool, produced).Artists; !reflect.DeepEqual(got, []string{artistA + ":primary", producer + ":composer"}) {
 		t.Fatalf("produced credits = %v", got)
+	}
+	var producedComposer string
+	if err := pool.QueryRow(ctx, `SELECT composer FROM tracks WHERE id=$1`, produced).Scan(&producedComposer); err != nil || producedComposer != producer {
+		t.Fatalf("produced composer column = %q, %v", producedComposer, err)
 	}
 	if got := snapshotTrack(t, ctx, pool, retry); got.Title != "Retry B" ||
 		!reflect.DeepEqual(got.Artists, []string{artistA + ":primary", artistB + ":featured"}) {
