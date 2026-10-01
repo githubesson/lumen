@@ -51,6 +51,16 @@ const matchWaiting = matchEligible + ` AND ` + matchDue
 // importer, or auto-download filing a saved copy), and that must win.
 const matchSettled = `t.updated_at < NOW() - INTERVAL '10 minutes'`
 
+// matchResumable holds for a track t that an unfinished release choice for
+// its album was judged on and that is still to file under it: no outcome
+// since the choice (or one older than the track), or a failure now due.
+const matchResumable = `COALESCE((
+	SELECT t.id = ANY(c.track_ids) AND NOT EXISTS (
+		SELECT 1 FROM tidal_matches rm
+		WHERE rm.track_id = t.id AND rm.updated_at >= c.created_at AND rm.updated_at >= t.updated_at
+		  AND (rm.status <> 'failed' OR rm.next_attempt_at > NOW()))
+	FROM tidal_match_albums c WHERE c.album_id = t.album_id), FALSE)`
+
 // matchLoose holds for a track t (album a, LEFT JOINed) with no album to go
 // by: none at all, or the catch-all ingest files untagged tracks under.
 const matchLoose = `(t.album_id IS NULL OR (a.title = '` + library.CatchAllAlbum + `'
@@ -75,6 +85,9 @@ type MatchTrack struct {
 	// Seen is the track's updated_at when loaded; a track changed since is
 	// left for the next attempt.
 	Seen time.Time
+	// Resumable: an unfinished release choice for the album was judged on
+	// it and it is still to file (matchResumable).
+	Resumable bool
 }
 
 // MatchAlbum is the library album a group of MatchTracks shares.
@@ -90,11 +103,10 @@ type MatchAlbum struct {
 	// Unsettled: some of its waiting tracks changed moments ago, so the
 	// album waits until they settle and can be judged with the rest.
 	Unsettled bool
-	// Chosen is the release an attempt cut short chose for the album, and
-	// ChosenTracks the tracks it was judged on, kept until none of those is
-	// left to file (ReleaseDone).
-	Chosen       string
-	ChosenTracks []uuid.UUID
+	// Chosen is the release an attempt cut short chose for the album, kept
+	// until none of the tracks it was judged on is left to file
+	// (ReleaseDone).
+	Chosen string
 }
 
 const matchTrackColumns = `t.id, t.album_id,
@@ -134,20 +146,15 @@ func (s *Store) PendingMatchAlbums(ctx context.Context, limit int) ([]uuid.UUID,
 		SELECT e.album_id
 		FROM (
 			SELECT t.album_id, t.created_at, `+matchSettled+` AS settled, `+matchDue+` AS due,
-			       EXISTS (SELECT 1 FROM tidal_matches bm
-			               WHERE bm.track_id = t.id AND bm.status = 'failed'
-			                 AND bm.next_attempt_at > NOW() AND bm.updated_at >= t.updated_at) AS backing_off
+			       `+matchResumable+` AS resumable
 			FROM tracks t
 			JOIN albums a ON a.id = t.album_id
 			WHERE `+matchEligible+` AND NOT `+matchLoose+`
 		) e
 		GROUP BY e.album_id
-		-- An unfinished choice resumes, unless all that's left is failures
-		-- backing off.
-		HAVING (BOOL_OR(e.due)
-		        OR (EXISTS (SELECT 1 FROM tidal_match_albums c WHERE c.album_id = e.album_id)
-		            AND BOOL_OR(NOT e.backing_off)))
-		   AND BOOL_AND(e.settled)
+		-- An unfinished choice resumes while a track it was judged on is
+		-- still to file and not backing off.
+		HAVING (BOOL_OR(e.due) OR BOOL_OR(e.resumable)) AND BOOL_AND(e.settled)
 		ORDER BY MAX(e.created_at) FILTER (WHERE e.due) DESC, e.album_id
 		LIMIT $1`, limit)
 	if err != nil {
@@ -178,11 +185,10 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 		          AND t.owner_id IS NULL),
 		       EXISTS (SELECT 1 FROM tracks t
 		               WHERE t.album_id = a.id AND `+matchEligible+` AND NOT `+matchSettled+`),
-		       COALESCE((SELECT c.tidal_album_id FROM tidal_match_albums c WHERE c.album_id = a.id), ''),
-		       COALESCE((SELECT c.track_ids FROM tidal_match_albums c WHERE c.album_id = a.id), '{}')
+		       COALESCE((SELECT c.tidal_album_id FROM tidal_match_albums c WHERE c.album_id = a.id), '')
 		FROM albums a LEFT JOIN artists ar ON ar.id = a.album_artist_id
 		WHERE a.id = $1`, albumID).Scan(&a.Title, &a.Artist, &a.Year, &a.TIDALAlbumID, &a.Tracks,
-		&a.Unsettled, &a.Chosen, &a.ChosenTracks)
+		&a.Unsettled, &a.Chosen)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return a, nil, nil
 	}
@@ -192,7 +198,7 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 	// Settling is checked again on the tracks as loaded: one may have
 	// changed since the album query.
 	rows, err := s.db.Query(ctx, `
-		SELECT `+matchTrackColumns+`, `+matchSettled+`
+		SELECT `+matchTrackColumns+`, `+matchSettled+`, `+matchResumable+`
 		FROM tracks t
 		JOIN albums a ON a.id = t.album_id
 		WHERE t.album_id = $1 AND `+matchEligible+` AND NOT `+matchLoose+`
@@ -209,7 +215,7 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 			settled bool
 		)
 		if err := rows.Scan(&t.ID, &t.AlbumID, &t.AlbumLink, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS,
-			&t.TrackNo, &t.DiscNo, &t.FilePath, &t.Seen, &settled); err != nil {
+			&t.TrackNo, &t.DiscNo, &t.FilePath, &t.Seen, &settled, &t.Resumable); err != nil {
 			return a, nil, err
 		}
 		a.Unsettled = a.Unsettled || !settled
@@ -439,6 +445,13 @@ func (s *Store) ChooseRelease(ctx context.Context, albumID uuid.UUID, tidalAlbum
 	return noted, err
 }
 
+// DropChoice drops an album's chosen release outright, e.g. once the album
+// is linked to a release and its tracks follow that.
+func (s *Store) DropChoice(ctx context.Context, albumID uuid.UUID) error {
+	_, err := s.db.Exec(ctx, `DELETE FROM tidal_match_albums WHERE album_id = $1`, albumID)
+	return err
+}
+
 // ReleaseDone drops an album's chosen release once none of the tracks it was
 // judged on is left to file: every one still eligible in the album has an
 // outcome recorded since the choice, and not a failure, which would retry
@@ -524,15 +537,17 @@ type MatchSummary struct {
 func (s *Store) MatchSummary(ctx context.Context) (MatchSummary, error) {
 	var out MatchSummary
 	// Outcomes other than a match count only for tracks matching may still
-	// change: an edit since ends the retries.
+	// change (an edit since ends the retries) and that haven't changed since
+	// the outcome; those count as waiting, as matchDue makes them due.
 	err := s.db.QueryRow(ctx, `
 		SELECT
 			COUNT(*) FILTER (WHERE m.status = 'matched'),
-			COUNT(*) FILTER (WHERE m.status = 'unmatched' AND `+matchEligible+`),
-			COUNT(*) FILTER (WHERE m.status = 'failed' AND `+matchEligible+`),
+			COUNT(*) FILTER (WHERE m.status = 'unmatched' AND m.updated_at >= t.updated_at AND `+matchEligible+`),
+			COUNT(*) FILTER (WHERE m.status = 'failed' AND m.updated_at >= t.updated_at AND `+matchEligible+`),
 			(SELECT COUNT(*) FROM tracks t
 			 WHERE `+matchEligible+`
-			   AND NOT EXISTS (SELECT 1 FROM tidal_matches m2 WHERE m2.track_id = t.id))
+			   AND NOT EXISTS (SELECT 1 FROM tidal_matches m2
+			                   WHERE m2.track_id = t.id AND m2.updated_at >= t.updated_at))
 		FROM tidal_matches m
 		JOIN tracks t ON t.id = m.track_id AND t.deleted_at IS NULL`,
 	).Scan(&out.Matched, &out.Unmatched, &out.Failed, &out.Waiting)

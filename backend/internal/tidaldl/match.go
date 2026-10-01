@@ -272,20 +272,26 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 		return nil
 	}
 	if album.Chosen != "" {
-		// Only the tracks the choice was judged on finish under it; any
-		// added since are judged once it is done.
-		judged := map[uuid.UUID]bool{}
-		for _, id := range album.ChosenTracks {
-			judged[id] = true
-		}
-		kept := tracks[:0]
-		for _, t := range tracks {
-			if judged[t.ID] {
-				kept = append(kept, t)
+		if album.TIDALAlbumID != "" {
+			// Linked since (by the choice's own first match, or by
+			// auto-download): its tracks follow the linked release now.
+			if err := m.Store.DropChoice(ctx, album.ID); err != nil {
+				return err
 			}
-		}
-		if tracks = kept; len(tracks) == 0 {
-			return m.Store.ReleaseDone(ctx, album.ID)
+			album.Chosen = ""
+		} else {
+			// Only the tracks the choice was judged on finish under it, and
+			// not while backing off; any added since are judged once it is
+			// done.
+			kept := tracks[:0]
+			for _, t := range tracks {
+				if t.Resumable {
+					kept = append(kept, t)
+				}
+			}
+			if tracks = kept; len(tracks) == 0 {
+				return m.Store.ReleaseDone(ctx, album.ID)
+			}
 		}
 	}
 	m.fillISRCs(tracks)

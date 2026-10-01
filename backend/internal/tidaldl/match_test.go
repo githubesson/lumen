@@ -967,20 +967,33 @@ func TestMatcherKeepsChoiceWhileTrackBacksOff(t *testing.T) {
 		t.Fatal("the choice went while a track still had to be filed")
 	}
 
-	// A new track brings the album up; the backing-off track comes along.
-	f.track(localTrack{title: "Extra", artists: []string{main}, album: &albumID, duration: 70_000})
+	// A new track brings the album up, but the judged track backing off
+	// waits for its retry, and the new one for the choice to finish.
+	extra := f.track(localTrack{title: "Extra", artists: []string{main}, album: &albumID, duration: 70_000})
 	m := f.matcher(&fakeCatalog{err: errors.New("TIDAL must not be needed")})
+	if err := m.matchAlbum(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(failed); got.Match != MatchFailed {
+		t.Fatalf("failed track = %+v; want it left backing off", got)
+	}
+	if got := f.state(extra); got.Match != "" {
+		t.Fatalf("extra = %+v; want it judged once the choice is done", got)
+	}
+	if choices() != 1 {
+		t.Fatal("the choice went while a judged track was still to file")
+	}
+
+	// Its retry comes due: it finishes under the choice, which then goes.
+	f.exec(`UPDATE tidal_matches SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE track_id = $1`, failed)
 	if err := m.matchAlbum(ctx, albumID); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.state(failed); got.Match != MatchMatched || got.Album != rel.Title {
 		t.Fatalf("failed track = %+v; want it matched on the chosen release", got)
 	}
-	if got := f.state(tail); got.Album != rel.Title {
-		t.Fatalf("tail = %+v; want it filed with the rest", got)
-	}
 	if choices() != 0 {
-		t.Fatal("the choice outlived the album")
+		t.Fatal("the choice outlived the tracks it was judged on")
 	}
 }
 
@@ -1448,7 +1461,8 @@ func TestBackoffStreakAndPendingChoice(t *testing.T) {
 	if containsID(pending, albumID) {
 		t.Fatal("a resting album is pending")
 	}
-	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id) VALUES($1, 'rel')`, albumID)
+	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, track_ids) VALUES($1, 'rel', $2)`,
+		albumID, []uuid.UUID{id})
 	if pending, err = store.PendingMatchAlbums(ctx, 10_000); err != nil {
 		t.Fatal(err)
 	}
@@ -1517,5 +1531,55 @@ func TestResumedChoiceKeepsToJudgedTracks(t *testing.T) {
 	}
 	if containsID(pending, other) {
 		t.Fatal("an album whose only track is backing off is pending")
+	}
+}
+
+// A choice whose album got linked since (its own first match, or
+// auto-download) gives way to the link, so later tracks aren't held back.
+// A track changed since its outcome counts as waiting.
+func TestChoiceGivesWayToLinkAndStaleOutcomesWait(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	relID := "rel" + f.run
+	rel := tidal.Album{ID: relID, Title: "Record " + f.run, Artist: main,
+		Tracks: []tidal.Track{{ID: "a" + f.run, Title: "Song", Artists: []string{main}, DurationMS: 100_000, TrackNo: 1}}}
+	if err := f.lib.SaveTIDALAlbum(ctx, rel); err != nil {
+		t.Fatal(err)
+	}
+	albumID := f.album("Record "+f.run, main, 0)
+	song := f.track(localTrack{title: "Song", artists: []string{main}, album: &albumID, duration: 100_000})
+	extra := f.track(localTrack{title: "Extra", artists: []string{main}, album: &albumID, duration: 50_000})
+	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, track_ids) VALUES($1, $2, $3)`,
+		albumID, relID, []uuid.UUID{song})
+	f.exec(`UPDATE albums SET tidal_album_id = $2 WHERE id = $1`, albumID, relID)
+
+	m := f.matcher(&fakeCatalog{err: errors.New("TIDAL must not be needed")})
+	if err := m.matchAlbum(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(song); got.Match != MatchMatched || got.AlbumID != albumID {
+		t.Fatalf("song = %+v", got)
+	}
+	if got := f.state(extra); got.Match != MatchUnmatched || got.AlbumID != albumID {
+		t.Fatalf("extra = %+v; want it handled with the linked album", got)
+	}
+	var choices int
+	if err := f.pool.QueryRow(ctx, `SELECT COUNT(*) FROM tidal_match_albums WHERE album_id = $1`, albumID).Scan(&choices); err != nil || choices != 0 {
+		t.Fatalf("choice left: %d, %v", choices, err)
+	}
+
+	store := NewStore(f.pool)
+	before, err := store.MatchSummary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`UPDATE tracks SET updated_at = NOW() + INTERVAL '1 second' WHERE id = $1`, extra)
+	after, err := store.MatchSummary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Unmatched != before.Unmatched-1 || after.Waiting != before.Waiting+1 {
+		t.Fatalf("summary %+v → %+v; a track changed since its outcome should count as waiting", before, after)
 	}
 }
