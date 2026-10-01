@@ -317,10 +317,10 @@ type execer interface {
 // RecordAlbumUnmatched records every track of an album waiting for a match
 // as unmatched, in one statement.
 func (s *Store) RecordAlbumUnmatched(ctx context.Context, albumID uuid.UUID, reason string, overLimit int) error {
-	// Share-locked, as ingest locks the album before adding a track, so the
-	// size checked holds through commit.
+	// The album and its tracks are share-locked, so the size checked holds
+	// through commit.
 	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM albums WHERE id = $1 FOR SHARE`, albumID); err != nil {
+		if err := lockAlbumMembers(ctx, tx, albumID); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `
@@ -502,6 +502,18 @@ func (s *Store) NextMatchRetry(ctx context.Context) (time.Time, bool, error) {
 	return *at, true, nil
 }
 
+// lockAlbumMembers share-locks an album and then its tracks, so its
+// membership holds until the caller commits: ingest locks the album before
+// adding a track, and a move or a removal updates the track's row, which
+// waits (or, committed first, is seen by the caller's next statement).
+func lockAlbumMembers(ctx context.Context, tx pgx.Tx, albumID uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM albums WHERE id = $1 FOR SHARE`, albumID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `SELECT 1 FROM tracks WHERE album_id = $1 ORDER BY id FOR SHARE`, albumID)
+	return err
+}
+
 // ChooseRelease notes the release chosen for an album before its tracks are
 // filed under it, if the album still holds just the tracks it was judged on
 // (judged), all settled; noted is false otherwise, and the album is judged
@@ -510,11 +522,10 @@ func (s *Store) ChooseRelease(ctx context.Context, albumID uuid.UUID, tidalAlbum
 	if judged == nil {
 		judged = []uuid.UUID{}
 	}
-	// The album row is share-locked first, as ingest locks it (exclusively)
-	// before adding a track, so no track lands between the check and the
-	// commit.
+	// The album and its tracks are share-locked first, so no track lands,
+	// moves or goes between the check and the commit.
 	err = dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM albums WHERE id = $1 FOR SHARE`, albumID); err != nil {
+		if err := lockAlbumMembers(ctx, tx, albumID); err != nil {
 			return err
 		}
 		err := tx.QueryRow(ctx, `
