@@ -1678,3 +1678,32 @@ func TestFinishedChoiceYearAndExistingCopy(t *testing.T) {
 		t.Fatal("a track found to be a TIDAL copy since its no-match isn't waiting")
 	}
 }
+
+// A track backing off after a failure isn't retried early because an
+// album-mate came due: it counts toward the release but waits its turn.
+func TestBackingOffTrackWaitsWithinItsAlbum(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	albumID := f.album("Record "+f.run, main, 0)
+	waiting := f.track(localTrack{title: "One", artists: []string{main}, album: &albumID, duration: 100_000})
+	fresh := f.track(localTrack{title: "Two", artists: []string{main}, album: &albumID, duration: 110_000})
+	f.exec(`INSERT INTO tidal_matches(track_id, status, error, attempts, next_attempt_at)
+	        VALUES($1, 'failed', 'boom', 3, NOW() + INTERVAL '40 minutes')`, waiting)
+	relID := "rel" + f.run
+	rel := tidal.Album{ID: relID, Title: "Record " + f.run, Artist: main, Tracks: []tidal.Track{
+		{ID: "o" + f.run, Title: "One", Artists: []string{main}, DurationMS: 100_000, TrackNo: 1},
+		{ID: "t" + f.run, Title: "Two", Artists: []string{main}, DurationMS: 110_000, TrackNo: 2},
+	}}
+	src := &fakeCatalog{searchAlbums: []tidal.Album{rel}, albums: map[string]tidal.Album{relID: rel}}
+	if err := f.matcher(src).matchAlbum(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(fresh); got.Match != MatchMatched {
+		t.Fatalf("fresh = %+v", got)
+	}
+	got := f.state(waiting)
+	if got.Match != MatchFailed || got.Edited || got.Retry == nil || time.Until(*got.Retry) < 30*time.Minute {
+		t.Fatalf("backing-off track = %+v; want it left until its retry", got)
+	}
+}

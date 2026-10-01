@@ -98,6 +98,10 @@ type MatchTrack struct {
 	// Resumable: an unfinished release choice for the album was judged on
 	// it and it is still to file (matchResumable).
 	Resumable bool
+	// BackingOff: its last lookup failed and the retry isn't due yet. It
+	// counts toward its album's release, but isn't changed or recorded
+	// until then.
+	BackingOff bool
 }
 
 // MatchAlbum is the library album a group of MatchTracks shares.
@@ -208,7 +212,10 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 	// Settling is checked again on the tracks as loaded: one may have
 	// changed since the album query.
 	rows, err := s.db.Query(ctx, `
-		SELECT `+matchTrackColumns+`, `+matchSettled+`, `+matchResumable+`
+		SELECT `+matchTrackColumns+`, `+matchSettled+`, `+matchResumable+`,
+		       EXISTS (SELECT 1 FROM tidal_matches m
+		               WHERE m.track_id = t.id AND m.status = 'failed' AND m.next_attempt_at > NOW()
+		                 AND `+matchFresh+`)
 		FROM tracks t
 		JOIN albums a ON a.id = t.album_id
 		WHERE t.album_id = $1 AND `+matchEligible+` AND NOT `+matchLoose+`
@@ -225,7 +232,7 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 			settled bool
 		)
 		if err := rows.Scan(&t.ID, &t.AlbumID, &t.AlbumLink, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS,
-			&t.TrackNo, &t.DiscNo, &t.FilePath, &t.Seen, &settled, &t.Resumable); err != nil {
+			&t.TrackNo, &t.DiscNo, &t.FilePath, &t.Seen, &settled, &t.Resumable, &t.BackingOff); err != nil {
 			return a, nil, err
 		}
 		// Linked between the two queries: judge it again on a fresh read.

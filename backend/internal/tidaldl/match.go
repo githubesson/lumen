@@ -300,17 +300,28 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 		}
 	}
 	m.fillISRCs(tracks)
+	// Tracks backing off count toward the release but wait for their own
+	// retry to be changed or recorded.
+	var due []MatchTrack
+	for _, t := range tracks {
+		if !t.BackingOff {
+			due = append(due, t)
+		}
+	}
+	if len(due) == 0 {
+		return nil
+	}
 	r, err := m.albumRelease(ctx, album, tracks)
 	if err != nil {
-		m.recordAll(ctx, tracks, MatchOutcome{Status: MatchFailed, Error: err.Error()}, err)
+		m.recordAll(ctx, due, MatchOutcome{Status: MatchFailed, Error: err.Error()}, err)
 		return err
 	}
 	if r == nil {
-		m.recordAll(ctx, tracks, MatchOutcome{Status: MatchUnmatched, Error: "no TIDAL release lists this album's tracks"}, nil)
+		m.recordAll(ctx, due, MatchOutcome{Status: MatchUnmatched, Error: "no TIDAL release lists this album's tracks"}, nil)
 		return nil
 	}
 	if err := m.keep(ctx, r); err != nil {
-		m.recordAll(ctx, tracks, MatchOutcome{Status: MatchFailed, Error: err.Error()}, err)
+		m.recordAll(ctx, due, MatchOutcome{Status: MatchFailed, Error: err.Error()}, err)
 		return err
 	}
 	linked := album.TIDALAlbumID != ""
@@ -331,6 +342,9 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 	for i, t := range tracks {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if t.BackingOff {
+			continue
 		}
 		if hit, ok := hits[i]; ok {
 			if err := m.apply(ctx, t, hit, linked); err != nil {
