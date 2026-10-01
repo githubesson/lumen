@@ -59,9 +59,11 @@ const matchLoose = `(t.album_id IS NULL OR (a.title = '` + library.CatchAllAlbum
 // MatchTrack is a library track waiting for a TIDAL match.
 type MatchTrack struct {
 	ID uuid.UUID
-	// AlbumID is the album the track was in when loaded; it is matched or
-	// moved only while still there.
+	// AlbumID is the album the track was in when loaded, and AlbumLink that
+	// album's TIDAL release link; it is matched or moved only while both
+	// still hold.
 	AlbumID    *uuid.UUID
+	AlbumLink  string
 	Title      string
 	Artists    []string // performers, primary first
 	ISRC       string
@@ -92,7 +94,8 @@ type MatchAlbum struct {
 	Chosen string
 }
 
-const matchTrackColumns = `t.id, t.album_id, t.title,
+const matchTrackColumns = `t.id, t.album_id,
+	COALESCE((SELECT la.tidal_album_id FROM albums la WHERE la.id = t.album_id), ''), t.title,
 	ARRAY(SELECT ar.name FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
 	      WHERE ta.track_id = t.id AND ta.role <> 'composer' ORDER BY ta.position, ar.name),
 	COALESCE(t.isrc, ''), t.duration_ms, COALESCE(t.track_no, 0), COALESCE(t.disc_no, 0), t.file_path,
@@ -106,12 +109,17 @@ func (t MatchTrack) seen() *time.Time {
 	return &t.Seen
 }
 
+// source is the track as loaded, for the final check.
+func (t MatchTrack) source() library.MatchSource {
+	return library.MatchSource{Album: t.AlbumID, AlbumLink: t.AlbumLink, Seen: t.seen()}
+}
+
 type rowScanner interface{ Scan(...any) error }
 
 func scanMatchTrack(row rowScanner) (MatchTrack, error) {
 	var t MatchTrack
-	err := row.Scan(&t.ID, &t.AlbumID, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS, &t.TrackNo, &t.DiscNo,
-		&t.FilePath, &t.Seen)
+	err := row.Scan(&t.ID, &t.AlbumID, &t.AlbumLink, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS, &t.TrackNo,
+		&t.DiscNo, &t.FilePath, &t.Seen)
 	return t, err
 }
 
@@ -187,8 +195,8 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 			t       MatchTrack
 			settled bool
 		)
-		if err := rows.Scan(&t.ID, &t.AlbumID, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS, &t.TrackNo,
-			&t.DiscNo, &t.FilePath, &t.Seen, &settled); err != nil {
+		if err := rows.Scan(&t.ID, &t.AlbumID, &t.AlbumLink, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS,
+			&t.TrackNo, &t.DiscNo, &t.FilePath, &t.Seen, &settled); err != nil {
 			return a, nil, err
 		}
 		a.Unsettled = a.Unsettled || !settled

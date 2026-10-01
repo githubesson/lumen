@@ -824,7 +824,7 @@ func TestApplyTIDALMatchHonorsAlbumEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	applied, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
-		Title: "Song", From: &albumID, Album: library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main},
+		Title: "Song", Source: library.MatchSource{Album: &albumID}, Album: library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main},
 	}, nil)
 	if err != nil || applied {
 		t.Fatalf("applied = %v, %v; want the edited album to keep its track", applied, err)
@@ -912,12 +912,12 @@ func TestApplyTIDALMatchNeedsSourceAlbum(t *testing.T) {
 	moved := f.album("Moved "+f.run, main, 0)
 	id := f.track(localTrack{title: "song", artists: []string{main}, album: &moved, duration: 100_000})
 	applied, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
-		Title: "Song", From: &from, Album: library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main},
+		Title: "Song", Source: library.MatchSource{Album: &from}, Album: library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main},
 	}, nil)
 	if err != nil || applied {
 		t.Fatalf("applied = %v, %v; want a moved track left alone", applied, err)
 	}
-	filed, err := f.lib.FileUnderTIDALRelease(ctx, id, &from, nil, library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main})
+	filed, err := f.lib.FileUnderTIDALRelease(ctx, id, library.MatchSource{Album: &from}, library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main})
 	if err != nil || filed {
 		t.Fatalf("filed = %v, %v; want a moved track left alone", filed, err)
 	}
@@ -1044,7 +1044,7 @@ func TestApplyTIDALMatchNeedsUnchangedTrack(t *testing.T) {
 	id := f.track(localTrack{title: "song", artists: []string{main}, duration: 100_000})
 	seen := time.Now().Add(-2 * time.Hour)
 	applied, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
-		Title: "Song", Seen: &seen, Album: library.TIDALAlbumFields{Title: "Record " + f.run, Artist: main},
+		Title: "Song", Source: library.MatchSource{Seen: &seen}, Album: library.TIDALAlbumFields{Title: "Record " + f.run, Artist: main},
 	}, nil)
 	if err != nil || applied {
 		t.Fatalf("applied = %v, %v; want a changed track left alone", applied, err)
@@ -1167,7 +1167,7 @@ func TestCatchAllCoverStaysBehind(t *testing.T) {
 	}
 	id := f.track(localTrack{title: "Untagged", album: &others, duration: 100_000})
 	applied, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
-		Title: "Song", Artists: []string{main}, From: &others,
+		Title: "Song", Artists: []string{main}, Source: library.MatchSource{Album: &others},
 		Album: library.TIDALAlbumFields{Title: "Record " + f.run, Artist: main},
 	}, nil)
 	if err != nil || !applied {
@@ -1212,5 +1212,28 @@ func TestChangedTrackIsDueAgain(t *testing.T) {
 	f.exec(`UPDATE tracks SET updated_at = NOW() - INTERVAL '20 minutes' WHERE id = $1`, id)
 	if !waiting() {
 		t.Fatal("a track changed since its no-match isn't waiting")
+	}
+}
+
+// An album linked to a release (auto-download saved part of it) while an
+// "unlinked" decision was being made keeps its track.
+func TestApplyTIDALMatchNeedsAlbumLinkUnchanged(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	albumID := f.album("Record "+f.run, main, 0)
+	id := f.track(localTrack{title: "song", artists: []string{main}, album: &albumID, duration: 100_000})
+	store := NewStore(f.pool)
+	_, loaded, err := store.MatchAlbumTracks(ctx, albumID, 10)
+	if err != nil || len(loaded) != 1 {
+		t.Fatalf("loaded %d, %v", len(loaded), err)
+	}
+	f.exec(`UPDATE albums SET tidal_album_id = $2 WHERE id = $1`, albumID, "saved"+f.run)
+	applied, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
+		Title: "Song", Source: loaded[0].source(),
+		Album: library.TIDALAlbumFields{Title: "Other Edition " + f.run, Artist: main},
+	}, nil)
+	if err != nil || applied {
+		t.Fatalf("applied = %v, %v; want the newly linked album to keep its track", applied, err)
 	}
 }

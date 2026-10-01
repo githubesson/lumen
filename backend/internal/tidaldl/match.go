@@ -306,7 +306,7 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 		}
 		// Not on the release: kept with the rest of its album.
 		if !linked {
-			filed, err := m.Library.FileUnderTIDALRelease(ctx, t.ID, t.AlbumID, t.seen(), fields)
+			filed, err := m.Library.FileUnderTIDALRelease(ctx, t.ID, t.source(), fields)
 			if errors.Is(err, library.ErrTIDALAlbumConflict) {
 				m.record(ctx, t, MatchOutcome{Status: MatchUnmatched, Error: err.Error()})
 				continue
@@ -754,8 +754,7 @@ func (m *Matcher) apply(ctx context.Context, t MatchTrack, hit tidal.Track, keep
 		Artists:   hit.Artists,
 		ISRC:      ingest.NormalizeISRC(isrc),
 		KeepAlbum: keepAlbum,
-		From:      t.AlbumID,
-		Seen:      t.seen(),
+		Source:    t.source(),
 	}
 	if strings.TrimSpace(hit.AlbumTitle) != "" {
 		fields.Album = library.TIDALAlbumFields{
