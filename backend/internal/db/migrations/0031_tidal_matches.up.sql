@@ -31,8 +31,14 @@ CREATE INDEX tidal_matches_cover_idx ON tidal_matches(cover_retry_at) WHERE cove
 CREATE TABLE tidal_match_albums (
     album_id       UUID PRIMARY KEY REFERENCES albums(id) ON DELETE CASCADE,
     tidal_album_id TEXT NOT NULL,
+    -- The tracks the choice was judged on; only they finish under it.
+    track_ids      UUID[] NOT NULL DEFAULT '{}',
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Matching skips tracks an importer brought in, per track; API tracker
+-- downloads already have this index.
+CREATE INDEX IF NOT EXISTS artistgrid_downloads_track_idx ON artistgrid_downloads(track_id);
 
 -- Set when an admin edits an album's title, album artist, year or
 -- compilation flag. TIDAL matching leaves the tracks of such an album alone,

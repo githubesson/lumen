@@ -271,6 +271,23 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 		}
 		return nil
 	}
+	if album.Chosen != "" {
+		// Only the tracks the choice was judged on finish under it; any
+		// added since are judged once it is done.
+		judged := map[uuid.UUID]bool{}
+		for _, id := range album.ChosenTracks {
+			judged[id] = true
+		}
+		kept := tracks[:0]
+		for _, t := range tracks {
+			if judged[t.ID] {
+				kept = append(kept, t)
+			}
+		}
+		if tracks = kept; len(tracks) == 0 {
+			return m.Store.ReleaseDone(ctx, album.ID)
+		}
+	}
 	m.fillISRCs(tracks)
 	r, err := m.albumRelease(ctx, album, tracks)
 	if err != nil {
@@ -499,18 +516,19 @@ func assignRelease(r tidal.Album, tracks []MatchTrack, relaxed bool) map[int]tid
 			if !titledMatch(t, c, title, entryTitles[j], relaxed) {
 				continue
 			}
-			score := 0
-			if sameISRC(t.ISRC, c.ISRC) {
-				score += 8
+			// Tiers, each outweighing everything below it across a whole
+			// pairing: the same ISRC, a listed entry, the same position,
+			// then the closest duration.
+			cost := int64(min(abs(t.DurationMS-c.DurationMS), assignDurationCap))
+			if t.TrackNo > 0 && t.TrackNo == c.TrackNo && max(t.DiscNo, 1) == max(c.DiscNo, 1) {
+				cost -= assignPositionWeight
 			}
 			if !c.Removed {
-				score += 4
+				cost -= assignListedWeight
 			}
-			if t.TrackNo > 0 && t.TrackNo == c.TrackNo && max(t.DiscNo, 1) == max(c.DiscNo, 1) {
-				score += 2
+			if sameISRC(t.ISRC, c.ISRC) {
+				cost -= assignISRCWeight
 			}
-			// Stronger pairs cost less; among equals, the closer duration.
-			cost := -score*assignScoreUnit + min(abs(t.DurationMS-c.DurationMS), assignScoreUnit-1)
 			pairs = append(pairs, assignPair{track: i, entry: j, cost: cost})
 		}
 	}
@@ -525,10 +543,20 @@ func assignRelease(r tidal.Album, tracks []MatchTrack, relaxed bool) map[int]tid
 	return out
 }
 
-// assignScoreUnit weighs one point of pair strength over any duration gap.
-const assignScoreUnit = 1_000_000
+// Pair cost tiers. A pairing holds at most matchMaxAlbumTracks pairs, so
+// each weight exceeds that many of everything below it: no number of
+// position matches outweighs one ISRC.
+const (
+	assignDurationCap    = 999_999                                                   // ms
+	assignPositionWeight = int64(matchMaxAlbumTracks+1) * (assignDurationCap + 1)    // > any duration total
+	assignListedWeight   = int64(matchMaxAlbumTracks+1) * (assignPositionWeight * 2) // > any position total
+	assignISRCWeight     = int64(matchMaxAlbumTracks+1) * (assignListedWeight * 2)   // > any listed total
+)
 
-type assignPair struct{ track, entry, cost int }
+type assignPair struct {
+	track, entry int
+	cost         int64
+}
 
 // minCostMatching pairs tracks with entries one to one: as many pairs as
 // possible, and among those the lowest total cost (successive shortest
@@ -542,9 +570,12 @@ func minCostMatching(tracks int, pairs []assignPair) map[int]int {
 		}
 	}
 	source, sink := 0, 1+tracks+len(entryNode)
-	type edge struct{ to, rev, capacity, cost int }
+	type edge struct {
+		to, rev, capacity int
+		cost              int64
+	}
 	graph := make([][]edge, sink+1)
-	addEdge := func(from, to, cost int) {
+	addEdge := func(from, to int, cost int64) {
 		graph[from] = append(graph[from], edge{to, len(graph[to]), 1, cost})
 		graph[to] = append(graph[to], edge{from, len(graph[from]) - 1, 0, -cost})
 	}
@@ -557,10 +588,10 @@ func minCostMatching(tracks int, pairs []assignPair) map[int]int {
 	for _, p := range pairs {
 		addEdge(1+p.track, entryNode[p.entry], p.cost)
 	}
-	const unreached = int(^uint(0) >> 1)
+	const unreached = int64(^uint64(0) >> 1)
 	for {
 		// Bellman-Ford (queue-based): costs may be negative.
-		dist := make([]int, len(graph))
+		dist := make([]int64, len(graph))
 		prevNode := make([]int, len(graph))
 		prevEdge := make([]int, len(graph))
 		queued := make([]bool, len(graph))

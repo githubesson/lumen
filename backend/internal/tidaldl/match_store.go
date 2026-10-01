@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/githubesson/lumen/internal/dbtext"
+	"github.com/githubesson/lumen/internal/dbutil"
 	"github.com/githubesson/lumen/internal/library"
 )
 
@@ -89,9 +90,11 @@ type MatchAlbum struct {
 	// Unsettled: some of its waiting tracks changed moments ago, so the
 	// album waits until they settle and can be judged with the rest.
 	Unsettled bool
-	// Chosen is the release an attempt cut short chose for the album, kept
-	// until none of its tracks is left to file (ReleaseDone).
-	Chosen string
+	// Chosen is the release an attempt cut short chose for the album, and
+	// ChosenTracks the tracks it was judged on, kept until none of those is
+	// left to file (ReleaseDone).
+	Chosen       string
+	ChosenTracks []uuid.UUID
 }
 
 const matchTrackColumns = `t.id, t.album_id,
@@ -130,13 +133,20 @@ func (s *Store) PendingMatchAlbums(ctx context.Context, limit int) ([]uuid.UUID,
 	rows, err := s.db.Query(ctx, `
 		SELECT e.album_id
 		FROM (
-			SELECT t.album_id, t.created_at, `+matchSettled+` AS settled, `+matchDue+` AS due
+			SELECT t.album_id, t.created_at, `+matchSettled+` AS settled, `+matchDue+` AS due,
+			       EXISTS (SELECT 1 FROM tidal_matches bm
+			               WHERE bm.track_id = t.id AND bm.status = 'failed'
+			                 AND bm.next_attempt_at > NOW() AND bm.updated_at >= t.updated_at) AS backing_off
 			FROM tracks t
 			JOIN albums a ON a.id = t.album_id
 			WHERE `+matchEligible+` AND NOT `+matchLoose+`
 		) e
 		GROUP BY e.album_id
-		HAVING (BOOL_OR(e.due) OR EXISTS (SELECT 1 FROM tidal_match_albums c WHERE c.album_id = e.album_id))
+		-- An unfinished choice resumes, unless all that's left is failures
+		-- backing off.
+		HAVING (BOOL_OR(e.due)
+		        OR (EXISTS (SELECT 1 FROM tidal_match_albums c WHERE c.album_id = e.album_id)
+		            AND BOOL_OR(NOT e.backing_off)))
 		   AND BOOL_AND(e.settled)
 		ORDER BY MAX(e.created_at) FILTER (WHERE e.due) DESC, e.album_id
 		LIMIT $1`, limit)
@@ -168,10 +178,11 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 		          AND t.owner_id IS NULL),
 		       EXISTS (SELECT 1 FROM tracks t
 		               WHERE t.album_id = a.id AND `+matchEligible+` AND NOT `+matchSettled+`),
-		       COALESCE((SELECT c.tidal_album_id FROM tidal_match_albums c WHERE c.album_id = a.id), '')
+		       COALESCE((SELECT c.tidal_album_id FROM tidal_match_albums c WHERE c.album_id = a.id), ''),
+		       COALESCE((SELECT c.track_ids FROM tidal_match_albums c WHERE c.album_id = a.id), '{}')
 		FROM albums a LEFT JOIN artists ar ON ar.id = a.album_artist_id
 		WHERE a.id = $1`, albumID).Scan(&a.Title, &a.Artist, &a.Year, &a.TIDALAlbumID, &a.Tracks,
-		&a.Unsettled, &a.Chosen)
+		&a.Unsettled, &a.Chosen, &a.ChosenTracks)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return a, nil, nil
 	}
@@ -285,20 +296,47 @@ func (s *Store) RecordOutcome(ctx context.Context, tracks []MatchTrack, o MatchO
 		links[i] = t.AlbumLink
 		seen[i] = t.seen()
 	}
-	_, err := s.db.Exec(ctx, `
-		INSERT INTO tidal_matches (track_id, status, tidal_id, tidal_album_id, error, attempts,
-		                           next_attempt_at, cover_url, cover_album_id)
-		SELECT tr.id, $4, $5, $6, $7, `+fmt.Sprintf(outcomeAttempts, "$4")+`, `+fmt.Sprintf(outcomeRetry, "$4")+`, '', NULL
-		FROM tracks tr
-		JOIN unnest($1::uuid[], $2::uuid[], $3::timestamptz[], $8::text[]) AS snap(id, album_id, seen, link)
-		  ON snap.id = tr.id
-		WHERE COALESCE(tr.album_id, '00000000-0000-0000-0000-000000000000'::uuid) = snap.album_id
-		  AND (snap.seen IS NULL OR tr.updated_at = snap.seen)
-		  AND COALESCE((SELECT la.tidal_album_id FROM albums la WHERE la.id = tr.album_id), '') = snap.link
-		`+outcomeUpsert,
-		ids, albums, seen, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error),
-		links)
-	return err
+	// Locked through commit, albums before tracks as everywhere else, so a
+	// link or an adoption can't land between the check and the write.
+	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			SELECT 1 FROM albums WHERE id = ANY($1) ORDER BY id FOR SHARE`, albums); err != nil {
+			return err
+		}
+		var still []uuid.UUID
+		rows, err := tx.Query(ctx, `
+			SELECT tr.id FROM tracks tr
+			JOIN unnest($1::uuid[], $2::uuid[], $3::timestamptz[], $4::text[]) AS snap(id, album_id, seen, link)
+			  ON snap.id = tr.id
+			WHERE COALESCE(tr.album_id, '00000000-0000-0000-0000-000000000000'::uuid) = snap.album_id
+			  AND (snap.seen IS NULL OR tr.updated_at = snap.seen)
+			  AND COALESCE((SELECT la.tidal_album_id FROM albums la WHERE la.id = tr.album_id), '') = snap.link
+			ORDER BY tr.id
+			FOR UPDATE OF tr`, ids, albums, seen, links)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id uuid.UUID
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			still = append(still, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil || len(still) == 0 {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO tidal_matches (track_id, status, tidal_id, tidal_album_id, error, attempts,
+			                           next_attempt_at, cover_url, cover_album_id)
+			SELECT id, $2, $3, $4, $5, `+fmt.Sprintf(outcomeAttempts, "$2")+`, `+fmt.Sprintf(outcomeRetry, "$2")+`, '', NULL
+			FROM unnest($1::uuid[]) AS id
+			`+outcomeUpsert,
+			still, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error))
+		return err
+	})
 }
 
 // outcomeAttempts is a new outcome's failure count, by its status (the %s
@@ -384,15 +422,16 @@ func (s *Store) ChooseRelease(ctx context.Context, albumID uuid.UUID, tidalAlbum
 		judged = []uuid.UUID{}
 	}
 	err = s.db.QueryRow(ctx, `
-		INSERT INTO tidal_match_albums (album_id, tidal_album_id)
-		SELECT $1, $2
+		INSERT INTO tidal_match_albums (album_id, tidal_album_id, track_ids)
+		SELECT $1, $2, $3::uuid[]
 		WHERE (SELECT COALESCE(ARRAY_AGG(t.id ORDER BY t.id), '{}')
 		       FROM tracks t JOIN albums a ON a.id = t.album_id
 		       WHERE t.album_id = $1 AND `+matchEligible+` AND NOT `+matchLoose+`)
 		    = (SELECT COALESCE(ARRAY_AGG(j ORDER BY j), '{}') FROM unnest($3::uuid[]) AS j)
 		  AND NOT EXISTS (SELECT 1 FROM tracks t
 		                  WHERE t.album_id = $1 AND `+matchEligible+` AND NOT `+matchSettled+`)
-		ON CONFLICT (album_id) DO UPDATE SET tidal_album_id = EXCLUDED.tidal_album_id, created_at = NOW()
+		ON CONFLICT (album_id) DO UPDATE SET
+			tidal_album_id = EXCLUDED.tidal_album_id, track_ids = EXCLUDED.track_ids, created_at = NOW()
 		RETURNING TRUE`, albumID, dbtext.Clean(tidalAlbumID), judged).Scan(&noted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -400,17 +439,17 @@ func (s *Store) ChooseRelease(ctx context.Context, albumID uuid.UUID, tidalAlbum
 	return noted, err
 }
 
-// ReleaseDone drops an album's chosen release once none of its tracks is
-// left to file: every eligible track still in the album has an outcome
-// recorded since the choice, and not a failure, which would retry under it.
-// An older outcome (a track skipped as changed) doesn't count.
+// ReleaseDone drops an album's chosen release once none of the tracks it was
+// judged on is left to file: every one still eligible in the album has an
+// outcome recorded since the choice, and not a failure, which would retry
+// under it. An older outcome (a track skipped as changed) doesn't count.
 func (s *Store) ReleaseDone(ctx context.Context, albumID uuid.UUID) error {
 	_, err := s.db.Exec(ctx, `
 		DELETE FROM tidal_match_albums c
 		WHERE c.album_id = $1 AND NOT EXISTS (
 			SELECT 1 FROM tracks t
 			LEFT JOIN tidal_matches om ON om.track_id = t.id
-			WHERE t.album_id = $1 AND `+matchEligible+`
+			WHERE t.album_id = $1 AND t.id = ANY(c.track_ids) AND `+matchEligible+`
 			  AND (om.track_id IS NULL OR om.status = 'failed' OR om.updated_at < c.created_at))`, albumID)
 	return err
 }

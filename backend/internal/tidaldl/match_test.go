@@ -732,7 +732,8 @@ func TestMatcherFinishesInterruptedAlbum(t *testing.T) {
 	}
 	albumID := f.album("Record "+f.run, "", 0)
 	bonus := f.track(localTrack{title: "Bonus", artists: []string{main}, album: &albumID, duration: 50_000})
-	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id) VALUES($1, $2)`, albumID, relID)
+	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, track_ids) VALUES($1, $2, $3)`,
+		albumID, relID, []uuid.UUID{bonus})
 
 	src := &fakeCatalog{err: errors.New("TIDAL must not be needed")}
 	if err := f.matcher(src).matchAlbum(ctx, albumID); err != nil {
@@ -1144,7 +1145,8 @@ func TestOutcomesNeedTheTrackAsLoaded(t *testing.T) {
 	}
 
 	// The choice comes after stays' outcome, which then doesn't finish it.
-	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, created_at) VALUES($1, 'rel', NOW() + INTERVAL '1 second')`, albumID)
+	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, track_ids, created_at)
+	        VALUES($1, 'rel', $2, NOW() + INTERVAL '1 second')`, albumID, []uuid.UUID{stays, moves})
 	if err := store.ReleaseDone(ctx, albumID); err != nil {
 		t.Fatal(err)
 	}
@@ -1466,5 +1468,54 @@ func TestBackoffStreakAndPendingChoice(t *testing.T) {
 	var errText string
 	if err := f.pool.QueryRow(ctx, `SELECT error FROM tidal_matches WHERE track_id = $1`, id).Scan(&errText); err != nil || errText == "late" {
 		t.Fatalf("error = %q, %v; an outcome landed on a track whose album was linked since", errText, err)
+	}
+}
+
+// A resumed choice only finishes the tracks it was judged on; a track added
+// since waits to be judged, and failures backing off don't keep the album
+// coming up.
+func TestResumedChoiceKeepsToJudgedTracks(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	relID := "rel" + f.run
+	rel := tidal.Album{ID: relID, Title: "Record " + f.run + " (Deluxe)", Artist: main,
+		Tracks: []tidal.Track{{ID: "a" + f.run, Title: "Song", Artists: []string{main}, DurationMS: 100_000, TrackNo: 1}}}
+	if err := f.lib.SaveTIDALAlbum(ctx, rel); err != nil {
+		t.Fatal(err)
+	}
+	albumID := f.album("Record "+f.run, main, 0)
+	judged := f.track(localTrack{title: "Song", artists: []string{main}, album: &albumID, duration: 100_000})
+	added := f.track(localTrack{title: "Unrelated", artists: []string{main}, album: &albumID, duration: 300_000})
+	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, track_ids) VALUES($1, $2, $3)`,
+		albumID, relID, []uuid.UUID{judged})
+	m := f.matcher(&fakeCatalog{err: errors.New("TIDAL must not be needed")})
+	if err := m.matchAlbum(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(judged); got.Match != MatchMatched || got.Album != rel.Title {
+		t.Fatalf("judged = %+v", got)
+	}
+	if got := f.state(added); got.Match != "" || got.AlbumID != albumID {
+		t.Fatalf("added = %+v; want it left to be judged on its own", got)
+	}
+	var choices int
+	if err := f.pool.QueryRow(ctx, `SELECT COUNT(*) FROM tidal_match_albums WHERE album_id = $1`, albumID).Scan(&choices); err != nil || choices != 0 {
+		t.Fatalf("choice left: %d, %v", choices, err)
+	}
+
+	// Only failures backing off left under a choice: not pending until due.
+	other := f.album("Other "+f.run, main, 0)
+	failing := f.track(localTrack{title: "Failing", artists: []string{main}, album: &other, duration: 100_000})
+	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, track_ids) VALUES($1, $2, $3)`,
+		other, relID, []uuid.UUID{failing})
+	f.exec(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at)
+	        VALUES($1, 'failed', 1, NOW() + INTERVAL '5 minutes')`, failing)
+	pending, err := m.Store.PendingMatchAlbums(ctx, 10_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsID(pending, other) {
+		t.Fatal("an album whose only track is backing off is pending")
 	}
 }

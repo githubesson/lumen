@@ -234,3 +234,21 @@ func TestAssignReleaseKeepsBestPairing(t *testing.T) {
 		t.Fatalf("assigned %v, %v, %v; want e100, e102, e105", got[0].ID, got[1].ID, got[2].ID)
 	}
 }
+
+// Each pairing tier outweighs everything below it summed over the largest
+// pairing, so pairings compare tier by tier.
+func TestAssignWeightsAreLexicographic(t *testing.T) {
+	n := int64(matchMaxAlbumTracks)
+	if assignPositionWeight <= n*int64(assignDurationCap) {
+		t.Fatal("durations can outweigh a position")
+	}
+	if assignListedWeight <= n*(assignPositionWeight+int64(assignDurationCap)) {
+		t.Fatal("positions can outweigh a listed entry")
+	}
+	if assignISRCWeight <= n*(assignListedWeight+assignPositionWeight+int64(assignDurationCap)) {
+		t.Fatal("lower tiers can outweigh an ISRC")
+	}
+	if max := n * (assignISRCWeight + assignListedWeight + assignPositionWeight + int64(assignDurationCap)); max <= 0 || max > 1<<62 {
+		t.Fatal("pairing costs can overflow")
+	}
+}
