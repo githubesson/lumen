@@ -254,6 +254,32 @@ destination volume has less free space than that. Anyone who can edit an
 opted-in playlist can add tracks to it, so only opt in playlists whose editors
 you trust with library space.
 
+### Filing local files by TIDAL
+
+The library's own files get the same metadata as saved TIDAL tracks. A
+background worker looks each shared local track up on TIDAL and, on a
+confident match, gives it TIDAL's title, artist list and ISRC, and files it
+under the TIDAL release: album, album artist, year, disc and track number,
+and the release cover when the album has none. The album page then shows the
+whole release, like an album of saved TIDAL tracks.
+
+- Tracks are matched album by album, so an album's tracks land on one
+  release, and only when at least half of them are on it. The rest of the
+  album moves with them, keeping their own titles. Tracks without an album are
+  matched one by one.
+- A match needs the same ISRC (read from the file's tags), or the same title,
+  artist and length within 3 seconds. Feat. credits and remaster or edition
+  qualifiers are ignored; live versions, remixes and the like are not.
+- Metadata set on purpose (an admin edit, an importer, an earlier match) is
+  never changed, and neither are personal uploads or the files themselves.
+- Each track is looked up once. Tracks without a match are tried again after
+  30 days; lookups that fail retry with backoff. The admin TIDAL status
+  (`GET /api/admin/tidal/auto-download`) counts them under `match`.
+
+`TIDAL_MATCH_LOCAL=false` turns it off. `TIDAL_MATCH_POLL_INTERVAL` (default
+`30m`) sets how often it looks for new tracks once it has caught up; a
+backlog is worked through a few albums a minute.
+
 ## Putting it on the internet
 
 Both app ports bind to loopback only — put a reverse proxy in front. Copy

@@ -236,6 +236,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		Genre:       md.Genre,
 		Year:        md.Year,
 		Composer:    md.Composer,
+		ISRC:        md.ISRC,
 		Comments:    md.Comment,
 		FilePath:    path,
 		FileSize:    stat.Size(),

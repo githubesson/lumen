@@ -55,3 +55,40 @@ func TestVorbisComposerTag(t *testing.T) {
 		}
 	}
 }
+
+// ISRCs are read from the tags and stored in their compact form; anything
+// that isn't one is dropped.
+func TestISRCTag(t *testing.T) {
+	for _, tc := range []struct {
+		comment, want string
+	}{
+		{"ISRC=usum71703861", "USUM71703861"},
+		{"ISRC=US-UM7-17-03861", "USUM71703861"},
+		{"ISRC=not an isrc", ""},
+		{"TITLE=No ISRC", ""},
+	} {
+		md, err := ParseFile(writeVorbisFLAC(t, "TITLE=Song", tc.comment))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if md.ISRC != tc.want {
+			t.Errorf("%s: ISRC = %q, want %q", tc.comment, md.ISRC, tc.want)
+		}
+	}
+}
+
+func TestNormalizeISRC(t *testing.T) {
+	for in, want := range map[string]string{
+		"GBAYE0601498":                 "GBAYE0601498",
+		" gb-aye-06-01498 ":            "GBAYE0601498",
+		"\x00\x00\x00\x00GBAYE0601498": "GBAYE0601498",
+		"GBAYE060149":                  "", // too short
+		"G1AYE0601498":                 "", // country code must be letters
+		"GBAYE06014X8":                 "", // designation must be digits
+		"":                             "",
+	} {
+		if got := NormalizeISRC(in); got != want {
+			t.Errorf("NormalizeISRC(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

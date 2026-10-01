@@ -38,6 +38,8 @@ type tidalAutoDownloadResp struct {
 	FFmpeg           bool               `json:"ffmpeg"`
 	Summary          tidaldl.Summary    `json:"summary"`
 	Recent           []tidaldl.Download `json:"recent"`
+	// Match counts library tracks by TIDAL matching state.
+	Match tidaldl.MatchSummary `json:"match"`
 }
 
 func (h *AdminTIDALDownloads) Status(w http.ResponseWriter, r *http.Request) {
@@ -61,11 +63,17 @@ func (h *AdminTIDALDownloads) Status(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	match, err := h.Store.MatchSummary(r.Context())
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	out := tidalAutoDownloadResp{
 		Subdir:  settings.Subdir,
 		FFmpeg:  mediaembed.Available(),
 		Summary: summary,
 		Recent:  recent,
+		Match:   match,
 	}
 	if settings.RootID != nil {
 		out.RootID = settings.RootID.String()
