@@ -1,9 +1,9 @@
 // Package mediaembed shells out to ffmpeg to embed metadata and cover art
-// into an assembled audio file (typically fragmented MP4 from TIDAL HLS
-// segments). It stream-copies (-c copy) so there is no re-encoding; ffmpeg
-// just remuxes the audio into a fresh container with tags and an attached
-// picture. If ffmpeg is not on $PATH, callers should fall back to serving
-// the raw assembled file without metadata.
+// into an audio file: one assembled from TIDAL HLS segments (Embed), or a
+// library file on disk (EmbedFile). It stream-copies (-c copy) so there is
+// no re-encoding; ffmpeg just remuxes the audio into a fresh container with
+// tags and an attached picture. If ffmpeg is not on $PATH, callers should
+// fall back to serving the file without metadata.
 package mediaembed
 
 import (
@@ -31,6 +31,10 @@ type Metadata struct {
 	TrackNo     int
 	DiscNo      int
 	ISRC        string
+	// Written only when set; a file's own value stays otherwise.
+	Genre    string
+	Composer string
+	Comment  string
 }
 
 // embedTimeout bounds a single ffmpeg invocation. -c copy is fast (no
@@ -59,7 +63,53 @@ const (
 	FormatMP4  FormatHint = "mp4"  // fMP4 / M4A / AAC segments
 	FormatFLAC FormatHint = "flac" // FLAC segments
 	FormatTS   FormatHint = "ts"   // MPEG-TS (usually AAC inside)
+	FormatMP3  FormatHint = "mp3"
+	FormatOgg  FormatHint = "ogg"  // Ogg Vorbis
+	FormatOpus FormatHint = "opus" // Ogg Opus
 )
+
+// HintFromPath is the hint for remuxing a library file in its own container,
+// by extension. ok is false for formats ffmpeg can't retag that way (WAV
+// keeps no usable tags, raw AAC and WebM have none of their own).
+func HintFromPath(path string) (hint FormatHint, ok bool) {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".flac":
+		return FormatFLAC, true
+	case ".m4a", ".mp4":
+		return FormatMP4, true
+	case ".mp3":
+		return FormatMP3, true
+	case ".ogg":
+		return FormatOgg, true
+	case ".opus":
+		return FormatOpus, true
+	}
+	return "", false
+}
+
+// ContentType is the MIME type of output in hint's format.
+func ContentType(hint FormatHint) string {
+	switch hint {
+	case FormatFLAC:
+		return "audio/flac"
+	case FormatMP3:
+		return "audio/mpeg"
+	case FormatOgg:
+		return "audio/ogg"
+	case FormatOpus:
+		return "audio/ogg; codecs=opus"
+	default:
+		return "audio/mp4"
+	}
+}
+
+// pictures reports whether hint's container holds cover art ffmpeg can
+// write. Ogg can't (ffmpeg has no picture muxing for it), so Ogg output
+// carries tags only, and an Ogg file that has art fails to remux rather
+// than lose it.
+func pictures(hint FormatHint) bool {
+	return hint != FormatOgg && hint != FormatOpus
+}
 
 // HintFromContentType maps a Content-Type string to a FormatHint.
 func HintFromContentType(ct string) FormatHint {
@@ -98,7 +148,6 @@ func Embed(ctx context.Context, r io.ReadCloser, cover []byte, meta Metadata, hi
 		return nil, errors.New("ffmpeg not available")
 	}
 
-	ext, outFormat := outputFormat(hint)
 	inExt := inputExt(hint)
 
 	// Write the assembled audio to a temp file first. ffmpeg's fMP4 demuxer
@@ -118,8 +167,33 @@ func Embed(ctx context.Context, r io.ReadCloser, cover []byte, meta Metadata, hi
 	}
 	r.Close()
 	inFile.Close()
+	defer os.Remove(inPath)
+	return embedPath(ctx, inPath, cover, meta, hint)
+}
 
-	outPath := inPath + ".out" + ext
+// EmbedFile is Embed for a file already on disk, such as a library track:
+// ffmpeg reads it in place, and it is not modified. The tagged copy keeps the
+// file's container (hint, see HintFromPath), its audio as is, and its other
+// tags; cover, when given, replaces its pictures, which are kept otherwise.
+func EmbedFile(ctx context.Context, path string, cover []byte, meta Metadata, hint FormatHint) (*Result, error) {
+	if !Available() {
+		return nil, errors.New("ffmpeg not available")
+	}
+	return embedPath(ctx, path, cover, meta, hint)
+}
+
+// embedPath runs ffmpeg on the audio at inPath, which it leaves in place.
+func embedPath(ctx context.Context, inPath string, cover []byte, meta Metadata, hint FormatHint) (*Result, error) {
+	ext, outFormat := outputFormat(hint)
+	if !pictures(hint) {
+		cover = nil
+	}
+	out, err := os.CreateTemp("", "mediaembed-out-*"+ext)
+	if err != nil {
+		return nil, fmt.Errorf("create temp output: %w", err)
+	}
+	outPath := out.Name()
+	out.Close()
 
 	var coverPath string
 	if len(cover) > 0 {
@@ -129,20 +203,20 @@ func Embed(ctx context.Context, r io.ReadCloser, cover []byte, meta Metadata, hi
 		}
 		cf, cerr := os.CreateTemp("", "mediaembed-cover-*"+coverExt)
 		if cerr != nil {
-			os.Remove(inPath)
+			os.Remove(outPath)
 			return nil, fmt.Errorf("create cover temp: %w", cerr)
 		}
 		coverPath = cf.Name()
 		if _, werr := cf.Write(cover); werr != nil {
 			cf.Close()
 			os.Remove(coverPath)
-			os.Remove(inPath)
+			os.Remove(outPath)
 			return nil, fmt.Errorf("write cover temp: %w", werr)
 		}
 		cf.Close()
 	}
 
-	args := buildArgs(inPath, outPath, coverPath, meta, outFormat)
+	args := buildArgs(inPath, outPath, coverPath, meta, outFormat, hint)
 
 	embedCtx, cancel := context.WithTimeout(ctx, embedTimeout)
 	defer cancel()
@@ -152,7 +226,6 @@ func Embed(ctx context.Context, r io.ReadCloser, cover []byte, meta Metadata, hi
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		os.Remove(inPath)
 		os.Remove(outPath)
 		if coverPath != "" {
 			os.Remove(coverPath)
@@ -162,7 +235,6 @@ func Embed(ctx context.Context, r io.ReadCloser, cover []byte, meta Metadata, hi
 		}
 		return nil, fmt.Errorf("ffmpeg failed: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
 	}
-	os.Remove(inPath)
 	if coverPath != "" {
 		os.Remove(coverPath)
 	}
@@ -202,6 +274,12 @@ func inputExt(hint FormatHint) string {
 		return ".flac"
 	case FormatTS:
 		return ".ts"
+	case FormatMP3:
+		return ".mp3"
+	case FormatOgg:
+		return ".ogg"
+	case FormatOpus:
+		return ".opus"
 	default:
 		return ".m4a"
 	}
@@ -211,25 +289,34 @@ func outputFormat(hint FormatHint) (ext, format string) {
 	switch hint {
 	case FormatFLAC:
 		return ".flac", "flac"
-	case FormatTS:
-		return ".m4a", "mp4"
+	case FormatMP3:
+		return ".mp3", "mp3"
+	case FormatOgg:
+		return ".ogg", "ogg"
+	case FormatOpus:
+		return ".opus", "opus"
 	default:
 		return ".m4a", "mp4"
 	}
 }
 
-func buildArgs(inPath, outPath, coverPath string, meta Metadata, outFormat string) []string {
+func buildArgs(inPath, outPath, coverPath string, meta Metadata, outFormat string, hint FormatHint) []string {
 	args := []string{
 		"-nostdin",
 		"-v", "error",
-		"-i", inPath,
+		// The output is a temp file of ours, created to reserve its name.
+		"-y",
+		// file: keeps a path from being read as another protocol.
+		"-i", "file:" + inPath,
 	}
 
 	if coverPath != "" {
-		args = append(args, "-i", coverPath)
+		args = append(args, "-i", "file:"+coverPath)
 	}
 
-	// Map audio (and cover if present)
+	// The audio, and the given cover or else the input's own pictures. Ogg
+	// output can't hold pictures, so an Ogg input with art fails here rather
+	// than lose it (callers then serve the file as is).
 	if coverPath != "" {
 		args = append(args,
 			"-map", "0:a",
@@ -237,7 +324,7 @@ func buildArgs(inPath, outPath, coverPath string, meta Metadata, outFormat strin
 			"-disposition:v:0", "attached_pic",
 		)
 	} else {
-		args = append(args, "-map", "0:a")
+		args = append(args, "-map", "0:a", "-map", "0:v?")
 	}
 
 	// Stream copy — no re-encode
@@ -247,30 +334,49 @@ func buildArgs(inPath, outPath, coverPath string, meta Metadata, outFormat strin
 		args = append(args, "-c:v:0", "copy")
 	}
 
-	// Metadata tags
-	args = append(args, "-metadata", "title="+meta.Title)
-	args = append(args, "-metadata", "artist="+meta.Artist)
-	args = append(args, "-metadata", "album="+meta.Album)
-	args = append(args, "-metadata", "album_artist="+meta.AlbumArtist)
+	// Metadata tags. Ogg keeps its tags on the audio stream rather than the
+	// container. The input's other tags are copied as they are.
+	tag := "-metadata"
+	if hint == FormatOgg || hint == FormatOpus {
+		tag = "-metadata:s:a:0"
+	}
+	set := func(key, value string) { args = append(args, tag, key+"="+value) }
+	set("title", meta.Title)
+	set("artist", meta.Artist)
+	set("album", meta.Album)
+	set("album_artist", meta.AlbumArtist)
 	if meta.Year > 0 {
-		args = append(args, "-metadata", "date="+strconv.Itoa(meta.Year))
+		set("date", strconv.Itoa(meta.Year))
 	}
 	if meta.TrackNo > 0 {
-		args = append(args, "-metadata", "track="+strconv.Itoa(meta.TrackNo))
+		set("track", strconv.Itoa(meta.TrackNo))
 	}
 	if meta.DiscNo > 0 {
-		args = append(args, "-metadata", "disc="+strconv.Itoa(meta.DiscNo))
+		set("disc", strconv.Itoa(meta.DiscNo))
 	}
 	if meta.ISRC != "" {
-		args = append(args, "-metadata", "isrc="+meta.ISRC)
+		set("isrc", meta.ISRC)
+	}
+	if meta.Genre != "" {
+		set("genre", meta.Genre)
+	}
+	if meta.Composer != "" {
+		set("composer", meta.Composer)
+	}
+	if meta.Comment != "" {
+		set("comment", meta.Comment)
 	}
 
-	// MP4: faststart for progressive playback; write to file (not pipe)
-	if outFormat == "mp4" {
+	switch outFormat {
+	case "mp4":
+		// faststart for progressive playback; write to file (not pipe)
 		args = append(args, "-movflags", "+faststart")
+	case "mp3":
+		// ID3v2.3: what most players and file browsers read.
+		args = append(args, "-id3v2_version", "3")
 	}
 
-	args = append(args, "-f", outFormat, outPath)
+	args = append(args, "-f", outFormat, "file:"+outPath)
 	return args
 }
 

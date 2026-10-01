@@ -22,6 +22,7 @@ surface for invites and library management.
 - Optional per-user Last.fm now-playing and scrobble integration
 - Uploads from the web and mobile apps
 - Track and album metadata editing
+- Downloads come tagged with the library's metadata and album cover, for local files as for TIDAL tracks
 
 ### Playlists, favorites & Replay
 
@@ -253,6 +254,24 @@ adding tracks to an opted-in playlist wakes the worker right away.
 destination volume has less free space than that. Anyone who can edit an
 opted-in playlist can add tracks to it, so only opt in playlists whose editors
 you trust with library space.
+
+### Tagged downloads
+
+Saving a track (web/desktop **Download**, playlist export, mobile offline
+downloads) asks for `GET /api/tracks/{id}/stream?download=1`. For a local file
+the server returns a copy tagged with what the library shows: title, artists,
+album, album artist, year, track and disc number, genre, composer, comment,
+ISRC, and the album cover (the file's own art stays when the album has none).
+ffmpeg copies the audio as is (no re-encode) in the file's own container, and
+keeps the file's other tags. The file on disk is never changed, and playback
+streams it as stored.
+
+- Retagged: FLAC, MP3, M4A/MP4, Ogg Vorbis and Opus. Ogg can't hold cover art,
+  so Ogg and Opus copies get tags only, and an Ogg file that already has art is
+  served as stored rather than lose it.
+- WAV, raw AAC and WebM, a server without ffmpeg, or a failed remux: the file
+  is served as stored.
+- At most four downloads are retagged at a time; others wait their turn.
 
 ## Putting it on the internet
 

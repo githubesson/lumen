@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   api,
   createTrackShareLink,
+  downloadStreamUrl,
   getPublicTrackShare,
   parseTrackShareUrl,
+  probeStreamUrl,
   resolveCoverUrl,
   setBaseUrl,
   setUnauthorizedHandler,
@@ -166,6 +168,30 @@ describe("cover URL resolution", () => {
 
     expect(resolveCoverUrl("https://resources.tidal.com/cover.jpg")).toBe(
       "https://resources.tidal.com/cover.jpg",
+    );
+  });
+});
+
+describe("track file URLs", () => {
+  afterEach(() => setBaseUrl(""));
+
+  it("asks for a tagged download for every track", () => {
+    setBaseUrl("https://music.example");
+    expect(downloadStreamUrl("0b2f6c3e-0000-4000-8000-000000000000")).toBe(
+      "https://music.example/api/tracks/0b2f6c3e-0000-4000-8000-000000000000/stream?download=1",
+    );
+    expect(downloadStreamUrl("tidal:123")).toBe(
+      "https://music.example/api/tracks/tidal%3A123/stream?download=1",
+    );
+  });
+
+  it("probes a local track's stored file, not a download", () => {
+    setBaseUrl("https://music.example");
+    expect(probeStreamUrl("0b2f6c3e-0000-4000-8000-000000000000")).toBe(
+      "https://music.example/api/tracks/0b2f6c3e-0000-4000-8000-000000000000/stream",
+    );
+    expect(probeStreamUrl("tidal:123")).toBe(
+      "https://music.example/api/tracks/tidal%3A123/stream?download=1",
     );
   });
 });

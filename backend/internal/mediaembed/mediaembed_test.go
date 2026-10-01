@@ -3,6 +3,9 @@ package mediaembed
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -241,5 +244,181 @@ func TestHintFromContentType(t *testing.T) {
 		if got := HintFromContentType(tt.ct); got != tt.want {
 			t.Errorf("HintFromContentType(%q) = %q, want %q", tt.ct, got, tt.want)
 		}
+	}
+}
+
+// probe returns a file's tags (container and first audio stream, merged,
+// keys lower-cased) and its picture streams' codecs, via ffprobe.
+func probe(t *testing.T, path string) (map[string]string, []string) {
+	t.Helper()
+	out, err := exec.Command("ffprobe", "-v", "error", "-print_format", "json",
+		"-show_format", "-show_streams", path).Output()
+	if err != nil {
+		t.Fatalf("ffprobe %s: %v", path, err)
+	}
+	var info struct {
+		Format struct {
+			Tags map[string]string `json:"tags"`
+		} `json:"format"`
+		Streams []struct {
+			CodecType   string            `json:"codec_type"`
+			CodecName   string            `json:"codec_name"`
+			Tags        map[string]string `json:"tags"`
+			Disposition map[string]int    `json:"disposition"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(out, &info); err != nil {
+		t.Fatal(err)
+	}
+	tags := map[string]string{}
+	add := func(m map[string]string) {
+		for k, v := range m {
+			tags[strings.ToLower(k)] = v
+		}
+	}
+	add(info.Format.Tags)
+	var pics []string
+	for _, s := range info.Streams {
+		switch {
+		case s.CodecType == "audio":
+			add(s.Tags)
+		case s.Disposition["attached_pic"] == 1:
+			pics = append(pics, s.CodecName)
+		}
+	}
+	return tags, pics
+}
+
+// libraryFile writes a 1-second tone in format ext with tags the library
+// will override, one it won't (genre), and a PNG picture where the
+// container holds one.
+func libraryFile(t *testing.T, ext string) string {
+	t.Helper()
+	if !Available() {
+		t.Skip("ffmpeg not available")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not available")
+	}
+	codec := map[string]string{".flac": "flac", ".mp3": "libmp3lame", ".m4a": "aac", ".ogg": "libvorbis", ".opus": "libopus"}[ext]
+	path := tempPath(t, ext)
+	args := []string{"-nostdin", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=1"}
+	hint, _ := HintFromPath(path)
+	if pictures(hint) {
+		pic := tempPath(t, ".png")
+		if out, err := exec.Command("ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi",
+			"-i", "color=c=red:s=16x16", "-frames:v", "1", pic).CombinedOutput(); err != nil {
+			t.Fatalf("picture: %v (%s)", err, out)
+		}
+		args = append(args, "-i", pic,
+			"-map", "0:a", "-map", "1:v", "-c:v", "copy", "-disposition:v:0", "attached_pic")
+	}
+	args = append(args, "-c:a", codec,
+		"-metadata", "title=File Title", "-metadata", "artist=File Artist",
+		"-metadata", "album=File Album", "-metadata", "genre=Rock", path)
+	if out, err := exec.Command("ffmpeg", args...).CombinedOutput(); err != nil {
+		t.Skipf("ffmpeg can't write %s here: %v (%s)", ext, err, out)
+	}
+	return path
+}
+
+// A library file is retagged in its own container from the library's
+// metadata, keeping its other tags; the library's cover replaces its
+// picture, which stays when there is none.
+func TestEmbedFileRetagsLibraryFiles(t *testing.T) {
+	meta := Metadata{
+		Title: "Library Title", Artist: "Main; Guest", Album: "Library Album", AlbumArtist: "Main",
+		Year: 2001, TrackNo: 4, DiscNo: 2, ISRC: "GBAYE0601498", Composer: "Writer",
+	}
+	for _, ext := range []string{".flac", ".mp3", ".m4a", ".ogg", ".opus"} {
+		t.Run(ext, func(t *testing.T) {
+			path := libraryFile(t, ext)
+			hint, ok := HintFromPath(path)
+			if !ok {
+				t.Fatalf("no hint for %s", ext)
+			}
+			before, _ := os.ReadFile(path)
+			for _, cover := range [][]byte{minimalJPEG(t), nil} {
+				res, err := EmbedFile(context.Background(), path, cover, meta, hint)
+				if err != nil {
+					t.Fatalf("EmbedFile(cover %v): %v", cover != nil, err)
+				}
+				if res.Size < 1000 {
+					t.Fatalf("output is %d bytes; no audio?", res.Size)
+				}
+				tags, pics := probe(t, res.File.Name())
+				res.Cleanup()
+				for k, want := range map[string]string{
+					"title": "Library Title", "artist": "Main; Guest", "album": "Library Album",
+					"genre": "Rock", "composer": "Writer",
+				} {
+					if tags[k] != want {
+						t.Errorf("cover %v: %s = %q, want %q (tags %v)", cover != nil, k, tags[k], want, tags)
+					}
+				}
+				if !strings.HasPrefix(tags["date"], "2001") || !strings.HasPrefix(tags["track"], "4") {
+					t.Errorf("cover %v: date %q, track %q", cover != nil, tags["date"], tags["track"])
+				}
+				switch {
+				case !pictures(hint):
+					if len(pics) != 0 {
+						t.Errorf("pictures in %s: %v", ext, pics)
+					}
+				case cover != nil:
+					if len(pics) != 1 || pics[0] != "mjpeg" {
+						t.Errorf("cover: pictures %v, want the given JPEG", pics)
+					}
+				default:
+					if len(pics) != 1 || pics[0] != "png" {
+						t.Errorf("no cover: pictures %v, want the file's own PNG", pics)
+					}
+				}
+			}
+			if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+				t.Fatal("the library file was modified")
+			}
+		})
+	}
+}
+
+func TestHintFromPath(t *testing.T) {
+	for path, want := range map[string]FormatHint{
+		"a.FLAC": FormatFLAC, "a.m4a": FormatMP4, "a.mp4": FormatMP4, "a.mp3": FormatMP3,
+		"a.ogg": FormatOgg, "a.opus": FormatOpus,
+	} {
+		if got, ok := HintFromPath(path); !ok || got != want {
+			t.Errorf("HintFromPath(%q) = %q, %v", path, got, ok)
+		}
+	}
+	for _, path := range []string{"a.wav", "a.aac", "a.webm", "a"} {
+		if _, ok := HintFromPath(path); ok {
+			t.Errorf("HintFromPath(%q) is taggable", path)
+		}
+	}
+}
+
+// Ogg can't hold pictures on output, so an Ogg file with art isn't
+// retagged (the caller serves it as is) rather than losing its art.
+func TestEmbedFileKeepsOggArtByFailing(t *testing.T) {
+	if !Available() {
+		t.Skip("ffmpeg not available")
+	}
+	jpeg := minimalJPEG(t)
+	be := binary.BigEndian.AppendUint32
+	block := be(nil, 3) // front cover
+	block = be(block, uint32(len("image/jpeg")))
+	block = append(block, "image/jpeg"...)
+	block = be(block, 0)                       // no description
+	block = be(be(be(be(block, 1), 1), 24), 0) // width, height, depth, colors
+	block = append(be(block, uint32(len(jpeg))), jpeg...)
+	path := tempPath(t, ".ogg")
+	if out, err := exec.Command("ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "sine=duration=1",
+		"-c:a", "libvorbis", "-metadata", "METADATA_BLOCK_PICTURE="+base64.StdEncoding.EncodeToString(block),
+		path).CombinedOutput(); err != nil {
+		t.Skipf("ffmpeg can't write Ogg Vorbis here: %v (%s)", err, out)
+	}
+	if res, err := EmbedFile(context.Background(), path, nil, Metadata{Title: "X"}, FormatOgg); err == nil {
+		res.Cleanup()
+		t.Fatal("retagged an Ogg file with art, dropping the art")
 	}
 }
