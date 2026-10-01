@@ -255,6 +255,7 @@ func main() {
 		FilenScan:        filenScanner,
 		TIDALDownloads:   tidalDownloadStore,
 		TIDALDownload:    tidalDownloadWorker,
+		TIDALMatch:       cfg.TIDALMatchLocal,
 		Preview:          previewBuilder,
 		MusicRoot:        cfg.MusicPath,
 		Background:       ctx,

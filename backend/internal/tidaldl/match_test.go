@@ -893,3 +893,75 @@ func TestMatcherPrefersFullerReleaseFromTrackSearch(t *testing.T) {
 		}
 	}
 }
+
+// A track moved out of the album a match was decided for is left alone.
+func TestApplyTIDALMatchNeedsSourceAlbum(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	from := f.album("Record "+f.run, main, 0)
+	moved := f.album("Moved "+f.run, main, 0)
+	id := f.track(localTrack{title: "song", artists: []string{main}, album: &moved, duration: 100_000})
+	applied, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
+		Title: "Song", From: &from, Album: library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main},
+	}, nil)
+	if err != nil || applied {
+		t.Fatalf("applied = %v, %v; want a moved track left alone", applied, err)
+	}
+	filed, err := f.lib.FileUnderTIDALRelease(ctx, id, &from, library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main})
+	if err != nil || filed {
+		t.Fatalf("filed = %v, %v; want a moved track left alone", filed, err)
+	}
+	if got := f.state(id); got.AlbumID != moved || got.Title != "song" {
+		t.Fatalf("track = %+v", got)
+	}
+}
+
+// An album's chosen release stays noted while one of its tracks backs off
+// after a failure, and goes once that track is done.
+func TestMatcherKeepsChoiceWhileTrackBacksOff(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	relID := "rel" + f.run
+	rel := tidal.Album{ID: relID, Title: "Record " + f.run, Artist: main,
+		Tracks: []tidal.Track{{ID: "a" + f.run, Title: "Song", Artists: []string{main}, DurationMS: 100_000, TrackNo: 1}}}
+	if err := f.lib.SaveTIDALAlbum(ctx, rel); err != nil {
+		t.Fatal(err)
+	}
+	albumID := f.album("Record "+f.run, "", 0)
+	failed := f.track(localTrack{title: "Song", artists: []string{main}, album: &albumID, duration: 100_000})
+	tail := f.track(localTrack{title: "Bonus", artists: []string{main}, album: &albumID, duration: 50_000})
+	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id) VALUES($1, $2)`, albumID, relID)
+	f.exec(`INSERT INTO tidal_matches(track_id, status, error, attempts, next_attempt_at)
+	        VALUES($1, 'failed', 'db hiccup', 1, NOW() + INTERVAL '5 minutes')`, failed)
+	choices := func() int {
+		var n int
+		if err := f.pool.QueryRow(ctx, `SELECT COUNT(*) FROM tidal_match_albums WHERE album_id = $1`, albumID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	m := f.matcher(&fakeCatalog{err: errors.New("TIDAL must not be needed")})
+	if err := m.matchAlbum(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(tail); got.Album != rel.Title || got.Match != MatchUnmatched {
+		t.Fatalf("tail = %+v; want it filed under the chosen release", got)
+	}
+	if choices() != 1 {
+		t.Fatal("the choice went while a track was still backing off")
+	}
+
+	f.exec(`UPDATE tidal_matches SET next_attempt_at = NOW() WHERE track_id = $1`, failed)
+	if err := m.matchAlbum(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(failed); got.Match != MatchMatched || got.Album != rel.Title {
+		t.Fatalf("failed track = %+v; want it matched on the chosen release", got)
+	}
+	if choices() != 0 {
+		t.Fatal("the choice outlived the album")
+	}
+}

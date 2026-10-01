@@ -23,6 +23,9 @@ type TIDALTrackFields struct {
 	// KeepAlbum leaves the track in its album, one already linked to the
 	// release, while it still takes the release's year and numbering.
 	KeepAlbum bool
+	// From is the album the match was decided for (nil: none). A track
+	// moved out of it meanwhile is left alone.
+	From *uuid.UUID
 }
 
 // ErrTIDALAlbumConflict reports that the library album for a release's
@@ -31,32 +34,25 @@ type TIDALTrackFields struct {
 var ErrTIDALAlbumConflict = errors.New("the library album for this release is linked to another release")
 
 // lockUnmatchable locks a live, shared local track whose metadata nobody set
-// on purpose, in an album nobody edited on purpose: the only kind TIDAL
-// matching may change, and returns its album. ok is false for any other
-// track. Its album is locked first (shared), so an edit to it can't land
-// before the caller commits. Callers upsert artists and albums before this,
-// so albums are locked before the track, in the order ingest takes them,
-// and the two can't deadlock.
-func lockUnmatchable(ctx context.Context, tx pgx.Tx, trackID uuid.UUID) (albumID *uuid.UUID, ok bool, err error) {
-	err = tx.QueryRow(ctx, `SELECT album_id FROM tracks WHERE id = $1`, trackID).Scan(&albumID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
+// on purpose, still in from (the album the caller decided for, nil for
+// none), which nobody edited on purpose: the only kind TIDAL matching may
+// change. ok is false for any other track. The album is locked first
+// (shared), so an edit to it can't land before the caller commits. Callers
+// upsert artists and albums before this, so albums are locked before the
+// track, in the order ingest takes them, and the two can't deadlock.
+func lockUnmatchable(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, from *uuid.UUID) (ok bool, err error) {
+	albumID := from
 	if albumID != nil {
 		var edited bool
 		err := tx.QueryRow(ctx, `
 			SELECT metadata_edited_at IS NOT NULL FROM albums WHERE id = $1 FOR SHARE`, *albumID).Scan(&edited)
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && edited) {
-			return nil, false, nil
+			return false, nil
 		}
 		if err != nil {
-			return nil, false, err
+			return false, err
 		}
 	}
-	// The album must still be the one checked.
 	err = tx.QueryRow(ctx, `
 		SELECT TRUE FROM tracks t
 		WHERE t.id = $1 AND t.deleted_at IS NULL AND t.source = 'local'
@@ -64,9 +60,9 @@ func lockUnmatchable(ctx context.Context, tx pgx.Tx, trackID uuid.UUID) (albumID
 		  AND t.album_id IS NOT DISTINCT FROM $2
 		FOR UPDATE`, trackID, albumID).Scan(&ok)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, false, nil
+		return false, nil
 	}
-	return albumID, ok, err
+	return ok, err
 }
 
 // releaseAlbum is upsertTIDALAlbum for TIDAL matching, which refuses an
@@ -154,12 +150,11 @@ func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDAL
 		albumID = &id
 		year, trackNo, discNo = in.Album.Year, in.Album.TrackNo, in.Album.DiscNo
 	}
-	current, ok, err := lockUnmatchable(ctx, tx, trackID)
-	if err != nil || !ok {
+	if ok, err := lockUnmatchable(ctx, tx, trackID, in.From); err != nil || !ok {
 		return false, err
 	}
 	if albumID == nil {
-		albumID = current
+		albumID = in.From
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE tracks SET
@@ -198,8 +193,9 @@ func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDAL
 // list, so the album isn't split. Like ApplyTIDALMatch it only touches a
 // live, shared local track whose metadata nobody set on purpose, and
 // reports whether it did; ErrTIDALAlbumConflict leaves it as it was. The
-// track doesn't count as edited.
-func (s *Store) FileUnderTIDALRelease(ctx context.Context, trackID uuid.UUID, in TIDALAlbumFields) (bool, error) {
+// track doesn't count as edited. from is the album the decision was made
+// for; a track moved out of it meanwhile is left alone.
+func (s *Store) FileUnderTIDALRelease(ctx context.Context, trackID uuid.UUID, from *uuid.UUID, in TIDALAlbumFields) (bool, error) {
 	if strings.TrimSpace(in.Title) == "" {
 		return false, errors.New("album title is required")
 	}
@@ -217,7 +213,7 @@ func (s *Store) FileUnderTIDALRelease(ctx context.Context, trackID uuid.UUID, in
 	if err != nil {
 		return false, err
 	}
-	if _, ok, err := lockUnmatchable(ctx, tx, trackID); err != nil || !ok {
+	if ok, err := lockUnmatchable(ctx, tx, trackID, from); err != nil || !ok {
 		return false, err
 	}
 	if _, err := tx.Exec(ctx, `

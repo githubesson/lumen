@@ -299,7 +299,7 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 		}
 		// Not on the release: kept with the rest of its album.
 		if !linked {
-			_, err := m.Library.FileUnderTIDALRelease(ctx, t.ID, fields)
+			_, err := m.Library.FileUnderTIDALRelease(ctx, t.ID, t.AlbumID, fields)
 			if errors.Is(err, library.ErrTIDALAlbumConflict) {
 				m.record(ctx, t, MatchOutcome{Status: MatchUnmatched, Error: err.Error()})
 				continue
@@ -690,6 +690,7 @@ func (m *Matcher) apply(ctx context.Context, t MatchTrack, hit tidal.Track, keep
 		Artists:   hit.Artists,
 		ISRC:      ingest.NormalizeISRC(isrc),
 		KeepAlbum: keepAlbum,
+		From:      t.AlbumID,
 	}
 	if strings.TrimSpace(hit.AlbumTitle) != "" {
 		fields.Album = library.TIDALAlbumFields{
@@ -830,11 +831,18 @@ func (m *Matcher) recordErr(ctx context.Context, t MatchTrack, err error) {
 }
 
 func (m *Matcher) recordAll(ctx context.Context, tracks []MatchTrack, o MatchOutcome, cause error) {
-	for _, t := range tracks {
-		if cause != nil {
-			m.recordErr(ctx, t, cause)
-			continue
+	if cause != nil {
+		if ctx.Err() != nil || errors.Is(cause, tidal.ErrNotConfigured) {
+			return
 		}
-		m.record(ctx, t, o)
+		o = MatchOutcome{Status: MatchFailed, Error: cause.Error()}
+	}
+	ids := make([]uuid.UUID, len(tracks))
+	for i, t := range tracks {
+		ids[i] = t.ID
+	}
+	// One statement: an album's outcome lands for all its tracks or none.
+	if err := m.Store.RecordMatches(ctx, ids, o); err != nil && ctx.Err() == nil {
+		m.log().Warn("tidal match outcomes not recorded", "tracks", len(ids), "err", err)
 	}
 }

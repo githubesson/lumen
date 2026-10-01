@@ -19,20 +19,23 @@ const (
 	MatchFailed    = "failed"
 )
 
-// matchWaiting selects tracks t that TIDAL matching may still change: live,
+// matchEligible selects tracks t that TIDAL matching may change: live,
 // shared local files whose metadata nobody set on purpose (an admin, an
-// importer, or an earlier match), that auto-download didn't save (those are
-// filed already), and that are due: never tried, or their retry is up.
-// Tracks from the API tracker and ArtistGrid importers carry the importer's
-// metadata, which edits before metadata_edited_at existed didn't mark, and
-// tracks of an album an admin edited stay in it.
-const matchWaiting = `t.source = 'local' AND t.owner_id IS NULL AND t.deleted_at IS NULL
+// importer, or an earlier match) and that auto-download didn't save (those
+// are filed already). Tracks from the API tracker and ArtistGrid importers
+// carry the importer's metadata, which edits before metadata_edited_at
+// existed didn't mark, and tracks of an album an admin edited stay in it.
+const matchEligible = `t.source = 'local' AND t.owner_id IS NULL AND t.deleted_at IS NULL
 	AND t.metadata_edited_at IS NULL
 	AND NOT EXISTS (SELECT 1 FROM albums ea WHERE ea.id = t.album_id AND ea.metadata_edited_at IS NOT NULL)
 	AND NOT EXISTS (SELECT 1 FROM tidal_downloads d
 		WHERE d.local_track_id = t.id AND d.status = 'downloaded')
 	AND NOT EXISTS (SELECT 1 FROM api_tracker_downloads ad WHERE ad.track_id = t.id)
-	AND NOT EXISTS (SELECT 1 FROM artistgrid_downloads gd WHERE gd.track_id = t.id)
+	AND NOT EXISTS (SELECT 1 FROM artistgrid_downloads gd WHERE gd.track_id = t.id)`
+
+// matchWaiting selects eligible tracks t that are due: never tried, or
+// their retry is up.
+const matchWaiting = matchEligible + `
 	AND NOT EXISTS (SELECT 1 FROM tidal_matches m
 		WHERE m.track_id = t.id AND (m.next_attempt_at IS NULL OR m.next_attempt_at > NOW()))`
 
@@ -49,7 +52,10 @@ const matchLoose = `(t.album_id IS NULL OR (a.title = '` + library.CatchAllAlbum
 
 // MatchTrack is a library track waiting for a TIDAL match.
 type MatchTrack struct {
-	ID         uuid.UUID
+	ID uuid.UUID
+	// AlbumID is the album the track was in when loaded; it is matched or
+	// moved only while still there.
+	AlbumID    *uuid.UUID
 	Title      string
 	Artists    []string // performers, primary first
 	ISRC       string
@@ -72,11 +78,12 @@ type MatchAlbum struct {
 	// Unsettled: some of its waiting tracks changed moments ago, so the
 	// album waits until they settle and can be judged with the rest.
 	Unsettled bool
-	// Chosen is the release an attempt cut short chose for the album.
+	// Chosen is the release an attempt cut short chose for the album in the
+	// last week; an older choice may not suit the tracks waiting now.
 	Chosen string
 }
 
-const matchTrackColumns = `t.id, t.title,
+const matchTrackColumns = `t.id, t.album_id, t.title,
 	ARRAY(SELECT ar.name FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
 	      WHERE ta.track_id = t.id AND ta.role <> 'composer' ORDER BY ta.position, ar.name),
 	COALESCE(t.isrc, ''), t.duration_ms, COALESCE(t.track_no, 0), COALESCE(t.disc_no, 0), t.file_path`
@@ -85,7 +92,7 @@ type rowScanner interface{ Scan(...any) error }
 
 func scanMatchTrack(row rowScanner) (MatchTrack, error) {
 	var t MatchTrack
-	err := row.Scan(&t.ID, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS, &t.TrackNo, &t.DiscNo, &t.FilePath)
+	err := row.Scan(&t.ID, &t.AlbumID, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS, &t.TrackNo, &t.DiscNo, &t.FilePath)
 	return t, err
 }
 
@@ -127,7 +134,8 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 		          AND t.owner_id IS NULL),
 		       EXISTS (SELECT 1 FROM tracks t
 		               WHERE t.album_id = a.id AND `+matchWaiting+` AND NOT `+matchSettled+`),
-		       COALESCE((SELECT c.tidal_album_id FROM tidal_match_albums c WHERE c.album_id = a.id), '')
+		       COALESCE((SELECT c.tidal_album_id FROM tidal_match_albums c
+		                 WHERE c.album_id = a.id AND c.created_at > NOW() - INTERVAL '7 days'), '')
 		FROM albums a LEFT JOIN artists ar ON ar.id = a.album_artist_id
 		WHERE a.id = $1`, albumID).Scan(&a.Title, &a.Artist, &a.Year, &a.TIDALAlbumID, &a.Tracks,
 		&a.Unsettled, &a.Chosen)
@@ -200,6 +208,15 @@ type execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
+// RecordMatches stores the same outcome for several tracks in one
+// statement, e.g. an album's: all of them or none.
+func (s *Store) RecordMatches(ctx context.Context, trackIDs []uuid.UUID, o MatchOutcome) error {
+	if len(trackIDs) == 0 {
+		return nil
+	}
+	return recordMatches(ctx, s.db, trackIDs, o)
+}
+
 // RecordMatch stores an attempt's outcome. A match is final; no match is
 // tried again after 30 days, in case TIDAL adds the release; a failure backs
 // off from 5 minutes, doubling up to a day. A track deleted meanwhile is
@@ -210,14 +227,18 @@ func (s *Store) RecordMatch(ctx context.Context, trackID uuid.UUID, o MatchOutco
 
 // recordMatch is RecordMatch on q, e.g. the transaction applying a match.
 func recordMatch(ctx context.Context, q execer, trackID uuid.UUID, o MatchOutcome) error {
+	return recordMatches(ctx, q, []uuid.UUID{trackID}, o)
+}
+
+func recordMatches(ctx context.Context, q execer, trackIDs []uuid.UUID, o MatchOutcome) error {
 	_, err := q.Exec(ctx, `
 		INSERT INTO tidal_matches (track_id, status, tidal_id, tidal_album_id, error, attempts,
 		                           next_attempt_at, cover_url, cover_album_id)
-		SELECT $1, $2, $3, $4, $5, 1, CASE $2
+		SELECT tr.id, $2, $3, $4, $5, 1, CASE $2
 			WHEN 'matched' THEN NULL
 			WHEN 'unmatched' THEN NOW() + INTERVAL '30 days'
 			ELSE NOW() + INTERVAL '5 minutes' END, $6, $7
-		WHERE EXISTS (SELECT 1 FROM tracks WHERE id = $1)
+		FROM tracks tr WHERE tr.id = ANY($1)
 		ON CONFLICT (track_id) DO UPDATE SET
 			status = EXCLUDED.status,
 			tidal_id = EXCLUDED.tidal_id,
@@ -233,7 +254,7 @@ func recordMatch(ctx context.Context, q execer, trackID uuid.UUID, o MatchOutcom
 			cover_album_id = EXCLUDED.cover_album_id,
 			cover_retry_at = NULL,
 			updated_at = NOW()`,
-		trackID, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error),
+		trackIDs, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error),
 		dbtext.Clean(o.CoverURL), o.CoverAlbum)
 	return err
 }
@@ -248,9 +269,17 @@ func (s *Store) ChooseRelease(ctx context.Context, albumID uuid.UUID, tidalAlbum
 	return err
 }
 
-// ReleaseDone drops an album's chosen release once every track is filed.
+// ReleaseDone drops an album's chosen release once none of its tracks is
+// left to file: every eligible track still in the album has an outcome
+// other than a failure, which would retry under the choice.
 func (s *Store) ReleaseDone(ctx context.Context, albumID uuid.UUID) error {
-	_, err := s.db.Exec(ctx, `DELETE FROM tidal_match_albums WHERE album_id = $1`, albumID)
+	_, err := s.db.Exec(ctx, `
+		DELETE FROM tidal_match_albums c
+		WHERE c.album_id = $1 AND NOT EXISTS (
+			SELECT 1 FROM tracks t
+			LEFT JOIN tidal_matches m ON m.track_id = t.id
+			WHERE t.album_id = $1 AND `+matchEligible+`
+			  AND (m.track_id IS NULL OR m.status = 'failed'))`, albumID)
 	return err
 }
 
