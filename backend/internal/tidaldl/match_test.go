@@ -102,6 +102,15 @@ func (f *matchFixture) exec(sql string, args ...any) {
 	}
 }
 
+// outcome inserts tidal_matches rows (sql) as the matcher would record
+// them: for the tracks as they are now.
+func (f *matchFixture) outcome(sql string, args ...any) {
+	f.t.Helper()
+	f.exec(sql, args...)
+	f.exec(`UPDATE tidal_matches m SET track_version = t.updated_at
+	        FROM tracks t WHERE t.id = m.track_id AND m.track_version IS NULL`)
+}
+
 // album creates a library album; artist "" leaves it without an album
 // artist, as ingest does for files without that tag.
 func (f *matchFixture) album(title, artist string, year int) uuid.UUID {
@@ -950,7 +959,7 @@ func TestMatcherKeepsChoiceWhileTrackBacksOff(t *testing.T) {
 	if noted, err := store.ChooseRelease(ctx, albumID, relID, []uuid.UUID{failed}); err != nil || noted {
 		t.Fatalf("noted a choice judged on part of the album: %v, %v", noted, err)
 	}
-	f.exec(`INSERT INTO tidal_matches(track_id, status, error, attempts, next_attempt_at)
+	f.outcome(`INSERT INTO tidal_matches(track_id, status, error, attempts, next_attempt_at)
 	        VALUES($1, 'failed', 'db hiccup', 1, NOW() + INTERVAL '5 minutes'),
 	              ($2, 'unmatched', '', 1, NOW() + INTERVAL '30 days')`, failed, tail)
 	choices := func() int {
@@ -1008,7 +1017,7 @@ func TestMatcherJudgesNewTrackWithRestingAlbum(t *testing.T) {
 	var resting []uuid.UUID
 	for i, n := range []string{"One", "Two"} {
 		id := f.track(localTrack{title: n, artists: []string{main}, album: &albumID, duration: 100_000 + i*10_000})
-		f.exec(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at)
+		f.outcome(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at)
 		        VALUES($1, 'unmatched', 1, NOW() + INTERVAL '20 days')`, id)
 		resting = append(resting, id)
 	}
@@ -1209,7 +1218,7 @@ func TestChangedTrackIsDueAgain(t *testing.T) {
 	ctx := context.Background()
 	main := "Main " + f.run
 	id := f.track(localTrack{title: "Loose", artists: []string{main}, duration: 100_000})
-	f.exec(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at, updated_at)
+	f.outcome(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at, updated_at)
 	        VALUES($1, 'unmatched', 1, NOW() + INTERVAL '20 days', NOW() - INTERVAL '50 minutes')`, id)
 	store := NewStore(f.pool)
 	waiting := func() bool {
@@ -1523,7 +1532,7 @@ func TestResumedChoiceKeepsToJudgedTracks(t *testing.T) {
 	failing := f.track(localTrack{title: "Failing", artists: []string{main}, album: &other, duration: 100_000})
 	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, track_ids) VALUES($1, $2, $3)`,
 		other, relID, []uuid.UUID{failing})
-	f.exec(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at)
+	f.outcome(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at)
 	        VALUES($1, 'failed', 1, NOW() + INTERVAL '5 minutes')`, failing)
 	pending, err := m.Store.PendingMatchAlbums(ctx, 10_000)
 	if err != nil {
@@ -1634,7 +1643,7 @@ func TestFinishedChoiceYearAndExistingCopy(t *testing.T) {
 	added := f.track(localTrack{title: "Later", artists: []string{main}, album: &albumID, duration: 120_000})
 	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, track_ids, created_at)
 	        VALUES($1, $2, $3, NOW() - INTERVAL '1 minute')`, albumID, relID, []uuid.UUID{done})
-	f.exec(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at, updated_at)
+	f.outcome(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at, updated_at)
 	        VALUES($1, 'unmatched', 0, NOW() + INTERVAL '30 days', NOW())`, done)
 	src := &fakeCatalog{searchAlbums: []tidal.Album{rel}, albums: map[string]tidal.Album{relID: rel}}
 	if err := f.matcher(src).matchAlbum(ctx, albumID); err != nil {
@@ -1688,7 +1697,7 @@ func TestBackingOffTrackWaitsWithinItsAlbum(t *testing.T) {
 	albumID := f.album("Record "+f.run, main, 0)
 	waiting := f.track(localTrack{title: "One", artists: []string{main}, album: &albumID, duration: 100_000})
 	fresh := f.track(localTrack{title: "Two", artists: []string{main}, album: &albumID, duration: 110_000})
-	f.exec(`INSERT INTO tidal_matches(track_id, status, error, attempts, next_attempt_at)
+	f.outcome(`INSERT INTO tidal_matches(track_id, status, error, attempts, next_attempt_at)
 	        VALUES($1, 'failed', 'boom', 3, NOW() + INTERVAL '40 minutes')`, waiting)
 	relID := "rel" + f.run
 	rel := tidal.Album{ID: relID, Title: "Record " + f.run, Artist: main, Tracks: []tidal.Track{
@@ -1720,7 +1729,7 @@ func TestAddedTrackWaitsForChoiceAndCoverRemoval(t *testing.T) {
 	f.track(localTrack{title: "Added", artists: []string{main}, album: &albumID, duration: 50_000})
 	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, track_ids, created_at)
 	        VALUES($1, 'rel', $2, NOW() - INTERVAL '1 minute')`, albumID, []uuid.UUID{judged})
-	f.exec(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at)
+	f.outcome(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at)
 	        VALUES($1, 'failed', 1, NOW() + INTERVAL '30 minutes')`, judged)
 	store := NewStore(f.pool)
 	pending := func() bool {
@@ -1738,7 +1747,7 @@ func TestAddedTrackWaitsForChoiceAndCoverRemoval(t *testing.T) {
 		t.Fatal("an added track doesn't bring up an album whose choice is done")
 	}
 
-	f.exec(`INSERT INTO tidal_matches(track_id, status, cover_url, cover_album_id)
+	f.outcome(`INSERT INTO tidal_matches(track_id, status, cover_url, cover_album_id)
 	        VALUES($1, 'matched', 'https://resources.tidal.com/c.jpg', $2)
 	        ON CONFLICT (track_id) DO UPDATE SET cover_url = EXCLUDED.cover_url, cover_album_id = EXCLUDED.cover_album_id`,
 		judged, albumID)
@@ -1748,5 +1757,56 @@ func TestAddedTrackWaitsForChoiceAndCoverRemoval(t *testing.T) {
 	var left string
 	if err := f.pool.QueryRow(ctx, `SELECT cover_url FROM tidal_matches WHERE track_id = $1`, judged).Scan(&left); err != nil || left != "" {
 		t.Fatalf("pending cover %q, %v; want it cancelled by the removal", left, err)
+	}
+}
+
+// Freshness is an exact version, not an ordering; an album no longer too
+// large isn't written off; a cover only lands while its task is pending.
+func TestVersionedFreshnessOversizeAndCoverTask(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	store := NewStore(f.pool)
+	loose := f.track(localTrack{title: "Solo", artists: []string{main}, duration: 90_000})
+	if err := store.RecordMatch(ctx, loose, MatchOutcome{Status: MatchUnmatched}); err != nil {
+		t.Fatal(err)
+	}
+	waiting := func() bool {
+		ts, err := store.PendingMatchLoose(ctx, 10_000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, w := range ts {
+			if w.ID == loose {
+				return true
+			}
+		}
+		return false
+	}
+	if waiting() {
+		t.Fatal("a resting track is waiting")
+	}
+	// A change stamped earlier than the outcome (a transaction that started
+	// before it) still counts.
+	f.exec(`UPDATE tracks SET updated_at = updated_at - INTERVAL '1 second' WHERE id = $1`, loose)
+	if !waiting() {
+		t.Fatal("a track changed since its outcome isn't waiting")
+	}
+
+	albumID := f.album("Small "+f.run, main, 0)
+	small := f.track(localTrack{title: "One", artists: []string{main}, album: &albumID, duration: 100_000})
+	if err := store.RecordAlbumUnmatched(ctx, albumID, "too many", matchMaxAlbumTracks); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(small); got.Match != "" {
+		t.Fatalf("small album's track = %+v; it isn't too large any more", got)
+	}
+
+	if err := store.SetMatchCover(ctx, small, albumID, "covers/x.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	var cover string
+	if err := f.pool.QueryRow(ctx, `SELECT COALESCE(cover_art_path, '') FROM albums WHERE id = $1`, albumID).Scan(&cover); err != nil || cover != "" {
+		t.Fatalf("cover %q, %v; set without a pending task", cover, err)
 	}
 }

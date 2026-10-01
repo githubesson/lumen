@@ -43,7 +43,7 @@ const trackAlbumLink = `COALESCE((SELECT la.tidal_album_id FROM albums la WHERE 
 // still is: neither the track (a duplicate's tags adopted, an ISRC filled)
 // nor its album's TIDAL link changed since, and auto-download hasn't found
 // it to be a TIDAL track's copy since.
-const matchFresh = `m.updated_at >= t.updated_at AND m.album_link = ` + trackAlbumLink + `
+const matchFresh = `m.track_version = t.updated_at AND m.album_link = ` + trackAlbumLink + `
 	AND NOT EXISTS (SELECT 1 FROM tidal_downloads fd
 		WHERE fd.local_track_id = t.id AND fd.status = 'existing' AND fd.updated_at > m.updated_at)`
 
@@ -67,7 +67,7 @@ const matchSettled = `t.updated_at < NOW() - INTERVAL '10 minutes'`
 const matchResumable = `COALESCE((
 	SELECT t.id = ANY(c.track_ids) AND NOT EXISTS (
 		SELECT 1 FROM tidal_matches rm
-		WHERE rm.track_id = t.id AND rm.updated_at >= c.created_at AND rm.updated_at >= t.updated_at
+		WHERE rm.track_id = t.id AND rm.updated_at >= c.created_at AND rm.track_version = t.updated_at
 		  AND (rm.status <> 'failed' OR rm.next_attempt_at > NOW()))
 	FROM tidal_match_albums c WHERE c.album_id = t.album_id), FALSE)`
 
@@ -111,6 +111,9 @@ type MatchTrack struct {
 	// Resumable: an unfinished release choice for the album was judged on
 	// it and it is still to file (matchResumable).
 	Resumable bool
+	// Loaded is the database time the track was read; an existing-copy
+	// association made since keeps a lookup's outcome from being recorded.
+	Loaded time.Time
 	// BackingOff: its last lookup failed and the retry isn't due yet. It
 	// counts toward its album's release, but isn't changed or recorded
 	// until then.
@@ -136,7 +139,7 @@ type MatchAlbum struct {
 	Chosen string
 }
 
-const matchTrackColumns = `t.id, t.album_id,
+const matchTrackColumns = `NOW(), t.id, t.album_id,
 	COALESCE((SELECT la.tidal_album_id FROM albums la WHERE la.id = t.album_id), ''), t.title,
 	ARRAY(SELECT ar.name FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
 	      WHERE ta.track_id = t.id AND ta.role <> 'composer' ORDER BY ta.position, ar.name),
@@ -160,7 +163,7 @@ type rowScanner interface{ Scan(...any) error }
 
 func scanMatchTrack(row rowScanner) (MatchTrack, error) {
 	var t MatchTrack
-	err := row.Scan(&t.ID, &t.AlbumID, &t.AlbumLink, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS, &t.TrackNo,
+	err := row.Scan(&t.Loaded, &t.ID, &t.AlbumID, &t.AlbumLink, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS, &t.TrackNo,
 		&t.DiscNo, &t.FilePath, &t.Seen)
 	return t, err
 }
@@ -246,7 +249,7 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 			t       MatchTrack
 			settled bool
 		)
-		if err := rows.Scan(&t.ID, &t.AlbumID, &t.AlbumLink, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS,
+		if err := rows.Scan(&t.Loaded, &t.ID, &t.AlbumID, &t.AlbumLink, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS,
 			&t.TrackNo, &t.DiscNo, &t.FilePath, &t.Seen, &settled, &t.Resumable, &t.BackingOff); err != nil {
 			return a, nil, err
 		}
@@ -300,18 +303,29 @@ type execer interface {
 
 // RecordAlbumUnmatched records every track of an album waiting for a match
 // as unmatched, in one statement.
-func (s *Store) RecordAlbumUnmatched(ctx context.Context, albumID uuid.UUID, reason string) error {
-	_, err := s.db.Exec(ctx, `
-		INSERT INTO tidal_matches (track_id, status, error, attempts, next_attempt_at, album_link)
-		SELECT t.id, 'unmatched', $2, 0, NOW() + INTERVAL '30 days', `+trackAlbumLink+`
-		FROM tracks t JOIN albums a ON a.id = t.album_id
-		WHERE t.album_id = $1 AND `+matchWaiting+` AND NOT `+matchLoose+`
-		ON CONFLICT (track_id) DO UPDATE SET
-			status = 'unmatched', tidal_id = '', tidal_album_id = '', error = EXCLUDED.error,
-			attempts = 0, next_attempt_at = EXCLUDED.next_attempt_at, album_link = EXCLUDED.album_link,
-			cover_url = '', cover_album_id = NULL, cover_retry_at = NULL, updated_at = NOW()`,
-		albumID, dbtext.Clean(reason))
-	return err
+func (s *Store) RecordAlbumUnmatched(ctx context.Context, albumID uuid.UUID, reason string, overLimit int) error {
+	// Share-locked, as ingest locks the album before adding a track, so the
+	// size checked holds through commit.
+	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM albums WHERE id = $1 FOR SHARE`, albumID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+			INSERT INTO tidal_matches (track_id, status, error, attempts, next_attempt_at, album_link, track_version)
+			SELECT t.id, 'unmatched', $2, 0, NOW() + INTERVAL '30 days', `+trackAlbumLink+`, t.updated_at
+			FROM tracks t JOIN albums a ON a.id = t.album_id
+			WHERE t.album_id = $1 AND `+matchWaiting+` AND NOT `+matchLoose+`
+			  AND (SELECT COUNT(*) FROM tracks st
+			       WHERE st.album_id = $1 AND st.deleted_at IS NULL AND st.source = 'local'
+			         AND st.owner_id IS NULL) > $3
+			ON CONFLICT (track_id) DO UPDATE SET
+				status = 'unmatched', tidal_id = '', tidal_album_id = '', error = EXCLUDED.error,
+				attempts = 0, next_attempt_at = EXCLUDED.next_attempt_at, album_link = EXCLUDED.album_link,
+				track_version = EXCLUDED.track_version,
+				cover_url = '', cover_album_id = NULL, cover_retry_at = NULL, updated_at = NOW()`,
+			albumID, dbtext.Clean(reason), overLimit)
+		return err
+	})
 }
 
 // RecordOutcome stores the same outcome for several tracks in one
@@ -327,6 +341,7 @@ func (s *Store) RecordOutcome(ctx context.Context, tracks []MatchTrack, o MatchO
 	albums := make([]uuid.UUID, len(tracks))
 	links := make([]string, len(tracks))
 	seen := make([]*time.Time, len(tracks))
+	loaded := make([]*time.Time, len(tracks))
 	for i, t := range tracks {
 		ids[i] = t.ID
 		if t.AlbumID != nil {
@@ -334,6 +349,9 @@ func (s *Store) RecordOutcome(ctx context.Context, tracks []MatchTrack, o MatchO
 		}
 		links[i] = t.AlbumLink
 		seen[i] = t.seen()
+		if !t.Loaded.IsZero() {
+			loaded[i] = &t.Loaded
+		}
 	}
 	// Locked through commit, albums before tracks as everywhere else, so a
 	// link or an adoption can't land between the check and the write.
@@ -345,13 +363,19 @@ func (s *Store) RecordOutcome(ctx context.Context, tracks []MatchTrack, o MatchO
 		var still []uuid.UUID
 		rows, err := tx.Query(ctx, `
 			SELECT tr.id FROM tracks tr
-			JOIN unnest($1::uuid[], $2::uuid[], $3::timestamptz[], $4::text[]) AS snap(id, album_id, seen, link)
+			JOIN unnest($1::uuid[], $2::uuid[], $3::timestamptz[], $4::text[], $5::timestamptz[])
+			  AS snap(id, album_id, seen, link, loaded)
 			  ON snap.id = tr.id
 			WHERE COALESCE(tr.album_id, '00000000-0000-0000-0000-000000000000'::uuid) = snap.album_id
 			  AND (snap.seen IS NULL OR tr.updated_at = snap.seen)
 			  AND COALESCE((SELECT la.tidal_album_id FROM albums la WHERE la.id = tr.album_id), '') = snap.link
+			  -- Found to be a TIDAL track's copy during the lookup: that
+			  -- settles more than this outcome could.
+			  AND NOT EXISTS (SELECT 1 FROM tidal_downloads ed
+			                  WHERE ed.local_track_id = tr.id AND ed.status = 'existing'
+			                    AND (snap.loaded IS NULL OR ed.updated_at >= snap.loaded))
 			ORDER BY tr.id
-			FOR UPDATE OF tr`, ids, albums, seen, links)
+			FOR UPDATE OF tr`, ids, albums, seen, links, loaded)
 		if err != nil {
 			return err
 		}
@@ -369,9 +393,9 @@ func (s *Store) RecordOutcome(ctx context.Context, tracks []MatchTrack, o MatchO
 		}
 		_, err = tx.Exec(ctx, `
 			INSERT INTO tidal_matches (track_id, status, tidal_id, tidal_album_id, error, attempts,
-			                           next_attempt_at, cover_url, cover_album_id, album_link)
+			                           next_attempt_at, cover_url, cover_album_id, album_link, track_version)
 			SELECT t.id, $2, $3, $4, $5, `+fmt.Sprintf(outcomeAttempts, "$2")+`, `+fmt.Sprintf(outcomeRetry, "$2")+`, '', NULL,
-			       `+trackAlbumLink+`
+			       `+trackAlbumLink+`, t.updated_at
 			FROM tracks t WHERE t.id = ANY($1)
 			`+outcomeUpsert,
 			still, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error))
@@ -412,6 +436,7 @@ const outcomeUpsert = `
 			cover_album_id = EXCLUDED.cover_album_id,
 			cover_retry_at = NULL,
 			album_link = EXCLUDED.album_link,
+			track_version = EXCLUDED.track_version,
 			updated_at = NOW()`
 
 // RecordMatch stores an attempt's outcome for a track this attempt itself
@@ -427,9 +452,9 @@ func (s *Store) RecordMatch(ctx context.Context, trackID uuid.UUID, o MatchOutco
 func recordMatch(ctx context.Context, q execer, trackID uuid.UUID, o MatchOutcome) error {
 	_, err := q.Exec(ctx, `
 		INSERT INTO tidal_matches (track_id, status, tidal_id, tidal_album_id, error, attempts,
-		                           next_attempt_at, cover_url, cover_album_id, album_link)
+		                           next_attempt_at, cover_url, cover_album_id, album_link, track_version)
 		SELECT t.id, $2, $3, $4, $5, `+fmt.Sprintf(outcomeAttempts, "$2")+`, `+fmt.Sprintf(outcomeRetry, "$2")+`, $6, $7,
-		       `+trackAlbumLink+`
+		       `+trackAlbumLink+`, t.updated_at
 		FROM tracks t WHERE t.id = $1
 		`+outcomeUpsert,
 		trackID, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error),
@@ -541,6 +566,19 @@ func (s *Store) PendingCovers(ctx context.Context, limit int) ([]CoverTask, erro
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// SetMatchCover gives an album a match's release cover while the match's
+// cover task is still pending (an admin removing the album's cover cancels
+// it) and the album still wants one: no artwork, not edited.
+func (s *Store) SetMatchCover(ctx context.Context, trackID, albumID uuid.UUID, coverPath string) error {
+	_, err := s.db.Exec(ctx, `
+		UPDATE albums SET cover_art_path = $3, updated_at = NOW()
+		WHERE id = $2 AND NULLIF(cover_art_path, '') IS NULL AND metadata_edited_at IS NULL
+		  AND EXISTS (SELECT 1 FROM tidal_matches
+		              WHERE track_id = $1 AND cover_album_id = $2 AND cover_url <> '')`,
+		trackID, albumID, dbtext.Clean(coverPath))
+	return err
 }
 
 // CoverDone drops a track's pending cover: its album has artwork.

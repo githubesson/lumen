@@ -266,7 +266,7 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 		return err
 	}
 	if album.Tracks > matchMaxAlbumTracks {
-		if err := m.Store.RecordAlbumUnmatched(ctx, album.ID, "too many tracks for one release"); err != nil {
+		if err := m.Store.RecordAlbumUnmatched(ctx, album.ID, "too many tracks for one release", matchMaxAlbumTracks); err != nil {
 			return err
 		}
 		return nil
@@ -934,7 +934,7 @@ func (m *Matcher) storeCover(ctx context.Context, c CoverTask) error {
 	if err != nil {
 		return err
 	}
-	return m.Library.SetAlbumCoverIfMissing(ctx, *c.AlbumID, key)
+	return m.Store.SetMatchCover(ctx, c.TrackID, *c.AlbumID, key)
 }
 
 // releaseFields is a release as album fields, for tracks filed under it
