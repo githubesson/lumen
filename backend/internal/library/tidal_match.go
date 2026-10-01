@@ -47,11 +47,12 @@ var ErrTIDALAlbumConflict = errors.New("the library album for this release is li
 
 // lockSource locks (shared) the album a match was decided for, so an edit
 // or a link can't land before the caller commits, and reports whether it is
-// still unedited and linked as it was. It runs before the caller upserts the
-// album the track moves to, which may be the same row, and before the track
-// is locked: albums before tracks, in the order ingest takes them, so the
-// two can't deadlock.
-func lockSource(ctx context.Context, tx pgx.Tx, src MatchSource) (bool, error) {
+// still unedited and linked as it was, or to release: the one being
+// applied, which an earlier track of the same batch may have linked it to.
+// It runs before the caller upserts the album the track moves to, which may
+// be the same row, and before the track is locked: albums before tracks, in
+// the order ingest takes them, so the two can't deadlock.
+func lockSource(ctx context.Context, tx pgx.Tx, src MatchSource, release string) (bool, error) {
 	if src.Album == nil {
 		return true, nil
 	}
@@ -68,7 +69,7 @@ func lockSource(ctx context.Context, tx pgx.Tx, src MatchSource) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return !edited && link == src.AlbumLink, nil
+	return !edited && (link == src.AlbumLink || (release != "" && link == release)), nil
 }
 
 // lockTrack locks a live, shared local track whose metadata nobody set on
@@ -168,7 +169,7 @@ func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDAL
 			roles = append(roles, "featured")
 		}
 	}
-	if ok, err := lockSource(ctx, tx, in.Source); err != nil || !ok {
+	if ok, err := lockSource(ctx, tx, in.Source, in.Album.TIDALAlbumID); err != nil || !ok {
 		return false, err
 	}
 	var (
@@ -234,9 +235,10 @@ func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDAL
 // live, shared local track whose metadata nobody set on purpose, and
 // reports whether it did; ErrTIDALAlbumConflict leaves it as it was. The
 // track doesn't count as edited. A track that no longer fits src is left
-// alone.
+// alone. record, if set, runs in the same transaction, so the caller's note
+// of the outcome commits with the move or not at all.
 func (s *Store) FileUnderTIDALRelease(ctx context.Context, trackID uuid.UUID, src MatchSource,
-	in TIDALAlbumFields) (bool, error) {
+	in TIDALAlbumFields, record func(context.Context, pgx.Tx) error) (bool, error) {
 	if strings.TrimSpace(in.Title) == "" {
 		return false, errors.New("album title is required")
 	}
@@ -246,7 +248,7 @@ func (s *Store) FileUnderTIDALRelease(ctx context.Context, trackID uuid.UUID, sr
 	}
 	defer tx.Rollback(ctx)
 
-	if ok, err := lockSource(ctx, tx, src); err != nil || !ok {
+	if ok, err := lockSource(ctx, tx, src, in.TIDALAlbumID); err != nil || !ok {
 		return false, err
 	}
 	oldCover, err := albumCover(ctx, tx, trackID)
@@ -267,6 +269,11 @@ func (s *Store) FileUnderTIDALRelease(ctx context.Context, trackID uuid.UUID, sr
 			updated_at = NOW()
 		WHERE id = $1`, trackID, albumID, in.Year); err != nil {
 		return false, err
+	}
+	if record != nil {
+		if err := record(ctx, tx); err != nil {
+			return false, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, err

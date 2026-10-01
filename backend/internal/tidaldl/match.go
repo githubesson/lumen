@@ -287,8 +287,14 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 	}
 	linked := album.TIDALAlbumID != ""
 	if !linked && album.Chosen != r.ID {
-		// Nothing changes unless the choice is noted.
-		if err := m.Store.ChooseRelease(ctx, album.ID, r.ID); err != nil {
+		// Nothing changes unless the choice is noted, and only while the
+		// album still holds the tracks it was judged on.
+		ids := make([]uuid.UUID, len(tracks))
+		for i, t := range tracks {
+			ids[i] = t.ID
+		}
+		noted, err := m.Store.ChooseRelease(ctx, album.ID, r.ID, ids)
+		if err != nil || !noted {
 			return err
 		}
 	}
@@ -304,28 +310,24 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 			}
 			continue
 		}
-		// Not on the release: kept with the rest of its album.
-		if !linked {
-			filed, err := m.Library.FileUnderTIDALRelease(ctx, t.ID, t.source(), fields)
-			if errors.Is(err, library.ErrTIDALAlbumConflict) {
-				m.record(ctx, t, MatchOutcome{Status: MatchUnmatched, Error: err.Error()})
-				continue
-			}
-			if err != nil {
-				m.recordErr(ctx, t, err)
-				return err
-			}
-			if !filed {
-				continue // moved, edited or changed meanwhile: judged afresh
-			}
-		}
+		// Not on the release: kept with the rest of its album, the outcome
+		// noted in the same transaction.
 		o := MatchOutcome{Status: MatchUnmatched, TIDALAlbumID: r.ID, Error: "not on the album's TIDAL release"}
 		if linked {
 			m.record(ctx, t, o)
-		} else if err := m.Store.RecordMatch(ctx, t.ID, o); err != nil && ctx.Err() == nil {
-			// Filed just now, so its snapshot is stale by design.
-			m.log().Warn("tidal match outcome not recorded", "track", t.ID, "err", err)
+			continue
 		}
+		_, err := m.Library.FileUnderTIDALRelease(ctx, t.ID, t.source(), fields,
+			func(ctx context.Context, tx pgx.Tx) error { return recordMatch(ctx, tx, t.ID, o) })
+		if errors.Is(err, library.ErrTIDALAlbumConflict) {
+			m.record(ctx, t, MatchOutcome{Status: MatchUnmatched, Error: err.Error()})
+			continue
+		}
+		if err != nil {
+			m.recordErr(ctx, t, err)
+			return err
+		}
+		// Not filed: moved, edited or changed meanwhile, so judged afresh.
 	}
 	if !linked {
 		if err := m.Store.ReleaseDone(ctx, album.ID); err != nil && ctx.Err() == nil {

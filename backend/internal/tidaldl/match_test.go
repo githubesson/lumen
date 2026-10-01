@@ -917,7 +917,7 @@ func TestApplyTIDALMatchNeedsSourceAlbum(t *testing.T) {
 	if err != nil || applied {
 		t.Fatalf("applied = %v, %v; want a moved track left alone", applied, err)
 	}
-	filed, err := f.lib.FileUnderTIDALRelease(ctx, id, library.MatchSource{Album: &from}, library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main})
+	filed, err := f.lib.FileUnderTIDALRelease(ctx, id, library.MatchSource{Album: &from}, library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main}, nil)
 	if err != nil || filed {
 		t.Fatalf("filed = %v, %v; want a moved track left alone", filed, err)
 	}
@@ -943,8 +943,11 @@ func TestMatcherKeepsChoiceWhileTrackBacksOff(t *testing.T) {
 	failed := f.track(localTrack{title: "Song", artists: []string{main}, album: &albumID, duration: 100_000})
 	tail := f.track(localTrack{title: "Bonus", artists: []string{main}, album: &albumID, duration: 50_000})
 	store := NewStore(f.pool)
-	if err := store.ChooseRelease(ctx, albumID, relID); err != nil {
-		t.Fatal(err)
+	if noted, err := store.ChooseRelease(ctx, albumID, relID, []uuid.UUID{failed, tail}); err != nil || !noted {
+		t.Fatalf("noted = %v, %v", noted, err)
+	}
+	if noted, err := store.ChooseRelease(ctx, albumID, relID, []uuid.UUID{failed}); err != nil || noted {
+		t.Fatalf("noted a choice judged on part of the album: %v, %v", noted, err)
 	}
 	f.exec(`INSERT INTO tidal_matches(track_id, status, error, attempts, next_attempt_at)
 	        VALUES($1, 'failed', 'db hiccup', 1, NOW() + INTERVAL '5 minutes'),
@@ -1235,5 +1238,44 @@ func TestApplyTIDALMatchNeedsAlbumLinkUnchanged(t *testing.T) {
 	}, nil)
 	if err != nil || applied {
 		t.Fatalf("applied = %v, %v; want the newly linked album to keep its track", applied, err)
+	}
+}
+
+// The common case: the release has the album's own title and artist, so the
+// first match links the album itself, and the rest of it still follows.
+func TestMatcherFilesAlbumThatIsTheRelease(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	title := "Record " + f.run
+	albumID := f.album(title, main, 0)
+	names := []string{"One", "Two", "Three", "Bonus"}
+	var ids []uuid.UUID
+	for i, n := range names {
+		ids = append(ids, f.track(localTrack{title: n, artists: []string{main}, album: &albumID,
+			duration: 100_000 + i*10_000, trackNo: i + 1}))
+	}
+	relID := "rel" + f.run
+	rel := tidal.Album{ID: relID, Title: title, Artist: main, ReleaseYear: 2012}
+	for i, n := range names[:3] {
+		rel.Tracks = append(rel.Tracks, tidal.Track{ID: n + f.run, Title: n, Artists: []string{main},
+			DurationMS: 100_000 + i*10_000, TrackNo: i + 1})
+	}
+	src := &fakeCatalog{searchAlbums: []tidal.Album{rel}, albums: map[string]tidal.Album{relID: rel}}
+	if err := f.matcher(src).matchAlbum(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range ids {
+		got := f.state(id)
+		if got.AlbumID != albumID || got.TIDALAlbum != relID {
+			t.Fatalf("%s = %+v; want it in its own album, now linked", names[i], got)
+		}
+		want := MatchMatched
+		if names[i] == "Bonus" {
+			want = MatchUnmatched
+		}
+		if got.Match != want {
+			t.Fatalf("%s outcome = %q, want %q", names[i], got.Match, want)
+		}
 	}
 }

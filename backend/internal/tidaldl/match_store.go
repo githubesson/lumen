@@ -359,13 +359,28 @@ func (s *Store) NextMatchRetry(ctx context.Context) (time.Time, bool, error) {
 }
 
 // ChooseRelease notes the release chosen for an album before its tracks are
-// filed under it.
-func (s *Store) ChooseRelease(ctx context.Context, albumID uuid.UUID, tidalAlbumID string) error {
-	_, err := s.db.Exec(ctx, `
-		INSERT INTO tidal_match_albums (album_id, tidal_album_id) VALUES ($1, $2)
-		ON CONFLICT (album_id) DO UPDATE SET tidal_album_id = EXCLUDED.tidal_album_id, created_at = NOW()`,
-		albumID, dbtext.Clean(tidalAlbumID))
-	return err
+// filed under it, if the album still holds just the tracks it was judged on
+// (judged), all settled; noted is false otherwise, and the album is judged
+// again on a later pass.
+func (s *Store) ChooseRelease(ctx context.Context, albumID uuid.UUID, tidalAlbumID string, judged []uuid.UUID) (noted bool, err error) {
+	if judged == nil {
+		judged = []uuid.UUID{}
+	}
+	err = s.db.QueryRow(ctx, `
+		INSERT INTO tidal_match_albums (album_id, tidal_album_id)
+		SELECT $1, $2
+		WHERE (SELECT COALESCE(ARRAY_AGG(t.id ORDER BY t.id), '{}')
+		       FROM tracks t JOIN albums a ON a.id = t.album_id
+		       WHERE t.album_id = $1 AND `+matchEligible+` AND NOT `+matchLoose+`)
+		    = (SELECT COALESCE(ARRAY_AGG(j ORDER BY j), '{}') FROM unnest($3::uuid[]) AS j)
+		  AND NOT EXISTS (SELECT 1 FROM tracks t
+		                  WHERE t.album_id = $1 AND `+matchEligible+` AND NOT `+matchSettled+`)
+		ON CONFLICT (album_id) DO UPDATE SET tidal_album_id = EXCLUDED.tidal_album_id, created_at = NOW()
+		RETURNING TRUE`, albumID, dbtext.Clean(tidalAlbumID), judged).Scan(&noted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return noted, err
 }
 
 // ReleaseDone drops an album's chosen release once none of its tracks is
