@@ -313,15 +313,15 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 	}
 	r, err := m.albumRelease(ctx, album, tracks)
 	if err != nil {
-		m.recordAll(ctx, due, MatchOutcome{Status: MatchFailed, Error: err.Error()}, err)
+		m.recordFor(ctx, due, tracks, MatchOutcome{Status: MatchFailed, Error: err.Error()}, err)
 		return err
 	}
 	if r == nil {
-		m.recordAll(ctx, due, MatchOutcome{Status: MatchUnmatched, Error: "no TIDAL release lists this album's tracks"}, nil)
+		m.recordFor(ctx, due, tracks, MatchOutcome{Status: MatchUnmatched, Error: "no TIDAL release lists this album's tracks"}, nil)
 		return nil
 	}
 	if err := m.keep(ctx, r); err != nil {
-		m.recordAll(ctx, due, MatchOutcome{Status: MatchFailed, Error: err.Error()}, err)
+		m.recordFor(ctx, due, tracks, MatchOutcome{Status: MatchFailed, Error: err.Error()}, err)
 		return err
 	}
 	linked := album.TIDALAlbumID != ""
@@ -951,7 +951,7 @@ func releaseFields(r tidal.Album) library.TIDALAlbumFields {
 // record stores an outcome for a track as it was loaded; one moved or
 // changed since is left for a fresh look.
 func (m *Matcher) record(ctx context.Context, t MatchTrack, o MatchOutcome) {
-	if err := m.Store.RecordOutcome(ctx, []MatchTrack{t}, o); err != nil && ctx.Err() == nil {
+	if err := m.Store.RecordOutcome(ctx, []MatchTrack{t}, nil, o); err != nil && ctx.Err() == nil {
 		m.log().Warn("tidal match outcome not recorded", "track", t.ID, "err", err)
 	}
 }
@@ -966,6 +966,12 @@ func (m *Matcher) recordErr(ctx context.Context, t MatchTrack, err error) {
 }
 
 func (m *Matcher) recordAll(ctx context.Context, tracks []MatchTrack, o MatchOutcome, cause error) {
+	m.recordFor(ctx, tracks, nil, o, cause)
+}
+
+// recordFor records an outcome for tracks, decided on basis (nil: tracks),
+// all of which must still be as loaded.
+func (m *Matcher) recordFor(ctx context.Context, tracks, basis []MatchTrack, o MatchOutcome, cause error) {
 	if cause != nil {
 		if ctx.Err() != nil || errors.Is(cause, tidal.ErrNotConfigured) {
 			return
@@ -973,7 +979,7 @@ func (m *Matcher) recordAll(ctx context.Context, tracks []MatchTrack, o MatchOut
 		o = MatchOutcome{Status: MatchFailed, Error: cause.Error()}
 	}
 	// One statement: an album's outcome lands for all its tracks or none.
-	if err := m.Store.RecordOutcome(ctx, tracks, o); err != nil && ctx.Err() == nil {
+	if err := m.Store.RecordOutcome(ctx, tracks, basis, o); err != nil && ctx.Err() == nil {
 		m.log().Warn("tidal match outcomes not recorded", "tracks", len(tracks), "err", err)
 	}
 }

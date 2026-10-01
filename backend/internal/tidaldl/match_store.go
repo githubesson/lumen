@@ -169,7 +169,7 @@ func (t MatchTrack) seen() *time.Time {
 
 // source is the track as loaded, for the final check.
 func (t MatchTrack) source() library.MatchSource {
-	return library.MatchSource{Album: t.AlbumID, AlbumLink: t.AlbumLink, Seen: t.seen()}
+	return library.MatchSource{Album: t.AlbumID, AlbumLink: t.AlbumLink, Seen: t.seen(), Copies: t.Copies}
 }
 
 type rowScanner interface{ Scan(...any) error }
@@ -348,10 +348,22 @@ func (s *Store) RecordAlbumUnmatched(ctx context.Context, albumID uuid.UUID, rea
 // album, changed, or whose album was linked to a release since it was
 // loaded (MatchTrack.AlbumID, AlbumLink, Seen) is left out: the outcome was
 // decided on what it was.
-func (s *Store) RecordOutcome(ctx context.Context, tracks []MatchTrack, o MatchOutcome) error {
+//
+// basis are all the tracks the outcome was decided on (an album's, tracks
+// backing off included); each must still be as loaded, while it is written
+// for tracks only. A nil basis is tracks.
+func (s *Store) RecordOutcome(ctx context.Context, tracks, basis []MatchTrack, o MatchOutcome) error {
 	if len(tracks) == 0 {
 		return nil
 	}
+	if basis == nil {
+		basis = tracks
+	}
+	write := make([]uuid.UUID, len(tracks))
+	for i, t := range tracks {
+		write[i] = t.ID
+	}
+	tracks = basis
 	ids := make([]uuid.UUID, len(tracks))
 	albums := make([]uuid.UUID, len(tracks))
 	links := make([]string, len(tracks))
@@ -373,6 +385,12 @@ func (s *Store) RecordOutcome(ctx context.Context, tracks []MatchTrack, o MatchO
 			SELECT 1 FROM albums WHERE id = ANY($1) ORDER BY id FOR SHARE`, albums); err != nil {
 			return err
 		}
+		// Locked first, checked in the next statement, which sees what any
+		// writer that held the rows committed.
+		if _, err := tx.Exec(ctx, `
+			SELECT 1 FROM tracks WHERE id = ANY($1) ORDER BY id FOR UPDATE`, ids); err != nil {
+			return err
+		}
 		var still []uuid.UUID
 		rows, err := tx.Query(ctx, `
 			SELECT t.id FROM tracks t
@@ -385,9 +403,7 @@ func (s *Store) RecordOutcome(ctx context.Context, tracks []MatchTrack, o MatchO
 			  AND `+trackAlbumLink+` = snap.link
 			  -- Found to be a TIDAL track's copy during the lookup: that
 			  -- settles more than this outcome could.
-			  AND `+trackCopies+` = snap.copies
-			ORDER BY t.id
-			FOR UPDATE OF t`, ids, albums, seen, links, copies)
+			  AND `+trackCopies+` = snap.copies`, ids, albums, seen, links, copies)
 		if err != nil {
 			return err
 		}
@@ -412,7 +428,7 @@ func (s *Store) RecordOutcome(ctx context.Context, tracks []MatchTrack, o MatchO
 			       `+trackAlbumLink+`, t.updated_at, `+trackCopies+`
 			FROM tracks t WHERE t.id = ANY($1)
 			`+outcomeUpsert,
-			still, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error))
+			write, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error))
 		return err
 	})
 }

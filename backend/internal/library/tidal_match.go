@@ -37,6 +37,9 @@ type MatchSource struct {
 	// Seen, if set, is its updated_at then; a duplicate's tags adopted
 	// since bump it.
 	Seen *time.Time
+	// Copies is the sorted list of TIDAL tracks auto-download had found it
+	// to be a copy of; a new association since is newer evidence.
+	Copies string
 }
 
 // ErrTIDALAlbumConflict reports that the library album for a release's
@@ -76,6 +79,12 @@ func lockSource(ctx context.Context, tx pgx.Tx, src MatchSource, release string)
 // purpose and that still fits src (same album, unchanged): the only kind
 // TIDAL matching may change. ok is false for any other track.
 func lockTrack(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, src MatchSource) (ok bool, err error) {
+	// Locked first, checked in the next statement: a writer holding the row
+	// (auto-download's adoption share-locks it while it records a copy) has
+	// committed by then, and the check sees what it wrote.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM tracks WHERE id = $1 FOR UPDATE`, trackID); err != nil {
+		return false, err
+	}
 	err = tx.QueryRow(ctx, `
 		SELECT TRUE FROM tracks t
 		WHERE t.id = $1 AND t.deleted_at IS NULL AND t.source = 'local'
@@ -88,7 +97,9 @@ func lockTrack(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, src MatchSourc
 		                  WHERE d.local_track_id = t.id AND d.status = 'downloaded')
 		  AND NOT EXISTS (SELECT 1 FROM api_tracker_downloads ad WHERE ad.track_id = t.id)
 		  AND NOT EXISTS (SELECT 1 FROM artistgrid_downloads gd WHERE gd.track_id = t.id)
-		FOR UPDATE`, trackID, src.Album, src.Seen).Scan(&ok)
+		  AND COALESCE((SELECT STRING_AGG(cd.tidal_id, ',' ORDER BY cd.tidal_id) FROM tidal_downloads cd
+		                WHERE cd.local_track_id = t.id AND cd.status = 'existing'), '') = $4`,
+		trackID, src.Album, src.Seen, src.Copies).Scan(&ok)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -134,8 +145,10 @@ func releaseAlbum(ctx context.Context, tx pgx.Tx, in TIDALAlbumFields, oldCover 
 func albumCover(ctx context.Context, tx pgx.Tx, trackID uuid.UUID) (*string, error) {
 	var cover *string
 	err := tx.QueryRow(ctx, `
-		SELECT CASE WHEN a.title = $2 AND a.album_artist_id IS NULL THEN NULL
-		            ELSE a.cover_art_path END
+		SELECT CASE WHEN a.title = $2 AND a.album_artist_id IS NULL
+		                 AND NOT EXISTS (SELECT 1 FROM track_artists ta
+		                                 WHERE ta.track_id = t.id AND ta.role <> 'composer')
+		            THEN NULL ELSE a.cover_art_path END
 		FROM tracks t JOIN albums a ON a.id = t.album_id
 		WHERE t.id = $1`, trackID, CatchAllAlbum).Scan(&cover)
 	if errors.Is(err, pgx.ErrNoRows) {

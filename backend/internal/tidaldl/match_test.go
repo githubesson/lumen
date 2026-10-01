@@ -1510,7 +1510,7 @@ func TestBackoffStreakAndPendingChoice(t *testing.T) {
 		t.Fatalf("loaded %d, %v", len(loaded), err)
 	}
 	f.exec(`UPDATE albums SET tidal_album_id = $2 WHERE id = $1`, albumID, "saved"+f.run)
-	if err := store.RecordOutcome(ctx, loaded, MatchOutcome{Status: MatchFailed, Error: "late"}); err != nil {
+	if err := store.RecordOutcome(ctx, loaded, nil, MatchOutcome{Status: MatchFailed, Error: "late"}); err != nil {
 		t.Fatal(err)
 	}
 	var errText string
@@ -1913,5 +1913,61 @@ func TestStreakRestartAndSoftDeletedTrack(t *testing.T) {
 	var status string
 	if err := f.pool.QueryRow(ctx, `SELECT status FROM tidal_matches WHERE track_id = $1`, a).Scan(&status); err != nil || status != MatchFailed {
 		t.Fatalf("status = %q, %v; an outcome decided with a deleted track landed", status, err)
+	}
+}
+
+// An album-wide outcome is checked against every track it was decided on,
+// those backing off included; and a real album named like the catch-all
+// keeps its cover when filed.
+func TestOutcomeBasisAndRealOthersAlbum(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	albumID := f.album("Record "+f.run, main, 0)
+	other := f.album("Other "+f.run, main, 0)
+	due := f.track(localTrack{title: "One", artists: []string{main}, album: &albumID, duration: 100_000})
+	resting := f.track(localTrack{title: "Two", artists: []string{main}, album: &albumID, duration: 110_000})
+	f.outcome(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at)
+	           VALUES($1, 'failed', 1, NOW() + INTERVAL '30 minutes')`, resting)
+	store := NewStore(f.pool)
+	_, loaded, err := store.MatchAlbumTracks(ctx, albumID, 10)
+	if err != nil || len(loaded) != 2 {
+		t.Fatalf("loaded %d, %v", len(loaded), err)
+	}
+	var dueOnly []MatchTrack
+	for _, l := range loaded {
+		if !l.BackingOff {
+			dueOnly = append(dueOnly, l)
+		}
+	}
+	f.exec(`UPDATE tracks SET album_id = $2 WHERE id = $1`, resting, other)
+	if err := store.RecordOutcome(ctx, dueOnly, loaded, MatchOutcome{Status: MatchUnmatched}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(due); got.Match != "" {
+		t.Fatalf("due = %+v; the decision's basis changed, so nothing should land", got)
+	}
+
+	// "Others" by a credited artist is a real album, not the catch-all.
+	var named uuid.UUID
+	if err := f.pool.QueryRow(ctx, `
+		INSERT INTO albums(title, is_compilation, cover_art_path) VALUES($1, TRUE, 'covers/real.jpg')
+		ON CONFLICT (title, COALESCE(album_artist_id, '00000000-0000-0000-0000-000000000000'::uuid))
+		DO UPDATE SET cover_art_path = EXCLUDED.cover_art_path
+		RETURNING id`, library.CatchAllAlbum).Scan(&named); err != nil {
+		t.Fatal(err)
+	}
+	id := f.track(localTrack{title: "Song", artists: []string{main}, album: &named, duration: 100_000})
+	if applied, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
+		Title: "Song", Source: library.MatchSource{Album: &named},
+		Album: library.TIDALAlbumFields{Title: "Others Deluxe " + f.run, Artist: main},
+	}, nil); err != nil || !applied {
+		t.Fatalf("applied = %v, %v", applied, err)
+	}
+	var cover string
+	if err := f.pool.QueryRow(ctx, `
+		SELECT COALESCE(a.cover_art_path, '') FROM tracks t JOIN albums a ON a.id = t.album_id WHERE t.id = $1`, id).
+		Scan(&cover); err != nil || cover != "covers/real.jpg" {
+		t.Fatalf("cover %q, %v; a real album's cover should come along", cover, err)
 	}
 }
