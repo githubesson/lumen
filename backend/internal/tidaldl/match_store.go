@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -51,6 +52,12 @@ const trackCopies = `COALESCE((SELECT STRING_AGG(cd.tidal_id, ',' ORDER BY cd.ti
 const matchFresh = `m.track_version = t.updated_at AND m.album_link = ` + trackAlbumLink + `
 	AND m.copies = ` + trackCopies
 
+// freshAs is matchFresh for an outcome aliased as alias.
+func freshAs(alias string) string {
+	return strings.NewReplacer("m.track_version", alias+".track_version", "m.album_link", alias+".album_link",
+		"m.copies", alias+".copies").Replace(matchFresh)
+}
+
 // matchDue holds for a track t never tried, whose retry is up, or whose
 // last outcome isn't fresh.
 const matchDue = `NOT EXISTS (SELECT 1 FROM tidal_matches m
@@ -69,10 +76,10 @@ const matchSettled = `t.updated_at < NOW() - INTERVAL '10 minutes'`
 // its album was judged on and that is still to file under it: no outcome
 // since the choice (or one older than the track), and no failure backing
 // off, from before the choice or since.
-const matchResumable = `COALESCE((
+var matchResumable = `COALESCE((
 	SELECT t.id = ANY(c.track_ids) AND NOT EXISTS (
 		SELECT 1 FROM tidal_matches rm
-		WHERE rm.track_id = t.id AND rm.track_version = t.updated_at
+		WHERE rm.track_id = t.id AND ` + freshAs("rm") + `
 		  AND ((rm.updated_at >= c.created_at AND rm.status <> 'failed')
 		    OR (rm.status = 'failed' AND rm.next_attempt_at > NOW())))
 	FROM tidal_match_albums c WHERE c.album_id = t.album_id), FALSE)`
@@ -374,6 +381,7 @@ func (s *Store) RecordOutcome(ctx context.Context, tracks []MatchTrack, o MatchO
 			  ON snap.id = t.id
 			WHERE COALESCE(t.album_id, '00000000-0000-0000-0000-000000000000'::uuid) = snap.album_id
 			  AND (snap.seen IS NULL OR t.updated_at = snap.seen)
+			  AND `+matchEligible+`
 			  AND `+trackAlbumLink+` = snap.link
 			  -- Found to be a TIDAL track's copy during the lookup: that
 			  -- settles more than this outcome could.
@@ -420,8 +428,15 @@ const outcomeRetry = `CASE %s
 			WHEN 'unmatched' THEN NOW() + INTERVAL '30 days'
 			ELSE NOW() + INTERVAL '5 minutes' END`
 
+// failStreak holds when an upserted failure continues the previous row's:
+// that was a failure too, for the track as it still is.
+const failStreak = `tidal_matches.status = 'failed'
+	AND tidal_matches.track_version IS NOT DISTINCT FROM EXCLUDED.track_version
+	AND tidal_matches.album_link = EXCLUDED.album_link AND tidal_matches.copies = EXCLUDED.copies`
+
 // outcomeUpsert replaces an earlier outcome. Failures in a row back off
-// from 5 minutes, doubling up to a day; any other outcome ends the streak.
+// from 5 minutes, doubling up to a day; any other outcome, or a change to
+// the track, ends the streak.
 const outcomeUpsert = `
 		ON CONFLICT (track_id) DO UPDATE SET
 			status = EXCLUDED.status,
@@ -430,11 +445,11 @@ const outcomeUpsert = `
 			error = EXCLUDED.error,
 			attempts = CASE
 				WHEN EXCLUDED.status <> 'failed' THEN 0
-				WHEN tidal_matches.status = 'failed' THEN tidal_matches.attempts + 1
+				WHEN ` + failStreak + ` THEN tidal_matches.attempts + 1
 				ELSE 1 END,
 			next_attempt_at = CASE
 				WHEN EXCLUDED.status <> 'failed' THEN EXCLUDED.next_attempt_at
-				WHEN tidal_matches.status = 'failed' THEN NOW() + LEAST(
+				WHEN ` + failStreak + ` THEN NOW() + LEAST(
 					INTERVAL '5 minutes' * POWER(2, LEAST(tidal_matches.attempts, 10)),
 					INTERVAL '24 hours')
 				ELSE NOW() + INTERVAL '5 minutes' END,

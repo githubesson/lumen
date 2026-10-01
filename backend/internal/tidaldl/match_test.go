@@ -1878,3 +1878,40 @@ func TestPreChoiceBackoffAndBlankArtistRelease(t *testing.T) {
 		t.Fatalf("track = %+v; want the artist's own release over one without an album artist", got)
 	}
 }
+
+// A failure streak restarts when the track changed; an album-wide outcome
+// isn't recorded once one of its tracks is soft-deleted.
+func TestStreakRestartAndSoftDeletedTrack(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	albumID := f.album("Record "+f.run, main, 0)
+	a := f.track(localTrack{title: "One", artists: []string{main}, album: &albumID, duration: 100_000})
+	b := f.track(localTrack{title: "Two", artists: []string{main}, album: &albumID, duration: 110_000})
+	store := NewStore(f.pool)
+	fail := MatchOutcome{Status: MatchFailed, Error: "boom"}
+	for i := 0; i < 6; i++ {
+		if err := store.RecordMatch(ctx, a, fail); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.exec(`UPDATE tracks SET updated_at = updated_at + INTERVAL '1 second' WHERE id = $1`, a)
+	if err := store.RecordMatch(ctx, a, fail); err != nil {
+		t.Fatal(err)
+	}
+	var attempts int
+	if err := f.pool.QueryRow(ctx, `SELECT attempts FROM tidal_matches WHERE track_id = $1`, a).Scan(&attempts); err != nil || attempts != 1 {
+		t.Fatalf("attempts = %d, %v; a changed track starts a new streak", attempts, err)
+	}
+
+	_, loaded, err := store.MatchAlbumTracks(ctx, albumID, 10)
+	if err != nil || len(loaded) != 2 {
+		t.Fatalf("loaded %d, %v", len(loaded), err)
+	}
+	f.exec(`UPDATE tracks SET deleted_at = NOW() WHERE id = $1`, b)
+	f.matcher(&fakeCatalog{}).recordAll(ctx, loaded, MatchOutcome{Status: MatchUnmatched, Error: "none"}, nil)
+	var status string
+	if err := f.pool.QueryRow(ctx, `SELECT status FROM tidal_matches WHERE track_id = $1`, a).Scan(&status); err != nil || status != MatchFailed {
+		t.Fatalf("status = %q, %v; an outcome decided with a deleted track landed", status, err)
+	}
+}

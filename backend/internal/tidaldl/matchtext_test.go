@@ -17,6 +17,9 @@ func TestMatchTitle(t *testing.T) {
 		{"Song (Live)", "Song - Live"},
 		{"Song (Skrillex Remix)", "Song - Skrillex Remix"},
 		{"Song - Explicit", "Song"},
+		{"Song - Re-mastered", "Song"},
+		{"Song - Live - 2011 Remaster", "Song (Live)"},
+		{"Up-Tempo - Remastered", "Up-Tempo"},
 	}
 	for _, p := range same {
 		if a, b := matchTitle(p[0]), matchTitle(p[1]); a != b {

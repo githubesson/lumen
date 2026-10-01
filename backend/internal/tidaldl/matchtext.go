@@ -27,7 +27,8 @@ var (
 	// " feat. X" to the end.
 	featTailRe = regexp.MustCompile(`(?i)\s(?:feat\.?|ft\.?|featuring)\s.*$`)
 	groupRe    = regexp.MustCompile(`[(\[]([^)\]]*)[)\]]`)
-	dashTailRe = regexp.MustCompile(`\s[-–—]\s([^-–—]+)$`)
+	// The last " - " qualifier; it may hold hyphens ("Re-mastered").
+	dashTailRe = regexp.MustCompile(`^(.*\S)\s+[-–—]\s+(.+)$`)
 
 	remasterNoise = `(?:\d{4}\s+)?(?:digital(?:ly)?\s+)?re-?master(?:ed)?(?:\s+\d{4})?(?:\s+(?:version|edition))?`
 	titleNoiseRe  = regexp.MustCompile(`(?i)^(?:` + remasterNoise +
@@ -56,11 +57,11 @@ func stripQualifiers(s string, noise *regexp.Regexp) string {
 		return " " + inner + " "
 	})
 	for {
-		m := dashTailRe.FindStringSubmatchIndex(s)
-		if m == nil || !noise.MatchString(strings.TrimSpace(s[m[2]:m[3]])) {
+		m := dashTailRe.FindStringSubmatch(s)
+		if m == nil || !noise.MatchString(strings.TrimSpace(m[2])) {
 			break
 		}
-		s = s[:m[0]]
+		s = m[1]
 	}
 	return words(s)
 }
