@@ -216,3 +216,21 @@ func TestAssignReleaseMaximizesPairs(t *testing.T) {
 		t.Fatalf("assigned %+v; want A→y and B→x", got)
 	}
 }
+
+// Among pairings as large as possible, the closest one wins: repeated
+// titles don't trade a close pair for a far one.
+func TestAssignReleaseKeepsBestPairing(t *testing.T) {
+	entry := func(id string, ms int) tidal.Track {
+		return tidal.Track{ID: id, Title: "Interlude", Artists: []string{"Main"}, DurationMS: ms}
+	}
+	r := tidal.Album{ID: "rel", Title: "Record", Tracks: []tidal.Track{
+		entry("e100", 100_000), entry("e102", 102_000), entry("e105", 105_000),
+	}}
+	local := func(ms int) MatchTrack {
+		return MatchTrack{Title: "Interlude", Artists: []string{"Main"}, DurationMS: ms}
+	}
+	got := assignRelease(r, []MatchTrack{local(100_000), local(101_000), local(102_000)}, false)
+	if len(got) != 3 || got[0].ID != "e100" || got[1].ID != "e102" || got[2].ID != "e105" {
+		t.Fatalf("assigned %v, %v, %v; want e100, e102, e105", got[0].ID, got[1].ID, got[2].ID)
+	}
+}

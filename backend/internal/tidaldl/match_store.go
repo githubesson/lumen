@@ -3,6 +3,7 @@ package tidaldl
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -243,37 +244,47 @@ func (s *Store) RecordAlbumUnmatched(ctx context.Context, albumID uuid.UUID, rea
 	return err
 }
 
-// RecordMatches stores the same outcome for several tracks in one
-// statement, e.g. an album's: all of them or none.
-func (s *Store) RecordMatches(ctx context.Context, trackIDs []uuid.UUID, o MatchOutcome) error {
-	if len(trackIDs) == 0 {
+// RecordOutcome stores the same outcome for several tracks in one
+// statement, e.g. an album's: all of them or none. A track moved to another
+// album or changed since it was loaded (MatchTrack.AlbumID, Seen) is left
+// out: the outcome was decided on what it was.
+func (s *Store) RecordOutcome(ctx context.Context, tracks []MatchTrack, o MatchOutcome) error {
+	if len(tracks) == 0 {
 		return nil
 	}
-	return recordMatches(ctx, s.db, trackIDs, o)
-}
-
-// RecordMatch stores an attempt's outcome. A match is final; no match is
-// tried again after 30 days, in case TIDAL adds the release; a failure backs
-// off from 5 minutes, doubling up to a day. A track deleted meanwhile is
-// skipped.
-func (s *Store) RecordMatch(ctx context.Context, trackID uuid.UUID, o MatchOutcome) error {
-	return recordMatch(ctx, s.db, trackID, o)
-}
-
-// recordMatch is RecordMatch on q, e.g. the transaction applying a match.
-func recordMatch(ctx context.Context, q execer, trackID uuid.UUID, o MatchOutcome) error {
-	return recordMatches(ctx, q, []uuid.UUID{trackID}, o)
-}
-
-func recordMatches(ctx context.Context, q execer, trackIDs []uuid.UUID, o MatchOutcome) error {
-	_, err := q.Exec(ctx, `
+	ids := make([]uuid.UUID, len(tracks))
+	albums := make([]uuid.UUID, len(tracks))
+	seen := make([]*time.Time, len(tracks))
+	for i, t := range tracks {
+		ids[i] = t.ID
+		if t.AlbumID != nil {
+			albums[i] = *t.AlbumID
+		}
+		seen[i] = t.seen()
+	}
+	_, err := s.db.Exec(ctx, `
 		INSERT INTO tidal_matches (track_id, status, tidal_id, tidal_album_id, error, attempts,
 		                           next_attempt_at, cover_url, cover_album_id)
-		SELECT tr.id, $2, $3, $4, $5, 1, CASE $2
+		SELECT tr.id, $4, $5, $6, $7, 1, `+fmt.Sprintf(outcomeRetry, "$4")+`, '', NULL
+		FROM tracks tr
+		JOIN unnest($1::uuid[], $2::uuid[], $3::timestamptz[]) AS snap(id, album_id, seen) ON snap.id = tr.id
+		WHERE COALESCE(tr.album_id, '00000000-0000-0000-0000-000000000000'::uuid) = snap.album_id
+		  AND (snap.seen IS NULL OR tr.updated_at = snap.seen)
+		`+outcomeUpsert,
+		ids, albums, seen, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error))
+	return err
+}
+
+// outcomeRetry is a new outcome's next attempt, by its status (the %s
+// parameter).
+const outcomeRetry = `CASE %s
 			WHEN 'matched' THEN NULL
 			WHEN 'unmatched' THEN NOW() + INTERVAL '30 days'
-			ELSE NOW() + INTERVAL '5 minutes' END, $6, $7
-		FROM tracks tr WHERE tr.id = ANY($1)
+			ELSE NOW() + INTERVAL '5 minutes' END`
+
+// outcomeUpsert replaces an earlier outcome; a failure backs off from 5
+// minutes, doubling up to a day.
+const outcomeUpsert = `
 		ON CONFLICT (track_id) DO UPDATE SET
 			status = EXCLUDED.status,
 			tidal_id = EXCLUDED.tidal_id,
@@ -288,17 +299,38 @@ func recordMatches(ctx context.Context, q execer, trackIDs []uuid.UUID, o MatchO
 			cover_url = EXCLUDED.cover_url,
 			cover_album_id = EXCLUDED.cover_album_id,
 			cover_retry_at = NULL,
-			updated_at = NOW()`,
-		trackIDs, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error),
+			updated_at = NOW()`
+
+// RecordMatch stores an attempt's outcome for a track this attempt itself
+// just changed (filed it), so no snapshot applies. A match is final; no
+// match is tried again after 30 days, in case TIDAL adds the release; a
+// failure backs off from 5 minutes, doubling up to a day. A track deleted
+// meanwhile is skipped.
+func (s *Store) RecordMatch(ctx context.Context, trackID uuid.UUID, o MatchOutcome) error {
+	return recordMatch(ctx, s.db, trackID, o)
+}
+
+// recordMatch is RecordMatch on q, e.g. the transaction applying a match.
+func recordMatch(ctx context.Context, q execer, trackID uuid.UUID, o MatchOutcome) error {
+	_, err := q.Exec(ctx, `
+		INSERT INTO tidal_matches (track_id, status, tidal_id, tidal_album_id, error, attempts,
+		                           next_attempt_at, cover_url, cover_album_id)
+		SELECT tr.id, $2, $3, $4, $5, 1, `+fmt.Sprintf(outcomeRetry, "$2")+`, $6, $7
+		FROM tracks tr WHERE tr.id = $1
+		`+outcomeUpsert,
+		trackID, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error),
 		dbtext.Clean(o.CoverURL), o.CoverAlbum)
 	return err
 }
 
-// NextMatchRetry is when the earliest failed lookup is due again, if any.
+// NextMatchRetry is when the earliest failed lookup of a track matching may
+// still change is due again, if any.
 func (s *Store) NextMatchRetry(ctx context.Context) (time.Time, bool, error) {
 	var at *time.Time
 	err := s.db.QueryRow(ctx, `
-		SELECT MIN(next_attempt_at) FROM tidal_matches WHERE status = 'failed'`).Scan(&at)
+		SELECT MIN(fm.next_attempt_at) FROM tidal_matches fm
+		JOIN tracks t ON t.id = fm.track_id
+		WHERE fm.status = 'failed' AND `+matchEligible).Scan(&at)
 	if err != nil || at == nil {
 		return time.Time{}, false, err
 	}
@@ -317,15 +349,16 @@ func (s *Store) ChooseRelease(ctx context.Context, albumID uuid.UUID, tidalAlbum
 
 // ReleaseDone drops an album's chosen release once none of its tracks is
 // left to file: every eligible track still in the album has an outcome
-// other than a failure, which would retry under the choice.
+// recorded since the choice, and not a failure, which would retry under it.
+// An older outcome (a track skipped as changed) doesn't count.
 func (s *Store) ReleaseDone(ctx context.Context, albumID uuid.UUID) error {
 	_, err := s.db.Exec(ctx, `
 		DELETE FROM tidal_match_albums c
 		WHERE c.album_id = $1 AND NOT EXISTS (
 			SELECT 1 FROM tracks t
-			LEFT JOIN tidal_matches m ON m.track_id = t.id
+			LEFT JOIN tidal_matches om ON om.track_id = t.id
 			WHERE t.album_id = $1 AND `+matchEligible+`
-			  AND (m.track_id IS NULL OR m.status = 'failed'))`, albumID)
+			  AND (om.track_id IS NULL OR om.status = 'failed' OR om.updated_at < c.created_at))`, albumID)
 	return err
 }
 

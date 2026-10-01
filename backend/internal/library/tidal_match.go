@@ -65,6 +65,12 @@ func lockUnmatchable(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, from *uu
 		  AND t.owner_id IS NULL AND t.metadata_edited_at IS NULL
 		  AND t.album_id IS NOT DISTINCT FROM $2
 		  AND ($3::timestamptz IS NULL OR t.updated_at = $3)
+		  -- Saved by auto-download or brought in by an importer since the
+		  -- match was decided: their metadata wins.
+		  AND NOT EXISTS (SELECT 1 FROM tidal_downloads d
+		                  WHERE d.local_track_id = t.id AND d.status = 'downloaded')
+		  AND NOT EXISTS (SELECT 1 FROM api_tracker_downloads ad WHERE ad.track_id = t.id)
+		  AND NOT EXISTS (SELECT 1 FROM artistgrid_downloads gd WHERE gd.track_id = t.id)
 		FOR UPDATE`, trackID, albumID, seen).Scan(&ok)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil

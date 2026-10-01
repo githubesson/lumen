@@ -1113,3 +1113,40 @@ func TestMatcherEditedDestinationAndCoverOncePerAlbum(t *testing.T) {
 		}
 	}
 }
+
+// An outcome decided on a track as loaded isn't recorded for a track moved
+// or changed since, and an outcome from before an album's release choice
+// doesn't finish the choice.
+func TestOutcomesNeedTheTrackAsLoaded(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	albumID := f.album("Record "+f.run, main, 0)
+	other := f.album("Other "+f.run, main, 0)
+	stays := f.track(localTrack{title: "Stays", artists: []string{main}, album: &albumID, duration: 100_000})
+	moves := f.track(localTrack{title: "Moves", artists: []string{main}, album: &albumID, duration: 100_000})
+	store := NewStore(f.pool)
+	_, loaded, err := store.MatchAlbumTracks(ctx, albumID, 10)
+	if err != nil || len(loaded) != 2 {
+		t.Fatalf("loaded %d tracks, %v", len(loaded), err)
+	}
+	f.exec(`UPDATE tracks SET album_id = $2 WHERE id = $1`, moves, other)
+	m := f.matcher(&fakeCatalog{})
+	m.recordAll(ctx, loaded, MatchOutcome{Status: MatchUnmatched, Error: "none"}, nil)
+	if got := f.state(stays); got.Match != MatchUnmatched {
+		t.Fatalf("stays = %+v", got)
+	}
+	if got := f.state(moves); got.Match != "" {
+		t.Fatalf("moved track got outcome %q decided for its old album", got.Match)
+	}
+
+	// The choice comes after stays' outcome, which then doesn't finish it.
+	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, created_at) VALUES($1, 'rel', NOW() + INTERVAL '1 second')`, albumID)
+	if err := store.ReleaseDone(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := f.pool.QueryRow(ctx, `SELECT COUNT(*) FROM tidal_match_albums WHERE album_id = $1`, albumID).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("choice count %d, %v; an outcome older than the choice finished it", n, err)
+	}
+}

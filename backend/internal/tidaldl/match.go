@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -320,7 +319,13 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 				continue // moved, edited or changed meanwhile: judged afresh
 			}
 		}
-		m.record(ctx, t, MatchOutcome{Status: MatchUnmatched, TIDALAlbumID: r.ID, Error: "not on the album's TIDAL release"})
+		o := MatchOutcome{Status: MatchUnmatched, TIDALAlbumID: r.ID, Error: "not on the album's TIDAL release"}
+		if linked {
+			m.record(ctx, t, o)
+		} else if err := m.Store.RecordMatch(ctx, t.ID, o); err != nil && ctx.Err() == nil {
+			// Filed just now, so its snapshot is stale by design.
+			m.log().Warn("tidal match outcome not recorded", "track", t.ID, "err", err)
+		}
 	}
 	if !linked {
 		if err := m.Store.ReleaseDone(ctx, album.ID); err != nil && ctx.Err() == nil {
@@ -402,8 +407,9 @@ func (m *Matcher) albumRelease(ctx context.Context, album MatchAlbum, tracks []M
 		if err != nil {
 			return nil, err
 		}
-		if len(hits) > 0 {
-			if err := consider(hits[0].AlbumID); err != nil {
+		// Every release the hits name, best first, while the budget lasts.
+		for _, h := range hits {
+			if err := consider(h.AlbumID); err != nil {
 				return nil, err
 			}
 		}
@@ -480,12 +486,11 @@ func betterRelease(a, b tidal.Album, album MatchAlbum, tracks int) bool {
 // position, then the closest duration. relaxed is trackMatches'. The entries
 // carry the release's album metadata.
 func assignRelease(r tidal.Album, tracks []MatchTrack, relaxed bool) map[int]tidal.Track {
-	type pair struct{ track, entry, score, diff int }
 	entryTitles := make([]string, len(r.Tracks))
 	for j, c := range r.Tracks {
 		entryTitles[j] = matchTitle(c.Title)
 	}
-	var pairs []pair
+	var pairs []assignPair
 	for i, t := range tracks {
 		title := matchTitle(t.Title)
 		for j, c := range r.Tracks {
@@ -502,57 +507,98 @@ func assignRelease(r tidal.Album, tracks []MatchTrack, relaxed bool) map[int]tid
 			if t.TrackNo > 0 && t.TrackNo == c.TrackNo && max(t.DiscNo, 1) == max(c.DiscNo, 1) {
 				score += 2
 			}
-			pairs = append(pairs, pair{i, j, score, abs(t.DurationMS - c.DurationMS)})
+			// Stronger pairs cost less; among equals, the closer duration.
+			cost := -score*assignScoreUnit + min(abs(t.DurationMS-c.DurationMS), assignScoreUnit-1)
+			pairs = append(pairs, assignPair{track: i, entry: j, cost: cost})
 		}
 	}
-	slices.SortStableFunc(pairs, func(a, b pair) int {
-		if a.score != b.score {
-			return b.score - a.score
-		}
-		return a.diff - b.diff
-	})
-	// Strongest pairs first, then augmenting paths for the tracks left out,
-	// which may move a paired track to a weaker entry so both fit.
-	options := make([][]int, len(tracks)) // entries per track, strongest first
-	entryOf := map[int]int{}              // track → entry
-	trackOf := map[int]int{}              // entry → track
-	for _, p := range pairs {
-		options[p.track] = append(options[p.track], p.entry)
-		if _, done := entryOf[p.track]; done {
-			continue
-		}
-		if _, taken := trackOf[p.entry]; taken {
-			continue
-		}
-		entryOf[p.track], trackOf[p.entry] = p.entry, p.track
-	}
-	var augment func(track int, seen map[int]bool) bool
-	augment = func(track int, seen map[int]bool) bool {
-		for _, e := range options[track] {
-			if seen[e] {
-				continue
-			}
-			seen[e] = true
-			other, taken := trackOf[e]
-			if !taken || augment(other, seen) {
-				entryOf[track], trackOf[e] = e, track
-				return true
-			}
-		}
-		return false
-	}
-	for i := range tracks {
-		if _, done := entryOf[i]; !done && len(options[i]) > 0 {
-			augment(i, map[int]bool{})
-		}
-	}
-	out := make(map[int]tidal.Track, len(entryOf))
-	for track, e := range entryOf {
+	out := map[int]tidal.Track{}
+	for track, e := range minCostMatching(len(tracks), pairs) {
 		hit := r.Tracks[e]
 		if hit.AlbumID == "" {
 			hit.AlbumID = r.ID
 		}
 		out[track] = fromRelease(hit, r)
+	}
+	return out
+}
+
+// assignScoreUnit weighs one point of pair strength over any duration gap.
+const assignScoreUnit = 1_000_000
+
+type assignPair struct{ track, entry, cost int }
+
+// minCostMatching pairs tracks with entries one to one: as many pairs as
+// possible, and among those the lowest total cost (successive shortest
+// paths over the pairs). It maps track → entry.
+func minCostMatching(tracks int, pairs []assignPair) map[int]int {
+	// Nodes: source, tracks, the entries pairs name, sink.
+	entryNode := map[int]int{}
+	for _, p := range pairs {
+		if _, ok := entryNode[p.entry]; !ok {
+			entryNode[p.entry] = 1 + tracks + len(entryNode)
+		}
+	}
+	source, sink := 0, 1+tracks+len(entryNode)
+	type edge struct{ to, rev, capacity, cost int }
+	graph := make([][]edge, sink+1)
+	addEdge := func(from, to, cost int) {
+		graph[from] = append(graph[from], edge{to, len(graph[to]), 1, cost})
+		graph[to] = append(graph[to], edge{from, len(graph[from]) - 1, 0, -cost})
+	}
+	for i := 0; i < tracks; i++ {
+		addEdge(source, 1+i, 0)
+	}
+	for _, node := range entryNode {
+		addEdge(node, sink, 0)
+	}
+	for _, p := range pairs {
+		addEdge(1+p.track, entryNode[p.entry], p.cost)
+	}
+	const unreached = int(^uint(0) >> 1)
+	for {
+		// Bellman-Ford (queue-based): costs may be negative.
+		dist := make([]int, len(graph))
+		prevNode := make([]int, len(graph))
+		prevEdge := make([]int, len(graph))
+		queued := make([]bool, len(graph))
+		for v := range dist {
+			dist[v] = unreached
+		}
+		dist[source] = 0
+		queue := []int{source}
+		for len(queue) > 0 {
+			v := queue[0]
+			queue = queue[1:]
+			queued[v] = false
+			for k, e := range graph[v] {
+				if e.capacity > 0 && dist[v]+e.cost < dist[e.to] {
+					dist[e.to] = dist[v] + e.cost
+					prevNode[e.to], prevEdge[e.to] = v, k
+					if !queued[e.to] {
+						queued[e.to] = true
+						queue = append(queue, e.to)
+					}
+				}
+			}
+		}
+		if dist[sink] == unreached {
+			break
+		}
+		for v := sink; v != source; v = prevNode[v] {
+			e := &graph[prevNode[v]][prevEdge[v]]
+			e.capacity--
+			graph[v][e.rev].capacity++
+		}
+	}
+	out := map[int]int{}
+	for entry, node := range entryNode {
+		for _, e := range graph[node] {
+			// A used track → entry edge leaves capacity on its reverse.
+			if e.to >= 1 && e.to <= tracks && e.capacity > 0 {
+				out[e.to-1] = entry
+			}
+		}
 	}
 	return out
 }
@@ -845,8 +891,10 @@ func releaseFields(r tidal.Album) library.TIDALAlbumFields {
 	}
 }
 
+// record stores an outcome for a track as it was loaded; one moved or
+// changed since is left for a fresh look.
 func (m *Matcher) record(ctx context.Context, t MatchTrack, o MatchOutcome) {
-	if err := m.Store.RecordMatch(ctx, t.ID, o); err != nil && ctx.Err() == nil {
+	if err := m.Store.RecordOutcome(ctx, []MatchTrack{t}, o); err != nil && ctx.Err() == nil {
 		m.log().Warn("tidal match outcome not recorded", "track", t.ID, "err", err)
 	}
 }
@@ -867,12 +915,8 @@ func (m *Matcher) recordAll(ctx context.Context, tracks []MatchTrack, o MatchOut
 		}
 		o = MatchOutcome{Status: MatchFailed, Error: cause.Error()}
 	}
-	ids := make([]uuid.UUID, len(tracks))
-	for i, t := range tracks {
-		ids[i] = t.ID
-	}
 	// One statement: an album's outcome lands for all its tracks or none.
-	if err := m.Store.RecordMatches(ctx, ids, o); err != nil && ctx.Err() == nil {
-		m.log().Warn("tidal match outcomes not recorded", "tracks", len(ids), "err", err)
+	if err := m.Store.RecordOutcome(ctx, tracks, o); err != nil && ctx.Err() == nil {
+		m.log().Warn("tidal match outcomes not recorded", "tracks", len(tracks), "err", err)
 	}
 }
