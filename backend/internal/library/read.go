@@ -1084,3 +1084,57 @@ func trackOrder(sort string) string {
 		return "t.created_at DESC, t.id ASC"
 	}
 }
+
+// TrackTags is the library's metadata for a local track, as written into a
+// downloaded copy of its file.
+type TrackTags struct {
+	Title       string
+	Performers  []string // primary first, then featured; composers aren't
+	Album       string
+	AlbumArtist string
+	Year        int // the track's, else its album's release year
+	TrackNo     int
+	DiscNo      int
+	Genre       string
+	Composer    string
+	Comment     string
+	ISRC        string
+	// CoverPath is the storage key of the album cover viewer sees: shared
+	// art first, else their own personal-upload cover.
+	CoverPath string
+}
+
+// TrackTags loads a track's TrackTags for viewer, applying the same access
+// checks as GetTrack. Returns ErrNotFound if missing, soft-deleted, or not
+// visible to viewer.
+func (s *Store) TrackTags(ctx context.Context, id, viewerID uuid.UUID) (*TrackTags, error) {
+	tt := &TrackTags{}
+	var cover *string
+	err := s.db.QueryRow(ctx, `
+		SELECT t.title,
+		       ARRAY(SELECT ar.name FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
+		             WHERE ta.track_id = t.id AND ta.role <> 'composer'
+		             ORDER BY ta.position, ar.name),
+		       COALESCE(a.title, ''), COALESCE(aa.name, ''),
+		       COALESCE(NULLIF(t.year, 0), NULLIF(a.release_year, 0), 0),
+		       COALESCE(t.track_no, 0), COALESCE(t.disc_no, 0),
+		       COALESCE(t.genre, ''), COALESCE(t.composer, ''), COALESCE(t.comments, ''),
+		       COALESCE(t.isrc, ''),
+		       `+albumCoverFor("$2")+`
+		FROM tracks t
+		LEFT JOIN albums a ON a.id = t.album_id
+		LEFT JOIN artists aa ON aa.id = a.album_artist_id
+		WHERE t.id = $1 AND t.deleted_at IS NULL AND `+trackVisibleP2, id, viewerID).
+		Scan(&tt.Title, &tt.Performers, &tt.Album, &tt.AlbumArtist, &tt.Year, &tt.TrackNo, &tt.DiscNo,
+			&tt.Genre, &tt.Composer, &tt.Comment, &tt.ISRC, &cover)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if cover != nil {
+		tt.CoverPath = *cover
+	}
+	return tt, nil
+}

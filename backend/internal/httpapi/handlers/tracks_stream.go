@@ -27,7 +27,9 @@ import (
 
 // Stream serves the raw audio file with HTTP range support via
 // http.ServeContent. Authentication is enforced by the middleware chain
-// (session cookie), same as every other /api route.
+// (session cookie), same as every other /api route. With ?download, the
+// file is tagged with the track's metadata first (serveTaggedLocal, and
+// streamTIDALDownload for TIDAL tracks).
 func (h *Tracks) Stream(w http.ResponseWriter, r *http.Request) {
 	u, ok := requireUser(w, r)
 	if !ok {
@@ -110,6 +112,11 @@ func (h *Tracks) Stream(w http.ResponseWriter, r *http.Request) {
 		h.log().Error("stream: could not stat track file",
 			"track", id, "user", u.ID, "path", t.FilePath, "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	// A download gets the library's metadata written in, as TIDAL downloads
+	// get TIDAL's; playback and HEAD probes get the file as stored.
+	if download && r.Method != http.MethodHead && h.serveTaggedLocal(w, r, id, u.ID, t.FilePath) {
 		return
 	}
 	w.Header().Set("Content-Type", audioContentType(t.Format, t.FilePath))

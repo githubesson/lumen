@@ -9,7 +9,7 @@
  * `expo-file-system` write on mobile) and re-export these.
  */
 
-import { downloadStreamUrl } from "./api";
+import { probeStreamUrl } from "./api";
 import type { TrackDetail, TrackListItem } from "./api";
 
 /**
@@ -114,7 +114,7 @@ export function extensionForContentType(
 export async function extensionFromStream(
   trackId: string,
 ): Promise<string | undefined> {
-  const url = downloadStreamUrl(trackId);
+  const url = probeStreamUrl(trackId);
   try {
     const res = await fetch(url, {
       method: "HEAD",

@@ -13,9 +13,21 @@ export function streamUrl(id: string): string {
   return apiUrl(`/api/tracks/${pathID(id)}/stream`);
 }
 
+/**
+ * A track's file to save: tagged by the server with the track's metadata and
+ * cover (the library's for local files, TIDAL's for TIDAL tracks).
+ */
 export function downloadStreamUrl(id: string): string {
-  const base = `/api/tracks/${pathID(id)}/stream`;
-  return apiUrl(id.toLowerCase().startsWith("tidal:") ? `${base}?download=1` : base);
+  return apiUrl(`/api/tracks/${pathID(id)}/stream?download=1`);
+}
+
+/**
+ * The URL that tells what a track's file is (its Content-Type) without the
+ * server building a download: a local track's stored file, or for a TIDAL
+ * track its assembled download, since playback serves an HLS playlist.
+ */
+export function probeStreamUrl(id: string): string {
+  return id.toLowerCase().startsWith("tidal:") ? downloadStreamUrl(id) : streamUrl(id);
 }
 
 function withCoverSize(path: string, size?: number): string {
