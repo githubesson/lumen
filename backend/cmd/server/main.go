@@ -222,17 +222,6 @@ func main() {
 		MinFreeBytes: cfg.TIDALDownloadMinFreeBytes,
 	}
 	startWorker(func() { tidalDownloadWorker.Run(ctx) })
-	if cfg.TIDALMatchLocal {
-		tidalMatcher := &tidaldl.Matcher{
-			Store:        tidalDownloadStore,
-			TIDAL:        tidalClient,
-			Library:      libraryStore,
-			Ingest:       ingestSvc,
-			Logger:       logger,
-			PollInterval: cfg.TIDALMatchPollInterval,
-		}
-		startWorker(func() { tidalMatcher.Run(ctx) })
-	}
 
 	handler := httpapi.NewRouter(httpapi.Deps{
 		DB:               pool,
@@ -255,7 +244,6 @@ func main() {
 		FilenScan:        filenScanner,
 		TIDALDownloads:   tidalDownloadStore,
 		TIDALDownload:    tidalDownloadWorker,
-		TIDALMatch:       cfg.TIDALMatchLocal,
 		Preview:          previewBuilder,
 		MusicRoot:        cfg.MusicPath,
 		Background:       ctx,

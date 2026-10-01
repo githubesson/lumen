@@ -844,19 +844,6 @@ export interface TidalAutoDownloadStatus {
     saved: number;
   };
   recent: TidalDownload[];
-  /**
-   * Shared library tracks by TIDAL matching, which files them by their TIDAL
-   * release like saved tracks. Absent from servers without it.
-   */
-  match?: {
-    matched: number;
-    /** No confident match; tried again after 30 days. */
-    unmatched: number;
-    /** The last lookup failed; retried with backoff. */
-    failed: number;
-    /** Not looked up yet. */
-    waiting: number;
-  };
 }
 
 export interface TidalDownload {

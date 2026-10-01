@@ -51,9 +51,6 @@ type Deps struct {
 	FilenScan      *filen.Scanner
 	TIDALDownloads *tidaldl.Store
 	TIDALDownload  *tidaldl.Worker
-	// TIDALMatch reports whether local tracks are matched on TIDAL
-	// (TIDAL_MATCH_LOCAL).
-	TIDALMatch     bool
 	Preview        *preview.Builder
 	MusicRoot      string
 	Background     context.Context // application lifecycle for request-detached jobs
@@ -152,7 +149,6 @@ func NewRouter(d Deps) http.Handler {
 		PrimaryRoot: d.MusicRoot,
 		TIDAL:       d.TIDAL,
 		Library:     d.Library,
-		Matching:    d.TIDALMatch,
 	}
 	lastFMH := &handlers.LastFM{Service: d.LastFM}
 	tracksH := &handlers.Tracks{

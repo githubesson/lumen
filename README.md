@@ -254,39 +254,6 @@ destination volume has less free space than that. Anyone who can edit an
 opted-in playlist can add tracks to it, so only opt in playlists whose editors
 you trust with library space.
 
-### Filing local files by TIDAL
-
-The library's own files get the same metadata as saved TIDAL tracks. A
-background worker looks each shared local track up on TIDAL and, on a
-confident match, gives it TIDAL's title, artist list and ISRC, and files it
-under the TIDAL release: album, album artist, year, disc and track number,
-and the release cover when the album has none. The album page then shows the
-whole release, like an album of saved TIDAL tracks.
-
-- Tracks are matched album by album, so an album's tracks land on one
-  release, and only when at least half of them are on it. The rest of the
-  album moves with them, keeping their own titles. Tracks without an album are
-  matched one by one.
-- A match needs the same ISRC (read from the file's tags), or the same title,
-  artist credit and length within 3 seconds. Feat. credits and remaster or edition
-  qualifiers are ignored; live versions, remixes and the like are not.
-- Metadata set on purpose (an admin edit of the track or its album, an
-  earlier match) is never changed, and neither are tracks from the API
-  tracker and ArtistGrid importers, personal uploads, or the files
-  themselves. Track edits made before migration 0030 and album edits made
-  before migration 0031 weren't marked, so they can't be told apart; set
-  `TIDAL_MATCH_LOCAL=false` before upgrading if that matters to you.
-- Each track is looked up once. Tracks without a match are tried again after
-  30 days; lookups that fail retry with backoff, and so do release covers
-  that couldn't be fetched. An "album" of more than 200 tracks isn't matched.
-  **Admin → Library → TIDAL** (and the mobile admin) shows the match counts
-  (matched, no match, waiting, retrying); the API reports them under `match`
-  in `GET /api/admin/tidal/auto-download`.
-
-`TIDAL_MATCH_LOCAL=false` turns it off. `TIDAL_MATCH_POLL_INTERVAL` (default
-`30m`) sets how often it looks for new tracks once it has caught up; a
-backlog is worked through a few albums a minute.
-
 ## Putting it on the internet
 
 Both app ports bind to loopback only — put a reverse proxy in front. Copy

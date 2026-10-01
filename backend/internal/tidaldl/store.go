@@ -1,6 +1,5 @@
 // Package tidaldl saves the TIDAL tracks of opted-in playlists into the local
-// library and repoints those playlists at the local copies, and files the
-// library's own tracks by their TIDAL match the same way.
+// library and repoints those playlists at the local copies.
 package tidaldl
 
 import (

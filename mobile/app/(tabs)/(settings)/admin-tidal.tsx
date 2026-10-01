@@ -407,22 +407,6 @@ function AutoDownloadSection({
           <StatusValue label="Failed" value={String(summary.failed)} theme={theme} />
           <StatusValue label="Saved" value={String(summary.saved)} theme={theme} />
         </View>
-        {status.match ? (
-          <>
-            <Text selectable style={{ color: theme.color.fgMuted, fontSize: 13, lineHeight: 18 }}>
-              Library files are matched on TIDAL and filed by their release, like saved
-              tracks.
-            </Text>
-            <View style={{ flexDirection: "row", gap: theme.space.sm }}>
-              <StatusValue label="Matched" value={String(status.match.matched)} theme={theme} />
-              <StatusValue label="No match" value={String(status.match.unmatched)} theme={theme} />
-              <StatusValue label="Waiting" value={String(status.match.waiting)} theme={theme} />
-              {status.match.failed > 0 ? (
-                <StatusValue label="Retrying" value={String(status.match.failed)} theme={theme} />
-              ) : null}
-            </View>
-          </>
-        ) : null}
         {summary.failed > 0 ? (
           <ActionButton
             label={retrying ? "Retrying…" : "Retry failed downloads"}
