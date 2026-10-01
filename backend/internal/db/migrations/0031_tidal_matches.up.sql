@@ -11,6 +11,7 @@ CREATE TABLE tidal_matches (
     -- unmatched tracks moved along with the rest of their album.
     tidal_album_id  TEXT NOT NULL DEFAULT '',
     error           TEXT NOT NULL DEFAULT '',
+    -- Consecutive failures, for the backoff; 0 after any other outcome.
     attempts        INTEGER NOT NULL DEFAULT 0,
     -- NULL never retries (matched).
     next_attempt_at TIMESTAMPTZ,

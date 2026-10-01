@@ -1403,3 +1403,68 @@ func TestNoReleaseIDAndEditedCoverAlbum(t *testing.T) {
 		t.Fatalf("has = %v, %v; an edited album still wants the release cover", has, err)
 	}
 }
+
+// Failures in a row back off from 5 minutes; a lookup that worked ends the
+// streak. An album whose release choice isn't finished stays pending even
+// when none of its tracks is due.
+func TestBackoffStreakAndPendingChoice(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	albumID := f.album("Record "+f.run, main, 0)
+	id := f.track(localTrack{title: "Song", artists: []string{main}, album: &albumID, duration: 100_000})
+	store := NewStore(f.pool)
+	retryIn := func() time.Duration {
+		var at time.Time
+		if err := f.pool.QueryRow(ctx, `SELECT next_attempt_at FROM tidal_matches WHERE track_id = $1`, id).Scan(&at); err != nil {
+			t.Fatal(err)
+		}
+		return time.Until(at)
+	}
+	fail := MatchOutcome{Status: MatchFailed, Error: "boom"}
+	for _, o := range []MatchOutcome{fail, fail, {Status: MatchUnmatched}, fail} {
+		if err := store.RecordMatch(ctx, id, o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if d := retryIn(); d > 6*time.Minute {
+		t.Fatalf("retry in %v; a new failure streak should start at 5 minutes", d)
+	}
+	if err := store.RecordMatch(ctx, id, fail); err != nil {
+		t.Fatal(err)
+	}
+	if d := retryIn(); d < 9*time.Minute || d > 11*time.Minute {
+		t.Fatalf("retry in %v; want 10 minutes for the second failure in a row", d)
+	}
+
+	// Resting, not due; a pending choice still brings the album up.
+	f.exec(`UPDATE tidal_matches SET status = 'unmatched', next_attempt_at = NOW() + INTERVAL '20 days' WHERE track_id = $1`, id)
+	pending, err := store.PendingMatchAlbums(ctx, 10_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsID(pending, albumID) {
+		t.Fatal("a resting album is pending")
+	}
+	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id) VALUES($1, 'rel')`, albumID)
+	if pending, err = store.PendingMatchAlbums(ctx, 10_000); err != nil {
+		t.Fatal(err)
+	}
+	if !containsID(pending, albumID) {
+		t.Fatal("an album with an unfinished choice isn't pending")
+	}
+
+	// An outcome isn't recorded for a track whose album was linked since.
+	_, loaded, err := store.MatchAlbumTracks(ctx, albumID, 10)
+	if err != nil || len(loaded) != 1 {
+		t.Fatalf("loaded %d, %v", len(loaded), err)
+	}
+	f.exec(`UPDATE albums SET tidal_album_id = $2 WHERE id = $1`, albumID, "saved"+f.run)
+	if err := store.RecordOutcome(ctx, loaded, MatchOutcome{Status: MatchFailed, Error: "late"}); err != nil {
+		t.Fatal(err)
+	}
+	var errText string
+	if err := f.pool.QueryRow(ctx, `SELECT error FROM tidal_matches WHERE track_id = $1`, id).Scan(&errText); err != nil || errText == "late" {
+		t.Fatalf("error = %q, %v; an outcome landed on a track whose album was linked since", errText, err)
+	}
+}

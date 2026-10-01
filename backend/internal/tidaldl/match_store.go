@@ -123,8 +123,9 @@ func scanMatchTrack(row rowScanner) (MatchTrack, error) {
 	return t, err
 }
 
-// PendingMatchAlbums lists albums holding tracks waiting for a match, all of
-// their eligible tracks settled, those with the newest additions first.
+// PendingMatchAlbums lists albums holding tracks waiting for a match, or a
+// release choice still to finish, all of their eligible tracks settled,
+// those with the newest additions first.
 func (s *Store) PendingMatchAlbums(ctx context.Context, limit int) ([]uuid.UUID, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT e.album_id
@@ -135,7 +136,8 @@ func (s *Store) PendingMatchAlbums(ctx context.Context, limit int) ([]uuid.UUID,
 			WHERE `+matchEligible+` AND NOT `+matchLoose+`
 		) e
 		GROUP BY e.album_id
-		HAVING BOOL_OR(e.due) AND BOOL_AND(e.settled)
+		HAVING (BOOL_OR(e.due) OR EXISTS (SELECT 1 FROM tidal_match_albums c WHERE c.album_id = e.album_id))
+		   AND BOOL_AND(e.settled)
 		ORDER BY MAX(e.created_at) FILTER (WHERE e.due) DESC, e.album_id
 		LIMIT $1`, limit)
 	if err != nil {
@@ -251,12 +253,12 @@ type execer interface {
 func (s *Store) RecordAlbumUnmatched(ctx context.Context, albumID uuid.UUID, reason string) error {
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO tidal_matches (track_id, status, error, attempts, next_attempt_at)
-		SELECT t.id, 'unmatched', $2, 1, NOW() + INTERVAL '30 days'
+		SELECT t.id, 'unmatched', $2, 0, NOW() + INTERVAL '30 days'
 		FROM tracks t JOIN albums a ON a.id = t.album_id
 		WHERE t.album_id = $1 AND `+matchWaiting+` AND NOT `+matchLoose+`
 		ON CONFLICT (track_id) DO UPDATE SET
 			status = 'unmatched', tidal_id = '', tidal_album_id = '', error = EXCLUDED.error,
-			attempts = tidal_matches.attempts + 1, next_attempt_at = EXCLUDED.next_attempt_at,
+			attempts = 0, next_attempt_at = EXCLUDED.next_attempt_at,
 			cover_url = '', cover_album_id = NULL, cover_retry_at = NULL, updated_at = NOW()`,
 		albumID, dbtext.Clean(reason))
 	return err
@@ -264,34 +266,44 @@ func (s *Store) RecordAlbumUnmatched(ctx context.Context, albumID uuid.UUID, rea
 
 // RecordOutcome stores the same outcome for several tracks in one
 // statement, e.g. an album's: all of them or none. A track moved to another
-// album or changed since it was loaded (MatchTrack.AlbumID, Seen) is left
-// out: the outcome was decided on what it was.
+// album, changed, or whose album was linked to a release since it was
+// loaded (MatchTrack.AlbumID, AlbumLink, Seen) is left out: the outcome was
+// decided on what it was.
 func (s *Store) RecordOutcome(ctx context.Context, tracks []MatchTrack, o MatchOutcome) error {
 	if len(tracks) == 0 {
 		return nil
 	}
 	ids := make([]uuid.UUID, len(tracks))
 	albums := make([]uuid.UUID, len(tracks))
+	links := make([]string, len(tracks))
 	seen := make([]*time.Time, len(tracks))
 	for i, t := range tracks {
 		ids[i] = t.ID
 		if t.AlbumID != nil {
 			albums[i] = *t.AlbumID
 		}
+		links[i] = t.AlbumLink
 		seen[i] = t.seen()
 	}
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO tidal_matches (track_id, status, tidal_id, tidal_album_id, error, attempts,
 		                           next_attempt_at, cover_url, cover_album_id)
-		SELECT tr.id, $4, $5, $6, $7, 1, `+fmt.Sprintf(outcomeRetry, "$4")+`, '', NULL
+		SELECT tr.id, $4, $5, $6, $7, `+fmt.Sprintf(outcomeAttempts, "$4")+`, `+fmt.Sprintf(outcomeRetry, "$4")+`, '', NULL
 		FROM tracks tr
-		JOIN unnest($1::uuid[], $2::uuid[], $3::timestamptz[]) AS snap(id, album_id, seen) ON snap.id = tr.id
+		JOIN unnest($1::uuid[], $2::uuid[], $3::timestamptz[], $8::text[]) AS snap(id, album_id, seen, link)
+		  ON snap.id = tr.id
 		WHERE COALESCE(tr.album_id, '00000000-0000-0000-0000-000000000000'::uuid) = snap.album_id
 		  AND (snap.seen IS NULL OR tr.updated_at = snap.seen)
+		  AND COALESCE((SELECT la.tidal_album_id FROM albums la WHERE la.id = tr.album_id), '') = snap.link
 		`+outcomeUpsert,
-		ids, albums, seen, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error))
+		ids, albums, seen, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error),
+		links)
 	return err
 }
+
+// outcomeAttempts is a new outcome's failure count, by its status (the %s
+// parameter).
+const outcomeAttempts = `CASE %s WHEN 'failed' THEN 1 ELSE 0 END`
 
 // outcomeRetry is a new outcome's next attempt, by its status (the %s
 // parameter).
@@ -300,20 +312,24 @@ const outcomeRetry = `CASE %s
 			WHEN 'unmatched' THEN NOW() + INTERVAL '30 days'
 			ELSE NOW() + INTERVAL '5 minutes' END`
 
-// outcomeUpsert replaces an earlier outcome; a failure backs off from 5
-// minutes, doubling up to a day.
+// outcomeUpsert replaces an earlier outcome. Failures in a row back off
+// from 5 minutes, doubling up to a day; any other outcome ends the streak.
 const outcomeUpsert = `
 		ON CONFLICT (track_id) DO UPDATE SET
 			status = EXCLUDED.status,
 			tidal_id = EXCLUDED.tidal_id,
 			tidal_album_id = EXCLUDED.tidal_album_id,
 			error = EXCLUDED.error,
-			attempts = tidal_matches.attempts + 1,
-			next_attempt_at = CASE EXCLUDED.status
-				WHEN 'failed' THEN NOW() + LEAST(
+			attempts = CASE
+				WHEN EXCLUDED.status <> 'failed' THEN 0
+				WHEN tidal_matches.status = 'failed' THEN tidal_matches.attempts + 1
+				ELSE 1 END,
+			next_attempt_at = CASE
+				WHEN EXCLUDED.status <> 'failed' THEN EXCLUDED.next_attempt_at
+				WHEN tidal_matches.status = 'failed' THEN NOW() + LEAST(
 					INTERVAL '5 minutes' * POWER(2, LEAST(tidal_matches.attempts, 10)),
 					INTERVAL '24 hours')
-				ELSE EXCLUDED.next_attempt_at END,
+				ELSE NOW() + INTERVAL '5 minutes' END,
 			cover_url = EXCLUDED.cover_url,
 			cover_album_id = EXCLUDED.cover_album_id,
 			cover_retry_at = NULL,
@@ -333,7 +349,7 @@ func recordMatch(ctx context.Context, q execer, trackID uuid.UUID, o MatchOutcom
 	_, err := q.Exec(ctx, `
 		INSERT INTO tidal_matches (track_id, status, tidal_id, tidal_album_id, error, attempts,
 		                           next_attempt_at, cover_url, cover_album_id)
-		SELECT tr.id, $2, $3, $4, $5, 1, `+fmt.Sprintf(outcomeRetry, "$2")+`, $6, $7
+		SELECT tr.id, $2, $3, $4, $5, `+fmt.Sprintf(outcomeAttempts, "$2")+`, `+fmt.Sprintf(outcomeRetry, "$2")+`, $6, $7
 		FROM tracks tr WHERE tr.id = $1
 		`+outcomeUpsert,
 		trackID, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error),
