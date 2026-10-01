@@ -26,6 +26,7 @@ type Metadata struct {
 	Genre       string
 	Composer    string
 	Comment     string
+	ISRC        string // normalized, "" when absent or malformed
 	Format      string // "MP3", "FLAC", "M4A", "OGG", "WAV", ...
 	Picture     *Picture
 }
@@ -101,6 +102,7 @@ func parse(rs io.ReadSeeker, path string) (*Metadata, error) {
 		Genre:       strings.TrimSpace(m.Genre()),
 		Composer:    composerTag(m),
 		Comment:     strings.TrimSpace(m.Comment()),
+		ISRC:        isrcTag(m.Raw()),
 		Format:      string(m.Format()),
 	}
 	md.Artists = splitArtists(m.Artist(), md.Composer)
@@ -140,6 +142,46 @@ func composerTag(m tag.Metadata) string {
 		return strings.TrimSpace(c)
 	}
 	return strings.TrimSpace(m.Composer())
+}
+
+// isrcTag is the file's ISRC: ID3's TSRC (TRC in v2.2), the Vorbis ISRC
+// comment, or iTunes' ----:ISRC atom. The tag library has no accessor for it.
+func isrcTag(raw map[string]interface{}) string {
+	for _, key := range []string{"TSRC", "TRC", "isrc", "ISRC"} {
+		if v, ok := raw[key].(string); ok {
+			if isrc := NormalizeISRC(v); isrc != "" {
+				return isrc
+			}
+		}
+	}
+	return ""
+}
+
+// NormalizeISRC returns an ISRC in its compact upper-case form
+// (CCXXXYYNNNNN), or "" when s isn't one. Hyphens, spaces and stray bytes
+// around the code (MP4 atoms keep a locale prefix) are dropped.
+func NormalizeISRC(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r - 'a' + 'A')
+		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		}
+	}
+	code := b.String()
+	if len(code) != 12 {
+		return ""
+	}
+	for i, r := range code {
+		letter := r >= 'A' && r <= 'Z'
+		// Country code: two letters; year and designation: digits.
+		if (i < 2 && !letter) || (i >= 5 && letter) {
+			return ""
+		}
+	}
+	return code
 }
 
 // splitArtists parses combined artist strings like "Alice feat. Bob & Carol"
