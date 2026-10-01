@@ -296,7 +296,12 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 		}
 		// Not on the release: kept with the rest of its album.
 		if !linked {
-			if _, err := m.Library.FileUnderTIDALRelease(ctx, t.ID, fields); err != nil {
+			_, err := m.Library.FileUnderTIDALRelease(ctx, t.ID, fields)
+			if errors.Is(err, library.ErrTIDALAlbumConflict) {
+				m.record(ctx, t, MatchOutcome{Status: MatchUnmatched, Error: err.Error()})
+				continue
+			}
+			if err != nil {
 				m.recordErr(ctx, t, err)
 				return err
 			}
@@ -698,6 +703,11 @@ func (m *Matcher) apply(ctx context.Context, t MatchTrack, hit tidal.Track, keep
 	applied, err := m.Library.ApplyTIDALMatch(ctx, t.ID, fields, func(ctx context.Context, tx pgx.Tx) error {
 		return recordMatch(ctx, tx, t.ID, outcome)
 	})
+	if errors.Is(err, library.ErrTIDALAlbumConflict) {
+		// Filed there, the track would follow the other release.
+		m.record(ctx, t, MatchOutcome{Status: MatchUnmatched, TIDALID: hit.ID, Error: err.Error()})
+		return nil
+	}
 	if err != nil {
 		m.recordErr(ctx, t, err)
 		return err

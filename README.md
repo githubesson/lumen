@@ -268,7 +268,7 @@ whole release, like an album of saved TIDAL tracks.
   album moves with them, keeping their own titles. Tracks without an album are
   matched one by one.
 - A match needs the same ISRC (read from the file's tags), or the same title,
-  artist and length within 3 seconds. Feat. credits and remaster or edition
+  artist credit and length within 3 seconds. Feat. credits and remaster or edition
   qualifiers are ignored; live versions, remixes and the like are not.
 - Metadata set on purpose (an admin edit of the track or its album, an
   earlier match) is never changed, and neither are tracks from the API tracker and ArtistGrid
@@ -278,8 +278,8 @@ whole release, like an album of saved TIDAL tracks.
 - Each track is looked up once. Tracks without a match are tried again after
   30 days; lookups that fail retry with backoff, and so do release covers
   that couldn't be fetched. An "album" of more than 200 tracks isn't matched.
-  The admin TIDAL status (`GET /api/admin/tidal/auto-download`) counts them
-  under `match`.
+  **Admin → Library → TIDAL** (and the mobile admin) counts them; the API
+  reports them under `match` in `GET /api/admin/tidal/auto-download`.
 
 `TIDAL_MATCH_LOCAL=false` turns it off. `TIDAL_MATCH_POLL_INTERVAL` (default
 `30m`) sets how often it looks for new tracks once it has caught up; a

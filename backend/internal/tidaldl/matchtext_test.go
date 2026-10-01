@@ -65,7 +65,10 @@ func TestArtistsOverlap(t *testing.T) {
 		{[]string{"Beyonce"}, []string{"Beyoncé", "JAY-Z"}, true},
 		{[]string{"Guest"}, []string{"Main", "Guest"}, true},
 		{[]string{"The Beatles"}, []string{"Beatles"}, true},
+		{[]string{"Simon", "Garfunkel", "Guest"}, []string{"Simon & Garfunkel"}, true},
 		{[]string{"Someone Else"}, []string{"Main"}, false},
+		{[]string{"Future"}, []string{"Future Islands"}, false},
+		{[]string{"Prince"}, []string{"Prince Royce"}, false},
 		{nil, []string{"Main"}, false},
 	} {
 		if got := artistsOverlap(tc.local, tc.remote); got != tc.want {

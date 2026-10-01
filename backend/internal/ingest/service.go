@@ -308,6 +308,12 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 					return out
 				}
 			}
+			// A duplicate's ISRC still identifies the track's audio.
+			if err := library.FillTrackISRC(ctx, tx, trackID, md.ISRC); err != nil {
+				out.Err = fmt.Errorf("fill isrc: %w", err)
+				s.recordErr(ctx, path, out.Err)
+				return out
+			}
 			if adopted {
 				// oldPath is "" when the track kept its own file.
 				canonicalPath, dropPath = path, oldPath

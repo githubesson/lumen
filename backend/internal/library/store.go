@@ -563,6 +563,18 @@ func UpdateTrackAudioInfoIfMissing(ctx context.Context, q pgx.Tx, trackID uuid.U
 	return err
 }
 
+// FillTrackISRC gives a track the ISRC of a duplicate file when it has none.
+func FillTrackISRC(ctx context.Context, q pgx.Tx, trackID uuid.UUID, isrc string) error {
+	isrc = dbtext.Clean(isrc)
+	if isrc == "" {
+		return nil
+	}
+	_, err := q.Exec(ctx, `
+		UPDATE tracks SET isrc = $2, updated_at = NOW()
+		WHERE id = $1 AND COALESCE(isrc, '') = ''`, trackID, isrc)
+	return err
+}
+
 // AliasInput carries the per-file metadata recorded as a track alias when a
 // file is deduplicated by audio SHA. Lets search match the dupe's strings
 // without inflating the canonical track row.

@@ -739,3 +739,50 @@ func TestMatcherLeavesEditedAlbum(t *testing.T) {
 		t.Fatalf("album counts %d tracks (%v); want only the shared one", a.Tracks, err)
 	}
 }
+
+// A release whose library album (same title and artist) is linked to another
+// release can't take the track: it would follow that release.
+func TestMatcherRefusesAlbumLinkedElsewhere(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	solo := "Solo " + f.run
+	title := "Reissue " + f.run
+	taken := f.album(title, solo, 0)
+	f.exec(`UPDATE albums SET tidal_album_id = $2 WHERE id = $1`, taken, "other"+f.run)
+	id := f.track(localTrack{title: "Song", artists: []string{solo}, duration: 100_000})
+	relID := "rel" + f.run
+	rel := tidal.Album{ID: relID, Title: title, Artist: solo,
+		Tracks: []tidal.Track{{ID: "a" + f.run, Title: "Song", Artists: []string{solo}, DurationMS: 100_000}}}
+	src := &fakeCatalog{
+		searchTracks: []tidal.Track{{ID: "a" + f.run, Title: "Song", Artists: []string{solo}, DurationMS: 100_000, AlbumID: relID}},
+		albums:       map[string]tidal.Album{relID: rel},
+	}
+	if err := f.matcher(src).matchLoose(ctx, MatchTrack{ID: id, Title: "Song", Artists: []string{solo}, DurationMS: 100_000}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(id); got.Album != "" || got.Edited || got.Match != MatchUnmatched {
+		t.Fatalf("track = %+v; want it left as it was, unmatched", got)
+	}
+}
+
+// An admin's album edit that lands while a match is being looked up wins.
+func TestApplyTIDALMatchHonorsAlbumEdit(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	albumID := f.album("Record "+f.run, main, 0)
+	id := f.track(localTrack{title: "song", artists: []string{main}, album: &albumID, duration: 100_000})
+	year := 1999
+	if err := f.lib.UpdateAlbum(ctx, albumID, library.AlbumPatch{ReleaseYear: &year}); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
+		Title: "Song", Album: library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main},
+	}, nil)
+	if err != nil || applied {
+		t.Fatalf("applied = %v, %v; want the edited album to keep its track", applied, err)
+	}
+	if got := f.state(id); got.AlbumID != albumID || got.Title != "song" {
+		t.Fatalf("track = %+v", got)
+	}
+}

@@ -25,20 +25,66 @@ type TIDALTrackFields struct {
 	KeepAlbum bool
 }
 
+// ErrTIDALAlbumConflict reports that the library album for a release's
+// title and album artist is already linked to another release, so a track
+// filed there would follow that one.
+var ErrTIDALAlbumConflict = errors.New("the library album for this release is linked to another release")
+
 // lockUnmatchable locks a live, shared local track whose metadata nobody set
-// on purpose, the only kind TIDAL matching may change; ok is false for any
-// other track. Callers upsert artists and albums first and lock the track
-// last, in the order ingest takes them, so the two can't deadlock.
+// on purpose, in an album nobody edited on purpose: the only kind TIDAL
+// matching may change. ok is false for any other track. Its album is locked
+// first (shared), so an edit to it can't land before the caller commits.
+// Callers upsert artists and albums before this, so albums are locked
+// before the track, in the order ingest takes them, and the two can't
+// deadlock.
 func lockUnmatchable(ctx context.Context, tx pgx.Tx, trackID uuid.UUID) (ok bool, err error) {
+	var albumID *uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT album_id FROM tracks WHERE id = $1`, trackID).Scan(&albumID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if albumID != nil {
+		var edited bool
+		err := tx.QueryRow(ctx, `
+			SELECT metadata_edited_at IS NOT NULL FROM albums WHERE id = $1 FOR SHARE`, *albumID).Scan(&edited)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && edited) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+	}
+	// The album must still be the one checked.
 	err = tx.QueryRow(ctx, `
 		SELECT TRUE FROM tracks t
 		WHERE t.id = $1 AND t.deleted_at IS NULL AND t.source = 'local'
 		  AND t.owner_id IS NULL AND t.metadata_edited_at IS NULL
-		FOR UPDATE`, trackID).Scan(&ok)
+		  AND t.album_id IS NOT DISTINCT FROM $2
+		FOR UPDATE`, trackID, albumID).Scan(&ok)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	return ok, err
+}
+
+// releaseAlbum is upsertTIDALAlbum for TIDAL matching, which refuses an
+// album already linked to another release.
+func releaseAlbum(ctx context.Context, tx pgx.Tx, in TIDALAlbumFields, oldCover *string) (uuid.UUID, error) {
+	id, err := upsertTIDALAlbum(ctx, tx, in, oldCover)
+	if err != nil || in.TIDALAlbumID == "" {
+		return id, err
+	}
+	var linked string
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(tidal_album_id, '') FROM albums WHERE id = $1`, id).Scan(&linked); err != nil {
+		return uuid.Nil, err
+	}
+	if linked != in.TIDALAlbumID {
+		return uuid.Nil, ErrTIDALAlbumConflict
+	}
+	return id, nil
 }
 
 // albumCover is the cover of a track's album, which the album the track
@@ -63,7 +109,8 @@ func albumCover(ctx context.Context, tx pgx.Tx, trackID uuid.UUID) (*string, err
 // applied is false for any other. The track then counts as edited, so a
 // duplicate file's tags never replace TIDAL's. record, if set, runs in the
 // same transaction once the track is updated, so the caller's note of the
-// match commits with it or not at all.
+// match commits with it or not at all. ErrTIDALAlbumConflict leaves the
+// track as it was.
 func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDALTrackFields,
 	record func(context.Context, pgx.Tx) error) (applied bool, err error) {
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
@@ -101,7 +148,7 @@ func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDAL
 		if err != nil {
 			return false, err
 		}
-		id, err := upsertTIDALAlbum(ctx, tx, in.Album, oldCover)
+		id, err := releaseAlbum(ctx, tx, in.Album, oldCover)
 		if err != nil {
 			return false, err
 		}
@@ -147,7 +194,8 @@ func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDAL
 // missing year: for the tracks of a matched album that the release doesn't
 // list, so the album isn't split. Like ApplyTIDALMatch it only touches a
 // live, shared local track whose metadata nobody set on purpose, and
-// reports whether it did. The track doesn't count as edited.
+// reports whether it did; ErrTIDALAlbumConflict leaves it as it was. The
+// track doesn't count as edited.
 func (s *Store) FileUnderTIDALRelease(ctx context.Context, trackID uuid.UUID, in TIDALAlbumFields) (bool, error) {
 	if strings.TrimSpace(in.Title) == "" {
 		return false, errors.New("album title is required")
@@ -162,7 +210,7 @@ func (s *Store) FileUnderTIDALRelease(ctx context.Context, trackID uuid.UUID, in
 	if err != nil {
 		return false, err
 	}
-	albumID, err := upsertTIDALAlbum(ctx, tx, in, oldCover)
+	albumID, err := releaseAlbum(ctx, tx, in, oldCover)
 	if err != nil {
 		return false, err
 	}

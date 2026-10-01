@@ -88,53 +88,39 @@ func artistWords(s string) []string {
 	return out
 }
 
-// artistsOverlap reports whether two artist lists credit the same act. Ingest
-// splits "Simon & Garfunkel" into "Simon" and "Garfunkel", so besides equal
-// names, the lists may match as a whole, or one side's primary artist may
-// appear in the other side's names.
+// artistsOverlap reports whether two artist lists share a credit. Ingest
+// splits "Simon & Garfunkel" into "Simon" and "Garfunkel", so a credit on
+// one side may be several consecutive names on the other; a name only part
+// of a credit ("Future" in "Future Islands") doesn't count.
 func artistsOverlap(local, remote []string) bool {
-	if len(local) == 0 || len(remote) == 0 {
-		return false
-	}
-	join := func(names []string) string { return strings.Join(names, " ") }
-	var l, r [][]string
-	for _, n := range local {
+	l, r := artistKeys(local), artistKeys(remote)
+	return len(l) > 0 && len(r) > 0 && (sharesCredit(l, r) || sharesCredit(r, l))
+}
+
+// artistKeys is each name in artistWords form, joined, blanks dropped.
+func artistKeys(names []string) []string {
+	var out []string
+	for _, n := range names {
 		if w := artistWords(n); len(w) > 0 {
-			l = append(l, w)
+			out = append(out, strings.Join(w, " "))
 		}
 	}
-	for _, n := range remote {
-		if w := artistWords(n); len(w) > 0 {
-			r = append(r, w)
-		}
+	return out
+}
+
+// sharesCredit reports whether consecutive names in split, joined, equal a
+// name in whole.
+func sharesCredit(split, whole []string) bool {
+	credits := map[string]bool{}
+	for _, w := range whole {
+		credits[w] = true
 	}
-	if len(l) == 0 || len(r) == 0 {
-		return false
-	}
-	for _, a := range l {
-		for _, b := range r {
-			if join(a) == join(b) {
+	for i := range split {
+		for j := i + 1; j <= len(split); j++ {
+			if credits[strings.Join(split[i:j], " ")] {
 				return true
 			}
 		}
-	}
-	lAll, rAll := artistWords(join(local)), artistWords(join(remote))
-	return join(lAll) == join(rAll) || containsRun(rAll, l[0]) || containsRun(lAll, r[0])
-}
-
-// containsRun reports whether needle appears as consecutive words in hay.
-func containsRun(hay, needle []string) bool {
-	if len(needle) == 0 {
-		return false
-	}
-outer:
-	for i := 0; i+len(needle) <= len(hay); i++ {
-		for j, w := range needle {
-			if hay[i+j] != w {
-				continue outer
-			}
-		}
-		return true
 	}
 	return false
 }
