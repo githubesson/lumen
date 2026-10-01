@@ -23,10 +23,14 @@ const (
 // shared local files whose metadata nobody set on purpose (an admin, an
 // importer, or an earlier match), that auto-download didn't save (those are
 // filed already), and that are due: never tried, or their retry is up.
+// Tracks from the API tracker and ArtistGrid importers carry the importer's
+// metadata, which edits before metadata_edited_at existed didn't mark.
 const matchWaiting = `t.source = 'local' AND t.owner_id IS NULL AND t.deleted_at IS NULL
 	AND t.metadata_edited_at IS NULL
 	AND NOT EXISTS (SELECT 1 FROM tidal_downloads d
 		WHERE d.local_track_id = t.id AND d.status = 'downloaded')
+	AND NOT EXISTS (SELECT 1 FROM api_tracker_downloads ad WHERE ad.track_id = t.id)
+	AND NOT EXISTS (SELECT 1 FROM artistgrid_downloads gd WHERE gd.track_id = t.id)
 	AND NOT EXISTS (SELECT 1 FROM tidal_matches m
 		WHERE m.track_id = t.id AND (m.next_attempt_at IS NULL OR m.next_attempt_at > NOW()))`
 
@@ -60,6 +64,8 @@ type MatchAlbum struct {
 	Artist       string // album artist, "" when none
 	Year         int
 	TIDALAlbumID string // the release the album is linked to, if any
+	// Tracks counts all of the album's live local tracks, waiting or not.
+	Tracks int
 }
 
 const matchTrackColumns = `t.id, t.title,
@@ -102,15 +108,15 @@ func (s *Store) PendingMatchAlbums(ctx context.Context, limit int) ([]uuid.UUID,
 }
 
 // MatchAlbumTracks loads an album and up to limit of its tracks waiting for
-// a match, in album order. An album that is gone has none. Callers judge a
-// release against all of an album's tracks, so a limit hit means the album
-// is too large to match.
+// a match, in album order. An album that is gone has none.
 func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit int) (MatchAlbum, []MatchTrack, error) {
 	a := MatchAlbum{ID: albumID}
 	err := s.db.QueryRow(ctx, `
-		SELECT a.title, COALESCE(ar.name, ''), COALESCE(a.release_year, 0), COALESCE(a.tidal_album_id, '')
+		SELECT a.title, COALESCE(ar.name, ''), COALESCE(a.release_year, 0), COALESCE(a.tidal_album_id, ''),
+		       (SELECT COUNT(*) FROM tracks t
+		        WHERE t.album_id = a.id AND t.deleted_at IS NULL AND t.source = 'local')
 		FROM albums a LEFT JOIN artists ar ON ar.id = a.album_artist_id
-		WHERE a.id = $1`, albumID).Scan(&a.Title, &a.Artist, &a.Year, &a.TIDALAlbumID)
+		WHERE a.id = $1`, albumID).Scan(&a.Title, &a.Artist, &a.Year, &a.TIDALAlbumID, &a.Tracks)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return a, nil, nil
 	}

@@ -148,7 +148,7 @@ func TestFindInReleaseFillsReleaseMetadata(t *testing.T) {
 			{ID: "3", Title: "Song", Artists: []string{"Main"}, DurationMS: 181_000, TrackNo: 2, DiscNo: 2},
 		},
 	}
-	got, ok := findInRelease(r, MatchTrack{Title: "Song", Artists: []string{"Main"}, DurationMS: 180_500})
+	got, ok := assignRelease(r, []MatchTrack{{Title: "Song", Artists: []string{"Main"}, DurationMS: 180_500}}, false)[0]
 	if !ok || got.ID != "3" {
 		t.Fatalf("found %q, want the entry TIDAL still lists", got.ID)
 	}
@@ -156,10 +156,41 @@ func TestFindInReleaseFillsReleaseMetadata(t *testing.T) {
 		got.Year != 2001 || got.DiscNo != 2 || got.TrackNo != 2 || got.CoverURL == "" {
 		t.Fatalf("release metadata missing: %+v", got)
 	}
-	if n := countInRelease(r, []MatchTrack{
-		{Title: "Intro", Artists: []string{"Main"}},
-		{Title: "Outro", Artists: []string{"Main"}},
-	}); n != 1 {
+	if n := len(assignRelease(r, []MatchTrack{
+		{Title: "Intro", Artists: []string{"Main"}, DurationMS: 60_000},
+		{Title: "Outro", Artists: []string{"Main"}, DurationMS: 60_000},
+	}, false)); n != 1 {
 		t.Fatalf("counted %d tracks on the release, want 1", n)
+	}
+}
+
+// One release entry stands for one library track: two copies of a song
+// don't both count toward (or take metadata from) the same entry.
+func TestAssignReleaseIsOneToOne(t *testing.T) {
+	r := tidal.Album{ID: "rel", Title: "Record", Tracks: []tidal.Track{
+		{ID: "1", Title: "Song", Artists: []string{"Main"}, DurationMS: 180_000, TrackNo: 1},
+		{ID: "2", Title: "Other", Artists: []string{"Main"}, DurationMS: 120_000, TrackNo: 2},
+	}}
+	got := assignRelease(r, []MatchTrack{
+		{Title: "Song", Artists: []string{"Main"}, DurationMS: 181_500},
+		{Title: "Song", Artists: []string{"Main"}, DurationMS: 180_200, TrackNo: 1},
+	}, false)
+	if len(got) != 1 || got[1].ID != "1" {
+		t.Fatalf("assigned %+v; want only the closer copy on entry 1", got)
+	}
+}
+
+// Sparse tracks (no duration, no artists) only count on a release their
+// album is already linked to.
+func TestAssignReleaseNeedsEvidenceUnlessLinked(t *testing.T) {
+	r := tidal.Album{ID: "rel", Title: "Record", Tracks: []tidal.Track{
+		{ID: "1", Title: "Song", Artists: []string{"Main"}, DurationMS: 180_000},
+	}}
+	sparse := []MatchTrack{{Title: "Song"}}
+	if got := assignRelease(r, sparse, false); len(got) != 0 {
+		t.Fatalf("a bare title counted toward an unlinked release: %+v", got)
+	}
+	if got := assignRelease(r, sparse, true); len(got) != 1 {
+		t.Fatal("a bare title should match within its album's linked release")
 	}
 }

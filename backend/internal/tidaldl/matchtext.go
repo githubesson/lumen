@@ -152,27 +152,32 @@ const (
 )
 
 // trackMatches reports whether a TIDAL track is the library track's
-// recording: the same ISRC, or the same title, artist and duration. Within a
-// release already matched to the track's album, a track without artists or
-// a known duration may still match on its title.
-func trackMatches(t MatchTrack, c tidal.Track, inRelease bool) bool {
+// recording: the same ISRC, or the same title, artist and duration. relaxed
+// is for a release the track's album is already linked to: there a track
+// without artists or a known duration may still match on its title.
+func trackMatches(t MatchTrack, c tidal.Track, relaxed bool) bool {
+	return titledMatch(t, c, matchTitle(t.Title), matchTitle(c.Title), relaxed)
+}
+
+// titledMatch is trackMatches with both titles already in matchTitle form.
+func titledMatch(t MatchTrack, c tidal.Track, title, cTitle string, relaxed bool) bool {
 	known := t.DurationMS > 0 && c.DurationMS > 0
 	diff := abs(t.DurationMS - c.DurationMS)
 	if sameISRC(t.ISRC, c.ISRC) {
 		return !known || diff <= isrcDurationSlackMS
 	}
-	if title := matchTitle(t.Title); title == "" || title != matchTitle(c.Title) {
+	if title == "" || title != cTitle {
 		return false
 	}
 	if known {
 		if diff > durationSlackMS {
 			return false
 		}
-	} else if !inRelease {
+	} else if !relaxed {
 		return false
 	}
 	if len(t.Artists) == 0 {
-		return inRelease
+		return relaxed
 	}
 	return artistsOverlap(t.Artists, c.Artists)
 }

@@ -593,3 +593,83 @@ func TestMatcherRetriesReleaseCover(t *testing.T) {
 		t.Fatalf("cover still pending: %q", left)
 	}
 }
+
+// An "album" too large for any release is a folder: none of its tracks are
+// matched, however many are still waiting.
+func TestMatcherSkipsOversizedAlbum(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	albumID := f.album("Downloads "+f.run, "", 0)
+	for i := 0; i <= matchMaxAlbumTracks; i++ {
+		f.track(localTrack{title: "Track", artists: []string{main}, album: &albumID, duration: 100_000})
+	}
+	m := f.matcher(&fakeCatalog{err: errors.New("TIDAL must not be asked")})
+	for pass := 0; pass < 2; pass++ {
+		if err := m.matchAlbum(ctx, albumID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var unmatched, other int
+	if err := f.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FILTER (WHERE m.status = 'unmatched'), COUNT(*) FILTER (WHERE m.status IS DISTINCT FROM 'unmatched')
+		FROM tracks t LEFT JOIN tidal_matches m ON m.track_id = t.id
+		WHERE t.album_id = $1`, albumID).Scan(&unmatched, &other); err != nil {
+		t.Fatal(err)
+	}
+	if unmatched != matchMaxAlbumTracks+1 || other != 0 {
+		t.Fatalf("%d unmatched, %d otherwise; want all %d unmatched", unmatched, other, matchMaxAlbumTracks+1)
+	}
+}
+
+// Importer tracks carry the importer's metadata, even when it predates the
+// edited marker.
+func TestMatcherSkipsImporterTracks(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	id := f.track(localTrack{title: "Leak", artists: []string{main}, duration: 100_000})
+	pin := uuid.New()
+	f.exec(`INSERT INTO api_tracker_pins(id, root_path, tracker_id) VALUES($1, '/music', 1)`, pin)
+	t.Cleanup(func() { f.pool.Exec(context.Background(), `DELETE FROM api_tracker_pins WHERE id = $1`, pin) })
+	f.exec(`INSERT INTO api_tracker_downloads(pin_id, source_url, status, track_id) VALUES($1, $2, 'downloaded', $3)`,
+		pin, "https://example.com/"+f.run, id)
+	waiting, err := NewStore(f.pool).PendingMatchLoose(ctx, 10_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range waiting {
+		if w.ID == id {
+			t.Fatal("an importer's track is waiting for a match")
+		}
+	}
+}
+
+// A loose track keeps the hit with its own ISRC, compilation or not, over a
+// weaker hit on the artist's release.
+func TestMatcherLooseTrackKeepsISRCHit(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	solo := "Solo " + f.run
+	isrc := "GBAYE0600002"
+	id := f.track(localTrack{title: "Anthem", artists: []string{solo}, duration: 210_000, isrc: isrc})
+	compID, ownID := "comp"+f.run, "own"+f.run
+	comp := tidal.Album{ID: compID, Title: "Now " + f.run, Artist: "Various Artists",
+		Tracks: []tidal.Track{{ID: "c" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000, ISRC: isrc}}}
+	own := tidal.Album{ID: ownID, Title: "Anthems " + f.run, Artist: solo,
+		Tracks: []tidal.Track{{ID: "o" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000, ISRC: "GBAYE0600003"}}}
+	src := &fakeCatalog{
+		searchTracks: []tidal.Track{
+			{ID: "o" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000, ISRC: "GBAYE0600003", AlbumID: ownID},
+			{ID: "c" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000, ISRC: isrc, AlbumID: compID},
+		},
+		albums: map[string]tidal.Album{compID: comp, ownID: own},
+	}
+	if err := f.matcher(src).matchLoose(ctx, MatchTrack{ID: id, Title: "Anthem", Artists: []string{solo},
+		DurationMS: 210_000, ISRC: isrc}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(id); got.Album != comp.Title || got.ISRC != isrc {
+		t.Fatalf("track = %+v; want the ISRC hit's release", got)
+	}
+}

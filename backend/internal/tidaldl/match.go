@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -29,8 +30,9 @@ const (
 	matchAlbumsPerPass = 5
 	matchLoosePerPass  = 20
 	matchCoversPerPass = 10
-	// A release is judged against all of an album's waiting tracks; an
-	// "album" with more than this is a catch-all folder, not a release.
+	// A release is judged against all of an album's waiting tracks at once;
+	// an "album" with more tracks than this is a catch-all folder, not a
+	// release.
 	matchMaxAlbumTracks = 200
 	matchSearchLimit    = 10
 	// Releases fetched to find an album, and tracks searched for when the
@@ -251,12 +253,12 @@ func (m *Matcher) fillISRCs(tracks []MatchTrack) {
 // filed under it as well, so the album stays together. Otherwise none are
 // changed.
 func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
-	album, tracks, err := m.Store.MatchAlbumTracks(ctx, albumID, matchMaxAlbumTracks+1)
+	album, tracks, err := m.Store.MatchAlbumTracks(ctx, albumID, matchMaxAlbumTracks)
 	if err != nil || len(tracks) == 0 {
 		return err
 	}
-	if len(tracks) > matchMaxAlbumTracks {
-		// The rest follow in the next passes.
+	if album.Tracks > matchMaxAlbumTracks {
+		// The rest follow in the next passes, as the album stays too large.
 		m.recordAll(ctx, tracks, MatchOutcome{Status: MatchUnmatched, Error: "too many tracks for one release"}, nil)
 		return nil
 	}
@@ -276,11 +278,12 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 	}
 	linked := album.TIDALAlbumID != ""
 	fields := releaseFields(r.Album)
-	for _, t := range tracks {
+	hits := assignRelease(r.Album, tracks, linked)
+	for i, t := range tracks {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if hit, ok := findInRelease(r.Album, t); ok {
+		if hit, ok := hits[i]; ok {
 			if err := m.apply(ctx, t, hit, linked); err != nil {
 				return err
 			}
@@ -307,6 +310,7 @@ func (m *Matcher) albumRelease(ctx context.Context, album MatchAlbum, tracks []M
 	var (
 		best    *release
 		bestHit int
+		onBest  map[int]tidal.Track
 	)
 	tried := map[string]bool{}
 	consider := func(id string) error {
@@ -318,9 +322,11 @@ func (m *Matcher) albumRelease(ctx context.Context, album MatchAlbum, tracks []M
 		if err != nil {
 			return err
 		}
-		hits := countInRelease(r.Album, tracks)
+		// Strict: a release isn't vouched for until it is chosen.
+		on := assignRelease(r.Album, tracks, false)
+		hits := len(on)
 		if hits > bestHit || (hits == bestHit && hits > 0 && betterRelease(r.Album, best.Album, album, len(tracks))) {
-			best, bestHit = r, hits
+			best, bestHit, onBest = r, hits, on
 		}
 		return nil
 	}
@@ -347,14 +353,12 @@ func (m *Matcher) albumRelease(ctx context.Context, album MatchAlbum, tracks []M
 	}
 	// The album search can miss a release a track search finds.
 	lookups := 0
-	for _, t := range tracks {
+	for i, t := range tracks {
 		if bestHit >= need || lookups >= maxMatchAlbumLookups {
 			break
 		}
-		if best != nil {
-			if _, ok := findInRelease(best.Album, t); ok {
-				continue
-			}
+		if _, ok := onBest[i]; ok {
+			continue
 		}
 		if !searchable(t) {
 			continue
@@ -435,49 +439,57 @@ func betterRelease(a, b tidal.Album, album MatchAlbum, tracks int) bool {
 	return abs(len(a.Tracks)-tracks) < abs(len(b.Tracks)-tracks)
 }
 
-// countInRelease counts the tracks a release lists.
-func countInRelease(r tidal.Album, tracks []MatchTrack) int {
-	n := 0
-	for _, t := range tracks {
-		if _, ok := findInRelease(r, t); ok {
-			n++
+// assignRelease pairs an album's tracks (by index) with a release's
+// entries, one to one, so one entry can't stand for several tracks: the
+// strongest pairs first, by the same ISRC, then a listed (not removed)
+// entry, then the same position, then the closest duration. relaxed is
+// trackMatches'. The entries carry the release's album metadata.
+func assignRelease(r tidal.Album, tracks []MatchTrack, relaxed bool) map[int]tidal.Track {
+	type pair struct{ track, entry, score, diff int }
+	entryTitles := make([]string, len(r.Tracks))
+	for j, c := range r.Tracks {
+		entryTitles[j] = matchTitle(c.Title)
+	}
+	var pairs []pair
+	for i, t := range tracks {
+		title := matchTitle(t.Title)
+		for j, c := range r.Tracks {
+			if !titledMatch(t, c, title, entryTitles[j], relaxed) {
+				continue
+			}
+			score := 0
+			if sameISRC(t.ISRC, c.ISRC) {
+				score += 8
+			}
+			if !c.Removed {
+				score += 4
+			}
+			if t.TrackNo > 0 && t.TrackNo == c.TrackNo && max(t.DiscNo, 1) == max(c.DiscNo, 1) {
+				score += 2
+			}
+			pairs = append(pairs, pair{i, j, score, abs(t.DurationMS - c.DurationMS)})
 		}
 	}
-	return n
-}
-
-// findInRelease finds a library track on a release: the same ISRC first,
-// then a listed (not removed) track, then the same position, then the
-// closest duration. The result carries the release's album metadata.
-func findInRelease(r tidal.Album, t MatchTrack) (tidal.Track, bool) {
-	best, bestScore := -1, -1
-	for i, c := range r.Tracks {
-		if !trackMatches(t, c, true) {
+	slices.SortStableFunc(pairs, func(a, b pair) int {
+		if a.score != b.score {
+			return b.score - a.score
+		}
+		return a.diff - b.diff
+	})
+	out := map[int]tidal.Track{}
+	used := map[int]bool{}
+	for _, p := range pairs {
+		if _, done := out[p.track]; done || used[p.entry] {
 			continue
 		}
-		score := 0
-		if sameISRC(t.ISRC, c.ISRC) {
-			score += 8
+		used[p.entry] = true
+		hit := r.Tracks[p.entry]
+		if hit.AlbumID == "" {
+			hit.AlbumID = r.ID
 		}
-		if !c.Removed {
-			score += 4
-		}
-		if t.TrackNo > 0 && t.TrackNo == c.TrackNo && max(t.DiscNo, 1) == max(c.DiscNo, 1) {
-			score += 2
-		}
-		if score > bestScore || (score == bestScore &&
-			abs(t.DurationMS-c.DurationMS) < abs(t.DurationMS-r.Tracks[best].DurationMS)) {
-			best, bestScore = i, score
-		}
+		out[p.track] = fromRelease(hit, r)
 	}
-	if best < 0 {
-		return tidal.Track{}, false
-	}
-	hit := r.Tracks[best]
-	if hit.AlbumID == "" {
-		hit.AlbumID = r.ID
-	}
-	return fromRelease(hit, r), true
+	return out
 }
 
 // searchable reports whether a track search could confirm a hit: that takes
@@ -560,16 +572,21 @@ func (m *Matcher) matchLoose(ctx context.Context, t MatchTrack) error {
 		m.record(ctx, t, MatchOutcome{Status: MatchUnmatched, Error: "no TIDAL track matches"})
 		return nil
 	}
-	// The best hit, unless its release turns out to be a compilation and the
-	// next hit's isn't.
+	// The best hit, unless its release turns out to be a compilation and a
+	// hit as strong (both or neither the file's ISRC) is on another release.
 	var (
-		hit tidal.Track
-		r   *release
+		hit   tidal.Track
+		r     *release
+		tried int
 	)
-	for i, c := range hits {
-		if i >= maxLooseReleases {
+	for _, c := range hits {
+		if tried >= maxLooseReleases {
 			break
 		}
+		if tried > 0 && sameISRC(t.ISRC, c.ISRC) != sameISRC(t.ISRC, hits[0].ISRC) {
+			continue
+		}
+		tried++
 		var cr *release
 		if c.AlbumID != "" {
 			if cr, err = m.lookupRelease(ctx, c.AlbumID); err != nil {
@@ -577,7 +594,7 @@ func (m *Matcher) matchLoose(ctx context.Context, t MatchTrack) error {
 				return err
 			}
 		}
-		if i == 0 || cr == nil || !isVariousArtists(cr.Artist) {
+		if tried == 1 || cr == nil || !isVariousArtists(cr.Artist) {
 			hit, r = c, cr
 		}
 		if cr == nil || !isVariousArtists(cr.Artist) {
