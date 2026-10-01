@@ -33,11 +33,12 @@ const matchEligible = `t.source = 'local' AND t.owner_id IS NULL AND t.deleted_a
 	AND NOT EXISTS (SELECT 1 FROM api_tracker_downloads ad WHERE ad.track_id = t.id)
 	AND NOT EXISTS (SELECT 1 FROM artistgrid_downloads gd WHERE gd.track_id = t.id)`
 
-// matchWaiting selects eligible tracks t that are due: never tried, or
-// their retry is up.
-const matchWaiting = matchEligible + `
-	AND NOT EXISTS (SELECT 1 FROM tidal_matches m
+// matchDue holds for a track t never tried, or whose retry is up.
+const matchDue = `NOT EXISTS (SELECT 1 FROM tidal_matches m
 		WHERE m.track_id = t.id AND (m.next_attempt_at IS NULL OR m.next_attempt_at > NOW()))`
+
+// matchWaiting selects eligible tracks t that are due.
+const matchWaiting = matchEligible + ` AND ` + matchDue
 
 // matchSettled holds for a track t nothing has changed for a while. A track
 // just ingested may still be getting its metadata from whoever added it (an
@@ -97,16 +98,19 @@ func scanMatchTrack(row rowScanner) (MatchTrack, error) {
 }
 
 // PendingMatchAlbums lists albums holding tracks waiting for a match, all of
-// them settled, those with the newest additions first.
+// their eligible tracks settled, those with the newest additions first.
 func (s *Store) PendingMatchAlbums(ctx context.Context, limit int) ([]uuid.UUID, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT t.album_id
-		FROM tracks t
-		JOIN albums a ON a.id = t.album_id
-		WHERE `+matchWaiting+` AND NOT `+matchLoose+`
-		GROUP BY t.album_id
-		HAVING BOOL_AND(`+matchSettled+`)
-		ORDER BY MAX(t.created_at) DESC, t.album_id
+		SELECT e.album_id
+		FROM (
+			SELECT t.album_id, t.created_at, `+matchSettled+` AS settled, `+matchDue+` AS due
+			FROM tracks t
+			JOIN albums a ON a.id = t.album_id
+			WHERE `+matchEligible+` AND NOT `+matchLoose+`
+		) e
+		GROUP BY e.album_id
+		HAVING BOOL_OR(e.due) AND BOOL_AND(e.settled)
+		ORDER BY MAX(e.created_at) FILTER (WHERE e.due) DESC, e.album_id
 		LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
@@ -123,8 +127,10 @@ func (s *Store) PendingMatchAlbums(ctx context.Context, limit int) ([]uuid.UUID,
 	return out, rows.Err()
 }
 
-// MatchAlbumTracks loads an album and up to limit of its tracks waiting for
-// a match, in album order. An album that is gone has none.
+// MatchAlbumTracks loads an album and up to limit of its eligible tracks,
+// in album order: the ones due and the ones whose last attempt is still
+// resting, so a release is judged against the whole album. An album that is
+// gone has none.
 func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit int) (MatchAlbum, []MatchTrack, error) {
 	a := MatchAlbum{ID: albumID}
 	err := s.db.QueryRow(ctx, `
@@ -133,7 +139,7 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 		        WHERE t.album_id = a.id AND t.deleted_at IS NULL AND t.source = 'local'
 		          AND t.owner_id IS NULL),
 		       EXISTS (SELECT 1 FROM tracks t
-		               WHERE t.album_id = a.id AND `+matchWaiting+` AND NOT `+matchSettled+`),
+		               WHERE t.album_id = a.id AND `+matchEligible+` AND NOT `+matchSettled+`),
 		       COALESCE((SELECT c.tidal_album_id FROM tidal_match_albums c
 		                 WHERE c.album_id = a.id AND c.created_at > NOW() - INTERVAL '7 days'), '')
 		FROM albums a LEFT JOIN artists ar ON ar.id = a.album_artist_id
@@ -149,7 +155,7 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 		SELECT `+matchTrackColumns+`
 		FROM tracks t
 		JOIN albums a ON a.id = t.album_id
-		WHERE t.album_id = $1 AND `+matchWaiting+` AND NOT `+matchLoose+`
+		WHERE t.album_id = $1 AND `+matchEligible+` AND NOT `+matchLoose+`
 		ORDER BY COALESCE(t.disc_no, 1), COALESCE(t.track_no, 0), t.title, t.id
 		LIMIT $2`, albumID, limit)
 	if err != nil {
@@ -206,6 +212,22 @@ type MatchOutcome struct {
 
 type execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// RecordAlbumUnmatched records every track of an album waiting for a match
+// as unmatched, in one statement.
+func (s *Store) RecordAlbumUnmatched(ctx context.Context, albumID uuid.UUID, reason string) error {
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO tidal_matches (track_id, status, error, attempts, next_attempt_at)
+		SELECT t.id, 'unmatched', $2, 1, NOW() + INTERVAL '30 days'
+		FROM tracks t JOIN albums a ON a.id = t.album_id
+		WHERE t.album_id = $1 AND `+matchWaiting+` AND NOT `+matchLoose+`
+		ON CONFLICT (track_id) DO UPDATE SET
+			status = 'unmatched', tidal_id = '', tidal_album_id = '', error = EXCLUDED.error,
+			attempts = tidal_matches.attempts + 1, next_attempt_at = EXCLUDED.next_attempt_at,
+			cover_url = '', cover_album_id = NULL, cover_retry_at = NULL, updated_at = NOW()`,
+		albumID, dbtext.Clean(reason))
+	return err
 }
 
 // RecordMatches stores the same outcome for several tracks in one
@@ -350,13 +372,15 @@ type MatchSummary struct {
 
 func (s *Store) MatchSummary(ctx context.Context) (MatchSummary, error) {
 	var out MatchSummary
+	// Outcomes other than a match count only for tracks matching may still
+	// change: an edit since ends the retries.
 	err := s.db.QueryRow(ctx, `
 		SELECT
 			COUNT(*) FILTER (WHERE m.status = 'matched'),
-			COUNT(*) FILTER (WHERE m.status = 'unmatched'),
-			COUNT(*) FILTER (WHERE m.status = 'failed'),
+			COUNT(*) FILTER (WHERE m.status = 'unmatched' AND `+matchEligible+`),
+			COUNT(*) FILTER (WHERE m.status = 'failed' AND `+matchEligible+`),
 			(SELECT COUNT(*) FROM tracks t
-			 WHERE `+matchWaiting+`
+			 WHERE `+matchEligible+`
 			   AND NOT EXISTS (SELECT 1 FROM tidal_matches m2 WHERE m2.track_id = t.id))
 		FROM tidal_matches m
 		JOIN tracks t ON t.id = m.track_id AND t.deleted_at IS NULL`,

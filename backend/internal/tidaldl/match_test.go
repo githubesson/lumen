@@ -917,8 +917,9 @@ func TestApplyTIDALMatchNeedsSourceAlbum(t *testing.T) {
 	}
 }
 
-// An album's chosen release stays noted while one of its tracks backs off
-// after a failure, and goes once that track is done.
+// An album's chosen release stays noted while one of its tracks still
+// has to be filed (a failure to retry), and goes once none has. A track
+// backing off is taken along with its album rather than left behind.
 func TestMatcherKeepsChoiceWhileTrackBacksOff(t *testing.T) {
 	f := newMatchFixture(t)
 	ctx := context.Background()
@@ -932,9 +933,13 @@ func TestMatcherKeepsChoiceWhileTrackBacksOff(t *testing.T) {
 	albumID := f.album("Record "+f.run, "", 0)
 	failed := f.track(localTrack{title: "Song", artists: []string{main}, album: &albumID, duration: 100_000})
 	tail := f.track(localTrack{title: "Bonus", artists: []string{main}, album: &albumID, duration: 50_000})
-	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id) VALUES($1, $2)`, albumID, relID)
+	store := NewStore(f.pool)
+	if err := store.ChooseRelease(ctx, albumID, relID); err != nil {
+		t.Fatal(err)
+	}
 	f.exec(`INSERT INTO tidal_matches(track_id, status, error, attempts, next_attempt_at)
-	        VALUES($1, 'failed', 'db hiccup', 1, NOW() + INTERVAL '5 minutes')`, failed)
+	        VALUES($1, 'failed', 'db hiccup', 1, NOW() + INTERVAL '5 minutes'),
+	              ($2, 'unmatched', '', 1, NOW() + INTERVAL '30 days')`, failed, tail)
 	choices := func() int {
 		var n int
 		if err := f.pool.QueryRow(ctx, `SELECT COUNT(*) FROM tidal_match_albums WHERE album_id = $1`, albumID).Scan(&n); err != nil {
@@ -942,26 +947,81 @@ func TestMatcherKeepsChoiceWhileTrackBacksOff(t *testing.T) {
 		}
 		return n
 	}
-
-	m := f.matcher(&fakeCatalog{err: errors.New("TIDAL must not be needed")})
-	if err := m.matchAlbum(ctx, albumID); err != nil {
+	if err := store.ReleaseDone(ctx, albumID); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.state(tail); got.Album != rel.Title || got.Match != MatchUnmatched {
-		t.Fatalf("tail = %+v; want it filed under the chosen release", got)
-	}
 	if choices() != 1 {
-		t.Fatal("the choice went while a track was still backing off")
+		t.Fatal("the choice went while a track still had to be filed")
 	}
 
-	f.exec(`UPDATE tidal_matches SET next_attempt_at = NOW() WHERE track_id = $1`, failed)
+	// A new track brings the album up; the backing-off track comes along.
+	f.track(localTrack{title: "Extra", artists: []string{main}, album: &albumID, duration: 70_000})
+	m := f.matcher(&fakeCatalog{err: errors.New("TIDAL must not be needed")})
 	if err := m.matchAlbum(ctx, albumID); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.state(failed); got.Match != MatchMatched || got.Album != rel.Title {
 		t.Fatalf("failed track = %+v; want it matched on the chosen release", got)
 	}
+	if got := f.state(tail); got.Album != rel.Title {
+		t.Fatalf("tail = %+v; want it filed with the rest", got)
+	}
 	if choices() != 0 {
 		t.Fatal("the choice outlived the album")
+	}
+}
+
+// A track added to an album whose other tracks found no match is judged
+// with them, not on its own.
+func TestMatcherJudgesNewTrackWithRestingAlbum(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	title := "Record " + f.run
+	albumID := f.album(title, main, 0)
+	var resting []uuid.UUID
+	for i, n := range []string{"One", "Two"} {
+		id := f.track(localTrack{title: n, artists: []string{main}, album: &albumID, duration: 100_000 + i*10_000})
+		f.exec(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at)
+		        VALUES($1, 'unmatched', 1, NOW() + INTERVAL '20 days')`, id)
+		resting = append(resting, id)
+	}
+	fresh := f.track(localTrack{title: "Three", artists: []string{main}, album: &albumID, duration: 130_000})
+	relID := "rel" + f.run
+	rel := tidal.Album{ID: relID, Title: title + " (Single)", Artist: main,
+		Tracks: []tidal.Track{{ID: "a" + f.run, Title: "Three", Artists: []string{main}, DurationMS: 130_000}}}
+	src := &fakeCatalog{searchAlbums: []tidal.Album{rel}, albums: map[string]tidal.Album{relID: rel}}
+	store := NewStore(f.pool)
+	pending, err := store.PendingMatchAlbums(ctx, 10_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsID(pending, albumID) {
+		t.Fatal("album with a new track isn't pending")
+	}
+	if err := f.matcher(src).matchAlbum(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range append(resting, fresh) {
+		if got := f.state(id); got.AlbumID != albumID || got.Match != MatchUnmatched {
+			t.Fatalf("track = %+v; want the album kept together and unmatched", got)
+		}
+	}
+
+	// An edit ends a track's retries, and the counts follow.
+	before, err := store.MatchSummary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newTitle := "One (edited)"
+	if err := f.lib.UpdateTrack(ctx, resting[0], library.TrackPatch{Title: &newTitle}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.MatchSummary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Unmatched != before.Unmatched-1 {
+		t.Fatalf("unmatched %d → %d; an edited track still counts", before.Unmatched, after.Unmatched)
 	}
 }

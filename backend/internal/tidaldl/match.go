@@ -260,8 +260,9 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 		return err
 	}
 	if album.Tracks > matchMaxAlbumTracks {
-		// The rest follow in the next passes, as the album stays too large.
-		m.recordAll(ctx, tracks, MatchOutcome{Status: MatchUnmatched, Error: "too many tracks for one release"}, nil)
+		if err := m.Store.RecordAlbumUnmatched(ctx, album.ID, "too many tracks for one release"); err != nil {
+			return err
+		}
 		return nil
 	}
 	m.fillISRCs(tracks)
