@@ -673,3 +673,69 @@ func TestMatcherLooseTrackKeepsISRCHit(t *testing.T) {
 		t.Fatalf("track = %+v; want the ISRC hit's release", got)
 	}
 }
+
+// An attempt cut short after choosing a release finishes on that release,
+// even though the tracks left can't vouch for it themselves.
+func TestMatcherFinishesInterruptedAlbum(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	relID := "rel" + f.run
+	rel := tidal.Album{ID: relID, Title: "Record " + f.run, Artist: main, ReleaseYear: 2004,
+		Tracks: []tidal.Track{{ID: "a" + f.run, Title: "Song", Artists: []string{main}, DurationMS: 100_000, TrackNo: 1}}}
+	if err := f.lib.SaveTIDALAlbum(ctx, rel); err != nil {
+		t.Fatal(err)
+	}
+	albumID := f.album("Record "+f.run, "", 0)
+	bonus := f.track(localTrack{title: "Bonus", artists: []string{main}, album: &albumID, duration: 50_000})
+	f.exec(`INSERT INTO tidal_matches(track_id, status, tidal_album_id, next_attempt_at)
+	        VALUES($1, 'failed', $2, NOW() - INTERVAL '1 minute')`, bonus, relID)
+
+	src := &fakeCatalog{err: errors.New("TIDAL must not be needed")}
+	if err := f.matcher(src).matchAlbum(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(bonus); got.Album != rel.Title || got.AlbumArtist != main || got.Match != MatchUnmatched ||
+		got.MatchAlbum != relID {
+		t.Fatalf("bonus = %+v; want it filed under the release chosen before", got)
+	}
+}
+
+// Tracks of an album an admin edited stay where the admin put them.
+func TestMatcherLeavesEditedAlbum(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	albumID := f.album("Record "+f.run, main, 0)
+	f.track(localTrack{title: "Song", artists: []string{main}, album: &albumID, duration: 100_000})
+	store := NewStore(f.pool)
+	pending, err := store.PendingMatchAlbums(ctx, 10_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsID(pending, albumID) {
+		t.Fatal("album isn't pending before the edit")
+	}
+	title := "Record " + f.run + " (My Edition)"
+	if err := f.lib.UpdateAlbum(ctx, albumID, library.AlbumPatch{Title: &title}); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err = store.PendingMatchAlbums(ctx, 10_000); err != nil {
+		t.Fatal(err)
+	}
+	if containsID(pending, albumID) {
+		t.Fatal("an album an admin edited is pending")
+	}
+
+	// Personal uploads in the album don't count toward its size.
+	owner := uuid.New()
+	f.exec(`INSERT INTO users(id, username, password_hash, role) VALUES($1, $2, 'x', 'user')`, owner, "match-"+f.run)
+	other := f.album("Other "+f.run, main, 0)
+	f.track(localTrack{title: "Shared", artists: []string{main}, album: &other, duration: 100_000})
+	for i := 0; i < 3; i++ {
+		f.track(localTrack{title: "Mine", artists: []string{main}, album: &other, duration: 100_000, owner: &owner})
+	}
+	if a, _, err := store.MatchAlbumTracks(ctx, other, 10); err != nil || a.Tracks != 1 {
+		t.Fatalf("album counts %d tracks (%v); want only the shared one", a.Tracks, err)
+	}
+}

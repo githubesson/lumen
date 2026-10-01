@@ -856,6 +856,9 @@ func (s *Store) UpdateAlbum(ctx context.Context, id uuid.UUID, p AlbumPatch) err
 	if set.Count() == 1 { // only updated_at
 		return tx.Commit(ctx)
 	}
+	// An album edited on purpose keeps its tracks: TIDAL matching won't
+	// refile them.
+	set.AddRaw("metadata_edited_at = NOW()")
 	setClause, args := set.Build()
 	args = append(args, id)
 	stmt := fmt.Sprintf(

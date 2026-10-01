@@ -194,3 +194,20 @@ func TestAssignReleaseNeedsEvidenceUnlessLinked(t *testing.T) {
 		t.Fatal("a bare title should match within its album's linked release")
 	}
 }
+
+// As many tracks as possible are paired, even when the strongest pair for
+// one track would leave another without its only entry.
+func TestAssignReleaseMaximizesPairs(t *testing.T) {
+	r := tidal.Album{ID: "rel", Title: "Record", Tracks: []tidal.Track{
+		{ID: "x", Title: "Song", Artists: []string{"Main"}, DurationMS: 180_000, TrackNo: 1},
+		{ID: "y", Title: "Song", Artists: []string{"Main"}, DurationMS: 183_000, TrackNo: 5},
+	}}
+	got := assignRelease(r, []MatchTrack{
+		// A fits both, x better (same position); B fits only x.
+		{Title: "Song", Artists: []string{"Main"}, DurationMS: 181_000, TrackNo: 1},
+		{Title: "Song", Artists: []string{"Main"}, DurationMS: 178_000},
+	}, false)
+	if len(got) != 2 || got[0].ID != "y" || got[1].ID != "x" {
+		t.Fatalf("assigned %+v; want A→y and B→x", got)
+	}
+}

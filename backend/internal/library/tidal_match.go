@@ -26,19 +26,33 @@ type TIDALTrackFields struct {
 }
 
 // lockUnmatchable locks a live, shared local track whose metadata nobody set
-// on purpose, the only kind TIDAL matching may change, and returns its
-// album's cover. ok is false for any other track.
-func lockUnmatchable(ctx context.Context, tx pgx.Tx, trackID uuid.UUID) (cover *string, ok bool, err error) {
+// on purpose, the only kind TIDAL matching may change; ok is false for any
+// other track. Callers upsert artists and albums first and lock the track
+// last, in the order ingest takes them, so the two can't deadlock.
+func lockUnmatchable(ctx context.Context, tx pgx.Tx, trackID uuid.UUID) (ok bool, err error) {
 	err = tx.QueryRow(ctx, `
-		SELECT a.cover_art_path FROM tracks t
-		LEFT JOIN albums a ON a.id = t.album_id
+		SELECT TRUE FROM tracks t
 		WHERE t.id = $1 AND t.deleted_at IS NULL AND t.source = 'local'
 		  AND t.owner_id IS NULL AND t.metadata_edited_at IS NULL
-		FOR UPDATE OF t`, trackID).Scan(&cover)
+		FOR UPDATE`, trackID).Scan(&ok)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, false, nil
+		return false, nil
 	}
-	return cover, err == nil, err
+	return ok, err
+}
+
+// albumCover is the cover of a track's album, which the album the track
+// moves to takes when it has none. Read before the track is locked; it is
+// only a fallback.
+func albumCover(ctx context.Context, tx pgx.Tx, trackID uuid.UUID) (*string, error) {
+	var cover *string
+	err := tx.QueryRow(ctx, `
+		SELECT a.cover_art_path FROM tracks t JOIN albums a ON a.id = t.album_id
+		WHERE t.id = $1`, trackID).Scan(&cover)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return cover, err
 }
 
 // ApplyTIDALMatch files a local track matched to a TIDAL track by TIDAL's
@@ -58,9 +72,22 @@ func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDAL
 	}
 	defer tx.Rollback(ctx)
 
-	oldCover, ok, err := lockUnmatchable(ctx, tx, trackID)
-	if err != nil || !ok {
-		return false, err
+	// Performers, then the album artist and album, then the track: ingest's
+	// order.
+	names := performerNames(in.Artists)
+	ids := make([]uuid.UUID, 0, len(names))
+	roles := make([]string, 0, len(names))
+	for i, name := range names {
+		id, err := UpsertArtist(ctx, tx, name)
+		if err != nil {
+			return false, err
+		}
+		ids = append(ids, id)
+		if i == 0 {
+			roles = append(roles, "primary")
+		} else {
+			roles = append(roles, "featured")
+		}
 	}
 	var (
 		albumID               *uuid.UUID
@@ -70,12 +97,19 @@ func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDAL
 	case in.KeepAlbum:
 		year, trackNo, discNo = in.Album.Year, in.Album.TrackNo, in.Album.DiscNo
 	case strings.TrimSpace(in.Album.Title) != "":
+		oldCover, err := albumCover(ctx, tx, trackID)
+		if err != nil {
+			return false, err
+		}
 		id, err := upsertTIDALAlbum(ctx, tx, in.Album, oldCover)
 		if err != nil {
 			return false, err
 		}
 		albumID = &id
 		year, trackNo, discNo = in.Album.Year, in.Album.TrackNo, in.Album.DiscNo
+	}
+	if ok, err := lockUnmatchable(ctx, tx, trackID); err != nil || !ok {
+		return false, err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE tracks SET
@@ -92,21 +126,7 @@ func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDAL
 		albumID, year, trackNo, discNo); err != nil {
 		return false, err
 	}
-	if names := performerNames(in.Artists); len(names) > 0 {
-		ids := make([]uuid.UUID, 0, len(names))
-		roles := make([]string, 0, len(names))
-		for i, name := range names {
-			id, err := UpsertArtist(ctx, tx, name)
-			if err != nil {
-				return false, err
-			}
-			ids = append(ids, id)
-			if i == 0 {
-				roles = append(roles, "primary")
-			} else {
-				roles = append(roles, "featured")
-			}
-		}
+	if len(ids) > 0 {
 		if err := relinkArtists(ctx, tx, trackID, ids, roles, false); err != nil {
 			return false, err
 		}
@@ -138,12 +158,15 @@ func (s *Store) FileUnderTIDALRelease(ctx context.Context, trackID uuid.UUID, in
 	}
 	defer tx.Rollback(ctx)
 
-	oldCover, ok, err := lockUnmatchable(ctx, tx, trackID)
-	if err != nil || !ok {
+	oldCover, err := albumCover(ctx, tx, trackID)
+	if err != nil {
 		return false, err
 	}
 	albumID, err := upsertTIDALAlbum(ctx, tx, in, oldCover)
 	if err != nil {
+		return false, err
+	}
+	if ok, err := lockUnmatchable(ctx, tx, trackID); err != nil || !ok {
 		return false, err
 	}
 	if _, err := tx.Exec(ctx, `

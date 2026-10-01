@@ -251,7 +251,8 @@ func (m *Matcher) fillISRCs(tracks []MatchTrack) {
 // album search or, failing that, by searching for a few of its tracks, and
 // it is used only when it lists at least half of them; the rest are then
 // filed under it as well, so the album stays together. Otherwise none are
-// changed.
+// changed. The chosen release is noted on every track before any is
+// changed, so an attempt cut short finishes on the same release.
 func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 	album, tracks, err := m.Store.MatchAlbumTracks(ctx, albumID, matchMaxAlbumTracks)
 	if err != nil || len(tracks) == 0 {
@@ -277,6 +278,10 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 		return err
 	}
 	linked := album.TIDALAlbumID != ""
+	if !linked {
+		m.recordAll(ctx, tracks, MatchOutcome{Status: MatchFailed, TIDALAlbumID: r.ID,
+			Error: "filing under the TIDAL release didn't finish"}, nil)
+	}
 	fields := releaseFields(r.Album)
 	hits := assignRelease(r.Album, tracks, linked)
 	for i, t := range tracks {
@@ -305,6 +310,11 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 func (m *Matcher) albumRelease(ctx context.Context, album MatchAlbum, tracks []MatchTrack) (*release, error) {
 	if album.TIDALAlbumID != "" {
 		return m.lookupRelease(ctx, album.TIDALAlbumID)
+	}
+	for _, t := range tracks {
+		if t.Release != "" {
+			return m.lookupRelease(ctx, t.Release)
+		}
 	}
 	need := (len(tracks) + 1) / 2
 	var (
@@ -440,10 +450,11 @@ func betterRelease(a, b tidal.Album, album MatchAlbum, tracks int) bool {
 }
 
 // assignRelease pairs an album's tracks (by index) with a release's
-// entries, one to one, so one entry can't stand for several tracks: the
-// strongest pairs first, by the same ISRC, then a listed (not removed)
-// entry, then the same position, then the closest duration. relaxed is
-// trackMatches'. The entries carry the release's album metadata.
+// entries, one to one, so one entry can't stand for several tracks. As many
+// tracks as possible are paired; among those pairings, stronger pairs come
+// first: the same ISRC, then a listed (not removed) entry, then the same
+// position, then the closest duration. relaxed is trackMatches'. The entries
+// carry the release's album metadata.
 func assignRelease(r tidal.Album, tracks []MatchTrack, relaxed bool) map[int]tidal.Track {
 	type pair struct{ track, entry, score, diff int }
 	entryTitles := make([]string, len(r.Tracks))
@@ -476,18 +487,48 @@ func assignRelease(r tidal.Album, tracks []MatchTrack, relaxed bool) map[int]tid
 		}
 		return a.diff - b.diff
 	})
-	out := map[int]tidal.Track{}
-	used := map[int]bool{}
+	// Strongest pairs first, then augmenting paths for the tracks left out,
+	// which may move a paired track to a weaker entry so both fit.
+	options := make([][]int, len(tracks)) // entries per track, strongest first
+	entryOf := map[int]int{}              // track → entry
+	trackOf := map[int]int{}              // entry → track
 	for _, p := range pairs {
-		if _, done := out[p.track]; done || used[p.entry] {
+		options[p.track] = append(options[p.track], p.entry)
+		if _, done := entryOf[p.track]; done {
 			continue
 		}
-		used[p.entry] = true
-		hit := r.Tracks[p.entry]
+		if _, taken := trackOf[p.entry]; taken {
+			continue
+		}
+		entryOf[p.track], trackOf[p.entry] = p.entry, p.track
+	}
+	var augment func(track int, seen map[int]bool) bool
+	augment = func(track int, seen map[int]bool) bool {
+		for _, e := range options[track] {
+			if seen[e] {
+				continue
+			}
+			seen[e] = true
+			other, taken := trackOf[e]
+			if !taken || augment(other, seen) {
+				entryOf[track], trackOf[e] = e, track
+				return true
+			}
+		}
+		return false
+	}
+	for i := range tracks {
+		if _, done := entryOf[i]; !done && len(options[i]) > 0 {
+			augment(i, map[int]bool{})
+		}
+	}
+	out := make(map[int]tidal.Track, len(entryOf))
+	for track, e := range entryOf {
+		hit := r.Tracks[e]
 		if hit.AlbumID == "" {
 			hit.AlbumID = r.ID
 		}
-		out[p.track] = fromRelease(hit, r)
+		out[track] = fromRelease(hit, r)
 	}
 	return out
 }

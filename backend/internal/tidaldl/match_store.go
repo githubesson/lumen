@@ -24,9 +24,11 @@ const (
 // importer, or an earlier match), that auto-download didn't save (those are
 // filed already), and that are due: never tried, or their retry is up.
 // Tracks from the API tracker and ArtistGrid importers carry the importer's
-// metadata, which edits before metadata_edited_at existed didn't mark.
+// metadata, which edits before metadata_edited_at existed didn't mark, and
+// tracks of an album an admin edited stay in it.
 const matchWaiting = `t.source = 'local' AND t.owner_id IS NULL AND t.deleted_at IS NULL
 	AND t.metadata_edited_at IS NULL
+	AND NOT EXISTS (SELECT 1 FROM albums ea WHERE ea.id = t.album_id AND ea.metadata_edited_at IS NOT NULL)
 	AND NOT EXISTS (SELECT 1 FROM tidal_downloads d
 		WHERE d.local_track_id = t.id AND d.status = 'downloaded')
 	AND NOT EXISTS (SELECT 1 FROM api_tracker_downloads ad WHERE ad.track_id = t.id)
@@ -55,6 +57,9 @@ type MatchTrack struct {
 	TrackNo    int
 	DiscNo     int
 	FilePath   string
+	// Release is the TIDAL release an unfinished attempt chose for the
+	// track's album, to finish filing under.
+	Release string
 }
 
 // MatchAlbum is the library album a group of MatchTracks shares.
@@ -64,20 +69,23 @@ type MatchAlbum struct {
 	Artist       string // album artist, "" when none
 	Year         int
 	TIDALAlbumID string // the release the album is linked to, if any
-	// Tracks counts all of the album's live local tracks, waiting or not.
+	// Tracks counts all of the album's live, shared local tracks, waiting or
+	// not.
 	Tracks int
 }
 
 const matchTrackColumns = `t.id, t.title,
 	ARRAY(SELECT ar.name FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
 	      WHERE ta.track_id = t.id AND ta.role <> 'composer' ORDER BY ta.position, ar.name),
-	COALESCE(t.isrc, ''), t.duration_ms, COALESCE(t.track_no, 0), COALESCE(t.disc_no, 0), t.file_path`
+	COALESCE(t.isrc, ''), t.duration_ms, COALESCE(t.track_no, 0), COALESCE(t.disc_no, 0), t.file_path,
+	COALESCE((SELECT fm.tidal_album_id FROM tidal_matches fm
+	          WHERE fm.track_id = t.id AND fm.status = 'failed'), '')`
 
 type rowScanner interface{ Scan(...any) error }
 
 func scanMatchTrack(row rowScanner) (MatchTrack, error) {
 	var t MatchTrack
-	err := row.Scan(&t.ID, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS, &t.TrackNo, &t.DiscNo, &t.FilePath)
+	err := row.Scan(&t.ID, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS, &t.TrackNo, &t.DiscNo, &t.FilePath, &t.Release)
 	return t, err
 }
 
@@ -114,7 +122,8 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 	err := s.db.QueryRow(ctx, `
 		SELECT a.title, COALESCE(ar.name, ''), COALESCE(a.release_year, 0), COALESCE(a.tidal_album_id, ''),
 		       (SELECT COUNT(*) FROM tracks t
-		        WHERE t.album_id = a.id AND t.deleted_at IS NULL AND t.source = 'local')
+		        WHERE t.album_id = a.id AND t.deleted_at IS NULL AND t.source = 'local'
+		          AND t.owner_id IS NULL)
 		FROM albums a LEFT JOIN artists ar ON ar.id = a.album_artist_id
 		WHERE a.id = $1`, albumID).Scan(&a.Title, &a.Artist, &a.Year, &a.TIDALAlbumID, &a.Tracks)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -186,7 +195,8 @@ type execer interface {
 
 // RecordMatch stores an attempt's outcome. A match is final; no match is
 // tried again after 30 days, in case TIDAL adds the release; a failure backs
-// off from 5 minutes, doubling up to a day. A track deleted meanwhile is
+// off from 5 minutes, doubling up to a day, and keeps the release an earlier
+// attempt chose unless it names another. A track deleted meanwhile is
 // skipped.
 func (s *Store) RecordMatch(ctx context.Context, trackID uuid.UUID, o MatchOutcome) error {
 	return recordMatch(ctx, s.db, trackID, o)
@@ -205,7 +215,8 @@ func recordMatch(ctx context.Context, q execer, trackID uuid.UUID, o MatchOutcom
 		ON CONFLICT (track_id) DO UPDATE SET
 			status = EXCLUDED.status,
 			tidal_id = EXCLUDED.tidal_id,
-			tidal_album_id = EXCLUDED.tidal_album_id,
+			tidal_album_id = CASE WHEN EXCLUDED.status = 'failed' AND EXCLUDED.tidal_album_id = ''
+				THEN tidal_matches.tidal_album_id ELSE EXCLUDED.tidal_album_id END,
 			error = EXCLUDED.error,
 			attempts = tidal_matches.attempts + 1,
 			next_attempt_at = CASE EXCLUDED.status

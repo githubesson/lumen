@@ -21,3 +21,8 @@ CREATE TABLE tidal_matches (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX tidal_matches_cover_idx ON tidal_matches(cover_retry_at) WHERE cover_url <> '';
+
+-- Set when an admin edits an album's title, album artist, year or
+-- compilation flag. TIDAL matching leaves the tracks of such an album alone,
+-- so it never refiles them under TIDAL's album.
+ALTER TABLE albums ADD COLUMN metadata_edited_at TIMESTAMPTZ;

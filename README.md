@@ -270,8 +270,8 @@ whole release, like an album of saved TIDAL tracks.
 - A match needs the same ISRC (read from the file's tags), or the same title,
   artist and length within 3 seconds. Feat. credits and remaster or edition
   qualifiers are ignored; live versions, remixes and the like are not.
-- Metadata set on purpose (an admin edit, an earlier match) is never
-  changed, and neither are tracks from the API tracker and ArtistGrid
+- Metadata set on purpose (an admin edit of the track or its album, an
+  earlier match) is never changed, and neither are tracks from the API tracker and ArtistGrid
   importers, personal uploads, or the files themselves. Edits made before
   migration 0030 weren't marked, so they can't be told apart; set
   `TIDAL_MATCH_LOCAL=false` before upgrading if that matters to you.
