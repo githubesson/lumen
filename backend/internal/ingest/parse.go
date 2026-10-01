@@ -144,21 +144,6 @@ func composerTag(m tag.Metadata) string {
 	return strings.TrimSpace(m.Composer())
 }
 
-// ReadISRC reads just the ISRC tag of the file at path: "" when it has none
-// or can't be read.
-func ReadISRC(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	m, err := tag.ReadFrom(f)
-	if err != nil {
-		return ""
-	}
-	return isrcTag(m.Raw())
-}
-
 // isrcTag is the file's ISRC: ID3's TSRC (TRC in v2.2), the Vorbis ISRC
 // comment, or iTunes' ----:ISRC atom. The tag library has no accessor for it.
 func isrcTag(raw map[string]interface{}) string {

@@ -107,10 +107,6 @@ services:
       TIDAL_COUNTRY_CODE: ${TIDAL_COUNTRY_CODE:-US}
       TIDAL_QUALITY: ${TIDAL_QUALITY:-LOSSLESS}
       TIDAL_HIFI_API_URL: http://hifi-api:${HIFI_API_PORT:-8000}
-      # Files the library's own tracks by their TIDAL match, like saved TIDAL
-      # tracks. false turns it off.
-      TIDAL_MATCH_LOCAL: ${TIDAL_MATCH_LOCAL:-true}
-      TIDAL_MATCH_POLL_INTERVAL: ${TIDAL_MATCH_POLL_INTERVAL:-30m}
       LASTFM_API_KEY: ${LASTFM_API_KEY:-}
       LASTFM_SHARED_SECRET: ${LASTFM_SHARED_SECRET:-}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}

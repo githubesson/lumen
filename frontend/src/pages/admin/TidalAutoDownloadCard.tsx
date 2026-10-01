@@ -103,16 +103,6 @@ export function TidalAutoDownloadCard({ roots }: { roots: MusicRoot[] | null }) 
     ["Failed", summary?.failed],
     ["Saved", summary?.saved],
   ];
-  const match = status?.match;
-  const matchStats: Array<[string, number | undefined]> = match
-    ? [
-        ["Matched", match.matched],
-        ["No match", match.unmatched],
-        ["Waiting", match.waiting],
-        // Lookups retry on their own; only worth a cell while some fail.
-        ...(match.failed > 0 ? [["Retrying", match.failed] as [string, number]] : []),
-      ]
-    : [];
 
   return (
     <section className="surface" style={{ padding: 16, display: "grid", gap: 14 }}>
@@ -152,17 +142,22 @@ export function TidalAutoDownloadCard({ roots }: { roots: MusicRoot[] | null }) 
         <ErrorBanner message={`Download folder unavailable: ${status.destination_error}`} />
       )}
 
-      <StatGrid stats={stats} />
-
-      {match && (
-        <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 14, color: "var(--muted-foreground)" }}>
-            Library files are matched on TIDAL and filed by their release, like
-            saved tracks.
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))",
+          gap: 10,
+        }}
+      >
+        {stats.map(([label, value]) => (
+          <div key={label}>
+            <div style={{ color: "var(--muted-foreground)", fontSize: 12 }}>{label}</div>
+            <div className="mono" style={{ fontSize: 18 }}>
+              {value ?? "-"}
+            </div>
           </div>
-          <StatGrid stats={matchStats} />
-        </div>
-      )}
+        ))}
+      </div>
 
       <form
         onSubmit={save}
@@ -258,26 +253,5 @@ export function TidalAutoDownloadCard({ roots }: { roots: MusicRoot[] | null }) 
         </Disclosure>
       )}
     </section>
-  );
-}
-
-function StatGrid({ stats }: { stats: Array<[string, number | undefined]> }) {
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))",
-        gap: 10,
-      }}
-    >
-      {stats.map(([label, value]) => (
-        <div key={label}>
-          <div style={{ color: "var(--muted-foreground)", fontSize: 12 }}>{label}</div>
-          <div className="mono" style={{ fontSize: 18 }}>
-            {value ?? "-"}
-          </div>
-        </div>
-      ))}
-    </div>
   );
 }
