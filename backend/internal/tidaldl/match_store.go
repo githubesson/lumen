@@ -35,9 +35,12 @@ const matchEligible = `t.source = 'local' AND t.owner_id IS NULL AND t.deleted_a
 	AND NOT EXISTS (SELECT 1 FROM api_tracker_downloads ad WHERE ad.track_id = t.id)
 	AND NOT EXISTS (SELECT 1 FROM artistgrid_downloads gd WHERE gd.track_id = t.id)`
 
-// matchDue holds for a track t never tried, or whose retry is up.
+// matchDue holds for a track t never tried, whose retry is up, or that
+// changed since its last outcome (a duplicate's tags adopted, an ISRC
+// filled): that outcome was decided on what it was.
 const matchDue = `NOT EXISTS (SELECT 1 FROM tidal_matches m
-		WHERE m.track_id = t.id AND (m.next_attempt_at IS NULL OR m.next_attempt_at > NOW()))`
+		WHERE m.track_id = t.id AND (m.next_attempt_at IS NULL OR m.next_attempt_at > NOW())
+		  AND m.updated_at >= t.updated_at)`
 
 // matchWaiting selects eligible tracks t that are due.
 const matchWaiting = matchEligible + ` AND ` + matchDue
@@ -165,8 +168,10 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 	if err != nil {
 		return a, nil, err
 	}
+	// Settling is checked again on the tracks as loaded: one may have
+	// changed since the album query.
 	rows, err := s.db.Query(ctx, `
-		SELECT `+matchTrackColumns+`
+		SELECT `+matchTrackColumns+`, `+matchSettled+`
 		FROM tracks t
 		JOIN albums a ON a.id = t.album_id
 		WHERE t.album_id = $1 AND `+matchEligible+` AND NOT `+matchLoose+`
@@ -178,10 +183,15 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 	defer rows.Close()
 	var out []MatchTrack
 	for rows.Next() {
-		t, err := scanMatchTrack(rows)
-		if err != nil {
+		var (
+			t       MatchTrack
+			settled bool
+		)
+		if err := rows.Scan(&t.ID, &t.AlbumID, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS, &t.TrackNo,
+			&t.DiscNo, &t.FilePath, &t.Seen, &settled); err != nil {
 			return a, nil, err
 		}
+		a.Unsettled = a.Unsettled || !settled
 		out = append(out, t)
 	}
 	return a, out, rows.Err()
@@ -323,14 +333,17 @@ func recordMatch(ctx context.Context, q execer, trackID uuid.UUID, o MatchOutcom
 	return err
 }
 
-// NextMatchRetry is when the earliest failed lookup of a track matching may
-// still change is due again, if any.
+// NextMatchRetry is when the next retry is due, if any: a failed lookup of
+// a track matching may still change, or a release cover put off.
 func (s *Store) NextMatchRetry(ctx context.Context) (time.Time, bool, error) {
 	var at *time.Time
 	err := s.db.QueryRow(ctx, `
-		SELECT MIN(fm.next_attempt_at) FROM tidal_matches fm
-		JOIN tracks t ON t.id = fm.track_id
-		WHERE fm.status = 'failed' AND `+matchEligible).Scan(&at)
+		SELECT LEAST(
+			(SELECT MIN(fm.next_attempt_at) FROM tidal_matches fm
+			 JOIN tracks t ON t.id = fm.track_id
+			 WHERE fm.status = 'failed' AND `+matchEligible+`),
+			(SELECT MIN(cm.cover_retry_at) FROM tidal_matches cm
+			 WHERE cm.cover_url <> '' AND cm.cover_album_id IS NOT NULL))`).Scan(&at)
 	if err != nil || at == nil {
 		return time.Time{}, false, err
 	}

@@ -824,7 +824,7 @@ func TestApplyTIDALMatchHonorsAlbumEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	applied, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
-		Title: "Song", Album: library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main},
+		Title: "Song", From: &albumID, Album: library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main},
 	}, nil)
 	if err != nil || applied {
 		t.Fatalf("applied = %v, %v; want the edited album to keep its track", applied, err)
@@ -1148,5 +1148,69 @@ func TestOutcomesNeedTheTrackAsLoaded(t *testing.T) {
 	var n int
 	if err := f.pool.QueryRow(ctx, `SELECT COUNT(*) FROM tidal_match_albums WHERE album_id = $1`, albumID).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("choice count %d, %v; an outcome older than the choice finished it", n, err)
+	}
+}
+
+// A track leaving the catch-all doesn't take its cover, which came from
+// whichever untagged file had art first.
+func TestCatchAllCoverStaysBehind(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	var others uuid.UUID
+	if err := f.pool.QueryRow(ctx, `
+		INSERT INTO albums(title, is_compilation, cover_art_path) VALUES($1, TRUE, 'covers/unrelated.jpg')
+		ON CONFLICT (title, COALESCE(album_artist_id, '00000000-0000-0000-0000-000000000000'::uuid))
+		DO UPDATE SET cover_art_path = EXCLUDED.cover_art_path
+		RETURNING id`, library.CatchAllAlbum).Scan(&others); err != nil {
+		t.Fatal(err)
+	}
+	id := f.track(localTrack{title: "Untagged", album: &others, duration: 100_000})
+	applied, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
+		Title: "Song", Artists: []string{main}, From: &others,
+		Album: library.TIDALAlbumFields{Title: "Record " + f.run, Artist: main},
+	}, nil)
+	if err != nil || !applied {
+		t.Fatalf("applied = %v, %v", applied, err)
+	}
+	var cover string
+	if err := f.pool.QueryRow(ctx, `
+		SELECT COALESCE(a.cover_art_path, '') FROM tracks t JOIN albums a ON a.id = t.album_id WHERE t.id = $1`, id).
+		Scan(&cover); err != nil {
+		t.Fatal(err)
+	}
+	if cover != "" {
+		t.Fatalf("release album took the catch-all's cover %q", cover)
+	}
+}
+
+// A track that changed after its no-match (a duplicate's tags adopted, an
+// ISRC filled) is due again, not left resting on the old decision.
+func TestChangedTrackIsDueAgain(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	id := f.track(localTrack{title: "Loose", artists: []string{main}, duration: 100_000})
+	f.exec(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at, updated_at)
+	        VALUES($1, 'unmatched', 1, NOW() + INTERVAL '20 days', NOW() - INTERVAL '50 minutes')`, id)
+	store := NewStore(f.pool)
+	waiting := func() bool {
+		ts, err := store.PendingMatchLoose(ctx, 10_000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, w := range ts {
+			if w.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	if waiting() {
+		t.Fatal("a resting track is waiting")
+	}
+	f.exec(`UPDATE tracks SET updated_at = NOW() - INTERVAL '20 minutes' WHERE id = $1`, id)
+	if !waiting() {
+		t.Fatal("a track changed since its no-match isn't waiting")
 	}
 }

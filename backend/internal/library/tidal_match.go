@@ -102,12 +102,15 @@ func releaseAlbum(ctx context.Context, tx pgx.Tx, in TIDALAlbumFields, oldCover 
 
 // albumCover is the cover of a track's album, which the album the track
 // moves to takes when it has none. Read before the track is locked; it is
-// only a fallback.
+// only a fallback. The catch-all's cover came from whichever untagged file
+// had art first, so it isn't carried.
 func albumCover(ctx context.Context, tx pgx.Tx, trackID uuid.UUID) (*string, error) {
 	var cover *string
 	err := tx.QueryRow(ctx, `
-		SELECT a.cover_art_path FROM tracks t JOIN albums a ON a.id = t.album_id
-		WHERE t.id = $1`, trackID).Scan(&cover)
+		SELECT CASE WHEN a.title = $2 AND a.album_artist_id IS NULL THEN NULL
+		            ELSE a.cover_art_path END
+		FROM tracks t JOIN albums a ON a.id = t.album_id
+		WHERE t.id = $1`, trackID, CatchAllAlbum).Scan(&cover)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
