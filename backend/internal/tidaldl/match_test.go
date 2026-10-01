@@ -1707,3 +1707,46 @@ func TestBackingOffTrackWaitsWithinItsAlbum(t *testing.T) {
 		t.Fatalf("backing-off track = %+v; want it left until its retry", got)
 	}
 }
+
+// While a choice is unfinished, a track added since doesn't bring the album
+// up (it would be filtered out and fill batches); once the choice is done,
+// it does. Removing an album's cover cancels a pending release cover.
+func TestAddedTrackWaitsForChoiceAndCoverRemoval(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	albumID := f.album("Record "+f.run, main, 0)
+	judged := f.track(localTrack{title: "Song", artists: []string{main}, album: &albumID, duration: 100_000})
+	f.track(localTrack{title: "Added", artists: []string{main}, album: &albumID, duration: 50_000})
+	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, track_ids, created_at)
+	        VALUES($1, 'rel', $2, NOW() - INTERVAL '1 minute')`, albumID, []uuid.UUID{judged})
+	f.exec(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at)
+	        VALUES($1, 'failed', 1, NOW() + INTERVAL '30 minutes')`, judged)
+	store := NewStore(f.pool)
+	pending := func() bool {
+		ids, err := store.PendingMatchAlbums(ctx, 10_000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return containsID(ids, albumID)
+	}
+	if pending() {
+		t.Fatal("an added track brought up an album whose choice is unfinished")
+	}
+	f.exec(`UPDATE tidal_matches SET status = 'unmatched', next_attempt_at = NOW() + INTERVAL '30 days' WHERE track_id = $1`, judged)
+	if !pending() {
+		t.Fatal("an added track doesn't bring up an album whose choice is done")
+	}
+
+	f.exec(`INSERT INTO tidal_matches(track_id, status, cover_url, cover_album_id)
+	        VALUES($1, 'matched', 'https://resources.tidal.com/c.jpg', $2)
+	        ON CONFLICT (track_id) DO UPDATE SET cover_url = EXCLUDED.cover_url, cover_album_id = EXCLUDED.cover_album_id`,
+		judged, albumID)
+	if err := f.lib.ClearAlbumCover(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	var left string
+	if err := f.pool.QueryRow(ctx, `SELECT cover_url FROM tidal_matches WHERE track_id = $1`, judged).Scan(&left); err != nil || left != "" {
+		t.Fatalf("pending cover %q, %v; want it cancelled by the removal", left, err)
+	}
+}

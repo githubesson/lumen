@@ -939,16 +939,23 @@ func (s *Store) SetAlbumCoverIfMissing(ctx context.Context, albumID uuid.UUID, c
 // the blob here could orphan another album's artwork. Returns ErrNotFound when
 // the album row is missing.
 func (s *Store) ClearAlbumCover(ctx context.Context, albumID uuid.UUID) error {
-	tag, err := s.db.Exec(ctx, `
-		UPDATE albums SET cover_art_path = NULL, updated_at = NOW()
-		WHERE id = $1`, albumID)
-	if err != nil {
+	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE albums SET cover_art_path = NULL, updated_at = NOW()
+			WHERE id = $1`, albumID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		// Removed on purpose: a TIDAL match's pending release cover must not
+		// put one back.
+		_, err = tx.Exec(ctx, `
+			UPDATE tidal_matches SET cover_url = '', cover_retry_at = NULL
+			WHERE cover_album_id = $1 AND cover_url <> ''`, albumID)
 		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	})
 }
 
 // RecordIngestError stores why a file failed to ingest. These rows are the

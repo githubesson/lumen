@@ -71,6 +71,19 @@ const matchResumable = `COALESCE((
 		  AND (rm.status <> 'failed' OR rm.next_attempt_at > NOW()))
 	FROM tidal_match_albums c WHERE c.album_id = t.album_id), FALSE)`
 
+// choiceUnfinished holds for an album (the SQL expression album) with a
+// release choice that some track it was judged on is still to file under:
+// no outcome since the choice, or a failure. ReleaseDone drops a choice
+// once this no longer holds.
+func choiceUnfinished(album string) string {
+	return `EXISTS (
+		SELECT 1 FROM tidal_match_albums c
+		JOIN tracks t ON t.id = ANY(c.track_ids) AND t.album_id = c.album_id
+		LEFT JOIN tidal_matches om ON om.track_id = t.id
+		WHERE c.album_id = ` + album + ` AND ` + matchEligible + `
+		  AND (om.track_id IS NULL OR om.status = 'failed' OR om.updated_at < c.created_at))`
+}
+
 // matchLoose holds for a track t (album a, LEFT JOINed) with no album to go
 // by: none at all, or the catch-all ingest files untagged tracks under.
 const matchLoose = `(t.album_id IS NULL OR (a.title = '` + library.CatchAllAlbum + `'
@@ -166,9 +179,11 @@ func (s *Store) PendingMatchAlbums(ctx context.Context, limit int) ([]uuid.UUID,
 			WHERE `+matchEligible+` AND NOT `+matchLoose+`
 		) e
 		GROUP BY e.album_id
-		-- An unfinished choice resumes while a track it was judged on is
-		-- still to file and not backing off.
-		HAVING (BOOL_OR(e.due) OR BOOL_OR(e.resumable)) AND BOOL_AND(e.settled)
+		-- While a choice is unfinished only the tracks it was judged on
+		-- (resumable: still to file, not backing off) bring the album up;
+		-- tracks added since wait until it is done.
+		HAVING (BOOL_OR(e.resumable) OR (BOOL_OR(e.due) AND NOT `+choiceUnfinished("e.album_id")+`))
+		   AND BOOL_AND(e.settled)
 		ORDER BY MAX(e.created_at) FILTER (WHERE e.due) DESC, e.album_id
 		LIMIT $1`, limit)
 	if err != nil {
@@ -448,21 +463,31 @@ func (s *Store) ChooseRelease(ctx context.Context, albumID uuid.UUID, tidalAlbum
 	if judged == nil {
 		judged = []uuid.UUID{}
 	}
-	err = s.db.QueryRow(ctx, `
-		INSERT INTO tidal_match_albums (album_id, tidal_album_id, track_ids)
-		SELECT $1, $2, $3::uuid[]
-		WHERE (SELECT COALESCE(ARRAY_AGG(t.id ORDER BY t.id), '{}')
-		       FROM tracks t JOIN albums a ON a.id = t.album_id
-		       WHERE t.album_id = $1 AND `+matchEligible+` AND NOT `+matchLoose+`)
-		    = (SELECT COALESCE(ARRAY_AGG(j ORDER BY j), '{}') FROM unnest($3::uuid[]) AS j)
-		  AND NOT EXISTS (SELECT 1 FROM tracks t
-		                  WHERE t.album_id = $1 AND `+matchEligible+` AND NOT `+matchSettled+`)
-		ON CONFLICT (album_id) DO UPDATE SET
-			tidal_album_id = EXCLUDED.tidal_album_id, track_ids = EXCLUDED.track_ids, created_at = NOW()
-		RETURNING TRUE`, albumID, dbtext.Clean(tidalAlbumID), judged).Scan(&noted)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
+	// The album row is share-locked first, as ingest locks it (exclusively)
+	// before adding a track, so no track lands between the check and the
+	// commit.
+	err = dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM albums WHERE id = $1 FOR SHARE`, albumID); err != nil {
+			return err
+		}
+		err := tx.QueryRow(ctx, `
+			INSERT INTO tidal_match_albums (album_id, tidal_album_id, track_ids)
+			SELECT $1, $2, $3::uuid[]
+			WHERE (SELECT COALESCE(ARRAY_AGG(t.id ORDER BY t.id), '{}')
+			       FROM tracks t JOIN albums a ON a.id = t.album_id
+			       WHERE t.album_id = $1 AND `+matchEligible+` AND NOT `+matchLoose+`)
+			    = (SELECT COALESCE(ARRAY_AGG(j ORDER BY j), '{}') FROM unnest($3::uuid[]) AS j)
+			  AND NOT EXISTS (SELECT 1 FROM tracks t
+			                  WHERE t.album_id = $1 AND `+matchEligible+` AND NOT `+matchSettled+`)
+			ON CONFLICT (album_id) DO UPDATE SET
+				tidal_album_id = EXCLUDED.tidal_album_id, track_ids = EXCLUDED.track_ids, created_at = NOW()
+			RETURNING TRUE`, albumID, dbtext.Clean(tidalAlbumID), judged).Scan(&noted)
+		if errors.Is(err, pgx.ErrNoRows) {
+			noted = false
+			return nil
+		}
+		return err
+	})
 	return noted, err
 }
 
@@ -480,12 +505,7 @@ func (s *Store) DropChoice(ctx context.Context, albumID uuid.UUID) error {
 // done reports whether it dropped the choice.
 func (s *Store) ReleaseDone(ctx context.Context, albumID uuid.UUID) (done bool, err error) {
 	tag, err := s.db.Exec(ctx, `
-		DELETE FROM tidal_match_albums c
-		WHERE c.album_id = $1 AND NOT EXISTS (
-			SELECT 1 FROM tracks t
-			LEFT JOIN tidal_matches om ON om.track_id = t.id
-			WHERE t.album_id = $1 AND t.id = ANY(c.track_ids) AND `+matchEligible+`
-			  AND (om.track_id IS NULL OR om.status = 'failed' OR om.updated_at < c.created_at))`, albumID)
+		DELETE FROM tidal_match_albums WHERE album_id = $1 AND NOT `+choiceUnfinished("$1"), albumID)
 	if err != nil {
 		return false, err
 	}
