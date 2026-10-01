@@ -502,6 +502,8 @@ func TestMatcherLooseTrackSkipsCompilationRelease(t *testing.T) {
 	src := &fakeCatalog{
 		searchTracks: []tidal.Track{
 			{ID: "c" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000, AlbumID: compID, AlbumTitle: comp.Title},
+			// The compilation listed twice uses up one release check, not two.
+			{ID: "c2" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000, AlbumID: compID, AlbumTitle: comp.Title},
 			{ID: "o" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000, AlbumID: ownID, AlbumTitle: own.Title},
 		},
 		albums: map[string]tidal.Album{compID: comp, ownID: own},

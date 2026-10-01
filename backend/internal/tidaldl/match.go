@@ -634,12 +634,19 @@ func (m *Matcher) matchLoose(ctx context.Context, t MatchTrack) error {
 		r     *release
 		tried int
 	)
+	checked := map[string]bool{} // releases already looked at
 	for _, c := range hits {
 		if tried >= maxLooseReleases {
 			break
 		}
 		if tried > 0 && sameISRC(t.ISRC, c.ISRC) != sameISRC(t.ISRC, hits[0].ISRC) {
 			continue
+		}
+		if c.AlbumID != "" {
+			if checked[c.AlbumID] {
+				continue
+			}
+			checked[c.AlbumID] = true
 		}
 		tried++
 		var cr *release

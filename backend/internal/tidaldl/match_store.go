@@ -79,8 +79,8 @@ type MatchAlbum struct {
 	// Unsettled: some of its waiting tracks changed moments ago, so the
 	// album waits until they settle and can be judged with the rest.
 	Unsettled bool
-	// Chosen is the release an attempt cut short chose for the album in the
-	// last week; an older choice may not suit the tracks waiting now.
+	// Chosen is the release an attempt cut short chose for the album, kept
+	// until none of its tracks is left to file (ReleaseDone).
 	Chosen string
 }
 
@@ -140,8 +140,7 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 		          AND t.owner_id IS NULL),
 		       EXISTS (SELECT 1 FROM tracks t
 		               WHERE t.album_id = a.id AND `+matchEligible+` AND NOT `+matchSettled+`),
-		       COALESCE((SELECT c.tidal_album_id FROM tidal_match_albums c
-		                 WHERE c.album_id = a.id AND c.created_at > NOW() - INTERVAL '7 days'), '')
+		       COALESCE((SELECT c.tidal_album_id FROM tidal_match_albums c WHERE c.album_id = a.id), '')
 		FROM albums a LEFT JOIN artists ar ON ar.id = a.album_artist_id
 		WHERE a.id = $1`, albumID).Scan(&a.Title, &a.Artist, &a.Year, &a.TIDALAlbumID, &a.Tracks,
 		&a.Unsettled, &a.Chosen)
