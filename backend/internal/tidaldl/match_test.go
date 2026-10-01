@@ -1279,3 +1279,97 @@ func TestMatcherFilesAlbumThatIsTheRelease(t *testing.T) {
 		}
 	}
 }
+
+// Whole passes over a small library: an album that is its release, one
+// filed under a differently named edition, a loose track, and an album TIDAL
+// doesn't have.
+func TestMatcherPassesOverLibrary(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	entry := func(id, title string, i int) tidal.Track {
+		return tidal.Track{ID: id + f.run, Title: title, Artists: []string{main}, DurationMS: 100_000 + i*10_000, TrackNo: i + 1}
+	}
+	local := func(album *uuid.UUID, title string, i int) uuid.UUID {
+		return f.track(localTrack{title: title, artists: []string{main}, album: album, duration: 100_000 + i*10_000, trackNo: i + 1})
+	}
+
+	alpha := f.album("Alpha "+f.run, main, 0)
+	alphaIDs := []uuid.UUID{local(&alpha, "A1", 0), local(&alpha, "A2", 1), local(&alpha, "A3", 2)}
+	alphaRel := tidal.Album{ID: "alpha" + f.run, Title: "Alpha " + f.run, Artist: main, ReleaseYear: 2001,
+		Tracks: []tidal.Track{entry("a1", "A1", 0), entry("a2", "A2", 1), entry("a3", "A3", 2)}}
+
+	beta := f.album("Beta "+f.run, "", 0)
+	betaIDs := []uuid.UUID{local(&beta, "B1", 0), local(&beta, "B2", 1)}
+	betaRel := tidal.Album{ID: "beta" + f.run, Title: "Beta " + f.run + " (Remastered)", Artist: main, ReleaseYear: 2002,
+		Tracks: []tidal.Track{entry("b1", "B1", 0), entry("b2", "B2", 1)}}
+
+	loose := f.track(localTrack{title: "Solo", artists: []string{main}, duration: 150_000})
+	gammaRel := tidal.Album{ID: "gamma" + f.run, Title: "Gamma " + f.run, Artist: main, ReleaseYear: 2003,
+		Tracks: []tidal.Track{{ID: "g1" + f.run, Title: "Solo", Artists: []string{main}, DurationMS: 150_000, TrackNo: 4}}}
+
+	unknown := f.album("Unknown "+f.run, main, 0)
+	unknownIDs := []uuid.UUID{local(&unknown, "U1", 0), local(&unknown, "U2", 1)}
+
+	src := &fakeCatalog{
+		searchAlbums: []tidal.Album{alphaRel, betaRel, gammaRel},
+		searchTracks: []tidal.Track{{ID: "g1" + f.run, Title: "Solo", Artists: []string{main}, DurationMS: 150_000,
+			AlbumID: gammaRel.ID, AlbumTitle: gammaRel.Title}},
+		albums: map[string]tidal.Album{alphaRel.ID: alphaRel, betaRel.ID: betaRel, gammaRel.ID: gammaRel},
+	}
+	m := f.matcher(src)
+	for i := 0; i < 20 && m.pass(ctx); i++ {
+	}
+	m.pass(ctx)
+
+	for _, id := range alphaIDs {
+		if got := f.state(id); got.AlbumID != alpha || got.TIDALAlbum != alphaRel.ID || got.Match != MatchMatched || got.Year != 2001 {
+			t.Fatalf("alpha track = %+v", got)
+		}
+	}
+	var betaAlbum uuid.UUID
+	for i, id := range betaIDs {
+		got := f.state(id)
+		if got.Album != betaRel.Title || got.AlbumArtist != main || got.Match != MatchMatched {
+			t.Fatalf("beta track = %+v", got)
+		}
+		if i == 0 {
+			betaAlbum = got.AlbumID
+		} else if got.AlbumID != betaAlbum {
+			t.Fatal("beta's tracks were split")
+		}
+	}
+	if got := f.state(loose); got.Album != gammaRel.Title || got.TrackNo != 4 || got.Match != MatchMatched {
+		t.Fatalf("loose = %+v", got)
+	}
+	for _, id := range unknownIDs {
+		if got := f.state(id); got.AlbumID != unknown || got.Match != MatchUnmatched || got.Edited {
+			t.Fatalf("unknown track = %+v", got)
+		}
+	}
+	var choices int
+	if err := f.pool.QueryRow(ctx, `SELECT COUNT(*) FROM tidal_match_albums WHERE album_id = ANY($1)`,
+		[]uuid.UUID{alpha, beta, unknown}).Scan(&choices); err != nil || choices != 0 {
+		t.Fatalf("%d album choices left behind (%v)", choices, err)
+	}
+}
+
+// A release's album an admin edited is refused even for a hit that names no
+// release id.
+func TestEditedDestinationRefusedWithoutReleaseID(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	edited := f.album("Kept "+f.run, main, 0)
+	year := 1990
+	if err := f.lib.UpdateAlbum(ctx, edited, library.AlbumPatch{ReleaseYear: &year}); err != nil {
+		t.Fatal(err)
+	}
+	id := f.track(localTrack{title: "song", artists: []string{main}, duration: 100_000})
+	_, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
+		Title: "Song", Album: library.TIDALAlbumFields{Title: "Kept " + f.run, Artist: main},
+	}, nil)
+	if !errors.Is(err, library.ErrTIDALAlbumConflict) {
+		t.Fatalf("err = %v; want the edited album refused", err)
+	}
+}

@@ -96,10 +96,10 @@ func lockTrack(ctx context.Context, tx pgx.Tx, trackID uuid.UUID, src MatchSourc
 }
 
 // releaseAlbum is upsertTIDALAlbum for TIDAL matching, which refuses an
-// album already linked to another release.
+// album an admin edited or one already linked to another release.
 func releaseAlbum(ctx context.Context, tx pgx.Tx, in TIDALAlbumFields, oldCover *string) (uuid.UUID, error) {
 	id, err := upsertTIDALAlbum(ctx, tx, in, oldCover)
-	if err != nil || in.TIDALAlbumID == "" {
+	if err != nil {
 		return id, err
 	}
 	var (
@@ -111,7 +111,7 @@ func releaseAlbum(ctx context.Context, tx pgx.Tx, in TIDALAlbumFields, oldCover 
 		Scan(&linked, &edited); err != nil {
 		return uuid.Nil, err
 	}
-	if linked != in.TIDALAlbumID || edited {
+	if edited || (in.TIDALAlbumID != "" && linked != in.TIDALAlbumID) {
 		return uuid.Nil, ErrTIDALAlbumConflict
 	}
 	return id, nil
