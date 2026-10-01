@@ -76,16 +76,32 @@ func words(s string) string {
 	}), " ")
 }
 
-// artistWords is an artist name in comparable form: "and" and "the" don't
-// count, so "Simon & Garfunkel" and "Simon and Garfunkel" compare equal.
-func artistWords(s string) []string {
+// artistKey is an artist name in comparable form ("&" reads "and"), less a
+// leading "The": "The Beatles" and "Beatles" are one act, while every other
+// word counts ("And One" isn't "One").
+func artistKey(s string) string {
+	w := words(s)
+	if rest, ok := strings.CutPrefix(w, "the "); ok {
+		return rest
+	}
+	return w
+}
+
+// connectors join the credits ingest splits a combined artist tag at.
+var connectors = map[string]bool{
+	"and": true, "x": true, "vs": true, "with": true, "feat": true, "ft": true, "featuring": true,
+}
+
+// withoutConnectors drops connector words, for comparing a combined credit
+// with the names ingest split it into.
+func withoutConnectors(key string) string {
 	var out []string
-	for _, w := range strings.Fields(words(s)) {
-		if w != "and" && w != "the" {
+	for _, w := range strings.Fields(key) {
+		if !connectors[w] {
 			out = append(out, w)
 		}
 	}
-	return out
+	return strings.Join(out, " ")
 }
 
 // artistsOverlap reports whether two artist lists share a credit. Ingest
@@ -97,27 +113,32 @@ func artistsOverlap(local, remote []string) bool {
 	return len(l) > 0 && len(r) > 0 && (sharesCredit(l, r) || sharesCredit(r, l))
 }
 
-// artistKeys is each name in artistWords form, joined, blanks dropped.
+// artistKeys is each name in artistKey form, blanks dropped.
 func artistKeys(names []string) []string {
 	var out []string
 	for _, n := range names {
-		if w := artistWords(n); len(w) > 0 {
-			out = append(out, strings.Join(w, " "))
+		if k := artistKey(n); k != "" {
+			out = append(out, k)
 		}
 	}
 	return out
 }
 
-// sharesCredit reports whether consecutive names in split, joined, equal a
-// name in whole.
+// sharesCredit reports whether a name in split equals one in whole, or
+// several consecutive names in split equal one in whole less the
+// connectors that joined them.
 func sharesCredit(split, whole []string) bool {
-	credits := map[string]bool{}
+	credits, combined := map[string]bool{}, map[string]bool{}
 	for _, w := range whole {
 		credits[w] = true
+		combined[withoutConnectors(w)] = true
 	}
 	for i := range split {
-		for j := i + 1; j <= len(split); j++ {
-			if credits[strings.Join(split[i:j], " ")] {
+		if credits[split[i]] {
+			return true
+		}
+		for j := i + 2; j <= len(split); j++ {
+			if combined[strings.Join(split[i:j], " ")] {
 				return true
 			}
 		}

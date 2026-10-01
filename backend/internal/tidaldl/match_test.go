@@ -33,6 +33,8 @@ type fakeCatalog struct {
 	err     error
 	fetched []string
 	cover   func() ([]byte, error) // nil: covers fail
+	// coverCalls counts cover fetches.
+	coverCalls int
 }
 
 func (f *fakeCatalog) SearchTracks(_ context.Context, query string, _, _ int) ([]tidal.Track, error) {
@@ -61,6 +63,9 @@ func (f *fakeCatalog) FullAlbum(_ context.Context, id string) (tidal.Album, erro
 }
 
 func (f *fakeCatalog) CoverBytes(context.Context, string) ([]byte, error) {
+	f.mu.Lock()
+	f.coverCalls++
+	f.mu.Unlock()
 	if f.cover == nil {
 		return nil, errors.New("no covers in tests")
 	}
@@ -579,7 +584,8 @@ func TestMatcherRetriesReleaseCover(t *testing.T) {
 		}
 	}
 
-	// Due again, and TIDAL serves it this time.
+	// Due again in a later pass, and TIDAL serves it this time.
+	m.coverMissed = nil
 	f.exec(`UPDATE tidal_matches SET cover_retry_at = NOW() WHERE track_id = $1`, id)
 	src.cover = func() ([]byte, error) {
 		var buf bytes.Buffer
@@ -617,6 +623,7 @@ func TestMatcherRetriesReleaseCover(t *testing.T) {
 	elsewhere := f.album("Elsewhere "+f.run, main, 0)
 	f.exec(`UPDATE tracks SET album_id = $2 WHERE id = $1`, id2, elsewhere)
 	f.exec(`UPDATE tidal_matches SET cover_retry_at = NOW() WHERE track_id = $1`, id2)
+	m.coverMissed = nil
 	src.cover = working
 	m.backfillCovers(ctx)
 	var matchedCover, elsewhereCover string
@@ -910,7 +917,7 @@ func TestApplyTIDALMatchNeedsSourceAlbum(t *testing.T) {
 	if err != nil || applied {
 		t.Fatalf("applied = %v, %v; want a moved track left alone", applied, err)
 	}
-	filed, err := f.lib.FileUnderTIDALRelease(ctx, id, &from, library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main})
+	filed, err := f.lib.FileUnderTIDALRelease(ctx, id, &from, nil, library.TIDALAlbumFields{Title: "Elsewhere " + f.run, Artist: main})
 	if err != nil || filed {
 		t.Fatalf("filed = %v, %v; want a moved track left alone", filed, err)
 	}
@@ -1025,5 +1032,84 @@ func TestMatcherJudgesNewTrackWithRestingAlbum(t *testing.T) {
 	}
 	if after.Unmatched != before.Unmatched-1 {
 		t.Fatalf("unmatched %d → %d; an edited track still counts", before.Unmatched, after.Unmatched)
+	}
+}
+
+// A track changed while its match was looked up (say a duplicate's tags were
+// adopted) is left for a fresh look.
+func TestApplyTIDALMatchNeedsUnchangedTrack(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	id := f.track(localTrack{title: "song", artists: []string{main}, duration: 100_000})
+	seen := time.Now().Add(-2 * time.Hour)
+	applied, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
+		Title: "Song", Seen: &seen, Album: library.TIDALAlbumFields{Title: "Record " + f.run, Artist: main},
+	}, nil)
+	if err != nil || applied {
+		t.Fatalf("applied = %v, %v; want a changed track left alone", applied, err)
+	}
+}
+
+// A release whose library album an admin edited can't take tracks, and one
+// album's failing cover is fetched once a pass, not once per track.
+func TestMatcherEditedDestinationAndCoverOncePerAlbum(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	solo := "Solo " + f.run
+	edited := f.album("Kept "+f.run, solo, 0)
+	year := 2000
+	if err := f.lib.UpdateAlbum(ctx, edited, library.AlbumPatch{ReleaseYear: &year}); err != nil {
+		t.Fatal(err)
+	}
+	loose := f.track(localTrack{title: "Song", artists: []string{solo}, duration: 100_000})
+	keptID := "kept" + f.run
+	kept := tidal.Album{ID: keptID, Title: "Kept " + f.run, Artist: solo,
+		Tracks: []tidal.Track{{ID: "k" + f.run, Title: "Song", Artists: []string{solo}, DurationMS: 100_000}}}
+	src := &fakeCatalog{
+		searchTracks: []tidal.Track{{ID: "k" + f.run, Title: "Song", Artists: []string{solo}, DurationMS: 100_000, AlbumID: keptID}},
+		albums:       map[string]tidal.Album{keptID: kept},
+	}
+	m := f.matcher(src)
+	if err := m.matchLoose(ctx, MatchTrack{ID: loose, Title: "Song", Artists: []string{solo}, DurationMS: 100_000}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(loose); got.Album != "" || got.Match != MatchUnmatched {
+		t.Fatalf("loose = %+v; want it kept out of the edited album", got)
+	}
+
+	main := "Main " + f.run
+	albumID := f.album("Record "+f.run, main, 0)
+	for i, n := range []string{"One", "Two", "Three"} {
+		f.track(localTrack{title: n, artists: []string{main}, album: &albumID, duration: 100_000 + i*10_000})
+	}
+	relID := "rel" + f.run
+	rel := tidal.Album{ID: relID, Title: "Record " + f.run, Artist: main, CoverURL: "https://resources.tidal.com/z.jpg"}
+	for i, n := range []string{"One", "Two", "Three"} {
+		rel.Tracks = append(rel.Tracks, tidal.Track{ID: n + f.run, Title: n, Artists: []string{main}, DurationMS: 100_000 + i*10_000})
+	}
+	src.searchAlbums = []tidal.Album{rel}
+	src.albums[relID] = rel
+	root := t.TempDir()
+	m.Ingest = &ingest.Service{DB: f.pool, Library: f.lib, Storage: storage.NewLocal(root), MusicRoot: root}
+	if err := m.matchAlbum(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	if src.coverCalls != 1 {
+		t.Fatalf("fetched the failing cover %d times; want once for the album", src.coverCalls)
+	}
+	pending, err := m.Store.PendingCovers(ctx, 10_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range pending {
+		var album uuid.UUID
+		if err := f.pool.QueryRow(ctx, `SELECT COALESCE(album_id, '00000000-0000-0000-0000-000000000000'::uuid) FROM tracks WHERE id = $1`, c.TrackID).Scan(&album); err == nil && c.AlbumID != nil && *c.AlbumID == album {
+			var title string
+			_ = f.pool.QueryRow(ctx, `SELECT title FROM albums WHERE id = $1`, album).Scan(&title)
+			if title == rel.Title {
+				t.Fatal("a track's cover is due again right after the album's failed")
+			}
+		}
 	}
 }

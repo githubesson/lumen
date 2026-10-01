@@ -3,6 +3,7 @@ package tidaldl
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -64,6 +65,9 @@ type MatchTrack struct {
 	TrackNo    int
 	DiscNo     int
 	FilePath   string
+	// Seen is the track's updated_at when loaded; a track changed since is
+	// left for the next attempt.
+	Seen time.Time
 }
 
 // MatchAlbum is the library album a group of MatchTracks shares.
@@ -87,13 +91,23 @@ type MatchAlbum struct {
 const matchTrackColumns = `t.id, t.album_id, t.title,
 	ARRAY(SELECT ar.name FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
 	      WHERE ta.track_id = t.id AND ta.role <> 'composer' ORDER BY ta.position, ar.name),
-	COALESCE(t.isrc, ''), t.duration_ms, COALESCE(t.track_no, 0), COALESCE(t.disc_no, 0), t.file_path`
+	COALESCE(t.isrc, ''), t.duration_ms, COALESCE(t.track_no, 0), COALESCE(t.disc_no, 0), t.file_path,
+	t.updated_at`
+
+// seen is Seen for the final check, nil when unknown.
+func (t MatchTrack) seen() *time.Time {
+	if t.Seen.IsZero() {
+		return nil
+	}
+	return &t.Seen
+}
 
 type rowScanner interface{ Scan(...any) error }
 
 func scanMatchTrack(row rowScanner) (MatchTrack, error) {
 	var t MatchTrack
-	err := row.Scan(&t.ID, &t.AlbumID, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS, &t.TrackNo, &t.DiscNo, &t.FilePath)
+	err := row.Scan(&t.ID, &t.AlbumID, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS, &t.TrackNo, &t.DiscNo,
+		&t.FilePath, &t.Seen)
 	return t, err
 }
 
@@ -278,6 +292,17 @@ func recordMatches(ctx context.Context, q execer, trackIDs []uuid.UUID, o MatchO
 		trackIDs, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error),
 		dbtext.Clean(o.CoverURL), o.CoverAlbum)
 	return err
+}
+
+// NextMatchRetry is when the earliest failed lookup is due again, if any.
+func (s *Store) NextMatchRetry(ctx context.Context) (time.Time, bool, error) {
+	var at *time.Time
+	err := s.db.QueryRow(ctx, `
+		SELECT MIN(next_attempt_at) FROM tidal_matches WHERE status = 'failed'`).Scan(&at)
+	if err != nil || at == nil {
+		return time.Time{}, false, err
+	}
+	return *at, true, nil
 }
 
 // ChooseRelease notes the release chosen for an album before its tracks are

@@ -74,6 +74,9 @@ type Matcher struct {
 	readISRC func(path string) string
 
 	lastCall time.Time
+	// coverMissed holds the albums whose cover failed this pass, so their
+	// other tracks wait for the retry rather than fetching it again.
+	coverMissed map[uuid.UUID]bool
 }
 
 // matchSource is the part of *tidal.Client the matcher uses.
@@ -117,6 +120,9 @@ func (m *Matcher) Run(ctx context.Context) {
 		next := interval
 		if m.pass(ctx) {
 			next = matchBusyInterval
+		} else if at, ok, err := m.Store.NextMatchRetry(ctx); err == nil && ok {
+			// A failed lookup's backoff can be shorter than the poll.
+			next = min(next, max(time.Until(at), matchBusyInterval))
 		}
 		timer.Reset(next)
 	}
@@ -125,6 +131,7 @@ func (m *Matcher) Run(ctx context.Context) {
 // pass matches a batch of albums and loose tracks. more reports a full
 // batch, so more are likely waiting.
 func (m *Matcher) pass(ctx context.Context) (more bool) {
+	m.coverMissed = nil
 	failures := 0
 	// stop reports whether the pass should end after an attempt's error.
 	stop := func(err error) bool {
@@ -300,7 +307,7 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 		}
 		// Not on the release: kept with the rest of its album.
 		if !linked {
-			_, err := m.Library.FileUnderTIDALRelease(ctx, t.ID, t.AlbumID, fields)
+			filed, err := m.Library.FileUnderTIDALRelease(ctx, t.ID, t.AlbumID, t.seen(), fields)
 			if errors.Is(err, library.ErrTIDALAlbumConflict) {
 				m.record(ctx, t, MatchOutcome{Status: MatchUnmatched, Error: err.Error()})
 				continue
@@ -308,6 +315,9 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 			if err != nil {
 				m.recordErr(ctx, t, err)
 				return err
+			}
+			if !filed {
+				continue // moved, edited or changed meanwhile: judged afresh
 			}
 		}
 		m.record(ctx, t, MatchOutcome{Status: MatchUnmatched, TIDALAlbumID: r.ID, Error: "not on the album's TIDAL release"})
@@ -699,6 +709,7 @@ func (m *Matcher) apply(ctx context.Context, t MatchTrack, hit tidal.Track, keep
 		ISRC:      ingest.NormalizeISRC(isrc),
 		KeepAlbum: keepAlbum,
 		From:      t.AlbumID,
+		Seen:      t.seen(),
 	}
 	if strings.TrimSpace(hit.AlbumTitle) != "" {
 		fields.Album = library.TIDALAlbumFields{
@@ -781,14 +792,25 @@ func (m *Matcher) fillCover(ctx context.Context, c CoverTask) {
 		}
 	}
 	if !has {
+		putOff := func() {
+			if err := m.Store.CoverFailed(ctx, c.TrackID); err != nil {
+				m.log().Warn("tidal match cover retry not recorded", "track", c.TrackID, "err", err)
+			}
+		}
+		if m.coverMissed[*c.AlbumID] {
+			putOff()
+			return
+		}
 		if err := m.storeCover(ctx, c); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
 			m.log().Warn("tidal match cover failed", "track", c.TrackID, "err", err)
-			if err := m.Store.CoverFailed(ctx, c.TrackID); err != nil {
-				m.log().Warn("tidal match cover retry not recorded", "track", c.TrackID, "err", err)
+			if m.coverMissed == nil {
+				m.coverMissed = map[uuid.UUID]bool{}
 			}
+			m.coverMissed[*c.AlbumID] = true
+			putOff()
 			return
 		}
 	}

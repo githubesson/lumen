@@ -68,6 +68,8 @@ func TestArtistsOverlap(t *testing.T) {
 		{[]string{"Simon", "Garfunkel", "Guest"}, []string{"Simon & Garfunkel"}, true},
 		{[]string{"Someone Else"}, []string{"Main"}, false},
 		{[]string{"Future"}, []string{"Future Islands"}, false},
+		{[]string{"One"}, []string{"And One"}, false},
+		{[]string{"Earth", "Wind", "Fire"}, []string{"Earth, Wind & Fire"}, true},
 		{[]string{"Prince"}, []string{"Prince Royce"}, false},
 		{nil, []string{"Main"}, false},
 	} {
