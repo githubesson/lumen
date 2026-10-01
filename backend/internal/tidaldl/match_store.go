@@ -57,9 +57,6 @@ type MatchTrack struct {
 	TrackNo    int
 	DiscNo     int
 	FilePath   string
-	// Release is the TIDAL release an unfinished attempt chose for the
-	// track's album, to finish filing under.
-	Release string
 }
 
 // MatchAlbum is the library album a group of MatchTracks shares.
@@ -72,32 +69,36 @@ type MatchAlbum struct {
 	// Tracks counts all of the album's live, shared local tracks, waiting or
 	// not.
 	Tracks int
+	// Unsettled: some of its waiting tracks changed moments ago, so the
+	// album waits until they settle and can be judged with the rest.
+	Unsettled bool
+	// Chosen is the release an attempt cut short chose for the album.
+	Chosen string
 }
 
 const matchTrackColumns = `t.id, t.title,
 	ARRAY(SELECT ar.name FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
 	      WHERE ta.track_id = t.id AND ta.role <> 'composer' ORDER BY ta.position, ar.name),
-	COALESCE(t.isrc, ''), t.duration_ms, COALESCE(t.track_no, 0), COALESCE(t.disc_no, 0), t.file_path,
-	COALESCE((SELECT fm.tidal_album_id FROM tidal_matches fm
-	          WHERE fm.track_id = t.id AND fm.status = 'failed'), '')`
+	COALESCE(t.isrc, ''), t.duration_ms, COALESCE(t.track_no, 0), COALESCE(t.disc_no, 0), t.file_path`
 
 type rowScanner interface{ Scan(...any) error }
 
 func scanMatchTrack(row rowScanner) (MatchTrack, error) {
 	var t MatchTrack
-	err := row.Scan(&t.ID, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS, &t.TrackNo, &t.DiscNo, &t.FilePath, &t.Release)
+	err := row.Scan(&t.ID, &t.Title, &t.Artists, &t.ISRC, &t.DurationMS, &t.TrackNo, &t.DiscNo, &t.FilePath)
 	return t, err
 }
 
-// PendingMatchAlbums lists albums holding tracks waiting for a match, those
-// with the newest additions first.
+// PendingMatchAlbums lists albums holding tracks waiting for a match, all of
+// them settled, those with the newest additions first.
 func (s *Store) PendingMatchAlbums(ctx context.Context, limit int) ([]uuid.UUID, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT t.album_id
 		FROM tracks t
 		JOIN albums a ON a.id = t.album_id
-		WHERE `+matchWaiting+` AND `+matchSettled+` AND NOT `+matchLoose+`
+		WHERE `+matchWaiting+` AND NOT `+matchLoose+`
 		GROUP BY t.album_id
+		HAVING BOOL_AND(`+matchSettled+`)
 		ORDER BY MAX(t.created_at) DESC, t.album_id
 		LIMIT $1`, limit)
 	if err != nil {
@@ -123,9 +124,13 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 		SELECT a.title, COALESCE(ar.name, ''), COALESCE(a.release_year, 0), COALESCE(a.tidal_album_id, ''),
 		       (SELECT COUNT(*) FROM tracks t
 		        WHERE t.album_id = a.id AND t.deleted_at IS NULL AND t.source = 'local'
-		          AND t.owner_id IS NULL)
+		          AND t.owner_id IS NULL),
+		       EXISTS (SELECT 1 FROM tracks t
+		               WHERE t.album_id = a.id AND `+matchWaiting+` AND NOT `+matchSettled+`),
+		       COALESCE((SELECT c.tidal_album_id FROM tidal_match_albums c WHERE c.album_id = a.id), '')
 		FROM albums a LEFT JOIN artists ar ON ar.id = a.album_artist_id
-		WHERE a.id = $1`, albumID).Scan(&a.Title, &a.Artist, &a.Year, &a.TIDALAlbumID, &a.Tracks)
+		WHERE a.id = $1`, albumID).Scan(&a.Title, &a.Artist, &a.Year, &a.TIDALAlbumID, &a.Tracks,
+		&a.Unsettled, &a.Chosen)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return a, nil, nil
 	}
@@ -136,7 +141,7 @@ func (s *Store) MatchAlbumTracks(ctx context.Context, albumID uuid.UUID, limit i
 		SELECT `+matchTrackColumns+`
 		FROM tracks t
 		JOIN albums a ON a.id = t.album_id
-		WHERE t.album_id = $1 AND `+matchWaiting+` AND `+matchSettled+` AND NOT `+matchLoose+`
+		WHERE t.album_id = $1 AND `+matchWaiting+` AND NOT `+matchLoose+`
 		ORDER BY COALESCE(t.disc_no, 1), COALESCE(t.track_no, 0), t.title, t.id
 		LIMIT $2`, albumID, limit)
 	if err != nil {
@@ -184,9 +189,11 @@ type MatchOutcome struct {
 	Status       string // MatchMatched, MatchUnmatched or MatchFailed
 	TIDALID      string
 	TIDALAlbumID string // the release the track was filed under, if any
-	// CoverURL is a match's release cover, kept until the album has artwork.
-	CoverURL string
-	Error    string
+	// CoverURL is a match's release cover, kept until CoverAlbum, the album
+	// it filed the track under, has artwork.
+	CoverURL   string
+	CoverAlbum *uuid.UUID
+	Error      string
 }
 
 type execer interface {
@@ -195,8 +202,7 @@ type execer interface {
 
 // RecordMatch stores an attempt's outcome. A match is final; no match is
 // tried again after 30 days, in case TIDAL adds the release; a failure backs
-// off from 5 minutes, doubling up to a day, and keeps the release an earlier
-// attempt chose unless it names another. A track deleted meanwhile is
+// off from 5 minutes, doubling up to a day. A track deleted meanwhile is
 // skipped.
 func (s *Store) RecordMatch(ctx context.Context, trackID uuid.UUID, o MatchOutcome) error {
 	return recordMatch(ctx, s.db, trackID, o)
@@ -206,17 +212,16 @@ func (s *Store) RecordMatch(ctx context.Context, trackID uuid.UUID, o MatchOutco
 func recordMatch(ctx context.Context, q execer, trackID uuid.UUID, o MatchOutcome) error {
 	_, err := q.Exec(ctx, `
 		INSERT INTO tidal_matches (track_id, status, tidal_id, tidal_album_id, error, attempts,
-		                           next_attempt_at, cover_url)
+		                           next_attempt_at, cover_url, cover_album_id)
 		SELECT $1, $2, $3, $4, $5, 1, CASE $2
 			WHEN 'matched' THEN NULL
 			WHEN 'unmatched' THEN NOW() + INTERVAL '30 days'
-			ELSE NOW() + INTERVAL '5 minutes' END, $6
+			ELSE NOW() + INTERVAL '5 minutes' END, $6, $7
 		WHERE EXISTS (SELECT 1 FROM tracks WHERE id = $1)
 		ON CONFLICT (track_id) DO UPDATE SET
 			status = EXCLUDED.status,
 			tidal_id = EXCLUDED.tidal_id,
-			tidal_album_id = CASE WHEN EXCLUDED.status = 'failed' AND EXCLUDED.tidal_album_id = ''
-				THEN tidal_matches.tidal_album_id ELSE EXCLUDED.tidal_album_id END,
+			tidal_album_id = EXCLUDED.tidal_album_id,
 			error = EXCLUDED.error,
 			attempts = tidal_matches.attempts + 1,
 			next_attempt_at = CASE EXCLUDED.status
@@ -225,25 +230,42 @@ func recordMatch(ctx context.Context, q execer, trackID uuid.UUID, o MatchOutcom
 					INTERVAL '24 hours')
 				ELSE EXCLUDED.next_attempt_at END,
 			cover_url = EXCLUDED.cover_url,
+			cover_album_id = EXCLUDED.cover_album_id,
 			cover_retry_at = NULL,
 			updated_at = NOW()`,
 		trackID, o.Status, dbtext.Clean(o.TIDALID), dbtext.Clean(o.TIDALAlbumID), dbtext.Clean(o.Error),
-		dbtext.Clean(o.CoverURL))
+		dbtext.Clean(o.CoverURL), o.CoverAlbum)
 	return err
 }
 
-// CoverTask is a matched track whose album still waits for the release
-// cover.
+// ChooseRelease notes the release chosen for an album before its tracks are
+// filed under it.
+func (s *Store) ChooseRelease(ctx context.Context, albumID uuid.UUID, tidalAlbumID string) error {
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO tidal_match_albums (album_id, tidal_album_id) VALUES ($1, $2)
+		ON CONFLICT (album_id) DO UPDATE SET tidal_album_id = EXCLUDED.tidal_album_id, created_at = NOW()`,
+		albumID, dbtext.Clean(tidalAlbumID))
+	return err
+}
+
+// ReleaseDone drops an album's chosen release once every track is filed.
+func (s *Store) ReleaseDone(ctx context.Context, albumID uuid.UUID) error {
+	_, err := s.db.Exec(ctx, `DELETE FROM tidal_match_albums WHERE album_id = $1`, albumID)
+	return err
+}
+
+// CoverTask is a match whose album still waits for the release cover.
 type CoverTask struct {
 	TrackID  uuid.UUID
+	AlbumID  *uuid.UUID // the album the match filed the track under; nil once gone
 	CoverURL string
 }
 
-// PendingCovers lists matched tracks whose album cover is still to be
-// fetched and due for an attempt.
+// PendingCovers lists matches whose album cover is still to be fetched and
+// due for an attempt.
 func (s *Store) PendingCovers(ctx context.Context, limit int) ([]CoverTask, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT m.track_id, m.cover_url
+		SELECT m.track_id, m.cover_album_id, m.cover_url
 		FROM tidal_matches m
 		WHERE m.cover_url <> '' AND (m.cover_retry_at IS NULL OR m.cover_retry_at <= NOW())
 		ORDER BY m.cover_retry_at NULLS FIRST, m.track_id
@@ -255,7 +277,7 @@ func (s *Store) PendingCovers(ctx context.Context, limit int) ([]CoverTask, erro
 	var out []CoverTask
 	for rows.Next() {
 		var c CoverTask
-		if err := rows.Scan(&c.TrackID, &c.CoverURL); err != nil {
+		if err := rows.Scan(&c.TrackID, &c.AlbumID, &c.CoverURL); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -277,15 +299,12 @@ func (s *Store) CoverFailed(ctx context.Context, trackID uuid.UUID) error {
 	return err
 }
 
-// TrackAlbumHasCover reports whether a track's album has shared artwork. A
-// track that is gone or has no album reports true, as there is nothing to
-// fill.
-func (s *Store) TrackAlbumHasCover(ctx context.Context, trackID uuid.UUID) (bool, error) {
+// AlbumHasCover reports whether an album has shared artwork. An album that
+// is gone reports true, as there is nothing to fill.
+func (s *Store) AlbumHasCover(ctx context.Context, albumID uuid.UUID) (bool, error) {
 	var has bool
 	err := s.db.QueryRow(ctx, `
-		SELECT t.album_id IS NULL OR COALESCE(a.cover_art_path, '') <> ''
-		FROM tracks t LEFT JOIN albums a ON a.id = t.album_id
-		WHERE t.id = $1 AND t.deleted_at IS NULL`, trackID).Scan(&has)
+		SELECT COALESCE(cover_art_path, '') <> '' FROM albums WHERE id = $1`, albumID).Scan(&has)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return true, nil
 	}

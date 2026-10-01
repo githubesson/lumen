@@ -251,11 +251,12 @@ func (m *Matcher) fillISRCs(tracks []MatchTrack) {
 // album search or, failing that, by searching for a few of its tracks, and
 // it is used only when it lists at least half of them; the rest are then
 // filed under it as well, so the album stays together. Otherwise none are
-// changed. The chosen release is noted on every track before any is
-// changed, so an attempt cut short finishes on the same release.
+// changed. The chosen release is noted for the album before any track is
+// changed, so an attempt cut short finishes on the same release. An album
+// waits while any of its waiting tracks is still settling.
 func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 	album, tracks, err := m.Store.MatchAlbumTracks(ctx, albumID, matchMaxAlbumTracks)
-	if err != nil || len(tracks) == 0 {
+	if err != nil || len(tracks) == 0 || album.Unsettled {
 		return err
 	}
 	if album.Tracks > matchMaxAlbumTracks {
@@ -278,9 +279,11 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 		return err
 	}
 	linked := album.TIDALAlbumID != ""
-	if !linked {
-		m.recordAll(ctx, tracks, MatchOutcome{Status: MatchFailed, TIDALAlbumID: r.ID,
-			Error: "filing under the TIDAL release didn't finish"}, nil)
+	if !linked && album.Chosen != r.ID {
+		// Nothing changes unless the choice is noted.
+		if err := m.Store.ChooseRelease(ctx, album.ID, r.ID); err != nil {
+			return err
+		}
 	}
 	fields := releaseFields(r.Album)
 	hits := assignRelease(r.Album, tracks, linked)
@@ -308,6 +311,11 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 		}
 		m.record(ctx, t, MatchOutcome{Status: MatchUnmatched, TIDALAlbumID: r.ID, Error: "not on the album's TIDAL release"})
 	}
+	if !linked {
+		if err := m.Store.ReleaseDone(ctx, album.ID); err != nil && ctx.Err() == nil {
+			m.log().Warn("tidal match album choice not cleared", "album", album.ID, "err", err)
+		}
+	}
 	return nil
 }
 
@@ -316,10 +324,9 @@ func (m *Matcher) albumRelease(ctx context.Context, album MatchAlbum, tracks []M
 	if album.TIDALAlbumID != "" {
 		return m.lookupRelease(ctx, album.TIDALAlbumID)
 	}
-	for _, t := range tracks {
-		if t.Release != "" {
-			return m.lookupRelease(ctx, t.Release)
-		}
+	if album.Chosen != "" {
+		// An attempt cut short chose it with the whole album in view.
+		return m.lookupRelease(ctx, album.Chosen)
 	}
 	need := (len(tracks) + 1) / 2
 	var (
@@ -366,10 +373,11 @@ func (m *Matcher) albumRelease(ctx context.Context, album MatchAlbum, tracks []M
 			return nil, err
 		}
 	}
-	// The album search can miss a release a track search finds.
+	// The album search can miss a release a track search finds; tracks the
+	// best release so far doesn't list may lead to a fuller one.
 	lookups := 0
 	for i, t := range tracks {
-		if bestHit >= need || lookups >= maxMatchAlbumLookups {
+		if bestHit == len(tracks) || lookups >= maxMatchAlbumLookups {
 			break
 		}
 		if _, ok := onBest[i]; ok {
@@ -694,14 +702,18 @@ func (m *Matcher) apply(ctx context.Context, t MatchTrack, hit tidal.Track, keep
 		}
 	}
 	// The cover is filled after the match commits; until then the match
-	// keeps its URL, so a failed fetch is retried (backfillCovers).
+	// keeps its URL and album, so a failed fetch is retried (backfillCovers).
 	cover := CoverTask{TrackID: t.ID}
 	if m.Ingest != nil {
 		cover.CoverURL = hit.CoverURL
 	}
-	outcome := MatchOutcome{Status: MatchMatched, TIDALID: hit.ID, TIDALAlbumID: hit.AlbumID, CoverURL: cover.CoverURL}
-	applied, err := m.Library.ApplyTIDALMatch(ctx, t.ID, fields, func(ctx context.Context, tx pgx.Tx) error {
-		return recordMatch(ctx, tx, t.ID, outcome)
+	applied, err := m.Library.ApplyTIDALMatch(ctx, t.ID, fields, func(ctx context.Context, tx pgx.Tx, albumID *uuid.UUID) error {
+		cover.AlbumID = albumID
+		o := MatchOutcome{Status: MatchMatched, TIDALID: hit.ID, TIDALAlbumID: hit.AlbumID}
+		if albumID != nil {
+			o.CoverURL, o.CoverAlbum = cover.CoverURL, albumID
+		}
+		return recordMatch(ctx, tx, t.ID, o)
 	})
 	if errors.Is(err, library.ErrTIDALAlbumConflict) {
 		// Filed there, the track would follow the other release.
@@ -717,7 +729,7 @@ func (m *Matcher) apply(ctx context.Context, t MatchTrack, hit tidal.Track, keep
 	}
 	m.log().Info("tidal match applied", "track", t.ID, "tidal_track", hit.ID, "tidal_album", hit.AlbumID,
 		"title", hit.Title)
-	if cover.CoverURL != "" {
+	if cover.CoverURL != "" && cover.AlbumID != nil {
 		m.fillCover(ctx, cover)
 	}
 	return nil
@@ -744,16 +756,20 @@ func (m *Matcher) backfillCovers(ctx context.Context) {
 	}
 }
 
-// fillCover gives a matched track's album the release cover when it has no
-// artwork. The task is done once the album has some, and put off for a few
-// hours when the cover can't be fetched or stored.
+// fillCover gives the album a match filed its track under the release
+// cover when it has no artwork, wherever the track is now. The task is done
+// once the album has some (or is gone), and put off for a few hours when
+// the cover can't be fetched or stored.
 func (m *Matcher) fillCover(ctx context.Context, c CoverTask) {
 	if m.Ingest == nil {
 		return
 	}
-	has, err := m.Store.TrackAlbumHasCover(ctx, c.TrackID)
-	if err != nil {
-		return // due again on the next pass
+	has := true
+	if c.AlbumID != nil {
+		var err error
+		if has, err = m.Store.AlbumHasCover(ctx, *c.AlbumID); err != nil {
+			return // due again on the next pass
+		}
 	}
 	if !has {
 		if err := m.storeCover(ctx, c); err != nil {
@@ -784,7 +800,7 @@ func (m *Matcher) storeCover(ctx context.Context, c CoverTask) error {
 	if err != nil {
 		return err
 	}
-	return m.Library.SetTrackAlbumCover(ctx, c.TrackID, key)
+	return m.Library.SetAlbumCoverIfMissing(ctx, *c.AlbumID, key)
 }
 
 // releaseFields is a release as album fields, for tracks filed under it

@@ -920,6 +920,19 @@ func (s *Store) SetTrackAlbumCover(ctx context.Context, trackID uuid.UUID, cover
 	return err
 }
 
+// SetAlbumCoverIfMissing points an album without artwork at coverPath; an
+// album that has some keeps it.
+func (s *Store) SetAlbumCoverIfMissing(ctx context.Context, albumID uuid.UUID, coverPath string) error {
+	coverPath = dbtext.Clean(coverPath)
+	if coverPath == "" {
+		return nil
+	}
+	_, err := s.db.Exec(ctx, `
+		UPDATE albums SET cover_art_path = $2, updated_at = NOW()
+		WHERE id = $1 AND NULLIF(cover_art_path, '') IS NULL`, albumID, coverPath)
+	return err
+}
+
 // ClearAlbumCover removes an album's cover-art reference, reverting it to the
 // placeholder. The underlying storage object is intentionally left in place:
 // covers are content-addressed and may be shared by other albums, so deleting

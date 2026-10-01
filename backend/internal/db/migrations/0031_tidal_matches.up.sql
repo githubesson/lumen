@@ -14,13 +14,24 @@ CREATE TABLE tidal_matches (
     attempts        INTEGER NOT NULL DEFAULT 0,
     -- NULL never retries (matched).
     next_attempt_at TIMESTAMPTZ,
-    -- A match's release cover, while its album still needs artwork; cleared
-    -- once the album has some. Failed fetches retry from cover_retry_at.
+    -- A match's release cover and the album it filed the track under, while
+    -- that album still needs artwork; cleared once it has some. Failed
+    -- fetches retry from cover_retry_at.
     cover_url       TEXT NOT NULL DEFAULT '',
+    cover_album_id  UUID REFERENCES albums(id) ON DELETE SET NULL,
     cover_retry_at  TIMESTAMPTZ,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX tidal_matches_cover_idx ON tidal_matches(cover_retry_at) WHERE cover_url <> '';
+
+-- The release chosen for a library album while its tracks are being filed
+-- under it, so an attempt cut short finishes on the same release rather than
+-- judging the tracks left on their own. Removed once every track is done.
+CREATE TABLE tidal_match_albums (
+    album_id       UUID PRIMARY KEY REFERENCES albums(id) ON DELETE CASCADE,
+    tidal_album_id TEXT NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 -- Set when an admin edits an album's title, album artist, year or
 -- compilation flag. TIDAL matching leaves the tracks of such an album alone,

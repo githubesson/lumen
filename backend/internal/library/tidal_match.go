@@ -32,29 +32,28 @@ var ErrTIDALAlbumConflict = errors.New("the library album for this release is li
 
 // lockUnmatchable locks a live, shared local track whose metadata nobody set
 // on purpose, in an album nobody edited on purpose: the only kind TIDAL
-// matching may change. ok is false for any other track. Its album is locked
-// first (shared), so an edit to it can't land before the caller commits.
-// Callers upsert artists and albums before this, so albums are locked
-// before the track, in the order ingest takes them, and the two can't
-// deadlock.
-func lockUnmatchable(ctx context.Context, tx pgx.Tx, trackID uuid.UUID) (ok bool, err error) {
-	var albumID *uuid.UUID
+// matching may change, and returns its album. ok is false for any other
+// track. Its album is locked first (shared), so an edit to it can't land
+// before the caller commits. Callers upsert artists and albums before this,
+// so albums are locked before the track, in the order ingest takes them,
+// and the two can't deadlock.
+func lockUnmatchable(ctx context.Context, tx pgx.Tx, trackID uuid.UUID) (albumID *uuid.UUID, ok bool, err error) {
 	err = tx.QueryRow(ctx, `SELECT album_id FROM tracks WHERE id = $1`, trackID).Scan(&albumID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	if albumID != nil {
 		var edited bool
 		err := tx.QueryRow(ctx, `
 			SELECT metadata_edited_at IS NOT NULL FROM albums WHERE id = $1 FOR SHARE`, *albumID).Scan(&edited)
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && edited) {
-			return false, nil
+			return nil, false, nil
 		}
 		if err != nil {
-			return false, err
+			return nil, false, err
 		}
 	}
 	// The album must still be the one checked.
@@ -65,9 +64,9 @@ func lockUnmatchable(ctx context.Context, tx pgx.Tx, trackID uuid.UUID) (ok bool
 		  AND t.album_id IS NOT DISTINCT FROM $2
 		FOR UPDATE`, trackID, albumID).Scan(&ok)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return nil, false, nil
 	}
-	return ok, err
+	return albumID, ok, err
 }
 
 // releaseAlbum is upsertTIDALAlbum for TIDAL matching, which refuses an
@@ -108,11 +107,11 @@ func albumCover(ctx context.Context, tx pgx.Tx, trackID uuid.UUID) (*string, err
 // on a live, shared local track whose metadata nobody set on purpose;
 // applied is false for any other. The track then counts as edited, so a
 // duplicate file's tags never replace TIDAL's. record, if set, runs in the
-// same transaction once the track is updated, so the caller's note of the
-// match commits with it or not at all. ErrTIDALAlbumConflict leaves the
-// track as it was.
+// same transaction once the track is updated, with the album the track is
+// now in, so the caller's note of the match commits with it or not at all.
+// ErrTIDALAlbumConflict leaves the track as it was.
 func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDALTrackFields,
-	record func(context.Context, pgx.Tx) error) (applied bool, err error) {
+	record func(ctx context.Context, tx pgx.Tx, albumID *uuid.UUID) error) (applied bool, err error) {
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, err
@@ -155,8 +154,12 @@ func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDAL
 		albumID = &id
 		year, trackNo, discNo = in.Album.Year, in.Album.TrackNo, in.Album.DiscNo
 	}
-	if ok, err := lockUnmatchable(ctx, tx, trackID); err != nil || !ok {
+	current, ok, err := lockUnmatchable(ctx, tx, trackID)
+	if err != nil || !ok {
 		return false, err
+	}
+	if albumID == nil {
+		albumID = current
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE tracks SET
@@ -179,7 +182,7 @@ func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDAL
 		}
 	}
 	if record != nil {
-		if err := record(ctx, tx); err != nil {
+		if err := record(ctx, tx, albumID); err != nil {
 			return false, err
 		}
 	}
@@ -214,7 +217,7 @@ func (s *Store) FileUnderTIDALRelease(ctx context.Context, trackID uuid.UUID, in
 	if err != nil {
 		return false, err
 	}
-	if ok, err := lockUnmatchable(ctx, tx, trackID); err != nil || !ok {
+	if _, ok, err := lockUnmatchable(ctx, tx, trackID); err != nil || !ok {
 		return false, err
 	}
 	if _, err := tx.Exec(ctx, `

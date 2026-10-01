@@ -27,13 +27,18 @@ type fakeCatalog struct {
 	mu           sync.Mutex
 	searchAlbums []tidal.Album
 	searchTracks []tidal.Track
-	albums       map[string]tidal.Album
-	err          error
-	fetched      []string
-	cover        func() ([]byte, error) // nil: covers fail
+	// byQuery, when set, answers track searches by query instead.
+	byQuery map[string][]tidal.Track
+	albums  map[string]tidal.Album
+	err     error
+	fetched []string
+	cover   func() ([]byte, error) // nil: covers fail
 }
 
-func (f *fakeCatalog) SearchTracks(context.Context, string, int, int) ([]tidal.Track, error) {
+func (f *fakeCatalog) SearchTracks(_ context.Context, query string, _, _ int) ([]tidal.Track, error) {
+	if f.byQuery != nil {
+		return f.byQuery[query], f.err
+	}
 	return f.searchTracks, f.err
 }
 
@@ -521,7 +526,7 @@ func TestApplyTIDALMatchRollsBackWithItsRecord(t *testing.T) {
 	id := f.track(localTrack{title: "song", artists: []string{main}, duration: 100_000})
 	applied, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
 		Title: "Song", Artists: []string{main}, Album: library.TIDALAlbumFields{Title: "Record " + f.run, Artist: main},
-	}, func(context.Context, pgx.Tx) error { return errors.New("record failed") })
+	}, func(context.Context, pgx.Tx, *uuid.UUID) error { return errors.New("record failed") })
 	if err == nil || applied {
 		t.Fatalf("applied = %v, err = %v; want the record's error", applied, err)
 	}
@@ -591,6 +596,36 @@ func TestMatcherRetriesReleaseCover(t *testing.T) {
 	}
 	if left != "" {
 		t.Fatalf("cover still pending: %q", left)
+	}
+
+	// A retried cover goes to the album the match filed the track under,
+	// even after the track has moved.
+	id2 := f.track(localTrack{title: "Other", artists: []string{main}, duration: 90_000})
+	rel2ID := "rel2" + f.run
+	rel2 := tidal.Album{ID: rel2ID, Title: "Second " + f.run, Artist: main, CoverURL: "https://resources.tidal.com/y.jpg",
+		Tracks: []tidal.Track{{ID: "b" + f.run, Title: "Other", Artists: []string{main}, DurationMS: 90_000}}}
+	src.albums[rel2ID] = rel2
+	src.searchTracks = []tidal.Track{{ID: "b" + f.run, Title: "Other", Artists: []string{main}, DurationMS: 90_000, AlbumID: rel2ID}}
+	working := src.cover
+	src.cover = nil
+	if err := m.matchLoose(ctx, MatchTrack{ID: id2, Title: "Other", Artists: []string{main}, DurationMS: 90_000}); err != nil {
+		t.Fatal(err)
+	}
+	matched := f.state(id2).AlbumID
+	elsewhere := f.album("Elsewhere "+f.run, main, 0)
+	f.exec(`UPDATE tracks SET album_id = $2 WHERE id = $1`, id2, elsewhere)
+	f.exec(`UPDATE tidal_matches SET cover_retry_at = NOW() WHERE track_id = $1`, id2)
+	src.cover = working
+	m.backfillCovers(ctx)
+	var matchedCover, elsewhereCover string
+	if err := f.pool.QueryRow(ctx, `
+		SELECT COALESCE((SELECT cover_art_path FROM albums WHERE id = $1), ''),
+		       COALESCE((SELECT cover_art_path FROM albums WHERE id = $2), '')`, matched, elsewhere).
+		Scan(&matchedCover, &elsewhereCover); err != nil {
+		t.Fatal(err)
+	}
+	if matchedCover == "" || elsewhereCover != "" {
+		t.Fatalf("matched album cover %q, other album %q; want only the matched album filled", matchedCover, elsewhereCover)
 	}
 }
 
@@ -688,8 +723,7 @@ func TestMatcherFinishesInterruptedAlbum(t *testing.T) {
 	}
 	albumID := f.album("Record "+f.run, "", 0)
 	bonus := f.track(localTrack{title: "Bonus", artists: []string{main}, album: &albumID, duration: 50_000})
-	f.exec(`INSERT INTO tidal_matches(track_id, status, tidal_album_id, next_attempt_at)
-	        VALUES($1, 'failed', $2, NOW() - INTERVAL '1 minute')`, bonus, relID)
+	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id) VALUES($1, $2)`, albumID, relID)
 
 	src := &fakeCatalog{err: errors.New("TIDAL must not be needed")}
 	if err := f.matcher(src).matchAlbum(ctx, albumID); err != nil {
@@ -698,6 +732,10 @@ func TestMatcherFinishesInterruptedAlbum(t *testing.T) {
 	if got := f.state(bonus); got.Album != rel.Title || got.AlbumArtist != main || got.Match != MatchUnmatched ||
 		got.MatchAlbum != relID {
 		t.Fatalf("bonus = %+v; want it filed under the release chosen before", got)
+	}
+	var left int
+	if err := f.pool.QueryRow(ctx, `SELECT COUNT(*) FROM tidal_match_albums WHERE album_id = $1`, albumID).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("album choice left behind: %d, %v", left, err)
 	}
 }
 
@@ -784,5 +822,74 @@ func TestApplyTIDALMatchHonorsAlbumEdit(t *testing.T) {
 	}
 	if got := f.state(id); got.AlbumID != albumID || got.Title != "song" {
 		t.Fatalf("track = %+v", got)
+	}
+}
+
+// An album waits while any of its waiting tracks is still settling, so it is
+// judged whole.
+func TestMatcherWaitsForAlbumToSettle(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	albumID := f.album("Record "+f.run, main, 0)
+	old := f.track(localTrack{title: "Old", artists: []string{main}, album: &albumID, duration: 100_000})
+	f.track(localTrack{title: "New", artists: []string{main}, album: &albumID, duration: 100_000, fresh: true})
+	store := NewStore(f.pool)
+	pending, err := store.PendingMatchAlbums(ctx, 10_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsID(pending, albumID) {
+		t.Fatal("an album with a track still settling is pending")
+	}
+	if err := f.matcher(&fakeCatalog{err: errors.New("TIDAL must not be asked")}).matchAlbum(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(old); got.Match != "" {
+		t.Fatalf("old = %+v; want it left for when the album settles", got)
+	}
+}
+
+// Track searches go on past the threshold while they may find a release
+// listing more of the album.
+func TestMatcherPrefersFullerReleaseFromTrackSearch(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	title := "Record " + f.run
+	albumID := f.album(title, main, 0)
+	names := []string{"One", "Two", "Three"}
+	var ids []uuid.UUID
+	for i, n := range names {
+		ids = append(ids, f.track(localTrack{title: n, artists: []string{main}, album: &albumID,
+			duration: 100_000 + i*10_000, trackNo: i + 1}))
+	}
+	entry := func(id, name string, i int) tidal.Track {
+		return tidal.Track{ID: id, Title: name, Artists: []string{main}, DurationMS: 100_000 + i*10_000, TrackNo: i + 1}
+	}
+	shortID, fullID := "short"+f.run, "full"+f.run
+	short := tidal.Album{ID: shortID, Title: title + " (Edited)", Artist: main,
+		Tracks: []tidal.Track{entry("s1"+f.run, "One", 0), entry("s2"+f.run, "Two", 1)}}
+	full := tidal.Album{ID: fullID, Title: title + " (Deluxe)", Artist: main,
+		Tracks: []tidal.Track{entry("f1"+f.run, "One", 0), entry("f2"+f.run, "Two", 1), entry("f3"+f.run, "Three", 2)}}
+	hit := func(name string, i int, a tidal.Album) []tidal.Track {
+		h := entry("x", name, i)
+		h.AlbumID, h.AlbumTitle = a.ID, a.Title
+		return []tidal.Track{h}
+	}
+	src := &fakeCatalog{
+		byQuery: map[string][]tidal.Track{
+			main + " One":   hit("One", 0, short),
+			main + " Three": hit("Three", 2, full),
+		},
+		albums: map[string]tidal.Album{shortID: short, fullID: full},
+	}
+	if err := f.matcher(src).matchAlbum(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		if got := f.state(id); got.TIDALAlbum != fullID {
+			t.Fatalf("track = %+v; want every track on the release listing all three", got)
+		}
 	}
 }
