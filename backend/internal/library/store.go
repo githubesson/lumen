@@ -563,6 +563,18 @@ func UpdateTrackAudioInfoIfMissing(ctx context.Context, q pgx.Tx, trackID uuid.U
 	return err
 }
 
+// FillTrackISRC gives a track the ISRC of a duplicate file when it has none.
+func FillTrackISRC(ctx context.Context, q pgx.Tx, trackID uuid.UUID, isrc string) error {
+	isrc = dbtext.Clean(isrc)
+	if isrc == "" {
+		return nil
+	}
+	_, err := q.Exec(ctx, `
+		UPDATE tracks SET isrc = $2, updated_at = NOW()
+		WHERE id = $1 AND COALESCE(isrc, '') = ''`, trackID, isrc)
+	return err
+}
+
 // AliasInput carries the per-file metadata recorded as a track alias when a
 // file is deduplicated by audio SHA. Lets search match the dupe's strings
 // without inflating the canonical track row.
@@ -856,6 +868,9 @@ func (s *Store) UpdateAlbum(ctx context.Context, id uuid.UUID, p AlbumPatch) err
 	if set.Count() == 1 { // only updated_at
 		return tx.Commit(ctx)
 	}
+	// An album edited on purpose keeps its tracks: TIDAL matching won't
+	// refile them.
+	set.AddRaw("metadata_edited_at = NOW()")
 	setClause, args := set.Build()
 	args = append(args, id)
 	stmt := fmt.Sprintf(
@@ -911,16 +926,23 @@ func (s *Store) SetTrackAlbumCover(ctx context.Context, trackID uuid.UUID, cover
 // the blob here could orphan another album's artwork. Returns ErrNotFound when
 // the album row is missing.
 func (s *Store) ClearAlbumCover(ctx context.Context, albumID uuid.UUID) error {
-	tag, err := s.db.Exec(ctx, `
-		UPDATE albums SET cover_art_path = NULL, updated_at = NOW()
-		WHERE id = $1`, albumID)
-	if err != nil {
+	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE albums SET cover_art_path = NULL, updated_at = NOW()
+			WHERE id = $1`, albumID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		// Removed on purpose: a TIDAL match's pending release cover must not
+		// put one back.
+		_, err = tx.Exec(ctx, `
+			UPDATE tidal_matches SET cover_url = '', cover_retry_at = NULL
+			WHERE cover_album_id = $1 AND cover_url <> ''`, albumID)
 		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	})
 }
 
 // RecordIngestError stores why a file failed to ingest. These rows are the

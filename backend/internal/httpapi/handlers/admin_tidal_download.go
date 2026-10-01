@@ -26,6 +26,9 @@ type AdminTIDALDownloads struct {
 	// For album downloads.
 	TIDAL   *tidal.Client
 	Library *library.Store
+	// Matching: local tracks are matched on TIDAL, so their counts are
+	// reported.
+	Matching bool
 }
 
 type tidalAutoDownloadResp struct {
@@ -38,6 +41,9 @@ type tidalAutoDownloadResp struct {
 	FFmpeg           bool               `json:"ffmpeg"`
 	Summary          tidaldl.Summary    `json:"summary"`
 	Recent           []tidaldl.Download `json:"recent"`
+	// Match counts library tracks by TIDAL matching state; absent while
+	// matching is turned off.
+	Match *tidaldl.MatchSummary `json:"match,omitempty"`
 }
 
 func (h *AdminTIDALDownloads) Status(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +72,14 @@ func (h *AdminTIDALDownloads) Status(w http.ResponseWriter, r *http.Request) {
 		FFmpeg:  mediaembed.Available(),
 		Summary: summary,
 		Recent:  recent,
+	}
+	if h.Matching {
+		match, err := h.Store.MatchSummary(r.Context())
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		out.Match = &match
 	}
 	if settings.RootID != nil {
 		out.RootID = settings.RootID.String()

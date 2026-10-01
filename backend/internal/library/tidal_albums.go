@@ -271,21 +271,7 @@ func (s *Store) ApplyTIDALAlbum(ctx context.Context, trackID uuid.UUID, in TIDAL
 	if err != nil {
 		return err
 	}
-	artist := strings.TrimSpace(in.Artist)
-	isComp := artist == "" || strings.EqualFold(artist, "Various Artists")
-	var artistID *uuid.UUID
-	if !isComp {
-		id, err := UpsertArtist(ctx, tx, artist)
-		if err != nil {
-			return err
-		}
-		artistID = &id
-	}
-	cover := ""
-	if oldCover != nil {
-		cover = *oldCover
-	}
-	albumID, err := UpsertAlbum(ctx, tx, in.Title, artistID, in.Year, isComp, cover, nil)
+	albumID, err := upsertTIDALAlbum(ctx, tx, in, oldCover)
 	if err != nil {
 		return err
 	}
@@ -299,6 +285,32 @@ func (s *Store) ApplyTIDALAlbum(ctx context.Context, trackID uuid.UUID, in TIDAL
 		WHERE id = $1`, trackID, albumID, in.Year, in.TrackNo, in.DiscNo); err != nil {
 		return err
 	}
+	return tx.Commit(ctx)
+}
+
+// upsertTIDALAlbum creates or reuses the library album for a TIDAL release
+// (title, album artist), gives it the cover of the album a track leaves
+// (oldCover) when it has none, and the release year and link unless it is
+// already linked to another release.
+func upsertTIDALAlbum(ctx context.Context, tx pgx.Tx, in TIDALAlbumFields, oldCover *string) (uuid.UUID, error) {
+	artist := strings.TrimSpace(in.Artist)
+	isComp := artist == "" || strings.EqualFold(artist, "Various Artists")
+	var artistID *uuid.UUID
+	if !isComp {
+		id, err := UpsertArtist(ctx, tx, artist)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		artistID = &id
+	}
+	cover := ""
+	if oldCover != nil {
+		cover = *oldCover
+	}
+	albumID, err := UpsertAlbum(ctx, tx, in.Title, artistID, in.Year, isComp, cover, nil)
+	if err != nil {
+		return uuid.Nil, err
+	}
 	if in.TIDALAlbumID != "" {
 		if _, err := tx.Exec(ctx, `
 			UPDATE albums SET
@@ -307,10 +319,10 @@ func (s *Store) ApplyTIDALAlbum(ctx context.Context, trackID uuid.UUID, in TIDAL
 				updated_at = NOW()
 			WHERE id = $1 AND (tidal_album_id IS NULL OR tidal_album_id = $2)`,
 			albumID, in.TIDALAlbumID, in.Year); err != nil {
-			return err
+			return uuid.Nil, err
 		}
 	}
-	return tx.Commit(ctx)
+	return albumID, nil
 }
 
 // TIDALAlbumReferenced reports whether the library has a stake in a TIDAL

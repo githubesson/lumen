@@ -236,6 +236,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		Genre:       md.Genre,
 		Year:        md.Year,
 		Composer:    md.Composer,
+		ISRC:        md.ISRC,
 		Comments:    md.Comment,
 		FilePath:    path,
 		FileSize:    stat.Size(),
@@ -303,6 +304,15 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 					trackInsert, artistIDs, artistRoles, keepFile)
 				if aerr != nil {
 					out.Err = fmt.Errorf("adopt duplicate: %w", aerr)
+					s.recordErr(ctx, path, out.Err)
+					return out
+				}
+			}
+			// A duplicate's ISRC still identifies the track's audio, if the
+			// file is still the one whose tags and audio were read.
+			if unchangedSince(path, stat) {
+				if err := library.FillTrackISRC(ctx, tx, trackID, md.ISRC); err != nil {
+					out.Err = fmt.Errorf("fill isrc: %w", err)
 					s.recordErr(ctx, path, out.Err)
 					return out
 				}
