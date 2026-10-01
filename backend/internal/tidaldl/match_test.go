@@ -1159,11 +1159,36 @@ func TestOutcomesNeedTheTrackAsLoaded(t *testing.T) {
 	f.exec(`UPDATE tracks SET album_id = $2 WHERE id = $1`, moves, other)
 	m := f.matcher(&fakeCatalog{})
 	m.recordAll(ctx, loaded, MatchOutcome{Status: MatchUnmatched, Error: "none"}, nil)
-	if got := f.state(stays); got.Match != MatchUnmatched {
-		t.Fatalf("stays = %+v", got)
-	}
+	// Decided on both, it stands for neither once one moved.
 	if got := f.state(moves); got.Match != "" {
 		t.Fatalf("moved track got outcome %q decided for its old album", got.Match)
+	}
+	if got := f.state(stays); got.Match != "" {
+		t.Fatalf("stays got outcome %q decided with a track that has moved", got.Match)
+	}
+
+	// A copy association made during the lookup, even one stamped earlier,
+	// keeps the outcome from landing.
+	_, loaded, err = store.MatchAlbumTracks(ctx, albumID, 10)
+	if err != nil || len(loaded) != 1 {
+		t.Fatalf("loaded %d, %v", len(loaded), err)
+	}
+	f.exec(`INSERT INTO tidal_downloads(tidal_id, status, local_track_id, updated_at)
+	        VALUES($1, 'existing', $2, NOW() - INTERVAL '1 hour')`, "copy"+f.run, stays)
+	t.Cleanup(func() {
+		f.pool.Exec(context.Background(), `DELETE FROM tidal_downloads WHERE tidal_id = $1`, "copy"+f.run)
+	})
+	m.recordAll(ctx, loaded, MatchOutcome{Status: MatchUnmatched, Error: "none"}, nil)
+	if got := f.state(stays); got.Match != "" {
+		t.Fatalf("stays got outcome %q though it was found to be a copy meanwhile", got.Match)
+	}
+	_, loaded, err = store.MatchAlbumTracks(ctx, albumID, 10)
+	if err != nil || len(loaded) != 1 {
+		t.Fatalf("loaded %d, %v", len(loaded), err)
+	}
+	m.recordAll(ctx, loaded, MatchOutcome{Status: MatchUnmatched, Error: "none"}, nil)
+	if got := f.state(stays); got.Match != MatchUnmatched {
+		t.Fatalf("stays = %+v", got)
 	}
 
 	// The choice comes after stays' outcome, which then doesn't finish it.

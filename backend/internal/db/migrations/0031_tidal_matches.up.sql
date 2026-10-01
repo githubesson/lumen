@@ -17,6 +17,9 @@ CREATE TABLE tidal_matches (
     -- exact copy, not an ordering, as NOW() is a transaction's start.
     album_link      TEXT NOT NULL DEFAULT '',
     track_version   TIMESTAMPTZ,
+    -- The TIDAL tracks auto-download had found the track to be a copy of
+    -- ('existing'), as a sorted list; a new one makes the outcome due again.
+    copies          TEXT NOT NULL DEFAULT '',
     -- Consecutive failures, for the backoff; 0 after any other outcome.
     attempts        INTEGER NOT NULL DEFAULT 0,
     -- NULL never retries (matched).
