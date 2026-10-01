@@ -41,8 +41,11 @@ const trackAlbumLink = `COALESCE((SELECT la.tidal_album_id FROM albums la WHERE 
 
 // matchFresh holds for an outcome m of track t decided on the track as it
 // still is: neither the track (a duplicate's tags adopted, an ISRC filled)
-// nor its album's TIDAL link changed since.
-const matchFresh = `m.updated_at >= t.updated_at AND m.album_link = ` + trackAlbumLink
+// nor its album's TIDAL link changed since, and auto-download hasn't found
+// it to be a TIDAL track's copy since.
+const matchFresh = `m.updated_at >= t.updated_at AND m.album_link = ` + trackAlbumLink + `
+	AND NOT EXISTS (SELECT 1 FROM tidal_downloads fd
+		WHERE fd.local_track_id = t.id AND fd.status = 'existing' AND fd.updated_at > m.updated_at)`
 
 // matchDue holds for a track t never tried, whose retry is up, or whose
 // last outcome isn't fresh.
@@ -467,15 +470,19 @@ func (s *Store) DropChoice(ctx context.Context, albumID uuid.UUID) error {
 // judged on is left to file: every one still eligible in the album has an
 // outcome recorded since the choice, and not a failure, which would retry
 // under it. An older outcome (a track skipped as changed) doesn't count.
-func (s *Store) ReleaseDone(ctx context.Context, albumID uuid.UUID) error {
-	_, err := s.db.Exec(ctx, `
+// done reports whether it dropped the choice.
+func (s *Store) ReleaseDone(ctx context.Context, albumID uuid.UUID) (done bool, err error) {
+	tag, err := s.db.Exec(ctx, `
 		DELETE FROM tidal_match_albums c
 		WHERE c.album_id = $1 AND NOT EXISTS (
 			SELECT 1 FROM tracks t
 			LEFT JOIN tidal_matches om ON om.track_id = t.id
 			WHERE t.album_id = $1 AND t.id = ANY(c.track_ids) AND `+matchEligible+`
 			  AND (om.track_id IS NULL OR om.status = 'failed' OR om.updated_at < c.created_at))`, albumID)
-	return err
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 // CoverTask is a match whose album still waits for the release cover.

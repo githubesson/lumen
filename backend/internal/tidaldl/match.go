@@ -290,7 +290,12 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 				}
 			}
 			if tracks = kept; len(tracks) == 0 {
-				return m.Store.ReleaseDone(ctx, album.ID)
+				// Finished: any tracks added since are judged now.
+				done, err := m.Store.ReleaseDone(ctx, album.ID)
+				if err != nil || !done {
+					return err
+				}
+				return m.matchAlbum(ctx, albumID)
 			}
 		}
 	}
@@ -353,7 +358,7 @@ func (m *Matcher) matchAlbum(ctx context.Context, albumID uuid.UUID) error {
 		// Not filed: moved, edited or changed meanwhile, so judged afresh.
 	}
 	if !linked {
-		if err := m.Store.ReleaseDone(ctx, album.ID); err != nil && ctx.Err() == nil {
+		if _, err := m.Store.ReleaseDone(ctx, album.ID); err != nil && ctx.Err() == nil {
 			m.log().Warn("tidal match album choice not cleared", "album", album.ID, "err", err)
 		}
 	}

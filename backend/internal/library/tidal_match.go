@@ -116,6 +116,14 @@ func releaseAlbum(ctx context.Context, tx pgx.Tx, in TIDALAlbumFields, oldCover 
 	if edited || linked != in.TIDALAlbumID {
 		return uuid.Nil, ErrTIDALAlbumConflict
 	}
+	// Filed by the release, the album takes its year over one from tags.
+	if in.Year > 0 {
+		if _, err := tx.Exec(ctx, `
+			UPDATE albums SET release_year = $2, updated_at = NOW()
+			WHERE id = $1 AND release_year IS DISTINCT FROM $2`, id, in.Year); err != nil {
+			return uuid.Nil, err
+		}
+	}
 	return id, nil
 }
 

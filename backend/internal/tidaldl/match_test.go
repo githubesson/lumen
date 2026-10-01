@@ -960,7 +960,7 @@ func TestMatcherKeepsChoiceWhileTrackBacksOff(t *testing.T) {
 		}
 		return n
 	}
-	if err := store.ReleaseDone(ctx, albumID); err != nil {
+	if _, err := store.ReleaseDone(ctx, albumID); err != nil {
 		t.Fatal(err)
 	}
 	if choices() != 1 {
@@ -1160,7 +1160,7 @@ func TestOutcomesNeedTheTrackAsLoaded(t *testing.T) {
 	// The choice comes after stays' outcome, which then doesn't finish it.
 	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, track_ids, created_at)
 	        VALUES($1, 'rel', $2, NOW() + INTERVAL '1 second')`, albumID, []uuid.UUID{stays, moves})
-	if err := store.ReleaseDone(ctx, albumID); err != nil {
+	if _, err := store.ReleaseDone(ctx, albumID); err != nil {
 		t.Fatal(err)
 	}
 	var n int
@@ -1609,5 +1609,72 @@ func TestRestingTrackDueOnceAlbumLinked(t *testing.T) {
 	f.exec(`UPDATE albums SET tidal_album_id = $2 WHERE id = $1`, albumID, "saved"+f.run)
 	if !pending() {
 		t.Fatal("an album linked since its tracks' no-match isn't pending")
+	}
+}
+
+// A finished choice gives way at once to tracks added since; a release
+// year replaces the album's year from tags; and auto-download finding a
+// track to be a TIDAL track's copy makes its old no-match due again.
+func TestFinishedChoiceYearAndExistingCopy(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	relID := "rel" + f.run
+	rel := tidal.Album{ID: relID, Title: "Record " + f.run, Artist: main, ReleaseYear: 2015,
+		Tracks: []tidal.Track{
+			{ID: "a" + f.run, Title: "Song", Artists: []string{main}, DurationMS: 100_000, TrackNo: 1},
+			{ID: "b" + f.run, Title: "Later", Artists: []string{main}, DurationMS: 120_000, TrackNo: 2},
+		}}
+	if err := f.lib.SaveTIDALAlbum(ctx, rel); err != nil {
+		t.Fatal(err)
+	}
+	// Tags said 1999; unlinked, so the release links it on the first match.
+	albumID := f.album("Record "+f.run, main, 1999)
+	done := f.track(localTrack{title: "Song", artists: []string{main}, album: &albumID, duration: 100_000})
+	added := f.track(localTrack{title: "Later", artists: []string{main}, album: &albumID, duration: 120_000})
+	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, track_ids, created_at)
+	        VALUES($1, $2, $3, NOW() - INTERVAL '1 minute')`, albumID, relID, []uuid.UUID{done})
+	f.exec(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at, updated_at)
+	        VALUES($1, 'unmatched', 0, NOW() + INTERVAL '30 days', NOW())`, done)
+	src := &fakeCatalog{searchAlbums: []tidal.Album{rel}, albums: map[string]tidal.Album{relID: rel}}
+	if err := f.matcher(src).matchAlbum(ctx, albumID); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(added); got.Match != MatchMatched || got.TIDALAlbum != relID {
+		t.Fatalf("added = %+v; want it judged right after the choice finished", got)
+	}
+	var year int
+	if err := f.pool.QueryRow(ctx, `SELECT COALESCE(release_year, 0) FROM albums WHERE id = $1`, albumID).Scan(&year); err != nil || year != 2015 {
+		t.Fatalf("album year %d, %v; want the release's 2015", year, err)
+	}
+
+	// An existing-copy link since a loose track's no-match makes it due.
+	loose := f.track(localTrack{title: "Solo", artists: []string{main}, duration: 90_000})
+	store := NewStore(f.pool)
+	if err := store.RecordMatch(ctx, loose, MatchOutcome{Status: MatchUnmatched}); err != nil {
+		t.Fatal(err)
+	}
+	waiting := func() bool {
+		ts, err := store.PendingMatchLoose(ctx, 10_000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, w := range ts {
+			if w.ID == loose {
+				return true
+			}
+		}
+		return false
+	}
+	if waiting() {
+		t.Fatal("a resting track is waiting")
+	}
+	f.exec(`INSERT INTO tidal_downloads(tidal_id, status, local_track_id, updated_at)
+	        VALUES($1, 'existing', $2, NOW() + INTERVAL '1 second')`, "x"+f.run, loose)
+	t.Cleanup(func() {
+		f.pool.Exec(context.Background(), `DELETE FROM tidal_downloads WHERE tidal_id = $1`, "x"+f.run)
+	})
+	if !waiting() {
+		t.Fatal("a track found to be a TIDAL copy since its no-match isn't waiting")
 	}
 }
