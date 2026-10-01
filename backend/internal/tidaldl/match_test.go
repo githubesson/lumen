@@ -1,17 +1,23 @@
 package tidaldl
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"image"
+	"image/png"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/storage"
 	"github.com/githubesson/lumen/internal/tidal"
 )
 
@@ -24,6 +30,7 @@ type fakeCatalog struct {
 	albums       map[string]tidal.Album
 	err          error
 	fetched      []string
+	cover        func() ([]byte, error) // nil: covers fail
 }
 
 func (f *fakeCatalog) SearchTracks(context.Context, string, int, int) ([]tidal.Track, error) {
@@ -49,7 +56,10 @@ func (f *fakeCatalog) FullAlbum(_ context.Context, id string) (tidal.Album, erro
 }
 
 func (f *fakeCatalog) CoverBytes(context.Context, string) ([]byte, error) {
-	return nil, errors.New("no covers in tests")
+	if f.cover == nil {
+		return nil, errors.New("no covers in tests")
+	}
+	return f.cover()
 }
 
 // matchFixture inserts library rows for matcher tests and removes them after.
@@ -470,4 +480,116 @@ func containsID(ids []uuid.UUID, id uuid.UUID) bool {
 		}
 	}
 	return false
+}
+
+// Search hits rarely name their album's artist, so a loose track's release
+// is checked: a compilation gives way to the next hit's artist release.
+func TestMatcherLooseTrackSkipsCompilationRelease(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	solo := "Solo " + f.run
+	id := f.track(localTrack{title: "Anthem", artists: []string{solo}, duration: 210_000})
+	compID, ownID := "comp"+f.run, "own"+f.run
+	comp := tidal.Album{ID: compID, Title: "Now " + f.run, Artist: "Various Artists",
+		Tracks: []tidal.Track{{ID: "c" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000, TrackNo: 12}}}
+	own := tidal.Album{ID: ownID, Title: "Anthems " + f.run, Artist: solo, ReleaseYear: 2015,
+		Tracks: []tidal.Track{{ID: "o" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000, TrackNo: 1}}}
+	src := &fakeCatalog{
+		searchTracks: []tidal.Track{
+			{ID: "c" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000, AlbumID: compID, AlbumTitle: comp.Title},
+			{ID: "o" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000, AlbumID: ownID, AlbumTitle: own.Title},
+		},
+		albums: map[string]tidal.Album{compID: comp, ownID: own},
+	}
+	if err := f.matcher(src).matchLoose(ctx, MatchTrack{ID: id, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(id); got.Album != own.Title || got.AlbumArtist != solo || got.TrackNo != 1 || got.Year != 2015 {
+		t.Fatalf("track = %+v; want the artist's own release", got)
+	}
+	if _, _, err := f.lib.TIDALAlbum(ctx, compID); !errors.Is(err, library.ErrNotFound) {
+		t.Fatalf("the skipped compilation was stored: %v", err)
+	}
+}
+
+// A match is recorded in the transaction that applies it: if recording
+// fails, the track is left as it was, to be tried again.
+func TestApplyTIDALMatchRollsBackWithItsRecord(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	id := f.track(localTrack{title: "song", artists: []string{main}, duration: 100_000})
+	applied, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
+		Title: "Song", Artists: []string{main}, Album: library.TIDALAlbumFields{Title: "Record " + f.run, Artist: main},
+	}, func(context.Context, pgx.Tx) error { return errors.New("record failed") })
+	if err == nil || applied {
+		t.Fatalf("applied = %v, err = %v; want the record's error", applied, err)
+	}
+	if got := f.state(id); got.Title != "song" || got.Edited || got.Album != "" {
+		t.Fatalf("track = %+v; want it unchanged", got)
+	}
+}
+
+// A release cover that can't be fetched when its track is matched is
+// retried later, until the album has it.
+func TestMatcherRetriesReleaseCover(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	id := f.track(localTrack{title: "Song", artists: []string{main}, duration: 100_000})
+	relID := "rel" + f.run
+	rel := tidal.Album{ID: relID, Title: "Record " + f.run, Artist: main, CoverURL: "https://resources.tidal.com/x.jpg",
+		Tracks: []tidal.Track{{ID: "a" + f.run, Title: "Song", Artists: []string{main}, DurationMS: 100_000, TrackNo: 1}}}
+	src := &fakeCatalog{
+		searchTracks: []tidal.Track{{ID: "a" + f.run, Title: "Song", Artists: []string{main}, DurationMS: 100_000, AlbumID: relID}},
+		albums:       map[string]tidal.Album{relID: rel},
+	}
+	root := t.TempDir()
+	m := f.matcher(src)
+	m.Ingest = &ingest.Service{DB: f.pool, Library: f.lib, Storage: storage.NewLocal(root), MusicRoot: root}
+	if err := m.matchLoose(ctx, MatchTrack{ID: id, Title: "Song", Artists: []string{main}, DurationMS: 100_000}); err != nil {
+		t.Fatal(err)
+	}
+	coverOf := func() string {
+		var cover string
+		if err := f.pool.QueryRow(ctx, `
+			SELECT COALESCE(a.cover_art_path, '') FROM tracks t JOIN albums a ON a.id = t.album_id
+			WHERE t.id = $1`, id).Scan(&cover); err != nil {
+			t.Fatal(err)
+		}
+		return cover
+	}
+	if got := f.state(id); got.Match != MatchMatched || coverOf() != "" {
+		t.Fatalf("track = %+v, cover %q; want a match still waiting for its cover", got, coverOf())
+	}
+	pending, err := m.Store.PendingCovers(ctx, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range pending {
+		if c.TrackID == id {
+			t.Fatal("a cover that just failed is due again at once")
+		}
+	}
+
+	// Due again, and TIDAL serves it this time.
+	f.exec(`UPDATE tidal_matches SET cover_retry_at = NOW() WHERE track_id = $1`, id)
+	src.cover = func() ([]byte, error) {
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 4, 4))); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	}
+	m.backfillCovers(ctx)
+	if coverOf() == "" {
+		t.Fatal("the album still has no cover")
+	}
+	var left string
+	if err := f.pool.QueryRow(ctx, `SELECT cover_url FROM tidal_matches WHERE track_id = $1`, id).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != "" {
+		t.Fatalf("cover still pending: %q", left)
+	}
 }

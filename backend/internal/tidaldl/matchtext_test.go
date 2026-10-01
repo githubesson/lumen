@@ -108,6 +108,15 @@ func TestTrackMatches(t *testing.T) {
 	}
 }
 
+// pickTrack is the best of rankTracks.
+func pickTrack(found []tidal.Track, t MatchTrack, albumTitle string) (tidal.Track, bool) {
+	hits := rankTracks(found, t, albumTitle)
+	if len(hits) == 0 {
+		return tidal.Track{}, false
+	}
+	return hits[0], true
+}
+
 func TestPickTrackPrefersISRCAndArtistReleases(t *testing.T) {
 	local := MatchTrack{Title: "Song", Artists: []string{"Main"}, DurationMS: 180_000}
 	hits := []tidal.Track{

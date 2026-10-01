@@ -14,5 +14,10 @@ CREATE TABLE tidal_matches (
     attempts        INTEGER NOT NULL DEFAULT 0,
     -- NULL never retries (matched).
     next_attempt_at TIMESTAMPTZ,
+    -- A match's release cover, while its album still needs artwork; cleared
+    -- once the album has some. Failed fetches retry from cover_retry_at.
+    cover_url       TEXT NOT NULL DEFAULT '',
+    cover_retry_at  TIMESTAMPTZ,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX tidal_matches_cover_idx ON tidal_matches(cover_retry_at) WHERE cover_url <> '';

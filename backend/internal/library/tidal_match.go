@@ -47,8 +47,11 @@ func lockUnmatchable(ctx context.Context, tx pgx.Tx, trackID uuid.UUID) (cover *
 // artist, year, disc and number. It all lands in one transaction, and only
 // on a live, shared local track whose metadata nobody set on purpose;
 // applied is false for any other. The track then counts as edited, so a
-// duplicate file's tags never replace TIDAL's.
-func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDALTrackFields) (applied bool, err error) {
+// duplicate file's tags never replace TIDAL's. record, if set, runs in the
+// same transaction once the track is updated, so the caller's note of the
+// match commits with it or not at all.
+func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDALTrackFields,
+	record func(context.Context, pgx.Tx) error) (applied bool, err error) {
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, err
@@ -105,6 +108,11 @@ func (s *Store) ApplyTIDALMatch(ctx context.Context, trackID uuid.UUID, in TIDAL
 			}
 		}
 		if err := relinkArtists(ctx, tx, trackID, ids, roles, false); err != nil {
+			return false, err
+		}
+	}
+	if record != nil {
+		if err := record(ctx, tx); err != nil {
 			return false, err
 		}
 	}
