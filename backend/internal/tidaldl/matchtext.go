@@ -150,6 +150,12 @@ func isVariousArtists(s string) bool {
 	return strings.EqualFold(strings.TrimSpace(s), "Various Artists")
 }
 
+// isCompilation reports whether a release's album artist makes it a
+// compilation, as library albums are filed: none, or Various Artists.
+func isCompilation(albumArtist string) bool {
+	return strings.TrimSpace(albumArtist) == "" || isVariousArtists(albumArtist)
+}
+
 const (
 	// TIDAL lists durations in whole seconds, and files differ by padding.
 	durationSlackMS = 3000

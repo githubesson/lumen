@@ -770,10 +770,10 @@ func (m *Matcher) matchLoose(ctx context.Context, t MatchTrack) error {
 				return err
 			}
 		}
-		if tried == 1 || cr == nil || !isVariousArtists(cr.Artist) {
+		if tried == 1 || cr == nil || !isCompilation(cr.Artist) {
 			hit, r = c, cr
 		}
-		if cr == nil || !isVariousArtists(cr.Artist) {
+		if cr == nil || !isCompilation(cr.Artist) {
 			break
 		}
 	}

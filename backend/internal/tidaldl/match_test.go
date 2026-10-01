@@ -1835,3 +1835,46 @@ func TestVersionedFreshnessOversizeAndCoverTask(t *testing.T) {
 		t.Fatalf("cover %q, %v; set without a pending task", cover, err)
 	}
 }
+
+// A judged failure backing off from before the choice doesn't bring the
+// album up either; a release without an album artist is a compilation for
+// a loose track's choice of release.
+func TestPreChoiceBackoffAndBlankArtistRelease(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	albumID := f.album("Record "+f.run, main, 0)
+	failing := f.track(localTrack{title: "Song", artists: []string{main}, album: &albumID, duration: 100_000})
+	f.outcome(`INSERT INTO tidal_matches(track_id, status, attempts, next_attempt_at, updated_at)
+	           VALUES($1, 'failed', 1, NOW() + INTERVAL '30 minutes', NOW() - INTERVAL '1 minute')`, failing)
+	f.exec(`INSERT INTO tidal_match_albums(album_id, tidal_album_id, track_ids) VALUES($1, 'rel', $2)`,
+		albumID, []uuid.UUID{failing})
+	ids, err := NewStore(f.pool).PendingMatchAlbums(ctx, 10_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsID(ids, albumID) {
+		t.Fatal("an album whose only judged track is backing off is pending")
+	}
+
+	solo := "Solo " + f.run
+	id := f.track(localTrack{title: "Anthem", artists: []string{solo}, duration: 210_000})
+	blankID, ownID := "blank"+f.run, "own"+f.run
+	blank := tidal.Album{ID: blankID, Title: "Mix " + f.run,
+		Tracks: []tidal.Track{{ID: "b" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000}}}
+	own := tidal.Album{ID: ownID, Title: "Anthems " + f.run, Artist: solo,
+		Tracks: []tidal.Track{{ID: "o" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000}}}
+	src := &fakeCatalog{
+		searchTracks: []tidal.Track{
+			{ID: "b" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000, AlbumID: blankID},
+			{ID: "o" + f.run, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000, AlbumID: ownID},
+		},
+		albums: map[string]tidal.Album{blankID: blank, ownID: own},
+	}
+	if err := f.matcher(src).matchLoose(ctx, MatchTrack{ID: id, Title: "Anthem", Artists: []string{solo}, DurationMS: 210_000}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state(id); got.Album != own.Title {
+		t.Fatalf("track = %+v; want the artist's own release over one without an album artist", got)
+	}
+}

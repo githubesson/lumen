@@ -67,12 +67,14 @@ const matchSettled = `t.updated_at < NOW() - INTERVAL '10 minutes'`
 
 // matchResumable holds for a track t that an unfinished release choice for
 // its album was judged on and that is still to file under it: no outcome
-// since the choice (or one older than the track), or a failure now due.
+// since the choice (or one older than the track), and no failure backing
+// off, from before the choice or since.
 const matchResumable = `COALESCE((
 	SELECT t.id = ANY(c.track_ids) AND NOT EXISTS (
 		SELECT 1 FROM tidal_matches rm
-		WHERE rm.track_id = t.id AND rm.updated_at >= c.created_at AND rm.track_version = t.updated_at
-		  AND (rm.status <> 'failed' OR rm.next_attempt_at > NOW()))
+		WHERE rm.track_id = t.id AND rm.track_version = t.updated_at
+		  AND ((rm.updated_at >= c.created_at AND rm.status <> 'failed')
+		    OR (rm.status = 'failed' AND rm.next_attempt_at > NOW())))
 	FROM tidal_match_albums c WHERE c.album_id = t.album_id), FALSE)`
 
 // choiceUnfinished holds for an album (the SQL expression album) with a
@@ -577,13 +579,36 @@ func (s *Store) PendingCovers(ctx context.Context, limit int) ([]CoverTask, erro
 // cover task is still pending (an admin removing the album's cover cancels
 // it) and the album still wants one: no artwork, not edited.
 func (s *Store) SetMatchCover(ctx context.Context, trackID, albumID uuid.UUID, coverPath string) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE albums SET cover_art_path = $3, updated_at = NOW()
-		WHERE id = $2 AND NULLIF(cover_art_path, '') IS NULL AND metadata_edited_at IS NULL
-		  AND EXISTS (SELECT 1 FROM tidal_matches
-		              WHERE track_id = $1 AND cover_album_id = $2 AND cover_url <> '')`,
-		trackID, albumID, dbtext.Clean(coverPath))
-	return err
+	// The album, then the task, locked and read in turn: the order
+	// ClearAlbumCover takes them, so a removal either lands first and
+	// cancels the task this then sees, or waits and wins after.
+	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+		var wants bool
+		err := tx.QueryRow(ctx, `
+			SELECT NULLIF(cover_art_path, '') IS NULL AND metadata_edited_at IS NULL
+			FROM albums WHERE id = $1 FOR UPDATE`, albumID).Scan(&wants)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !wants) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var pending bool
+		err = tx.QueryRow(ctx, `
+			SELECT TRUE FROM tidal_matches
+			WHERE track_id = $1 AND cover_album_id = $2 AND cover_url <> ''
+			FOR UPDATE`, trackID, albumID).Scan(&pending)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			UPDATE albums SET cover_art_path = $2, updated_at = NOW() WHERE id = $1`,
+			albumID, dbtext.Clean(coverPath))
+		return err
+	})
 }
 
 // CoverDone drops a track's pending cover: its album has artwork.
