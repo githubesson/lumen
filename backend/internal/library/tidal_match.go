@@ -111,7 +111,9 @@ func releaseAlbum(ctx context.Context, tx pgx.Tx, in TIDALAlbumFields, oldCover 
 		Scan(&linked, &edited); err != nil {
 		return uuid.Nil, err
 	}
-	if edited || (in.TIDALAlbumID != "" && linked != in.TIDALAlbumID) {
+	// Linked to any other release, or to one at all when the hit names
+	// none: the link can't be shown to agree.
+	if edited || linked != in.TIDALAlbumID {
 		return uuid.Nil, ErrTIDALAlbumConflict
 	}
 	return id, nil

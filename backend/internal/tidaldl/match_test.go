@@ -1373,3 +1373,33 @@ func TestEditedDestinationRefusedWithoutReleaseID(t *testing.T) {
 		t.Fatalf("err = %v; want the edited album refused", err)
 	}
 }
+
+// A hit naming no release can't be filed into an album linked to one, and a
+// pending cover is dropped once an admin edits its album.
+func TestNoReleaseIDAndEditedCoverAlbum(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	linked := f.album("Linked "+f.run, main, 0)
+	f.exec(`UPDATE albums SET tidal_album_id = $2 WHERE id = $1`, linked, "some"+f.run)
+	id := f.track(localTrack{title: "song", artists: []string{main}, duration: 100_000})
+	_, err := f.lib.ApplyTIDALMatch(ctx, id, library.TIDALTrackFields{
+		Title: "Song", Album: library.TIDALAlbumFields{Title: "Linked " + f.run, Artist: main},
+	}, nil)
+	if !errors.Is(err, library.ErrTIDALAlbumConflict) {
+		t.Fatalf("err = %v; want a linked album refused for a hit without a release id", err)
+	}
+
+	album := f.album("Cover "+f.run, main, 0)
+	store := NewStore(f.pool)
+	if has, err := store.AlbumHasCover(ctx, album); err != nil || has {
+		t.Fatalf("has = %v, %v; want a cover needed", has, err)
+	}
+	title := "Cover " + f.run + " (renamed)"
+	if err := f.lib.UpdateAlbum(ctx, album, library.AlbumPatch{Title: &title}); err != nil {
+		t.Fatal(err)
+	}
+	if has, err := store.AlbumHasCover(ctx, album); err != nil || !has {
+		t.Fatalf("has = %v, %v; an edited album still wants the release cover", has, err)
+	}
+}

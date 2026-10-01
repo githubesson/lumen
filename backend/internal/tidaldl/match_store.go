@@ -350,7 +350,8 @@ func (s *Store) NextMatchRetry(ctx context.Context) (time.Time, bool, error) {
 			(SELECT MIN(fm.next_attempt_at) FROM tidal_matches fm
 			 JOIN tracks t ON t.id = fm.track_id
 			 WHERE fm.status = 'failed' AND `+matchEligible+`),
-			(SELECT MIN(cm.cover_retry_at) FROM tidal_matches cm
+			-- A cover not tried yet is due now.
+			(SELECT MIN(COALESCE(cm.cover_retry_at, NOW())) FROM tidal_matches cm
 			 WHERE cm.cover_url <> '' AND cm.cover_album_id IS NOT NULL))`).Scan(&at)
 	if err != nil || at == nil {
 		return time.Time{}, false, err
@@ -443,12 +444,14 @@ func (s *Store) CoverFailed(ctx context.Context, trackID uuid.UUID) error {
 	return err
 }
 
-// AlbumHasCover reports whether an album has shared artwork. An album that
-// is gone reports true, as there is nothing to fill.
+// AlbumHasCover reports whether an album needs no release cover: it has
+// shared artwork, an admin edited it since the match (the cover may no
+// longer fit), or it is gone.
 func (s *Store) AlbumHasCover(ctx context.Context, albumID uuid.UUID) (bool, error) {
 	var has bool
 	err := s.db.QueryRow(ctx, `
-		SELECT COALESCE(cover_art_path, '') <> '' FROM albums WHERE id = $1`, albumID).Scan(&has)
+		SELECT COALESCE(cover_art_path, '') <> '' OR metadata_edited_at IS NOT NULL
+		FROM albums WHERE id = $1`, albumID).Scan(&has)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return true, nil
 	}

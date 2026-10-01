@@ -921,7 +921,7 @@ func (s *Store) SetTrackAlbumCover(ctx context.Context, trackID uuid.UUID, cover
 }
 
 // SetAlbumCoverIfMissing points an album without artwork at coverPath; an
-// album that has some keeps it.
+// album that has some, or that an admin edited, keeps what it has.
 func (s *Store) SetAlbumCoverIfMissing(ctx context.Context, albumID uuid.UUID, coverPath string) error {
 	coverPath = dbtext.Clean(coverPath)
 	if coverPath == "" {
@@ -929,7 +929,7 @@ func (s *Store) SetAlbumCoverIfMissing(ctx context.Context, albumID uuid.UUID, c
 	}
 	_, err := s.db.Exec(ctx, `
 		UPDATE albums SET cover_art_path = $2, updated_at = NOW()
-		WHERE id = $1 AND NULLIF(cover_art_path, '') IS NULL`, albumID, coverPath)
+		WHERE id = $1 AND NULLIF(cover_art_path, '') IS NULL AND metadata_edited_at IS NULL`, albumID, coverPath)
 	return err
 }
 
