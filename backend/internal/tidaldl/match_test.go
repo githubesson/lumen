@@ -1583,3 +1583,31 @@ func TestChoiceGivesWayToLinkAndStaleOutcomesWait(t *testing.T) {
 		t.Fatalf("summary %+v → %+v; a track changed since its outcome should count as waiting", before, after)
 	}
 }
+
+// A track resting after a no-match comes due again once its album is
+// linked to a release, which can now settle it.
+func TestRestingTrackDueOnceAlbumLinked(t *testing.T) {
+	f := newMatchFixture(t)
+	ctx := context.Background()
+	main := "Main " + f.run
+	albumID := f.album("Record "+f.run, main, 0)
+	id := f.track(localTrack{title: "Song", artists: []string{main}, album: &albumID, duration: 100_000})
+	store := NewStore(f.pool)
+	if err := store.RecordMatch(ctx, id, MatchOutcome{Status: MatchUnmatched}); err != nil {
+		t.Fatal(err)
+	}
+	pending := func() bool {
+		ids, err := store.PendingMatchAlbums(ctx, 10_000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return containsID(ids, albumID)
+	}
+	if pending() {
+		t.Fatal("a resting album is pending")
+	}
+	f.exec(`UPDATE albums SET tidal_album_id = $2 WHERE id = $1`, albumID, "saved"+f.run)
+	if !pending() {
+		t.Fatal("an album linked since its tracks' no-match isn't pending")
+	}
+}
