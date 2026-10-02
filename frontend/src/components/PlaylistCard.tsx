@@ -5,6 +5,7 @@ import {
   Users as UsersIcon,
 } from "lucide-react";
 import { playlistArtUrl, type Playlist } from "../api";
+import { playlistSubtitle } from "@music-library/core/playlist-details";
 import CoverArt from "./CoverArt";
 
 // Cards are at most 168px wide; enough for a 2x screen.
@@ -46,11 +47,7 @@ export default function PlaylistCard({ playlist }: { playlist: Playlist }) {
             />
           )}
         </div>
-        <div className="card-sub">
-          {playlist.effective_role && playlist.effective_role !== "owner"
-            ? playlist.effective_role
-            : playlist.visibility}
-        </div>
+        <div className="card-sub">{playlistSubtitle(playlist)}</div>
       </div>
     </Link>
   );

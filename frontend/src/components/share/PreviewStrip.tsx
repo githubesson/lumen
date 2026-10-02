@@ -1,4 +1,5 @@
 import {
+  snippetDragTarget,
   snippetHandleBounds,
   adjustSnippetWindow,
 } from "@music-library/core/share-snippet";
@@ -114,26 +115,16 @@ export default function PreviewStrip({
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     const el = stripRef.current;
     if (!el || durationSec <= 0) return;
-    const atSec = pointerSec(event.clientX);
-    const edgeHitSec = (14 / el.getBoundingClientRect().width) * durationSec;
-    const startDistance = Math.abs(atSec - startSec);
-    const endDistance = Math.abs(atSec - endSec);
-
-    if (Math.min(startDistance, endDistance) <= edgeHitSec) {
-      if (startDistance <= endDistance) {
-        beginDrag("start", event, atSec - startSec);
-      } else {
-        beginDrag("end", event, atSec - endSec);
-      }
-      return;
-    }
-
-    if (atSec >= startSec && atSec <= endSec) {
-      beginDrag("window", event, atSec - startSec);
-      return;
-    }
-
-    beginDrag("window", event, (endSec - startSec) / 2);
+    const target = snippetDragTarget({
+      atSec: pointerSec(event.clientX),
+      startSec,
+      endSec,
+      durationSec,
+      widthPx: el.getBoundingClientRect().width,
+    });
+    // Every grab applies the pointer at once; outside the window that's
+    // what recenters it there.
+    beginDrag(target.kind, event, target.grabOffsetSec);
   };
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!dragRef.current) return;

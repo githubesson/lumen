@@ -1,8 +1,13 @@
+import type { TrackArtist } from "./api";
 import {
   DEFAULT_SHARE_SNIPPET_DURATION_SEC,
   MAX_SHARE_SNIPPET_DURATION_SEC,
   MIN_SHARE_SNIPPET_DURATION_SEC,
+  parseTrackShareUrl,
+  primaryArtistName,
+  type TrackShareRef,
 } from "./api-media";
+import { sanitizeFilename } from "./audio-format";
 
 /** Bounds used by both the preview and its trim controls, in seconds. */
 export function snippetWindow(
@@ -131,4 +136,87 @@ export function snippetHandleBounds({
     minEndSec: Math.min(selectableEndSec, startSec + minDurationSec),
     maxEndSec: Math.min(selectableEndSec, startSec + maxDurationSec),
   };
+}
+
+/** How close, in pixels, a press has to land to an edge to grab it rather than the window. */
+export const SNIPPET_EDGE_HIT_PX = 14;
+
+/**
+ * What a press on the strip grabs. Within `SNIPPET_EDGE_HIT_PX` of an edge it
+ * grabs the nearer edge; inside the window, the window where it was pressed;
+ * outside, the window by its middle, `recenter` asking the caller to move it
+ * there at once. `grabOffsetSec` is subtracted from later pointer positions,
+ * so the grabbed spot stays under the finger.
+ */
+export function snippetDragTarget({
+  atSec,
+  startSec,
+  endSec,
+  durationSec,
+  widthPx,
+}: {
+  atSec: number;
+  startSec: number;
+  endSec: number;
+  durationSec: number;
+  widthPx: number;
+}): { kind: "start" | "end" | "window"; grabOffsetSec: number; recenter: boolean } {
+  const edgeHitSec = widthPx > 0 ? (SNIPPET_EDGE_HIT_PX / widthPx) * durationSec : 0;
+  const startDistance = Math.abs(atSec - startSec);
+  const endDistance = Math.abs(atSec - endSec);
+  if (Math.min(startDistance, endDistance) <= edgeHitSec) {
+    return startDistance <= endDistance
+      ? { kind: "start", grabOffsetSec: atSec - startSec, recenter: false }
+      : { kind: "end", grabOffsetSec: atSec - endSec, recenter: false };
+  }
+  if (atSec >= startSec && atSec <= endSec) {
+    return { kind: "window", grabOffsetSec: atSec - startSec, recenter: false };
+  }
+  return { kind: "window", grabOffsetSec: (endSec - startSec) / 2, recenter: true };
+}
+
+/**
+ * A share page's own parameters (the route's track id and the `t`, `d` and
+ * `sig` query values) checked by the same rules as a pasted share URL. They
+ * are put back into a share path and read with `parseTrackShareUrl`, so there
+ * is one validator to keep in step with the server.
+ */
+export function parseTrackShareParams({
+  trackId,
+  t,
+  d,
+  sig,
+}: {
+  trackId: string | null | undefined;
+  t: string | null | undefined;
+  d: string | null | undefined;
+  sig: string | null | undefined;
+}): TrackShareRef | null {
+  if (!trackId) return null;
+  const query = new URLSearchParams();
+  if (t != null) query.set("t", t);
+  if (d != null) query.set("d", d);
+  if (sig != null) query.set("sig", sig);
+  const ref = parseTrackShareUrl(
+    `/share/track/${encodeURIComponent(trackId)}?${query.toString()}`,
+  );
+  return ref && { ...ref, trackId };
+}
+
+/**
+ * The file name (without extension) for a saved clip: "Artist - Title
+ * (clip)", made filename-safe. A track with no known artist is just "Title
+ * (clip)" rather than "Unknown artist - …".
+ */
+export function shareClipName(
+  track:
+    | { title?: string | null; artist?: string | null; artists?: TrackArtist[] }
+    | null
+    | undefined,
+): string {
+  const artist = (
+    track?.artists?.length ? primaryArtistName(track, "") : (track?.artist ?? "")
+  ).trim();
+  const title = track?.title?.trim() || "Lumen";
+  return sanitizeFilename(`${artist ? `${artist} - ` : ""}${title} (clip)`);
 }

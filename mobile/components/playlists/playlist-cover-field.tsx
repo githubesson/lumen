@@ -14,6 +14,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   api,
   errorMessage,
+  playlistCoverSizeError,
   playlistCoverUrl,
   type Playlist,
 } from "@music-library/core";
@@ -88,6 +89,13 @@ export function PlaylistCoverField({
     }
     if (result.canceled || result.assets.length === 0) return;
     const asset = result.assets[0];
+    // The picker doesn't always know the size; the server checks it anyway.
+    const tooLarge = playlistCoverSizeError(asset.fileSize);
+    if (tooLarge) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setError(tooLarge);
+      return;
+    }
     await run(
       () =>
         api.setPlaylistCover(playlist.id, {

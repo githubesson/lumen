@@ -1,4 +1,8 @@
-import { snippetHandleBounds, adjustSnippetWindow } from "@music-library/core/share-snippet";
+import {
+  adjustSnippetWindow,
+  snippetDragTarget,
+  snippetHandleBounds,
+} from "@music-library/core/share-snippet";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   PanResponder,
@@ -15,7 +19,6 @@ import { useTheme } from "../../theme/theme";
 import { selectionTint } from "./selection-tint";
 
 const WAVEFORM_BARS = 64;
-const EDGE_HIT_WIDTH = 14;
 const ADJUST_ACTIONS = [
   { name: "decrement" as const, label: "Move one second earlier" },
   { name: "increment" as const, label: "Move one second later" },
@@ -96,36 +99,20 @@ export function WaveformRegionSelector({
     (x: number) => {
       const availableWidth = widthRef.current;
       if (availableWidth <= 0 || durationSec <= 0) return;
-      const atSec = clamp(x / availableWidth, 0, 1) * durationSec;
-      const edgeHitSec = (EDGE_HIT_WIDTH / availableWidth) * durationSec;
-      const startDistance = Math.abs(atSec - startSec);
-      const endDistance = Math.abs(atSec - endSec);
-
-      if (Math.min(startDistance, endDistance) <= edgeHitSec) {
-        const kind = startDistance <= endDistance ? "start" : "end";
-        const edgeSec = kind === "start" ? startSec : endSec;
-        dragRef.current = {
-          kind,
-          grabOffsetSec: atSec - edgeSec,
-          anchorStartSec: startSec,
-          anchorEndSec: endSec,
-        };
-      } else if (atSec >= startSec && atSec <= endSec) {
-        dragRef.current = {
-          kind: "window",
-          grabOffsetSec: atSec - startSec,
-          anchorStartSec: startSec,
-          anchorEndSec: endSec,
-        };
-      } else {
-        dragRef.current = {
-          kind: "window",
-          grabOffsetSec: (endSec - startSec) / 2,
-          anchorStartSec: startSec,
-          anchorEndSec: endSec,
-        };
-        updateDrag(x);
-      }
+      const { kind, grabOffsetSec, recenter } = snippetDragTarget({
+        atSec: clamp(x / availableWidth, 0, 1) * durationSec,
+        startSec,
+        endSec,
+        durationSec,
+        widthPx: availableWidth,
+      });
+      dragRef.current = {
+        kind,
+        grabOffsetSec,
+        anchorStartSec: startSec,
+        anchorEndSec: endSec,
+      };
+      if (recenter) updateDrag(x);
 
       if (process.env.EXPO_OS === "ios") void Haptics.selectionAsync();
     },
@@ -179,16 +166,19 @@ export function WaveformRegionSelector({
     maxDurationSec: maxSnippetDurationSec,
   });
 
-  const moveWindowBy = (delta: number) => {
-    onWindowChange(clamp(startSec + delta, 0, maxStartSec), endSec - startSec);
-  };
-  const moveStartBy = (delta: number) => {
-    const nextStart = clamp(startSec + delta, minStartSec, maxResizeStartSec);
-    onWindowChange(nextStart, endSec - nextStart);
-  };
-  const moveEndBy = (delta: number) => {
-    const nextEnd = clamp(endSec + delta, minEndSec, maxEndSec);
-    onWindowChange(startSec, nextEnd - startSec);
+  // Accessibility steps go through the same clamping as a drag.
+  const stepBy = (kind: "start" | "end" | "window", delta: number) => {
+    const next = adjustSnippetWindow({
+      kind,
+      atSec: (kind === "end" ? endSec : startSec) + delta,
+      startSec,
+      endSec,
+      durationSec,
+      minDurationSec: minSnippetDurationSec,
+      maxDurationSec: maxSnippetDurationSec,
+      maxStartSec,
+    });
+    onWindowChange(next.startSec, next.durationSec);
   };
 
   return (
@@ -241,8 +231,8 @@ export function WaveformRegionSelector({
             }}
             accessibilityActions={ADJUST_ACTIONS}
             onAccessibilityAction={({ nativeEvent }) => {
-              if (nativeEvent.actionName === "decrement") moveWindowBy(-1);
-              if (nativeEvent.actionName === "increment") moveWindowBy(1);
+              if (nativeEvent.actionName === "decrement") stepBy("window", -1);
+              if (nativeEvent.actionName === "increment") stepBy("window", 1);
             }}
             style={[
               styles.selectionRegion,
@@ -267,8 +257,8 @@ export function WaveformRegionSelector({
             }}
             accessibilityActions={ADJUST_ACTIONS}
             onAccessibilityAction={({ nativeEvent }) => {
-              if (nativeEvent.actionName === "decrement") moveStartBy(-1);
-              if (nativeEvent.actionName === "increment") moveStartBy(1);
+              if (nativeEvent.actionName === "decrement") stepBy("start", -1);
+              if (nativeEvent.actionName === "increment") stepBy("start", 1);
             }}
             style={[
               styles.selectionHandle,
@@ -292,8 +282,8 @@ export function WaveformRegionSelector({
             }}
             accessibilityActions={ADJUST_ACTIONS}
             onAccessibilityAction={({ nativeEvent }) => {
-              if (nativeEvent.actionName === "decrement") moveEndBy(-1);
-              if (nativeEvent.actionName === "increment") moveEndBy(1);
+              if (nativeEvent.actionName === "decrement") stepBy("end", -1);
+              if (nativeEvent.actionName === "increment") stepBy("end", 1);
             }}
             style={[
               styles.selectionHandle,

@@ -14,7 +14,13 @@ import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, useAuth, type Playlist } from "@music-library/core";
+import {
+  api,
+  canAddToPlaylist,
+  playlistSubtitle,
+  useAuth,
+  type Playlist,
+} from "@music-library/core";
 import { EmptyState } from "../components/empty-state";
 import { PlaylistArtwork } from "../components/playlist-artwork";
 import { TRACK_FLASH_LIST_PERFORMANCE_PROPS } from "../components/list-performance";
@@ -109,11 +115,7 @@ export default function PlaylistPickerScreen() {
   });
 
   const editablePlaylists = useMemo(
-    () =>
-      (playlistsQuery.data ?? []).filter(
-        (playlist) =>
-          !playlist.effective_role || playlist.effective_role !== "viewer",
-      ),
+    () => (playlistsQuery.data ?? []).filter(canAddToPlaylist),
     [playlistsQuery.data],
   );
 
@@ -366,17 +368,12 @@ function PlaylistPickerRow({
           >
             {playlist.name}
           </Text>
-          {collaborative || playlist.effective_role ? (
-            <Text
-              numberOfLines={1}
-              style={{ color: theme.color.fgMuted, fontSize: 13 }}
-            >
-              {collaborative ? "Collaborative" : "Private"}
-              {playlist.effective_role && playlist.effective_role !== "owner"
-                ? ` - ${playlist.effective_role}`
-                : ""}
-            </Text>
-          ) : null}
+          <Text
+            numberOfLines={1}
+            style={{ color: theme.color.fgMuted, fontSize: 13 }}
+          >
+            {playlistSubtitle(playlist)}
+          </Text>
         </View>
         {selected ? (
           <ActivityIndicator color={theme.color.fgMuted} />

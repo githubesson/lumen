@@ -9,23 +9,18 @@ import { Select, type SelectOption } from "../../components/Select";
 import SettingRow from "../../components/SettingRow";
 import Switch from "../../components/Switch";
 import { pluralize } from "../../lib/format";
+import {
+  isValidPlaylistName,
+  playlistDetailsPayload,
+  samePlaylistDetails,
+  type PlaylistDetailsPayload,
+} from "@music-library/core/playlist-details";
+import type { PlaylistPermissions } from "@music-library/core/playlist-permissions";
 
 const VISIBILITY_OPTIONS: SelectOption<Visibility>[] = [
   { value: "private", label: "Private" },
   { value: "collaborative", label: "Collaborative" },
 ];
-
-export interface PlaylistDetails {
-  name: string;
-  description: string;
-  visibility: Visibility;
-}
-
-// Names are saved trimmed, so a trailing space isn't a pending edit.
-const sameDetails = (a: PlaylistDetails, b: PlaylistDetails) =>
-  a.name.trim() === b.name.trim() &&
-  a.description === b.description &&
-  a.visibility === b.visibility;
 
 /**
  * The playlist's Settings tab: cover, details and deletion for the owner,
@@ -35,8 +30,7 @@ const sameDetails = (a: PlaylistDetails, b: PlaylistDetails) =>
 export default function PlaylistSettingsPanel({
   hidden,
   playlist,
-  isOwner,
-  isAdmin,
+  permissions,
   nameInputRef,
   onSaveDetails,
   savingCover,
@@ -51,11 +45,10 @@ export default function PlaylistSettingsPanel({
   /** Kept mounted behind the other tabs, so unsaved edits survive a switch. */
   hidden: boolean;
   playlist: Playlist;
-  isOwner: boolean;
-  isAdmin: boolean;
+  permissions: PlaylistPermissions;
   nameInputRef: RefObject<HTMLInputElement>;
   /** Resolves once saved; rejects with the error to show. */
-  onSaveDetails: (details: PlaylistDetails) => Promise<void>;
+  onSaveDetails: (details: PlaylistDetailsPayload) => Promise<void>;
   savingCover: boolean;
   onPickCover: () => void;
   onRemoveCover: () => void;
@@ -65,13 +58,13 @@ export default function PlaylistSettingsPanel({
   onToggleAutoDownload: () => void;
   onDelete: () => void;
 }) {
-  const saved: PlaylistDetails = {
+  const saved: PlaylistDetailsPayload = {
     name: playlist.name,
     description: playlist.description ?? "",
     visibility: playlist.visibility,
   };
   // Null until edited, so a reload of the playlist shows through.
-  const [draft, setDraft] = useState<PlaylistDetails | null>(null);
+  const [draft, setDraft] = useState<PlaylistDetailsPayload | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const values = draft ?? saved;
@@ -80,16 +73,15 @@ export default function PlaylistSettingsPanel({
     (draft.name !== saved.name ||
       draft.description !== saved.description ||
       draft.visibility !== saved.visibility);
-  const edit = (patch: Partial<PlaylistDetails>) => setDraft({ ...values, ...patch });
+  const edit = (patch: Partial<PlaylistDetailsPayload>) => setDraft({ ...values, ...patch });
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
-    const name = values.name.trim();
-    if (!name) {
+    if (!isValidPlaylistName(values.name)) {
       setError("Give the playlist a name.");
       return;
     }
-    const submitted = { ...values, name };
+    const submitted = playlistDetailsPayload(values);
     setBusy(true);
     setError(null);
     try {
@@ -97,7 +89,7 @@ export default function PlaylistSettingsPanel({
       // Typing can carry on while the save is out; keep anything newer than
       // what was sent.
       setDraft((current) =>
-        current === null || sameDetails(current, submitted) ? null : current,
+        current === null || samePlaylistDetails(current, submitted) ? null : current,
       );
     } catch (err) {
       setError(errorMessage(err, "Failed to save."));
@@ -108,7 +100,7 @@ export default function PlaylistSettingsPanel({
 
   return (
     <div className="playlist-settings" hidden={hidden}>
-      {isOwner && (
+      {permissions.canEditDetails && (
         <Section title="Details">
           <form className="surface playlist-settings-card" onSubmit={save}>
             <SettingRow
@@ -205,7 +197,7 @@ export default function PlaylistSettingsPanel({
         </Section>
       )}
 
-      {isAdmin && (
+      {permissions.canToggleTidalAutoDownload && (
         <Section title="Downloads">
           <div className="surface playlist-settings-card">
             <SettingRow
@@ -232,7 +224,7 @@ export default function PlaylistSettingsPanel({
         </Section>
       )}
 
-      {isOwner && (
+      {permissions.canDelete && (
         <Section title="Danger zone">
           <div className="surface playlist-settings-card">
             <SettingRow

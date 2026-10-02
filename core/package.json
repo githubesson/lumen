@@ -32,7 +32,14 @@
     "./admin/music-roots": "./src/admin/music-roots.ts",
     "./tidal/status": "./src/tidal/status.ts",
     "./tidal/device-login": "./src/tidal/use-tidal-device-login.ts",
-    "./auth/errors": "./src/auth/errors.ts"
+    "./auth/errors": "./src/auth/errors.ts",
+    "./playlist-permissions": "./src/playlist-permissions.ts",
+    "./playlist-details": "./src/playlist-details.ts",
+    "./playlist-tracks": "./src/playlist-tracks.ts",
+    "./share-link-session": "./src/share-link-session.ts",
+    "./upload": "./src/upload.ts",
+    "./replay/replay": "./src/replay/replay.ts",
+    "./replay/use-local-day": "./src/replay/use-local-day.ts"
   },
   "peerDependencies": {
     "react": "^18.3.1 || ^19.0.0"

@@ -2,7 +2,16 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, errorMessage, useAuth, type Visibility } from "@music-library/core";
+import {
+  api,
+  errorMessage,
+  isValidPlaylistName,
+  playlistDetailsPayload,
+  playlistPermissions,
+  useAuth,
+  type Visibility,
+} from "@music-library/core";
+import { EmptyState } from "../../../../components/empty-state";
 import {
   FormError,
 } from "../../../../components/form-field";
@@ -14,10 +23,11 @@ import { qk } from "../../../../lib/query-keys";
 import { useTheme } from "../../../../theme/theme";
 
 /**
- * Edit an existing playlist's metadata, and for its owner the cover. Pushed
- * from the detail screen and hydrated once from the cached playlist query. `Save` / `Cancel`
- * live in the sheet's nav bar via `HeaderButton` so hit targets stay aligned
- * when the button swaps between label and spinner.
+ * Edit an existing playlist's metadata and cover, which only its owner may
+ * change. Pushed from the detail screen and hydrated once from the cached
+ * playlist query. `Save` / `Cancel` live in the sheet's nav bar via
+ * `HeaderButton` so hit targets stay aligned when the button swaps between
+ * label and spinner.
  */
 export default function EditPlaylistScreen() {
   const theme = useTheme();
@@ -53,11 +63,7 @@ export default function EditPlaylistScreen() {
 
   const saveMutation = useMutation({
     mutationFn: () =>
-      api.updatePlaylist(id!, {
-        name: name.trim(),
-        description: description.trim(),
-        visibility,
-      }),
+      api.updatePlaylist(id!, playlistDetailsPayload({ name, description, visibility })),
     onSuccess: () => {
       // User-scoped keys so the list and the detail screen both pick up the
       // edited name / description / visibility instead of staying stale.
@@ -68,13 +74,15 @@ export default function EditPlaylistScreen() {
   });
 
   const playlist = playlistQuery.data;
-  // Editors reach this screen too; only the owner may change the cover.
-  const isOwner =
-    !!playlist && (!playlist.effective_role || playlist.effective_role === "owner");
+  const permissions = playlistPermissions(playlist, me);
+  // The detail screen only offers Edit to the owner, but the playlist may
+  // have changed hands (or this screen been reached some other way) since.
+  const forbidden = hydrated && !permissions.canEditDetails;
 
   const canSubmit =
     hydrated &&
-    name.trim().length > 0 &&
+    permissions.canEditDetails &&
+    isValidPlaylistName(name) &&
     !saveMutation.isPending;
 
   return (
@@ -101,9 +109,11 @@ export default function EditPlaylistScreen() {
           <View style={{ paddingVertical: 48, alignItems: "center" }}>
             <ActivityIndicator color={theme.color.fgMuted} />
           </View>
+        ) : forbidden ? (
+          <EmptyState message="Only the playlist's owner can edit its details." />
         ) : (
           <>
-            {playlist && isOwner ? (
+            {playlist && permissions.canChangeCover ? (
               <PlaylistCoverField playlist={playlist} userId={userId} />
             ) : null}
             <PlaylistFields

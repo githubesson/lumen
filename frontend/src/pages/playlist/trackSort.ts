@@ -6,9 +6,9 @@ import type { SelectOption } from "../../components/Select";
 // ── Local sorting ────────────────────────────────────────────────────────────
 // Display-only: never touches the saved playlist order on the server.
 //
-// Title normalization and default directions come from core. The web's
-// comparator uses precomputed keys, with ordering checked against core's
-// comparator. Custom order with no search builds no keys.
+// The comparator, title normalization and default directions come from core;
+// the page passes core's comparator the title keys built here once per list.
+// Custom order with no search builds no keys.
 
 export {
   SORT_DEFAULT_ASC,
@@ -38,21 +38,4 @@ export function usePlaylistTrackKeys(tracks: PlaylistTrackEntry[] | null, sortKe
     [tracks, searching],
   );
   return { titleKeys, searchKeys };
-}
-
-const titleCollator = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
-
-export function compareIndexedEntries(
-  a: PlaylistTrackEntry,
-  b: PlaylistTrackEntry,
-  key: SortKey,
-  titleKeys: ReadonlyMap<PlaylistTrackEntry, string>,
-): number {
-  const byTitle = () => titleCollator.compare(titleKeys.get(a)!, titleKeys.get(b)!);
-  switch (key) {
-    case "title": return byTitle();
-    case "duration": return a.duration_ms - b.duration_ms || byTitle();
-    case "plays": return (a.play_count ?? 0) - (b.play_count ?? 0) || byTitle();
-    case "custom": return 0;
-  }
 }

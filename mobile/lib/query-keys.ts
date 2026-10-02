@@ -89,7 +89,9 @@ export const qk = {
   adminTidalAutoDownload: ["admin", "tidal-auto-download"] as const,
 
   // ---- replay ----
-  replay: (periodKey: string) => ["replay", periodKey] as const,
+  /** Keyed on `replayRequest(period).cacheKey`: the period and the days it
+   *  covers, so a rolling period's persisted answer can't outlive its window. */
+  replay: (cacheKey: string) => ["replay", cacheKey] as const,
 
   // ---- home ----
   /** Root of the home screen's library-derived sections. */

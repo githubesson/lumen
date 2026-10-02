@@ -38,17 +38,26 @@ import { useFavorites } from "../context/Favorites";
 import { usePlaylists } from "../context/Playlists";
 import { dropCache, readCache, writeCache } from "../lib/resourceCache";
 import { useKey } from "../lib/keybindings";
-import { fmtTotalMs } from "../lib/format";
+import { fmtTotalMs, pluralize } from "../lib/format";
+import {
+  playlistCoverSizeError,
+  type PlaylistDetailsPayload,
+} from "@music-library/core/playlist-details";
+import { playlistPermissions } from "@music-library/core/playlist-permissions";
+import {
+  PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS,
+  movePlaylistEntry,
+  queuedTidalCount,
+  removePlaylistEntry,
+} from "@music-library/core/playlist-tracks";
+import { compareSortableTracks, sortForDisplay } from "@music-library/core/track-sort";
 import CollaboratorsPanel from "./playlist/CollaboratorsPanel";
 import AddTracksDialog from "./playlist/AddTracksDialog";
-import PlaylistSettingsPanel, {
-  type PlaylistDetails,
-} from "./playlist/PlaylistSettingsPanel";
+import PlaylistSettingsPanel from "./playlist/PlaylistSettingsPanel";
 import PlaylistTracksPanel from "./playlist/PlaylistTracksPanel";
 import {
   SORT_DEFAULT_ASC,
   SORT_OPTIONS,
-  compareIndexedEntries,
   usePlaylistTrackKeys,
   type SortKey,
 } from "./playlist/trackSort";
@@ -56,13 +65,8 @@ import type { PlaylistTrackEntry } from "../api";
 
 type Tab = "tracks" | "collaborators" | "settings";
 const PLAYLIST_SELECTION_CONTROLS_ID = "playlist-track-selection-controls";
-// The server's own upload cap, checked first to skip a doomed upload.
-const MAX_COVER_BYTES = 16 << 20;
 // Header art is 200px wide; enough for a 2x screen.
 const HEADER_ART_SIZE = 400;
-// While TIDAL tracks are queued for download, refresh so rows flip to their
-// library copies without a manual reload.
-const AUTO_DOWNLOAD_REFRESH_MS = 20_000;
 
 interface CachedPlaylist {
   playlist: Playlist;
@@ -70,8 +74,9 @@ interface CachedPlaylist {
   collabs: Collaborator[];
 }
 const cacheKey = (id: string | undefined) => (id ? `playlist:${id}` : undefined);
+// Whether the list exists doesn't depend on the viewer's account role.
 const showsCollaborators = (p: Playlist) =>
-  p.effective_role === "owner" || p.visibility === "collaborative";
+  playlistPermissions(p, null).canSeeCollaborators;
 
 // The same pick as the header art, and as the server's list: the first track
 // with an album, else the first.
@@ -111,7 +116,6 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   const { play } = usePlayerControls();
   const { isFavorite, toggle: toggleFav } = useFavorites();
   const { me } = useAuth();
-  const isAdmin = me?.role === "admin";
 
   // A revisit starts from what this page showed last time; a first visit
   // starts from the sidebar's row, so the header is up while tracks load.
@@ -261,10 +265,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   }, [id, loadedPlaylist, tracks, collabs]);
 
   const autoDownload = Boolean(playlist?.tidal_auto_download);
-  const queuedTidal = useMemo(
-    () => (tracks ?? []).filter((t) => t.source === "tidal").length,
-    [tracks],
-  );
+  const queuedTidal = useMemo(() => queuedTidalCount(tracks ?? []), [tracks]);
   useEffect(() => {
     if (!id || !autoDownload || queuedTidal === 0) return;
     let controller: AbortController | null = null;
@@ -283,7 +284,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         .catch(() => {})
         .finally(() => { if (controller === request) controller = null; });
     };
-    const timer = window.setInterval(refresh, AUTO_DOWNLOAD_REFRESH_MS);
+    const timer = window.setInterval(refresh, PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS);
     document.addEventListener("visibilitychange", refresh);
     return () => {
       window.clearInterval(timer);
@@ -298,12 +299,10 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   const q = searchQuery.trim().toLowerCase();
   const { titleKeys, searchKeys } = usePlaylistTrackKeys(tracks, sortKey, q);
   const sortedTracks = useMemo(() => {
-    const base = tracks ?? [];
-    if (sortKey === "custom") return base;
-    const sorted = [...base].sort((a, b) =>
-      compareIndexedEntries(a, b, sortKey, titleKeys!),
+    const titleKeyOf = (t: PlaylistTrackEntry) => titleKeys!.get(t)!;
+    return sortForDisplay(tracks ?? [], sortKey, sortAsc, (a, b) =>
+      compareSortableTracks(a, b, sortKey, titleKeyOf),
     );
-    return sortAsc ? sorted : sorted.reverse();
   }, [tracks, sortKey, sortAsc, titleKeys]);
   const queue = useMemo(() => sortedTracks.map(toQueueItem), [sortedTracks]);
   const queueById = useMemo(() => {
@@ -343,10 +342,11 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     );
   }
 
-  const role = playlist.effective_role ?? "";
-  const isOwner = role === "owner";
-  const canEdit = isOwner || role === "editor";
-  const hasSettings = isOwner || isAdmin;
+  const permissions = playlistPermissions(playlist, me);
+  const { role } = permissions;
+  const canEdit = permissions.canEditTracks;
+  const hasSettings =
+    permissions.canEditDetails || permissions.canToggleTidalAutoDownload;
   // Rows name who added them on a shared playlist, or once anyone but the
   // owner has (a playlist made private keeps its collaborators' tracks).
   const showAddedBy =
@@ -434,15 +434,13 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   };
   const onRemove = async (position: number) => {
     if (!id || !tracks) return;
-    const next = tracks.filter((track) => track.position !== position).map((track, index) => track.position === index ? track : { ...track, position: index });
+    const next = removePlaylistEntry(tracks, position);
     await commitTracks(next, () => api.removePlaylistTrack(id, position), "Failed to remove track.");
   };
   const onReorder = async (from: number, to: number) => {
     if (!id || !tracks || from === to) return;
-    const next = [...tracks];
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved);
-    await commitTracks(next.map((track, position) => track.position === position ? track : { ...track, position }), () => api.reorderPlaylist(id, next.map((track) => track.track_id)), "Failed to reorder tracks.");
+    const next = movePlaylistEntry(tracks, from, to);
+    await commitTracks(next, () => api.reorderPlaylist(id, next.map((track) => track.track_id)), "Failed to reorder tracks.");
   };
 
   // Dragging only makes sense against the saved order with nothing filtered
@@ -466,7 +464,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     }
   };
 
-  const onSaveDetails = async (details: PlaylistDetails) => {
+  const onSaveDetails = async (details: PlaylistDetailsPayload) => {
     if (!id) return;
     invalidateLoads();
     try {
@@ -504,8 +502,9 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
 
   const onCoverFile = (file: File) => {
     if (!id) return;
-    if (file.size > MAX_COVER_BYTES) {
-      setError("That image is over 16 MB. Choose a smaller one.");
+    const tooLarge = playlistCoverSizeError(file.size);
+    if (tooLarge) {
+      setError(tooLarge);
       return;
     }
     void changeCover(() => api.setPlaylistCover(id, file), "Couldn't use that image.");
@@ -525,6 +524,15 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     });
   };
 
+  // Gone from the sidebar, the Playlists page and the cache before we land
+  // there, rather than whenever a refetch succeeds.
+  const leavePlaylist = () => {
+    invalidateLoads();
+    dropCache(cacheKey(id));
+    updatePlaylists((rows) => rows?.filter((p) => p.id !== id) ?? rows);
+    navigate("/playlists", { replace: true });
+  };
+
   const onDelete = async () => {
     if (
       !id ||
@@ -533,12 +541,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       return;
     try {
       await api.deletePlaylist(id);
-      // Gone from the sidebar, the Playlists page and the cache before we
-      // land there, rather than whenever a refetch succeeds.
-      invalidateLoads();
-      dropCache(cacheKey(id));
-      updatePlaylists((rows) => rows?.filter((p) => p.id !== id) ?? rows);
-      navigate("/playlists", { replace: true });
+      leavePlaylist();
     } catch (err) {
       setError(errorMessage(err, "Failed to delete."));
     }
@@ -546,7 +549,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
 
   return (
     <div className="view" style={{ display: "grid", gap: 18 }}>
-      {isOwner && (
+      {permissions.canChangeCover && (
         <input
           ref={coverInputRef}
           type="file"
@@ -585,7 +588,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
           </>
         }
         title={
-          isOwner ? (
+          permissions.canEditDetails ? (
             <button
               type="button"
               className="detail-title-edit"
@@ -611,16 +614,14 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
             // Plain art until the tracks say whether there's a cover, rather
             // than a note that gets swapped for one.
             showFallbackIcon={tracks !== null}
-            onPick={isOwner ? pickCover : undefined}
+            onPick={permissions.canChangeCover ? pickCover : undefined}
             saving={savingCover}
           />
         }
         meta={
           <>
             <span>
-              {tracks === null
-                ? "—"
-                : `${tracks.length} ${tracks.length === 1 ? "track" : "tracks"}`}
+              {tracks === null ? "—" : pluralize(tracks.length, "track")}
             </span>
             {tracks && tracks.length > 0 && (
               <>
@@ -671,7 +672,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
           onChange={setTab}
           options={[
             { value: "tracks", label: "Tracks" },
-            ...(playlist.visibility === "collaborative" || isOwner
+            ...(permissions.canSeeCollaborators
               ? [
                   {
                     value: "collaborators",
@@ -778,9 +779,10 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         <CollaboratorsPanel
           playlistId={id!}
           collaborators={collabs}
-          isOwner={isOwner}
-          canInvite={isOwner && playlist.visibility === "collaborative"}
+          permissions={permissions}
+          me={me}
           onChanged={load}
+          onLeft={leavePlaylist}
         />
       )}
 
@@ -788,8 +790,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         <PlaylistSettingsPanel
           hidden={tab !== "settings"}
           playlist={playlist}
-          isOwner={isOwner}
-          isAdmin={isAdmin}
+          permissions={permissions}
           nameInputRef={nameInputRef}
           onSaveDetails={onSaveDetails}
           savingCover={savingCover}

@@ -1,5 +1,6 @@
 import {
   normalizeSnippetSelection,
+  shareClipName,
   snippetWindow,
 } from "@music-library/core/share-snippet";
 import { useEffect, useMemo, useState } from "react";
@@ -8,7 +9,6 @@ import {
   Pause as PauseIcon,
   Play as PlayIcon,
 } from "lucide-react";
-import { sanitizeFilename } from "@music-library/core/audio-format";
 import {
   DEFAULT_SHARE_SNIPPET_DURATION_SEC,
   errorMessage,
@@ -154,7 +154,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
       if (!ref) throw new Error("Couldn't read the generated share link.");
       const a = document.createElement("a");
       a.href = trackSharePreviewVideoUrl(ref);
-      a.download = `${sanitizeFilename(`${primaryArtistName(track)} - ${track.title} (clip)`)}.mp4`;
+      a.download = `${shareClipName(track)}.mp4`;
       a.rel = "noopener";
       document.body.appendChild(a);
       a.click();
