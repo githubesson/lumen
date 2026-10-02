@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
-  canStartTrack,
   fisherYatesWithAnchor,
   useAuth,
   type Playlist,
@@ -14,12 +13,14 @@ import {
   usePlayerPlayback,
 } from "../context/player";
 import {
+  cachedSiriCatalog,
   loadSiriMediaQueue,
   resolveSiriMediaRequest,
   trackSiriMediaItem,
 } from "../lib/siri-media";
 import { diagnosticsLog } from "../lib/diagnostics/log";
-import { isTrackPlayableOffline } from "../lib/offline-mode";
+import { offlineStore } from "../lib/offline-mode";
+import { startableListTracks } from "../lib/use-play-queue";
 import { qk } from "../lib/query-keys";
 import { QUERY_STALE_TIME } from "../lib/query-policy";
 import {
@@ -62,6 +63,8 @@ function waitForPlayerHandoff() {
  */
 export function SiriMediaBridge() {
   const { status, me } = useAuth();
+  const queryClient = useQueryClient();
+  const userId = me?.id;
   const controls = usePlayerControls();
   const current = useCurrentTrack();
   const { isPlaying, shuffle } = usePlayerPlayback();
@@ -73,7 +76,7 @@ export function SiriMediaBridge() {
   const available = isSiriMediaAvailable();
 
   const playlistsQuery = useQuery({
-    queryKey: qk.playlists(me?.id),
+    queryKey: qk.playlists(userId),
     queryFn: ({ signal }) => api.listPlaylists({ signal }),
     enabled: available && authorization === "authorized" && status === "authed",
     staleTime: QUERY_STALE_TIME.default,
@@ -159,8 +162,11 @@ export function SiriMediaBridge() {
           return;
         }
 
+        const catalog = cachedSiriCatalog(queryClient, userId, () =>
+          offlineStore.isOffline(),
+        );
         const [entity] = hasRequestedMedia
-          ? await resolveSiriMediaRequest(request, controller.signal)
+          ? await resolveSiriMediaRequest(request, controller.signal, catalog)
           : [];
         if (hasRequestedMedia && !entity) {
           diagnosticsLog.append({
@@ -174,11 +180,9 @@ export function SiriMediaBridge() {
           return;
         }
         const loadedQueue = entity
-          ? await loadSiriMediaQueue(entity, controller.signal)
-          : await api.listRecent(100, { signal: controller.signal });
-        const playableQueue = loadedQueue.filter((track) =>
-          canStartTrack(track, isTrackPlayableOffline),
-        );
+          ? await loadSiriMediaQueue(entity, controller.signal, catalog)
+          : await catalog.listRecent(100, { signal: controller.signal });
+        const playableQueue = startableListTracks(loadedQueue);
         if (!playableQueue.length) {
           diagnosticsLog.append({
             scope: "siri",
@@ -235,7 +239,7 @@ export function SiriMediaBridge() {
         clearTimeout(timeout);
       }
     },
-    [controls, current, rememberRequest, shuffle, status],
+    [controls, current, queryClient, rememberRequest, shuffle, status, userId],
   );
 
   // Reads the latest player state when a request arrives, so the listener

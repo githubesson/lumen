@@ -351,7 +351,9 @@ export default function RegisterScreen() {
 
       <TextAction
         label="Already have an account? Sign in"
-        onPress={() => router.replace("/(auth)/login")}
+        // Back to the Sign in screen that pushed this one, if any, rather than
+        // stacking a second copy on top; from Welcome or a link it replaces.
+        onPress={() => router.dismissTo("/(auth)/login")}
       />
     </FormScreen>
   );

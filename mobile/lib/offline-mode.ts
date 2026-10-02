@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import { useSyncExternalStore } from "react";
+import { canStartTrack, type TrackListItem } from "@music-library/core";
 import { downloadStore } from "./downloads/download-store";
 
 /**
@@ -76,6 +77,12 @@ export const offlineStore = new OfflineStore();
  */
 export function isTrackPlayableOffline(trackId: string): boolean {
   return !offlineStore.isOffline() || downloadStore.isDownloaded(trackId);
+}
+
+/** A list's tracks that can start now: still available, and downloaded when
+ *  offline. */
+export function startableTracks<T extends TrackListItem>(tracks: readonly T[] = []): T[] {
+  return tracks.filter((track) => canStartTrack(track, isTrackPlayableOffline));
 }
 
 // The third argument is required: app.json sets web.output "static", so Expo

@@ -105,6 +105,15 @@ export const useRemotePlayback = useRemotePlaybackCtx;
 
 const LOCK_SCREEN_OPTIONS: AudioLockScreenOptions = {};
 
+// A module value rather than context, so list buttons can read it when
+// pressed without every screen re-rendering on each remote update.
+let playingRemotely = false;
+
+/** Whether play commands go to another device right now. */
+export function isPlayingRemotely(): boolean {
+  return playingRemotely;
+}
+
 function canPlayLocally(track: TrackListItem): boolean {
   if (isTrackPlayableOffline(track.id)) return true;
   void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
@@ -174,6 +183,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     canPlayLocally,
   });
   const { targetDevice } = remote;
+  const remoteTarget = targetDevice != null;
+  useEffect(() => {
+    playingRemotely = remoteTarget;
+    return () => {
+      playingRemotely = false;
+    };
+  }, [remoteTarget]);
 
   const lockScreenActiveRef = useRef(false);
   const nowPlayingMetadata = useMemo(

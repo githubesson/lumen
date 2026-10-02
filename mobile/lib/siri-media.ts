@@ -8,11 +8,15 @@ import {
   type TrackListItem,
 } from "@music-library/core";
 
+import type { QueryClient, QueryKey } from "@tanstack/react-query";
+
 import type {
   SiriMediaItem,
   SiriMediaKind,
   SiriPlayMediaRequest,
 } from "../modules/siri-media";
+import { qk } from "./query-keys";
+import { isRefusal } from "./query-policy";
 
 type SiriCatalogApi = Pick<
   typeof api,
@@ -23,8 +27,61 @@ type SiriCatalogApi = Pick<
   | "listArtistTracks"
   | "listPlaylists"
   | "listPlaylistTracks"
+  | "listRecent"
   | "searchTracks"
 >;
+
+/**
+ * Siri's catalog reads for a signed-in user, the way CarPlay reads its lists:
+ * from the server when online, falling back to the query cache the screens
+ * fill (and persist to disk) under the same keys when the server can't be
+ * reached, and from that cache alone when offline. Successful reads go into
+ * that cache; a refusal (see `isRefusal`) drops the cached copy instead.
+ * That's what lets "play <playlist>" reach its downloaded tracks with no
+ * network. Name searches have nothing cached to read and still fail.
+ */
+export function cachedSiriCatalog(
+  queryClient: QueryClient,
+  userId: string | undefined,
+  isOffline: () => boolean,
+  client: SiriCatalogApi = api,
+): SiriCatalogApi {
+  const read = async <T>(queryKey: QueryKey, fetch: () => Promise<T>): Promise<T> => {
+    if (!isOffline()) {
+      try {
+        const data = await fetch();
+        queryClient.setQueryData(queryKey, data);
+        return data;
+      } catch (error) {
+        if (isRefusal(error)) {
+          queryClient.removeQueries({ queryKey, exact: true });
+          throw error;
+        }
+        const cached = queryClient.getQueryData<T>(queryKey);
+        if (cached === undefined) throw error;
+        return cached;
+      }
+    }
+    const cached = queryClient.getQueryData<T>(queryKey);
+    if (cached === undefined) throw new Error("Not available offline");
+    return cached;
+  };
+  return {
+    ...client,
+    getTrack: (id, options) =>
+      read(qk.track(userId, id), () => client.getTrack(id, options)),
+    listAlbumTracks: (id, options) =>
+      read(qk.albumTracks(userId, id), () => client.listAlbumTracks(id, options)),
+    listArtistTracks: (id, options) =>
+      read(qk.artistTracks(userId, id), () => client.listArtistTracks(id, options)),
+    listPlaylists: (options) =>
+      read(qk.playlists(userId), () => client.listPlaylists(options)),
+    listPlaylistTracks: (id, options) =>
+      read(qk.playlistTracks(userId, id), () => client.listPlaylistTracks(id, options)),
+    listRecent: (limit, options) =>
+      read(qk.recent(userId), () => client.listRecent(limit, options)),
+  };
+}
 
 const ENTITY_PREFIX = "lumen";
 const MAX_SIRI_RESULTS = 5;

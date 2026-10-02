@@ -208,10 +208,24 @@ class AutoDownloadStore {
     }
   }
 
-  /** Forget a deleted playlist, including downloads absent from the screen cache. */
+  /**
+   * Forget a deleted or left playlist, including downloads absent from the
+   * screen cache. Best effort and never throws: the playlist is already gone
+   * on the server, so a local failure must not read as the action failing.
+   */
   async removePlaylist(playlistId: string): Promise<void> {
-    await this.setEnabled(playlistId, false);
-    await this.downloads.removePlaylist(playlistId);
+    try {
+      await this.setEnabled(playlistId, false);
+      await this.downloads.removePlaylist(playlistId);
+    } catch (error) {
+      diagnosticsLog.append({
+        scope: "auto-sync",
+        level: "error",
+        event: "forget-failed",
+        message: `Could not clear downloads for removed playlist ${playlistId}: ${describeError(error)}`,
+        playlistId,
+      });
+    }
   }
 
   /** Sync every opted-in playlist. Sequential to avoid a burst of requests. */

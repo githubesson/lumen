@@ -1,6 +1,9 @@
+import { ApiError } from "@music-library/core";
+import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  cachedSiriCatalog,
   decodeSiriMediaIdentifier,
   loadSiriMediaQueue,
   rankNamedSiriItems,
@@ -8,6 +11,7 @@ import {
   siriMediaIdentifier,
 } from "../lib/siri-media";
 import type { SiriPlayMediaRequest } from "../modules/siri-media";
+import { qk } from "../lib/query-keys";
 
 function request(
   input: Partial<SiriPlayMediaRequest>,
@@ -181,5 +185,84 @@ describe("Siri catalog matching", () => {
         cover_url: undefined,
       },
     ]);
+  });
+});
+
+describe("cachedSiriCatalog", () => {
+  const playlistTracks = {
+    tracks: [{ position: 1, track_id: "t-1", title: "Downloaded", duration_ms: 1, added_at: "", play_count: 0 }],
+  };
+
+  it("reads what the screens cached while offline", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(qk.playlistTracks("u-1", "p-1"), playlistTracks);
+    const client = { listPlaylistTracks: vi.fn() };
+    const catalog = cachedSiriCatalog(
+      queryClient,
+      "u-1",
+      () => true,
+      client as unknown as Parameters<typeof cachedSiriCatalog>[3],
+    );
+
+    await expect(
+      loadSiriMediaQueue({ identifier: "x", lumenId: "p-1", title: "Road Trip", type: "playlist" }, undefined, catalog),
+    ).resolves.toMatchObject([{ id: "t-1", title: "Downloaded" }]);
+    expect(client.listPlaylistTracks).not.toHaveBeenCalled();
+    // Nothing cached: fail rather than wait on a request that can't finish.
+    await expect(catalog.listAlbumTracks("a-1")).rejects.toThrow("Not available offline");
+  });
+
+  it("asks the server while online", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(qk.playlistTracks("u-1", "p-1"), { tracks: [] });
+    const client = { listPlaylistTracks: vi.fn().mockResolvedValue(playlistTracks) };
+    const catalog = cachedSiriCatalog(
+      queryClient,
+      "u-1",
+      () => false,
+      client as unknown as Parameters<typeof cachedSiriCatalog>[3],
+    );
+
+    await expect(catalog.listPlaylistTracks("p-1")).resolves.toBe(playlistTracks);
+    expect(client.listPlaylistTracks).toHaveBeenCalledWith("p-1", undefined);
+    // Kept for a later request with no network.
+    expect(queryClient.getQueryData(qk.playlistTracks("u-1", "p-1"))).toEqual(playlistTracks);
+  });
+
+  it("falls back to the cache when the server can't be reached", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(qk.playlistTracks("u-1", "p-1"), playlistTracks);
+    const unreachable = new Error("Network request failed");
+    const client = {
+      listPlaylistTracks: vi.fn().mockRejectedValue(unreachable),
+      listAlbumTracks: vi.fn().mockRejectedValue(unreachable),
+    };
+    const catalog = cachedSiriCatalog(
+      queryClient,
+      "u-1",
+      () => false,
+      client as unknown as Parameters<typeof cachedSiriCatalog>[3],
+    );
+
+    await expect(catalog.listPlaylistTracks("p-1")).resolves.toBe(playlistTracks);
+    await expect(catalog.listAlbumTracks("a-1")).rejects.toBe(unreachable);
+  });
+
+  it("doesn't play a cached copy of something the server refuses", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(qk.playlistTracks("u-1", "p-1"), playlistTracks);
+    const deleted = new ApiError(404, "not found");
+    const catalog = cachedSiriCatalog(
+      queryClient,
+      "u-1",
+      () => false,
+      { listPlaylistTracks: vi.fn().mockRejectedValue(deleted) } as unknown as Parameters<
+        typeof cachedSiriCatalog
+      >[3],
+    );
+
+    await expect(catalog.listPlaylistTracks("p-1")).rejects.toBe(deleted);
+    // Dropped, so a later request without a network can't play it either.
+    expect(queryClient.getQueryData(qk.playlistTracks("u-1", "p-1"))).toBeUndefined();
   });
 });

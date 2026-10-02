@@ -32,6 +32,7 @@ import {
   usePlaylistDownload,
 } from "../../lib/downloads";
 import { useIsOffline } from "../../lib/offline-mode";
+import { useImageFailure } from "../../lib/use-image-failure";
 import type { ThemeTokens } from "../../theme/theme";
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
@@ -52,8 +53,9 @@ const SORT_MENU_SYMBOLS: Record<SortKey, string> = {
 export const PLAYLIST_CONTROL_SIZE = 50;
 
 /**
- * Artwork for the playlist hero: the owner's uploaded cover, else a collage
- * of the tracks' covers.
+ * Artwork for the playlist hero: the owner's uploaded cover, else (or when it
+ * fails to load, e.g. offline with nothing cached at this size) a collage of
+ * the tracks' covers.
  */
 export function PlaylistHero({
   theme,
@@ -74,6 +76,8 @@ export function PlaylistHero({
         Math.round(size * PixelRatio.get()),
       )
     : null;
+  const customCoverFailure = useImageFailure(customUri);
+  const showCustom = customUri != null && !customCoverFailure.failed;
   const covers = useMemo(() => {
     const seen = new Set<string>();
     const unique: TrackListItem[] = [];
@@ -118,7 +122,7 @@ export function PlaylistHero({
           justifyContent: "center",
         }}
       >
-        {customUri ? (
+        {showCustom ? (
           <Image
             source={{ uri: customUri }}
             style={{ width: size, height: size }}
@@ -127,6 +131,7 @@ export function PlaylistHero({
             cachePolicy="memory-disk"
             priority="high"
             recyclingKey={customUri}
+            onError={customCoverFailure.onError}
           />
         ) : cells.length === 0 ? (
           <SymbolView

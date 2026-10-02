@@ -296,11 +296,74 @@ type TrackDetail struct {
 	PlayCount       int // viewer's all-time plays of this track
 }
 
+// TIDALQueue is where a playlist's auto-download stands, for clients that
+// poll for saved copies.
+type TIDALQueue struct {
+	// Queued entries are waiting for a download the worker will attempt now:
+	// a first attempt, or a failed one whose backoff has run out (the same
+	// rule as tidaldl's Pending).
+	Queued int
+	// RetryAt is when the next failed entry's backoff (up to a day) runs out,
+	// or nil when none is waiting.
+	RetryAt *time.Time
+}
+
+// queryer is what the playlist reads need from a pool or a transaction.
+type queryer interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// TracksWithQueue reads a playlist's tracks (as TracksDetailed) and its TIDAL
+// queue from one snapshot. Read separately, a row added, restored or adopted
+// between the reads could be paired with a count that doesn't account for it,
+// such as a TIDAL row with nothing queued, and a client would stop polling
+// with that row still showing.
+func (s *Store) TracksWithQueue(ctx context.Context, id, viewerID uuid.UUID) ([]TrackDetail, TIDALQueue, error) {
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, TIDALQueue{}, err
+	}
+	defer tx.Rollback(ctx)
+	tracks, err := tracksDetailed(ctx, tx, id, viewerID)
+	if err != nil {
+		return nil, TIDALQueue{}, err
+	}
+	queue, err := tidalQueue(ctx, tx, id)
+	if err != nil {
+		return nil, TIDALQueue{}, err
+	}
+	return tracks, queue, tx.Commit(ctx)
+}
+
+// tidalQueue reports the playlist's TIDAL entries auto-download has yet to
+// save. Nothing is queued unless the playlist is opted in.
+func tidalQueue(ctx context.Context, db queryer, playlistID uuid.UUID) (TIDALQueue, error) {
+	var q TIDALQueue
+	err := db.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE d.status IS DISTINCT FROM 'failed'
+			                    OR d.next_attempt_at IS NULL
+			                    OR d.next_attempt_at <= NOW()),
+			MIN(d.next_attempt_at) FILTER (WHERE d.status = 'failed' AND d.next_attempt_at > NOW())
+		FROM playlist_tracks pt
+		JOIN playlists p ON p.id = pt.playlist_id AND p.tidal_auto_download
+		JOIN tracks t ON t.id = pt.track_id
+		 AND t.source = 'tidal' AND t.external_id <> '' AND t.deleted_at IS NULL
+		LEFT JOIN tidal_downloads d ON d.tidal_id = t.external_id
+		WHERE pt.playlist_id = $1`, playlistID).Scan(&q.Queued, &q.RetryAt)
+	return q, err
+}
+
 // TracksDetailed returns all tracks in a playlist visible to viewerID (global
 // tracks + viewer's own personal tracks). Other users' personal tracks are
 // silently omitted.
 func (s *Store) TracksDetailed(ctx context.Context, id, viewerID uuid.UUID) ([]TrackDetail, error) {
-	rows, err := s.db.Query(ctx, `
+	return tracksDetailed(ctx, s.db, id, viewerID)
+}
+
+func tracksDetailed(ctx context.Context, db queryer, id, viewerID uuid.UUID) ([]TrackDetail, error) {
+	rows, err := db.Query(ctx, `
 		SELECT
 			pt.position, pt.track_id, t.title, t.album_id, COALESCE(a.title, ''),
 			COALESCE(t.track_no, 0), t.duration_ms,

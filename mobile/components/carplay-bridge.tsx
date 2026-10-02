@@ -16,7 +16,6 @@ import {
 import {
   api,
   fisherYatesWithAnchor,
-  playableTracks,
   startListPlayback,
   toQueueItem,
   useAuth,
@@ -53,8 +52,9 @@ import {
   offlineStore,
   useIsOffline,
 } from "../lib/offline-mode";
+import { startableListTracks } from "../lib/use-play-queue";
 import { qk } from "../lib/query-keys";
-import { QUERY_STALE_TIME } from "../lib/query-policy";
+import { QUERY_STALE_TIME, isRefusal } from "../lib/query-policy";
 import {
   addCarPlayAlbumArtistListener,
   addCarPlayConnectListener,
@@ -63,6 +63,7 @@ import {
   addCarPlayProtectedDataListener,
   addCarPlaySelectListener,
   addCarPlayUpNextListener,
+  canSelectCarPlayTab,
   carPlayListLimits,
   configureCarPlayNowPlaying,
   finishCarPlaySelection,
@@ -186,6 +187,10 @@ export function CarPlayBridge() {
   /** Track lists reachable from a row tap: the tabs, plus what's been pushed. */
   const tabListsRef = useRef(new Map<string, TrackedList>());
   const pushedRef = useRef(new Map<string, TrackedList>());
+  /** The installed tabs, and the copies iOS 16 pushes in place of selecting
+   *  one (pushed id → tab id), which follow their tab's updates. */
+  const tabsRef = useRef<CarPlayListTemplate[]>([]);
+  const tabCopiesRef = useRef(new Map<string, string>());
 
   const enabled = connected && signedIn;
   const recent = useQuery({
@@ -285,6 +290,10 @@ export function CarPlayBridge() {
     ],
   );
 
+  useEffect(() => {
+    tabsRef.current = tabs;
+  }, [tabs]);
+
   // The tab lists are also playable lists: tapping a row has to find the tracks
   // behind it, and Play/Shuffle have to find the whole list.
   useEffect(() => {
@@ -341,12 +350,17 @@ export function CarPlayBridge() {
     if (installedKeyRef.current !== installKey) {
       installedKeyRef.current = installKey;
       pushedRef.current.clear();
+      tabCopiesRef.current.clear();
       void installRoot(signedIn, sessionLocked, tabs);
       return;
     }
 
     if (!signedIn) return;
     for (const tab of tabs) void updateCarPlayList(tab);
+    for (const [id, tabId] of tabCopiesRef.current) {
+      const tab = tabs.find((candidate) => candidate.id === tabId);
+      if (tab) void updateCarPlayList(tabCopy(tab, id));
+    }
   }, [installKey, sessionLocked, signedIn, tabs]);
 
   // Move the playing indicator on lists the user already pushed, and re-dim
@@ -440,16 +454,18 @@ export function CarPlayBridge() {
             tracks?.tracks.map(toQueueItem),
           );
         }
-        case "album":
+        case "album": {
+          const tracks = await load(
+            queryClient,
+            qk.albumTracks(userId, destination.id),
+            ({ signal }) => api.listAlbumTracks(destination.id, { signal }),
+          );
           return trackList(
             id,
-            albumTitle(queryClient, userId, destination.id),
-            await load(
-              queryClient,
-              qk.albumTracks(userId, destination.id),
-              ({ signal }) => api.listAlbumTracks(destination.id, { signal }),
-            ),
+            albumTitle(queryClient, userId, destination.id, tracks),
+            tracks,
           );
+        }
         default:
           return null;
       }
@@ -459,7 +475,8 @@ export function CarPlayBridge() {
 
   const listFor = useCallback(
     (templateId: string) =>
-      pushedRef.current.get(templateId) ?? tabListsRef.current.get(templateId),
+      pushedRef.current.get(templateId) ??
+      tabListsRef.current.get(tabCopiesRef.current.get(templateId) ?? templateId),
     [],
   );
 
@@ -478,12 +495,26 @@ export function CarPlayBridge() {
 
           // A shelf's chevron, and the shelf row itself: the full list is
           // already a tab, so move there instead of pushing a second copy.
+          // Before iOS 17 an app can't select a tab, so the list is pushed
+          // after all rather than the row spinning and doing nothing.
           case "recent":
           case "favorites":
           case "playlists":
-          case "albums":
-            await selectCarPlayTab(CARPLAY_TAB[destination.kind]);
+          case "albums": {
+            const tabId = CARPLAY_TAB[destination.kind];
+            if (canSelectCarPlayTab()) {
+              await selectCarPlayTab(tabId);
+              return;
+            }
+            // The copy is updated with its tab (a list still loading fills
+            // in), and its rows play from the tab's list.
+            const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
+            if (!tab) return;
+            const id = pushedTemplateId(destination);
+            tabCopiesRef.current.set(id, tabId);
+            await pushCarPlayList(tabCopy(tab, id));
             return;
+          }
 
           // A position in the live queue: move there rather than restarting the
           // queue, and stay on the list so the driver sees it advance.
@@ -504,10 +535,13 @@ export function CarPlayBridge() {
             return;
           }
 
+          // Both list buttons start from what can play now. Offline that's
+          // the downloaded tracks, so a list whose first track isn't stored
+          // still plays in the car rather than raising an alert on the phone.
           // Play respects whatever shuffle mode is set, matching the phone.
           case "play-list": {
-            const list = listFor(templateId);
-            if (!list || !startListPlayback(controls.play, list.tracks, false)) return;
+            const startable = startableListTracks(listFor(templateId)?.tracks);
+            if (!startListPlayback(controls.play, startable, shuffle)) return;
             await pushCarPlayNowPlaying();
             return;
           }
@@ -516,11 +550,11 @@ export function CarPlayBridge() {
           // queue: `setShuffle` would otherwise reorder the queue this render
           // still thinks is playing, not the one we're about to start.
           case "shuffle-list": {
-            const playable = playableTracks(listFor(templateId)?.tracks ?? []);
-            if (!playable.length) return;
-            const shuffled = fisherYatesWithAnchor(playable, null);
+            const startable = startableListTracks(listFor(templateId)?.tracks);
+            if (!startable.length) return;
+            const shuffled = fisherYatesWithAnchor(startable, null);
             if (!shuffle) controls.setShuffle(true);
-            controls.play(shuffled[0], shuffled);
+            if (controls.play(shuffled[0], shuffled) === false) return;
             await pushCarPlayNowPlaying();
             return;
           }
@@ -619,8 +653,10 @@ function isLoading(query: { isFetching: boolean; data: unknown }): boolean {
 
 /**
  * Read a list for the car: cache first when offline, otherwise fetch and fall
- * back to whatever is cached. Never rejects and never hangs — a pending fetch
- * would leave the row spinning until the native timeout releases it.
+ * back to whatever is cached when the server can't be reached. A refusal (a
+ * deleted playlist's 404: see `isRefusal`) drops the cached copy instead. Never
+ * rejects and never hangs — a pending fetch would leave the row spinning
+ * until the native timeout releases it.
  *
  * `fetchQuery` is deliberate: these are the same keys the phone screens read,
  * so browsing in the car warms the app's own caches and vice versa.
@@ -643,13 +679,21 @@ async function load<T>(
       // One attempt: a retry can outlast the selection timeout.
       retry: false,
     });
-  } catch {
-    return cached;
+  } catch (error) {
+    if (!isRefusal(error)) return cached;
+    queryClient.removeQueries({ queryKey, exact: true });
+    return undefined;
   }
 }
 
-/** Names come from the list the user navigated through, which is always cached
- *  by the time its rows can be tapped. */
+/** A tab's list, pushed under its own id: what iOS 16 shows in place of
+ *  selecting the tab. */
+function tabCopy(tab: CarPlayListTemplate, id: string): CarPlayListTemplate {
+  return { ...tab, id, tabTitle: undefined, tabSymbol: undefined };
+}
+
+/** Playlist names come from the Playlists tab, which is always cached by the
+ *  time one of its rows can be tapped. */
 function playlistName(
   queryClient: QueryClient,
   userId: string | undefined,
@@ -659,11 +703,20 @@ function playlistName(
   return playlists?.find((playlist) => playlist.id === id)?.name ?? "Playlist";
 }
 
+/** The Albums tab holds only the first page, and albums opened from Home's
+ *  recents or from Now Playing are often past it; their tracks carry the
+ *  title too. */
 function albumTitle(
   queryClient: QueryClient,
   userId: string | undefined,
   id: string,
+  tracks: TrackListItem[] | undefined,
 ): string {
   const albums = queryClient.getQueryData<Album[]>(qk.carPlayAlbums(userId));
-  return albums?.find((album) => album.id === id)?.title ?? "Album";
+  return (
+    albums?.find((album) => album.id === id)?.title ??
+    tracks?.find((track) => track.album_title)?.album_title ??
+    "Album"
+  );
 }
+

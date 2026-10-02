@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import {
+  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -13,6 +14,7 @@ import { Stack, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import {
   api,
+  errorMessage,
   useAuth,
   type PendingInvite,
   type Playlist,
@@ -63,11 +65,17 @@ export default function PlaylistsScreen() {
   );
   const { refreshing, onRefresh } = usePullToRefresh(refetchAll);
 
+  // A failed answer refreshes the invites too: the usual cause is an invite
+  // that was withdrawn meanwhile, which should then leave the list.
   const acceptMutation = useMutation({
     mutationFn: (id: string) => api.acceptInvite(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: invitesQueryKey });
       void queryClient.invalidateQueries({ queryKey: playlistsQueryKey });
+    },
+    onError: (error) => {
+      void queryClient.invalidateQueries({ queryKey: invitesQueryKey });
+      Alert.alert("Couldn't accept invite", errorMessage(error, "Please try again."));
     },
   });
 
@@ -75,6 +83,10 @@ export default function PlaylistsScreen() {
     mutationFn: (id: string) => api.declineInvite(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: invitesQueryKey });
+    },
+    onError: (error) => {
+      void queryClient.invalidateQueries({ queryKey: invitesQueryKey });
+      Alert.alert("Couldn't decline invite", errorMessage(error, "Please try again."));
     },
   });
 

@@ -9,6 +9,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -374,6 +375,13 @@ func (h *Playlists) writePlaylist(w http.ResponseWriter, r *http.Request, pid uu
 
 type tracksResp struct {
 	Tracks []trackItem `json:"tracks"`
+	// TIDALQueued is how many TIDAL entries auto-download will save next
+	// (failed ones only once their retry is due). Always sent, so clients can
+	// tell an older server, which lacks it, from zero.
+	TIDALQueued int `json:"tidal_queued"`
+	// TIDALRetryAt is when the next failed entry is retried, so a client
+	// that stopped polling knows when to look again.
+	TIDALRetryAt string `json:"tidal_retry_at,omitempty"`
 }
 
 type trackItem struct {
@@ -410,7 +418,7 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	tracks, err := h.Store.TracksDetailed(r.Context(), pid, u.ID)
+	tracks, queue, err := h.Store.TracksWithQueue(r.Context(), pid, u.ID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -446,6 +454,10 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 			ti.AddedByID = t.AddedBy.String()
 		}
 		out.Tracks = append(out.Tracks, ti)
+	}
+	out.TIDALQueued = queue.Queued
+	if queue.RetryAt != nil {
+		out.TIDALRetryAt = queue.RetryAt.UTC().Format(time.RFC3339)
 	}
 	writePlaylistTracks(w, r, out)
 }

@@ -13,6 +13,7 @@ import {
   usePlayTrack,
   useRemotePlayback,
 } from "../../context/player";
+import { listPlaybackQueue } from "../../lib/use-play-queue";
 import { useTheme } from "../../theme/theme";
 
 const PLAY_SIZE = 56;
@@ -106,7 +107,7 @@ export function ArtistPlayControls({
         onPress={() => {
           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
           if (playingHere) toggle();
-          else startListPlayback(play, tracks, shuffle);
+          else startListPlayback(play, listPlaybackQueue(tracks), shuffle);
         }}
         disabled={!canPlay}
         accessibilityRole="button"

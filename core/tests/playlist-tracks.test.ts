@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { PlaylistTrackEntry } from "../src/api";
 import {
   PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS,
   movePlaylistEntry,
+  playlistAutoDownloadRefetchMs,
+  playlistTidalQueued,
   queuedTidalCount,
   removePlaylistEntry,
 } from "../src/playlist-tracks";
@@ -86,6 +89,49 @@ describe("queuedTidalCount", () => {
 
   it("refreshes every 20 seconds while tracks are queued", () => {
     expect(PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS).toBe(20_000);
+  });
+});
+
+describe("playlistTidalQueued", () => {
+  const tracks = [{ source: "tidal" }, { source: "tidal" }] as PlaylistTrackEntry[];
+
+  it("uses the server's count, which leaves out failed downloads", () => {
+    expect(playlistTidalQueued({ tracks, tidal_queued: 1 })).toBe(1);
+    expect(playlistTidalQueued({ tracks, tidal_queued: 0 })).toBe(0);
+  });
+
+  it("counts rows still on TIDAL when the server doesn't send it", () => {
+    expect(playlistTidalQueued({ tracks })).toBe(2);
+    expect(playlistTidalQueued(undefined)).toBe(0);
+  });
+});
+
+describe("playlistAutoDownloadRefetchMs", () => {
+  const now = Date.parse("2026-10-02T12:00:00Z");
+
+  it("polls every 20 seconds while entries are queued", () => {
+    expect(playlistAutoDownloadRefetchMs({ tracks: [], tidal_queued: 3 }, now)).toBe(20_000);
+  });
+
+  it("waits for the next retry when only failed downloads remain", () => {
+    expect(
+      playlistAutoDownloadRefetchMs(
+        { tracks: [], tidal_queued: 0, tidal_retry_at: "2026-10-02T13:00:00Z" },
+        now,
+      ),
+    ).toBe(60 * 60 * 1000);
+    // A retry that's already due (or a clock behind the server's) still waits 20 s.
+    expect(
+      playlistAutoDownloadRefetchMs(
+        { tracks: [], tidal_queued: 0, tidal_retry_at: "2026-10-02T11:59:59Z" },
+        now,
+      ),
+    ).toBe(20_000);
+  });
+
+  it("stops when nothing is pending", () => {
+    expect(playlistAutoDownloadRefetchMs({ tracks: [], tidal_queued: 0 }, now)).toBe(false);
+    expect(playlistAutoDownloadRefetchMs(undefined, now)).toBe(false);
   });
 });
 

@@ -1,5 +1,5 @@
 import { buildTrackPatch, trackEditForm } from "@music-library/core/metadata-edit";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   ScrollView,
   View,
@@ -14,6 +14,8 @@ import {
   libraryChanged,
   trackActions,
   useAuth,
+  useEditDraft,
+  type TrackDetail,
 } from "@music-library/core";
 import { PrimaryButton } from "../../../../components/buttons";
 import {
@@ -32,8 +34,6 @@ import { EmptyState, retryAction } from "../../../../components/empty-state";
  * fields the web edit dialog exposes, and PATCHes only what actually changed.
  */
 export default function TrackEditScreen() {
-  const theme = useTheme();
-  const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { me } = useAuth();
   const userId = me?.id;
@@ -51,73 +51,10 @@ export default function TrackEditScreen() {
     ? trackActions(track, { isAdmin: me?.role === "admin" }).editMetadata
     : false;
 
-  const [title, setTitle] = useState("");
-  const [artists, setArtists] = useState("");
-  const [albumTitle, setAlbumTitle] = useState("");
-  const [albumArtist, setAlbumArtist] = useState("");
-  const [year, setYear] = useState("");
-  const [genre, setGenre] = useState("");
-  const [trackNo, setTrackNo] = useState("");
-  const [discNo, setDiscNo] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Seed the form once the track loads. Keyed on the track id so navigating
-  // between edit screens re-seeds, but a background refetch of the same track
-  // doesn't clobber in-progress edits.
-  useEffect(() => {
-    if (!track) return;
-    const form = trackEditForm(track);
-    // The edit draft intentionally snapshots the queried track.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setTitle(form.title);
-    setArtists(form.artists);
-    setAlbumTitle(form.albumTitle);
-    setAlbumArtist(form.albumArtist);
-    setYear(form.year);
-    setGenre(form.genre);
-    setTrackNo(form.trackNo);
-    setDiscNo(form.discNo);
-    setError(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [track?.id]);
-
-  const onSave = async () => {
-    if (!id || !track || !canEdit || saving) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const patch = buildTrackPatch(track, {
-        title,
-        artists,
-        albumTitle,
-        albumArtist,
-        year,
-        genre,
-        trackNo,
-        discNo,
-      });
-      await api.updateTrack(id, patch);
-      // The root layout's libraryChanged subscriber invalidates the browse
-      // lists and every user-scoped query, so emitting is the whole refresh.
-      libraryChanged.emit();
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.back();
-    } catch (err) {
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : "Save failed.",
-      );
-      setSaving(false);
-    }
-  };
-
   if (trackQuery.isLoading) return <EmptyState fill loading />;
-  if (trackQuery.isError || !track) {
+  // Only without data: a failed background refetch keeps the last track, and
+  // must not unmount the editor and its unsaved changes.
+  if (!track || !id) {
     return (
       <EmptyState
         fill
@@ -142,6 +79,42 @@ export default function TrackEditScreen() {
       </>
     );
   }
+  return <TrackEditor key={track.id} id={id} track={track} />;
+}
+
+function TrackEditor({ id, track }: { id: string; track: TrackDetail }) {
+  const theme = useTheme();
+  const router = useRouter();
+  // The save diffs against the copy the form was filled from: the cached
+  // track can be older than the server's, and a refetch landing mid-edit must
+  // not turn the fields the user left alone into changes.
+  const { base, draft, setField } = useEditDraft(track, trackEditForm);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const onSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await api.updateTrack(id, buildTrackPatch(base, draft));
+      // The root layout's libraryChanged subscriber invalidates the browse
+      // lists and every user-scoped query, so emitting is the whole refresh.
+      libraryChanged.emit();
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      router.back();
+    } catch (err) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Save failed.",
+      );
+      setSaving(false);
+    }
+  };
 
   return (
     <>
@@ -164,8 +137,8 @@ export default function TrackEditScreen() {
       >
         <FormField label="Title">
           <FormTextInput
-            value={title}
-            onChangeText={setTitle}
+            value={draft.title}
+            onChangeText={(value) => setField("title", value)}
             placeholder="Track title"
           />
         </FormField>
@@ -174,16 +147,16 @@ export default function TrackEditScreen() {
           hint="Comma-separated. First is the primary, rest are featured."
         >
           <FormTextInput
-            value={artists}
-            onChangeText={setArtists}
+            value={draft.artists}
+            onChangeText={(value) => setField("artists", value)}
             placeholder="Alice, Bob"
             autoCapitalize="words"
           />
         </FormField>
         <FormField label="Album" hint="Leave blank to detach from its album.">
           <FormTextInput
-            value={albumTitle}
-            onChangeText={setAlbumTitle}
+            value={draft.albumTitle}
+            onChangeText={(value) => setField("albumTitle", value)}
             placeholder="Album title"
           />
         </FormField>
@@ -192,8 +165,8 @@ export default function TrackEditScreen() {
           hint="Leave blank for compilations (Various Artists)."
         >
           <FormTextInput
-            value={albumArtist}
-            onChangeText={setAlbumArtist}
+            value={draft.albumArtist}
+            onChangeText={(value) => setField("albumArtist", value)}
             placeholder="Album artist"
             autoCapitalize="words"
           />
@@ -202,8 +175,8 @@ export default function TrackEditScreen() {
           <View style={{ flex: 1 }}>
             <FormField label="Year">
               <FormTextInput
-                value={year}
-                onChangeText={setYear}
+                value={draft.year}
+                onChangeText={(value) => setField("year", value)}
                 placeholder="2024"
                 keyboardType="number-pad"
               />
@@ -212,8 +185,8 @@ export default function TrackEditScreen() {
           <View style={{ flex: 1 }}>
             <FormField label="Genre">
               <FormTextInput
-                value={genre}
-                onChangeText={setGenre}
+                value={draft.genre}
+                onChangeText={(value) => setField("genre", value)}
                 placeholder="Genre"
               />
             </FormField>
@@ -223,8 +196,8 @@ export default function TrackEditScreen() {
           <View style={{ flex: 1 }}>
             <FormField label="Track #">
               <FormTextInput
-                value={trackNo}
-                onChangeText={setTrackNo}
+                value={draft.trackNo}
+                onChangeText={(value) => setField("trackNo", value)}
                 placeholder="1"
                 keyboardType="number-pad"
               />
@@ -233,8 +206,8 @@ export default function TrackEditScreen() {
           <View style={{ flex: 1 }}>
             <FormField label="Disc #">
               <FormTextInput
-                value={discNo}
-                onChangeText={setDiscNo}
+                value={draft.discNo}
+                onChangeText={(value) => setField("discNo", value)}
                 placeholder="1"
                 keyboardType="number-pad"
               />

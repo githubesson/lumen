@@ -1,8 +1,9 @@
-import { memo, useState } from "react";
+import { memo } from "react";
 import { PixelRatio, View } from "react-native";
 import { Image } from "expo-image";
 import { SymbolView } from "expo-symbols";
 import { playlistArtUrl, type Playlist } from "@music-library/core";
+import { useImageFailure } from "../lib/use-image-failure";
 import { useTheme } from "../theme/theme";
 
 interface Props {
@@ -22,9 +23,8 @@ interface Props {
 function PlaylistArtworkImpl({ playlist, size, glyphSize, radius, background }: Props) {
   const theme = useTheme();
   const uri = playlistArtUrl(playlist, Math.round(size * PixelRatio.get()));
-  // Keyed by URL, so a new cover gets a fresh attempt.
-  const [failedUri, setFailedUri] = useState<string | null>(null);
-  const showImage = uri != null && failedUri !== uri;
+  const failure = useImageFailure(uri);
+  const showImage = uri != null && !failure.failed;
   return (
     <View
       style={{
@@ -48,7 +48,7 @@ function PlaylistArtworkImpl({ playlist, size, glyphSize, radius, background }: 
           allowDownscaling
           decodeFormat="rgb"
           recyclingKey={uri}
-          onError={() => setFailedUri(uri)}
+          onError={failure.onError}
         />
       ) : (
         <SymbolView

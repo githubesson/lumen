@@ -4,7 +4,7 @@ import {
   Pressable,
 } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
@@ -17,7 +17,9 @@ import {
   libraryAlbumMetaParts,
   metaLine,
   playableTracks,
+  startListPlayback,
   useAuth,
+  type Album,
   type TrackListItem,
 } from "@music-library/core";
 import { TRACK_FLASH_LIST_PERFORMANCE_PROPS } from "../../../../components/list-performance";
@@ -28,7 +30,7 @@ import {
 import { TrackRow } from "../../../../components/track-row";
 import { usePlayTrack } from "../../../../context/player";
 import { qk } from "../../../../lib/query-keys";
-import { usePlayQueue } from "../../../../lib/use-play-queue";
+import { listPlaybackQueue, usePlayQueue } from "../../../../lib/use-play-queue";
 import { useAlbumDownloadAction } from "../../../../lib/album-download";
 import { useTheme } from "../../../../theme/theme";
 import { AlbumHeader, ALBUM_ART_SIZE } from "../../../../components/album-header";
@@ -82,15 +84,22 @@ export default function AlbumDetailScreen() {
   const onTrackPress = usePlayQueue(tracks);
   const { refetch: refetchAlbum } = albumQuery;
   const { refetch: refetchTracks } = tracksQuery;
-  const refetchAll = useCallback(() => {
-    void refetchAlbum();
-    void refetchTracks();
-  }, [refetchAlbum, refetchTracks]);
+  const queryClient = useQueryClient();
+  const onQueuedChanged = useCallback(
+    (queued: number) => {
+      queryClient.setQueryData<Album>(qk.album(userId, id), (album) =>
+        album ? { ...album, queued_count: queued } : album,
+      );
+      void refetchAlbum();
+      void refetchTracks();
+    },
+    [queryClient, userId, id, refetchAlbum, refetchTracks],
+  );
   const downloadAction = useAlbumDownloadAction(
     albumQuery.data?.tidal_album_id,
     tracks,
     albumQuery.data?.queued_count ?? 0,
-    refetchAll,
+    onQueuedChanged,
   );
 
   const renderItem = useCallback(
@@ -117,10 +126,11 @@ export default function AlbumDetailScreen() {
         coverUri={coverUri}
         coverKey={coverUri ?? undefined}
         metadata={metaLine(libraryAlbumMetaParts(album))}
-        onPlay={(() => {
-          const playable = playableTracks(tracks);
-          return playable.length > 0 ? () => play(playable[0], playable) : undefined;
-        })()}
+        onPlay={
+          playableTracks(tracks).length > 0
+            ? () => startListPlayback(play, listPlaybackQueue(tracks), false)
+            : undefined
+        }
         secondaryAction={downloadAction}
       />
     );

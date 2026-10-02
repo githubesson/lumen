@@ -1,5 +1,5 @@
 import { albumEditForm, buildAlbumPatch } from "@music-library/core/metadata-edit";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -20,6 +20,7 @@ import {
   errorMessage,
   libraryChanged,
   useAuth,
+  useEditDraft,
   type Album,
 } from "@music-library/core";
 import {
@@ -46,9 +47,6 @@ const COVER_PREVIEW_SIZE = 120;
  * button. Reached from the album screen's header and the track context menu.
  */
 export default function AlbumEditScreen() {
-  const theme = useTheme();
-  const router = useRouter();
-  const queryClient = useQueryClient();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { me } = useAuth();
   const userId = me?.id;
@@ -60,41 +58,48 @@ export default function AlbumEditScreen() {
   });
 
   const album = albumQuery.data;
+  if (albumQuery.isLoading) return <EmptyState fill loading />;
+  // Only without data: a failed background refetch keeps the last album, and
+  // must not unmount the editor and its unsaved changes.
+  if (!album || !id) {
+    return (
+      <EmptyState
+        fill
+        selectable
+        message="Couldn't load album."
+        action={retryAction(albumQuery)}
+      />
+    );
+  }
+  return <AlbumEditor key={album.id} id={id} album={album} />;
+}
 
-  const [title, setTitle] = useState("");
-  const [albumArtist, setAlbumArtist] = useState("");
-  const [year, setYear] = useState("");
-  const [isCompilation, setIsCompilation] = useState(false);
-  const [hasCover, setHasCover] = useState(false);
+function AlbumEditor({ id, album }: { id: string; album: Album }) {
+  const theme = useTheme();
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const { me } = useAuth();
+  const userId = me?.id;
+
+  // The save diffs against the copy the form was filled from: the cached
+  // album can be older than the server's, and a refetch landing mid-edit must
+  // not turn the fields the user left alone into changes.
+  const { base, draft, setField } = useEditDraft(album, albumEditForm);
   // Cache-busts the cover preview <img> — the cover URL is stable even when
   // the underlying image is replaced.
   const [coverNonce, setCoverNonce] = useState(0);
   const [saving, setSaving] = useState(false);
   const [coverBusy, setCoverBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Seed the form once the album loads. Keyed on the album id so a background
-  // refetch of the same album doesn't clobber in-progress edits.
-  useEffect(() => {
-    if (!album) return;
-    const form = albumEditForm(album);
-    // The edit draft intentionally snapshots the queried album.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setTitle(form.title);
-    setAlbumArtist(form.albumArtist);
-    setYear(form.year);
-    setIsCompilation(form.isCompilation);
-    setHasCover(album.has_cover);
-    setError(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [album?.id]);
+  // Live, not part of the draft: cover changes apply immediately and write
+  // the updated album into the cache.
+  const hasCover = album.has_cover;
 
   // Push an updated album back into the caches the album screen reads, and
   // bump the shared cover-bust entry so its <Image> reloads the new artwork.
   const applyAlbumUpdate = useCallback(
     (updated: Album) => {
       const nonce = Date.now();
-      setHasCover(updated.has_cover);
       setCoverNonce(nonce);
       // Update this album + its cover-bust nonce immediately so the album
       // screen underneath reflects the change without a flash; the
@@ -108,7 +113,7 @@ export default function AlbumEditScreen() {
   );
 
   const pickAndUploadCover = async () => {
-    if (coverBusy || !id) return;
+    if (coverBusy) return;
     let result: ImagePicker.ImagePickerResult;
     try {
       result = await ImagePicker.launchImageLibraryAsync({
@@ -142,7 +147,7 @@ export default function AlbumEditScreen() {
   };
 
   const confirmRemoveCover = () => {
-    if (coverBusy || !id) return;
+    if (coverBusy) return;
     Alert.alert(
       "Remove cover art?",
       "The album will fall back to the placeholder artwork.",
@@ -177,12 +182,11 @@ export default function AlbumEditScreen() {
   };
 
   const onSave = async () => {
-    if (!id || !album || saving) return;
+    if (saving) return;
     setSaving(true);
     setError(null);
     try {
-      const patch = buildAlbumPatch(album, { title, albumArtist, year, isCompilation });
-      const updated = await api.updateAlbum(id, patch);
+      const updated = await api.updateAlbum(id, buildAlbumPatch(base, draft));
       applyAlbumUpdate(updated);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.back();
@@ -193,20 +197,9 @@ export default function AlbumEditScreen() {
     }
   };
 
-  if (albumQuery.isLoading) return <EmptyState fill loading />;
-  if (albumQuery.isError || !album) {
-    return (
-      <EmptyState
-        fill
-        selectable
-        message="Couldn't load album."
-        action={retryAction(albumQuery)}
-      />
-    );
-  }
-
-  const coverUri =
-    hasCover && id ? albumCoverUrl(id, COVER_PREVIEW_SIZE * 3, coverNonce) : null;
+  const coverUri = hasCover
+    ? albumCoverUrl(id, COVER_PREVIEW_SIZE * 3, coverNonce)
+    : null;
 
   return (
     <>
@@ -296,8 +289,8 @@ export default function AlbumEditScreen() {
 
         <FormField label="Title">
           <FormTextInput
-            value={title}
-            onChangeText={setTitle}
+            value={draft.title}
+            onChangeText={(value) => setField("title", value)}
             placeholder="Album title"
           />
         </FormField>
@@ -306,8 +299,8 @@ export default function AlbumEditScreen() {
           hint="Leave blank and turn on Compilation for Various Artists."
         >
           <FormTextInput
-            value={albumArtist}
-            onChangeText={setAlbumArtist}
+            value={draft.albumArtist}
+            onChangeText={(value) => setField("albumArtist", value)}
             placeholder="Album artist"
             autoCapitalize="words"
           />
@@ -316,8 +309,8 @@ export default function AlbumEditScreen() {
           <View style={{ flex: 1 }}>
             <FormField label="Year">
               <FormTextInput
-                value={year}
-                onChangeText={setYear}
+                value={draft.year}
+                onChangeText={(value) => setField("year", value)}
                 placeholder="2024"
                 keyboardType="number-pad"
               />
@@ -339,8 +332,8 @@ export default function AlbumEditScreen() {
               Compilation
             </Text>
             <Switch
-              value={isCompilation}
-              onValueChange={setIsCompilation}
+              value={draft.isCompilation}
+              onValueChange={(value) => setField("isCompilation", value)}
               trackColor={{ true: theme.color.accent }}
             />
           </Card>
