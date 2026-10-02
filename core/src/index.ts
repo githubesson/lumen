@@ -98,3 +98,4 @@ export {
   useTidalDeviceLogin,
   type TidalVerificationOpenResult,
 } from "./tidal/use-tidal-device-login";
+export * from "./auth/errors";

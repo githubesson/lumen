@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import * as Haptics from "expo-haptics";
-import { ApiError, api, useAuth } from "@music-library/core";
+import {
+  api,
+  passwordChangeErrorMessage,
+  useAuth,
+  validatePasswordChange,
+} from "@music-library/core";
 import { PrimaryButton } from "../../components/buttons";
 import { FormError, FormTextInput } from "../../components/form-field";
 import { FormScreen } from "../../components/form-screen";
@@ -23,13 +28,11 @@ export default function ResetPasswordScreen() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const mismatch = confirm !== next;
-  const canSubmit =
-    current.length > 0 &&
-    next.length > 0 &&
-    confirm.length > 0 &&
-    !mismatch &&
-    !pending;
+  const validation = validatePasswordChange(current, next, confirm);
+  // Only once there's something to judge, as on registration.
+  const passwordError = next ? validation.passwordError : null;
+  const mismatch = confirm ? validation.confirmError : null;
+  const canSubmit = validation.valid && !pending;
 
   const onSubmit = async () => {
     if (!canSubmit) return;
@@ -42,13 +45,7 @@ export default function ResetPasswordScreen() {
       await refresh();
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      if (err instanceof ApiError && err.status === 401) {
-        setError("Your current password is incorrect.");
-      } else if (err instanceof Error) {
-        setError(err.message || "Couldn't reset password.");
-      } else {
-        setError("Couldn't reset password.");
-      }
+      setError(passwordChangeErrorMessage(err));
     } finally {
       setPending(false);
     }
@@ -95,6 +92,7 @@ export default function ResetPasswordScreen() {
           onChangeText={setNext}
           editable={!pending}
         />
+        <FormError message={passwordError} />
         <FormTextInput
           placeholder="Confirm new password"
           autoCapitalize="none"
@@ -110,7 +108,7 @@ export default function ResetPasswordScreen() {
             mismatch ? { borderWidth: 1, borderColor: theme.color.danger } : null
           }
         />
-        <FormError message={mismatch ? "Passwords don't match." : null} />
+        <FormError message={mismatch} />
       </View>
 
       <FormError message={error} />

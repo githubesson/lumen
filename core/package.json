@@ -31,7 +31,8 @@
     "./admin/invites": "./src/admin/invites.ts",
     "./admin/music-roots": "./src/admin/music-roots.ts",
     "./tidal/status": "./src/tidal/status.ts",
-    "./tidal/device-login": "./src/tidal/use-tidal-device-login.ts"
+    "./tidal/device-login": "./src/tidal/use-tidal-device-login.ts",
+    "./auth/errors": "./src/auth/errors.ts"
   },
   "peerDependencies": {
     "react": "^18.3.1 || ^19.0.0"

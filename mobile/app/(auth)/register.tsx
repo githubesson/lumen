@@ -4,7 +4,13 @@ import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import * as Haptics from "expo-haptics";
-import { ApiError, api, useAuth, type Role } from "@music-library/core";
+import {
+  api,
+  inviteCheckErrorMessage,
+  registrationErrorMessage,
+  useAuth,
+  type Role,
+} from "@music-library/core";
 import { PrimaryButton } from "../../components/buttons";
 import {
   FormError,
@@ -28,6 +34,7 @@ type InviteState =
       status: "verification-error";
       token: string;
       source: InviteSource;
+      message: string;
     };
 
 /**
@@ -79,9 +86,14 @@ export default function RegisterScreen() {
         } else {
           setInviteState({ status: "invalid", token, source });
         }
-      } catch {
+      } catch (err) {
         if (request !== checkRequestRef.current) return;
-        setInviteState({ status: "verification-error", token, source });
+        setInviteState({
+          status: "verification-error",
+          token,
+          source,
+          message: inviteCheckErrorMessage(err),
+        });
       }
     },
     [],
@@ -233,7 +245,7 @@ export default function RegisterScreen() {
             accessibilityLiveRegion="assertive"
             style={{ fontSize: 16, color: theme.color.danger }}
           >
-            Couldn&apos;t verify this invite. Check your connection and try again.
+            {activeInviteState.message}
           </Text>
         )}
       </View>
@@ -361,18 +373,4 @@ function TextAction({ label, onPress }: { label: string; onPress: () => void }) 
       <Text style={{ color: theme.color.accent, fontSize: 15 }}>{label}</Text>
     </Pressable>
   );
-}
-
-function registrationErrorMessage(err: unknown): string {
-  if (err instanceof ApiError) {
-    if (err.status === 409) return "That username is already taken.";
-    if (err.status === 429) {
-      return "Too many registration attempts. Try again later.";
-    }
-    if (err.message.includes("invite")) {
-      return "This invite is no longer usable. Enter another invite and try again.";
-    }
-    return err.message || `Registration failed (${err.status}).`;
-  }
-  return "Couldn't create your account. Check your connection and try again.";
 }
