@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PlaybackQueueSnapshot } from "./queue-sync";
 import type { PlaybackActivity, TrackListItem } from "../api";
+import { displayText } from "../format";
 import { clampVolume, type PlayerState, type RepeatMode, type TimeState } from "./player-core";
 import {
   sendRemotePlaybackCommand,
@@ -420,4 +421,49 @@ export function remotePlayerState(
     index: snapshot?.index ?? 0,
     isPlaying: !!device.activity?.is_playing,
   };
+}
+
+/**
+ * Why the last command to a remote device failed, for an error banner or
+ * tooltip; null when it was applied (or nothing has been sent).
+ */
+export function remoteCommandError(
+  result: RemotePlaybackCommandResult | null | undefined,
+): string | null {
+  if (!result || result.status === "applied") return null;
+  return result.error || `Command ${result.status}`;
+}
+
+/** Accessible name of the button that opens the playback device picker. */
+export function playbackDeviceButtonLabel(
+  targetDevice: Pick<PlaybackDevice, "deviceName"> | null | undefined,
+): string {
+  return targetDevice
+    ? `Playback device: ${targetDevice.deviceName}`
+    : "Choose playback device";
+}
+
+/** What a device row in the picker says about the device, and whether it is playing. */
+export function playbackDeviceStatus(
+  device: Pick<PlaybackDevice, "activity">,
+): { label: string; playing: boolean } {
+  // A heartbeat can carry no title (e.g. a track that is still loading);
+  // "Playing · " with nothing after it reads as broken.
+  const title = displayText(device.activity?.title);
+  if (!title) return { label: "Online · Nothing playing", playing: false };
+  const playing = !!device.activity?.is_playing;
+  return { label: `${playing ? "Playing" : "Paused"} · ${title}`, playing };
+}
+
+export type PlaybackDeviceKind = "tablet" | "phone" | "web" | "desktop";
+
+/**
+ * The kind of device behind a published device name (the apps report
+ * "iPhone", "iPad", "Mobile", "Desktop" or "Web"), for picking its icon.
+ */
+export function playbackDeviceKind(deviceName: string): PlaybackDeviceKind {
+  if (/ipad|tablet/i.test(deviceName)) return "tablet";
+  if (/iphone|android|mobile|phone/i.test(deviceName)) return "phone";
+  if (/web|browser/i.test(deviceName)) return "web";
+  return "desktop";
 }

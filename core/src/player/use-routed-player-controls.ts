@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { TrackListItem } from "../api";
 import type {
   PlaybackDevice,
@@ -16,19 +16,87 @@ import {
   type ControlledPlaybackState,
 } from "./remote-control";
 
+type SendRemoteCommand = (
+  action: RemotePlaybackCommandAction,
+  args?: Record<string, unknown>,
+) => Promise<RemotePlaybackCommandResult>;
+
 export interface RoutedPlayerControlsOptions {
   controls: PlayerControls;
   targetDevice: PlaybackDevice | null;
   controlled: ControlledPlaybackState;
-  sendCommand: (
-    action: RemotePlaybackCommandAction,
-    args?: Record<string, unknown>,
-  ) => Promise<RemotePlaybackCommandResult>;
-  remoteQueue: TrackListItem[];
+  sendCommand: SendRemoteCommand;
+  /**
+   * Queue to replay from when `jumpTo` targets a device that reports no queue
+   * snapshot, for a platform that keeps its own copy of what it sent (see
+   * `onRemoteQueueApplied`). Leave unset otherwise: a device without a
+   * snapshot then ignores jumps instead of having its queue replaced by
+   * whatever is on screen.
+   */
+  remoteQueue?: TrackListItem[];
   /** Platform policy and feedback, only applied when starting local playback. */
   canPlayLocally?: (track: TrackListItem) => boolean;
   /** Keep a platform's queue snapshot only after the target accepts play. */
   onRemoteQueueApplied?: (queue: TrackListItem[]) => void;
+}
+
+/**
+ * Minimum gap between `set_volume` commands to a remote device. A slider drag
+ * changes the volume on every pointer move; each one would otherwise be a
+ * socket round trip and a pending-command tick on the controller.
+ */
+export const REMOTE_VOLUME_INTERVAL_MS = 80;
+
+const NO_TRACKS: TrackListItem[] = [];
+
+/**
+ * `set_volume` for the selected device, at most once per
+ * {@link REMOTE_VOLUME_INTERVAL_MS}. The newest value inside an interval
+ * replaces older ones and is always sent when it ends, so a drag lands where
+ * it was released. A value still waiting when the target changes (or the
+ * player unmounts) is sent at once, to the device it was meant for.
+ */
+function useThrottledRemoteVolume(sendCommand: SendRemoteCommand) {
+  const throttle = useRef<{
+    lastSentAt: number;
+    pending: number | null;
+    timer: ReturnType<typeof setTimeout> | null;
+  }>({ lastSentAt: -Infinity, pending: null, timer: null });
+
+  useEffect(() => {
+    const state = throttle.current;
+    return () => {
+      if (state.timer !== null) clearTimeout(state.timer);
+      state.timer = null;
+      state.lastSentAt = -Infinity;
+      const pending = state.pending;
+      state.pending = null;
+      if (pending !== null) void sendCommand("set_volume", { volume: pending });
+    };
+  }, [sendCommand]);
+
+  return useCallback(
+    (volume: number) => {
+      const state = throttle.current;
+      const wait = REMOTE_VOLUME_INTERVAL_MS - (Date.now() - state.lastSentAt);
+      if (wait <= 0 && state.timer === null) {
+        state.lastSentAt = Date.now();
+        void sendCommand("set_volume", { volume });
+        return;
+      }
+      state.pending = volume;
+      if (state.timer !== null) return;
+      state.timer = setTimeout(() => {
+        state.timer = null;
+        const value = state.pending;
+        state.pending = null;
+        if (value === null) return;
+        state.lastSentAt = Date.now();
+        void sendCommand("set_volume", { volume: value });
+      }, Math.max(0, wait));
+    },
+    [sendCommand],
+  );
 }
 
 /** One control surface for local audio and a selected remote playback device. */
@@ -37,7 +105,7 @@ export function useRoutedPlayerControls({
   targetDevice,
   controlled,
   sendCommand,
-  remoteQueue,
+  remoteQueue = NO_TRACKS,
   canPlayLocally,
   onRemoteQueueApplied,
 }: RoutedPlayerControlsOptions): PlayerControls {
@@ -61,6 +129,7 @@ export function useRoutedPlayerControls({
     },
     [canPlayLocally, localPlay, onRemoteQueueApplied, sendCommand, targetDevice],
   );
+  const sendVolume = useThrottledRemoteVolume(sendCommand);
 
   return useMemo<PlayerControls>(
     () => ({
@@ -105,8 +174,7 @@ export function useRoutedPlayerControls({
         else controls.seek(seconds);
       },
       setVolume: (volume) => {
-        if (targetDevice)
-          void sendCommand("set_volume", { volume: clampVolume(volume) });
+        if (targetDevice) sendVolume(clampVolume(volume));
         else controls.setVolume(volume);
       },
       setMuted: (muted) => {
@@ -147,6 +215,7 @@ export function useRoutedPlayerControls({
       play,
       remoteQueue,
       sendCommand,
+      sendVolume,
       targetDevice,
     ],
   );

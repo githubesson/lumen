@@ -45,7 +45,7 @@ import SegmentedControl from "./SegmentedControl";
 import { displayText } from "../lib/format";
 import { useTrackContextMenu } from "../lib/useTrackContextMenu";
 import { useAuth } from "../context/Auth";
-import { usePlayer, useRemotePlayback } from "../context/Player";
+import { usePlayer } from "../context/Player";
 import { useTheme } from "../context/Theme";
 
 const SEARCH_PLACEHOLDER_NOUN: Record<SearchType, string> = {
@@ -75,9 +75,10 @@ export default function CommandPalette({
   const navigate = useNavigate();
   const { me, logout } = useAuth();
   const { theme, toggle: toggleTheme } = useTheme();
+  // Displayed state: it follows the device the player controls route to.
   const {
-    current: localCurrent,
-    isPlaying: localIsPlaying,
+    current,
+    isPlaying,
     toggle,
     next,
     prev,
@@ -85,12 +86,7 @@ export default function CommandPalette({
     cycleRepeat,
     play,
   } = usePlayer();
-  const { targetDevice } = useRemotePlayback();
-  // Match the device that the player controls currently route commands to.
-  const hasTrack = targetDevice ? !!targetDevice.activity : !!localCurrent;
-  const isPlaying = targetDevice
-    ? !!targetDevice.activity?.is_playing
-    : localIsPlaying;
+  const hasTrack = !!current;
 
   const [query, setQuery] = useState("");
   const [searchType, setSearchType] = useState<SearchType>("all");

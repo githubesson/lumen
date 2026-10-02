@@ -85,8 +85,23 @@ export {
   listPlaybackState,
   startListPlayback,
   usePlayFromList,
+  playbackDeviceButtonLabel,
+  playbackDeviceKind,
+  playbackDeviceStatus,
+  remoteCommandError,
+  REMOTE_VOLUME_INTERVAL_MS,
+  useRemotePlaybackController,
+  buildNowPlayingMetadata,
+  shouldExposeNowPlayingSession,
+  REMOTE_CONTROL_INDICATOR_MS,
+  useRemoteControlIndicator,
   type ListPlaybackState,
   type PlayFromList,
+  type PlaybackDeviceKind,
+  type RemotePlaybackContextValue,
+  type UseRemotePlaybackControllerOptions,
+  type UseRemotePlaybackControllerReturn,
+  type NowPlayingMetadata,
 } from "./player";
 
 export * from "./lyrics";

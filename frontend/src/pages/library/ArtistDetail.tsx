@@ -347,11 +347,10 @@ function ArtistActions({
   tracks: TrackListItem[];
   children?: ReactNode;
 }) {
+  // Displayed state: `shuffle` is the controlled device's while casting.
   const { play, toggle, current, isPlaying, shuffle, toggleShuffle } =
     usePlayer();
-  const { targetDevice, controlledShuffle, commandPending } =
-    useRemotePlayback();
-  const shownShuffle = targetDevice ? controlledShuffle : shuffle;
+  const { commandPending } = useRemotePlayback();
   const { playingHere, showPause, canPlay } = listPlaybackState(
     tracks,
     current,
@@ -367,7 +366,7 @@ function ArtistActions({
         aria-label={showPause ? `Pause ${label}` : `Play ${label}`}
         onClick={() => {
           if (playingHere) toggle();
-          else startListPlayback(play, tracks, shownShuffle);
+          else startListPlayback(play, tracks, shuffle);
         }}
       >
         {showPause ? (
@@ -378,9 +377,9 @@ function ArtistActions({
       </button>
       <button
         type="button"
-        className={"artist-shuffle" + (shownShuffle ? " active" : "")}
+        className={"artist-shuffle" + (shuffle ? " active" : "")}
         aria-label="Shuffle"
-        aria-pressed={shownShuffle}
+        aria-pressed={shuffle}
         onClick={toggleShuffle}
         disabled={commandPending}
       >

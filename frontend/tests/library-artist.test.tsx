@@ -10,7 +10,7 @@ vi.mock("../../core/src/api", async (original) => ({
 vi.mock("../src/components/TrackList", () => ({ default: () => null }));
 vi.mock("../src/context/Player", () => ({
   usePlayer: () => ({ play: vi.fn(), toggle: vi.fn(), toggleShuffle: vi.fn(), current: null, isPlaying: false, shuffle: false }),
-  useRemotePlayback: () => ({ targetDevice: null, controlledShuffle: false, commandPending: false }),
+  useRemotePlayback: () => ({ targetDevice: null, commandPending: false }),
 }));
 
 afterEach(cleanup);

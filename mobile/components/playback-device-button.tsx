@@ -1,7 +1,6 @@
 import { useState } from "react";
 import {
   Modal,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -12,7 +11,15 @@ import {
 import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  playbackDeviceButtonLabel,
+  playbackDeviceKind,
+  playbackDeviceStatus,
+  remoteCommandError,
+  type PlaybackDeviceKind,
+} from "@music-library/core";
 import { useRemotePlayback } from "../context/player";
+import { LOCAL_DEVICE_LABEL, LOCAL_DEVICE_NAME } from "../lib/device-name";
 import { useTheme } from "../theme/theme";
 import { AdaptiveGlass } from "./adaptive-glass";
 import {
@@ -48,21 +55,14 @@ export function PlaybackDeviceButton({
     selectTarget,
   } = useRemotePlayback();
   const [open, setOpen] = useState(false);
-  const commandError =
-    lastCommandResult && lastCommandResult.status !== "applied"
-      ? lastCommandResult.error || `Command ${lastCommandResult.status}`
-      : null;
+  const commandError = remoteCommandError(lastCommandResult);
+  const accessibilityLabel = playbackDeviceButtonLabel(targetDevice);
+  const localIcon = DEVICE_SYMBOLS[playbackDeviceKind(LOCAL_DEVICE_NAME)];
 
   const swiftUI = getOptionalSwiftUI();
-  // The published device name in context/player uses the same distinction.
-  const localDeviceLabel =
-    Platform.OS === "ios" && Platform.isPad ? "This iPad" : "This iPhone";
 
   if (swiftUI) {
     const { Button, Divider, Host, Menu, RNHostView, Section } = swiftUI;
-    const accessibilityLabel = targetDevice
-      ? `Playback device: ${targetDevice.deviceName}`
-      : "Choose playback device";
 
     return (
       <Host colorScheme={theme.scheme} style={{ width: size, height: size }}>
@@ -90,8 +90,8 @@ export function PlaybackDeviceButton({
         >
           <Section title={connected ? "Playback Device" : "Reconnecting…"}>
             <Button
-              label={localDeviceLabel}
-              systemImage={targetDeviceId ? "iphone" : "checkmark"}
+              label={LOCAL_DEVICE_LABEL}
+              systemImage={targetDeviceId ? localIcon : "checkmark"}
               onPress={() => {
                 void Haptics.selectionAsync();
                 selectTarget(null);
@@ -104,7 +104,7 @@ export function PlaybackDeviceButton({
                 systemImage={
                   targetDeviceId === device.deviceId
                     ? "checkmark"
-                    : "desktopcomputer"
+                    : DEVICE_SYMBOLS[playbackDeviceKind(device.deviceName)]
                 }
                 onPress={() => {
                   void Haptics.selectionAsync();
@@ -146,11 +146,7 @@ export function PlaybackDeviceButton({
       }}
       hitSlop={10}
       accessibilityRole="button"
-      accessibilityLabel={
-        targetDevice
-          ? `Playback device: ${targetDevice.deviceName}`
-          : "Choose playback device"
-      }
+      accessibilityLabel={accessibilityLabel}
       accessibilityState={{ selected: !!targetDevice }}
       style={({ pressed }) => [
         styles.trigger,
@@ -262,7 +258,7 @@ export function PlaybackDeviceButton({
             </View>
 
             <DeviceRow
-              icon="iphone"
+              icon={localIcon}
               name="This device"
               detail="Play locally on this phone"
               selected={!targetDeviceId}
@@ -283,13 +279,9 @@ export function PlaybackDeviceButton({
               remoteDevices.map((device) => (
                 <DeviceRow
                   key={device.deviceId}
-                  icon="desktopcomputer"
+                  icon={DEVICE_SYMBOLS[playbackDeviceKind(device.deviceName)]}
                   name={device.deviceName}
-                  detail={
-                    device.activity
-                      ? `${device.activity.is_playing ? "Playing" : "Paused"} · ${device.activity.title}`
-                      : "Online · Nothing playing"
-                  }
+                  detail={playbackDeviceStatus(device).label}
                   online
                   selected={targetDeviceId === device.deviceId}
                   onPress={() => {
@@ -329,6 +321,16 @@ export function PlaybackDeviceButton({
     </>
   );
 }
+
+type SymbolName = Parameters<typeof SymbolView>[0]["name"];
+
+/** SF Symbol for each kind of device, matching the web picker's icons. */
+const DEVICE_SYMBOLS: Record<PlaybackDeviceKind, SymbolName> = {
+  tablet: "ipad",
+  phone: "iphone",
+  web: "globe",
+  desktop: "desktopcomputer",
+};
 
 function PlaybackDeviceTriggerVisual({
   size,
@@ -439,7 +441,7 @@ function DeviceRow({
   selected,
   onPress,
 }: {
-  icon: Parameters<typeof SymbolView>[0]["name"];
+  icon: SymbolName;
   name: string;
   detail: string;
   online?: boolean;

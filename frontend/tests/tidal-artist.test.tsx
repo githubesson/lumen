@@ -29,7 +29,6 @@ vi.mock("../src/context/Player", () => ({
   }),
   useRemotePlayback: () => ({
     targetDevice: null,
-    controlledShuffle: false,
     commandPending: false,
   }),
 }));

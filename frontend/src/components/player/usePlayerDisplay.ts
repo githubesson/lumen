@@ -1,5 +1,4 @@
 import { useLocation } from "react-router-dom";
-import type { TrackListItem } from "@music-library/core";
 import { usePlayer, useRemotePlayback } from "../../context/Player";
 import { displayText } from "../../lib/format";
 import {
@@ -14,30 +13,14 @@ import type { ProgressOverride } from "./ProgressBar";
  */
 export function usePlayerDisplay() {
   const location = useLocation();
+  // The provider's displayed state already follows a remote target (its
+  // track, play state and controlled volume/shuffle/repeat), so the bar
+  // agrees with the queue and lyrics views.
   const { current, isPlaying, volume, muted, shuffle, repeat, seek } =
     usePlayer();
-  const {
-    targetDevice,
-    commandPending,
-    controlledVolume,
-    controlledMuted,
-    controlledShuffle,
-    controlledRepeat,
-  } = useRemotePlayback();
+  const { targetDevice, commandPending } = useRemotePlayback();
   const fh6Snapshot = useFH6Snapshot();
   const isFH6Page = location.pathname.startsWith("/fh6-radio");
-  const remoteActivity = targetDevice?.activity ?? null;
-  const remoteTrack: TrackListItem | null = remoteActivity
-    ? {
-        id: remoteActivity.track_id,
-        title: remoteActivity.title,
-        artist: remoteActivity.artist,
-        album_id: remoteActivity.album_id,
-        album_title: remoteActivity.album,
-        cover_url: remoteActivity.cover_url,
-        duration_ms: (remoteActivity.duration_sec ?? 0) * 1000,
-      }
-    : null;
   const isRemoteMode = !!targetDevice;
   const isFH6Mode = isFH6Page && !isRemoteMode;
   const fh6Source = fh6Snapshot?.state?.sources?.available?.find(
@@ -46,54 +29,32 @@ export function usePlayerDisplay() {
   const fh6Track = fh6Snapshot?.state?.track;
   const fh6HasTrack = !!fh6Track?.title;
   const fh6Playing = fh6Source?.playback_state === "playing";
-  const displayCurrent = isRemoteMode
-    ? remoteTrack
-    : isFH6Mode
-      ? null
-      : current;
-  const displayHasTrack = isRemoteMode
-    ? !!remoteActivity
-    : isFH6Mode
-      ? fh6HasTrack
-      : !!current;
-  const displayPlaying = isRemoteMode
-    ? !!remoteActivity?.is_playing
-    : isFH6Mode
-      ? fh6Playing
-      : isPlaying;
-  const displayTitle = isRemoteMode
-    ? displayText(remoteActivity?.title, `Nothing playing on ${targetDevice.deviceName}`)
-    : isFH6Mode
+  const displayCurrent = isFH6Mode ? null : current;
+  const displayHasTrack = isFH6Mode ? fh6HasTrack : !!current;
+  const displayPlaying = isFH6Mode ? fh6Playing : isPlaying;
+  const displayTitle = isFH6Mode
     ? displayText(fh6Track?.title, "Waiting for FH6")
-    : displayText(current?.title, "Nothing playing");
-  const displayArtist = isRemoteMode
-    ? [remoteActivity?.artist, remoteActivity?.album].filter(Boolean).join(" · ") ||
-      targetDevice.deviceName
-    : isFH6Mode
-      ? [fh6Track?.artist, fh6Track?.album].filter(Boolean).join(" · ") ||
-        "Lumen Radio"
-      : current
-        ? `${displayText(current.artist, "—")}${
-            current.album_title ? ` · ${displayText(current.album_title)}` : ""
-          }`
-        : "—";
+    : displayText(
+        current?.title,
+        targetDevice ? `Nothing playing on ${targetDevice.deviceName}` : "Nothing playing",
+      );
+  const displayArtist = isFH6Mode
+    ? [fh6Track?.artist, fh6Track?.album].filter(Boolean).join(" · ") ||
+      "Lumen Radio"
+    : current
+      ? `${displayText(current.artist, "—")}${
+          current.album_title ? ` · ${displayText(current.album_title)}` : ""
+        }`
+      : (targetDevice?.deviceName ?? "—");
 
-  const shownVolume = isRemoteMode ? controlledVolume : volume;
-  const shownMuted = isRemoteMode ? controlledMuted : muted;
-  const shownShuffle = isRemoteMode ? controlledShuffle : shuffle;
-  const shownRepeat = isRemoteMode ? controlledRepeat : repeat;
-
-  // Previous, play/pause and next need something to act on in the active mode.
-  const transportDisabled =
-    commandPending ||
-    (isRemoteMode
-      ? !remoteActivity
-      : isFH6Mode
-        ? !fh6Snapshot?.state
-        : !current);
+  // Previous, play/pause and next need something to act on in the active
+  // mode. A pending remote command doesn't disable them: the target applies
+  // commands in order, so a quick second "next" should skip again, and
+  // disabling would drop keyboard focus mid-use.
+  const transportDisabled = isFH6Mode ? !fh6Snapshot?.state : !current;
 
   const progressOverride: ProgressOverride | undefined =
-    isRemoteMode && remoteActivity
+    isRemoteMode && current
       ? // The player clock already follows the target device.
         { onSeek: seek }
       : isFH6Mode
@@ -119,10 +80,10 @@ export function usePlayerDisplay() {
     displayPlaying,
     displayTitle,
     displayArtist,
-    shownVolume,
-    shownMuted,
-    shownShuffle,
-    shownRepeat,
+    shownVolume: volume,
+    shownMuted: muted,
+    shownShuffle: shuffle,
+    shownRepeat: repeat,
     transportDisabled,
     progressOverride,
     fh6Transport,
