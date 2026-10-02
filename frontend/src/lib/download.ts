@@ -2,11 +2,11 @@
 // used to define now live in `core/src/audio-format.ts` — they were identical
 // to `mobile/lib/track-download.ts` character-for-character — and are
 // re-exported here because ~20 call sites import them from this module.
-import { api, downloadStreamUrl, type TrackDetail, type TrackListItem } from "../api";
+import { downloadStreamUrl, type TrackDetail, type TrackListItem } from "../api";
 import {
   downloadFilename,
-  extensionForFormat,
-  extensionFromStream,
+  prepareTrackDownload,
+  type PreparedTrackDownload,
 } from "@music-library/core/audio-format";
 import {
   exportTrackFiles,
@@ -69,11 +69,7 @@ export async function exportTracksAsFiles(
     };
   }
 
-  const prepared: Array<{
-    track: TrackListItem;
-    detail: TrackDetail | null;
-    ext?: string;
-  }> = [];
+  const prepared: Array<PreparedTrackDownload & { track: TrackListItem }> = [];
   let failed = 0;
   const errors: string[] = [];
   const results: typeof prepared = new Array(tracks.length);
@@ -83,15 +79,7 @@ export async function exportTracksAsFiles(
       const index = cursor++;
       const track = tracks[index];
       try {
-        let detail: TrackDetail | null = null;
-        try {
-          detail = await api.getTrack(track.id);
-        } catch {
-          // Stream URL is enough; detail only improves the filename.
-        }
-        const ext =
-          extensionForFormat(detail?.format) ?? (await extensionFromStream(track.id));
-        results[index] = { track, detail, ext };
+        results[index] = { track, ...(await prepareTrackDownload(track)) };
       } catch (e) {
         failed += 1;
         if (errors.length < 5) {
@@ -104,9 +92,9 @@ export async function exportTracksAsFiles(
 
   if (canExportTrackFiles()) {
     const res = await exportTrackFiles(
-      prepared.map(({ track, detail, ext }) => ({
+      prepared.map(({ track, filename }) => ({
         url: downloadStreamUrl(track.id),
-        filename: downloadFilename(track, detail, ext),
+        filename,
       })),
     );
     if (res?.canceled) {

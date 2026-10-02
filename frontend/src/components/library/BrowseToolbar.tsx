@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { SEARCH_TYPE_OPTIONS, type SearchType } from "../../api";
+import { SEARCH_DEBOUNCE_MS, SEARCH_TYPE_OPTIONS, type SearchType } from "../../api";
 import { List as Bars3BottomLeftIcon, LayoutGrid as Squares2X2Icon } from "lucide-react";
 import SearchInput from "../SearchInput";
 import { Select, type SelectOption } from "../Select";
@@ -168,9 +168,12 @@ function LibrarySearchInput({ value, onQueryChange, ...props }: Omit<React.Compo
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setDraft(value);
   }, [value]);
+  // Not useDebouncedValue: that only reports changes of the debounced value,
+  // so retyping, within the delay, a query that back/forward just replaced
+  // would never be applied.
   useEffect(() => {
     if (draft === value) return;
-    const timer = setTimeout(() => latestChange.current(draft), 250);
+    const timer = setTimeout(() => latestChange.current(draft), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [draft, value]);
   return <SearchInput {...props} value={draft} onChange={(event) => setDraft(event.target.value)} />;

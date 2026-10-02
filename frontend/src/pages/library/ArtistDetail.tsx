@@ -6,12 +6,11 @@ import {
   Play as PlayIcon,
 } from "lucide-react";
 import {
-  albumCoverUrl,
+  albumArtUrl,
   api,
   ApiError,
+  artistImageUrl,
   errorMessage,
-  resolveCoverUrl,
-  trackCoverUrl,
   type Artist,
   type TidalArtist,
   type TrackListItem,
@@ -21,12 +20,15 @@ import {
   filterReleases,
   hasReleaseFilters,
   libraryArtistReleases,
+  RELEASE_FILTER_OPTIONS,
   releaseSubtitle,
   tidalArtistReleases,
   type ArtistRelease,
   type ReleaseFilter,
 } from "@music-library/core/artist-releases";
-import { displayText, pluralize } from "../../lib/format";
+import { artistMetaParts, tidalArtistMetaParts } from "@music-library/core/entity-labels";
+import { searchEntityTarget, type EntityTarget } from "@music-library/core/entity-target";
+import { displayText } from "../../lib/format";
 import { useEntityDetail } from "../../lib/useEntityDetail";
 import { dropCache, readCache, writeCache } from "../../lib/resourceCache";
 import { usePlayer, useRemotePlayback } from "../../context/Player";
@@ -46,11 +48,6 @@ import {
 
 const SHELF_LIMIT = 6;
 const NO_TRACKS: TrackListItem[] = [];
-const RELEASE_FILTERS: { key: ReleaseFilter; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "albums", label: "Albums" },
-  { key: "singles", label: "Singles and EPs" },
-];
 
 export function ArtistDetailView({
   id,
@@ -59,7 +56,7 @@ export function ArtistDetailView({
 }: {
   id: string;
   onBack: () => void;
-  onOpenAlbum: (id: string) => void;
+  onOpenAlbum: (target: EntityTarget) => void;
 }) {
   const { entity: artist, tracks, error } = useEntityDetail<Artist>(id, {
     get: api.getArtist,
@@ -114,12 +111,9 @@ export function ArtistDetailView({
     <div className="view artist-page">
       <ArtistHero
         name={artist.name}
-        imageUrl={tracks[0] ? trackCoverUrl(tracks[0]) : null}
+        imageUrl={artistImageUrl(artist, tracks)}
         kind="Artist"
-        meta={[
-          pluralize(artist.track_count, "track"),
-          artist.album_count > 0 && pluralize(artist.album_count, "album"),
-        ]}
+        meta={artistMetaParts(artist)}
         backLabel="Library"
         onBack={onBack}
       />
@@ -166,7 +160,7 @@ export function TidalArtistDetailView({
   /** Name from the link, shown until the loaded profile replaces it. */
   name: string;
   onBack: () => void;
-  onOpenAlbum: (id: string) => void;
+  onOpenAlbum: (target: EntityTarget) => void;
 }) {
   // Keyed on the id by the caller, so this only has to seed a revisit.
   const [data, setData] = useState<TidalArtist | null>(
@@ -185,11 +179,7 @@ export function TidalArtistDetailView({
   const profile = data?.artist;
   const artistName = profile?.name || name;
   // Artists without a TIDAL picture borrow their top track's cover.
-  const imageUrl = profile?.cover_url
-    ? resolveCoverUrl(profile.cover_url)
-    : tracks[0]
-      ? trackCoverUrl(tracks[0])
-      : null;
+  const imageUrl = artistImageUrl(profile, tracks);
   useEffect(() => {
     const controller = new AbortController();
     api
@@ -224,14 +214,7 @@ export function TidalArtistDetailView({
             <span className="badge">TIDAL</span>
           </>
         }
-        meta={
-          data
-            ? [
-                releases.length > 0 && pluralize(releases.length, "release"),
-                tracks.length > 0 && pluralize(tracks.length, "popular track"),
-              ]
-            : undefined
-        }
+        meta={data ? tidalArtistMetaParts(releases.length, tracks.length) : undefined}
         backLabel="Back to search"
         onBack={onBack}
       />
@@ -430,7 +413,7 @@ function Discography({
   onOpen,
 }: {
   releases: ArtistRelease[];
-  onOpen: (id: string) => void;
+  onOpen: (target: EntityTarget) => void;
 }) {
   const [filter, setFilter] = useState<ReleaseFilter>("all");
   const [showAll, setShowAll] = useState(false);
@@ -454,13 +437,13 @@ function Discography({
     >
       {hasReleaseFilters(releases) && (
         <div className="chips artist-chips">
-          {RELEASE_FILTERS.map((option) => (
+          {RELEASE_FILTER_OPTIONS.map((option) => (
             <button
-              key={option.key}
+              key={option.value}
               type="button"
-              className={"chip" + (filter === option.key ? " active" : "")}
-              aria-pressed={filter === option.key}
-              onClick={() => setFilter(option.key)}
+              className={"chip" + (filter === option.value ? " active" : "")}
+              aria-pressed={filter === option.value}
+              onClick={() => setFilter(option.value)}
             >
               {option.label}
             </button>
@@ -489,15 +472,11 @@ function ReleaseCard({
   onOpen,
 }: {
   release: ArtistRelease;
-  onOpen: (id: string) => void;
+  onOpen: (target: EntityTarget) => void;
 }) {
-  const src = release.cover_url
-    ? resolveCoverUrl(release.cover_url, 384)
-    : release.has_cover !== false
-      ? albumCoverUrl(release.id, 384)
-      : null;
+  const src = albumArtUrl(release, 384);
   return (
-    <button type="button" className="card" onClick={() => onOpen(release.id)}>
+    <button type="button" className="card" onClick={() => onOpen(searchEntityTarget(release))}>
       <CoverArt
         className="card-art"
         src={src}

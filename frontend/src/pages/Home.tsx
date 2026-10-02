@@ -25,6 +25,7 @@ import { useFavorites } from "../context/Favorites";
 import { usePlaylists } from "../context/Playlists";
 import { useApiResource } from "../lib/useApiResource";
 import { displayText, pluralize } from "../lib/format";
+import { trackAlbumTarget } from "@music-library/core/entity-target";
 
 const EMPTY_TRACKS: TrackListItem[] = [];
 
@@ -43,7 +44,7 @@ export default function Home() {
   const playlistResource = usePlaylists();
   const recent = recentResource.data ?? EMPTY_TRACKS;
   const tracks = tracksResource.data ?? EMPTY_TRACKS;
-  const favs = favorites.tracks.filter((track) => favorites.ids.has(track.id));
+  const favs = favorites.tracks;
   const playlists = playlistResource.data ?? [];
   const { bind: bindCtx, menu: ctxMenu } = useTrackContextMenu();
 
@@ -190,19 +191,19 @@ function HeroAlbum({
   fallbackQueue: TrackListItem[];
 }) {
   const { play } = usePlayerControls();
-  const albumID = track.album_id;
+  const target = trackAlbumTarget(track);
+  // Only a library album has a page to describe it and tracks to play through
+  // here; a TIDAL track links to its release.
+  const albumID = target?.kind === "local" ? target.id : undefined;
   const album = useApiResource(
     (signal) => (albumID ? api.getAlbum(albumID, { signal }) : Promise.resolve(null)),
     "Could not load the album.",
     { cacheKey: albumID ? `home:hero-album:${albumID}` : undefined },
   );
   const [starting, setStarting] = useState(false);
-  const tidalAlbumID = track.source === "tidal" ? track.source_album_id : undefined;
-  const albumHref = albumID
-    ? `/library?view=albums&album=${encodeURIComponent(albumID)}`
-    : tidalAlbumID
-      ? `/library?view=albums&tidalAlbum=${encodeURIComponent(tidalAlbumID)}`
-      : null;
+  const albumHref = target
+    ? `/library?view=albums&${target.kind === "tidal" ? "tidalAlbum" : "album"}=${encodeURIComponent(target.id)}`
+    : null;
   const year = album.data?.release_year;
   const trackCount = album.data?.track_count;
 

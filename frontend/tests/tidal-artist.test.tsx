@@ -178,7 +178,7 @@ it("previews five popular tracks and files releases newest first by kind", async
     "Short EP | 2022 · EP",
     "Old album | 2020 · Album",
   ]);
-  fireEvent.click(screen.getByRole("button", { name: "Singles and EPs" }));
+  fireEvent.click(screen.getByRole("button", { name: "Singles & EPs" }));
   expect(cards()).toEqual(["New single | 2024 · Single", "Short EP | 2022 · EP"]);
 });
 
@@ -191,12 +191,12 @@ it("drops a release filter that a retry makes unavailable", async () => {
   const view = await show();
   const titles = () =>
     [...view.container.querySelectorAll(".card-title")].map((title) => title.textContent);
-  fireEvent.click(screen.getByRole("button", { name: "Singles and EPs" }));
+  fireEvent.click(screen.getByRole("button", { name: "Singles & EPs" }));
   expect(titles()).toEqual(["Single"]);
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry artist" }));
   });
-  expect(screen.queryByRole("button", { name: "Singles and EPs" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Singles & EPs" })).toBeNull();
   expect(titles()).toEqual(["LP"]);
 });
 
@@ -206,4 +206,26 @@ it("aborts artist requests when leaving the screen", async () => {
   const signal = mock.artist.mock.calls[0][1].signal as AbortSignal;
   view.unmount();
   expect(signal.aborted).toBe(true);
+});
+
+it("opens a release's TIDAL page by its TIDAL id", async () => {
+  mock.artist.mockResolvedValueOnce({
+    tracks: [],
+    albums: [
+      { id: "tidal:1", source: "tidal", source_id: "1", title: "LP", track_count: 12, duration_ms: 45 * 60_000 },
+      // Older payloads carry only the prefixed id.
+      { id: "tidal:2", title: "EP", track_count: 5, duration_ms: 18 * 60_000 },
+    ],
+  });
+  const onOpenAlbum = vi.fn();
+  render(<TidalArtistDetailView id="123" name="Artist" onBack={() => {}} onOpenAlbum={onOpenAlbum} />);
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: /^LP/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^EP/ }));
+  expect(onOpenAlbum.mock.calls).toEqual([
+    [{ kind: "tidal", id: "1" }],
+    [{ kind: "tidal", id: "2" }],
+  ]);
+  // A release without a cover URL has no library cover to fall back to.
+  expect(document.querySelectorAll(".card img")).toHaveLength(0);
 });

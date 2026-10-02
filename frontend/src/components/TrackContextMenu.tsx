@@ -23,16 +23,13 @@ import {
   api,
   errorMessage,
   type Playlist,
-  type TrackDetail,
   type TrackListItem,
 } from "../api";
+import { prepareTrackDownload } from "@music-library/core/audio-format";
+import { resolveTrackAlbumTarget } from "@music-library/core/entity-target";
+import { deleteOwnUploadMessage, trackActions } from "@music-library/core/track";
 import { libraryChanged } from "../lib/events";
-import {
-  extensionForFormat,
-  extensionFromStream,
-  triggerDownload,
-} from "../lib/download";
-import { isLocalTrack } from "../lib/track";
+import { triggerDownload } from "../lib/download";
 import { useDismiss } from "../lib/useDismiss";
 import { useAuth } from "../context/Auth";
 import { useFavorites } from "../context/Favorites";
@@ -84,7 +81,7 @@ export default function TrackContextMenu({
   const { isFavorite, toggle: toggleFav } = useFavorites();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
-  const isLocal = isLocalTrack(track);
+  const actions = trackActions(track, { isAdmin });
   const fav = isFavorite(track.id);
 
   const ref = useRef<HTMLDivElement>(null);
@@ -164,7 +161,7 @@ export default function TrackContextMenu({
   const runPlay = () => {
     // Dropped from TIDAL with no library copy: nothing to stream.
     if (onPlay) onPlay();
-    else if (!track.unavailable) {
+    else if (actions.play) {
       play(track, queue && queue.length > 0 ? queue : [track]);
     }
     onClose();
@@ -196,17 +193,11 @@ export default function TrackContextMenu({
   };
 
   const runDownload = async () => {
-    if (downloading || track.unavailable) return;
+    if (downloading || !actions.download) return;
     setDownloading(true);
     setError(null);
     try {
-      let detail: TrackDetail | null = null;
-      try {
-        detail = await api.getTrack(track.id);
-      } catch {
-        // The stream URL is enough; detail just gives the download a nicer name.
-      }
-      const ext = extensionForFormat(detail?.format) ?? await extensionFromStream(track.id);
+      const { detail, ext } = await prepareTrackDownload(track);
       triggerDownload(track, detail, ext);
       onClose();
     } catch (err) {
@@ -235,23 +226,10 @@ export default function TrackContextMenu({
     setViewingAlbum(true);
     setError(null);
     try {
-      let localAlbumID = track.album_id;
-      let tidalAlbumID =
-        track.source === "tidal" ? track.source_album_id : undefined;
-      if (!localAlbumID || (track.source === "tidal" && !tidalAlbumID)) {
-        const detail = await api.getTrack(track.id);
-        localAlbumID = localAlbumID || detail.album_id;
-        if (detail.source === "tidal") {
-          tidalAlbumID = tidalAlbumID || detail.source_album_id;
-        }
-      }
-      if (track.source === "tidal" && tidalAlbumID) {
-        navigate(`/library?view=albums&tidalAlbum=${encodeURIComponent(tidalAlbumID)}`);
-        onClose();
-        return;
-      }
-      if (localAlbumID) {
-        navigate(`/library?view=albums&album=${encodeURIComponent(localAlbumID)}`);
+      const target = await resolveTrackAlbumTarget(track);
+      if (target) {
+        const param = target.kind === "tidal" ? "tidalAlbum" : "album";
+        navigate(`/library?view=albums&${param}=${encodeURIComponent(target.id)}`);
         onClose();
         return;
       }
@@ -288,10 +266,7 @@ export default function TrackContextMenu({
   // Personal uploads only (track.owned): removes the DB row and the file the
   // user uploaded.
   const runDelete = () =>
-    confirmDelete(
-      `Delete "${track.title}" from your library? This permanently removes the file you uploaded.`,
-      () => api.deleteTrack(track.id),
-    );
+    confirmDelete(deleteOwnUploadMessage(track), () => api.deleteTrack(track.id));
 
   // Admin-only, for global (shared-library) tracks: unlinks the file(s) from
   // disk so a rescan won't re-add it — removes the song for everyone.
@@ -336,8 +311,8 @@ export default function TrackContextMenu({
         role="menuitem"
         className="ctx-item"
         onClick={runPlay}
-        disabled={track.unavailable}
-        title={track.unavailable ? "No longer on TIDAL" : undefined}
+        disabled={!actions.play}
+        title={actions.play ? undefined : "No longer on TIDAL"}
       >
         <PlayIcon className="size-3.5" />
         <span>Play</span>
@@ -362,7 +337,7 @@ export default function TrackContextMenu({
           <span>Song info</span>
         </button>
       )}
-      {(track.album_id || track.album_title || track.source === "tidal") && (
+      {actions.viewAlbum && (
         <button
           type="button"
           role="menuitem"
@@ -374,7 +349,7 @@ export default function TrackContextMenu({
           <span>{viewingAlbum ? "Opening album..." : "View album"}</span>
         </button>
       )}
-      {onShare && (
+      {onShare && actions.share && (
         <button
           type="button"
           role="menuitem"
@@ -390,13 +365,13 @@ export default function TrackContextMenu({
         role="menuitem"
         className="ctx-item"
         onClick={() => void runDownload()}
-        disabled={downloading || track.unavailable}
-        title={track.unavailable ? "No longer on TIDAL" : undefined}
+        disabled={downloading || !actions.download}
+        title={actions.download ? undefined : "No longer on TIDAL"}
       >
         <ArrowDownTrayIcon className="size-3.5" />
         <span>{downloading ? "Preparing download..." : "Download file"}</span>
       </button>
-      {isAdmin && onEdit && (
+      {actions.editMetadata && onEdit && (
         <button
           type="button"
           role="menuitem"
@@ -407,7 +382,7 @@ export default function TrackContextMenu({
           <span>Edit metadata</span>
         </button>
       )}
-      {isAdmin && onMoveToAlbum && (
+      {actions.moveToAlbum && onMoveToAlbum && (
         <button
           type="button"
           role="menuitem"
@@ -418,7 +393,7 @@ export default function TrackContextMenu({
           <span>Move to album…</span>
         </button>
       )}
-      {track.owned && (
+      {actions.deleteOwnUpload && (
         <button
           type="button"
           role="menuitem"
@@ -435,7 +410,7 @@ export default function TrackContextMenu({
           </span>
         </button>
       )}
-      {isAdmin && !track.owned && isLocal && (
+      {actions.adminRemove && (
         <button
           type="button"
           role="menuitem"

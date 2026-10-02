@@ -13,6 +13,7 @@ import {
   type TrackListItem,
 } from "../api";
 import { displayText } from "../lib/format";
+import type { EntityTarget } from "@music-library/core/entity-target";
 import TrackList from "../components/TrackList";
 import CoverArt from "../components/CoverArt";
 import ErrorBanner from "../components/ErrorBanner";
@@ -120,28 +121,28 @@ export default function Library() {
     setParams(next, { replace: true });
   };
 
-  const openAlbum = (id: string) => {
+  const openAlbum = (target: EntityTarget) => {
     const next = new URLSearchParams(params);
     next.delete("tidalArtist");
     // Only one album param at a time: the library album view wins when both
     // are set, which would strand a jump from it to its TIDAL release.
-    if (id.startsWith("tidal:")) {
+    if (target.kind === "tidal") {
       next.delete("album");
-      next.set("tidalAlbum", id.slice(6));
+      next.set("tidalAlbum", target.id);
     } else {
       next.delete("tidalAlbum");
-      next.set("album", id);
+      next.set("album", target.id);
     }
     setParams(next);
   };
 
-  const openArtist = (id: string, name?: string) => {
+  const openArtist = (target: EntityTarget, name?: string) => {
     const next = new URLSearchParams(params);
-    if (id.startsWith("tidal:")) {
-      next.set("tidalArtist", id.slice(6));
+    if (target.kind === "tidal") {
+      next.set("tidalArtist", target.id);
       if (name) next.set("artistName", name);
     }
-    else next.set("artist", id);
+    else next.set("artist", target.id);
     setParams(next);
   };
 
@@ -201,8 +202,8 @@ function LibraryBrowse({
   onSearchTypeChange: (type: SearchType) => void;
   onViewChange: (v: View) => void;
   onQueryChange: (q: string) => void;
-  onOpenAlbum: (id: string) => void;
-  onOpenArtist: (id: string) => void;
+  onOpenAlbum: (target: EntityTarget) => void;
+  onOpenArtist: (target: EntityTarget, name?: string) => void;
 }) {
   const [displayMode, setDisplayMode] = useState<"grid" | "list">("list");
   const [sort, setSort] = useState<SortKey>("recent");
@@ -325,7 +326,7 @@ function AlbumsView({
   onOpen,
 }: {
   query: string;
-  onOpen: (id: string) => void;
+  onOpen: (target: EntityTarget) => void;
 }) {
   return (
     <GridView<Album>
@@ -345,7 +346,7 @@ function ArtistsView({
   onOpen,
 }: {
   query: string;
-  onOpen: (id: string) => void;
+  onOpen: (target: EntityTarget, name?: string) => void;
 }) {
   return (
     <GridView<Artist>

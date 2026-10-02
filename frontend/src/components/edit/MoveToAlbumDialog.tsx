@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   api,
-  albumCoverUrl,
+  albumArtUrl,
   errorMessage,
   type Album,
   type TrackDetail,
@@ -13,6 +13,7 @@ import { DialogShell } from "../DialogShell";
 import SearchInput from "../SearchInput";
 import ErrorBanner from "../ErrorBanner";
 import { libraryChanged } from "../../lib/events";
+import { albumSubtitle } from "@music-library/core/entity-labels";
 
 interface MoveToAlbumProps {
   open: boolean;
@@ -167,7 +168,7 @@ export function MoveToAlbumDialog({
                 }}
               >
                 <CoverArt
-                  src={a.has_cover ? albumCoverUrl(a.id, 80) : null}
+                  src={albumArtUrl(a, 80)}
                   label={a.title}
                   size={40}
                   radius={6}
@@ -195,10 +196,7 @@ export function MoveToAlbumDialog({
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {a.artist_name ||
-                      (a.is_compilation ? "Various Artists" : "Unknown artist")}{" "}
-                    · {a.track_count}{" "}
-                    {a.track_count === 1 ? "track" : "tracks"}
+                    {albumSubtitle(a)}
                   </div>
                 </div>
                 {isCurrent && (

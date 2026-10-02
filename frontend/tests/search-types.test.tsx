@@ -214,3 +214,23 @@ it("does not confirm an empty search while a stream failed, and retries", async 
   expect(screen.getByText("No matching results.")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+it("keeps earlier pages' warnings once each as more results load", async () => {
+  mock.search
+    .mockResolvedValueOnce({ ...page([album], { tidal_album: 25 }), warnings: ["TIDAL is slow."] })
+    .mockResolvedValueOnce({
+      ...page([{ ...album, item: { ...album.item, id: "tidal:43", source_id: "43" } }]),
+      warnings: ["TIDAL is slow.", "Local search is rebuilding."],
+    });
+  render(
+    <MemoryRouter initialEntries={["/library?q=hello&type=album"]}>
+      <Library />
+    </MemoryRouter>,
+  );
+  await act(async () => {});
+  expect(screen.getByRole("alert").textContent).toBe("TIDAL is slow.");
+  await act(async () => {
+    mock.more?.();
+  });
+  expect(screen.getByRole("alert").textContent).toBe("TIDAL is slow. Local search is rebuilding.");
+});
