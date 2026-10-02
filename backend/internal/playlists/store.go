@@ -308,11 +308,39 @@ type TIDALQueue struct {
 	RetryAt *time.Time
 }
 
-// TIDALQueue reports the playlist's TIDAL entries auto-download has yet to
+// queryer is what the playlist reads need from a pool or a transaction.
+type queryer interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// TracksWithQueue reads a playlist's tracks (as TracksDetailed) and its TIDAL
+// queue from one snapshot. Read separately, a row added, restored or adopted
+// between the reads could be paired with a count that doesn't account for it,
+// such as a TIDAL row with nothing queued, and a client would stop polling
+// with that row still showing.
+func (s *Store) TracksWithQueue(ctx context.Context, id, viewerID uuid.UUID) ([]TrackDetail, TIDALQueue, error) {
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, TIDALQueue{}, err
+	}
+	defer tx.Rollback(ctx)
+	tracks, err := tracksDetailed(ctx, tx, id, viewerID)
+	if err != nil {
+		return nil, TIDALQueue{}, err
+	}
+	queue, err := tidalQueue(ctx, tx, id)
+	if err != nil {
+		return nil, TIDALQueue{}, err
+	}
+	return tracks, queue, tx.Commit(ctx)
+}
+
+// tidalQueue reports the playlist's TIDAL entries auto-download has yet to
 // save. Nothing is queued unless the playlist is opted in.
-func (s *Store) TIDALQueue(ctx context.Context, playlistID uuid.UUID) (TIDALQueue, error) {
+func tidalQueue(ctx context.Context, db queryer, playlistID uuid.UUID) (TIDALQueue, error) {
 	var q TIDALQueue
-	err := s.db.QueryRow(ctx, `
+	err := db.QueryRow(ctx, `
 		SELECT
 			COUNT(*) FILTER (WHERE d.status IS DISTINCT FROM 'failed'
 			                    OR d.next_attempt_at IS NULL
@@ -331,7 +359,11 @@ func (s *Store) TIDALQueue(ctx context.Context, playlistID uuid.UUID) (TIDALQueu
 // tracks + viewer's own personal tracks). Other users' personal tracks are
 // silently omitted.
 func (s *Store) TracksDetailed(ctx context.Context, id, viewerID uuid.UUID) ([]TrackDetail, error) {
-	rows, err := s.db.Query(ctx, `
+	return tracksDetailed(ctx, s.db, id, viewerID)
+}
+
+func tracksDetailed(ctx context.Context, db queryer, id, viewerID uuid.UUID) ([]TrackDetail, error) {
+	rows, err := db.Query(ctx, `
 		SELECT
 			pt.position, pt.track_id, t.title, t.album_id, COALESCE(a.title, ''),
 			COALESCE(t.track_no, 0), t.duration_ms,
