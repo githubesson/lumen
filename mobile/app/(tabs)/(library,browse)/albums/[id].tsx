@@ -4,7 +4,7 @@ import {
   Pressable,
 } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
@@ -19,6 +19,7 @@ import {
   playableTracks,
   startListPlayback,
   useAuth,
+  type Album,
   type TrackListItem,
 } from "@music-library/core";
 import { TRACK_FLASH_LIST_PERFORMANCE_PROPS } from "../../../../components/list-performance";
@@ -83,15 +84,22 @@ export default function AlbumDetailScreen() {
   const onTrackPress = usePlayQueue(tracks);
   const { refetch: refetchAlbum } = albumQuery;
   const { refetch: refetchTracks } = tracksQuery;
-  const refetchAll = useCallback(
-    () => Promise.all([refetchAlbum(), refetchTracks()]),
-    [refetchAlbum, refetchTracks],
+  const queryClient = useQueryClient();
+  const onQueuedChanged = useCallback(
+    (queued: number) => {
+      queryClient.setQueryData<Album>(qk.album(userId, id), (album) =>
+        album ? { ...album, queued_count: queued } : album,
+      );
+      void refetchAlbum();
+      void refetchTracks();
+    },
+    [queryClient, userId, id, refetchAlbum, refetchTracks],
   );
   const downloadAction = useAlbumDownloadAction(
     albumQuery.data?.tidal_album_id,
     tracks,
     albumQuery.data?.queued_count ?? 0,
-    refetchAll,
+    onQueuedChanged,
   );
 
   const renderItem = useCallback(

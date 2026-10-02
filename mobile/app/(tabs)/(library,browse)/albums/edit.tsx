@@ -59,7 +59,9 @@ export default function AlbumEditScreen() {
 
   const album = albumQuery.data;
   if (albumQuery.isLoading) return <EmptyState fill loading />;
-  if (albumQuery.isError || !album || !id) {
+  // Only without data: a failed background refetch keeps the last album, and
+  // must not unmount the editor and its unsaved changes.
+  if (!album || !id) {
     return (
       <EmptyState
         fill

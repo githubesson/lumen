@@ -36,9 +36,9 @@ type SiriCatalogApi = Pick<
  * from the server when online, falling back to the query cache the screens
  * fill (and persist to disk) under the same keys when the server can't be
  * reached (not when it refuses: see `canServeCachedAfter`), and from that
- * cache alone when offline. That's what lets "play <playlist>" reach its
- * downloaded tracks with no network. Name searches have nothing cached to
- * read and still fail.
+ * cache alone when offline. Successful reads go into that cache too. That's
+ * what lets "play <playlist>" reach its downloaded tracks with no network.
+ * Name searches have nothing cached to read and still fail.
  */
 export function cachedSiriCatalog(
   queryClient: QueryClient,
@@ -49,7 +49,9 @@ export function cachedSiriCatalog(
   const read = async <T>(queryKey: QueryKey, fetch: () => Promise<T>): Promise<T> => {
     if (!isOffline()) {
       try {
-        return await fetch();
+        const data = await fetch();
+        queryClient.setQueryData(queryKey, data);
+        return data;
       } catch (error) {
         const cached = queryClient.getQueryData<T>(queryKey);
         if (cached === undefined || !canServeCachedAfter(error)) throw error;

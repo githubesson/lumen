@@ -225,6 +225,8 @@ describe("cachedSiriCatalog", () => {
 
     await expect(catalog.listPlaylistTracks("p-1")).resolves.toBe(playlistTracks);
     expect(client.listPlaylistTracks).toHaveBeenCalledWith("p-1", undefined);
+    // Kept for a later request with no network.
+    expect(queryClient.getQueryData(qk.playlistTracks("u-1", "p-1"))).toBe(playlistTracks);
   });
 
   it("falls back to the cache when the server can't be reached", async () => {

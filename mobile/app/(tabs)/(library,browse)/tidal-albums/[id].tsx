@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { PixelRatio } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams } from "expo-router";
 import {
   ALBUM_DOWNLOAD_REFRESH_MS,
@@ -14,6 +14,7 @@ import {
   startListPlayback,
   tidalAlbumMetaParts,
   useAuth,
+  type TidalAlbum,
   type TrackListItem,
 } from "@music-library/core";
 import { TRACK_FLASH_LIST_PERFORMANCE_PROPS } from "../../../../components/list-performance";
@@ -53,13 +54,22 @@ export default function TidalAlbumDetailScreen() {
   );
   const onTrackPress = usePlayQueue(tracks);
   const play = usePlayTrack();
+  const queryClient = useQueryClient();
   const { refetch } = albumQuery;
-  const refetchAlbum = useCallback(() => refetch(), [refetch]);
+  const onQueuedChanged = useCallback(
+    (queued: number) => {
+      queryClient.setQueryData<TidalAlbum>(qk.tidalAlbum(userId, id), (album) =>
+        album ? { ...album, queued_count: queued } : album,
+      );
+      void refetch();
+    },
+    [queryClient, userId, id, refetch],
+  );
   const downloadAction = useAlbumDownloadAction(
     albumQuery.data?.id,
     tracks,
     albumQuery.data?.queued_count ?? 0,
-    refetchAlbum,
+    onQueuedChanged,
   );
 
   const renderItem = useCallback(

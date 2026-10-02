@@ -52,7 +52,9 @@ export default function TrackEditScreen() {
     : false;
 
   if (trackQuery.isLoading) return <EmptyState fill loading />;
-  if (trackQuery.isError || !track || !id) {
+  // Only without data: a failed background refetch keeps the last track, and
+  // must not unmount the editor and its unsaved changes.
+  if (!track || !id) {
     return (
       <EmptyState
         fill
