@@ -9,8 +9,13 @@ import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
 import {
-  albumCoverUrl,
+  ALBUM_DOWNLOAD_REFRESH_MS,
+  albumArtists,
+  albumArtUrl,
   api,
+  displayText,
+  libraryAlbumMetaParts,
+  metaLine,
   playableTracks,
   useAuth,
   type TrackListItem,
@@ -24,10 +29,7 @@ import { TrackRow } from "../../../../components/track-row";
 import { usePlayTrack } from "../../../../context/player";
 import { qk } from "../../../../lib/query-keys";
 import { usePlayQueue } from "../../../../lib/use-play-queue";
-import {
-  ALBUM_DOWNLOAD_REFRESH_MS,
-  useAlbumDownloadAction,
-} from "../../../../lib/album-download";
+import { useAlbumDownloadAction } from "../../../../lib/album-download";
 import { useTheme } from "../../../../theme/theme";
 import { AlbumHeader, ALBUM_ART_SIZE } from "../../../../components/album-header";
 import { EmptyState, retryAction } from "../../../../components/empty-state";
@@ -107,18 +109,14 @@ export default function AlbumDetailScreen() {
       1,
       Math.round(ALBUM_ART_SIZE * PixelRatio.get()),
     );
-    const coverUri = album.has_cover
-      ? `${albumCoverUrl(album.id, requestSize)}${coverBust ? `&v=${coverBust}` : ""}`
-      : null;
+    const coverUri = albumArtUrl(album, requestSize, coverBust);
     return (
       <AlbumHeader
         title={album.title}
-        artist={album.artist_names?.join(", ") || album.artist_name}
+        artist={albumArtists(album)}
         coverUri={coverUri}
         coverKey={coverUri ?? undefined}
-        metadata={`${album.track_count} ${album.track_count === 1 ? "track" : "tracks"}${
-          album.tidal_album_id && album.saved_count !== undefined ? ` · ${album.saved_count} saved` : ""
-        }${album.release_year ? ` · ${album.release_year}` : ""}`}
+        metadata={metaLine(libraryAlbumMetaParts(album))}
         onPlay={(() => {
           const playable = playableTracks(tracks);
           return playable.length > 0 ? () => play(playable[0], playable) : undefined;
@@ -153,7 +151,7 @@ export default function AlbumDetailScreen() {
     <>
       <Stack.Screen
         options={{
-          title: albumQuery.data.title,
+          title: displayText(albumQuery.data.title),
           headerLargeTitle: false,
           headerRight: isAdmin
             ? () => (

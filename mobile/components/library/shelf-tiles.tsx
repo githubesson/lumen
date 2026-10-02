@@ -1,7 +1,7 @@
 import { View } from "react-native";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
-import { albumCoverUrl, type TrackListItem } from "@music-library/core";
+import { albumCoverUrl, displayText, type TrackListItem } from "@music-library/core";
 import type { StyleProp, ViewStyle } from "react-native";
 import { CoverArt } from "../cover-art";
 import { ShelfTile } from "../shelf-tile";
@@ -22,15 +22,15 @@ export function TrackTile({
   onPress: (t: TrackListItem) => void;
   style?: StyleProp<ViewStyle>;
 }) {
+  const title = displayText(track.title);
+  const artist = displayText(track.artist);
   return (
     <ShelfTile
       artwork={<CoverArt track={track} size={SHELF_TILE_SIZE} priority="low" />}
-      title={track.title}
-      subtitle={track.artist ?? undefined}
+      title={title}
+      subtitle={artist || undefined}
       width={SHELF_TILE_SIZE}
-      accessibilityLabel={
-        track.artist ? `${track.title} by ${track.artist}` : track.title
-      }
+      accessibilityLabel={artist ? `${title} by ${artist}` : title}
       onPress={() => {
         void Haptics.selectionAsync();
         onPress(track);
@@ -46,8 +46,8 @@ export function TrackTile({
  */
 export function AlbumTile({
   id,
-  title,
-  subtitle,
+  title: rawTitle,
+  subtitle: rawSubtitle,
   onPress,
   style,
 }: {
@@ -58,6 +58,8 @@ export function AlbumTile({
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
+  const title = displayText(rawTitle);
+  const subtitle = displayText(rawSubtitle) || undefined;
   return (
     <ShelfTile
       artwork={

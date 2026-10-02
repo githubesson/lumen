@@ -1,15 +1,12 @@
 import { useCallback, useState } from "react";
 import { Alert } from "react-native";
 import {
+  albumDownloadState,
   api,
-  downloadableAlbumTracks,
   errorMessage,
   useAuth,
   type TrackListItem,
 } from "@music-library/core";
-
-/** How often album screens refetch while tracks are queued for download. */
-export const ALBUM_DOWNLOAD_REFRESH_MS = 15_000;
 
 /**
  * Admin action for an album header that saves a TIDAL release into the
@@ -42,9 +39,10 @@ export function useAlbumDownloadAction(
   );
 
   if (me?.role !== "admin" || !tidalAlbumId) return undefined;
-  if (queuedCount > 0) {
+  const state = albumDownloadState(tracks, queuedCount);
+  if (state.kind === "queued") {
     return {
-      label: `Downloading · ${queuedCount} left`,
+      label: state.label,
       disabled: busy,
       onPress: () =>
         Alert.alert("Cancel album download?", "Tracks already saved stay in the library.", [
@@ -58,11 +56,9 @@ export function useAlbumDownloadAction(
         ]),
     };
   }
-  const remaining = downloadableAlbumTracks(tracks).length;
-  if (remaining === 0) return undefined;
-  const anySaved = tracks.some((t) => t.source !== "tidal");
+  if (state.kind === "none") return undefined;
   return {
-    label: anySaved ? `Download ${remaining} remaining` : "Download album",
+    label: state.label,
     disabled: busy,
     onPress: () =>
       void run(() => api.downloadTidalAlbum(tidalAlbumId), "Couldn't start the album download"),

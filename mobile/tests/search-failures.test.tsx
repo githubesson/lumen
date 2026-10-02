@@ -33,6 +33,8 @@ const mock = vi.hoisted(() => ({
     refetch: vi.fn(),
   },
   retrySearch: undefined as undefined | (() => void),
+  push: vi.fn(),
+  openRelease: undefined as undefined | ((release: unknown) => void),
 }));
 vi.mock("react-native", () => ({
   View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -61,16 +63,14 @@ vi.mock("../components/artist-row", () => ({ ArtistRow: () => null }));
 vi.mock("expo-router", () => ({
   Stack: { Screen: () => null },
   useLocalSearchParams: () => ({ id: "123", name: "Artist" }),
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: mock.push }),
 }));
-vi.mock("@music-library/core", () => ({
+// The pure label and artwork helpers are the real ones.
+vi.mock("@music-library/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@music-library/core")>()),
   api: {},
   SEARCH_TYPE_OPTIONS: [],
-  searchEntityID: vi.fn(),
   useAuth: () => ({ me: { id: "user" } }),
-  pluralize: (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`,
-  resolveCoverUrl: (url: string) => `resolved:${url}`,
-  trackCoverUrl: (track: { id: string }) => `track-cover:${track.id}`,
 }));
 vi.mock("@shopify/flash-list", () => ({
   FlashList: ({
@@ -114,15 +114,20 @@ vi.mock("../components/artist/popular-track-row", () => ({
 vi.mock("../components/artist/artist-discography", () => ({
   ArtistDiscography: ({
     releases,
+    onOpen,
   }: {
     releases: { title: string; kind?: string }[];
-  }) => (
-    <ul>
-      {releases.map((release) => (
-        <li key={release.title}>{`${release.title} (${release.kind})`}</li>
-      ))}
-    </ul>
-  ),
+    onOpen: (release: unknown) => void;
+  }) => {
+    mock.openRelease = onOpen;
+    return (
+      <ul>
+        {releases.map((release) => (
+          <li key={release.title}>{`${release.title} (${release.kind})`}</li>
+        ))}
+      </ul>
+    );
+  },
 }));
 vi.mock("../components/section", () => ({
   Section: ({ title }: { title: string }) => <h2>{title}</h2>,
@@ -228,14 +233,15 @@ it("uses the artist profile for the name and picture, falling back to the top tr
   const track = { id: "t1", title: "Hit" };
   mock.query.data = { albums: [], tracks: [track] };
   const fallback = markup();
-  expect(fallback).toContain('data-image="track-cover:t1">Artist</header>');
+  expect(fallback).toContain('data-image="/api/tracks/t1/cover?size=200">Artist</header>');
   mock.query.data = {
     artist: { name: "Profile Name", cover_url: "/api/covers/remote?url=x" },
     albums: [],
     tracks: [track],
   };
+  // Sized like the fallback, since it's one of our cover endpoints.
   expect(markup()).toContain(
-    'data-image="resolved:/api/covers/remote?url=x">Profile Name</header>',
+    'data-image="/api/covers/remote?url=x&amp;size=200">Profile Name</header>',
   );
 });
 
@@ -269,4 +275,28 @@ it("does not confirm an empty search while a stream failed, and offers retry", (
   const recovered = renderToStaticMarkup(<SearchResults search="hello" />);
   expect(recovered).toContain("No matching results.");
   expect(recovered).not.toContain("Retry search");
+});
+
+it("shows each search warning once across loaded pages", () => {
+  mock.searchQuery.data = {
+    pages: [
+      { items: [], warnings: ["TIDAL is slow."] },
+      { items: [], warnings: ["TIDAL is slow.", "Local search is rebuilding."] },
+    ],
+  };
+  const html = renderToStaticMarkup(<SearchResults search="hello" />);
+  expect(html.split("TIDAL is slow.")).toHaveLength(2);
+  expect(html).toContain("Local search is rebuilding.");
+});
+
+it("opens a TIDAL release by its TIDAL id", () => {
+  mock.query.data = {
+    albums: [{ id: "tidal:9", title: "LP", track_count: 12, duration_ms: 2_700_000 }],
+    tracks: [],
+  };
+  mock.push.mockReset();
+  markup();
+  mock.openRelease?.({ id: "tidal:9", source: "tidal", source_id: "9" });
+  mock.openRelease?.({ id: "tidal:10", source: "tidal" });
+  expect(mock.push.mock.calls.map(([route]) => route.params)).toEqual([{ id: "9" }, { id: "10" }]);
 });

@@ -6,7 +6,9 @@ import { useRouter } from "expo-router";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import {
   api,
-  searchEntityID,
+  mergeSearchWarnings,
+  nextPageParam,
+  searchEntityTarget,
   SEARCH_TYPE_OPTIONS,
   useAuth,
   type SearchAlbum,
@@ -45,12 +47,7 @@ export function SearchResults({ search }: { search: string }) {
     queryFn: ({ pageParam, signal }) =>
       api.searchPage({ q: search, type, limit: 25, ...pageParam, signal }),
     getNextPageParam: (last, pages) =>
-      Object.keys(last.nextOffsets ?? {}).length
-        ? {
-            offset: pages.reduce((sum, page) => sum + page.items.length, 0),
-            searchOffsets: last.nextOffsets,
-          }
-        : undefined,
+      nextPageParam(last, pages.reduce((sum, page) => sum + page.items.length, 0)),
   });
   const results = useMemo(
     () => query.data?.pages.flatMap((page) => page.items) ?? [],
@@ -64,33 +61,32 @@ export function SearchResults({ search }: { search: string }) {
     [results],
   );
   const onTrackPress = usePlayQueue(tracks);
-  const warnings = [
-    ...new Set(query.data?.pages.flatMap((page) => page.warnings ?? []) ?? []),
-  ];
+  const warnings = (query.data?.pages ?? []).reduce<string[]>(
+    (shown, page) => mergeSearchWarnings(shown, page.warnings),
+    [],
+  );
   // Stable handlers and render callback: rows are memoized, and new closures
   // every render re-rendered every visible row on each query or state change.
-  const openAlbum = useCallback(
-    (album: SearchAlbum) =>
-      router.push({
-        pathname:
-          album.source === "tidal"
-            ? "/(tabs)/tidal-albums/[id]"
-            : "/(tabs)/albums/[id]",
-        params: { id: searchEntityID(album) },
-      }),
-    [router],
-  );
-  const openArtist = useCallback(
-    (artist: SearchArtist) =>
-      router.push({
-        pathname:
-          artist.source === "tidal"
-            ? "/(tabs)/tidal-artists/[id]"
-            : "/(tabs)/artists/[id]",
-        params: { id: searchEntityID(artist), name: artist.name },
-      }),
-    [router],
-  );
+  const openAlbum = useCallback((album: SearchAlbum) => {
+    const target = searchEntityTarget(album);
+    router.push({
+      pathname:
+        target.kind === "tidal"
+          ? "/(tabs)/tidal-albums/[id]"
+          : "/(tabs)/albums/[id]",
+      params: { id: target.id },
+    });
+  }, [router]);
+  const openArtist = useCallback((artist: SearchArtist) => {
+    const target = searchEntityTarget(artist);
+    router.push({
+      pathname:
+        target.kind === "tidal"
+          ? "/(tabs)/tidal-artists/[id]"
+          : "/(tabs)/artists/[id]",
+      params: { id: target.id, name: artist.name },
+    });
+  }, [router]);
   const renderItem = useCallback(
     ({ item: result }: { item: SearchResult }) => {
       switch (result.type) {

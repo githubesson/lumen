@@ -23,6 +23,8 @@ import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import {
   api,
+  nextPageParam,
+  SEARCH_DEBOUNCE_MS,
   type Page,
   type SearchOffsets,
   type Album,
@@ -49,7 +51,6 @@ import { useTheme } from "../../../theme/theme";
 
 type Mode = "tracks" | "albums" | "artists";
 const PAGE_SIZE = 50;
-const SEARCH_DEBOUNCE_MS = 250;
 
 /**
  * One paged, searchable library list. The three tabs are byte-identical apart
@@ -78,14 +79,8 @@ function useLibraryListQuery<T>({
     queryFn: ({ pageParam, signal }) =>
       fetchPage({ q: "", limit: PAGE_SIZE, ...pageParam, signal }),
     initialPageParam: { offset: 0 } as { offset: number; searchOffsets?: SearchOffsets },
-    getNextPageParam: (last, pages) => {
-      const loaded = pages.reduce((s, p) => s + p.items.length, 0);
-      if (last.nextOffsets !== undefined) {
-        return Object.keys(last.nextOffsets).length
-          ? { offset: loaded, searchOffsets: last.nextOffsets } : undefined;
-      }
-      return loaded < last.total ? { offset: loaded } : undefined;
-    },
+    getNextPageParam: (last, pages) =>
+      nextPageParam(last, pages.reduce((s, p) => s + p.items.length, 0)),
   });
 }
 

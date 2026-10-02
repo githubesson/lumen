@@ -2,6 +2,7 @@ import { Text, View } from "react-native";
 import { Image } from "expo-image";
 import { SymbolView } from "expo-symbols";
 import { Eyebrow } from "../eyebrow";
+import { displayText } from "@music-library/core";
 import { useTheme } from "../../theme/theme";
 
 export const ARTIST_AVATAR_SIZE = 168;
@@ -115,7 +116,7 @@ export function ArtistHero({
             textAlign: "center",
           }}
         >
-          {name}
+          {displayText(name)}
         </Text>
       </View>
     </View>
