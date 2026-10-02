@@ -54,7 +54,7 @@ import {
 } from "../lib/offline-mode";
 import { startableListTracks } from "../lib/use-play-queue";
 import { qk } from "../lib/query-keys";
-import { QUERY_STALE_TIME } from "../lib/query-policy";
+import { QUERY_STALE_TIME, canServeCachedAfter } from "../lib/query-policy";
 import {
   addCarPlayAlbumArtistListener,
   addCarPlayConnectListener,
@@ -653,8 +653,10 @@ function isLoading(query: { isFetching: boolean; data: unknown }): boolean {
 
 /**
  * Read a list for the car: cache first when offline, otherwise fetch and fall
- * back to whatever is cached. Never rejects and never hangs — a pending fetch
- * would leave the row spinning until the native timeout releases it.
+ * back to whatever is cached when the server can't be reached (not when it
+ * refuses, e.g. a deleted playlist's 404: see `canServeCachedAfter`). Never
+ * rejects and never hangs — a pending fetch would leave the row spinning
+ * until the native timeout releases it.
  *
  * `fetchQuery` is deliberate: these are the same keys the phone screens read,
  * so browsing in the car warms the app's own caches and vice versa.
@@ -677,8 +679,8 @@ async function load<T>(
       // One attempt: a retry can outlast the selection timeout.
       retry: false,
     });
-  } catch {
-    return cached;
+  } catch (error) {
+    return canServeCachedAfter(error) ? cached : undefined;
   }
 }
 

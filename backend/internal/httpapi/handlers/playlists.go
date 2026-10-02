@@ -418,6 +418,15 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	// Queue first: if a download lands between the two reads, the response
+	// pairs a saved row with a stale count, which costs one extra poll. The
+	// other order could pair a stale TIDAL row with a count of zero, and the
+	// client would stop polling with that row still showing.
+	queue, err := h.Store.TIDALQueue(r.Context(), pid)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	tracks, err := h.Store.TracksDetailed(r.Context(), pid, u.ID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -454,11 +463,6 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 			ti.AddedByID = t.AddedBy.String()
 		}
 		out.Tracks = append(out.Tracks, ti)
-	}
-	queue, err := h.Store.TIDALQueue(r.Context(), pid)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
 	}
 	out.TIDALQueued = queue.Queued
 	if queue.RetryAt != nil {

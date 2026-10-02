@@ -1,3 +1,4 @@
+import { ApiError } from "@music-library/core";
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
@@ -243,5 +244,21 @@ describe("cachedSiriCatalog", () => {
 
     await expect(catalog.listPlaylistTracks("p-1")).resolves.toBe(playlistTracks);
     await expect(catalog.listAlbumTracks("a-1")).rejects.toBe(unreachable);
+  });
+
+  it("doesn't play a cached copy of something the server refuses", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(qk.playlistTracks("u-1", "p-1"), playlistTracks);
+    const deleted = new ApiError(404, "not found");
+    const catalog = cachedSiriCatalog(
+      queryClient,
+      "u-1",
+      () => false,
+      { listPlaylistTracks: vi.fn().mockRejectedValue(deleted) } as unknown as Parameters<
+        typeof cachedSiriCatalog
+      >[3],
+    );
+
+    await expect(catalog.listPlaylistTracks("p-1")).rejects.toBe(deleted);
   });
 });
