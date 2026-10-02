@@ -27,7 +27,8 @@
     "./lyrics": "./src/lyrics.ts",
     "./metadata-edit": "./src/metadata-edit.ts",
     "./share-snippet": "./src/share-snippet.ts",
-    "./auth/validation": "./src/auth/validation.ts"
+    "./auth/validation": "./src/auth/validation.ts",
+    "./admin/invites": "./src/admin/invites.ts"
   },
   "peerDependencies": {
     "react": "^18.3.1 || ^19.0.0"
