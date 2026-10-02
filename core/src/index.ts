@@ -80,6 +80,14 @@ export {
   type UsePlayerCoreOptions,
   type UsePlayerCoreReturn,
 } from "./player";
+export {
+  canStartTrack,
+  listPlaybackState,
+  startListPlayback,
+  usePlayFromList,
+  type ListPlaybackState,
+  type PlayFromList,
+} from "./player";
 
 export * from "./lyrics";
 export * from "./metadata-edit";

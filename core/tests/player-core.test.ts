@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canStartTrack,
   clampVolume,
   fisherYatesWithAnchor,
   nextRepeatMode,
@@ -82,5 +83,18 @@ describe("shouldReportPlay", () => {
     expect(shouldReportPlay(0, 0)).toBe(false);
     expect(shouldReportPlay(29, 0)).toBe(false);
     expect(shouldReportPlay(31, 0)).toBe(true);
+  });
+});
+
+describe("canStartTrack", () => {
+  it("rejects unavailable tracks even without a platform gate", () => {
+    expect(canStartTrack({ id: "a" })).toBe(true);
+    expect(canStartTrack({ id: "a", unavailable: true })).toBe(false);
+    expect(canStartTrack({ id: "a", unavailable: true }, () => true)).toBe(false);
+  });
+
+  it("applies the platform gate to available tracks", () => {
+    expect(canStartTrack({ id: "a" }, (id) => id === "b")).toBe(false);
+    expect(canStartTrack({ id: "b" }, (id) => id === "b")).toBe(true);
   });
 });

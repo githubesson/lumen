@@ -144,12 +144,16 @@ export function optimisticControlledState(
  * The window starts 24 tracks back so "previous" works immediately after a
  * hand-off. If the selected track somehow falls outside the window, the queue
  * degrades to just that track rather than silently playing something else.
+ *
+ * Unavailable tracks are left out: no device can play them, and the command
+ * schema (strictly decoded by the server) has no field to flag them with.
  */
 export function buildRemoteQueue(
   track: TrackListItem,
   queue?: TrackListItem[],
 ): TrackListItem[] {
-  const source = queue?.length ? queue : [track];
+  const playable = queue?.filter((item) => !item.unavailable);
+  const source = playable?.length ? playable : [track];
   const selectedIndex = Math.max(
     0,
     source.findIndex((item) => item.id === track.id),

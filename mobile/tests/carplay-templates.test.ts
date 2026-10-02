@@ -398,6 +398,19 @@ describe("track list template", () => {
     ]);
   });
 
+  it("dims tracks that are unavailable even when online", () => {
+    const template = buildTrackListTemplate({
+      id: "favorites",
+      title: "Favorites",
+      limits: LIMITS,
+      tracks: [track("t1", { unavailable: true }), track("t2")],
+    });
+
+    expect(contentRows(template)).toMatchObject([
+      { id: "track:t1", enabled: false },
+      { id: "track:t2", enabled: true },
+    ]);
+  });
   it("falls back to the album when a track has no artist", () => {
     const template = buildTrackListTemplate({
       id: "album:a1",

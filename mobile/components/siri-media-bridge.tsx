@@ -2,6 +2,7 @@ import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query";
 import {
   api,
+  canStartTrack,
   fisherYatesWithAnchor,
   useAuth,
   type Playlist,
@@ -176,7 +177,7 @@ export function SiriMediaBridge() {
           ? await loadSiriMediaQueue(entity, controller.signal)
           : await api.listRecent(100, { signal: controller.signal });
         const playableQueue = loadedQueue.filter((track) =>
-          isTrackPlayableOffline(track.id),
+          canStartTrack(track, isTrackPlayableOffline),
         );
         if (!playableQueue.length) {
           diagnosticsLog.append({

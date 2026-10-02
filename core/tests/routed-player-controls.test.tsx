@@ -220,3 +220,25 @@ describe("routed player controls", () => {
     expect(controls.toggle).toHaveBeenCalledOnce();
   });
 });
+
+describe("routed player controls: unavailable tracks", () => {
+  const gone: TrackListItem = { ...second, unavailable: true };
+
+  it("refuses them before the local offline gate can misreport why", () => {
+    const { result, options, controls } = setup();
+    expect(result.current.play(gone, [track, gone])).toBe(false);
+    expect(options.canPlayLocally).not.toHaveBeenCalled();
+    expect(controls.play).not.toHaveBeenCalled();
+  });
+
+  it("never sends one to a remote device, as the track or in its queue", async () => {
+    const { result, options } = setup(device);
+    expect(result.current.play(gone, [track, gone])).toBe(false);
+    expect(options.sendCommand).not.toHaveBeenCalled();
+    await act(async () => result.current.play(track, [gone, track, gone]));
+    expect(options.sendCommand).toHaveBeenCalledExactlyOnceWith("play_track", {
+      track: expect.objectContaining({ id: "t1" }),
+      queue: [expect.objectContaining({ id: "t1" })],
+    });
+  });
+});

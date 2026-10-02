@@ -45,5 +45,12 @@ export {
 } from "./activity-sync";
 
 export { useRoutedPlayerControls, type RoutedPlayerControlsOptions } from "./use-routed-player-controls";
+export {
+  listPlaybackState,
+  startListPlayback,
+  usePlayFromList,
+  type ListPlaybackState,
+  type PlayFromList,
+} from "./play-list";
 
 export type { PlaybackQueueSnapshot } from "./queue-sync";

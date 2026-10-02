@@ -44,6 +44,9 @@ export function useRoutedPlayerControls({
   const localPlay = controls.play;
   const play = useCallback<PlayerControls["play"]>(
     (track, queue) => {
+      // No device can play these, and checking first keeps a platform's
+      // offline feedback from misreporting why.
+      if (track.unavailable) return false;
       if (!targetDevice) {
         if (canPlayLocally && !canPlayLocally(track)) return false;
         return localPlay(track, queue);

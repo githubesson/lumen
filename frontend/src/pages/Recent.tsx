@@ -7,6 +7,7 @@ import ListPageHeader from "../components/ListPageHeader";
 import ErrorBanner from "../components/ErrorBanner";
 import EmptyState from "../components/EmptyState";
 import { usePlayerControls } from "../context/Player";
+import { startListPlayback } from "@music-library/core/player/play-list";
 import { useApiResource } from "../lib/useApiResource";
 import { pluralize } from "../lib/format";
 
@@ -39,8 +40,8 @@ export default function Recent() {
         actions={
           <Button
             variant="primary"
-            disabled={!tracks || tracks.length === 0}
-            onClick={() => tracks && tracks.length > 0 && play(tracks[0], tracks)}
+            disabled={!tracks?.some((track) => !track.unavailable)}
+            onClick={() => tracks && startListPlayback(play, tracks, false)}
             leadingIcon={<PlayIcon className="size-4" />}
           >
             Play all

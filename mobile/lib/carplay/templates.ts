@@ -1,5 +1,6 @@
 import {
   albumCoverUrl,
+  canStartTrack,
   playlistArtUrl,
   trackCoverUrl,
   type Album,
@@ -244,7 +245,7 @@ function trackRow(
     text: track.title,
     detailText: trackSubtitle(track),
     isPlaying: track.id === options.currentTrackId,
-    enabled: options.isPlayable ? options.isPlayable(track.id) : true,
+    enabled: canStartTrack(track, options.isPlayable),
     imageUrl: options.coverFor(track),
     symbol: SYMBOL.track,
   };

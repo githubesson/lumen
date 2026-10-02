@@ -5,6 +5,7 @@ import { Stack, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import {
   api,
+  playableTracks,
   useAuth,
   type ReplayData,
   type ReplayAlbum,
@@ -185,9 +186,10 @@ export default function HomeScreen() {
   const onFavoriteTilePress = usePlayQueue(favoritesShelf);
 
   const onShuffleFavorites = useCallback(() => {
-    if (favorites.length === 0) return;
+    const playable = playableTracks(favorites);
+    if (playable.length === 0) return;
     void Haptics.selectionAsync();
-    const shuffled = seededShuffle(favorites, `${Date.now()}`);
+    const shuffled = seededShuffle(playable, `${Date.now()}`);
     play(shuffled[0], shuffled);
   }, [favorites, play]);
 

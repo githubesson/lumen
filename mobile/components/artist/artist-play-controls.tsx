@@ -3,6 +3,10 @@ import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
 import type { TrackListItem } from "@music-library/core";
 import {
+  listPlaybackState,
+  startListPlayback,
+} from "@music-library/core/player/play-list";
+import {
   useCurrentTrack,
   usePlayerControls,
   usePlayerPlayback,
@@ -34,12 +38,11 @@ export function ArtistPlayControls({
   const current = useCurrentTrack();
   const { isPlaying, shuffle } = usePlayerPlayback();
   const { commandPending } = useRemotePlayback();
-  // Without a play-context id, a current track from this artist's list is the
-  // closest signal that the button should pause instead of restarting.
-  const playingHere =
-    current != null && tracks.some((track) => track.id === current.id);
-  const showPause = playingHere && isPlaying;
-  const canPlay = tracks.length > 0;
+  const { playingHere, showPause, canPlay } = listPlaybackState(
+    tracks,
+    current,
+    isPlaying,
+  );
 
   return (
     <View
@@ -102,14 +105,8 @@ export function ArtistPlayControls({
       <Pressable
         onPress={() => {
           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          if (playingHere) {
-            toggle();
-            return;
-          }
-          const start = shuffle
-            ? tracks[Math.floor(Math.random() * tracks.length)]
-            : tracks[0];
-          play(start, tracks);
+          if (playingHere) toggle();
+          else startListPlayback(play, tracks, shuffle);
         }}
         disabled={!canPlay}
         accessibilityRole="button"
