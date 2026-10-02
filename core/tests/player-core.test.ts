@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   canStartTrack,
   clampVolume,
+  extrapolatePosition,
   fisherYatesWithAnchor,
   nextRepeatMode,
+  repeatModeLabel,
   shouldReportPlay,
 } from "../src/player/player-core";
 
@@ -83,6 +85,27 @@ describe("shouldReportPlay", () => {
     expect(shouldReportPlay(0, 0)).toBe(false);
     expect(shouldReportPlay(29, 0)).toBe(false);
     expect(shouldReportPlay(31, 0)).toBe(true);
+  });
+});
+
+describe("repeatModeLabel", () => {
+  it("names the current mode, then what pressing the button does next", () => {
+    expect(repeatModeLabel("off")).toBe("Repeat off. Turn on repeat");
+    expect(repeatModeLabel("all")).toBe("Repeat all. Turn on repeat one");
+    expect(repeatModeLabel("one")).toBe("Repeat one. Turn repeat off");
+  });
+});
+
+describe("extrapolatePosition", () => {
+  it("advances by the elapsed time and stops at the end of the track", () => {
+    expect(extrapolatePosition(10, 2.5, 180)).toBe(12.5);
+    expect(extrapolatePosition(179, 5, 180)).toBe(180);
+  });
+
+  it("leaves an unknown duration uncapped and never runs backwards", () => {
+    expect(extrapolatePosition(10, 5, 0)).toBe(15);
+    expect(extrapolatePosition(10, 5, Number.NaN)).toBe(15);
+    expect(extrapolatePosition(10, -3, 180)).toBe(10);
   });
 });
 

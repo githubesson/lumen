@@ -166,7 +166,7 @@ export function CarPlayBridge() {
   const { status, me, refresh } = useAuth();
   const controls = usePlayerControls();
   const currentTrack = useCurrentTrack();
-  const { queue, index } = usePlayerQueue();
+  const { queue, index, progress: queueProgress } = usePlayerQueue();
   const { shuffle, repeat } = usePlayerPlayback();
   const connected = useCarPlayConnected();
   const protectedData = useProtectedDataAvailable();
@@ -390,10 +390,10 @@ export function CarPlayBridge() {
         },
       ],
       upNextTitle: "Up Next",
-      upNextEnabled: queue.length > index + 1,
+      upNextEnabled: queueProgress.upcoming > 0,
       albumArtistEnabled: !!currentTrack?.album_id,
     });
-  }, [connected, currentTrack, favorited, index, queue.length, repeat, shuffle]);
+  }, [connected, currentTrack, favorited, queueProgress.upcoming, repeat, shuffle]);
 
   const trackList = useCallback(
     (id: string, title: string, tracks: TrackListItem[] | undefined) => {
@@ -557,7 +557,15 @@ export function CarPlayBridge() {
     }
   });
   const onUpNext = useEffectEvent(() => {
-    void pushCarPlayList(buildQueueTemplate({ limits, coverFor, queue, index }));
+    void pushCarPlayList(
+      buildQueueTemplate({
+        limits,
+        coverFor,
+        queue,
+        index,
+        upcoming: queueProgress.upcoming,
+      }),
+    );
   });
   const onAlbumArtist = useEffectEvent(() => {
     const albumId = currentTrack?.album_id;

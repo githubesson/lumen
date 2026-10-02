@@ -8,7 +8,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import Slider from "@react-native-community/slider";
-import type { TimeState } from "@music-library/core";
+import { extrapolatePosition, type TimeState } from "@music-library/core";
 import { formatDurationSec } from "../../lib/format";
 import { useTheme } from "../../theme/theme";
 
@@ -127,10 +127,7 @@ function useEstimatedPlaybackTime(
       if (seekingRef.current) return;
       const { baseTime, wallTime } = anchorRef.current;
       const elapsed = (performance.now() - wallTime) / 1000;
-      const next =
-        time.duration > 0
-          ? Math.min(baseTime + elapsed, time.duration)
-          : baseTime + elapsed;
+      const next = extrapolatePosition(baseTime, elapsed, time.duration);
       setDisplayTime((prev) => (Math.abs(prev - next) < 0.05 ? prev : next));
     };
     tick();

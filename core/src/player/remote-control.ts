@@ -16,7 +16,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PlaybackQueueSnapshot } from "./queue-sync";
 import type { PlaybackActivity, TrackListItem } from "../api";
 import { displayText } from "../format";
-import { clampVolume, type PlayerState, type RepeatMode, type TimeState } from "./player-core";
+import {
+  clampVolume,
+  extrapolatePosition,
+  type PlayerState,
+  type RepeatMode,
+  type TimeState,
+} from "./player-core";
 import {
   sendRemotePlaybackCommand,
   type PlaybackDevice,
@@ -184,10 +190,10 @@ export function remoteActivityTime(
   const updatedAt = Date.parse(activity.updated_at);
   const elapsed =
     activity.is_playing && Number.isFinite(updatedAt)
-      ? Math.max(0, (Date.now() - updatedAt) / 1000)
+      ? (Date.now() - updatedAt) / 1000
       : 0;
   return {
-    currentTime: Math.min(duration || Infinity, activity.position_sec + elapsed),
+    currentTime: extrapolatePosition(activity.position_sec, elapsed, duration),
     duration,
   };
 }

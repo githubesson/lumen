@@ -74,6 +74,33 @@ export function nextRepeatMode(r: RepeatMode): RepeatMode {
 }
 
 /**
+ * Accessible label for the repeat button: the current mode, then what
+ * pressing it does (the next mode in {@link nextRepeatMode}'s cycle).
+ */
+export function repeatModeLabel(repeat: RepeatMode): string {
+  switch (repeat) {
+    case "off":
+      return "Repeat off. Turn on repeat";
+    case "all":
+      return "Repeat all. Turn on repeat one";
+    case "one":
+      return "Repeat one. Turn repeat off";
+  }
+}
+
+/**
+ * A playback position advanced by the time since it was sampled, capped at
+ * the track's end. An unknown (zero or NaN) duration leaves it uncapped.
+ */
+export function extrapolatePosition(
+  position: number,
+  elapsedSeconds: number,
+  duration: number,
+): number {
+  return Math.min(duration > 0 ? duration : Infinity, position + Math.max(0, elapsedSeconds));
+}
+
+/**
  * Whether the player may start `track`. Tracks flagged `unavailable` (dropped
  * from TIDAL with no library copy) can never stream; `isPlayable` is the
  * platform's own gate (e.g. not downloaded while offline).

@@ -331,6 +331,14 @@ describe("queue", () => {
     expect(pushed.sections[0].header).toBe("2 songs");
   });
 
+  it("counts a remote device's queue window against its whole queue", () => {
+    const queue = [track("t1"), track("t2"), track("t3")];
+    const pushed = buildQueueTemplate({ limits: LIMITS, queue, index: 1, upcoming: 40 });
+    // Rows still jump by their place in the window; routing adds the offset.
+    expect(ids(pushed)).toEqual(["queued:2"]);
+    expect(pushed.sections[0].header).toBe("First 1 of 40 songs");
+  });
+
   it("dims the now-playing button when nothing is playing", () => {
     expect(nowPlayingNavButton(null)).toMatchObject({
       id: "now-playing",
@@ -411,6 +419,7 @@ describe("track list template", () => {
       { id: "track:t2", enabled: true },
     ]);
   });
+
   it("falls back to the album when a track has no artist", () => {
     const template = buildTrackListTemplate({
       id: "album:a1",

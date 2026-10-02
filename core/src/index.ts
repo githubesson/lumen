@@ -95,6 +95,10 @@ export {
   shouldExposeNowPlayingSession,
   REMOTE_CONTROL_INDICATOR_MS,
   useRemoteControlIndicator,
+  createAudioAdapterEmitter,
+  extrapolatePosition,
+  queueProgress,
+  repeatModeLabel,
   type ListPlaybackState,
   type PlayFromList,
   type PlaybackDeviceKind,
@@ -102,6 +106,8 @@ export {
   type UseRemotePlaybackControllerOptions,
   type UseRemotePlaybackControllerReturn,
   type NowPlayingMetadata,
+  type AudioAdapterEmitter,
+  type QueueProgress,
 } from "./player";
 
 export * from "./lyrics";

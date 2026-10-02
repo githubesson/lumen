@@ -15,12 +15,14 @@ import { Alert, AppState, Platform } from "react-native";
 import * as Haptics from "expo-haptics";
 import {
   buildNowPlayingMetadata,
+  queueProgress,
   shouldExposeNowPlayingSession,
   usePlaybackActivityPublisher,
   usePlayerCore,
   useRemotePlaybackController,
   type PlayerControls,
   type PlayerState,
+  type QueueProgress,
   type RemotePlaybackContextValue,
   type TrackListItem,
   type TimeState,
@@ -38,7 +40,10 @@ import {
   setLockScreenTrackControlsEnabled,
 } from "../modules/lock-screen-controls";
 
-type PlayerQueueState = Pick<PlayerState, "queue" | "index">;
+type PlayerQueueState = Pick<PlayerState, "queue" | "index"> & {
+  /** Absolute position and counts, beyond a remote device's queue window. */
+  progress: QueueProgress;
+};
 type PlayerPlaybackState = Pick<
   PlayerState,
   "isPlaying" | "shuffle" | "repeat"
@@ -256,10 +261,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // isPlaying stays in the deps so pause/resume refresh playbackRate.
   }, [adapter, nowPlayingMetadata, isPlaying, targetDevice]);
 
-  const queueValue = useMemo<PlayerQueueState>(
-    () => ({ queue: displayedState.queue, index: displayedState.index }),
-    [displayedState.queue, displayedState.index],
-  );
+  const { queue: displayedQueue, index: displayedIndex } = displayedState;
+  const queueOffset = targetDevice?.queue?.offset;
+  const queueTotal = targetDevice?.queue?.total;
+  const queueValue = useMemo<PlayerQueueState>(() => {
+    const window =
+      queueOffset === undefined || queueTotal === undefined
+        ? null
+        : { offset: queueOffset, total: queueTotal };
+    return {
+      queue: displayedQueue,
+      index: displayedIndex,
+      progress: queueProgress({ queue: displayedQueue, index: displayedIndex }, window),
+    };
+  }, [displayedIndex, displayedQueue, queueOffset, queueTotal]);
   const playbackValue = useMemo<PlayerPlaybackState>(
     () => ({
       isPlaying: displayedState.isPlaying,

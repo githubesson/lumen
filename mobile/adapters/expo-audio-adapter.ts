@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   clearPreloadedSource,
   preload,
@@ -16,6 +16,7 @@ import type {
   AudioAdapter,
   AudioAdapterEvent,
 } from "@music-library/core";
+import { createAudioAdapterEmitter } from "@music-library/core/player/audio-adapter";
 
 function isReleasedSharedObjectError(error: unknown) {
   if (!(error instanceof Error)) return false;
@@ -63,9 +64,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
     [player],
   );
 
-  const listenersRef = useRef<Map<AudioAdapterEvent, Set<() => void>>>(
-    new Map(),
-  );
+  const [listeners] = useState(createAudioAdapterEmitter);
   const preparedRef = useRef<{
     url: string;
     ready: boolean;
@@ -104,10 +103,8 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         pendingSeek: Boolean(pendingSeekRef.current),
       });
     }
-    const set = listenersRef.current.get(event);
-    if (!set) return;
-    for (const fn of set) fn();
-  }, [diagnostics]);
+    listeners.emit(event);
+  }, [diagnostics, listeners]);
 
   useEffect(() => {
     diagnostics.record("audio-session", {
@@ -404,17 +401,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
           if (!isReleasedSharedObjectError(error)) throw error;
         }
       },
-      on(event, handler) {
-        let set = listenersRef.current.get(event);
-        if (!set) {
-          set = new Set();
-          listenersRef.current.set(event, set);
-        }
-        set.add(handler);
-        return () => {
-          set!.delete(handler);
-        };
-      },
+      on: listeners.on,
       dispose() {
         diagnostics.record("audio-dispose");
         playbackGenerationRef.current += 1;
@@ -424,10 +411,10 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         preparedRef.current = null;
         prepareGenerationRef.current += 1;
         if (prepared) void clearPreloadedSource(prepared.url).catch(() => {});
-        listenersRef.current.clear();
+        listeners.clear();
       },
     }),
-    [diagnostics, dispatch, player, startPreparedPlaybackIfReady],
+    [diagnostics, dispatch, listeners, player, startPreparedPlaybackIfReady],
   );
 
   return adapter;

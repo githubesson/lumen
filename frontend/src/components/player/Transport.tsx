@@ -6,7 +6,7 @@ import {
   Pause as PauseIcon,
   Play as PlayIcon,
 } from "lucide-react";
-import type { RepeatMode } from "@music-library/core";
+import { repeatModeLabel, type RepeatMode } from "@music-library/core";
 import { usePlayer } from "../../context/Player";
 import ProgressBar, { type ProgressOverride } from "./ProgressBar";
 import VolumeControl from "./VolumeControl";
@@ -98,7 +98,7 @@ export default function Transport({
         <button
           type="button"
           className={"t-btn" + (repeat !== "off" ? " active" : "")}
-          aria-label={`Repeat: ${repeat}`}
+          aria-label={repeatModeLabel(repeat)}
           onClick={cycleRepeat}
           disabled={isFH6Mode || commandPending}
         >

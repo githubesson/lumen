@@ -550,15 +550,21 @@ export function buildQueueTemplate({
   limits,
   queue,
   index,
+  upcoming,
   coverFor = trackArtwork,
 }: {
   limits: Limits;
   queue: TrackListItem[];
   index: number;
+  /**
+   * Songs after the current one in the whole queue, when `queue` is only a
+   * window of it (a remote device's snapshot). Defaults to the rest of `queue`.
+   */
+  upcoming?: number;
   coverFor?: CoverResolver;
 }): CarPlayListTemplate {
   const rows = upNextRows(queue, index, limits.maximumItemCount, coverFor);
-  const remaining = Math.max(0, queue.length - index - 1);
+  const remaining = upcoming ?? Math.max(0, queue.length - index - 1);
 
   return listTemplate(
     {

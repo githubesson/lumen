@@ -1,7 +1,9 @@
 export * from "./player-core";
-export type {
-  AudioAdapter,
-  AudioAdapterEvent,
+export {
+  createAudioAdapterEmitter,
+  type AudioAdapter,
+  type AudioAdapterEmitter,
+  type AudioAdapterEvent,
 } from "./audio-adapter";
 export {
   usePlayerCore,
@@ -72,6 +74,7 @@ export {
   type ListPlaybackState,
   type PlayFromList,
 } from "./play-list";
+export { queueProgress, type QueueProgress } from "./queue-progress";
 export {
   REMOTE_CONTROL_INDICATOR_MS,
   useRemoteControlIndicator,

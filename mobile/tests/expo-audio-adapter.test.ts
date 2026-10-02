@@ -65,6 +65,10 @@ vi.mock("react", () => ({
   useCallback: (fn: unknown) => fn,
   useMemo: (fn: () => unknown) => fn(),
   useRef: (initial: unknown) => ({ current: initial }),
+  useState: (initial: unknown) => [
+    typeof initial === "function" ? (initial as () => unknown)() : initial,
+    () => {},
+  ],
   // Run effects immediately so the status-subscription effect registers its
   // listener on the fake player; cleanups are dropped (each test calls the
   // hook once and never re-renders).
