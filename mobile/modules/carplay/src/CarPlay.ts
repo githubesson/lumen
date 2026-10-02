@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import { requireOptionalNativeModule } from "expo-modules-core";
 import type { EventSubscription } from "expo-modules-core";
 
@@ -112,6 +113,13 @@ export function setCarPlayRootTabs(templates: CarPlayListTemplate[]) {
  *  the single-list root rather than installing a root the car can't show. */
 export function isCarPlayTabsSupported() {
   return supports("setRootTabs");
+}
+
+/** Whether `selectCarPlayTab` can move to a tab. CarPlay only lets an app
+ *  select a tab from iOS 17; before that the native call does nothing. */
+export function canSelectCarPlayTab(): boolean {
+  if (!supports("selectTab")) return false;
+  return Number.parseInt(String(Platform.Version), 10) >= 17;
 }
 
 /** Moves to an installed tab — what a shelf's "see all" chevron does, rather

@@ -13,6 +13,7 @@ export * from "./storage";
 export * from "./track";
 export * from "./track-sort";
 export { useDebouncedValue } from "./use-debounced-value";
+export { useEditDraft, type EditDraft } from "./use-edit-draft";
 export { AuthProvider, useAuth, type AuthState } from "./auth/auth-core";
 export {
   FavoritesProvider,

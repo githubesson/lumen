@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -52,8 +52,9 @@ const SORT_MENU_SYMBOLS: Record<SortKey, string> = {
 export const PLAYLIST_CONTROL_SIZE = 50;
 
 /**
- * Artwork for the playlist hero: the owner's uploaded cover, else a collage
- * of the tracks' covers.
+ * Artwork for the playlist hero: the owner's uploaded cover, else (or when it
+ * fails to load, e.g. offline with nothing cached at this size) a collage of
+ * the tracks' covers.
  */
 export function PlaylistHero({
   theme,
@@ -74,6 +75,9 @@ export function PlaylistHero({
         Math.round(size * PixelRatio.get()),
       )
     : null;
+  // Keyed by URL, so a new cover gets a fresh attempt.
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const showCustom = customUri != null && failedUri !== customUri;
   const covers = useMemo(() => {
     const seen = new Set<string>();
     const unique: TrackListItem[] = [];
@@ -118,7 +122,7 @@ export function PlaylistHero({
           justifyContent: "center",
         }}
       >
-        {customUri ? (
+        {showCustom ? (
           <Image
             source={{ uri: customUri }}
             style={{ width: size, height: size }}
@@ -127,6 +131,7 @@ export function PlaylistHero({
             cachePolicy="memory-disk"
             priority="high"
             recyclingKey={customUri}
+            onError={() => setFailedUri(customUri)}
           />
         ) : cells.length === 0 ? (
           <SymbolView

@@ -22,12 +22,13 @@ import {
   SORT_DEFAULT_ASC,
   api,
   compareSortableTracks,
+  errorMessage,
   fisherYatesWithAnchor,
   movePlaylistEntry,
   playlistEntryToTrack as entryToTrack,
   playlistPermissions,
+  playlistTidalQueued,
   pluralize,
-  queuedTidalCount,
   removePlaylistEntry,
   sortForDisplay,
   useAuth,
@@ -56,7 +57,6 @@ import {
   usePlayTrack,
 } from "../../../context/player";
 import { startListPlayback } from "@music-library/core/player/play-list";
-import { playableTracks } from "@music-library/core/track";
 import {
   useBottomDockInset,
   useDockControls,
@@ -71,6 +71,7 @@ import {
   useDownloadedPlaylistTracks,
 } from "../../../lib/downloads";
 import {
+  listPlaybackQueue,
   useIsOffline,
   useTrackUnavailableOffline,
 } from "../../../lib/offline-mode";
@@ -132,7 +133,7 @@ export default function PlaylistDetailScreen() {
     enabled: !!userId && !!id,
     refetchInterval: (query) =>
       playlistQuery.data?.tidal_auto_download &&
-      queuedTidalCount(query.state.data?.tracks ?? []) > 0
+      playlistTidalQueued(query.state.data) > 0
         ? PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS
         : false,
   });
@@ -177,17 +178,22 @@ export default function PlaylistDetailScreen() {
   }, [serverData]);
 
   // Both edits resolve only after the refetch, so their per-call onSuccess
-  // runs once fresh server data is in the cache.
+  // runs once fresh server data is in the cache. They also bump the
+  // playlist's updated_at, which orders the playlists list, and can change
+  // the first track its tile takes a cover from.
+  const onTracksEdited = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: qk.playlists(userId) });
+    return queryClient.invalidateQueries({ queryKey: playlistTracksQueryKey });
+  }, [queryClient, userId, playlistTracksQueryKey]);
+
   const reorderMutation = useMutation({
     mutationFn: (trackIds: string[]) => api.reorderPlaylist(id!, trackIds),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: playlistTracksQueryKey }),
+    onSuccess: onTracksEdited,
   });
 
   const removeMutation = useMutation({
     mutationFn: (position: number) => api.removePlaylistTrack(id!, position),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: playlistTracksQueryKey }),
+    onSuccess: onTracksEdited,
   });
 
   // A changed snapshot retires an override on its own, but an edit the server
@@ -211,6 +217,8 @@ export default function PlaylistDetailScreen() {
       void queryClient.invalidateQueries({ queryKey: playlistsQueryKey });
       router.back();
     },
+    onError: (error) =>
+      Alert.alert("Couldn't delete playlist", errorMessage(error, "Please try again.")),
   });
 
   const serverSaveMutation = useMutation({
@@ -293,7 +301,7 @@ export default function PlaylistDetailScreen() {
     [displayModels],
   );
   const onTrackPress = usePlayQueue(tracks);
-  const queuedForServer = useMemo(() => queuedTidalCount(localTracks), [localTracks]);
+  const queuedForServer = playlistTidalQueued(serverData);
 
   // Fresh query data is the earliest signal that entries were added, so catch
   // up here too rather than waiting for the next foreground or reconnect.
@@ -322,7 +330,7 @@ export default function PlaylistDetailScreen() {
   // mode goes on as well, like CarPlay's and Siri's shuffle play; the queue is
   // shuffled here because `setShuffle` reorders the queue playing now.
   const onShuffle = useCallback(() => {
-    const playable = playableTracks(tracks);
+    const playable = listPlaybackQueue(tracks);
     if (playable.length === 0) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const shuffled = fisherYatesWithAnchor(playable, null);
@@ -508,7 +516,10 @@ export default function PlaylistDetailScreen() {
               accessibilityLabel="Play playlist"
               onPress={() => {
                 void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                startListPlayback(play, tracks, false);
+                // With shuffle mode on, start somewhere random like the artist
+                // page does; from the top, every shuffled play would open on
+                // the same song.
+                startListPlayback(play, listPlaybackQueue(tracks), shuffle);
               }}
               style={({ pressed }) => ({
                 flex: 1,
@@ -559,6 +570,8 @@ export default function PlaylistDetailScreen() {
     deleteMutation.isPending,
     canDelete,
     play,
+    shuffle,
+    onShuffle,
     router,
     sortKey,
     sortAsc,

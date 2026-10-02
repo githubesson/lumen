@@ -6,7 +6,7 @@ import {
   Share as NativeShare,
   View,
 } from "react-native";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Directory, File, Paths } from "expo-file-system";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -19,6 +19,7 @@ import {
   replayImageRequest,
   replayPlaylistRequest,
   replayRequest,
+  useAuth,
   useLocalDay,
   type ReplayAlbum,
   type ReplayData,
@@ -59,6 +60,8 @@ export default function ReplayScreen() {
   const dockInset = useBottomDockInset();
   const dockScroll = useDockScrollHandler();
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const userId = useAuth().me?.id;
   const [period, setPeriod] = useState<Period>({ kind: "this-year" });
   const [generating, setGenerating] = useState(false);
   const [sharingImage, setSharingImage] = useState(false);
@@ -95,16 +98,13 @@ export default function ReplayScreen() {
 
   const onAlbumPress = useCallback(
     (album: ReplayAlbum) => {
+      // Both open in the Settings stack, so back returns to Replay.
       const target = replayAlbumTarget(album);
-      if (target.kind === "tidal") {
-        router.push({
-          pathname: "/(tabs)/(library)/tidal-albums/[id]" as never,
-          params: { id: target.id },
-        });
-        return;
-      }
       router.push({
-        pathname: "/(tabs)/(settings)/albums/[id]",
+        pathname:
+          target.kind === "tidal"
+            ? "/(tabs)/(settings)/tidal-albums/[id]"
+            : "/(tabs)/(settings)/albums/[id]",
         params: { id: target.id },
       });
     },
@@ -119,6 +119,9 @@ export default function ReplayScreen() {
       const playlist = await api.generateReplayPlaylist(
         replayPlaylistRequest(period, range),
       );
+      // The Playlists tab (and CarPlay and Siri) read this list; it stays
+      // mounted and cached, so the new playlist wouldn't show there otherwise.
+      void queryClient.invalidateQueries({ queryKey: qk.playlists(userId) });
       router.push({
         pathname: "/(tabs)/(playlists)/[id]",
         params: { id: playlist.id },
@@ -131,7 +134,7 @@ export default function ReplayScreen() {
     } finally {
       setGenerating(false);
     }
-  }, [data, period, range, router]);
+  }, [data, period, range, router, queryClient, userId]);
 
   const onShareImage = useCallback(async () => {
     if (!data || data.summary.total_plays === 0) return;

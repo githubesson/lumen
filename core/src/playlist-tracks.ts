@@ -1,3 +1,5 @@
+import type { PlaylistTracks } from "./api";
+
 /**
  * Optimistic track-list edits for the playlist screens, and the values both
  * screens derive from the list.
@@ -17,6 +19,18 @@ export function queuedTidalCount(entries: readonly { source?: string }[]): numbe
   let count = 0;
   for (const entry of entries) if (entry.source === "tidal") count += 1;
   return count;
+}
+
+/**
+ * How many entries auto-download is still saving, as the server counts them.
+ * That leaves out failed downloads, which wait out a backoff of up to a day:
+ * counting every row still on TIDAL kept a screen polling and showing them as
+ * "saving" all that time. Servers without `tidal_queued` fall back to it.
+ */
+export function playlistTidalQueued(
+  data: Pick<PlaylistTracks, "tracks" | "tidal_queued"> | undefined,
+): number {
+  return data?.tidal_queued ?? queuedTidalCount(data?.tracks ?? []);
 }
 
 /**

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { PlaylistTrackEntry } from "../src/api";
 import {
   PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS,
   movePlaylistEntry,
+  playlistTidalQueued,
   queuedTidalCount,
   removePlaylistEntry,
 } from "../src/playlist-tracks";
@@ -86,6 +88,20 @@ describe("queuedTidalCount", () => {
 
   it("refreshes every 20 seconds while tracks are queued", () => {
     expect(PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS).toBe(20_000);
+  });
+});
+
+describe("playlistTidalQueued", () => {
+  const tracks = [{ source: "tidal" }, { source: "tidal" }] as PlaylistTrackEntry[];
+
+  it("uses the server's count, which leaves out failed downloads", () => {
+    expect(playlistTidalQueued({ tracks, tidal_queued: 1 })).toBe(1);
+    expect(playlistTidalQueued({ tracks, tidal_queued: 0 })).toBe(0);
+  });
+
+  it("counts rows still on TIDAL when the server doesn't send it", () => {
+    expect(playlistTidalQueued({ tracks })).toBe(2);
+    expect(playlistTidalQueued(undefined)).toBe(0);
   });
 });
 

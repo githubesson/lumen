@@ -374,6 +374,10 @@ func (h *Playlists) writePlaylist(w http.ResponseWriter, r *http.Request, pid uu
 
 type tracksResp struct {
 	Tracks []trackItem `json:"tracks"`
+	// TIDALQueued is how many TIDAL entries auto-download is still to save
+	// (failed ones excluded). Always sent, so clients can tell an older
+	// server, which lacks it, from zero.
+	TIDALQueued int `json:"tidal_queued"`
 }
 
 type trackItem struct {
@@ -446,6 +450,10 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 			ti.AddedByID = t.AddedBy.String()
 		}
 		out.Tracks = append(out.Tracks, ti)
+	}
+	if out.TIDALQueued, err = h.Store.TIDALQueued(r.Context(), pid); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
 	writePlaylistTracks(w, r, out)
 }

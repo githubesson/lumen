@@ -296,6 +296,23 @@ type TrackDetail struct {
 	PlayCount       int // viewer's all-time plays of this track
 }
 
+// TIDALQueued counts the playlist's TIDAL entries that auto-download has yet
+// to save: the playlist is opted in and the track's last attempt didn't fail.
+// A failed track waits out a backoff of up to a day before its retry, so it
+// isn't counted; clients poll for saved copies while this is above zero.
+func (s *Store) TIDALQueued(ctx context.Context, playlistID uuid.UUID) (int, error) {
+	var n int
+	err := s.db.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM playlist_tracks pt
+		JOIN playlists p ON p.id = pt.playlist_id AND p.tidal_auto_download
+		JOIN tracks t ON t.id = pt.track_id
+		 AND t.source = 'tidal' AND t.external_id <> '' AND t.deleted_at IS NULL
+		LEFT JOIN tidal_downloads d ON d.tidal_id = t.external_id
+		WHERE pt.playlist_id = $1 AND d.status IS DISTINCT FROM 'failed'`, playlistID).Scan(&n)
+	return n, err
+}
+
 // TracksDetailed returns all tracks in a playlist visible to viewerID (global
 // tracks + viewer's own personal tracks). Other users' personal tracks are
 // silently omitted.

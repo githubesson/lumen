@@ -18,6 +18,10 @@ export default function SettingsStackLayout() {
         options={{ headerLargeTitle: false, title: "" }}
       />
       <Stack.Screen
+        name="tidal-albums/[id]"
+        options={{ headerLargeTitle: false, title: "" }}
+      />
+      <Stack.Screen
         name="artists/[id]"
         options={{ headerLargeTitle: false, title: "" }}
       />

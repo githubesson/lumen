@@ -50,7 +50,7 @@ export function ShareActionButton({
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={theme.color.onAccent} />
+        <ActivityIndicator color={primary ? theme.color.onAccent : theme.color.fg} />
       ) : (
         <SymbolView
           name={icon}

@@ -11,6 +11,7 @@ import {
   displayText,
   metaLine,
   playableTracks,
+  startListPlayback,
   tidalAlbumMetaParts,
   useAuth,
   type TrackListItem,
@@ -21,6 +22,8 @@ import {
   useDockScrollHandler,
 } from "../../../../components/dock/dock-context";
 import { TrackRow } from "../../../../components/track-row";
+import { usePlayTrack } from "../../../../context/player";
+import { listPlaybackQueue } from "../../../../lib/offline-mode";
 import { qk } from "../../../../lib/query-keys";
 import { usePlayQueue } from "../../../../lib/use-play-queue";
 import { useAlbumDownloadAction } from "../../../../lib/album-download";
@@ -50,8 +53,9 @@ export default function TidalAlbumDetailScreen() {
     [albumQuery.data?.tracks],
   );
   const onTrackPress = usePlayQueue(tracks);
+  const play = usePlayTrack();
   const { refetch } = albumQuery;
-  const refetchAlbum = useCallback(() => void refetch(), [refetch]);
+  const refetchAlbum = useCallback(() => refetch(), [refetch]);
   const downloadAction = useAlbumDownloadAction(
     albumQuery.data?.id,
     tracks,
@@ -83,14 +87,15 @@ export default function TidalAlbumDetailScreen() {
         coverUri={coverUri}
         coverKey={`${album.id}:${requestSize}`}
         metadata={metaLine(tidalAlbumMetaParts(album))}
-        onPlay={(() => {
-          const first = playableTracks(tracks)[0];
-          return first ? () => onTrackPress(first) : undefined;
-        })()}
+        onPlay={
+          playableTracks(tracks).length > 0
+            ? () => startListPlayback(play, listPlaybackQueue(tracks), false)
+            : undefined
+        }
         secondaryAction={downloadAction}
       />
     );
-  }, [albumQuery.data, onTrackPress, tracks, downloadAction]);
+  }, [albumQuery.data, play, tracks, downloadAction]);
 
   if (albumQuery.isLoading) return <EmptyState fill loading />;
   if (albumQuery.isError || !albumQuery.data) {

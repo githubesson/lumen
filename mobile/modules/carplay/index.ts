@@ -6,6 +6,7 @@ export {
   addCarPlayProtectedDataListener,
   addCarPlaySelectListener,
   addCarPlayUpNextListener,
+  canSelectCarPlayTab,
   carPlayListLimits,
   configureCarPlayNowPlaying,
   finishCarPlaySelection,

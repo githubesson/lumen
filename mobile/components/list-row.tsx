@@ -16,6 +16,9 @@ import { useTheme } from "../theme/theme";
  * selection haptic, and the title/subtitle text styles. Rows supply only the
  * leading visual, strings, and an optional trailing accessory (a plain string
  * renders as the standard muted detail text).
+ *
+ * `disabled` rows ignore taps (no haptic) and read as dimmed to VoiceOver;
+ * they stay pressable as an element so a wrapping long-press menu still works.
  */
 export function ListRow({
   leading,
@@ -25,6 +28,7 @@ export function ListRow({
   onPress,
   accessibilityLabel,
   accessibilityHint,
+  disabled = false,
   style,
 }: {
   leading?: ReactNode;
@@ -34,18 +38,21 @@ export function ListRow({
   onPress: () => void;
   accessibilityLabel?: string;
   accessibilityHint?: string;
+  disabled?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
   return (
     <Pressable
       onPress={() => {
+        if (disabled) return;
         void Haptics.selectionAsync();
         onPress();
       }}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
+      accessibilityState={disabled ? { disabled } : undefined}
       style={({ pressed }) => [
         styles.row,
         {

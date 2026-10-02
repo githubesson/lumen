@@ -829,6 +829,11 @@ export interface PlaylistTrackEntry {
 
 export interface PlaylistTracks {
   tracks: PlaylistTrackEntry[];
+  /**
+   * TIDAL entries auto-download has yet to save, failed downloads excluded.
+   * Missing from older servers; read it through `playlistTidalQueued`.
+   */
+  tidal_queued?: number;
 }
 
 export interface TidalStatus {
