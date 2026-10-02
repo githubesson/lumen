@@ -11,7 +11,14 @@ import {
   X as XMarkIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import {
+  playbackDeviceKind,
+  playbackDeviceStatus,
+  remoteCommandError,
+  type PlaybackDeviceKind,
+} from "@music-library/core";
 import { usePlayer, useRemotePlayback } from "../context/Player";
+import { displayText } from "../lib/format";
 import { isElectron } from "../lib/platform";
 import { PlayingBars } from "./TrackRowCells";
 import { useDismiss } from "../lib/useDismiss";
@@ -103,10 +110,7 @@ export function DeviceList({ onSelected }: { onSelected?: () => void }) {
   const { isPlaying, current } = usePlayer();
   const { remoteDevices, targetDeviceId, lastCommandResult, selectTarget } =
     useRemotePlayback();
-  const error =
-    lastCommandResult && lastCommandResult.status !== "applied"
-      ? lastCommandResult.error || `Command ${lastCommandResult.status}`
-      : null;
+  const error = remoteCommandError(lastCommandResult);
 
   const localPlaying = !targetDeviceId && isPlaying && !!current;
 
@@ -118,7 +122,7 @@ export function DeviceList({ onSelected }: { onSelected?: () => void }) {
           name="This device"
           meta={
             localPlaying
-              ? `Playing · ${current.title}`
+              ? `Playing · ${displayText(current.title)}`
               : targetDeviceId
                 ? "Play here instead"
                 : "Listening here"
@@ -134,21 +138,17 @@ export function DeviceList({ onSelected }: { onSelected?: () => void }) {
         <div className="device-pop-section">Other devices</div>
         {remoteDevices.length ? (
           remoteDevices.map((device) => {
-            const Icon = iconFor(device.deviceName);
-            const title = device.activity?.title;
+            const Icon = DEVICE_ICONS[playbackDeviceKind(device.deviceName)];
+            const status = playbackDeviceStatus(device);
             return (
               <DeviceRow
                 key={device.deviceId}
                 icon={<Icon aria-hidden="true" />}
                 name={device.deviceName}
-                meta={
-                  title
-                    ? `${device.activity?.is_playing ? "Playing" : "Paused"} · ${title}`
-                    : "Online · Nothing playing"
-                }
+                meta={status.label}
                 online
                 active={targetDeviceId === device.deviceId}
-                playing={!!title && !!device.activity?.is_playing}
+                playing={status.playing}
                 onSelect={() => {
                   selectTarget(device.deviceId);
                   onSelected?.();
@@ -182,13 +182,12 @@ export function DeviceList({ onSelected }: { onSelected?: () => void }) {
 
 const LocalIcon = isElectron() ? LaptopIcon : WebIcon;
 
-/** Icon for a device from the name its app reports (iPhone, iPad, Mobile, Desktop, Web). */
-function iconFor(name: string) {
-  if (/ipad|tablet/i.test(name)) return TabletIcon;
-  if (/iphone|android|mobile|phone/i.test(name)) return PhoneIcon;
-  if (/web|browser/i.test(name)) return WebIcon;
-  return ComputerDesktopIcon;
-}
+const DEVICE_ICONS: Record<PlaybackDeviceKind, typeof WebIcon> = {
+  tablet: TabletIcon,
+  phone: PhoneIcon,
+  web: WebIcon,
+  desktop: ComputerDesktopIcon,
+};
 
 function DeviceRow({
   icon,

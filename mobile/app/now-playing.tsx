@@ -65,7 +65,7 @@ export default function NowPlayingScreen() {
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const track = useCurrentTrack();
-  const { queue, index } = usePlayerQueue();
+  const { queue, index, progress: queueProgress } = usePlayerQueue();
   const { shuffle, repeat } = usePlayerPlayback();
   const { jumpTo, toggleShuffle, cycleRepeat } = usePlayerControls();
   const { toggle: toggleFavorite } = useFavoriteActions();
@@ -575,6 +575,8 @@ export default function NowPlayingScreen() {
             queueOpen={queueOpen}
             queue={queue}
             startIndex={index + 1}
+            positionOffset={queueProgress.offset}
+            upcomingCount={queueProgress.upcoming}
             shuffle={shuffle}
             repeat={repeat}
             onJumpToPosition={handleQueueJump}

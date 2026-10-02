@@ -1,6 +1,5 @@
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -11,31 +10,26 @@ import {
 import {
   setAudioModeAsync,
   type AudioLockScreenOptions,
-  type AudioMetadata,
 } from "expo-audio";
 import { Alert, AppState, Platform } from "react-native";
 import * as Haptics from "expo-haptics";
 import {
-  remotePlayerState,
-  controlledStateForDevice,
-  useRemotePlaybackTarget,
-  trackCoverUrl,
-  useRemoteActivityClock,
-  useRemotePlaybackCommands,
+  buildNowPlayingMetadata,
+  queueProgress,
+  shouldExposeNowPlayingSession,
   usePlaybackActivityPublisher,
-  usePlaybackRemoteSession,
   usePlayerCore,
-  useRoutedPlayerControls,
-  type PlaybackDevice,
+  useRemotePlaybackController,
   type PlayerControls,
   type PlayerState,
-  type RemotePlaybackCommandResult,
+  type QueueProgress,
+  type RemotePlaybackContextValue,
   type TrackListItem,
   type TimeState,
 } from "@music-library/core";
 import { useExpoAudioAdapter } from "../adapters/expo-audio-adapter";
 import { asyncStorageAdapter } from "../adapters/async-storage-adapter";
-import { shouldExposeNowPlayingSession } from "./now-playing-session";
+import { LOCAL_DEVICE_NAME } from "../lib/device-name";
 import { downloadStore } from "../lib/downloads";
 import { isTrackPlayableOffline } from "../lib/offline-mode";
 import { recordCrashBreadcrumb } from "../lib/crash-reporting";
@@ -46,22 +40,15 @@ import {
   setLockScreenTrackControlsEnabled,
 } from "../modules/lock-screen-controls";
 
-type PlayerQueueState = Pick<PlayerState, "queue" | "index">;
+type PlayerQueueState = Pick<PlayerState, "queue" | "index"> & {
+  /** Absolute position and counts, beyond a remote device's queue window. */
+  progress: QueueProgress;
+};
 type PlayerPlaybackState = Pick<
   PlayerState,
   "isPlaying" | "shuffle" | "repeat"
 >;
 type PlayerVolumeState = Pick<PlayerState, "volume" | "muted">;
-type RemotePlaybackContextValue = {
-  deviceId: string | null;
-  connected: boolean;
-  remoteDevices: PlaybackDevice[];
-  targetDeviceId: string | null;
-  targetDevice: PlaybackDevice | null;
-  commandPending: boolean;
-  lastCommandResult: RemotePlaybackCommandResult | null;
-  selectTarget: (deviceId: string | null) => void;
-};
 
 /**
  * Context + throw-if-unmounted hook pair. The provider split below is
@@ -118,18 +105,6 @@ export const useRemotePlayback = useRemotePlaybackCtx;
 
 const LOCK_SCREEN_OPTIONS: AudioLockScreenOptions = {};
 
-function buildNowPlayingMetadata(
-  track: PlayerState["current"],
-): AudioMetadata | null {
-  if (!track) return null;
-  return {
-    title: track.title,
-    artist: track.artist,
-    albumTitle: track.album_title,
-    artworkUrl: trackCoverUrl(track, 1024),
-  };
-}
-
 function canPlayLocally(track: TrackListItem): boolean {
   if (isTrackPlayableOffline(track.id)) return true;
   void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
@@ -139,7 +114,8 @@ function canPlayLocally(track: TrackListItem): boolean {
 
 /**
  * Mobile `PlayerProvider`. Same role as the web version but backed by
- * `expo-audio` and `AsyncStorage` via the shared `usePlayerCore` hook.
+ * `expo-audio` and `AsyncStorage` via the shared `usePlayerCore` hook, with
+ * remote playback from the shared `useRemotePlaybackController`.
  */
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const adapter = useExpoAudioAdapter();
@@ -155,9 +131,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     isTrackPlayable: isTrackPlayableOffline,
   });
   // Destructured so hooks below depend only on the fields they read. Depending
-  // on `state` wholesale would rebuild them on every queue change, and
-  // `selectTarget` is handed to consumers through the remote-playback context.
-  const { current, index, isPlaying, muted, repeat, shuffle, volume } = state;
+  // on `state` wholesale would rebuild them on every queue change.
+  const { current, index, isPlaying, repeat, shuffle } = state;
   const queueLength = state.queue.length;
   const currentId = current?.id;
   useEffect(() => {
@@ -180,61 +155,25 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     state,
     time,
     storage: asyncStorageAdapter,
-    deviceName: Platform.OS === "ios" ? (Platform.isPad ? "iPad" : "iPhone") : "Mobile",
+    deviceName: LOCAL_DEVICE_NAME,
     adapter,
     controls,
     controlEnabled: true,
   });
-  const remoteSession = usePlaybackRemoteSession();
-  const { remoteDevices, targetDevice, targetDeviceId, setTargetDeviceId } =
-    useRemotePlaybackTarget(remoteSession);
   const {
-    controlled,
-    commandPending,
-    lastCommandResult,
-    sendCommand,
-    seedControlled,
-  } = useRemotePlaybackCommands({
-    targetDeviceId,
-    sourceDeviceId: remoteSession.deviceId,
-    targetActivity: targetDevice?.activity,
-    targetQueue: targetDevice?.queue,
-    initialState: {
-      volume,
-      muted,
-      shuffle,
-      repeat,
-    },
+    displayedState,
+    displayedTime,
+    controls: routedControls,
+    remote,
+  } = useRemotePlaybackController({
+    state,
+    controls,
+    time,
+    // Foreground-gated like `interpolateProgress` above.
+    clockEnabled: appState === "active",
+    canPlayLocally,
   });
-
-  const selectTarget = useCallback(
-    (nextDeviceId: string | null) => {
-      if (nextDeviceId && isPlaying) controls.pause();
-      const nextDevice =
-        remoteDevices.find((device) => device.deviceId === nextDeviceId) ??
-        null;
-      setTargetDeviceId(nextDeviceId);
-      seedControlled(
-        controlledStateForDevice(nextDevice, {
-          volume,
-          muted,
-          shuffle,
-          repeat,
-        }),
-      );
-    },
-    [
-      controls,
-      isPlaying,
-      muted,
-      remoteDevices,
-      repeat,
-      seedControlled,
-      setTargetDeviceId,
-      shuffle,
-      volume,
-    ],
-  );
+  const { targetDevice } = remote;
 
   const lockScreenActiveRef = useRef(false);
   const nowPlayingMetadata = useMemo(
@@ -322,30 +261,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // isPlaying stays in the deps so pause/resume refresh playbackRate.
   }, [adapter, nowPlayingMetadata, isPlaying, targetDevice]);
 
-  const displayedState = useMemo<PlayerState>(
-    () => targetDevice ? remotePlayerState(targetDevice, controlled) : state,
-    [targetDevice, controlled, state],
-  );
-  const routedControls = useRoutedPlayerControls({
-    controls,
-    targetDevice,
-    controlled,
-    sendCommand,
-    remoteQueue: displayedState.queue,
-    canPlayLocally,
-  });
-  // Ticking, not memoized from the heartbeat: snapshots arrive every ~10s,
-  // and a memo keyed on them made cast-mode lyrics/scrubber time advance in
-  // ten-second leaps. Foreground-gated like `interpolateProgress` above.
-  const remoteTime = useRemoteActivityClock(
-    targetDevice?.activity,
-    appState === "active",
-  );
-  const displayedTime = targetDevice ? remoteTime : time;
-  const queueValue = useMemo<PlayerQueueState>(
-    () => ({ queue: displayedState.queue, index: displayedState.index }),
-    [displayedState.queue, displayedState.index],
-  );
+  const { queue: displayedQueue, index: displayedIndex } = displayedState;
+  const queueOffset = targetDevice?.queue?.offset;
+  const queueTotal = targetDevice?.queue?.total;
+  const queueValue = useMemo<PlayerQueueState>(() => {
+    const window =
+      queueOffset === undefined || queueTotal === undefined
+        ? null
+        : { offset: queueOffset, total: queueTotal };
+    return {
+      queue: displayedQueue,
+      index: displayedIndex,
+      progress: queueProgress({ queue: displayedQueue, index: displayedIndex }, window),
+    };
+  }, [displayedIndex, displayedQueue, queueOffset, queueTotal]);
   const playbackValue = useMemo<PlayerPlaybackState>(
     () => ({
       isPlaying: displayedState.isPlaying,
@@ -358,31 +287,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     () => ({ volume: displayedState.volume, muted: displayedState.muted }),
     [displayedState.volume, displayedState.muted],
   );
-  const remoteValue = useMemo<RemotePlaybackContextValue>(
-    () => ({
-      deviceId: remoteSession.deviceId,
-      connected: remoteSession.connected,
-      remoteDevices,
-      targetDeviceId,
-      targetDevice,
-      commandPending,
-      lastCommandResult,
-      selectTarget,
-    }),
-    [
-      lastCommandResult,
-      commandPending,
-      remoteDevices,
-      remoteSession.connected,
-      remoteSession.deviceId,
-      selectTarget,
-      targetDevice,
-      targetDeviceId,
-    ],
-  );
-
   return (
-    <RemotePlaybackCtx.Provider value={remoteValue}>
+    <RemotePlaybackCtx.Provider value={remote}>
       <PlayerCurrentCtx.Provider value={displayedState.current}>
         <PlayerHasTrackCtx.Provider value={displayedState.current !== null}>
           <PlayerIsPlayingCtx.Provider value={displayedState.isPlaying}>

@@ -10,6 +10,7 @@ import type { Storage } from "../storage";
 import type { AudioAdapter } from "./audio-adapter";
 import {
   VOLUME_STORAGE_KEY,
+  canStartTrack,
   clampVolume,
   fisherYatesWithAnchor,
   nextRepeatMode,
@@ -35,6 +36,7 @@ export interface UsePlayerCoreOptions {
    * Gate consulted when starting a track or advancing through the queue: return false to skip a
    * track (e.g. not downloaded while offline). Read synchronously on user
    * action / track end, so it must be cheap. Absent → everything is playable.
+   * Tracks flagged `unavailable` are skipped regardless.
    */
   isTrackPlayable?: (trackId: string) => boolean;
 }
@@ -56,8 +58,8 @@ function quantizeTime(seconds: number, duration: number): number {
   return Math.round(clamped / TIME_STATE_GRANULARITY_SEC) * TIME_STATE_GRANULARITY_SEC;
 }
 
-/** First index in [from..to] (inclusive, step ±1) whose track passes the
- *  gate; -1 when none does. No gate → the first in-bounds index. */
+/** First index in [from..to] (inclusive, step ±1) whose track can start
+ *  (see `canStartTrack`); -1 when none can. */
 function firstPlayableIndex(
   queue: TrackListItem[],
   from: number,
@@ -68,7 +70,7 @@ function firstPlayableIndex(
   for (let i = from; step > 0 ? i <= to : i >= to; i += step) {
     const track = queue[i];
     if (!track) continue;
-    if (!isPlayable || isPlayable(track.id)) return i;
+    if (canStartTrack(track, isPlayable)) return i;
   }
   return -1;
 }
@@ -197,7 +199,7 @@ export function usePlayerCore({
 
   const play = useCallback<PlayerControls["play"]>(
     (track, q) => {
-      if (isTrackPlayable && !isTrackPlayable(track.id)) return false;
+      if (!canStartTrack(track, isTrackPlayable)) return false;
       const base = q && q.length ? q : [track];
       setSourceQueue(base);
       if (shuffle) {
@@ -384,9 +386,9 @@ export function usePlayerCore({
   const jumpTo = useCallback<PlayerControls["jumpTo"]>(
     (i) => {
       if (i < 0 || i >= queue.length) return;
-      // Silently ignore taps on tracks the gate rejects (e.g. not downloaded
-      // while offline) — queue UIs dim them instead.
-      if (isTrackPlayable && queue[i] && !isTrackPlayable(queue[i].id)) return;
+      // Silently ignore taps on tracks that can't start (unavailable, or not
+      // downloaded while offline) — queue UIs dim them instead.
+      if (!canStartTrack(queue[i], isTrackPlayable)) return;
       clearPreparedNext();
       setIndex(i);
       setCurrent(queue[i]);
@@ -468,7 +470,7 @@ export function usePlayerCore({
     // its next track is intentionally unknown until then.
     if (repeat === "all" && !shuffle) {
       const first = queue[0];
-      if (first && (!isTrackPlayable || isTrackPlayable(first.id))) return first;
+      if (first && canStartTrack(first, isTrackPlayable)) return first;
     }
     return null;
   }, [current, index, isTrackPlayable, queue, repeat, shuffle]);

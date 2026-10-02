@@ -10,6 +10,7 @@ const observed = vi.hoisted(() => ({
   data: [] as TrackListItem[],
   keys: [] as string[],
   presses: [] as (() => void)[],
+  hints: [] as string[],
 }));
 
 vi.mock("react-native", () => ({
@@ -18,11 +19,14 @@ vi.mock("react-native", () => ({
   Pressable: ({
     children,
     onPress,
+    accessibilityHint,
   }: {
     children: ReactNode;
     onPress: () => void;
+    accessibilityHint?: string;
   }) => {
     observed.presses.push(onPress);
+    if (accessibilityHint) observed.hints.push(accessibilityHint);
     return <button>{children}</button>;
   },
   StyleSheet: { create: (styles: unknown) => styles },
@@ -107,6 +111,7 @@ beforeEach(() => {
   observed.data = [];
   observed.keys = [];
   observed.presses = [];
+  observed.hints = [];
 });
 
 describe("queue first render", () => {
@@ -142,5 +147,27 @@ describe("queue first render", () => {
     expect(new Set(observed.keys).size).toBe(2);
     observed.presses[1]();
     expect(onJumpToPosition).toHaveBeenCalledWith(2);
+  });
+
+  it("numbers rows by their 1-based place in the whole queue", () => {
+    render({ startIndex: 3 });
+    expect(observed.hints[0]).toBe("Position 4 in queue. Double tap to play.");
+  });
+
+  it("counts a remote device's window against its whole queue", () => {
+    // A 50-track window starting at 100 of 300, playing its 25th track.
+    const onJumpToPosition = vi.fn();
+    const html = render({
+      queue: queue.slice(0, 50),
+      startIndex: 25,
+      positionOffset: 100,
+      upcomingCount: 175,
+      onJumpToPosition,
+    });
+    expect(html).toContain("175 songs");
+    expect(observed.hints[0]).toBe("Position 126 in queue. Double tap to play.");
+    // Jumps still use the window index; routed controls add the offset.
+    observed.presses[0]();
+    expect(onJumpToPosition).toHaveBeenCalledWith(25);
   });
 });

@@ -1,8 +1,8 @@
 import {
-  parseSyncedLyrics,
-  parsePlainLyrics,
+  LYRICS_NOT_FOUND_MESSAGE,
   activeLineIndex,
   activeWordIndexForLine,
+  lyricsContent,
 } from "@music-library/core/lyrics";
 import { memo, useLayoutEffect, useMemo, useRef, type Ref } from "react";
 import type { LyricsResult } from "../api";
@@ -84,16 +84,9 @@ function SidebarLyricsView({
   const activeLineRef = useRef<HTMLParagraphElement>(null);
   const lastScrolledLineRef = useRef(-1);
 
-  const syncedLyrics = useMemo(() => {
-    if (!lyrics.syncedLyrics) return null;
-    const parsed = parseSyncedLyrics(lyrics.syncedLyrics);
-    return parsed.length > 0 ? parsed : null;
-  }, [lyrics.syncedLyrics]);
-
-  const plainLines = useMemo(
-    () => parsePlainLyrics(lyrics.plainLyrics ?? undefined),
-    [lyrics.plainLyrics],
-  );
+  const content = useMemo(() => lyricsContent(lyrics), [lyrics]);
+  const syncedLyrics = content.kind === "synced" ? content.lines : null;
+  const plainLines = content.kind === "plain" ? content.lines : null;
 
   const currentIndex = useMemo(() => {
     if (!syncedLyrics?.length) return -1;
@@ -133,7 +126,7 @@ function SidebarLyricsView({
     lastScrolledLineRef.current = -1;
   }, [lyrics.syncedLyrics, lyrics.plainLyrics]);
 
-  if (lyrics.instrumental) {
+  if (content.kind === "instrumental") {
     return <p className="player-lyric-status player-lyric-sidebar">Instrumental</p>;
   }
 
@@ -157,7 +150,7 @@ function SidebarLyricsView({
     );
   }
 
-  if (plainLines.length) {
+  if (plainLines?.length) {
     return (
       <div className="player-lyrics-scroll player-lyrics-scroll-plain">
         {plainLines.map((line, index) => (
@@ -176,7 +169,7 @@ function SidebarLyricsView({
   }
 
   return (
-    <p className="player-lyric-status player-lyric-sidebar">No lyrics found</p>
+    <p className="player-lyric-status player-lyric-sidebar">{LYRICS_NOT_FOUND_MESSAGE}</p>
   );
 }
 
@@ -219,7 +212,7 @@ export default function PlayerLyricsLine({
   if (!lyrics) {
     return (
       <p className={"player-lyric-status player-lyric-" + variant}>
-        No lyrics found
+        {LYRICS_NOT_FOUND_MESSAGE}
       </p>
     );
   }

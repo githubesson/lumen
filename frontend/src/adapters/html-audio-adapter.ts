@@ -1,6 +1,10 @@
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type Hls from "hls.js";
-import type { AudioAdapter, AudioAdapterEvent } from "@music-library/core";
+import {
+  createAudioAdapterEmitter,
+  type AudioAdapter,
+  type AudioAdapterEvent,
+} from "@music-library/core";
 import { usesNativeHls } from "../lib/nativeHls";
 
 /**
@@ -29,15 +33,9 @@ export function useHtmlAudioAdapter(): {
   const pendingLoadRef = useRef<Promise<void> | null>(null);
   const loadGenerationRef = useRef(0);
   const playIntentRef = useRef(0);
-  const listenersRef = useRef<Map<AudioAdapterEvent, Set<() => void>>>(
-    new Map(),
-  );
-
-  const dispatch = (event: AudioAdapterEvent) => {
-    const set = listenersRef.current.get(event);
-    if (!set) return;
-    for (const fn of set) fn();
-  };
+  // One registry for the adapter's lifetime: useState never replaces it, so
+  // listing it as a dependency below re-runs nothing.
+  const [listeners] = useState(createAudioAdapterEmitter);
 
   // Wire native events → listener registry once the element mounts.
   useEffect(() => {
@@ -48,7 +46,7 @@ export function useHtmlAudioAdapter(): {
 
     const wire = (a: HTMLAudioElement) => {
       const dispatchIfActive = (event: AudioAdapterEvent) => () => {
-        if (activeAudioRef.current === a) dispatch(event);
+        if (activeAudioRef.current === a) listeners.emit(event);
       };
       const handlers = {
         timeupdate: dispatchIfActive("timeupdate"),
@@ -76,11 +74,11 @@ export function useHtmlAudioAdapter(): {
       unwireSecondary();
       activeAudioRef.current = null;
     };
-  }, []);
+  }, [listeners]);
 
   // Teardown goes through the adapter's own dispose(). The hand-rolled version
   // that used to live here was a partial copy: it omitted the element reset and
-  // listenersRef.clear(), so listener sets survived a provider remount.
+  // listener clear, so listener sets survived a provider remount.
   const disposeRef = useRef<(() => void) | null>(null);
   useEffect(
     () => () => {
@@ -277,9 +275,9 @@ export function useHtmlAudioAdapter(): {
         previousHls?.destroy();
         old.pause();
         resetAudio(old);
-        dispatch("loadedmetadata");
+        listeners.emit("loadedmetadata");
         try {
-          void next.play().catch(() => dispatch("pause"));
+          void next.play().catch(() => listeners.emit("pause"));
           return true;
         } catch {
           return false;
@@ -330,17 +328,7 @@ export function useHtmlAudioAdapter(): {
       duration() {
         return activeAudioRef.current?.duration ?? 0;
       },
-      on(event, handler) {
-        let set = listenersRef.current.get(event);
-        if (!set) {
-          set = new Set();
-          listenersRef.current.set(event, set);
-        }
-        set.add(handler);
-        return () => {
-          set!.delete(handler);
-        };
-      },
+      on: listeners.on,
       dispose() {
         loadGenerationRef.current += 1;
         playIntentRef.current += 1;
@@ -355,10 +343,10 @@ export function useHtmlAudioAdapter(): {
         preparedUrlRef.current = null;
         if (audioRef.current) resetAudio(audioRef.current);
         if (preloadAudioRef.current) resetAudio(preloadAudioRef.current);
-        listenersRef.current.clear();
+        listeners.clear();
       },
     }),
-    [],
+    [listeners],
   );
   useEffect(() => {
     disposeRef.current = () => adapter.dispose?.();

@@ -1,7 +1,6 @@
 import {
   memo,
   useCallback,
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -10,7 +9,7 @@ import {
 import { SquarePen as PencilSquareIcon } from "lucide-react";
 import { trackCoverUrl, type TrackListItem } from "../api";
 import { displayText, fmtDurationMs } from "../lib/format";
-import { isLocalTrack, playableTracks } from "../lib/track";
+import { isLocalTrack } from "../lib/track";
 import { trackActions } from "@music-library/core/track";
 import CoverArt from "./CoverArt";
 import { EditTrackDialog } from "./edit/EditTrackDialog";
@@ -21,6 +20,7 @@ import { useAuth } from "../context/Auth";
 import { useTrackInfo } from "../context/TrackInfo";
 import { useFavorites } from "../context/Favorites";
 import { usePlayer, usePlayerControls } from "../context/Player";
+import { usePlayFromList } from "@music-library/core/player/play-list";
 import { useTrackSelection } from "../lib/useTrackSelection";
 import { useWindowedSlice } from "../lib/useWindowedSlice";
 import {
@@ -101,26 +101,13 @@ export default function TrackList({
     [selectedTracks],
   );
 
-  // Queue reference held in a ref so stable per-track callbacks can read the
-  // latest list without invalidating React.memo on every pagination page.
-  // Unavailable rows (dropped from TIDAL, no library copy) are listed but
-  // never queued.
-  const queue = useMemo(() => playableTracks(queueSource ?? tracks), [queueSource, tracks]);
-  const queueRef = useRef(queue);
-  // Refreshed from an effect rather than during render: a discarded render must
-  // not mutate a ref. Every reader is an event handler, so a tick of lag is
-  // harmless.
-  useEffect(() => {
-    queueRef.current = queue;
-  }, [queue]);
-
   // Stable action callbacks: each takes the track (or id) at event time,
   // instead of closing over a new function per row on every parent render.
-  const handlePlay = useCallback(
-    (t: TrackListItem) => {
-      if (!t.unavailable) play(t, queueRef.current);
-    },
-    [play],
+  // The queue is read at event time too, so pagination doesn't invalidate
+  // React.memo on every page.
+  const { playTrack: handlePlay, getQueue } = usePlayFromList(
+    play,
+    queueSource ?? tracks,
   );
   const handleToggleFav = useCallback(
     (id: string) => void toggle(id),
@@ -138,12 +125,12 @@ export default function TrackList({
       // onInfo is wired by default via TrackInfoProvider; the bind() helper
       // falls back to the app-wide dialog when we don't override it here.
       bind(t, {
-        queue: queueRef.current,
+        queue: getQueue(),
         onEdit: actions.editMetadata ? () => setEditId(t.id) : undefined,
         onMoveToAlbum: actions.moveToAlbum ? () => setMoveTrack(t) : undefined,
       })(e);
     },
-    [bind, isAdmin],
+    [bind, getQueue, isAdmin],
   );
 
   const tableRef = useRef<HTMLTableElement>(null);

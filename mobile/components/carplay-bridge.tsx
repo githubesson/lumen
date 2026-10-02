@@ -16,6 +16,8 @@ import {
 import {
   api,
   fisherYatesWithAnchor,
+  playableTracks,
+  startListPlayback,
   toQueueItem,
   useAuth,
   type Album,
@@ -164,7 +166,7 @@ export function CarPlayBridge() {
   const { status, me, refresh } = useAuth();
   const controls = usePlayerControls();
   const currentTrack = useCurrentTrack();
-  const { queue, index } = usePlayerQueue();
+  const { queue, index, progress: queueProgress } = usePlayerQueue();
   const { shuffle, repeat } = usePlayerPlayback();
   const connected = useCarPlayConnected();
   const protectedData = useProtectedDataAvailable();
@@ -388,10 +390,10 @@ export function CarPlayBridge() {
         },
       ],
       upNextTitle: "Up Next",
-      upNextEnabled: queue.length > index + 1,
+      upNextEnabled: queueProgress.upcoming > 0,
       albumArtistEnabled: !!currentTrack?.album_id,
     });
-  }, [connected, currentTrack, favorited, index, queue.length, repeat, shuffle]);
+  }, [connected, currentTrack, favorited, queueProgress.upcoming, repeat, shuffle]);
 
   const trackList = useCallback(
     (id: string, title: string, tracks: TrackListItem[] | undefined) => {
@@ -497,7 +499,7 @@ export function CarPlayBridge() {
               (candidate) => candidate.id === destination.id,
             );
             if (!track || !list) return;
-            controls.play(track, list.tracks);
+            if (controls.play(track, list.tracks) === false) return;
             await pushCarPlayNowPlaying();
             return;
           }
@@ -505,8 +507,7 @@ export function CarPlayBridge() {
           // Play respects whatever shuffle mode is set, matching the phone.
           case "play-list": {
             const list = listFor(templateId);
-            if (!list?.tracks.length) return;
-            controls.play(list.tracks[0], list.tracks);
+            if (!list || !startListPlayback(controls.play, list.tracks, false)) return;
             await pushCarPlayNowPlaying();
             return;
           }
@@ -515,9 +516,9 @@ export function CarPlayBridge() {
           // queue: `setShuffle` would otherwise reorder the queue this render
           // still thinks is playing, not the one we're about to start.
           case "shuffle-list": {
-            const list = listFor(templateId);
-            if (!list?.tracks.length) return;
-            const shuffled = fisherYatesWithAnchor(list.tracks, null);
+            const playable = playableTracks(listFor(templateId)?.tracks ?? []);
+            if (!playable.length) return;
+            const shuffled = fisherYatesWithAnchor(playable, null);
             if (!shuffle) controls.setShuffle(true);
             controls.play(shuffled[0], shuffled);
             await pushCarPlayNowPlaying();
@@ -556,7 +557,15 @@ export function CarPlayBridge() {
     }
   });
   const onUpNext = useEffectEvent(() => {
-    void pushCarPlayList(buildQueueTemplate({ limits, coverFor, queue, index }));
+    void pushCarPlayList(
+      buildQueueTemplate({
+        limits,
+        coverFor,
+        queue,
+        index,
+        upcoming: queueProgress.upcoming,
+      }),
+    );
   });
   const onAlbumArtist = useEffectEvent(() => {
     const albumId = currentTrack?.album_id;

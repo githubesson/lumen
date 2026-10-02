@@ -32,6 +32,7 @@ import { displayText } from "../../lib/format";
 import { useEntityDetail } from "../../lib/useEntityDetail";
 import { dropCache, readCache, writeCache } from "../../lib/resourceCache";
 import { usePlayer, useRemotePlayback } from "../../context/Player";
+import { listPlaybackState, startListPlayback } from "@music-library/core/player/play-list";
 import { Button } from "../../components/Button";
 import CoverArt from "../../components/CoverArt";
 import EmptyState from "../../components/EmptyState";
@@ -329,33 +330,26 @@ function ArtistActions({
   tracks: TrackListItem[];
   children?: ReactNode;
 }) {
+  // Displayed state: `shuffle` is the controlled device's while casting.
   const { play, toggle, current, isPlaying, shuffle, toggleShuffle } =
     usePlayer();
-  const { targetDevice, controlledShuffle, commandPending } =
-    useRemotePlayback();
-  const shownShuffle = targetDevice ? controlledShuffle : shuffle;
-  // Without a play-context id, a current track from this artist's list is the
-  // closest signal that the big button should pause instead of restarting.
-  const playingHere =
-    current != null && tracks.some((track) => track.id === current.id);
-  const showPause = playingHere && isPlaying;
+  const { commandPending } = useRemotePlayback();
+  const { playingHere, showPause, canPlay } = listPlaybackState(
+    tracks,
+    current,
+    isPlaying,
+  );
   const label = displayText(name);
   return (
     <div className="artist-actions">
       <button
         type="button"
         className="artist-play"
-        disabled={tracks.length === 0}
+        disabled={!canPlay}
         aria-label={showPause ? `Pause ${label}` : `Play ${label}`}
         onClick={() => {
-          if (playingHere) {
-            toggle();
-            return;
-          }
-          const start = shownShuffle
-            ? tracks[Math.floor(Math.random() * tracks.length)]
-            : tracks[0];
-          play(start, tracks);
+          if (playingHere) toggle();
+          else startListPlayback(play, tracks, shuffle);
         }}
       >
         {showPause ? (
@@ -366,9 +360,9 @@ function ArtistActions({
       </button>
       <button
         type="button"
-        className={"artist-shuffle" + (shownShuffle ? " active" : "")}
+        className={"artist-shuffle" + (shuffle ? " active" : "")}
         aria-label="Shuffle"
-        aria-pressed={shownShuffle}
+        aria-pressed={shuffle}
         onClick={toggleShuffle}
         disabled={commandPending}
       >

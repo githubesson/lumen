@@ -50,7 +50,13 @@ import {
   TRACK_FLASH_LIST_PERFORMANCE_PROPS,
   TRACK_LIST_PERFORMANCE_PROPS,
 } from "../../../components/list-performance";
-import { usePlayTrack } from "../../../context/player";
+import {
+  usePlayerControls,
+  usePlayerPlayback,
+  usePlayTrack,
+} from "../../../context/player";
+import { startListPlayback } from "@music-library/core/player/play-list";
+import { playableTracks } from "@music-library/core/track";
 import {
   useBottomDockInset,
   useDockControls,
@@ -98,6 +104,8 @@ export default function PlaylistDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const play = usePlayTrack();
+  const { setShuffle } = usePlayerControls();
+  const { shuffle } = usePlayerPlayback();
   const headerHeight = useHeaderHeight();
   const dockInset = useBottomDockInset();
   const dockScroll = useDockScrollHandler();
@@ -310,13 +318,17 @@ export default function PlaylistDetailScreen() {
   }, []);
 
   // Shuffle is queue-level: reorder a copy of the visible tracks and start
-  // from the new head, leaving the saved playlist order untouched.
+  // from the new head, leaving the saved playlist order untouched. Shuffle
+  // mode goes on as well, like CarPlay's and Siri's shuffle play; the queue is
+  // shuffled here because `setShuffle` reorders the queue playing now.
   const onShuffle = useCallback(() => {
-    if (tracks.length === 0) return;
+    const playable = playableTracks(tracks);
+    if (playable.length === 0) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const shuffled = fisherYatesWithAnchor(tracks, null);
+    const shuffled = fisherYatesWithAnchor(playable, null);
+    if (!shuffle) setShuffle(true);
     play(shuffled[0], shuffled);
-  }, [tracks, play]);
+  }, [tracks, play, setShuffle, shuffle]);
 
   const onToggleReorder = useCallback(() => {
     void Haptics.selectionAsync();
@@ -496,7 +508,7 @@ export default function PlaylistDetailScreen() {
               accessibilityLabel="Play playlist"
               onPress={() => {
                 void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                play(tracks[0], tracks);
+                startListPlayback(play, tracks, false);
               }}
               style={({ pressed }) => ({
                 flex: 1,

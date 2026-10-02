@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { extrapolatePosition } from "@music-library/core";
 import { usePlayerControls, usePlayerTime } from "../../context/Player";
 import { fmtDurationSec } from "../../lib/format";
 import SeekBar from "./SeekBar";
@@ -32,10 +33,10 @@ export default function ProgressBar({
     const interval = setInterval(() => setClock(Date.now()), 250);
     return () => clearInterval(interval);
   }, [sampledAt]);
-  const elapsed = sampledAt !== undefined ? Math.max(0, (clock - sampledAt) / 1000) : 0;
+  const elapsed = sampledAt !== undefined ? (clock - sampledAt) / 1000 : 0;
   const shownCurrentTime =
     override?.currentTime !== undefined
-      ? Math.min(override.duration || Infinity, override.currentTime + elapsed)
+      ? extrapolatePosition(override.currentTime, elapsed, override.duration ?? 0)
       : currentTime;
   const shownDuration = override?.duration ?? duration;
   const progress = shownDuration > 0 ? shownCurrentTime / shownDuration : 0;

@@ -1,8 +1,10 @@
 import { memo, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Music as MusicalNoteIcon, X as XMarkIcon } from "lucide-react";
+import { queueProgress } from "@music-library/core";
 import { trackCoverUrl, type TrackListItem } from "../api";
 import { usePlayer, usePlayerControls, useRemotePlayback } from "../context/Player";
+import { displayText } from "../lib/format";
 import { useDismiss } from "../lib/useDismiss";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import CoverArt from "./CoverArt";
@@ -152,7 +154,8 @@ export function useQueuePosition(externalQueue?: ExternalQueue): string | null {
     return `${clampIndex(externalQueue.currentIndex, total) + 1} / ${total}`;
   }
   if (!current) return null;
-  return `${(remoteQueue?.offset ?? 0) + index + 1} / ${remoteQueue?.total ?? queue.length}`;
+  const { position, total } = queueProgress({ queue, index }, remoteQueue);
+  return `${position} / ${total}`;
 }
 
 /**
@@ -172,14 +175,22 @@ export function QueueList({
 }) {
   const { queue, index, current } = usePlayer();
   const { jumpTo } = usePlayerControls();
-  return <QueueContents queue={queue} index={index} current={current} jumpTo={jumpTo} externalQueue={externalQueue} bindCtx={bindCtx} onJumped={onJumped} />;
+  const { targetDevice } = useRemotePlayback();
+  // A remote device's queue arrives as a window of a longer one.
+  const { upcoming: upcomingTotal } = queueProgress(
+    { queue, index },
+    targetDevice?.queue,
+  );
+  return <QueueContents queue={queue} index={index} current={current} jumpTo={jumpTo} upcomingTotal={upcomingTotal} externalQueue={externalQueue} bindCtx={bindCtx} onJumped={onJumped} />;
 }
 
-const QueueContents = memo(function QueueContents({ queue, index, current, jumpTo, externalQueue, bindCtx, onJumped }: {
+const QueueContents = memo(function QueueContents({ queue, index, current, jumpTo, upcomingTotal, externalQueue, bindCtx, onJumped }: {
   queue: TrackListItem[];
   index: number;
   current: TrackListItem | null;
   jumpTo: (index: number) => void;
+  /** Tracks after the current one in the whole queue, beyond any remote window. */
+  upcomingTotal: number;
   externalQueue?: ExternalQueue;
   bindCtx?: BindTrackContext;
   onJumped?: () => void;
@@ -236,7 +247,7 @@ const QueueContents = memo(function QueueContents({ queue, index, current, jumpT
       {upcoming.length > 0 ? (
         <>
           <div className="queue-pop-heading">
-            Up next · {upcoming.length}
+            Up next · {usingExternal ? upcoming.length : upcomingTotal}
           </div>
           {usingExternal
             ? externalUpcoming.map((t, i) => (
@@ -294,8 +305,8 @@ function QueueRow({
     <>
       <CoverArt className="queue-pop-art" src={coverUrl} label={title} />
       <div className="queue-pop-text">
-        <div className="queue-pop-title">{title}</div>
-        <div className="queue-pop-artist">{artist ?? "Unknown artist"}</div>
+        <div className="queue-pop-title">{displayText(title)}</div>
+        <div className="queue-pop-artist">{displayText(artist, "Unknown artist")}</div>
       </div>
     </>
   );

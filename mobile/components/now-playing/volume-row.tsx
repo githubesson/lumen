@@ -1,4 +1,3 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   StyleSheet,
   View,
@@ -9,12 +8,10 @@ import Slider from "@react-native-community/slider";
 import { SymbolView } from "expo-symbols";
 import { useTheme } from "../../theme/theme";
 
-const VOLUME_UPDATE_INTERVAL_MS = 80;
-
 /**
- * Volume control row: quiet/loud speaker glyphs flanking the native
- * volume slider. Drag updates are throttled before reaching `onSetVolume` so
- * the player isn't flooded, with the final value always committed on release.
+ * Volume control row: quiet/loud speaker glyphs flanking the native volume
+ * slider. Drag updates go straight to `onSetVolume`; the player throttles
+ * what it sends to a remote device, and local volume follows the thumb.
  */
 export function VolumeRow({
   value,
@@ -27,7 +24,6 @@ export function VolumeRow({
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
-  const volumeChange = useThrottledVolumeChange(onSetVolume);
 
   return (
     <View style={[styles.row, style]}>
@@ -44,8 +40,8 @@ export function VolumeRow({
         step={0.01}
         accessibilityLabel="Volume"
         accessibilityValue={{ min: 0, max: 100, now: Math.round(value * 100), text: `${Math.round(value * 100)} percent` }}
-        onValueChange={volumeChange.change}
-        onSlidingComplete={volumeChange.commit}
+        onValueChange={onSetVolume}
+        onSlidingComplete={onSetVolume}
         minimumTrackTintColor={theme.color.overlayStrong}
         maximumTrackTintColor={theme.color.overlayMuted}
         thumbTintColor={theme.color.fg}
@@ -57,65 +53,6 @@ export function VolumeRow({
       />
     </View>
   );
-}
-
-function useThrottledVolumeChange(setVolume: (value: number) => void) {
-  const lastUpdateRef = useRef(0);
-  const pendingValueRef = useRef<number | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearPendingTimer = useCallback(() => {
-    if (!timerRef.current) return;
-    clearTimeout(timerRef.current);
-    timerRef.current = null;
-  }, []);
-
-  useEffect(() => clearPendingTimer, [clearPendingTimer]);
-
-  const flushPending = useCallback(() => {
-    timerRef.current = null;
-    const pending = pendingValueRef.current;
-    if (pending == null) return;
-    pendingValueRef.current = null;
-    lastUpdateRef.current = performance.now();
-    setVolume(pending);
-  }, [setVolume]);
-
-  const change = useCallback(
-    (value: number) => {
-      const now = performance.now();
-      const elapsed = now - lastUpdateRef.current;
-
-      if (elapsed >= VOLUME_UPDATE_INTERVAL_MS) {
-        clearPendingTimer();
-        pendingValueRef.current = null;
-        lastUpdateRef.current = now;
-        setVolume(value);
-        return;
-      }
-
-      pendingValueRef.current = value;
-      if (!timerRef.current) {
-        timerRef.current = setTimeout(
-          flushPending,
-          VOLUME_UPDATE_INTERVAL_MS - elapsed,
-        );
-      }
-    },
-    [clearPendingTimer, flushPending, setVolume],
-  );
-
-  const commit = useCallback(
-    (value: number) => {
-      clearPendingTimer();
-      pendingValueRef.current = null;
-      lastUpdateRef.current = performance.now();
-      setVolume(value);
-    },
-    [clearPendingTimer, setVolume],
-  );
-
-  return useMemo(() => ({ change, commit }), [change, commit]);
 }
 
 const styles = StyleSheet.create({
