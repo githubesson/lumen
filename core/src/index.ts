@@ -89,3 +89,4 @@ export * from "./auth/validation";
 export { useLastFMConnection } from "./lastfm/use-lastfm-connection";
 
 export * from "./admin/invites";
+export * from "./admin/music-roots";

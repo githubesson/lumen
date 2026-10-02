@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Stack, useRouter } from "expo-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, errorMessage } from "@music-library/core";
+import { addMusicRootInput, api, errorMessage } from "@music-library/core";
 import {
   FormError,
   FormField,
@@ -19,9 +19,10 @@ export default function AdminAddRootScreen() {
   const [path, setPath] = useState("");
   const [label, setLabel] = useState("");
 
+  const input = addMusicRootInput(path, label);
   const createMutation = useMutation({
-    mutationFn: () =>
-      api.addMusicRoot({ path: path.trim(), label: label.trim() || undefined }),
+    mutationFn: (request: { path: string; label?: string }) =>
+      api.addMusicRoot(request),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: qk.adminMusicRoots,
@@ -30,7 +31,7 @@ export default function AdminAddRootScreen() {
     },
   });
 
-  const canSubmit = path.trim().length > 0 && !createMutation.isPending;
+  const canSubmit = input !== null && !createMutation.isPending;
 
   return (
     <>
@@ -46,7 +47,9 @@ export default function AdminAddRootScreen() {
             <HeaderTextButton
               label="Add"
               disabled={!canSubmit}
-              onPress={() => createMutation.mutate()}
+              onPress={() => {
+                if (input) createMutation.mutate(input);
+              }}
             />
           ),
         }}

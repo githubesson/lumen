@@ -1,3 +1,11 @@
+import {
+  addMusicRootInput,
+  canManageMusicRoot,
+  musicRootKey,
+  musicRootName,
+  rescanChangedLibrary,
+  rootRemovalChangedLibrary,
+} from "@music-library/core/admin/music-roots";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   RefreshCw as ArrowPathIcon,
@@ -58,12 +66,6 @@ function Stat({
   );
 }
 
-
-
-/** Last path segment, for either separator (the server may run on Windows). */
-function basename(path: string): string {
-  return path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || path;
-}
 
 /** A bar where a number will be, while the server walks the folders. */
 function Measuring() {
@@ -173,33 +175,29 @@ export function MusicRootsSection({
     };
   }, [rescan?.running, loadStatus]);
 
-  useEffect(() => {
-    if (rescan && rescan.running === false && (rescan.processed ?? 0) > 0) {
-      libraryChanged.emit();
-    }
-    // The complete object is intentionally excluded: only a transition in the
-    // two scalar completion fields should emit a library change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rescan?.running, rescan?.processed]);
-
+  // Reacts to a scan seen running and then finishing, not to the idle status
+  // every load reports, which still carries the last scan's counts.
   const wasRunningRef = useRef(false);
   useEffect(() => {
     if (rescan?.running) {
       wasRunningRef.current = true;
     } else if (rescan && wasRunningRef.current) {
       wasRunningRef.current = false;
+      if (rescanChangedLibrary(rescan)) libraryChanged.emit();
       refreshUsageRef.current = true;
       void reloadUsage();
       void reloadErrors();
     }
   }, [rescan, reloadUsage, reloadErrors]);
 
+  const addInput = addMusicRootInput(path, label);
   const add = async (e: FormEvent) => {
     e.preventDefault();
+    if (!addInput) return;
     onError("");
     setAdding(true);
     try {
-      await api.addMusicRoot({ path: path.trim(), label: label.trim() });
+      await api.addMusicRoot(addInput);
       setPath("");
       setLabel("");
       await reloadRoots();
@@ -230,20 +228,12 @@ export function MusicRootsSection({
     setRemoveOpen(true);
   };
 
-  const onRemoved = async ({
-    purged,
-    deletedTracks,
-  }: {
-    purged: boolean;
-    deletedTracks: number;
-  }) => {
+  const onRemoved = async (result: { purged: boolean; deletedTracks: number }) => {
     setRemoveOpen(false);
     await reloadRoots();
     void reloadUsage();
     void reloadErrors();
-    if (purged && deletedTracks) {
-      libraryChanged.emit();
-    }
+    if (rootRemovalChangedLibrary(result)) libraryChanged.emit();
   };
 
   const startRescan = async () => {
@@ -321,7 +311,7 @@ export function MusicRootsSection({
             type="submit"
             variant="primary"
             leadingIcon={<FolderPlusIcon className="size-4" />}
-            disabled={adding || !path.trim()}
+            disabled={adding || !addInput}
           >
             {adding ? "Adding…" : "Add"}
           </Button>
@@ -379,11 +369,11 @@ export function MusicRootsSection({
               const u = usageByPath.get(r.path);
               const measuring = !u && !usageError && r.exists;
               return (
-                <tr key={r.id || "primary"}>
+                <tr key={musicRootKey(r)}>
                   <td>
                     <div className="row-name">
                       <span className="track-title">
-                        {r.primary ? "Primary" : r.label || basename(r.path)}
+                        {musicRootName(r)}
                       </span>
                       {!r.primary && !r.enabled && (
                         <span className="badge">paused</span>
@@ -409,7 +399,7 @@ export function MusicRootsSection({
                     {measuring ? <Measuring /> : u && r.exists ? fmtBytes(u.bytes) : "—"}
                   </td>
                   <td className="col-acts">
-                    {!r.primary && (
+                    {canManageMusicRoot(r) && (
                       <div className="admin-actions">
                         <button
                           type="button"
@@ -499,7 +489,6 @@ export function MusicRootsSection({
       <RemoveFolderDialog
         key={removeTarget?.id}
         root={removeTarget}
-        coveredBy={removeTarget?.covered_by || null}
         open={removeOpen}
         onClose={() => setRemoveOpen(false)}
         onRemoved={onRemoved}
