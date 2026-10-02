@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentProps } from "react";
+import { type ComponentProps } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,8 +15,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
   errorMessage,
+  tidalAutoDownloadProblems,
+  tidalStatusDetails,
+  tidalStatusErrors,
+  useTidalDeviceLogin,
   type TidalAccount,
-  type TidalAuthStart,
   type TidalAutoDownloadStatus,
 } from "@music-library/core";
 import { HeaderIconButton } from "../../../components/header-buttons";
@@ -27,9 +30,6 @@ import { useTheme, type ThemeTokens } from "../../../theme/theme";
 export default function AdminTidalScreen() {
   const theme = useTheme();
   const queryClient = useQueryClient();
-  const [flow, setFlow] = useState<TidalAuthStart | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [localError, setLocalError] = useState<string | null>(null);
 
   const statusQuery = useQuery({
     queryKey: qk.adminTidalStatus,
@@ -37,41 +37,26 @@ export default function AdminTidalScreen() {
     staleTime: 0,
   });
 
-  useEffect(() => {
-    if (!flow) return;
-    const controller = new AbortController();
-    const expiresIn = Date.parse(flow.expires_at) - Date.now();
-    void api
-      .waitForTidalAuthorization(flow.flow_id, {
-        signal: controller.signal,
-        timeoutMs: Number.isFinite(expiresIn)
-          ? Math.max(2500, expiresIn + 5000)
-          : undefined,
-      })
-      .then((result) => {
-        setFlow(null);
-        if (result.state === "linked") {
-          void WebBrowser.dismissBrowser().catch(() => {});
-          setMessage(
-            result.account?.user_id
-              ? `TIDAL account ${result.account.user_id} linked.`
-              : "TIDAL account linked.",
-          );
-          setLocalError(null);
-          void queryClient.invalidateQueries({ queryKey: qk.adminTidalStatus });
-          return;
-        }
-        setLocalError(result.message || `TIDAL sign-in ${result.state}.`);
-      })
-      .catch((error) => {
-        if (error instanceof Error && error.name === "AbortError") return;
-        setFlow(null);
-        setLocalError(
-          errorMessage(error, "Could not complete TIDAL sign-in."),
-        );
+  const {
+    flow,
+    starting,
+    unlinkingId,
+    error: loginError,
+    notice: message,
+    start,
+    reopen,
+    unlink,
+  } = useTidalDeviceLogin({
+    // Resolves when the sheet is dismissed; the login is polled meanwhile.
+    openVerification: async (url) => {
+      await WebBrowser.openBrowserAsync(url, {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
       });
-    return () => controller.abort();
-  }, [flow, queryClient]);
+    },
+    onLinked: () => void WebBrowser.dismissBrowser().catch(() => {}),
+    onAccountsChanged: () =>
+      queryClient.invalidateQueries({ queryKey: qk.adminTidalStatus }),
+  });
 
   const autoDownloadQuery = useQuery({
     queryKey: qk.adminTidalAutoDownload,
@@ -89,45 +74,9 @@ export default function AdminTidalScreen() {
       ),
   });
 
-  const startAuth = useMutation({
-    mutationFn: () => api.startTidalAuth(),
-  });
-
-  const removeAccount = useMutation({
-    mutationFn: (account: TidalAccount) => api.removeTidalAccount(account.id),
-    onSuccess: () => {
-      setMessage("TIDAL account unlinked.");
-      setLocalError(null);
-      void queryClient.invalidateQueries({ queryKey: qk.adminTidalStatus });
-    },
-    onError: (error) =>
-      setLocalError(errorMessage(error, "Could not unlink the TIDAL account.")),
-  });
-
-  const onStartAuth = async () => {
+  const onStartAuth = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setMessage(null);
-    setLocalError(null);
-    try {
-      const started = await startAuth.mutateAsync();
-      setFlow(started);
-      await WebBrowser.openBrowserAsync(started.verification_url, {
-        presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
-      });
-    } catch (error) {
-      setLocalError(errorMessage(error, "Could not start TIDAL sign-in."));
-    }
-  };
-
-  const openFlow = async () => {
-    if (!flow) return;
-    try {
-      await WebBrowser.openBrowserAsync(flow.verification_url, {
-        presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
-      });
-    } catch {
-      setLocalError("Could not open the TIDAL sign-in page.");
-    }
+    void start();
   };
 
   const confirmRemove = (account: TidalAccount) => {
@@ -139,7 +88,7 @@ export default function AdminTidalScreen() {
         {
           text: "Unlink",
           style: "destructive",
-          onPress: () => removeAccount.mutate(account),
+          onPress: () => void unlink(account),
         },
       ],
     );
@@ -147,11 +96,14 @@ export default function AdminTidalScreen() {
 
   const status = statusQuery.data;
   const accounts = status?.accounts ?? [];
-  const error =
-    localError ||
-    (statusQuery.error
-      ? errorMessage(statusQuery.error, "Could not load TIDAL status.")
-      : status?.management_error || status?.error);
+  const details = tidalStatusDetails(status);
+  const errors = tidalStatusErrors(
+    loginError ??
+      (statusQuery.error
+        ? errorMessage(statusQuery.error, "Could not load TIDAL status.")
+        : null),
+    status,
+  );
 
   return (
     <>
@@ -183,17 +135,23 @@ export default function AdminTidalScreen() {
         <StatusCard
           connected={!!status?.connected}
           loading={statusQuery.isLoading}
-          country={status?.country_code || "US"}
-          quality={status?.quality || "LOSSLESS"}
-          version={status?.version || "unknown"}
+          country={details.country}
+          quality={details.quality}
+          version={details.version}
           theme={theme}
         />
 
-        {error ? (
-          <Card style={{ padding: theme.space.md }}>
-            <Text selectable style={{ color: theme.color.danger, fontSize: 13 }}>
-              {error}
-            </Text>
+        {errors.length > 0 ? (
+          <Card style={{ padding: theme.space.md, gap: theme.space.sm }}>
+            {errors.map((error) => (
+              <Text
+                key={error}
+                selectable
+                style={{ color: theme.color.danger, fontSize: 13 }}
+              >
+                {error}
+              </Text>
+            ))}
           </Card>
         ) : null}
 
@@ -219,8 +177,8 @@ export default function AdminTidalScreen() {
             <AccountCard
               key={account.id}
               account={account}
-              removing={removeAccount.isPending && removeAccount.variables?.id === account.id}
-              disabled={removeAccount.isPending}
+              removing={unlinkingId === account.id}
+              disabled={unlinkingId !== null}
               onRemove={() => confirmRemove(account)}
               theme={theme}
             />
@@ -270,7 +228,7 @@ export default function AdminTidalScreen() {
             <ActionButton
               label="Open TIDAL"
               icon="arrow.up.forward.app"
-              onPress={() => void openFlow()}
+              onPress={() => void reopen()}
               theme={theme}
             />
           </Card>
@@ -284,16 +242,17 @@ export default function AdminTidalScreen() {
         ) : null}
 
         <ActionButton
-          label={startAuth.isPending ? "Starting sign-in…" : "Link TIDAL account"}
+          label={starting ? "Starting sign-in…" : "Link TIDAL account"}
           icon="person.badge.plus"
-          loading={startAuth.isPending}
+          loading={starting}
           disabled={
-            startAuth.isPending ||
+            starting ||
+            unlinkingId !== null ||
             !!flow ||
             !status?.connected ||
             !status?.management_supported
           }
-          onPress={() => void onStartAuth()}
+          onPress={onStartAuth}
           theme={theme}
           primary
         />
@@ -382,11 +341,7 @@ function AutoDownloadSection({
   theme: ThemeTokens;
 }) {
   const { summary } = status;
-  const problem = !status.ffmpeg
-    ? "ffmpeg is not installed on the server, so downloads are paused."
-    : status.destination_error
-      ? `Download folder unavailable: ${status.destination_error}`
-      : null;
+  const problems = tidalAutoDownloadProblems(status);
   return (
     <View style={{ gap: theme.space.sm }}>
       <SectionLabel>Server library saving</SectionLabel>
@@ -396,11 +351,15 @@ function AutoDownloadSection({
           {status.destination ?? "the music folder"} and the playlist switches
           to the library copies. Change the folder from the web admin.
         </Text>
-        {problem ? (
-          <Text selectable style={{ color: theme.color.danger, fontSize: 13 }}>
+        {problems.map((problem) => (
+          <Text
+            key={problem}
+            selectable
+            style={{ color: theme.color.danger, fontSize: 13 }}
+          >
             {problem}
           </Text>
-        ) : null}
+        ))}
         <View style={{ flexDirection: "row", gap: theme.space.sm }}>
           <StatusValue label="Playlists" value={String(summary.playlists)} theme={theme} />
           <StatusValue label="Queued" value={String(summary.queued)} theme={theme} />

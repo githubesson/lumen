@@ -90,3 +90,11 @@ export { useLastFMConnection } from "./lastfm/use-lastfm-connection";
 
 export * from "./admin/invites";
 export * from "./admin/music-roots";
+export * from "./tidal/status";
+export {
+  normalizeTidalVerificationURL,
+  tidalAuthorizationTimeoutMs,
+  tidalSignInMessage,
+  useTidalDeviceLogin,
+  type TidalVerificationOpenResult,
+} from "./tidal/use-tidal-device-login";
