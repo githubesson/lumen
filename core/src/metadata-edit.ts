@@ -1,4 +1,52 @@
 import type { TrackDetail, TrackPatch, Album, AlbumPatch } from "./api";
+import { displayArtists } from "./api-media";
+
+export interface TrackEditForm {
+  title: string;
+  artists: string;
+  albumTitle: string;
+  albumArtist: string;
+  year: string;
+  genre: string;
+  trackNo: string;
+  discNo: string;
+}
+
+export interface AlbumEditForm {
+  title: string;
+  albumArtist: string;
+  year: string;
+  isCompilation: boolean;
+}
+
+/**
+ * The edit form for a loaded track: the inverse of {@link buildTrackPatch},
+ * so an untouched form diffs to an empty patch. Unset numbers are blank.
+ */
+export function trackEditForm(track: TrackDetail): TrackEditForm {
+  return {
+    title: track.title,
+    artists: displayArtists(track),
+    albumTitle: track.album_title ?? "",
+    // album_artist isn't on TrackDetail, so it starts blank (compilations
+    // stay "Various Artists"; otherwise the server keeps the primary artist).
+    albumArtist: "",
+    year: track.year ? String(track.year) : "",
+    genre: track.genre ?? "",
+    trackNo: track.track_no ? String(track.track_no) : "",
+    discNo: track.disc_no ? String(track.disc_no) : "",
+  };
+}
+
+/** The edit form for a loaded album: the inverse of {@link buildAlbumPatch}. */
+export function albumEditForm(album: Album): AlbumEditForm {
+  return {
+    title: album.title,
+    albumArtist: album.artist_name ?? "",
+    year: album.release_year ? String(album.release_year) : "",
+    isCompilation: album.is_compilation,
+  };
+}
 
 /**
  * Diff the form against the loaded track and return only the fields that
@@ -6,19 +54,7 @@ import type { TrackDetail, TrackPatch, Album, AlbumPatch } from "./api";
  * minimal. An untouched album-artist field is never sent (it isn't part of
  * TrackDetail, so there's nothing to compare it against).
  */
-export function buildTrackPatch(
-  track: TrackDetail,
-  form: {
-    title: string;
-    artists: string;
-    albumTitle: string;
-    albumArtist: string;
-    year: string;
-    genre: string;
-    trackNo: string;
-    discNo: string;
-  },
-): TrackPatch {
+export function buildTrackPatch(track: TrackDetail, form: TrackEditForm): TrackPatch {
   const patch: TrackPatch = {};
   const title = form.title.trim();
   if (title && title !== track.title) patch.title = title;
@@ -56,15 +92,7 @@ export function buildTrackPatch(
   return patch;
 }
 
-export function buildAlbumPatch(
-  album: Album,
-  form: {
-    title: string;
-    albumArtist: string;
-    year: string;
-    isCompilation: boolean;
-  },
-): AlbumPatch {
+export function buildAlbumPatch(album: Album, form: AlbumEditForm): AlbumPatch {
   const patch: AlbumPatch = {};
   const title = form.title.trim();
   if (title && title !== album.title) patch.title = title;
