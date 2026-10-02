@@ -13,6 +13,7 @@ import {
   DEFAULT_SHARE_SNIPPET_DURATION_SEC,
   errorMessage,
   parseTrackShareUrl,
+  primaryArtistName,
   trackCoverUrl,
   trackSharePreviewVideoUrl,
   type TrackDetail,
@@ -153,7 +154,7 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
       if (!ref) throw new Error("Couldn't read the generated share link.");
       const a = document.createElement("a");
       a.href = trackSharePreviewVideoUrl(ref);
-      a.download = `${sanitizeFilename(`${primaryArtist(track)} - ${track.title} (clip)`)}.mp4`;
+      a.download = `${sanitizeFilename(`${primaryArtistName(track)} - ${track.title} (clip)`)}.mp4`;
       a.rel = "noopener";
       document.body.appendChild(a);
       a.click();
@@ -329,16 +330,8 @@ export function ShareDialog({ open, trackId, onClose }: Props) {
   );
 }
 
-function primaryArtist(track: TrackDetail): string {
-  return (
-    track.artists.find((a) => a.role === "primary")?.name ??
-    track.artists[0]?.name ??
-    "Unknown artist"
-  );
-}
-
 function HeaderBlock({ track }: { track: TrackDetail }) {
-  const primary = primaryArtist(track);
+  const primary = primaryArtistName(track);
   return (
     <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
       <CoverArt

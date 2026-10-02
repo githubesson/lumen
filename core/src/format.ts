@@ -63,3 +63,19 @@ export function formatBytes(bytes: number | null | undefined): string {
 export function pluralize(n: number, singular: string, plural?: string): string {
   return `${n} ${n === 1 ? singular : (plural ?? `${singular}s`)}`;
 }
+
+/**
+ * Mojibake (double-encoded UTF-8) cleanup for track/album/artist text, so
+ * corrupted metadata renders cleanly wherever it is shown. The real fix is
+ * normalizing text on ingest.
+ */
+export function displayText(value: string | null | undefined, fallback = ""): string {
+  return (value ?? fallback)
+    .replace(/Ã\u0082Â·|Â·/g, "·")
+    .replace(/Ã¢â\u0082¬â€œ/g, "—")
+    .replace(/Ã\u0085Â\u0081/g, "L")
+    .replace(/Ã\u0084/g, "")
+    .replace(/Â/g, "")
+    .replace(/Ã/g, "")
+    .trim();
+}

@@ -332,3 +332,15 @@ export function displayArtists(track: { artists?: TrackArtist[] }): string {
     .map((artist) => artist.name)
     .join(", ");
 }
+
+/**
+ * The name to show for "the" artist of a track: its primary credit, else its
+ * first credit, else `fallback`.
+ */
+export function primaryArtistName(
+  track: { artists?: TrackArtist[] } | null | undefined,
+  fallback = "Unknown artist",
+): string {
+  const artists = track?.artists ?? [];
+  return artists.find((artist) => artist.role === "primary")?.name ?? artists[0]?.name ?? fallback;
+}

@@ -1,4 +1,4 @@
-import { type TrackDetail } from "../api";
+import { primaryArtistName, type TrackDetail } from "../api";
 import { DialogShell } from "./DialogShell";
 import { fmtBytes, fmtDurationMs } from "../lib/format";
 import { useTrackDetail } from "../lib/useTrackDetail";
@@ -92,12 +92,11 @@ export function TrackInfoDialog({
 }
 
 function HeaderBlock({ track }: { track: TrackDetail }) {
-  const primary = track.artists.find((a) => a.role === "primary")?.name;
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{ fontSize: 16, fontWeight: 600 }}>{track.title}</div>
       <div style={{ color: "var(--muted-foreground)" }}>
-        {primary ?? "Unknown artist"}
+        {primaryArtistName(track)}
         {track.album_title ? ` · ${track.album_title}` : ""}
       </div>
     </div>

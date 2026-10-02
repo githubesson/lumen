@@ -11,7 +11,8 @@ import {
   periodKey,
   periodRange,
 } from "../src/replay/period";
-import { formatBytes } from "../src/format";
+import { displayText, formatBytes } from "../src/format";
+import { primaryArtistName } from "../src/api-media";
 import { compareSortableTracks, sortTitleKey } from "../src/track-sort";
 import { canShareTrack, isLocalTrack, isTidalTrack } from "../src/track";
 import { withFavorite, withFavoriteId } from "../src/favorites/favorite-toggle";
@@ -359,5 +360,33 @@ describe("remote playback helpers", () => {
 
   it("reports zeroes when there is no activity", () => {
     expect(remoteActivityTime(null)).toEqual({ currentTime: 0, duration: 0 });
+  });
+});
+
+describe("displayText", () => {
+  it("repairs double-encoded separators and dashes", () => {
+    expect(displayText("A \u00c2\u00b7 B")).toBe("A \u00b7 B");
+    expect(displayText("Live \u00c3\u00a2\u00e2\u0082\u00ac\u00e2\u20ac\u0153 2019")).toBe("Live \u2014 2019");
+  });
+
+  it("falls back for missing text and trims", () => {
+    expect(displayText(null, "Unknown")).toBe("Unknown");
+    expect(displayText("  Title  ")).toBe("Title");
+  });
+});
+
+describe("primaryArtistName", () => {
+  const artist = (name: string, role: string) => ({ id: name, name, role });
+
+  it("prefers the primary credit over earlier ones", () => {
+    expect(
+      primaryArtistName({ artists: [artist("Feat", "featured"), artist("Main", "primary")] }),
+    ).toBe("Main");
+  });
+
+  it("falls back to the first credit, then the fallback", () => {
+    expect(primaryArtistName({ artists: [artist("Only", "featured")] })).toBe("Only");
+    expect(primaryArtistName({ artists: [] })).toBe("Unknown artist");
+    expect(primaryArtistName(null, "")).toBe("");
   });
 });

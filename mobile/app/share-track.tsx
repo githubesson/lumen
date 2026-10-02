@@ -28,6 +28,7 @@ import {
   createTrackStoryBackgroundVideo,
   getPublicTrackShare,
   parseTrackShareUrl,
+  primaryArtistName,
   sanitizeFilename,
   streamUrl,
   trackSharePreviewVideoUrl,
@@ -443,9 +444,7 @@ export default function ShareTrackScreen() {
       const shareRef = parseTrackShareUrl(url);
       if (!shareRef) throw new Error("Couldn't read the generated share link.");
       const track = trackQuery.data;
-      const artist =
-        track?.artists.find((a) => a.role === "primary")?.name ??
-        track?.artists[0]?.name;
+      const artist = primaryArtistName(track, "");
       const name = sanitizeFilename(
         `${artist ? `${artist} - ` : ""}${track?.title ?? "Lumen"} (clip)`,
       );
