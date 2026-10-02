@@ -26,6 +26,7 @@ import {
   type TrackDetail,
   type TrackListItem,
 } from "../api";
+import { canAddToPlaylist } from "@music-library/core/playlist-permissions";
 import { libraryChanged } from "../lib/events";
 import {
   extensionForFormat,
@@ -154,10 +155,7 @@ export default function TrackContextMenu({
   }, [x, y, playlists, coords.x, coords.y]);
 
   const editablePlaylists = useMemo(
-    () =>
-      (playlists ?? []).filter(
-        (p) => p.effective_role === "owner" || p.effective_role === "editor",
-      ),
+    () => (playlists ?? []).filter(canAddToPlaylist),
     [playlists],
   );
 

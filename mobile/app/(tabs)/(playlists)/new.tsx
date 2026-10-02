@@ -1,7 +1,14 @@
 import { useState } from "react";
 import { Stack, useRouter } from "expo-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, errorMessage, useAuth, type Visibility } from "@music-library/core";
+import {
+  api,
+  errorMessage,
+  isValidPlaylistName,
+  playlistDetailsPayload,
+  useAuth,
+  type Visibility,
+} from "@music-library/core";
 import {
   FormError,
 } from "../../../components/form-field";
@@ -29,11 +36,7 @@ export default function NewPlaylistScreen() {
 
   const createMutation = useMutation({
     mutationFn: () =>
-      api.createPlaylist({
-        name: name.trim(),
-        description: description.trim() || undefined,
-        visibility,
-      }),
+      api.createPlaylist(playlistDetailsPayload({ name, description, visibility })),
     onSuccess: (playlist) => {
       // Must match the user-scoped key the playlists list reads under, or the
       // new playlist never appears until a manual refresh.
@@ -45,7 +48,7 @@ export default function NewPlaylistScreen() {
     },
   });
 
-  const canSubmit = name.trim().length > 0 && !createMutation.isPending;
+  const canSubmit = isValidPlaylistName(name) && !createMutation.isPending;
 
   return (
     <>

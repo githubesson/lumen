@@ -11,19 +11,27 @@ import ErrorBanner from "../../components/ErrorBanner";
 import EmptyState from "../../components/EmptyState";
 import { Field, NativeSelect, TextInput } from "../../components/Field";
 import { fmtDate } from "../../lib/format";
+import {
+  collaboratorPermissions,
+  type PlaylistPermissions,
+  type PlaylistViewer,
+} from "@music-library/core/playlist-permissions";
 
 export default function CollaboratorsPanel({
   playlistId,
   collaborators,
-  isOwner,
-  canInvite,
+  permissions,
+  me,
   onChanged,
+  onLeft,
 }: {
   playlistId: string;
   collaborators: Collaborator[];
-  isOwner: boolean;
-  canInvite: boolean;
+  permissions: PlaylistPermissions;
+  me: PlaylistViewer;
   onChanged: () => Promise<void>;
+  /** After you remove yourself, which ends your access to the playlist. */
+  onLeft: () => void;
 }) {
   const [username, setUsername] = useState("");
   const [role, setRole] = useState<CollaboratorRole>("editor");
@@ -45,13 +53,17 @@ export default function CollaboratorsPanel({
     }
   };
 
-  const remove = async (userId: string) => {
-    if (!window.confirm("Remove this collaborator?")) return;
+  const remove = async (userId: string, isSelf: boolean) => {
+    const question = isSelf
+      ? "Leave this playlist? You'll lose access to it."
+      : "Remove this collaborator?";
+    if (!window.confirm(question)) return;
     try {
       await api.removeCollaborator(playlistId, userId);
-      await onChanged();
+      if (isSelf) onLeft();
+      else await onChanged();
     } catch (err) {
-      setError(errorMessage(err, "Failed to remove."));
+      setError(errorMessage(err, isSelf ? "Failed to leave." : "Failed to remove."));
     }
   };
 
@@ -66,7 +78,7 @@ export default function CollaboratorsPanel({
 
   return (
     <div style={{ display: "grid", gap: 20 }}>
-      {canInvite && (
+      {permissions.canInvite && (
         <form
           onSubmit={invite}
           className="surface"
@@ -113,56 +125,59 @@ export default function CollaboratorsPanel({
         <EmptyState title="No collaborators yet." />
       ) : (
         <div className="surface">
-          {collaborators.map((c, i) => (
-            <div
-              key={c.user_id}
-              style={{
-                padding: "12px 16px",
-                display: "flex",
-                alignItems: "center",
-                gap: 16,
-                borderTop: i === 0 ? "0" : "1px solid var(--border)",
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 500, color: "var(--foreground)" }}>
-                  {c.username}
+          {collaborators.map((c, i) => {
+            const row = collaboratorPermissions(permissions, c, me);
+            return (
+              <div
+                key={c.user_id}
+                style={{
+                  padding: "12px 16px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 16,
+                  borderTop: i === 0 ? "0" : "1px solid var(--border)",
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: "var(--foreground)" }}>
+                    {c.username}
+                  </div>
+                  <div
+                    className="mono"
+                    style={{ fontSize: 12, color: "var(--muted-foreground)" }}
+                  >
+                    {c.status === "pending" ? "Invite pending" : "Accepted"} ·{" "}
+                    {fmtDate(c.invited_at)}
+                  </div>
                 </div>
-                <div
-                  className="mono"
-                  style={{ fontSize: 12, color: "var(--muted-foreground)" }}
-                >
-                  {c.status === "pending" ? "Invite pending" : "Accepted"} ·{" "}
-                  {fmtDate(c.invited_at)}
-                </div>
+                {row.canChangeRole ? (
+                  <NativeSelect
+                    style={{ width: 110 }}
+                    value={c.role}
+                    onChange={(e) =>
+                      void setRoleFor(c.user_id, e.target.value as CollaboratorRole)
+                    }
+                    aria-label={`Role for ${c.username}`}
+                  >
+                    <option value="editor">Editor</option>
+                    <option value="viewer">Viewer</option>
+                  </NativeSelect>
+                ) : (
+                  <span className="badge">{c.role}</span>
+                )}
+                {row.canRemove && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void remove(c.user_id, row.isSelf)}
+                    leadingIcon={<UserMinusIcon className="size-3.5" />}
+                  >
+                    {row.isSelf ? "Leave" : "Remove"}
+                  </Button>
+                )}
               </div>
-              {isOwner && c.status === "accepted" ? (
-                <NativeSelect
-                  style={{ width: 110 }}
-                  value={c.role}
-                  onChange={(e) =>
-                    void setRoleFor(c.user_id, e.target.value as CollaboratorRole)
-                  }
-                  aria-label={`Role for ${c.username}`}
-                >
-                  <option value="editor">Editor</option>
-                  <option value="viewer">Viewer</option>
-                </NativeSelect>
-              ) : (
-                <span className="badge">{c.role}</span>
-              )}
-              {isOwner && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void remove(c.user_id)}
-                  leadingIcon={<UserMinusIcon className="size-3.5" />}
-                >
-                  Remove
-                </Button>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

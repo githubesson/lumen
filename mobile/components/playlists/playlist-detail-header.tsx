@@ -350,7 +350,8 @@ export function PlaylistMoreMenu({
   playlistId,
   playlistName,
   tracks,
-  collaborative,
+  canSeeCollaborators,
+  canEditDetails,
   canEdit,
   reorderActive,
   onEdit,
@@ -366,7 +367,10 @@ export function PlaylistMoreMenu({
   playlistId: string;
   playlistName: string;
   tracks: TrackListItem[];
-  collaborative: boolean;
+  canSeeCollaborators: boolean;
+  /** Name, description, visibility and cover: the server lets only the owner. */
+  canEditDetails: boolean;
+  /** Reorder and remove tracks. */
   canEdit: boolean;
   reorderActive: boolean;
   onEdit: () => void;
@@ -450,9 +454,11 @@ export function PlaylistMoreMenu({
         hitSlop={10}
         onPress={() =>
           Alert.alert(playlistName, undefined, [
+            ...(canEditDetails
+              ? [{ text: "Edit Playlist", onPress: onEdit }]
+              : []),
             ...(canEdit
               ? [
-                  { text: "Edit Playlist", onPress: onEdit },
                   {
                     text: reorderActive ? "Done Reordering" : "Reorder Tracks",
                     onPress: onToggleReorder,
@@ -472,7 +478,7 @@ export function PlaylistMoreMenu({
                   },
                 ]
               : []),
-            ...(collaborative
+            ...(canSeeCollaborators
               ? [{ text: "Collaborators", onPress: onOpenCollaborators }]
               : []),
             ...(serverSave && !serverSave.pending
@@ -514,21 +520,21 @@ export function PlaylistMoreMenu({
           swiftControlSize("regular"),
         ]}
       >
-        {canEdit ? (
-          <>
-            <swiftUI.Button
-              label="Edit Playlist"
-              systemImage="pencil"
-              onPress={onEdit}
-            />
-            <swiftUI.Button
-              label={reorderActive ? "Done Reordering" : "Reorder Tracks"}
-              systemImage={reorderActive ? "checkmark" : "line.3.horizontal"}
-              onPress={onToggleReorder}
-            />
-            <swiftUI.Divider />
-          </>
+        {canEditDetails ? (
+          <swiftUI.Button
+            label="Edit Playlist"
+            systemImage="pencil"
+            onPress={onEdit}
+          />
         ) : null}
+        {canEdit ? (
+          <swiftUI.Button
+            label={reorderActive ? "Done Reordering" : "Reorder Tracks"}
+            systemImage={reorderActive ? "checkmark" : "line.3.horizontal"}
+            onPress={onToggleReorder}
+          />
+        ) : null}
+        {canEditDetails || canEdit ? <swiftUI.Divider /> : null}
         <swiftUI.Button
           label={downloadLabel}
           systemImage={isDownloaded ? "minus.circle" : "arrow.down.circle"}
@@ -541,7 +547,7 @@ export function PlaylistMoreMenu({
           modifiers={[swiftDisabled(autoDisabled)]}
           onPress={onAutoPress}
         />
-        {collaborative ? (
+        {canSeeCollaborators ? (
           <swiftUI.Button
             label="Collaborators"
             systemImage="person.2"

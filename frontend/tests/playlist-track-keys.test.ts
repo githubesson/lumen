@@ -1,7 +1,8 @@
 import { cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { PlaylistTrackEntry } from "../src/api";
-import { usePlaylistTrackKeys, compareIndexedEntries, compareEntries, type SortKey } from "../src/pages/playlist/trackSort";
+import { compareSortableTracks } from "@music-library/core/track-sort";
+import { usePlaylistTrackKeys, compareEntries, type SortKey } from "../src/pages/playlist/trackSort";
 
 afterEach(cleanup);
 
@@ -18,8 +19,9 @@ it.each<SortKey>(["custom", "title", "duration", "plays"])(
   (sortKey) => {
     const { result } = renderHook(() => usePlaylistTrackKeys(tracks, sortKey, ""));
     const expected = [...tracks].sort((a, b) => compareEntries(a, b, sortKey));
+    const titleKeys = result.current.titleKeys ?? new Map<PlaylistTrackEntry, string>();
     const actual = [...tracks].sort((a, b) =>
-      compareIndexedEntries(a, b, sortKey, result.current.titleKeys ?? new Map()),
+      compareSortableTracks(a, b, sortKey, (track) => titleKeys.get(track)!),
     );
     expect(actual).toEqual(expected);
     expect(actual.map((track) => tracks.indexOf(track))).toEqual(expected.map((track) => tracks.indexOf(track)));

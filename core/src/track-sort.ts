@@ -60,14 +60,17 @@ export interface SortableTrack {
  * Compare two tracks by `key`. Every non-title key falls back to title order
  * so equal durations/play counts still produce a stable, alphabetical list.
  * `custom` returns 0 throughout, leaving the caller's original order intact.
+ *
+ * `titleKeyOf` lets a caller sorting a long list pass `sortTitleKey` results
+ * it computed once, instead of stripping each title on every comparison.
  */
-export function compareSortableTracks(
-  a: SortableTrack,
-  b: SortableTrack,
+export function compareSortableTracks<A extends SortableTrack, B extends SortableTrack>(
+  a: A,
+  b: B,
   key: SortKey,
+  titleKeyOf: (track: A | B) => string = (track) => sortTitleKey(track.title),
 ): number {
-  const byTitle = () =>
-    titleCollator.compare(sortTitleKey(a.title), sortTitleKey(b.title));
+  const byTitle = () => titleCollator.compare(titleKeyOf(a), titleKeyOf(b));
   switch (key) {
     case "title":
       return byTitle();
@@ -78,4 +81,19 @@ export function compareSortableTracks(
     case "custom":
       return 0;
   }
+}
+
+/**
+ * The list as shown: the saved order for `custom` (the same array), otherwise
+ * a sorted copy, reversed when descending.
+ */
+export function sortForDisplay<T>(
+  items: T[],
+  key: SortKey,
+  asc: boolean,
+  compare: (a: T, b: T) => number,
+): T[] {
+  if (key === "custom") return items;
+  const sorted = [...items].sort(compare);
+  return asc ? sorted : sorted.reverse();
 }

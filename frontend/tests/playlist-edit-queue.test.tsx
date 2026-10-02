@@ -79,6 +79,31 @@ it("queues a second remove behind one still in flight instead of dropping it", a
   expect(screen.getByRole("button", { name: "Remove C" })).toBeTruthy();
 });
 
+it("addresses a queued remove by the position the server will have given the row", async () => {
+  // Position 1 belongs to a row this viewer can't see (another user's
+  // personal upload). Removing A shifts it and B up one on the server, so the
+  // queued remove of B has to target 1, not B's index 0 (the hidden row).
+  mock.listPlaylistTracksIfChanged.mockResolvedValue({
+    etag: "v1",
+    tracks: [
+      { position: 0, track_id: "t-A", title: "A", duration_ms: 1000, source: "local" },
+      { position: 2, track_id: "t-B", title: "B", duration_ms: 1000, source: "local" },
+      { position: 3, track_id: "t-C", title: "C", duration_ms: 1000, source: "local" },
+    ] as PlaylistTrackEntry[],
+  });
+  let finishFirst!: () => void;
+  mock.removePlaylistTrack
+    .mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirst = resolve; }))
+    .mockResolvedValueOnce(undefined);
+  await renderPage();
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove A" }));
+  fireEvent.click(screen.getByRole("button", { name: "Remove B" }));
+  await act(async () => {});
+  await act(async () => { finishFirst(); });
+  expect(mock.removePlaylistTrack.mock.calls).toEqual([["p1", 0], ["p1", 1]]);
+});
+
 it("discards edits queued behind a failed one and reloads the server's rows", async () => {
   let failFirst!: (error: Error) => void;
   mock.removePlaylistTrack.mockImplementationOnce(

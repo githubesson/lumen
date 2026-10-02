@@ -27,7 +27,10 @@
     "./lyrics": "./src/lyrics.ts",
     "./metadata-edit": "./src/metadata-edit.ts",
     "./share-snippet": "./src/share-snippet.ts",
-    "./auth/validation": "./src/auth/validation.ts"
+    "./auth/validation": "./src/auth/validation.ts",
+    "./playlist-permissions": "./src/playlist-permissions.ts",
+    "./playlist-details": "./src/playlist-details.ts",
+    "./playlist-tracks": "./src/playlist-tracks.ts"
   },
   "peerDependencies": {
     "react": "^18.3.1 || ^19.0.0"
