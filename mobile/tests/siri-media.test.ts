@@ -262,5 +262,7 @@ describe("cachedSiriCatalog", () => {
     );
 
     await expect(catalog.listPlaylistTracks("p-1")).rejects.toBe(deleted);
+    // Dropped, so a later request without a network can't play it either.
+    expect(queryClient.getQueryData(qk.playlistTracks("u-1", "p-1"))).toBeUndefined();
   });
 });

@@ -16,7 +16,7 @@ import type {
   SiriPlayMediaRequest,
 } from "../modules/siri-media";
 import { qk } from "./query-keys";
-import { canServeCachedAfter } from "./query-policy";
+import { isRefusal } from "./query-policy";
 
 type SiriCatalogApi = Pick<
   typeof api,
@@ -35,10 +35,10 @@ type SiriCatalogApi = Pick<
  * Siri's catalog reads for a signed-in user, the way CarPlay reads its lists:
  * from the server when online, falling back to the query cache the screens
  * fill (and persist to disk) under the same keys when the server can't be
- * reached (not when it refuses: see `canServeCachedAfter`), and from that
- * cache alone when offline. Successful reads go into that cache too. That's
- * what lets "play <playlist>" reach its downloaded tracks with no network.
- * Name searches have nothing cached to read and still fail.
+ * reached, and from that cache alone when offline. Successful reads go into
+ * that cache; a refusal (see `isRefusal`) drops the cached copy instead.
+ * That's what lets "play <playlist>" reach its downloaded tracks with no
+ * network. Name searches have nothing cached to read and still fail.
  */
 export function cachedSiriCatalog(
   queryClient: QueryClient,
@@ -53,8 +53,12 @@ export function cachedSiriCatalog(
         queryClient.setQueryData(queryKey, data);
         return data;
       } catch (error) {
+        if (isRefusal(error)) {
+          queryClient.removeQueries({ queryKey, exact: true });
+          throw error;
+        }
         const cached = queryClient.getQueryData<T>(queryKey);
-        if (cached === undefined || !canServeCachedAfter(error)) throw error;
+        if (cached === undefined) throw error;
         return cached;
       }
     }

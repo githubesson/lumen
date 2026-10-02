@@ -54,7 +54,7 @@ import {
 } from "../lib/offline-mode";
 import { startableListTracks } from "../lib/use-play-queue";
 import { qk } from "../lib/query-keys";
-import { QUERY_STALE_TIME, canServeCachedAfter } from "../lib/query-policy";
+import { QUERY_STALE_TIME, isRefusal } from "../lib/query-policy";
 import {
   addCarPlayAlbumArtistListener,
   addCarPlayConnectListener,
@@ -653,8 +653,8 @@ function isLoading(query: { isFetching: boolean; data: unknown }): boolean {
 
 /**
  * Read a list for the car: cache first when offline, otherwise fetch and fall
- * back to whatever is cached when the server can't be reached (not when it
- * refuses, e.g. a deleted playlist's 404: see `canServeCachedAfter`). Never
+ * back to whatever is cached when the server can't be reached. A refusal (a
+ * deleted playlist's 404: see `isRefusal`) drops the cached copy instead. Never
  * rejects and never hangs — a pending fetch would leave the row spinning
  * until the native timeout releases it.
  *
@@ -680,7 +680,9 @@ async function load<T>(
       retry: false,
     });
   } catch (error) {
-    return canServeCachedAfter(error) ? cached : undefined;
+    if (!isRefusal(error)) return cached;
+    queryClient.removeQueries({ queryKey, exact: true });
+    return undefined;
   }
 }
 

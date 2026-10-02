@@ -6,14 +6,17 @@
  */
 import { ApiError } from "@music-library/core";
 
+const REFUSAL_STATUSES = new Set([401, 403, 404, 410]);
+
 /**
- * Whether a failed read may fall back to cached data. Not when the server
- * answered with a 4xx: a 404 or 403 is its answer about the resource (deleted,
- * access revoked), which a cached copy must not override. Transport failures,
- * timeouts and 5xx (a proxy whose backend is down) say nothing of the sort.
+ * Whether the server refused a read: the resource is gone (404, 410) or not
+ * this user's (401, 403). That's its answer about the resource, so a cached
+ * copy must not be served in its place, now or later: drop it. Transport
+ * failures, timeouts, rate limits and 5xx (a proxy whose backend is down) say
+ * nothing about the resource, and cached data may stand in.
  */
-export function canServeCachedAfter(error: unknown): boolean {
-  return !(error instanceof ApiError && error.status >= 400 && error.status < 500);
+export function isRefusal(error: unknown): boolean {
+  return error instanceof ApiError && REFUSAL_STATUSES.has(error.status);
 }
 
 export const QUERY_STALE_TIME = {
