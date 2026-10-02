@@ -148,6 +148,35 @@ describe("API unauthorized handling", () => {
 
     expect(onUnauthorized).toHaveBeenCalledOnce();
   });
+
+  it("keeps the session when a password change rejects the current password", async () => {
+    const onUnauthorized = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("invalid credentials\n", { status: 401 })),
+    );
+    setUnauthorizedHandler(onUnauthorized);
+
+    await expect(api.resetPassword("wrong", "new-password")).rejects.toMatchObject({
+      status: 401,
+      message: "invalid credentials",
+    });
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it("signs out when a password change finds no session", async () => {
+    const onUnauthorized = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("unauthorized\n", { status: 401 })),
+    );
+    setUnauthorizedHandler(onUnauthorized);
+
+    await expect(api.resetPassword("current", "new-password")).rejects.toMatchObject({ status: 401 });
+
+    expect(onUnauthorized).toHaveBeenCalledOnce();
+  });
 });
 
 describe("cover URL resolution", () => {

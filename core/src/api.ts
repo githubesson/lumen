@@ -109,11 +109,13 @@ export const api = {
     }),
   checkInvite: (token: string) =>
     request<InviteCheck>(`/api/auth/invite?token=${encodeURIComponent(token)}`),
+  // A wrong current password is also a 401 ("invalid credentials"); only a
+  // missing session should sign the user out.
   resetPassword: (current_password: string, new_password: string) =>
     requestVoid("/api/auth/reset-password", {
       method: "POST",
       body: JSON.stringify({ current_password, new_password }),
-    }),
+    }, { notifyUnauthorized: (body) => body !== "invalid credentials" }),
 
   listAdminUsers: (options: RequestOptions = {}) =>
     request<AdminUser[]>("/api/admin/users", options),
