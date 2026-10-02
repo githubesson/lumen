@@ -1,8 +1,11 @@
 import {
-  parseSyncedLyrics,
-  parsePlainLyrics,
+  LYRICS_NOT_FOUND_MESSAGE,
   activeLineIndex,
   activeWordIndexForLine,
+  lyricsContent,
+  lyricsErrorMessage,
+  lyricsRequest,
+  lyricsTimingDuration,
   type SyncedLine,
 } from "@music-library/core/lyrics";
 import {
@@ -163,36 +166,33 @@ export const LyricsSection = forwardRef<
   const [translatingTrackId, setTranslatingTrackId] = useState<
     TrackListItem["id"] | null
   >(null);
+  const request = lyricsRequest(track);
   const lyricsQuery = useQuery({
-    queryKey: qk.lyrics(track.id, track.title, track.artist, track.album_title),
-    queryFn: () =>
-      api.getLyrics({
-        track_name: track.title,
-        artist_name: track.artist,
-        album_name: track.album_title,
-        duration: track.duration_ms
-          ? Math.round(track.duration_ms / 1000)
-          : undefined,
-      }),
+    queryKey: qk.lyrics(
+      track.id,
+      request.track_name,
+      request.artist_name,
+      request.album_name,
+      request.duration,
+    ),
+    queryFn: () => api.getLyrics(request),
     staleTime: Number.POSITIVE_INFINITY,
   });
 
-  const syncedLines = useMemo(
-    () => parseSyncedLyrics(lyricsQuery.data?.syncedLyrics),
-    [lyricsQuery.data?.syncedLyrics],
+  const content = useMemo(
+    () => lyricsContent(lyricsQuery.data),
+    [lyricsQuery.data],
   );
-  const plainLines = useMemo(
-    () => parsePlainLyrics(lyricsQuery.data?.plainLyrics),
-    [lyricsQuery.data?.plainLyrics],
+  const syncedLines = useMemo(
+    () => (content.kind === "synced" ? content.lines : []),
+    [content],
   );
   const displayedLines = useMemo(
-    () => (syncedLines.length ? syncedLines : plainLines),
-    [plainLines, syncedLines],
+    () =>
+      content.kind === "synced" || content.kind === "plain" ? content.lines : [],
+    [content],
   );
-  const lyricsAvailable =
-    lyricsQuery.isSuccess &&
-    !lyricsQuery.data.instrumental &&
-    displayedLines.length > 0;
+  const lyricsAvailable = lyricsQuery.isSuccess && displayedLines.length > 0;
   const activeTranslation =
     translation?.trackId === track.id ? translation : null;
   const translationBusy = translatingTrackId !== null;
@@ -377,18 +377,18 @@ export const LyricsSection = forwardRef<
           selectable
           style={{ color: theme.color.fgMuted, textAlign: "center" }}
         >
-          Lyrics unavailable
+          {lyricsErrorMessage(lyricsQuery.error)}
         </Text>
       </View>
     );
   }
 
-  if (lyricsQuery.data?.instrumental) {
+  if (content.kind === "instrumental") {
     return <LyricsMessage text="Instrumental" />;
   }
 
-  if (!syncedLines.length && !plainLines.length) {
-    return <LyricsMessage text="No lyrics found" />;
+  if (content.kind === "none") {
+    return <LyricsMessage text={LYRICS_NOT_FOUND_MESSAGE} />;
   }
 
   return (
@@ -409,13 +409,14 @@ export const LyricsSection = forwardRef<
         {syncedLines.length
           ? (
               <SyncedLyricLines
+                track={track}
                 lines={syncedLines}
                 translatedLines={activeTranslation?.visible ? activeTranslation.lines : null}
                 onLineLayout={onLineLayout}
                 scrollToLine={scrollToLine}
               />
             )
-          : plainLines.map((line, index) => (
+          : displayedLines.map((line, index) => (
               <Animated.View
                 key={`${index}-${line.text}`}
                 entering={FadeIn.duration(180)}
@@ -483,11 +484,13 @@ function LyricsMessage({ text }: { text: string }) {
  * lines that change state when the active line moves on.
  */
 function SyncedLyricLines({
+  track,
   lines,
   translatedLines,
   onLineLayout,
   scrollToLine,
 }: {
+  track: TrackListItem;
   lines: SyncedLine[];
   translatedLines: Record<number, string> | null;
   onLineLayout: (index: number, event: LayoutChangeEvent) => void;
@@ -513,7 +516,7 @@ function SyncedLyricLines({
           activeLine,
           lines[activeIndex + 1],
           time.currentTime,
-          Math.max(1, time.duration),
+          lyricsTimingDuration(track, time.duration),
         )
       : null;
 

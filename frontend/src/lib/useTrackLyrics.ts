@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { TrackListItem } from "@music-library/core";
+import {
+  LYRICS_NOT_FOUND_MESSAGE,
+  lyricsErrorMessage,
+} from "@music-library/core/lyrics";
 import type { LyricsResult } from "../api";
 import {
   fetchLyricsCached,
@@ -45,7 +49,7 @@ export function useTrackLyrics(track: TrackListItem | null, enabled: boolean) {
         setError(null);
       } else {
         setLyrics(null);
-        setError("No lyrics found");
+        setError(LYRICS_NOT_FOUND_MESSAGE);
       }
       setLoading(false);
       return;
@@ -63,14 +67,14 @@ export function useTrackLyrics(track: TrackListItem | null, enabled: boolean) {
           setError(null);
         } else {
           setLyrics(null);
-          setError("No lyrics found");
+          setError(LYRICS_NOT_FOUND_MESSAGE);
         }
       })
       .catch((err) => {
         if (cancelled) return;
         console.error("Failed to fetch lyrics:", err);
         setLyrics(null);
-        setError("Failed to load lyrics");
+        setError(lyricsErrorMessage(err));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -85,10 +89,4 @@ export function useTrackLyrics(track: TrackListItem | null, enabled: boolean) {
 }
 
 /** The track length the lyrics view times words against, in seconds. */
-export function lyricsDurationSeconds(
-  track: TrackListItem | null,
-  playerDuration: number,
-): number {
-  if (track?.duration_ms != null) return track.duration_ms / 1000;
-  return playerDuration > 0 ? playerDuration : 1;
-}
+export { lyricsTimingDuration as lyricsDurationSeconds } from "@music-library/core/lyrics";
