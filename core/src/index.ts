@@ -5,6 +5,8 @@
 export * from "./api";
 export * from "./artist-releases";
 export * from "./audio-format";
+export * from "./entity-labels";
+export * from "./entity-target";
 export * from "./events";
 export * from "./format";
 export * from "./storage";
@@ -19,7 +21,12 @@ export {
   useFavorites,
   type FavoritesState,
 } from "./favorites/favorites-core";
-export { withFavorite, withFavoriteId } from "./favorites/favorite-toggle";
+export {
+  createToggleGuard,
+  withFavorite,
+  withFavoriteId,
+  type ToggleGuard,
+} from "./favorites/favorite-toggle";
 export {
   buildPeriodOptions,
   formatListeningTime,
@@ -80,6 +87,35 @@ export {
   type UsePlayerCoreOptions,
   type UsePlayerCoreReturn,
 } from "./player";
+export {
+  canStartTrack,
+  listPlaybackState,
+  startListPlayback,
+  usePlayFromList,
+  playbackDeviceButtonLabel,
+  playbackDeviceKind,
+  playbackDeviceStatus,
+  remoteCommandError,
+  REMOTE_VOLUME_INTERVAL_MS,
+  useRemotePlaybackController,
+  buildNowPlayingMetadata,
+  shouldExposeNowPlayingSession,
+  REMOTE_CONTROL_INDICATOR_MS,
+  useRemoteControlIndicator,
+  createAudioAdapterEmitter,
+  extrapolatePosition,
+  queueProgress,
+  repeatModeLabel,
+  type ListPlaybackState,
+  type PlayFromList,
+  type PlaybackDeviceKind,
+  type RemotePlaybackContextValue,
+  type UseRemotePlaybackControllerOptions,
+  type UseRemotePlaybackControllerReturn,
+  type NowPlayingMetadata,
+  type AudioAdapterEmitter,
+  type QueueProgress,
+} from "./player";
 
 export * from "./lyrics";
 export * from "./metadata-edit";
@@ -87,3 +123,23 @@ export * from "./share-snippet";
 export * from "./auth/validation";
 
 export { useLastFMConnection } from "./lastfm/use-lastfm-connection";
+
+export * from "./admin/invites";
+export * from "./admin/music-roots";
+export * from "./tidal/status";
+export {
+  normalizeTidalVerificationURL,
+  tidalAuthorizationTimeoutMs,
+  tidalSignInMessage,
+  useTidalDeviceLogin,
+  type TidalVerificationOpenResult,
+} from "./tidal/use-tidal-device-login";
+export * from "./auth/errors";
+export { lastFMConnectionState, type LastFMConnectionKind } from "./lastfm/use-lastfm-connection";
+export * from "./playlist-permissions";
+export * from "./playlist-details";
+export * from "./playlist-tracks";
+export * from "./upload";
+export * from "./replay/replay";
+export { useLocalDay, type ResumeSubscriber } from "./replay/use-local-day";
+export { useShareLinkSession } from "./share-link-session";

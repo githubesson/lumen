@@ -1,33 +1,8 @@
-import { useEffect, useRef, useState } from "react";
 import { Smartphone as DevicePhoneMobileIcon } from "lucide-react";
-import {
-  subscribeRemotePlaybackControl,
-  type RemotePlaybackControlEvent,
-} from "@music-library/core";
-
-const INDICATOR_VISIBLE_MS = 6_000;
+import { useRemoteControlIndicator } from "@music-library/core";
 
 export default function RemoteControlIndicator() {
-  const [event, setEvent] = useState<RemotePlaybackControlEvent | null>(null);
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return subscribeRemotePlaybackControl((nextEvent) => {
-      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-      setEvent(nextEvent);
-      hideTimerRef.current = setTimeout(() => {
-        hideTimerRef.current = null;
-        setEvent(null);
-      }, INDICATOR_VISIBLE_MS);
-    });
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    },
-    [],
-  );
+  const event = useRemoteControlIndicator();
 
   if (!event) return null;
 

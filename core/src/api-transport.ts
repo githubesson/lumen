@@ -8,7 +8,8 @@ export type RequestOptions = Pick<RequestInit, "signal">;
 
 type RequestBehavior = {
   allowNotModified?: boolean;
-  notifyUnauthorized?: boolean;
+  /** false never signs the user out on a 401; a function decides from the response body. */
+  notifyUnauthorized?: boolean | ((body: string) => boolean);
   /** Overrides the default 30s deadline, for routes the server lets run longer. */
   timeoutMs?: number;
 };
@@ -121,14 +122,17 @@ export async function rawFetch(
   }
 
   if (!response.ok && !(behavior.allowNotModified && response.status === 304)) {
-    if (response.status === 401 && generation === authGeneration && behavior.notifyUnauthorized !== false) {
+    const text = (await response.text().catch(() => "")).trim();
+    const notify = behavior.notifyUnauthorized;
+    if (
+      response.status === 401 &&
+      generation === authGeneration &&
+      notify !== false &&
+      (typeof notify !== "function" || notify(text))
+    ) {
       onUnauthorized?.();
     }
-    const text = await response.text().catch(() => "");
-    throw new ApiError(
-      response.status,
-      text.trim() || response.statusText,
-    );
+    throw new ApiError(response.status, text || response.statusText);
   }
   return response;
 }

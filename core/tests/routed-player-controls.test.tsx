@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { act, renderHook } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  REMOTE_VOLUME_INTERVAL_MS,
   useRoutedPlayerControls,
   type RoutedPlayerControlsOptions,
 } from "../src/player/use-routed-player-controls";
@@ -218,5 +219,106 @@ describe("routed player controls", () => {
     rerender({ ...options, targetDevice: null });
     result.current.toggle();
     expect(controls.toggle).toHaveBeenCalledOnce();
+  });
+});
+
+describe("routed player controls: unavailable tracks", () => {
+  const gone: TrackListItem = { ...second, unavailable: true };
+
+  it("refuses them before the local offline gate can misreport why", () => {
+    const { result, options, controls } = setup();
+    expect(result.current.play(gone, [track, gone])).toBe(false);
+    expect(options.canPlayLocally).not.toHaveBeenCalled();
+    expect(controls.play).not.toHaveBeenCalled();
+  });
+
+  it("never sends one to a remote device, as the track or in its queue", async () => {
+    const { result, options } = setup(device);
+    expect(result.current.play(gone, [track, gone])).toBe(false);
+    expect(options.sendCommand).not.toHaveBeenCalled();
+    await act(async () => result.current.play(track, [gone, track, gone]));
+    expect(options.sendCommand).toHaveBeenCalledExactlyOnceWith("play_track", {
+      track: expect.objectContaining({ id: "t1" }),
+      queue: [expect.objectContaining({ id: "t1" })],
+    });
+  });
+});
+
+describe("routed player controls: remote volume", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const volumeCalls = (send: RoutedPlayerControlsOptions["sendCommand"]) =>
+    vi.mocked(send).mock.calls.filter(([action]) => action === "set_volume");
+
+  it("sends at most one set_volume per interval and always the last value", () => {
+    vi.useFakeTimers();
+    const { result, options } = setup(device);
+    act(() => {
+      result.current.setVolume(0.1);
+      result.current.setVolume(0.2);
+      result.current.setVolume(0.3);
+    });
+    expect(volumeCalls(options.sendCommand)).toEqual([["set_volume", { volume: 0.1 }]]);
+    act(() => vi.advanceTimersByTime(REMOTE_VOLUME_INTERVAL_MS));
+    expect(volumeCalls(options.sendCommand)).toEqual([
+      ["set_volume", { volume: 0.1 }],
+      ["set_volume", { volume: 0.3 }],
+    ]);
+    // A drag that settles sends nothing more; the next change after a quiet
+    // interval goes out at once.
+    act(() => vi.advanceTimersByTime(REMOTE_VOLUME_INTERVAL_MS * 3));
+    act(() => result.current.setVolume(2));
+    expect(volumeCalls(options.sendCommand)).toHaveLength(3);
+    expect(volumeCalls(options.sendCommand)[2]).toEqual(["set_volume", { volume: 1 }]);
+  });
+
+  it("delivers a pending value to the device it was meant for when the target changes", () => {
+    vi.useFakeTimers();
+    const { result, rerender, options } = setup(device);
+    act(() => {
+      result.current.setVolume(0.1);
+      result.current.setVolume(0.6);
+    });
+    const otherSend = vi.fn().mockResolvedValue(applied);
+    rerender({
+      ...options,
+      targetDevice: { ...device, deviceId: "other" },
+      sendCommand: otherSend,
+    });
+    expect(volumeCalls(options.sendCommand)).toEqual([
+      ["set_volume", { volume: 0.1 }],
+      ["set_volume", { volume: 0.6 }],
+    ]);
+    act(() => vi.advanceTimersByTime(REMOTE_VOLUME_INTERVAL_MS * 2));
+    expect(otherSend).not.toHaveBeenCalled();
+    expect(volumeCalls(options.sendCommand)).toHaveLength(2);
+  });
+
+  it("sends a pending value when the player unmounts and leaves no timer behind", () => {
+    vi.useFakeTimers();
+    const { result, unmount, options } = setup(device);
+    act(() => {
+      result.current.setVolume(0.1);
+      result.current.setVolume(0.4);
+    });
+    unmount();
+    expect(volumeCalls(options.sendCommand)).toEqual([
+      ["set_volume", { volume: 0.1 }],
+      ["set_volume", { volume: 0.4 }],
+    ]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("leaves local volume immediate", () => {
+    vi.useFakeTimers();
+    const { result, options, controls } = setup();
+    act(() => {
+      result.current.setVolume(0.1);
+      result.current.setVolume(0.2);
+    });
+    expect(vi.mocked(controls.setVolume).mock.calls).toEqual([[0.1], [0.2]]);
+    expect(options.sendCommand).not.toHaveBeenCalled();
   });
 });

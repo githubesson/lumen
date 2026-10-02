@@ -13,6 +13,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import * as WebBrowser from "expo-web-browser";
 import {
+  lastFMConnectionState,
   useAuth,
   useLastFMConnection,
 } from "@music-library/core";
@@ -46,6 +47,7 @@ export default function SettingsScreen() {
       presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
     }),
   });
+  const lastFMState = lastFMConnectionState(lastFM, lastFMError);
   const [logProblems, setLogProblems] = useState(0);
 
   // Counting scans the log file, so it happens after paint rather than during
@@ -143,15 +145,7 @@ export default function SettingsScreen() {
             <View style={{ gap: 2 }}>
               <Text style={{ color: theme.color.fg, fontSize: 16 }}>Last.fm</Text>
               <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>
-                {!lastFM
-                  ? "Checking availability…"
-                  : !lastFM.configured
-                    ? "Server integration is not configured"
-                    : lastFM.connected
-                      ? `Scrobbling as ${lastFM.username || "connected user"}`
-                      : lastFM.pending
-                        ? "Tap to authorize again"
-                        : "Connect your account to scrobble"}
+                {lastFMState.description}
               </Text>
             </View>
           </View>
@@ -163,7 +157,7 @@ export default function SettingsScreen() {
             </Text>
           )}
         </Pressable>
-        {(lastFMError || lastFM?.last_error) ? (
+        {lastFMState.error ? (
           <Text
             style={{
               color: theme.color.danger,
@@ -172,7 +166,7 @@ export default function SettingsScreen() {
               paddingBottom: 12,
             }}
           >
-            {lastFMError || lastFM?.last_error}
+            {lastFMState.error}
           </Text>
         ) : null}
       </Section>

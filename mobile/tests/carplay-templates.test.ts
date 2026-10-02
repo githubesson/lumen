@@ -22,6 +22,7 @@ import {
   nowPlayingNavButton,
   pushedTemplateId,
   recentAlbumTiles,
+  trackArtwork,
   type CarPlayDestination,
 } from "../lib/carplay/templates";
 import type { CarPlayListItem, CarPlayListTemplate } from "../modules/carplay";
@@ -331,6 +332,14 @@ describe("queue", () => {
     expect(pushed.sections[0].header).toBe("2 songs");
   });
 
+  it("counts a remote device's queue window against its whole queue", () => {
+    const queue = [track("t1"), track("t2"), track("t3")];
+    const pushed = buildQueueTemplate({ limits: LIMITS, queue, index: 1, upcoming: 40 });
+    // Rows still jump by their place in the window; routing adds the offset.
+    expect(ids(pushed)).toEqual(["queued:2"]);
+    expect(pushed.sections[0].header).toBe("First 1 of 40 songs");
+  });
+
   it("dims the now-playing button when nothing is playing", () => {
     expect(nowPlayingNavButton(null)).toMatchObject({
       id: "now-playing",
@@ -395,6 +404,20 @@ describe("track list template", () => {
     expect(contentRows(template)).toMatchObject([
       { id: "track:t1", isPlaying: false, enabled: false },
       { id: "track:t2", isPlaying: true, enabled: true },
+    ]);
+  });
+
+  it("dims tracks that are unavailable even when online", () => {
+    const template = buildTrackListTemplate({
+      id: "favorites",
+      title: "Favorites",
+      limits: LIMITS,
+      tracks: [track("t1", { unavailable: true }), track("t2")],
+    });
+
+    expect(contentRows(template)).toMatchObject([
+      { id: "track:t1", enabled: false },
+      { id: "track:t2", enabled: true },
     ]);
   });
 
@@ -570,5 +593,17 @@ describe("browse templates", () => {
     expect(
       buildAlbumsTemplate({ limits: LIMITS, albums: undefined }).emptyTitle,
     ).toMatch(/offline/i);
+  });
+});
+
+describe("CarPlay artwork", () => {
+  it("prefers a payload's remote cover over the library endpoint", () => {
+    expect(
+      trackArtwork({ id: "t1", title: "T", duration_ms: 1, album_id: "a1", cover_url: "/api/covers/remote?u=x" }),
+    ).toContain("/api/covers/remote?u=x");
+    expect(
+      trackArtwork({ id: "t1", title: "T", duration_ms: 1, has_cover: false, cover_url: "/api/covers/remote?u=x" }),
+    ).toContain("/api/covers/remote?u=x");
+    expect(trackArtwork({ id: "t1", title: "T", duration_ms: 1, has_cover: false })).toBeUndefined();
   });
 });

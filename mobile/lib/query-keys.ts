@@ -76,8 +76,15 @@ export const qk = {
   albumCoverBust: (id: Id) => ["album-cover-bust", id] as const,
   /** Public/share track fetch used by the share modal (not user-scoped). */
   shareTrack: (id: Id) => ["track", id] as const,
-  lyrics: (id: Id, title?: string, artist?: string, album?: string) =>
-    ["lyrics", id, title ?? "", artist ?? "", album ?? ""] as const,
+  /** Keyed on everything the lyrics request sends, duration included. */
+  lyrics: (
+    id: Id,
+    title?: string,
+    artist?: string,
+    album?: string,
+    durationSec?: number,
+  ) =>
+    ["lyrics", id, title ?? "", artist ?? "", album ?? "", durationSec ?? ""] as const,
   playlistCollaborators: (id: Id) =>
     ["playlist-collaborators", id] as const,
 
@@ -89,7 +96,9 @@ export const qk = {
   adminTidalAutoDownload: ["admin", "tidal-auto-download"] as const,
 
   // ---- replay ----
-  replay: (periodKey: string) => ["replay", periodKey] as const,
+  /** Keyed on `replayRequest(period).cacheKey`: the period and the days it
+   *  covers, so a rolling period's persisted answer can't outlive its window. */
+  replay: (cacheKey: string) => ["replay", cacheKey] as const,
 
   // ---- home ----
   /** Root of the home screen's library-derived sections. */

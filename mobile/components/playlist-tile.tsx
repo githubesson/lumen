@@ -2,7 +2,7 @@ import { memo } from "react";
 import { View } from "react-native";
 import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
-import type { Playlist } from "@music-library/core";
+import { playlistSubtitle, type Playlist } from "@music-library/core";
 import { PlaylistArtwork } from "./playlist-artwork";
 import { ShelfTile } from "./shelf-tile";
 import { usePlaylistDownloaded } from "../lib/downloads";
@@ -18,6 +18,7 @@ interface Props {
 /** Grid tile for the playlists tab: large artwork over name and visibility. */
 function PlaylistTileImpl({ playlist, size, onPress }: Props) {
   const theme = useTheme();
+  const subtitle = playlistSubtitle(playlist);
   const downloaded = usePlaylistDownloaded(playlist.id);
   const offline = useIsOffline();
   // Dim on a wrapper so it multiplies with ShelfTile's pressed fade instead
@@ -29,7 +30,7 @@ function PlaylistTileImpl({ playlist, size, onPress }: Props) {
           void Haptics.selectionAsync();
           onPress(playlist);
         }}
-        accessibilityLabel={`${playlist.name}, ${playlist.visibility}`}
+        accessibilityLabel={`${playlist.name}, ${subtitle}`}
         artwork={
           <PlaylistArtwork
             playlist={playlist}
@@ -39,12 +40,7 @@ function PlaylistTileImpl({ playlist, size, onPress }: Props) {
           />
         }
         title={playlist.name}
-        subtitle={
-          (playlist.visibility === "collaborative" ? "Collaborative" : "Private") +
-          (playlist.effective_role && playlist.effective_role !== "owner"
-            ? ` - ${playlist.effective_role}`
-            : "")
-        }
+        subtitle={subtitle}
         subtitleAccessory={
           downloaded ? (
             <SymbolView

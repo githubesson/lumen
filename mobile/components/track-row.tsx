@@ -1,5 +1,5 @@
 import { memo } from "react";
-import type { TrackListItem } from "@music-library/core";
+import { displayText, type TrackListItem } from "@music-library/core";
 import { CoverArt } from "./cover-art";
 import { ListRow } from "./list-row";
 import { TrackActionsContextMenu } from "./track-actions-menu";
@@ -19,17 +19,17 @@ function TrackRowImpl({ track, onPress }: Props) {
   const unavailableOffline = useTrackUnavailableOffline(track.id);
   // track.unavailable: no longer on TIDAL and not in the library.
   const unavailable = unavailableOffline || !!track.unavailable;
+  const title = displayText(track.title);
+  const artist = displayText(track.artist);
   const row = (
     <ListRow
       style={unavailable ? { opacity: 0.4 } : undefined}
       onPress={() => onPress(track)}
-      accessibilityLabel={
-        track.artist ? `${track.title} by ${track.artist}` : track.title
-      }
+      accessibilityLabel={artist ? `${title} by ${artist}` : title}
       accessibilityHint="Double tap to play. Press and hold for more actions."
       leading={<CoverArt track={track} size={40} transitionMs={0} priority="low" />}
-      title={track.title}
-      subtitle={track.unavailable ? "Removed from TIDAL" : track.artist}
+      title={title}
+      subtitle={track.unavailable ? "Removed from TIDAL" : artist}
       trailing={formatDurationMs(track.duration_ms)}
     />
   );

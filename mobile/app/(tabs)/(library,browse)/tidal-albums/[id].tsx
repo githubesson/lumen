@@ -4,9 +4,14 @@ import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import { useQuery } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams } from "expo-router";
 import {
+  ALBUM_DOWNLOAD_REFRESH_MS,
+  albumArtists,
+  albumArtUrl,
   api,
+  displayText,
+  metaLine,
   playableTracks,
-  resolveCoverUrl,
+  tidalAlbumMetaParts,
   useAuth,
   type TrackListItem,
 } from "@music-library/core";
@@ -18,10 +23,7 @@ import {
 import { TrackRow } from "../../../../components/track-row";
 import { qk } from "../../../../lib/query-keys";
 import { usePlayQueue } from "../../../../lib/use-play-queue";
-import {
-  ALBUM_DOWNLOAD_REFRESH_MS,
-  useAlbumDownloadAction,
-} from "../../../../lib/album-download";
+import { useAlbumDownloadAction } from "../../../../lib/album-download";
 import { useTheme } from "../../../../theme/theme";
 import { AlbumHeader, ALBUM_ART_SIZE } from "../../../../components/album-header";
 import { EmptyState, retryAction } from "../../../../components/empty-state";
@@ -73,16 +75,14 @@ export default function TidalAlbumDetailScreen() {
       1,
       Math.round(ALBUM_ART_SIZE * PixelRatio.get()),
     );
-    const coverUri = album.cover_url ? resolveCoverUrl(album.cover_url) : null;
+    const coverUri = albumArtUrl({ ...album, source: "tidal" }, requestSize);
     return (
       <AlbumHeader
         title={album.title}
-        artist={album.artists?.join(", ") || album.artist}
+        artist={albumArtists(album)}
         coverUri={coverUri}
         coverKey={`${album.id}:${requestSize}`}
-        metadata={`${album.track_count} ${album.track_count === 1 ? "track" : "tracks"}${
-          album.saved_count ? ` - ${album.saved_count} saved` : ""
-        }${album.release_year ? ` - ${album.release_year}` : ""}`}
+        metadata={metaLine(tidalAlbumMetaParts(album))}
         onPlay={(() => {
           const first = playableTracks(tracks)[0];
           return first ? () => onTrackPress(first) : undefined;
@@ -108,7 +108,7 @@ export default function TidalAlbumDetailScreen() {
     <>
       <Stack.Screen
         options={{
-          title: albumQuery.data.title,
+          title: displayText(albumQuery.data.title),
           headerLargeTitle: false,
         }}
       />

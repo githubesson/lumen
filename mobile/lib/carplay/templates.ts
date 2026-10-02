@@ -1,7 +1,8 @@
 import {
-  albumCoverUrl,
+  albumArtUrl,
+  canStartTrack,
   playlistArtUrl,
-  trackCoverUrl,
+  trackArtUrl,
   type Album,
   type Playlist,
   type TrackListItem,
@@ -142,12 +143,11 @@ export function trackSubtitle(track: TrackListItem): string | undefined {
 
 /** Cover URL for a track row, or nothing when the track has no artwork. */
 export function trackArtwork(track: TrackListItem): string | undefined {
-  if (track.has_cover === false) return undefined;
-  return trackCoverUrl(track, COVER_PIXELS);
+  return trackArtUrl(track, COVER_PIXELS) ?? undefined;
 }
 
 function albumArtwork(album: Album): string | undefined {
-  return album.has_cover ? albumCoverUrl(album.id, COVER_PIXELS) : undefined;
+  return albumArtUrl(album, COVER_PIXELS) ?? undefined;
 }
 
 /** Resolves a track's artwork. The bridge substitutes downloaded covers so
@@ -244,7 +244,7 @@ function trackRow(
     text: track.title,
     detailText: trackSubtitle(track),
     isPlaying: track.id === options.currentTrackId,
-    enabled: options.isPlayable ? options.isPlayable(track.id) : true,
+    enabled: canStartTrack(track, options.isPlayable),
     imageUrl: options.coverFor(track),
     symbol: SYMBOL.track,
   };
@@ -549,15 +549,21 @@ export function buildQueueTemplate({
   limits,
   queue,
   index,
+  upcoming,
   coverFor = trackArtwork,
 }: {
   limits: Limits;
   queue: TrackListItem[];
   index: number;
+  /**
+   * Songs after the current one in the whole queue, when `queue` is only a
+   * window of it (a remote device's snapshot). Defaults to the rest of `queue`.
+   */
+  upcoming?: number;
   coverFor?: CoverResolver;
 }): CarPlayListTemplate {
   const rows = upNextRows(queue, index, limits.maximumItemCount, coverFor);
-  const remaining = Math.max(0, queue.length - index - 1);
+  const remaining = upcoming ?? Math.max(0, queue.length - index - 1);
 
   return listTemplate(
     {

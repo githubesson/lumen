@@ -15,7 +15,11 @@ import Animated, {
 import { SymbolView } from "expo-symbols";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { type TrackListItem } from "@music-library/core";
+import {
+  displayText,
+  repeatModeLabel,
+  type TrackListItem,
+} from "@music-library/core";
 import {
   useCurrentTrack,
   useIsPlaying,
@@ -33,10 +37,7 @@ import {
 } from "./dock-context";
 import { DockSurface } from "./dock-surface";
 import { showActionMenu, type ActionMenuItem } from "../../lib/action-menu";
-import {
-  repeatModeAccessibilityLabel,
-  repeatModeIcon,
-} from "../now-playing/repeat-mode";
+import { repeatModeIcon } from "../now-playing/repeat-mode";
 
 let nowPlayingNavigationLockedUntil = 0;
 const NOW_PLAYING_NAVIGATION_LOCK_MS = 700;
@@ -115,6 +116,8 @@ export function PhoneMiniPlayer() {
   }));
 
   if (!current) return null;
+  const title = displayText(current.title);
+  const artist = displayText(current.artist);
 
   return (
     <View style={styles.phoneStack}>
@@ -135,9 +138,9 @@ export function PhoneMiniPlayer() {
         }}
         accessibilityRole="button"
         accessibilityLabel={
-          current.artist
-            ? `${current.title} by ${current.artist}. Tap to open full player.`
-            : `${current.title}. Tap to open full player.`
+          artist
+            ? `${title} by ${artist}. Tap to open full player.`
+            : `${title}. Tap to open full player.`
         }
         style={styles.phoneRow}
       >
@@ -151,14 +154,14 @@ export function PhoneMiniPlayer() {
               color: colors.active,
             }}
           >
-            {current.title}
+            {title}
           </Text>
-          {current.artist ? (
+          {artist ? (
             <Text
               numberOfLines={1}
               style={{ fontSize: 13, color: colors.muted }}
             >
-              {current.artist}
+              {artist}
             </Text>
           ) : null}
         </View>
@@ -268,6 +271,8 @@ export function PadMiniPlayer() {
   }));
 
   if (!current) return null;
+  const title = displayText(current.title);
+  const artist = displayText(current.artist);
 
   const compact = width < 900;
 
@@ -334,7 +339,7 @@ export function PadMiniPlayer() {
             <PadIconButton
               icon={repeatModeIcon(playback.repeat)}
               selected={playback.repeat !== "off"}
-              accessibilityLabel={repeatModeAccessibilityLabel(playback.repeat)}
+              accessibilityLabel={repeatModeLabel(playback.repeat)}
               onPress={() => {
                 void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 player.cycleRepeat();
@@ -348,9 +353,9 @@ export function PadMiniPlayer() {
           onPress={() => openNowPlaying()}
           accessibilityRole="button"
           accessibilityLabel={
-            current.artist
-              ? `${current.title} by ${current.artist}. Tap to open full player.`
-              : `${current.title}. Tap to open full player.`
+            artist
+              ? `${title} by ${artist}. Tap to open full player.`
+              : `${title}. Tap to open full player.`
           }
           style={({ pressed }) => [
             styles.padTrackButton,
@@ -363,14 +368,14 @@ export function PadMiniPlayer() {
               numberOfLines={1}
               style={[styles.padTitle, { color: colors.active }]}
             >
-              {current.title}
+              {title}
             </Text>
-            {current.artist ? (
+            {artist ? (
               <Text
                 numberOfLines={1}
                 style={[styles.padArtist, { color: colors.muted }]}
               >
-                {current.artist}
+                {artist}
               </Text>
             ) : null}
           </View>
@@ -460,7 +465,7 @@ function PadTrackActionsButton({ track }: { track: TrackListItem }) {
         onPress: actions.toggleFavorite,
       },
       { label: "Track Info", onPress: actions.openInfo },
-      { label: "Share...", onPress: actions.openShare },
+      ...(actions.canShare ? [{ label: "Share...", onPress: actions.openShare }] : []),
       { label: "Add to Playlist...", onPress: actions.openPlaylistPicker },
       {
         label: actions.downloading ? "Downloading..." : "Download File...",
@@ -472,17 +477,17 @@ function PadTrackActionsButton({ track }: { track: TrackListItem }) {
     if (actions.hasAlbum) {
       items.push({ label: "View Album", onPress: actions.openAlbum });
     }
-    if (actions.isAdmin) {
+    if (actions.canEditMetadata) {
       items.push({
         label: "Edit Metadata",
         onPress: actions.openEditMetadata,
       });
-      if (actions.hasEditableAlbum) {
-        items.push({
-          label: "Edit Album & Cover",
-          onPress: actions.openEditAlbum,
-        });
-      }
+    }
+    if (actions.hasEditableAlbum) {
+      items.push({
+        label: "Edit Album & Cover",
+        onPress: actions.openEditAlbum,
+      });
     }
     if (actions.owned) {
       items.push({

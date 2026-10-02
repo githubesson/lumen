@@ -1,19 +1,13 @@
 import { useMemo } from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
-import type { ReplayBucket, ReplayData } from "@music-library/core";
+import {
+  activityBucketLabel,
+  activityChartScale,
+  type ReplayBucket,
+  type ReplayData,
+} from "@music-library/core";
 import { Card } from "../primitives";
 import { useTheme } from "../../theme/theme";
-
-function activityBucketLabel(d: Date, bucket: ReplayBucket): string {
-  switch (bucket) {
-    case "day":
-      return d.toLocaleDateString(undefined, { day: "numeric" });
-    case "week":
-      return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    case "month":
-      return d.toLocaleDateString(undefined, { month: "narrow" });
-  }
-}
 
 /**
  * Bar chart card of plays per time bucket, with a sparse axis-label row
@@ -29,12 +23,7 @@ export function ActivityChart({
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
-  const max = useMemo(
-    () => buckets.reduce((m, b) => Math.max(m, b.plays), 0),
-    [buckets],
-  );
-  // Show ~6 ticks max so labels don't overlap
-  const labelStep = Math.max(1, Math.ceil(buckets.length / 6));
+  const { max, labelStep } = useMemo(() => activityChartScale(buckets), [buckets]);
 
   return (
     <Card style={[{ padding: 14 }, style]}>
@@ -93,7 +82,7 @@ export function ActivityChart({
                     fontVariant: ["tabular-nums"],
                   }}
                 >
-                  {activityBucketLabel(new Date(b.bucket_start), bucket)}
+                  {activityBucketLabel(new Date(b.bucket_start), bucket, "compact")}
                 </Text>
               ) : null}
             </View>

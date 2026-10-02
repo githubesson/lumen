@@ -24,7 +24,7 @@ export function SnippetPanel({
   endSec,
   currentSec,
   maxStartSec,
-  snippetDurationSec,
+  displayDurationSec,
   minSnippetDurationSec,
   maxSnippetDurationSec,
   picked,
@@ -38,7 +38,8 @@ export function SnippetPanel({
   endSec: number;
   currentSec: number;
   maxStartSec: number;
-  snippetDurationSec: number;
+  /** `snippetWindow(...).displayDurationSec`: the clip's length as heard. */
+  displayDurationSec: number;
   minSnippetDurationSec: number;
   maxSnippetDurationSec: number;
   picked: boolean;
@@ -48,9 +49,6 @@ export function SnippetPanel({
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
-  const displaySnippetDurationSec = durationSec > 0
-    ? Math.min(snippetDurationSec, durationSec)
-    : snippetDurationSec;
 
   return (
     <SharePanel
@@ -78,7 +76,7 @@ export function SnippetPanel({
             fontVariant: ["tabular-nums"],
           }}
         >
-          {formatDurationSec(displaySnippetDurationSec)}
+          {formatDurationSec(displayDurationSec)}
         </Text>
       </View>
 

@@ -6,7 +6,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import Animated, { FadeInDown, FadeOutUp } from "react-native-reanimated";
-import type { TrackListItem } from "@music-library/core";
+import { displayText, type TrackListItem } from "@music-library/core";
 import { useTheme } from "../../theme/theme";
 
 export const HERO_META_STAGE_HEIGHT = 48;
@@ -24,6 +24,7 @@ export function HeroMeta({
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
+  const artist = displayText(track.artist);
   return (
     <View style={[styles.stage, style]}>
       <Animated.View
@@ -44,15 +45,15 @@ export function HeroMeta({
               flexShrink: 1,
             }}
           >
-            {track.title}
+            {displayText(track.title)}
           </Text>
         </View>
-        {track.artist ? (
+        {artist ? (
           <Text
             numberOfLines={1}
             style={{ color: theme.color.fgMuted, fontSize: 17 }}
           >
-            {track.artist}
+            {artist}
           </Text>
         ) : null}
       </Animated.View>

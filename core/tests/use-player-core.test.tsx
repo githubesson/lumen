@@ -454,3 +454,64 @@ describe("usePlayerCore", () => {
   });
 });
 
+
+describe("usePlayerCore with unavailable tracks", () => {
+  // Dropped from TIDAL with no library copy: no gate needed to skip them.
+  const gone = (id: string): TrackListItem => ({ ...t(id), unavailable: true });
+
+  it("refuses to start an unavailable track without touching the queue", async () => {
+    const { result, adapter } = await setup();
+    act(() => {
+      expect(result.current.controls.play(gone("a"), [gone("a"), t("b")])).toBe(false);
+    });
+    expect(result.current.state.current).toBeNull();
+    expect(result.current.state.queue).toEqual([]);
+    expect(adapter.load).not.toHaveBeenCalled();
+  });
+
+  it("skips them on next, prev and auto-advance, and ignores jumps to them", async () => {
+    const { result, emit, state } = await setup();
+    const queue = [t("a"), gone("b"), t("c"), gone("d")];
+    act(() => result.current.controls.play(t("a"), queue));
+
+    act(() => result.current.controls.next());
+    expect(result.current.state.current?.id).toBe("c");
+
+    state.time = 0;
+    act(() => result.current.controls.prev());
+    expect(result.current.state.current?.id).toBe("a");
+
+    act(() => result.current.controls.jumpTo(1));
+    expect(result.current.state.current?.id).toBe("a");
+
+    act(() => result.current.controls.jumpTo(2));
+    // Only an unavailable track is left ahead: stop rather than land on it.
+    act(() => emit("ended"));
+    expect(result.current.state.current?.id).toBe("c");
+    expect(result.current.state.isPlaying).toBe(false);
+  });
+
+  it("wraps past them with repeat=all, shuffled or not", async () => {
+    const { result } = await setup();
+    act(() => result.current.controls.play(t("b"), [gone("a"), t("b")]));
+    act(() => result.current.controls.setRepeat("all"));
+    act(() => result.current.controls.next());
+    expect(result.current.state.current?.id).toBe("b");
+    expect(result.current.state.isPlaying).toBe(true);
+
+    act(() => result.current.controls.setShuffle(true));
+    for (let i = 0; i < 5; i++) {
+      act(() => result.current.controls.next());
+      expect(result.current.state.current?.id).toBe("b");
+    }
+  });
+
+  it("does not preload an unavailable next track", async () => {
+    const { result, adapter, state, emit } = await setup();
+    act(() => result.current.controls.play(t("a"), [t("a"), gone("b"), t("c")]));
+    state.dur = 100;
+    state.time = 80;
+    act(() => emit("timeupdate"));
+    expect(adapter.prepareNext).toHaveBeenCalledExactlyOnceWith("test://stream/c");
+  });
+});

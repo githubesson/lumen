@@ -1,5 +1,5 @@
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
-import type { ReplayData } from "@music-library/core";
+import { genreShares, type ReplayData } from "@music-library/core";
 import { Card } from "../primitives";
 import { useTheme } from "../../theme/theme";
 import { HairlineSeparator } from "../hairline-separator";
@@ -16,11 +16,10 @@ export function GenreList({
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
-  const total = genres.reduce((acc, g) => acc + g.plays, 0);
   return (
     <Card style={[{ overflow: "hidden" }, style]}>
-      {genres.map((g, i) => {
-        const pct = total > 0 ? (g.plays / total) * 100 : 0;
+      {genreShares(genres).map((g, i) => {
+        const pct = g.share;
         return (
           <View key={g.genre}>
             {i > 0 && <HairlineSeparator inset={14} />}

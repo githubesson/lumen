@@ -26,12 +26,16 @@ import {
   withTiming,
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
-import { trackCoverUrl, type TrackListItem } from "@music-library/core";
+import {
+  repeatModeLabel,
+  trackCoverUrl,
+  type TrackListItem,
+} from "@music-library/core";
 import { useTheme } from "../../theme/theme";
 import { sessionCookieHeader } from "../../lib/downloads";
 import { ModePill } from "./mode-pill";
 import { QUEUE_ROW_HEIGHT, QueueRow } from "./queue-row";
-import { repeatModeAccessibilityLabel, repeatModeIcon } from "./repeat-mode";
+import { repeatModeIcon } from "./repeat-mode";
 
 const QUEUE_EAGER_ROWS = 6;
 const QUEUE_ADVANCE_ANIMATION_MS = 260;
@@ -40,6 +44,8 @@ const QUEUE_PREFETCH_LIMIT = 20;
 type DisplayedQueue = {
   queue: TrackListItem[];
   startIndex: number;
+  /** Absolute position of `queue[0]` in the whole queue. */
+  positionOffset: number;
 };
 
 /**
@@ -51,6 +57,8 @@ export const QueueSection = memo(function QueueSection({
   queueOpen,
   queue,
   startIndex,
+  positionOffset = 0,
+  upcomingCount,
   shuffle,
   repeat,
   onJumpToPosition,
@@ -59,8 +67,13 @@ export const QueueSection = memo(function QueueSection({
   style,
 }: {
   queueOpen: boolean;
+  /** The queue as displayed: a remote device sends a window of a longer one. */
   queue: TrackListItem[];
   startIndex: number;
+  /** Absolute position of `queue[0]` in the whole queue (a remote window's offset). */
+  positionOffset?: number;
+  /** Songs after the current one in the whole queue; defaults to the rest of `queue`. */
+  upcomingCount?: number;
   shuffle: boolean;
   repeat: "off" | "all" | "one";
   onJumpToPosition: (position: number) => void;
@@ -70,10 +83,12 @@ export const QueueSection = memo(function QueueSection({
 }) {
   const theme = useTheme();
   const upcomingLength = Math.max(0, queue.length - startIndex);
+  const upcomingTotal = upcomingCount ?? upcomingLength;
   const reducedMotion = useReducedMotion();
   const [displayedQueue, setDisplayedQueue] = useState<DisplayedQueue>(() => ({
     queue,
     startIndex,
+    positionOffset,
   }));
   const displayedQueueRef = useRef(displayedQueue);
   const pendingQueueRef = useRef<DisplayedQueue | null>(null);
@@ -111,12 +126,13 @@ export const QueueSection = memo(function QueueSection({
   );
 
   useEffect(() => {
-    const nextQueue: DisplayedQueue = { queue, startIndex };
+    const nextQueue: DisplayedQueue = { queue, startIndex, positionOffset };
     const currentQueue = displayedQueueRef.current;
 
     if (
       currentQueue.queue === queue &&
-      currentQueue.startIndex === startIndex
+      currentQueue.startIndex === startIndex &&
+      currentQueue.positionOffset === positionOffset
     ) {
       // A quick skip back may return to the still-displayed queue while an
       // advance is pending. Cancel it instead of committing the stale result.
@@ -140,6 +156,7 @@ export const QueueSection = memo(function QueueSection({
       queueOpen &&
       !reducedMotion &&
       currentQueue.queue === queue &&
+      currentQueue.positionOffset === positionOffset &&
       currentQueue.startIndex + 1 === startIndex &&
       currentQueue.startIndex + 1 < currentQueue.queue.length &&
       currentQueue.queue[currentQueue.startIndex + 1]?.id ===
@@ -179,6 +196,7 @@ export const QueueSection = memo(function QueueSection({
     queueOpen,
     setDisplayedQueueState,
     startIndex,
+    positionOffset,
     queue,
   ]);
 
@@ -228,11 +246,19 @@ export const QueueSection = memo(function QueueSection({
       <QueueRow
         track={item}
         position={displayedQueue.startIndex + index}
+        queuePosition={
+          displayedQueue.positionOffset + displayedQueue.startIndex + index + 1
+        }
         advanceOffset={queueAdvanceOffset}
         onJumpToPosition={onJumpToPosition}
       />
     ),
-    [displayedQueue.startIndex, onJumpToPosition, queueAdvanceOffset],
+    [
+      displayedQueue.positionOffset,
+      displayedQueue.startIndex,
+      onJumpToPosition,
+      queueAdvanceOffset,
+    ],
   );
 
   const keyExtractor = useCallback(
@@ -252,7 +278,7 @@ export const QueueSection = memo(function QueueSection({
             Up next
           </Text>
           <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>
-            {upcomingLength} {upcomingLength === 1 ? "song" : "songs"}
+            {upcomingTotal} {upcomingTotal === 1 ? "song" : "songs"}
           </Text>
         </View>
         <View style={styles.pillsRow}>
@@ -269,7 +295,7 @@ export const QueueSection = memo(function QueueSection({
             style={styles.modePill}
             icon={repeatModeIcon(repeat)}
             selected={repeat !== "off"}
-            accessibilityLabel={repeatModeAccessibilityLabel(repeat)}
+            accessibilityLabel={repeatModeLabel(repeat)}
             onPress={onCycleRepeat}
           />
         </View>

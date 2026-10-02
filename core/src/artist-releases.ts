@@ -1,4 +1,4 @@
-import type { SearchAlbum, TrackListItem } from "./api";
+import type { SearchAlbum, TrackListItem, TrackSource } from "./api";
 import { pluralize } from "./format";
 
 /** Popular tracks an artist page shows before "See more". */
@@ -6,6 +6,11 @@ export const ARTIST_POPULAR_PREVIEW_COUNT = 5;
 
 export type ReleaseKind = "Album" | "EP" | "Single";
 export type ReleaseFilter = "all" | "albums" | "singles";
+export const RELEASE_FILTER_OPTIONS: { value: ReleaseFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "albums", label: "Albums" },
+  { value: "singles", label: "Singles & EPs" },
+];
 
 /**
  * One tile in an artist's discography. Field names follow the album payloads
@@ -18,6 +23,9 @@ export interface ArtistRelease {
   release_year?: number;
   has_cover?: boolean;
   cover_url?: string;
+  /** Unset for library albums; with `source_id`, what the release opens. */
+  source?: TrackSource;
+  source_id?: string;
   /** Unknown for library albums, which are grouped from the artist's tracks. */
   kind?: ReleaseKind;
 }
@@ -44,6 +52,9 @@ export function tidalArtistReleases(albums: SearchAlbum[]): ArtistRelease[] {
       release_year: album.release_year || undefined,
       has_cover: album.has_cover,
       cover_url: album.cover_url,
+      // The artist endpoint only lists TIDAL releases.
+      source: "tidal" as const,
+      source_id: album.source_id,
       kind: releaseKind(album.track_count, album.duration_ms),
     }))
     .sort((a, b) => (b.release_year ?? 0) - (a.release_year ?? 0));

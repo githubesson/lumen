@@ -59,6 +59,18 @@ export const SEARCH_TYPE_OPTIONS: { value: SearchType; label: string }[] = [
 export function isSearchType(value: string | null): value is SearchType {
   return SEARCH_TYPE_OPTIONS.some((option) => option.value === value);
 }
+/** How long typing pauses before a search box fires its query. */
+export const SEARCH_DEBOUNCE_MS = 250;
+/**
+ * Warnings to show for a search after another page lands: the ones already
+ * shown plus the new page's, each once. Pass no `previous` for a first page.
+ */
+export function mergeSearchWarnings(
+  previous: readonly string[] | null | undefined,
+  next: readonly string[] | null | undefined,
+): string[] {
+  return [...new Set([...(previous ?? []), ...(next ?? [])].filter(Boolean))];
+}
 export type { SearchStream, SearchOffsets } from "./api-transport";
 
 export type SearchParams = PageParams & {
@@ -97,11 +109,13 @@ export const api = {
     }),
   checkInvite: (token: string) =>
     request<InviteCheck>(`/api/auth/invite?token=${encodeURIComponent(token)}`),
+  // A wrong current password is also a 401 ("invalid credentials"); only a
+  // missing session should sign the user out.
   resetPassword: (current_password: string, new_password: string) =>
     requestVoid("/api/auth/reset-password", {
       method: "POST",
       body: JSON.stringify({ current_password, new_password }),
-    }),
+    }, { notifyUnauthorized: (body) => body !== "invalid credentials" }),
 
   listAdminUsers: (options: RequestOptions = {}) =>
     request<AdminUser[]>("/api/admin/users", options),
@@ -689,7 +703,7 @@ export interface SearchArtist extends Artist {
   cover_url?: string;
 }
 /** Match the detail route's source and tolerate older remote payloads without source_id. */
-export function searchEntityID(item: { id: string; source: TrackSource; source_id?: string }): string {
+export function searchEntityID(item: { id: string; source?: TrackSource; source_id?: string }): string {
   return item.source === "tidal" ? item.source_id || item.id.replace(/^tidal:/, "") : item.id;
 }
 
@@ -935,6 +949,23 @@ export interface Page<T> {
   nextOffsets?: SearchOffsets;
   items: T[];
   total: number;
+}
+
+/**
+ * Where the page after `lastPage` starts, or undefined when the list is done.
+ * Search pages carry per-source cursors (an empty set means exhausted); other
+ * lists page by offset until `loadedCount` reaches the total.
+ */
+export function nextPageParam(
+  lastPage: Pick<Page<unknown>, "nextOffsets" | "total">,
+  loadedCount: number,
+): { offset: number; searchOffsets?: SearchOffsets } | undefined {
+  if (lastPage.nextOffsets !== undefined) {
+    return Object.keys(lastPage.nextOffsets).length > 0
+      ? { offset: loadedCount, searchOffsets: lastPage.nextOffsets }
+      : undefined;
+  }
+  return loadedCount < lastPage.total ? { offset: loadedCount } : undefined;
 }
 
 /** @deprecated use Page<TrackListItem> */

@@ -15,7 +15,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PlaybackQueueSnapshot } from "./queue-sync";
 import type { PlaybackActivity, TrackListItem } from "../api";
-import { clampVolume, type PlayerState, type RepeatMode, type TimeState } from "./player-core";
+import { displayText } from "../format";
+import {
+  clampVolume,
+  extrapolatePosition,
+  type PlayerState,
+  type RepeatMode,
+  type TimeState,
+} from "./player-core";
 import {
   sendRemotePlaybackCommand,
   type PlaybackDevice,
@@ -144,12 +151,16 @@ export function optimisticControlledState(
  * The window starts 24 tracks back so "previous" works immediately after a
  * hand-off. If the selected track somehow falls outside the window, the queue
  * degrades to just that track rather than silently playing something else.
+ *
+ * Unavailable tracks are left out: no device can play them, and the command
+ * schema (strictly decoded by the server) has no field to flag them with.
  */
 export function buildRemoteQueue(
   track: TrackListItem,
   queue?: TrackListItem[],
 ): TrackListItem[] {
-  const source = queue?.length ? queue : [track];
+  const playable = queue?.filter((item) => !item.unavailable);
+  const source = playable?.length ? playable : [track];
   const selectedIndex = Math.max(
     0,
     source.findIndex((item) => item.id === track.id),
@@ -179,10 +190,10 @@ export function remoteActivityTime(
   const updatedAt = Date.parse(activity.updated_at);
   const elapsed =
     activity.is_playing && Number.isFinite(updatedAt)
-      ? Math.max(0, (Date.now() - updatedAt) / 1000)
+      ? (Date.now() - updatedAt) / 1000
       : 0;
   return {
-    currentTime: Math.min(duration || Infinity, activity.position_sec + elapsed),
+    currentTime: extrapolatePosition(activity.position_sec, elapsed, duration),
     duration,
   };
 }
@@ -416,4 +427,49 @@ export function remotePlayerState(
     index: snapshot?.index ?? 0,
     isPlaying: !!device.activity?.is_playing,
   };
+}
+
+/**
+ * Why the last command to a remote device failed, for an error banner or
+ * tooltip; null when it was applied (or nothing has been sent).
+ */
+export function remoteCommandError(
+  result: RemotePlaybackCommandResult | null | undefined,
+): string | null {
+  if (!result || result.status === "applied") return null;
+  return result.error || `Command ${result.status}`;
+}
+
+/** Accessible name of the button that opens the playback device picker. */
+export function playbackDeviceButtonLabel(
+  targetDevice: Pick<PlaybackDevice, "deviceName"> | null | undefined,
+): string {
+  return targetDevice
+    ? `Playback device: ${targetDevice.deviceName}`
+    : "Choose playback device";
+}
+
+/** What a device row in the picker says about the device, and whether it is playing. */
+export function playbackDeviceStatus(
+  device: Pick<PlaybackDevice, "activity">,
+): { label: string; playing: boolean } {
+  // A heartbeat can carry no title (e.g. a track that is still loading);
+  // "Playing · " with nothing after it reads as broken.
+  const title = displayText(device.activity?.title);
+  if (!title) return { label: "Online · Nothing playing", playing: false };
+  const playing = !!device.activity?.is_playing;
+  return { label: `${playing ? "Playing" : "Paused"} · ${title}`, playing };
+}
+
+export type PlaybackDeviceKind = "tablet" | "phone" | "web" | "desktop";
+
+/**
+ * The kind of device behind a published device name (the apps report
+ * "iPhone", "iPad", "Mobile", "Desktop" or "Web"), for picking its icon.
+ */
+export function playbackDeviceKind(deviceName: string): PlaybackDeviceKind {
+  if (/ipad|tablet/i.test(deviceName)) return "tablet";
+  if (/iphone|android|mobile|phone/i.test(deviceName)) return "phone";
+  if (/web|browser/i.test(deviceName)) return "web";
+  return "desktop";
 }

@@ -1,7 +1,9 @@
 export * from "./player-core";
-export type {
-  AudioAdapter,
-  AudioAdapterEvent,
+export {
+  createAudioAdapterEmitter,
+  type AudioAdapter,
+  type AudioAdapterEmitter,
+  type AudioAdapterEvent,
 } from "./audio-adapter";
 export {
   usePlayerCore,
@@ -20,7 +22,12 @@ export {
   useRemoteActivityClock,
   useRemotePlaybackCommands,
   useRemotePlaybackTarget,
+  playbackDeviceButtonLabel,
+  playbackDeviceKind,
+  playbackDeviceStatus,
+  remoteCommandError,
   type ControlledPlaybackState,
+  type PlaybackDeviceKind,
   type UseRemotePlaybackCommandsOptions,
   type UseRemotePlaybackCommandsReturn,
 } from "./remote-control";
@@ -44,6 +51,33 @@ export {
   type RemotePlaybackControlEvent,
 } from "./activity-sync";
 
-export { useRoutedPlayerControls, type RoutedPlayerControlsOptions } from "./use-routed-player-controls";
+export {
+  REMOTE_VOLUME_INTERVAL_MS,
+  useRoutedPlayerControls,
+  type RoutedPlayerControlsOptions,
+} from "./use-routed-player-controls";
+export {
+  useRemotePlaybackController,
+  type RemotePlaybackContextValue,
+  type UseRemotePlaybackControllerOptions,
+  type UseRemotePlaybackControllerReturn,
+} from "./use-remote-playback-controller";
+export {
+  buildNowPlayingMetadata,
+  shouldExposeNowPlayingSession,
+  type NowPlayingMetadata,
+} from "./now-playing";
+export {
+  listPlaybackState,
+  startListPlayback,
+  usePlayFromList,
+  type ListPlaybackState,
+  type PlayFromList,
+} from "./play-list";
+export { queueProgress, type QueueProgress } from "./queue-progress";
+export {
+  REMOTE_CONTROL_INDICATOR_MS,
+  useRemoteControlIndicator,
+} from "./remote-control-indicator";
 
 export type { PlaybackQueueSnapshot } from "./queue-sync";

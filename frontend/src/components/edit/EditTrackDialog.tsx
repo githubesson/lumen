@@ -1,8 +1,11 @@
-import { buildTrackPatch } from "@music-library/core/metadata-edit";
+import {
+  buildTrackPatch,
+  trackEditForm,
+  type TrackEditForm,
+} from "@music-library/core/metadata-edit";
 import { FormEvent, useEffect, useState } from "react";
 import {
   api,
-  displayArtists,
   errorMessage,
   type TrackDetail,
 } from "../../api";
@@ -15,9 +18,7 @@ import { libraryChanged } from "../../lib/events";
 import { useFormDraft } from "../../lib/useFormDraft";
 import { useTrackDetail } from "../../lib/useTrackDetail";
 
-type TrackDraft = Parameters<typeof buildTrackPatch>[1];
-
-const EMPTY_TRACK_DRAFT: TrackDraft = {
+const EMPTY_TRACK_DRAFT: TrackEditForm = {
   title: "",
   artists: "",
   albumTitle: "",
@@ -53,18 +54,7 @@ export function EditTrackDialog({
     // The form draft intentionally snapshots the selected track.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setError(null);
-    resetDraft({
-      title: track.title,
-      artists: displayArtists(track),
-      albumTitle: track.album_title ?? "",
-      // album_artist isn't on TrackDetail — default to empty (compilations
-      // stay "Various Artists"; otherwise the server keeps the primary artist).
-      albumArtist: "",
-      year: track.year ? String(track.year) : "",
-      genre: track.genre ?? "",
-      trackNo: track.track_no ? String(track.track_no) : "",
-      discNo: track.disc_no ? String(track.disc_no) : "",
-    });
+    resetDraft(trackEditForm(track));
   }, [track, resetDraft]);
 
   const submit = async (e: FormEvent) => {

@@ -3,7 +3,6 @@ import {
   buildInviteRegistrationUrl,
   buildInviteShareMessage,
   extractInviteToken,
-  validateInviteCreationInput,
 } from "../lib/invite-registration";
 
 const TOKEN = "abcdefghijklmnopqrstuvwxyz_ABCDEFGH-1234567";
@@ -54,43 +53,4 @@ describe("invite registration links", () => {
     expect(extractInviteToken("not+a+url-safe+token")).toBeNull();
     expect(extractInviteToken("https://lumen.example/register")).toBeNull();
   });
-});
-
-describe("invite creation validation", () => {
-  it("accepts positive whole-number uses and a blank expiry", () => {
-    expect(validateInviteCreationInput("1", "")).toMatchObject({
-      maxUses: 1,
-      expiresAt: undefined,
-      maxUsesError: null,
-      expiresDaysError: null,
-      valid: true,
-    });
-  });
-
-  it.each(["", "0", "-1", "1.5", "2147483648", "many"])(
-    "rejects invalid max uses: %s",
-    (value) => {
-      expect(validateInviteCreationInput(value, "").valid).toBe(false);
-      expect(validateInviteCreationInput(value, "").maxUsesError).not.toBeNull();
-    },
-  );
-
-  it("converts positive expiry days from an injected clock", () => {
-    const now = Date.parse("2026-08-09T00:00:00.000Z");
-    expect(validateInviteCreationInput("2", "3", now)).toMatchObject({
-      maxUses: 2,
-      expiresAt: "2026-08-12T00:00:00.000Z",
-      expiresDaysError: null,
-      valid: true,
-    });
-  });
-
-  it.each(["0", "-1", "1.5", "3000000", "later"])(
-    "rejects invalid expiry days: %s",
-    (value) => {
-      const result = validateInviteCreationInput("1", value);
-      expect(result.valid).toBe(false);
-      expect(result.expiresDaysError).not.toBeNull();
-    },
-  );
 });

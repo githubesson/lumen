@@ -1,4 +1,8 @@
-import { normalizeSnippetSelection, snippetWindow } from "@music-library/core/share-snippet";
+import {
+  normalizeSnippetSelection,
+  shareClipName,
+  snippetWindow,
+} from "@music-library/core/share-snippet";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -24,13 +28,12 @@ import {
   ApiError,
   DEFAULT_SHARE_SNIPPET_DURATION_SEC,
   api,
-  createTrackShareLink,
   createTrackStoryBackgroundVideo,
   getPublicTrackShare,
   parseTrackShareUrl,
-  sanitizeFilename,
   streamUrl,
   trackSharePreviewVideoUrl,
+  useShareLinkSession,
   type PublicTrackShare,
   type StoryBackgroundCrop,
 } from "@music-library/core";
@@ -75,7 +78,11 @@ export default function ShareTrackScreen() {
     DEFAULT_SHARE_SNIPPET_DURATION_SEC,
   );
   const [picked, setPicked] = useState(false);
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const {
+    shareUrl,
+    ensureUrl: ensureShareUrl,
+    invalidate: invalidateShareUrl,
+  } = useShareLinkSession();
   const [storyBusy, setStoryBusy] = useState(false);
   const [videoBusy, setVideoBusy] = useState(false);
   const [stickerShare, setStickerShare] = useState<PublicTrackShare | null>(null);
@@ -140,6 +147,7 @@ export default function ShareTrackScreen() {
     effectiveDurationSec: effectivePreviewSec,
     maxStartSec,
     endSec,
+    displayDurationSec: displayPreviewSec,
   } = snippetWindow(durationSec, selectedDurationSec, startSec);
   const currentSec = playerStatus.playing ? playerStatus.currentTime : startSec;
 
@@ -173,14 +181,12 @@ export default function ShareTrackScreen() {
     startSec,
   ]);
 
+  // The session mints once per window and drops the link when the window
+  // moves; the mutation adds the busy state and the failure alert.
   const generateMutation = useMutation({
     mutationFn: async () => {
       if (!trackId) throw new Error("Missing track id.");
-      const res = await createTrackShareLink(trackId, startSec, effectivePreviewSec);
-      return res.url;
-    },
-    onSuccess: (url) => {
-      setShareUrl(url);
+      return await ensureShareUrl(trackId, startSec, effectivePreviewSec);
     },
     onError: (error) => {
       Alert.alert(
@@ -200,13 +206,14 @@ export default function ShareTrackScreen() {
       setSelectedDurationSec(nextDuration);
       setStartSec(nextStart);
       setPicked(true);
-      setShareUrl(null);
+      invalidateShareUrl();
       if (playerStatus.playing) {
         void seekPreview(nextStart);
       }
     },
     [
       durationSec,
+      invalidateShareUrl,
       playerStatus.playing,
       seekPreview,
     ],
@@ -442,13 +449,7 @@ export default function ShareTrackScreen() {
     try {
       const shareRef = parseTrackShareUrl(url);
       if (!shareRef) throw new Error("Couldn't read the generated share link.");
-      const track = trackQuery.data;
-      const artist =
-        track?.artists.find((a) => a.role === "primary")?.name ??
-        track?.artists[0]?.name;
-      const name = sanitizeFilename(
-        `${artist ? `${artist} - ` : ""}${track?.title ?? "Lumen"} (clip)`,
-      );
+      const name = shareClipName(trackQuery.data);
       const dir = new Directory(Paths.cache, "share-videos");
       dir.create({ idempotent: true, intermediates: true });
       const file = await downloadToFile(
@@ -558,7 +559,7 @@ export default function ShareTrackScreen() {
               endSec={endSec}
               currentSec={currentSec}
               maxStartSec={maxStartSec}
-              snippetDurationSec={effectivePreviewSec}
+              displayDurationSec={displayPreviewSec}
               minSnippetDurationSec={minSnippetDurationSec}
               maxSnippetDurationSec={maxSnippetDurationSec}
               picked={picked}

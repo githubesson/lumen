@@ -9,7 +9,7 @@
  * `expo-file-system` write on mobile) and re-export these.
  */
 
-import { probeStreamUrl } from "./api";
+import { api, probeStreamUrl } from "./api";
 import type { TrackDetail, TrackListItem } from "./api";
 
 /**
@@ -137,4 +137,29 @@ export async function extensionFromStream(
   } catch {
     return undefined;
   }
+}
+
+export interface PreparedTrackDownload {
+  /** Null when the detail read failed; the download still works without it. */
+  detail: TrackDetail | null;
+  ext?: string;
+  filename: string;
+}
+
+/**
+ * Everything needed to save a track's file besides the bytes: its detail
+ * (best effort, it only improves the name), the extension from the stored
+ * format or else from what the stream reports, and the filename.
+ */
+export async function prepareTrackDownload(
+  track: TrackListItem,
+): Promise<PreparedTrackDownload> {
+  let detail: TrackDetail | null = null;
+  try {
+    detail = await api.getTrack(track.id);
+  } catch {
+    // The stream URL is enough; detail just gives the download a nicer name.
+  }
+  const ext = extensionForFormat(detail?.format) ?? (await extensionFromStream(track.id));
+  return { detail, ext, filename: downloadFilename(track, detail, ext) };
 }

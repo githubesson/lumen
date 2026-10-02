@@ -1,3 +1,10 @@
+import {
+  inviteRoleLabel,
+  inviteStatus,
+  inviteUsage,
+  partitionInvites,
+  validateInviteCreationWithDate,
+} from "@music-library/core/admin/invites";
 import { FormEvent, useState } from "react";
 import {
   Check as CheckIcon,
@@ -18,16 +25,6 @@ import { fmtDate, fmtDateTime } from "../lib/format";
 import { useApiResource } from "../lib/useApiResource";
 import { useCopiedFlag } from "../lib/useCopiedFlag";
 
-type Status = "active" | "revoked" | "exhausted" | "expired";
-
-function statusOf(inv: Invite): Status {
-  if (inv.revoked_at) return "revoked";
-  if (inv.uses >= inv.max_uses) return "exhausted";
-  if (inv.expires_at && new Date(inv.expires_at).getTime() < Date.now())
-    return "expired";
-  return "active";
-}
-
 /**
  * Section for the unified Admin page. Handles invite CRUD. The parent page
  * owns the `.view` wrapper and page title.
@@ -46,19 +43,23 @@ export function InvitesAdminSection() {
   const error = actionError ?? loadError;
 
   const [role, setRole] = useState<Role>("user");
-  const [maxUses, setMaxUses] = useState(1);
+  const [maxUses, setMaxUses] = useState("1");
   const [expiresAt, setExpiresAt] = useState("");
+  const validation = validateInviteCreationWithDate(maxUses, expiresAt);
   const [justCreated, setJustCreated] = useState<Invite | null>(null);
   const { copied, flash: flashCopied, reset: resetCopied } = useCopiedFlag(2000);
 
   const create = async (e: FormEvent) => {
     e.preventDefault();
+    // Checked against the clock now, not when the form last rendered.
+    const input = validateInviteCreationWithDate(maxUses, expiresAt);
+    if (!input.valid || input.maxUses === null) return;
     setActionError(null);
     try {
       const created = await api.createInvite({
         target_role: role,
-        max_uses: maxUses,
-        expires_at: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+        max_uses: input.maxUses,
+        expires_at: input.expiresAt,
       });
       setJustCreated(created);
       resetCopied();
@@ -85,8 +86,7 @@ export function InvitesAdminSection() {
     if (await copyText(text)) flashCopied();
   };
 
-  const active = (rows ?? []).filter((inv) => statusOf(inv) === "active");
-  const past = (rows ?? []).filter((inv) => statusOf(inv) !== "active");
+  const { active, past } = partitionInvites(rows ?? []);
 
   return (
     <AdminPanel>
@@ -130,20 +130,21 @@ export function InvitesAdminSection() {
             </Field>
           </div>
           <div style={{ width: 120 }}>
-            <Field label="Max uses">
+            <Field label="Max uses" error={validation.maxUsesError ?? undefined}>
               <TextInput
                 type="number"
                 name="max_uses"
                 min={1}
                 value={maxUses}
-                onChange={(e) =>
-                  setMaxUses(parseInt(e.target.value || "1", 10))
-                }
+                onChange={(e) => setMaxUses(e.target.value)}
               />
             </Field>
           </div>
           <div style={{ width: 240 }}>
-            <Field label="Expires (optional)">
+            <Field
+              label="Expires (optional)"
+              error={validation.expiresError ?? undefined}
+            >
               <TextInput
                 type="datetime-local"
                 name="expires_at"
@@ -156,6 +157,7 @@ export function InvitesAdminSection() {
             type="submit"
             variant="primary"
             leadingIcon={<PlusIcon className="size-4" />}
+            disabled={!validation.valid}
           >
             Create
           </Button>
@@ -271,16 +273,18 @@ function InviteTable({
         )}
         {rows.map((inv) => (
           <tr key={inv.id}>
-            <td style={{ color: "var(--foreground)" }}>{inv.target_role}</td>
+            <td style={{ color: "var(--foreground)" }}>
+              {inviteRoleLabel(inv.target_role)}
+            </td>
             <td className="mono" style={{ color: "var(--muted-foreground)" }}>
-              {inv.uses} / {inv.max_uses}
+              {inviteUsage(inv)}
             </td>
             <td className="mono" style={{ color: "var(--muted-foreground)" }}>
               {inv.expires_at ? fmtDateTime(inv.expires_at) : "—"}
             </td>
             {showStatus && (
               <td>
-                <span className="badge">{statusOf(inv)}</span>
+                <span className="badge">{inviteStatus(inv)}</span>
               </td>
             )}
             <td className="mono" style={{ color: "var(--muted-foreground)" }}>

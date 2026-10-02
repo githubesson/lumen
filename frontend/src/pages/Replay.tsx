@@ -31,10 +31,21 @@ import {
   formatListeningTime as formatListeningTimeCore,
   periodKey,
   periodLabel,
-  periodRange,
   periodTitle,
   type Period,
 } from "@music-library/core/replay/period";
+import {
+  genreShares,
+  playsById as playsByIdFor,
+  replayImageFilename,
+  replayImageRequest,
+  replayPlaylistRequest,
+  replayRequest,
+} from "@music-library/core/replay/replay";
+import {
+  useLocalDay,
+  type ResumeSubscriber,
+} from "@music-library/core/replay/use-local-day";
 import { displayText, pluralize } from "../lib/format";
 import { usePlayerControls } from "../context/Player";
 import { usePlaylists } from "../context/Playlists";
@@ -54,6 +65,13 @@ interface PeriodOption {
   label: string;
   period: Period;
 }
+
+// Timers stall while a laptop sleeps, so the day is rechecked when the tab
+// is shown again.
+const subscribeTabShown: ResumeSubscriber = (onResume) => {
+  document.addEventListener("visibilitychange", onResume);
+  return () => document.removeEventListener("visibilitychange", onResume);
+};
 
 function buildOptions(availableYears: number[]): PeriodOption[] {
   return buildPeriodOptions(availableYears).map((period) => ({
@@ -90,22 +108,13 @@ export default function Replay() {
   // picks a new pill, so depending on it directly is both correct and
   // exhaustive-deps clean (the old code keyed on a fresh periodKey string).
   //
-  // Rolling periods ("this month") keep their key across a boundary, so the
-  // cache also keys on the concrete days they cover: last month's numbers
-  // never answer for this month. Day granularity lets "last 30 days" still
-  // hit within a day. A page left open past midnight recomputes the range
+  // The cache key carries the concrete days a rolling period covers (see
+  // `replayRequest`). A page left open past midnight recomputes the range
   // (and refetches), so rolling periods don't keep acting on old dates.
-  const today = useLocalDay();
+  const today = useLocalDay(subscribeTabShown);
   const request = useMemo(() => {
-    const range = periodRange(period);
-    const key = periodKey(period);
-    const day = (iso?: string) => iso?.slice(0, 10) ?? "";
-    return {
-      key,
-      range,
-      asOf: today,
-      cacheKey: `replay:${key}:${day(range.from)}:${day(range.to)}`,
-    };
+    const { range, cacheKey } = replayRequest(period);
+    return { range, asOf: today, cacheKey: `replay:${cacheKey}` };
   }, [period, today]);
   const range = request.range;
   // A period seen before this session answers from the cache while it
@@ -149,11 +158,7 @@ export default function Replay() {
     [data?.top_tracks],
   );
 
-  const playsById = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const t of data?.top_tracks ?? []) m.set(t.id, t.plays);
-    return m;
-  }, [data?.top_tracks]);
+  const playsById = useMemo(() => playsByIdFor(data?.top_tracks), [data?.top_tracks]);
 
   const collageTracks = useMemo(() => queue.slice(0, 4), [queue]);
 
@@ -162,13 +167,9 @@ export default function Replay() {
     setCreatingPlaylist(true);
     setCreateError(null);
     try {
-      const name = `Replay · ${periodTitle(period)}`;
-      const playlist = await api.generateReplayPlaylist({
-        from: range.from,
-        to: range.to,
-        name,
-        limit: 50,
-      });
+      const playlist = await api.generateReplayPlaylist(
+        replayPlaylistRequest(period, range),
+      );
       void reloadPlaylists();
       navigate(`/playlists/${playlist.id}`);
     } catch (err) {
@@ -183,16 +184,12 @@ export default function Replay() {
     setDownloadingImage(true);
     setImageError(null);
     try {
-      const res = await api.getReplayImage({
-        from: range.from,
-        to: range.to,
-        title: periodTitle(period),
-      });
+      const res = await api.getReplayImage(replayImageRequest(period, range));
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `replay-${periodKey(period).replace(/[^a-z0-9-]/gi, "-")}.png`;
+      a.download = replayImageFilename(period);
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -234,10 +231,7 @@ export default function Replay() {
       el.style.minHeight = "";
     };
   }, [showLoading]);
-  const totalGenrePlays = useMemo(
-    () => (data?.top_genres ?? []).reduce((acc, g) => acc + g.plays, 0),
-    [data?.top_genres],
-  );
+  const genres = useMemo(() => genreShares(data?.top_genres ?? []), [data?.top_genres]);
 
   const extraColumn = useMemo(
     () => ({
@@ -291,7 +285,7 @@ export default function Replay() {
           <>
             <span style={{ fontVariantNumeric: "tabular-nums" }}>
               {summary
-                ? `${summary.total_plays.toLocaleString()} ${summary.total_plays === 1 ? "play" : "plays"}`
+                ? pluralize(summary.total_plays, "play", undefined, { locale: true })
                 : "—"}
             </span>
             <span className="dot" />
@@ -467,26 +461,20 @@ export default function Replay() {
             {data.top_genres.length > 0 && (
               <Section sub="What filled the room" title="Top genres">
                 <div className="genre-list">
-                  {data.top_genres.map((g) => {
-                    const pct =
-                      totalGenrePlays > 0
-                        ? (g.plays / totalGenrePlays) * 100
-                        : 0;
-                    return (
-                      <div key={g.genre} className="genre-row">
-                        <div className="genre-label">{displayText(g.genre)}</div>
-                        <div className="genre-bar-track">
-                          <div
-                            className="genre-bar-fill"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                        <div className="genre-count mono">
-                          {g.plays} · {pct.toFixed(0)}%
-                        </div>
+                  {genres.map((g) => (
+                    <div key={g.genre} className="genre-row">
+                      <div className="genre-label">{displayText(g.genre)}</div>
+                      <div className="genre-bar-track">
+                        <div
+                          className="genre-bar-fill"
+                          style={{ width: `${g.share}%` }}
+                        />
                       </div>
-                    );
-                  })}
+                      <div className="genre-count mono">
+                        {g.plays} · {g.share.toFixed(0)}%
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </Section>
             )}
@@ -495,31 +483,4 @@ export default function Replay() {
       </div>
     </div>
   );
-}
-
-/**
- * The local date, updated when it changes: a timer set for midnight, plus a
- * check on returning to the tab, since timers stall while a laptop sleeps.
- */
-function useLocalDay() {
-  const [day, setDay] = useState(() => new Date().toDateString());
-  useEffect(() => {
-    let timer = 0;
-    const check = () => setDay(new Date().toDateString());
-    const arm = () => {
-      const now = new Date();
-      const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-      timer = window.setTimeout(() => {
-        check();
-        arm();
-      }, midnight.getTime() - now.getTime() + 1000);
-    };
-    arm();
-    document.addEventListener("visibilitychange", check);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", check);
-    };
-  }, []);
-  return day;
 }

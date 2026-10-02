@@ -11,7 +11,7 @@ import Animated, {
   useAnimatedStyle,
   type SharedValue,
 } from "react-native-reanimated";
-import type { TrackListItem } from "@music-library/core";
+import { displayText, type TrackListItem } from "@music-library/core";
 import { CoverArt } from "../cover-art";
 import { useTheme } from "../../theme/theme";
 
@@ -26,17 +26,23 @@ export const QUEUE_ROW_HEIGHT = 64;
 function QueueRowImpl({
   track,
   position,
+  queuePosition,
   advanceOffset,
   onJumpToPosition,
   style,
 }: {
   track: TrackListItem;
+  /** Index in the displayed queue, which is what `jumpTo` takes. */
   position: number;
+  /** 1-based place in the whole queue, for the accessibility hint. */
+  queuePosition: number;
   advanceOffset: SharedValue<number>;
   onJumpToPosition: (position: number) => void;
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
+  const title = displayText(track.title);
+  const artist = displayText(track.artist);
   const advanceStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: advanceOffset.get() }],
   }));
@@ -46,10 +52,8 @@ function QueueRowImpl({
       <Pressable
         onPress={() => onJumpToPosition(position)}
         accessibilityRole="button"
-        accessibilityLabel={
-          track.artist ? `${track.title} by ${track.artist}` : track.title
-        }
-        accessibilityHint={`Position ${position} in queue. Double tap to play.`}
+        accessibilityLabel={artist ? `${title} by ${artist}` : title}
+        accessibilityHint={`Position ${queuePosition} in queue. Double tap to play.`}
         style={({ pressed }) => [
           styles.row,
           pressed ? { opacity: 0.58 } : null,
@@ -72,15 +76,15 @@ function QueueRowImpl({
                 flexShrink: 1,
               }}
             >
-              {track.title}
+              {title}
             </Text>
           </View>
-          {track.artist ? (
+          {artist ? (
             <Text
               numberOfLines={1}
               style={{ fontSize: 14, color: theme.color.fgMuted }}
             >
-              {track.artist}
+              {artist}
             </Text>
           ) : null}
         </View>

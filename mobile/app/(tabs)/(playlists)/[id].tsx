@@ -8,7 +8,6 @@ import {
 } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import ReorderableList, {
-  reorderItems,
   useIsActive,
   useReorderableDrag,
   type ReorderableListReorderEvent,
@@ -19,11 +18,18 @@ import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS,
   SORT_DEFAULT_ASC,
   api,
   compareSortableTracks,
   fisherYatesWithAnchor,
+  movePlaylistEntry,
   playlistEntryToTrack as entryToTrack,
+  playlistPermissions,
+  pluralize,
+  queuedTidalCount,
+  removePlaylistEntry,
+  sortForDisplay,
   useAuth,
   type Playlist,
   type PlaylistTrackEntry,
@@ -44,7 +50,13 @@ import {
   TRACK_FLASH_LIST_PERFORMANCE_PROPS,
   TRACK_LIST_PERFORMANCE_PROPS,
 } from "../../../components/list-performance";
-import { usePlayTrack } from "../../../context/player";
+import {
+  usePlayerControls,
+  usePlayerPlayback,
+  usePlayTrack,
+} from "../../../context/player";
+import { startListPlayback } from "@music-library/core/player/play-list";
+import { playableTracks } from "@music-library/core/track";
 import {
   useBottomDockInset,
   useDockControls,
@@ -66,9 +78,6 @@ import { useTheme, type ThemeTokens } from "../../../theme/theme";
 
 const TRACK_ART_SIZE = 40;
 const noop = () => {};
-// While TIDAL tracks are queued for the server library, refetch so rows flip
-// to their library copies.
-const SERVER_SAVE_REFRESH_MS = 20_000;
 
 type TracksOverride = {
   /** The server snapshot the edit was made against. */
@@ -95,6 +104,8 @@ export default function PlaylistDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const play = usePlayTrack();
+  const { setShuffle } = usePlayerControls();
+  const { shuffle } = usePlayerPlayback();
   const headerHeight = useHeaderHeight();
   const dockInset = useBottomDockInset();
   const dockScroll = useDockScrollHandler();
@@ -121,8 +132,8 @@ export default function PlaylistDetailScreen() {
     enabled: !!userId && !!id,
     refetchInterval: (query) =>
       playlistQuery.data?.tidal_auto_download &&
-      query.state.data?.tracks.some((t) => t.source === "tidal")
-        ? SERVER_SAVE_REFRESH_MS
+      queuedTidalCount(query.state.data?.tracks ?? []) > 0
+        ? PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS
         : false,
   });
 
@@ -202,7 +213,6 @@ export default function PlaylistDetailScreen() {
     },
   });
 
-  const isAdmin = me?.role === "admin";
   const serverSaveMutation = useMutation({
     mutationFn: (enabled: boolean) =>
       api.setPlaylistTidalAutoDownload(id!, enabled),
@@ -238,17 +248,20 @@ export default function PlaylistDetailScreen() {
     );
   }, [serverSaveEnabled, setServerSave]);
 
-  const role = playlist?.effective_role;
+  const permissions = playlistPermissions(playlist, me);
   // Editing and deleting need the server's own data: reorder positions must
   // match the backend's list, and the offline fallback is a downloaded
   // subset in local order.
-  const canEdit =
-    (!role || role === "owner" || role === "editor") && !!tracksQuery.data;
-  const canDelete = (!role || role === "owner") && !!playlistQuery.data;
+  const canEdit = permissions.canEditTracks && !!tracksQuery.data;
+  const canEditDetails = permissions.canEditDetails && !!playlistQuery.data;
+  const canDelete = permissions.canDelete && !!playlistQuery.data;
   const showReorderMode = canEdit && reorderMode;
   // Removal is addressed by position, and the server renumbers positions after
-  // every remove and reorder. Until the refetch after a local edit lands, the
-  // positions on screen may point at a different track.
+  // every remove and reorder. The local edit predicts that renumbering, but
+  // edits here aren't queued (two removes can reach the server in either
+  // order) and a reorder also prunes rows the list never showed, so until the
+  // refetch after an edit lands, the positions on screen may point at a
+  // different track.
   const canRemove = canEdit && !activeOverride;
 
   useEffect(() => {
@@ -268,22 +281,19 @@ export default function PlaylistDetailScreen() {
     [localTracks],
   );
   // What the list actually shows; the play queue follows this order too.
-  const displayModels = useMemo<PlaylistTrackRowModel[]>(() => {
-    if (sortKey === "custom") return rowModels;
-    const sorted = [...rowModels].sort((a, b) =>
-      compareSortableTracks(a.entry, b.entry, sortKey),
-    );
-    return sortAsc ? sorted : sorted.reverse();
-  }, [rowModels, sortKey, sortAsc]);
+  const displayModels = useMemo<PlaylistTrackRowModel[]>(
+    () =>
+      sortForDisplay(rowModels, sortKey, sortAsc, (a, b) =>
+        compareSortableTracks(a.entry, b.entry, sortKey),
+      ),
+    [rowModels, sortKey, sortAsc],
+  );
   const tracks = useMemo<TrackListItem[]>(
     () => displayModels.map((model) => model.track),
     [displayModels],
   );
   const onTrackPress = usePlayQueue(tracks);
-  const queuedForServer = useMemo(
-    () => localTracks.filter((t) => t.source === "tidal").length,
-    [localTracks],
-  );
+  const queuedForServer = useMemo(() => queuedTidalCount(localTracks), [localTracks]);
 
   // Fresh query data is the earliest signal that entries were added, so catch
   // up here too rather than waiting for the next foreground or reconnect.
@@ -308,13 +318,17 @@ export default function PlaylistDetailScreen() {
   }, []);
 
   // Shuffle is queue-level: reorder a copy of the visible tracks and start
-  // from the new head, leaving the saved playlist order untouched.
+  // from the new head, leaving the saved playlist order untouched. Shuffle
+  // mode goes on as well, like CarPlay's and Siri's shuffle play; the queue is
+  // shuffled here because `setShuffle` reorders the queue playing now.
   const onShuffle = useCallback(() => {
-    if (tracks.length === 0) return;
+    const playable = playableTracks(tracks);
+    if (playable.length === 0) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const shuffled = fisherYatesWithAnchor(tracks, null);
+    const shuffled = fisherYatesWithAnchor(playable, null);
+    if (!shuffle) setShuffle(true);
     play(shuffled[0], shuffled);
-  }, [tracks, play]);
+  }, [tracks, play, setShuffle, shuffle]);
 
   const onToggleReorder = useCallback(() => {
     void Haptics.selectionAsync();
@@ -334,7 +348,7 @@ export default function PlaylistDetailScreen() {
     ({ from, to }: ReorderableListReorderEvent) => {
       if (!serverData) return;
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      const next = reorderItems(localTracks, from, to);
+      const next = movePlaylistEntry(localTracks, from, to);
       const edit = { base: serverData, tracks: next };
       setOverride(edit);
       reorderTracks(
@@ -363,7 +377,7 @@ export default function PlaylistDetailScreen() {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       const edit = {
         base: serverData,
-        tracks: localTracks.filter((t) => t.position !== position),
+        tracks: removePlaylistEntry(localTracks, position),
       };
       setOverride(edit);
       removeTrack(position, {
@@ -448,7 +462,7 @@ export default function PlaylistDetailScreen() {
             }}
           >
             <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>
-              {tracks.length} {tracks.length === 1 ? "track" : "tracks"}
+              {pluralize(tracks.length, "track")}
               {p.visibility === "collaborative" ? " · Collaborative" : ""}
               {p.tidal_auto_download && queuedForServer > 0
                 ? ` · ${queuedForServer} saving to server`
@@ -494,7 +508,7 @@ export default function PlaylistDetailScreen() {
               accessibilityLabel="Play playlist"
               onPress={() => {
                 void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                play(tracks[0], tracks);
+                startListPlayback(play, tracks, false);
               }}
               style={({ pressed }) => ({
                 flex: 1,
@@ -608,7 +622,8 @@ export default function PlaylistDetailScreen() {
               playlistId={playlist.id}
               playlistName={playlist.name}
               tracks={tracks}
-              collaborative={playlist.visibility === "collaborative"}
+              canSeeCollaborators={permissions.canSeeCollaborators}
+              canEditDetails={canEditDetails}
               canEdit={canEdit}
               reorderActive={showReorderMode}
               onEdit={() =>
@@ -628,7 +643,7 @@ export default function PlaylistDetailScreen() {
               }
               onDelete={onDelete}
               serverSave={
-                isAdmin && playlistQuery.data
+                permissions.canToggleTidalAutoDownload && playlistQuery.data
                   ? {
                       enabled: serverSaveEnabled,
                       pending: serverSaveMutation.isPending,

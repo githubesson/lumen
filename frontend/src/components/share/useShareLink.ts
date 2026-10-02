@@ -1,40 +1,34 @@
 import { useCallback, useState } from "react";
-import { createTrackShareLink, errorMessage } from "../../api";
+import { useShareLinkSession } from "@music-library/core/share-link-session";
+import { errorMessage } from "../../api";
 import { copyText } from "../../lib/clipboard";
 import { useCopiedFlag } from "../../lib/useCopiedFlag";
 
 /**
- * Generates a share link for a clip window and copies it. The generated URL
- * is kept so repeat copies of the same window don't mint a new link; call
- * `invalidate` whenever the window changes.
+ * Generates a share link for a clip window and copies it. The link session
+ * (minting once per window, dropping it when the window moves) is core's;
+ * this adds the copy, its busy state and its feedback. Call `invalidate`
+ * whenever the window changes.
  */
 export function useShareLink() {
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const { shareUrl, ensureUrl, invalidate: invalidateSession } = useShareLinkSession();
   const [busy, setBusy] = useState(false);
   const { copied, flash: flashCopied, reset: resetCopied } = useCopiedFlag(1800);
   const [copyError, setCopyError] = useState<string | null>(null);
 
   const invalidate = useCallback(() => {
-    setShareUrl(null);
+    invalidateSession();
     resetCopied();
-  }, [resetCopied]);
+  }, [invalidateSession, resetCopied]);
 
   const clearError = useCallback(() => setCopyError(null), []);
 
   const reset = useCallback(() => {
-    setShareUrl(null);
+    invalidateSession();
     setBusy(false);
     resetCopied();
     setCopyError(null);
-  }, [resetCopied]);
-
-  /** The link for this window, minting it on first use. */
-  const ensureUrl = async (trackId: string, startSec: number, durationSec: number) => {
-    if (shareUrl) return shareUrl;
-    const res = await createTrackShareLink(trackId, startSec, durationSec);
-    setShareUrl(res.url);
-    return res.url;
-  };
+  }, [invalidateSession, resetCopied]);
 
   const copy = async (trackId: string, startSec: number, durationSec: number) => {
     setBusy(true);

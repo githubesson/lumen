@@ -21,8 +21,14 @@ import {
 } from "@tanstack/react-query";
 import {
   api,
+  canManageMusicRoot,
   errorMessage,
   libraryChanged,
+  musicRootKey,
+  musicRootName,
+  musicRootRemoval,
+  rescanChangedLibrary,
+  rootRemovalChangedLibrary,
   type MusicRoot,
   type RescanStatus,
 } from "@music-library/core";
@@ -45,11 +51,12 @@ let rescanWatch: Promise<void> | null = null;
 
 /**
  * Polls the rescan status through the query cache until the scan is idle, then
- * fires one library-wide refresh so other screens pull updated lists. It runs
- * outside the screen so leaving Admin → Library mid-scan still refreshes, and
- * it starts from a known scan rather than reacting to idle statuses, since
- * every mount and focus fetch reports idle and would otherwise invalidate the
- * whole library cache. One watcher at a time.
+ * fires one library-wide refresh if the scan changed anything, so other
+ * screens pull updated lists. It runs outside the screen so leaving Admin →
+ * Library mid-scan still refreshes, and it starts from a known scan rather
+ * than reacting to idle statuses, since every mount and focus fetch reports
+ * idle and would otherwise invalidate the whole library cache. One watcher at
+ * a time.
  */
 function watchRescan(queryClient: QueryClient): void {
   if (rescanWatch) return;
@@ -60,7 +67,7 @@ function watchRescan(queryClient: QueryClient): void {
         const status = await queryClient.fetchQuery(rescanStatusQuery);
         failures = 0;
         if (!status.running) {
-          libraryChanged.emit();
+          if (rescanChangedLibrary(status)) libraryChanged.emit();
           return;
         }
       } catch {
@@ -117,19 +124,43 @@ export default function AdminLibraryScreen() {
   const deleteRoot = useMutation({
     mutationFn: ({ id, purge }: { id: string; purge: boolean }) =>
       api.deleteMusicRoot(id, { purge }),
-    onSuccess: () => {
+    onSuccess: (result, { purge }) => {
       void queryClient.invalidateQueries({
         queryKey: qk.adminMusicRoots,
       });
-      libraryChanged.emit();
+      if (
+        rootRemovalChangedLibrary({
+          purged: purge,
+          deletedTracks: result?.deleted_tracks,
+        })
+      ) {
+        libraryChanged.emit();
+      }
     },
     onError: (error) =>
       Alert.alert("Couldn't remove music root", errorMessage(error, "Please try again.")),
   });
 
   const onDelete = (root: MusicRoot) => {
+    const title = `Remove "${musicRootName(root)}"?`;
+    const { canPurge, coveredBy } = musicRootRemoval(root);
+    if (!canPurge) {
+      Alert.alert(
+        title,
+        `It's inside ${coveredBy}, which is still watched, so its tracks stay in your library.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Remove",
+            style: "destructive",
+            onPress: () => deleteRoot.mutate({ id: root.id, purge: false }),
+          },
+        ],
+      );
+      return;
+    }
     Alert.alert(
-      `Remove "${root.label || root.path}"?`,
+      title,
       "You can remove just the root, or also purge tracks that came from it.",
       [
         { text: "Cancel", style: "cancel" },
@@ -176,7 +207,7 @@ export default function AdminLibraryScreen() {
       <FlatList
         data={rootsQuery.data ?? []}
         renderItem={renderItem}
-        keyExtractor={(r) => r.id}
+        keyExtractor={musicRootKey}
         contentInsetAdjustmentBehavior="automatic"
         style={{ backgroundColor: theme.color.bg }}
         contentContainerStyle={{
@@ -301,6 +332,9 @@ function RootCard({
   onToggle: (enabled: boolean) => void;
   onDelete: () => void;
 }) {
+  const name = musicRootName(root);
+  // The primary root (MUSIC_PATH) is always watched and has no id to act on.
+  const manageable = canManageMusicRoot(root);
   return (
     <Card
       style={{
@@ -314,41 +348,46 @@ function RootCard({
           style={{ color: theme.color.fg, fontSize: 15, fontWeight: "600" }}
           numberOfLines={1}
         >
-          {root.label || root.path}
+          {name}
         </Text>
-        <Switch
-          value={root.enabled}
-          onValueChange={onToggle}
-          trackColor={{ true: theme.color.accent, false: theme.color.bgElev2 }}
-        />
+        {manageable ? (
+          <Switch
+            value={root.enabled}
+            onValueChange={onToggle}
+            accessibilityLabel={`Watch ${name}`}
+            trackColor={{ true: theme.color.accent, false: theme.color.bgElev2 }}
+          />
+        ) : null}
       </View>
-      {root.label ? (
-        <Text
-          style={{
-            color: theme.color.fgMuted,
-            fontSize: 12,
-            fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
-          }}
-          numberOfLines={2}
-          selectable
-        >
-          {root.path}
-        </Text>
-      ) : null}
+      <Text
+        style={{
+          color: theme.color.fgMuted,
+          fontSize: 12,
+          fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
+        }}
+        numberOfLines={2}
+        selectable
+      >
+        {root.path}
+      </Text>
       <View style={styles.rowSpaceBetween}>
         <Text style={{ color: theme.color.fgMuted, fontSize: 12 }}>
-          {root.primary ? "Primary · " : ""}
+          {root.primary ? "Always watched · " : ""}
           {root.exists ? "Available" : "Missing"}
         </Text>
-        <Pressable
-          onPress={onDelete}
-          style={({ pressed }) => ({
-            paddingVertical: 4,
-            opacity: pressed ? 0.6 : 1,
-          })}
-        >
-          <Text style={{ color: theme.color.danger, fontSize: 13 }}>Remove</Text>
-        </Pressable>
+        {manageable ? (
+          <Pressable
+            onPress={onDelete}
+            accessibilityRole="button"
+            accessibilityLabel={`Remove ${name}`}
+            style={({ pressed }) => ({
+              paddingVertical: 4,
+              opacity: pressed ? 0.6 : 1,
+            })}
+          >
+            <Text style={{ color: theme.color.danger, fontSize: 13 }}>Remove</Text>
+          </Pressable>
+        ) : null}
       </View>
     </Card>
   );

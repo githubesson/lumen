@@ -1,7 +1,14 @@
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams } from "expo-router";
-import { api, useAuth } from "@music-library/core";
+import {
+  api,
+  displayText,
+  formatBitrate,
+  formatSampleRate,
+  trackCredits,
+  useAuth,
+} from "@music-library/core";
 import { CoverArt } from "../../../../components/cover-art";
 import { EmptyState } from "../../../../components/empty-state";
 import { Card, SectionLabel } from "../../../../components/primitives";
@@ -43,7 +50,10 @@ export default function TrackInfoScreen() {
           gap: theme.space.lg,
         }}
       >
-        <CoverArt track={{ id: t.id, album_id: t.album_id }} size={200} />
+        <CoverArt
+          track={{ id: t.id, album_id: t.album_id, cover_url: t.cover_url, has_cover: t.has_cover }}
+          size={200}
+        />
         <View style={{ alignItems: "center", gap: 4 }}>
           <Text
             style={{
@@ -54,26 +64,22 @@ export default function TrackInfoScreen() {
             }}
             numberOfLines={3}
           >
-            {t.title}
+            {displayText(t.title)}
           </Text>
           {t.album_title ? (
             <Text
               style={{ fontSize: 15, color: theme.color.fgMuted }}
               numberOfLines={2}
             >
-              {t.album_title}
+              {displayText(t.album_title)}
             </Text>
           ) : null}
         </View>
 
         <InfoBlock title="Artists">
-          {t.artists.length === 0 ? (
-            <InfoRow label="—" value="" theme={theme} />
-          ) : (
-            t.artists.map((a) => (
-              <InfoRow key={a.id} label={a.role} value={a.name} theme={theme} />
-            ))
-          )}
+          {trackCredits(t).map((credit) => (
+            <InfoRow key={credit.label} label={credit.label} value={credit.value} theme={theme} />
+          ))}
         </InfoBlock>
 
         <InfoBlock title="Details">
@@ -92,18 +98,10 @@ export default function TrackInfoScreen() {
           ) : null}
           <InfoRow label="Format" value={t.format} theme={theme} />
           {t.bitrate ? (
-            <InfoRow
-              label="Bitrate"
-              value={`${Math.round(t.bitrate / 1000)} kbps`}
-              theme={theme}
-            />
+            <InfoRow label="Bitrate" value={formatBitrate(t.bitrate)} theme={theme} />
           ) : null}
           {t.sample_rate ? (
-            <InfoRow
-              label="Sample rate"
-              value={`${(t.sample_rate / 1000).toFixed(1)} kHz`}
-              theme={theme}
-            />
+            <InfoRow label="Sample rate" value={formatSampleRate(t.sample_rate)} theme={theme} />
           ) : null}
           {t.channels ? (
             <InfoRow

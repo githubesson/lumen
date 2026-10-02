@@ -59,7 +59,41 @@ export function formatBytes(bytes: number | null | undefined): string {
   return `${v.toFixed(i === 0 || v >= 100 ? 0 : 1)} ${units[i]}`;
 }
 
-/** "1 track" / "2 tracks". */
-export function pluralize(n: number, singular: string, plural?: string): string {
-  return `${n} ${n === 1 ? singular : (plural ?? `${singular}s`)}`;
+/** Sample rate in Hz -> "44.1 kHz" / "48 kHz"; em dash when unknown. */
+export function formatSampleRate(hz: number | null | undefined): string {
+  if (hz == null || !Number.isFinite(hz) || hz <= 0) return "—";
+  return `${Number((hz / 1000).toFixed(1))} kHz`;
+}
+
+/** Bitrate in bits per second -> "320 kbps"; em dash when unknown. */
+export function formatBitrate(bps: number | null | undefined): string {
+  if (bps == null || !Number.isFinite(bps) || bps <= 0) return "—";
+  return `${Math.round(bps / 1000)} kbps`;
+}
+
+/** "1 track" / "2 tracks"; `locale` groups the count ("1,234 plays"). */
+export function pluralize(
+  n: number,
+  singular: string,
+  plural?: string,
+  options?: { locale?: boolean },
+): string {
+  const count = options?.locale ? n.toLocaleString() : String(n);
+  return `${count} ${n === 1 ? singular : (plural ?? `${singular}s`)}`;
+}
+
+/**
+ * Mojibake (double-encoded UTF-8) cleanup for track/album/artist text, so
+ * corrupted metadata renders cleanly wherever it is shown. The real fix is
+ * normalizing text on ingest.
+ */
+export function displayText(value: string | null | undefined, fallback = ""): string {
+  return (value ?? fallback)
+    .replace(/Ã\u0082Â·|Â·/g, "·")
+    .replace(/Ã¢â\u0082¬â€œ/g, "—")
+    .replace(/Ã\u0085Â\u0081/g, "L")
+    .replace(/Ã\u0084/g, "")
+    .replace(/Â/g, "")
+    .replace(/Ã/g, "")
+    .trim();
 }

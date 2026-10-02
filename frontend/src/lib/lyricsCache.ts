@@ -1,3 +1,4 @@
+import { lyricsContent, lyricsRequest } from "@music-library/core/lyrics";
 import { api, type LyricsResult } from "../api";
 
 export type LyricsCacheEntry =
@@ -50,23 +51,15 @@ export async function fetchLyricsCached(track: {
   const pending = inflight.get(key);
   if (pending) return pending;
 
-  const durationSec = track.duration_ms
-    ? Math.round(track.duration_ms / 1000)
-    : undefined;
-
   const promise = api
-    .getLyrics({
-      track_name: track.title,
-      artist_name: track.artist,
-      album_name: track.album_title,
-      duration: durationSec,
-    })
-    .then((result): LyricsCacheEntry => {
-      if (result && (result.syncedLyrics || result.plainLyrics)) {
-        return { status: "hit", lyrics: result };
-      }
-      return { status: "miss" };
-    })
+    .getLyrics(lyricsRequest(track))
+    // An instrumental result has no text but is still an answer; counting it
+    // as a miss showed "No lyrics found" instead of "Instrumental".
+    .then((result): LyricsCacheEntry =>
+      lyricsContent(result).kind === "none"
+        ? { status: "miss" }
+        : { status: "hit", lyrics: result },
+    )
     .then((entry) => {
       cache.set(key, entry);
       trimCache();

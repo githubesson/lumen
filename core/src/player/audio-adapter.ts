@@ -58,3 +58,42 @@ export interface AudioAdapter {
   /** Release any resources held by this adapter. */
   dispose(): void;
 }
+
+export interface AudioAdapterEmitter {
+  /** `AudioAdapter.on`: subscribe to an event; returns an unsubscribe function. */
+  on(event: AudioAdapterEvent, handler: () => void): () => void;
+  /** Call every handler subscribed to `event`. */
+  emit(event: AudioAdapterEvent): void;
+  /** Drop every subscription; for `AudioAdapter.dispose`. */
+  clear(): void;
+}
+
+/**
+ * The listener registry behind `AudioAdapter.on`. Adapters funnel their native
+ * events through one of these, so repeated `on()` calls don't each attach a
+ * native listener.
+ */
+export function createAudioAdapterEmitter(): AudioAdapterEmitter {
+  const listeners = new Map<AudioAdapterEvent, Set<() => void>>();
+  return {
+    on(event, handler) {
+      let set = listeners.get(event);
+      if (!set) {
+        set = new Set();
+        listeners.set(event, set);
+      }
+      set.add(handler);
+      return () => {
+        set.delete(handler);
+      };
+    },
+    emit(event) {
+      const set = listeners.get(event);
+      if (!set) return;
+      for (const handler of set) handler();
+    },
+    clear() {
+      listeners.clear();
+    },
+  };
+}

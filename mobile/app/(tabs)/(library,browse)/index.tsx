@@ -5,7 +5,13 @@ import { Stack, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import {
   api,
+  playableTracks,
+  playsById,
+  replayAlbumTarget,
+  replayRequest,
   useAuth,
+  useLocalDay,
+  type Period,
   type ReplayData,
   type ReplayAlbum,
   type TrackListItem,
@@ -24,9 +30,9 @@ import { AlbumTile, TrackTile } from "../../../components/library/shelf-tiles";
 import { WelcomeCard } from "../../../components/library/welcome-card";
 import { useFavoritesQuery } from "../../../context/favorites";
 import { usePlayTrack } from "../../../context/player";
+import { subscribeAppActive } from "../../../lib/app-resume";
 import { qk } from "../../../lib/query-keys";
 import { QUERY_STALE_TIME } from "../../../lib/query-policy";
-import { replayAlbumTarget } from "../../../lib/replay-album-target";
 import { usePlayQueue } from "../../../lib/use-play-queue";
 import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme } from "../../../theme/theme";
@@ -77,11 +83,7 @@ function greetingForNow(): string {
   return "Good evening";
 }
 
-function last30Range(): { from: string; to: string; bucket: "day" } {
-  const to = new Date();
-  const from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
-  return { from: from.toISOString(), to: to.toISOString(), bucket: "day" };
-}
+const LAST_30_DAYS: Period = { kind: "last-30" };
 
 // ── Screen ──────────────────────────────────────────────────────────────────
 
@@ -108,9 +110,19 @@ export default function HomeScreen() {
 
   const favoritesQuery = useFavoritesQuery();
 
+  // The Replay screen's "Last 30 days" entry: the same key, recomputed when
+  // the local day changes, so a persisted answer for an older window isn't
+  // shown as the current one. Each fetch still asks for the 30 days up to
+  // that moment.
+  const today = useLocalDay(subscribeAppActive);
+  const replayLast30 = useMemo(
+    () => ({ asOf: today, cacheKey: replayRequest(LAST_30_DAYS).cacheKey }),
+    [today],
+  );
   const replayQuery = useQuery<ReplayData>({
-    queryKey: qk.replay("last-30"),
-    queryFn: ({ signal }) => api.getReplay(last30Range(), { signal }),
+    queryKey: qk.replay(replayLast30.cacheKey),
+    queryFn: ({ signal }) =>
+      api.getReplay(replayRequest(LAST_30_DAYS).range, { signal }),
     staleTime: QUERY_STALE_TIME.replay,
   });
 
@@ -161,11 +173,7 @@ export default function HomeScreen() {
     () => ((replay?.top_tracks ?? []) as TrackListItem[]).slice(0, 5),
     [replay?.top_tracks],
   );
-  const topTrackPlays = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const t of replay?.top_tracks ?? []) m.set(t.id, t.plays);
-    return m;
-  }, [replay?.top_tracks]);
+  const topTrackPlays = useMemo(() => playsById(replay?.top_tracks), [replay?.top_tracks]);
   const topAlbums = useMemo(
     () => (replay?.top_albums ?? []).slice(0, 10),
     [replay?.top_albums],
@@ -185,9 +193,10 @@ export default function HomeScreen() {
   const onFavoriteTilePress = usePlayQueue(favoritesShelf);
 
   const onShuffleFavorites = useCallback(() => {
-    if (favorites.length === 0) return;
+    const playable = playableTracks(favorites);
+    if (playable.length === 0) return;
     void Haptics.selectionAsync();
-    const shuffled = seededShuffle(favorites, `${Date.now()}`);
+    const shuffled = seededShuffle(playable, `${Date.now()}`);
     play(shuffled[0], shuffled);
   }, [favorites, play]);
 

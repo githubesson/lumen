@@ -10,8 +10,13 @@ import { DialogShell } from "./DialogShell";
 import { libraryChanged } from "../lib/events";
 import { AUDIO_EXTENSIONS, isAudioFile } from "../lib/download";
 import { useTransitionMount } from "../lib/useTransitionMount";
-
-type Scope = "personal" | "global";
+import {
+  defaultUploadScope,
+  uploadAddedAny,
+  uploadResultDetail,
+  uploadResultStatus,
+  type UploadScope,
+} from "@music-library/core/upload";
 
 interface Props {
   open: boolean;
@@ -27,7 +32,7 @@ interface Props {
  */
 export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Props) {
   const { mounted } = useTransitionMount(open, 200);
-  const [scope, setScope] = useState<Scope>(isAdmin ? "global" : "personal");
+  const [scope, setScope] = useState<UploadScope>(() => defaultUploadScope(isAdmin));
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<UploadResult[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -49,10 +54,11 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
     setBusy(true);
     setError(null);
     try {
-      const r = await api.uploadMusic(files, scope);
+      // Only admins may upload to the shared library; the choice is hidden
+      // from everyone else.
+      const r = await api.uploadMusic(files, isAdmin ? scope : "personal");
       setResults(r);
-      const anyInserted = r.some((x) => x.inserted);
-      if (anyInserted) libraryChanged.emit();
+      if (uploadAddedAny(r)) libraryChanged.emit();
       onComplete?.();
     } catch (err) {
       setError(errorMessage(err, "Upload failed."));
@@ -229,7 +235,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
                         margin: "2px 0 0",
                       }}
                     >
-                      {resultLabel(r)}
+                      {uploadResultDetail(r)}
                     </p>
                   </div>
                 </li>
@@ -248,16 +254,9 @@ function isAudio(f: File) {
   return f.type.startsWith("audio/") || isAudioFile(f.name);
 }
 
-function resultLabel(r: UploadResult) {
-  if (r.error) return r.error;
-  if (r.skipped) return "Skipped (unsupported format)";
-  if (r.inserted) return "Added";
-  if (r.dedup) return "Already in library";
-  return "Uploaded";
-}
-
 function StatusDot({ result }: { result: UploadResult }) {
-  if (result.error) {
+  const status = uploadResultStatus(result);
+  if (status === "failed") {
     return (
       <span
         style={{
@@ -275,7 +274,7 @@ function StatusDot({ result }: { result: UploadResult }) {
       </span>
     );
   }
-  if (result.inserted || result.dedup) {
+  if (status === "added" || status === "duplicate") {
     return (
       <CheckIcon
         className="size-4 shrink-0"

@@ -1,6 +1,11 @@
-import { type TrackDetail } from "../api";
+import { displayArtists, primaryArtistName, trackCredits, type TrackDetail } from "../api";
+import {
+  formatBitrate,
+  formatDurationMs,
+  formatSampleRate,
+} from "@music-library/core/format";
 import { DialogShell } from "./DialogShell";
-import { fmtBytes, fmtDurationMs } from "../lib/format";
+import { fmtBytes } from "../lib/format";
 import { useTrackDetail } from "../lib/useTrackDetail";
 
 interface Props {
@@ -49,9 +54,9 @@ export function TrackInfoDialog({
 
       <Section label="Identity">
         <Field k="Title" v={track.title} />
-        <Field k="Primary artist" v={artistNames(track, "primary") || "—"} />
-        <Field k="Featured" v={artistNames(track, "featured") || "—"} />
-        <Field k="Producers" v={producerNames(track) || "—"} />
+        {trackCredits(track).map((credit) => (
+          <Field key={credit.label} k={credit.label} v={credit.value} />
+        ))}
         <Field k="Album" v={track.album_title || "—"} />
         <Field k="Year" v={track.year ? String(track.year) : "—"} />
         <Field k="Genre" v={track.genre || "—"} />
@@ -68,16 +73,10 @@ export function TrackInfoDialog({
 
       <Section label="Audio">
         <Field k="Format" v={track.format || "—"} />
-        <Field
-          k="Bitrate"
-          v={track.bitrate ? `${Math.round(track.bitrate / 1000)} kbps` : "—"}
-        />
-        <Field
-          k="Sample rate"
-          v={track.sample_rate ? `${track.sample_rate} Hz` : "—"}
-        />
+        <Field k="Bitrate" v={formatBitrate(track.bitrate)} />
+        <Field k="Sample rate" v={formatSampleRate(track.sample_rate)} />
         <Field k="Channels" v={track.channels ? String(track.channels) : "—"} />
-        <Field k="Duration" v={fmtDurationMs(track.duration_ms)} />
+        <Field k="Duration" v={formatDurationMs(track.duration_ms, "—")} />
         <Field k="File size" v={fmtBytes(track.file_size)} />
         {track.file_name && <Field k="File" v={track.file_name} />}
       </Section>
@@ -92,12 +91,11 @@ export function TrackInfoDialog({
 }
 
 function HeaderBlock({ track }: { track: TrackDetail }) {
-  const primary = track.artists.find((a) => a.role === "primary")?.name;
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{ fontSize: 16, fontWeight: 600 }}>{track.title}</div>
       <div style={{ color: "var(--muted-foreground)" }}>
-        {primary ?? "Unknown artist"}
+        {primaryArtistName(track)}
         {track.album_title ? ` · ${track.album_title}` : ""}
       </div>
     </div>
@@ -130,10 +128,7 @@ const sameValue = (a: string, b: string) =>
 function Versions({ track }: { track: TrackDetail }) {
   const shown: Version = {
     title: track.title,
-    artists: track.artists
-      .filter((a) => a.role !== "composer")
-      .map((a) => a.name)
-      .join(", "),
+    artists: displayArtists(track),
     album: track.album_title ?? "",
     file: track.metadata_edited
       ? "Edited"
@@ -202,17 +197,6 @@ function Versions({ track }: { track: TrackDetail }) {
       </div>
     </Section>
   );
-}
-
-function artistNames(track: TrackDetail, role: string): string {
-  return track.artists
-    .filter((a) => a.role === role)
-    .map((a) => a.name)
-    .join(", ");
-}
-
-function producerNames(track: TrackDetail): string {
-  return track.composer?.trim() || artistNames(track, "composer");
 }
 
 function Section({

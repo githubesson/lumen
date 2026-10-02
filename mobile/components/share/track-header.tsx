@@ -5,7 +5,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { type TrackDetail } from "@music-library/core";
+import { primaryArtistName, type TrackDetail } from "@music-library/core";
 import { CoverArt } from "../cover-art";
 import { formatDurationSec } from "../../lib/format";
 import { useTheme } from "../../theme/theme";
@@ -23,10 +23,7 @@ export function TrackHeader({
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
-  const artist =
-    track.artists.find((item) => item.role === "primary")?.name ??
-    track.artists[0]?.name ??
-    "Unknown artist";
+  const artist = primaryArtistName(track);
 
   return (
     <View style={[styles.header, { gap: theme.space.md }, style]}>

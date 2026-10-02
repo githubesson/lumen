@@ -1,5 +1,9 @@
 import { useState } from "react";
 import { Monitor as ComputerDesktopIcon } from "lucide-react";
+import {
+  playbackDeviceButtonLabel,
+  remoteCommandError,
+} from "@music-library/core";
 import { useRemotePlayback } from "../../context/Player";
 import PlaybackDevicePopover from "../PlaybackDevicePopover";
 import { usePopoverOpen, type MiniPanelToggle } from "./useMiniPlayerMode";
@@ -20,10 +24,7 @@ export default function DevicePickerButton({
   const [deviceOpen, setDeviceOpen] = usePopoverOpen(!!panel);
   const open = panel ? panel.open : deviceOpen;
   const isRemoteMode = !!targetDevice;
-  const commandError =
-    lastCommandResult && lastCommandResult.status !== "applied"
-      ? lastCommandResult.error || `Command ${lastCommandResult.status}`
-      : null;
+  const commandError = remoteCommandError(lastCommandResult);
 
   return (
     <>
@@ -41,13 +42,9 @@ export default function DevicePickerButton({
             ? commandError
             : targetDevice
               ? `Controlling ${targetDevice.deviceName}`
-              : "Choose playback device"
+              : playbackDeviceButtonLabel(null)
         }
-        aria-label={
-          targetDevice
-            ? `Playback device: ${targetDevice.deviceName}`
-            : "Choose playback device"
-        }
+        aria-label={playbackDeviceButtonLabel(targetDevice)}
         aria-expanded={open}
         aria-controls={panel?.controls}
         onClick={panel ? panel.onToggle : () => setDeviceOpen((v) => !v)}

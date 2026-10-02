@@ -18,7 +18,7 @@ import Animated, {
   withSequence,
   withTiming,
 } from "react-native-reanimated";
-import { ApiError, useAuth } from "@music-library/core";
+import { loginErrorMessage, useAuth } from "@music-library/core";
 import { PrimaryButton } from "../../components/buttons";
 import { FormError, FormTextInput } from "../../components/form-field";
 import { useTheme } from "../../theme/theme";
@@ -68,13 +68,7 @@ export default function LoginScreen() {
           ),
         );
       }
-      if (err instanceof ApiError && err.status === 401) {
-        setError("Wrong username or password.");
-      } else if (err instanceof Error) {
-        setError(err.message || "Couldn't reach the server.");
-      } else {
-        setError("Couldn't reach the server.");
-      }
+      setError(loginErrorMessage(err));
     } finally {
       setPending(false);
     }

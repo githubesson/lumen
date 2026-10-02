@@ -30,18 +30,24 @@ export function probeStreamUrl(id: string): string {
   return id.toLowerCase().startsWith("tidal:") ? downloadStreamUrl(id) : streamUrl(id);
 }
 
-function withCoverSize(path: string, size?: number): string {
-  if (!size || !Number.isFinite(size) || size <= 0) return apiUrl(path);
-  const query = new URLSearchParams({ size: String(Math.round(size)) });
-  return apiUrl(`${path}?${query.toString()}`);
+function withCoverSize(path: string, size?: number, version?: string | number): string {
+  const query = new URLSearchParams();
+  if (size && Number.isFinite(size) && size > 0) query.set("size", String(Math.round(size)));
+  if (version) query.set("v", String(version));
+  const qs = query.toString();
+  return apiUrl(qs ? `${path}?${qs}` : path);
 }
 
 export function coverUrl(id: string, size?: number): string {
   return withCoverSize(`/api/tracks/${pathID(id)}/cover`, size);
 }
 
-export function albumCoverUrl(id: string, size?: number): string {
-  return withCoverSize(`/api/albums/${pathID(id)}/cover`, size);
+/**
+ * `version` busts caches after an admin replaces the artwork, since the URL
+ * itself doesn't change. Falsy versions are left off.
+ */
+export function albumCoverUrl(id: string, size?: number, version?: string | number): string {
+  return withCoverSize(`/api/albums/${pathID(id)}/cover`, size, version);
 }
 
 /** A playlist's uploaded cover; `version` is its `custom_cover`. */
@@ -91,6 +97,54 @@ export function trackCoverUrl(track: {
 }, size?: number): string {
   if (track.cover_url) return resolveCoverUrl(track.cover_url, size);
   return track.album_id ? albumCoverUrl(track.album_id, size) : coverUrl(track.id, size);
+}
+
+/*
+ * "Has a cover" is `has_cover !== false`, not truthiness: album payloads always
+ * send the flag, but track rows don't carry it at all, and art derived from a
+ * track (an artist's releases, an artist image) must still be tried. Only an
+ * explicit false skips the request.
+ */
+
+/**
+ * A track's artwork, or null when the payload says it has none (and carries
+ * no remote cover).
+ */
+export function trackArtUrl(
+  track: { id: string; album_id?: string | null; cover_url?: string | null; has_cover?: boolean },
+  size?: number,
+): string | null {
+  if (!track.cover_url && track.has_cover === false) return null;
+  return trackCoverUrl(track, size);
+}
+
+/**
+ * An album's artwork: its remote cover when it has one, else the library
+ * cover endpoint unless the payload says there is no cover. A TIDAL release
+ * has only its remote cover; its id isn't a library album.
+ */
+export function albumArtUrl(
+  album: { id: string; has_cover?: boolean; cover_url?: string | null; source?: TrackSource },
+  size?: number,
+  version?: string | number,
+): string | null {
+  if (album.cover_url) return resolveCoverUrl(album.cover_url, size);
+  if (album.source === "tidal" || album.has_cover === false) return null;
+  return albumCoverUrl(album.id, size, version);
+}
+
+/**
+ * An artist's picture: its own when the payload has one, else the cover of
+ * its first track that may have art.
+ */
+export function artistImageUrl(
+  artist: { name?: string; cover_url?: string | null } | null | undefined,
+  tracks: readonly { id: string; album_id?: string | null; cover_url?: string | null; has_cover?: boolean }[],
+  size?: number,
+): string | null {
+  if (artist?.cover_url) return resolveCoverUrl(artist.cover_url, size);
+  const track = tracks.find((candidate) => candidate.has_cover !== false);
+  return track ? trackCoverUrl(track, size) : null;
 }
 
 export interface SignedCoverUrl {
@@ -331,4 +385,39 @@ export function displayArtists(track: { artists?: TrackArtist[] }): string {
     .filter((artist) => artist.role !== "composer")
     .map((artist) => artist.name)
     .join(", ");
+}
+
+function creditNames(track: { artists?: TrackArtist[] }, role: string): string {
+  return (track.artists ?? [])
+    .filter((artist) => artist.role === role)
+    .map((artist) => artist.name)
+    .join(", ");
+}
+
+/**
+ * The credit rows of a track's info view, "—" when empty. Producers come from
+ * the composer tag, else composer-role credits (the server stores the tag as
+ * those).
+ */
+export function trackCredits(track: {
+  artists?: TrackArtist[];
+  composer?: string;
+}): { label: string; value: string }[] {
+  return [
+    { label: "Primary artist", value: creditNames(track, "primary") || "—" },
+    { label: "Featured", value: creditNames(track, "featured") || "—" },
+    { label: "Producers", value: track.composer?.trim() || creditNames(track, "composer") || "—" },
+  ];
+}
+
+/**
+ * The name to show for "the" artist of a track: its primary credit, else its
+ * first credit, else `fallback`.
+ */
+export function primaryArtistName(
+  track: { artists?: TrackArtist[] } | null | undefined,
+  fallback = "Unknown artist",
+): string {
+  const artists = track?.artists ?? [];
+  return artists.find((artist) => artist.role === "primary")?.name ?? artists[0]?.name ?? fallback;
 }

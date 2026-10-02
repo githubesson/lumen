@@ -5,9 +5,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import {
   api,
-  pluralize,
-  resolveCoverUrl,
-  trackCoverUrl,
+  artistImageUrl,
+  displayText,
+  metaLine,
+  searchEntityTarget,
+  tidalArtistMetaParts,
   useAuth,
   type TrackListItem,
 } from "@music-library/core";
@@ -63,28 +65,20 @@ export default function TidalArtistScreen() {
   const problem = query.isError ? "Couldn't load artist." : warning;
   const artistName = data?.artist?.name || name || "TIDAL artist";
   // Artists without a TIDAL picture borrow their top track's cover.
-  const imageUri = data?.artist?.cover_url
-    ? resolveCoverUrl(data.artist.cover_url)
-    : tracks[0]
-      ? trackCoverUrl(
-          tracks[0],
-          Math.round(ARTIST_AVATAR_SIZE * PixelRatio.get()),
-        )
-      : null;
+  const imageUri = artistImageUrl(
+    data?.artist,
+    tracks,
+    Math.round(ARTIST_AVATAR_SIZE * PixelRatio.get()),
+  );
   const detail = data
-    ? [
-        releases.length > 0 && pluralize(releases.length, "release"),
-        tracks.length > 0 && pluralize(tracks.length, "popular track"),
-      ]
-        .filter(Boolean)
-        .join(" · ")
+    ? metaLine(tidalArtistMetaParts(releases.length, tracks.length))
     : undefined;
 
   const openRelease = useCallback(
     (release: ArtistRelease) =>
       router.push({
         pathname: "/(tabs)/tidal-albums/[id]",
-        params: { id: release.id.replace(/^tidal:/, "") },
+        params: { id: searchEntityTarget(release).id },
       }),
     [router],
   );
@@ -98,7 +92,7 @@ export default function TidalArtistScreen() {
   return (
     <>
       <Stack.Screen
-        options={{ title: artistName, headerLargeTitle: false }}
+        options={{ title: displayText(artistName), headerLargeTitle: false }}
       />
       <FlashList
         {...dockScroll}
@@ -113,7 +107,7 @@ export default function TidalArtistScreen() {
               imageUri={imageUri}
             />
             <ArtistPlayControls
-              name={artistName}
+              name={displayText(artistName)}
               tracks={tracks}
               detail={detail}
             />

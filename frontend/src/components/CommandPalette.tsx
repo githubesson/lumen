@@ -27,12 +27,11 @@ import {
   UserRound as UserIcon,
 } from "lucide-react";
 import {
-  albumCoverUrl,
+  albumArtUrl,
   api,
-  searchEntityID,
+  artistImageUrl,
   errorMessage,
   trackCoverUrl,
-  resolveCoverUrl,
   SEARCH_TYPE_OPTIONS,
   type SearchType,
   type SearchAlbum,
@@ -43,9 +42,11 @@ import {
 import CoverArt from "./CoverArt";
 import SegmentedControl from "./SegmentedControl";
 import { displayText } from "../lib/format";
+import { albumSubtitle, artistSubtitle } from "@music-library/core/entity-labels";
+import { searchEntityTarget } from "@music-library/core/entity-target";
 import { useTrackContextMenu } from "../lib/useTrackContextMenu";
 import { useAuth } from "../context/Auth";
-import { usePlayer, useRemotePlayback } from "../context/Player";
+import { usePlayer } from "../context/Player";
 import { useTheme } from "../context/Theme";
 
 const SEARCH_PLACEHOLDER_NOUN: Record<SearchType, string> = {
@@ -75,9 +76,10 @@ export default function CommandPalette({
   const navigate = useNavigate();
   const { me, logout } = useAuth();
   const { theme, toggle: toggleTheme } = useTheme();
+  // Displayed state: it follows the device the player controls route to.
   const {
-    current: localCurrent,
-    isPlaying: localIsPlaying,
+    current,
+    isPlaying,
     toggle,
     next,
     prev,
@@ -85,12 +87,7 @@ export default function CommandPalette({
     cycleRepeat,
     play,
   } = usePlayer();
-  const { targetDevice } = useRemotePlayback();
-  // Match the device that the player controls currently route commands to.
-  const hasTrack = targetDevice ? !!targetDevice.activity : !!localCurrent;
-  const isPlaying = targetDevice
-    ? !!targetDevice.activity?.is_playing
-    : localIsPlaying;
+  const hasTrack = !!current;
 
   const [query, setQuery] = useState("");
   const [searchType, setSearchType] = useState<SearchType>("all");
@@ -338,79 +335,72 @@ export default function CommandPalette({
 
           {albums.length > 0 && (
             <Command.Group heading="Albums">
-              {albums.map((a) => (
-                <Command.Item
-                  disabled={loading}
-                  key={`album-${a.id}`}
-                  value={`album ${a.id} ${a.title} ${a.artist_name ?? ""}`}
-                  onSelect={() =>
-                    run(() =>
-                      navigate(
-                        `/library?q=${encodeURIComponent(query.trim())}&type=${searchType}&${a.source === "tidal" ? "tidalAlbum" : "album"}=${encodeURIComponent(searchEntityID(a))}`,
-                      ),
-                    )
-                  }
-                >
-                  <CoverArt
-                    className="cmdk-art"
-                    src={a.cover_url ? resolveCoverUrl(a.cover_url, 64) : a.has_cover ? albumCoverUrl(a.id, 64) : null}
-                    label={a.title}
-                    forcePlaceholder={!a.cover_url && !a.has_cover}
-                  />
-                  <span className="cmdk-item-main">
-                    <span className="cmdk-item-title">{a.title}</span>
-                    <span className="cmdk-item-sub">
-                      {a.artist_name ||
-                        (a.is_compilation ? "Various Artists" : "Unknown artist")}
-                      {" · "}
-                      {a.track_count} {a.track_count === 1 ? "track" : "tracks"}
-                      {a.source === "tidal" && " · TIDAL"}
+              {albums.map((a) => {
+                const target = searchEntityTarget(a);
+                const art = albumArtUrl(a, 64);
+                return (
+                  <Command.Item
+                    disabled={loading}
+                    key={`album-${a.id}`}
+                    value={`album ${a.id} ${a.title} ${a.artist_name ?? ""}`}
+                    onSelect={() =>
+                      run(() =>
+                        navigate(
+                          `/library?q=${encodeURIComponent(query.trim())}&type=${searchType}&${target.kind === "tidal" ? "tidalAlbum" : "album"}=${encodeURIComponent(target.id)}`,
+                        ),
+                      )
+                    }
+                  >
+                    <CoverArt
+                      className="cmdk-art"
+                      src={art}
+                      label={a.title}
+                      forcePlaceholder={!art}
+                    />
+                    <span className="cmdk-item-main">
+                      <span className="cmdk-item-title">{displayText(a.title)}</span>
+                      <span className="cmdk-item-sub">{albumSubtitle(a)}</span>
                     </span>
-                  </span>
-                  <span className="cmdk-shortcut">open</span>
-                </Command.Item>
-              ))}
+                    <span className="cmdk-shortcut">open</span>
+                  </Command.Item>
+                );
+              })}
             </Command.Group>
           )}
 
           {artists.length > 0 && (
             <Command.Group heading="Artists">
-              {artists.map((a) => (
-                <Command.Item
-                  disabled={loading}
-                  key={`artist-${a.id}`}
-                  value={`artist ${a.id} ${a.name}`}
-                  onSelect={() =>
-                    run(() =>
-                      navigate(
-                        `/library?q=${encodeURIComponent(query.trim())}&type=${searchType}&${a.source === "tidal" ? "tidalArtist" : "artist"}=${encodeURIComponent(searchEntityID(a))}&artistName=${encodeURIComponent(a.name)}`,
-                      ),
-                    )
-                  }
-                >
-                  <CoverArt
-                    className="cmdk-art"
-                    label={a.name}
-                    src={a.cover_url ? resolveCoverUrl(a.cover_url, 64) : null}
-                    radius={999}
-                    forcePlaceholder={!a.cover_url}
-                  />
-                  <span className="cmdk-item-main">
-                    <span className="cmdk-item-title">{a.name}</span>
-                    <span className="cmdk-item-sub">
-                      {a.source === "tidal" ? "TIDAL artist" : `${a.track_count} ${a.track_count === 1 ? "track" : "tracks"}`}
-                      {a.album_count > 0 && (
-                        <>
-                          {" · "}
-                          {a.album_count}{" "}
-                          {a.album_count === 1 ? "album" : "albums"}
-                        </>
-                      )}
+              {artists.map((a) => {
+                const target = searchEntityTarget(a);
+                const art = artistImageUrl(a, [], 64);
+                return (
+                  <Command.Item
+                    disabled={loading}
+                    key={`artist-${a.id}`}
+                    value={`artist ${a.id} ${a.name}`}
+                    onSelect={() =>
+                      run(() =>
+                        navigate(
+                          `/library?q=${encodeURIComponent(query.trim())}&type=${searchType}&${target.kind === "tidal" ? "tidalArtist" : "artist"}=${encodeURIComponent(target.id)}&artistName=${encodeURIComponent(a.name)}`,
+                        ),
+                      )
+                    }
+                  >
+                    <CoverArt
+                      className="cmdk-art"
+                      label={a.name}
+                      src={art}
+                      radius={999}
+                      forcePlaceholder={!art}
+                    />
+                    <span className="cmdk-item-main">
+                      <span className="cmdk-item-title">{displayText(a.name)}</span>
+                      <span className="cmdk-item-sub">{artistSubtitle(a)}</span>
                     </span>
-                  </span>
-                  <span className="cmdk-shortcut">open</span>
-                </Command.Item>
-              ))}
+                    <span className="cmdk-shortcut">open</span>
+                  </Command.Item>
+                );
+              })}
             </Command.Group>
           )}
 

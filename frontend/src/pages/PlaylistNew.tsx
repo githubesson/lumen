@@ -7,6 +7,10 @@ import ErrorBanner from "../components/ErrorBanner";
 import PageHeader from "../components/PageHeader";
 import RadioCardOption from "../components/RadioCardOption";
 import { usePlaylists } from "../context/Playlists";
+import {
+  isValidPlaylistName,
+  playlistDetailsPayload,
+} from "@music-library/core/playlist-details";
 
 export default function PlaylistNew() {
   const navigate = useNavigate();
@@ -17,12 +21,18 @@ export default function PlaylistNew() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // A whitespace-only name passes `required` but the server refuses it.
+  const canSubmit = isValidPlaylistName(name) && !busy;
+
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!canSubmit) return;
     setError(null);
     setBusy(true);
     try {
-      const p = await api.createPlaylist({ name: name.trim(), description, visibility });
+      const p = await api.createPlaylist(
+        playlistDetailsPayload({ name, description, visibility }),
+      );
       void reloadPlaylists();
       navigate(`/playlists/${p.id}`, { replace: true });
     } catch (err) {
@@ -91,7 +101,7 @@ export default function PlaylistNew() {
         {error && <ErrorBanner message={error} />}
 
         <div style={{ display: "flex", gap: 8 }}>
-          <Button type="submit" variant="primary" disabled={busy}>
+          <Button type="submit" variant="primary" disabled={!canSubmit}>
             {busy ? "Creating…" : "Create playlist"}
           </Button>
           <Button variant="ghost" onClick={() => navigate(-1)}>

@@ -1,7 +1,13 @@
 import { memo } from "react";
 import { View } from "react-native";
 import { SymbolView } from "expo-symbols";
-import type { Artist, SearchArtist } from "@music-library/core";
+import {
+  artistMetaParts,
+  artistSubtitle,
+  displayText,
+  type Artist,
+  type SearchArtist,
+} from "@music-library/core";
 import { ListRow } from "./list-row";
 import { useTheme } from "../theme/theme";
 
@@ -13,10 +19,11 @@ interface Props<T extends Artist | SearchArtist> {
 
 function ArtistRowImpl<T extends Artist | SearchArtist>({ artist, onPress }: Props<T>) {
   const theme = useTheme();
+  const name = displayText(artist.name);
   return (
     <ListRow
       onPress={() => onPress(artist)}
-      accessibilityLabel={"source" in artist && artist.source === "tidal" ? `${artist.name}, TIDAL artist` : `${artist.name}, ${artist.track_count} tracks`}
+      accessibilityLabel={[name, ...artistMetaParts(artist)].join(", ")}
       leading={
         <View
           style={{
@@ -35,13 +42,8 @@ function ArtistRowImpl<T extends Artist | SearchArtist>({ artist, onPress }: Pro
           />
         </View>
       }
-      title={artist.name}
-      subtitle={"source" in artist && artist.source === "tidal" ? "TIDAL artist" :
-        `${artist.track_count} ${artist.track_count === 1 ? "track" : "tracks"}` +
-        (artist.album_count
-          ? ` - ${artist.album_count} ${artist.album_count === 1 ? "album" : "albums"}`
-          : "")
-      }
+      title={name}
+      subtitle={artistSubtitle(artist)}
     />
   );
 }

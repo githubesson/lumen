@@ -7,6 +7,7 @@ import ErrorBanner from "../components/ErrorBanner";
 import EmptyState from "../components/EmptyState";
 import { useFavorites } from "../context/Favorites";
 import { usePlayerControls } from "../context/Player";
+import { startListPlayback } from "@music-library/core/player/play-list";
 import { pluralize } from "../lib/format";
 
 export default function Favorites() {
@@ -46,8 +47,8 @@ export default function Favorites() {
         actions={
           <Button
             variant="primary"
-            disabled={!tracks || tracks.length === 0}
-            onClick={() => tracks && tracks.length > 0 && play(tracks[0], tracks)}
+            disabled={!tracks?.some((track) => !track.unavailable)}
+            onClick={() => tracks && startListPlayback(play, tracks, false)}
             leadingIcon={<PlayIcon className="size-4" />}
           >
             Play all

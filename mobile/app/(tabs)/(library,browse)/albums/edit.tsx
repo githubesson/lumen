@@ -1,4 +1,4 @@
-import { buildAlbumPatch } from "@music-library/core/metadata-edit";
+import { albumEditForm, buildAlbumPatch } from "@music-library/core/metadata-edit";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -77,12 +77,13 @@ export default function AlbumEditScreen() {
   // refetch of the same album doesn't clobber in-progress edits.
   useEffect(() => {
     if (!album) return;
+    const form = albumEditForm(album);
     // The edit draft intentionally snapshots the queried album.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setTitle(album.title);
-    setAlbumArtist(album.artist_name ?? "");
-    setYear(album.release_year ? String(album.release_year) : "");
-    setIsCompilation(album.is_compilation);
+    setTitle(form.title);
+    setAlbumArtist(form.albumArtist);
+    setYear(form.year);
+    setIsCompilation(form.isCompilation);
     setHasCover(album.has_cover);
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -205,9 +206,7 @@ export default function AlbumEditScreen() {
   }
 
   const coverUri =
-    hasCover && id
-      ? `${albumCoverUrl(id, COVER_PREVIEW_SIZE * 3)}${coverNonce ? `&v=${coverNonce}` : ""}`
-      : null;
+    hasCover && id ? albumCoverUrl(id, COVER_PREVIEW_SIZE * 3, coverNonce) : null;
 
   return (
     <>

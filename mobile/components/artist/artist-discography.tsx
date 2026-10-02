@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { View } from "react-native";
 import * as Haptics from "expo-haptics";
+import { displayText } from "@music-library/core";
 import {
   filterReleases,
   hasReleaseFilters,
+  RELEASE_FILTER_OPTIONS,
   releaseSubtitle,
   type ArtistRelease,
   type ReleaseFilter,
@@ -16,11 +18,6 @@ import { ShelfTile } from "../shelf-tile";
 import { useTheme } from "../../theme/theme";
 
 const TILE_SIZE = 140;
-const FILTER_OPTIONS: { label: string; value: ReleaseFilter }[] = [
-  { label: "All", value: "all" },
-  { label: "Albums", value: "albums" },
-  { label: "Singles & EPs", value: "singles" },
-];
 
 /**
  * Discography shelf, newest first. When an artist has both albums and
@@ -41,7 +38,7 @@ export function ArtistDiscography({
       {hasReleaseFilters(releases) ? (
         <View style={{ paddingHorizontal: theme.space.lg }}>
           <GlassSegmentedControl
-            options={FILTER_OPTIONS}
+            options={RELEASE_FILTER_OPTIONS}
             value={filter}
             onChange={setFilter}
           />
@@ -49,6 +46,7 @@ export function ArtistDiscography({
       ) : null}
       <HorizontalShelf>
         {shown.map((release) => {
+          const title = displayText(release.title);
           const subtitle = releaseSubtitle(release);
           return (
             <ShelfTile
@@ -56,10 +54,10 @@ export function ArtistDiscography({
               artwork={
                 <CoverArt album={release} size={TILE_SIZE} priority="low" />
               }
-              title={release.title}
+              title={title}
               subtitle={subtitle}
               width={TILE_SIZE}
-              accessibilityLabel={`${release.title}, ${subtitle}`}
+              accessibilityLabel={`${title}, ${subtitle}`}
               onPress={() => {
                 void Haptics.selectionAsync();
                 onOpen(release);

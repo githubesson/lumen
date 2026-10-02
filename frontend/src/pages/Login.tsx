@@ -1,7 +1,7 @@
+import { loginErrorMessage } from "@music-library/core/auth/errors";
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/Auth";
-import { ApiError } from "../api";
 import { Button } from "../components/Button";
 import CenteredCard from "../components/CenteredCard";
 import ErrorBanner from "../components/ErrorBanner";
@@ -26,11 +26,7 @@ export default function Login({ onChangeServer }: { onChangeServer?: () => void 
       await login(username, password);
       navigate("/", { replace: true });
     } catch (err) {
-      setError(
-        err instanceof ApiError && err.status === 401
-          ? "Invalid username or password."
-          : "Sign in failed. Please try again.",
-      );
+      setError(loginErrorMessage(err));
     } finally {
       setBusy(false);
     }

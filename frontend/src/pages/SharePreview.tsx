@@ -11,9 +11,11 @@ import {
   Pause as PauseIcon,
   Play as PlayIcon,
 } from "lucide-react";
-import { sanitizeFilename } from "@music-library/core/audio-format";
 import {
-  MAX_SHARE_SNIPPET_DURATION_SEC,
+  parseTrackShareParams,
+  shareClipName,
+} from "@music-library/core/share-snippet";
+import {
   errorMessage,
   getPublicTrackShare,
   trackSharePreviewVideoUrl,
@@ -33,12 +35,16 @@ import { useTransitionMount } from "../lib/useTransitionMount";
 export default function SharePreview() {
   const { id = "" } = useParams();
   const [params] = useSearchParams();
-  const startSec = Number.parseInt(params.get("t") ?? "0", 10);
-  const rawDurationSec = params.get("d");
-  const durationSec = rawDurationSec === null
-    ? undefined
-    : Number(rawDurationSec);
-  const sig = params.get("sig") ?? "";
+  const shareRef = parseTrackShareParams({
+    trackId: id,
+    t: params.get("t"),
+    d: params.get("d"),
+    sig: params.get("sig"),
+  });
+  // Primitives, so the load effect reruns only when the link itself changes.
+  const startSec = shareRef?.startSec;
+  const durationSec = shareRef?.durationSec;
+  const sig = shareRef?.sig;
 
   const [share, setShare] = useState<PublicTrackShare | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,17 +67,7 @@ export default function SharePreview() {
     setCurrentTime(0);
     setMediaDuration(0);
 
-    if (
-      !id ||
-      !sig ||
-      !Number.isFinite(startSec) ||
-      startSec < 0 ||
-      (durationSec !== undefined && (
-        !Number.isInteger(durationSec) ||
-        durationSec <= 0 ||
-        durationSec > MAX_SHARE_SNIPPET_DURATION_SEC
-      ))
-    ) {
+    if (startSec === undefined || sig === undefined) {
       setLoading(false);
       setError("Share link unavailable.");
       return;
@@ -219,15 +215,12 @@ export default function SharePreview() {
               >
                 {copied ? "Copied" : "Copy link"}
               </Button>
-              <SnippetDownloadMenu
-                share={share}
-                videoUrl={trackSharePreviewVideoUrl({
-                  trackId: id,
-                  startSec,
-                  durationSec,
-                  sig,
-                })}
-              />
+              {shareRef && (
+                <SnippetDownloadMenu
+                  share={share}
+                  videoUrl={trackSharePreviewVideoUrl(shareRef)}
+                />
+              )}
             </footer>
 
             <video
@@ -268,9 +261,7 @@ function SnippetDownloadMenu({
   const close = useCallback(() => setOpen(false), []);
   useDismiss(rootRef, { onDismiss: close, enabled: open });
 
-  const baseName = sanitizeFilename(
-    `${share.artist ? `${share.artist} - ` : ""}${share.title} (clip)`,
-  );
+  const baseName = shareClipName(share);
   const items = [
     ...(share.audio_url
       ? [{ label: "Audio", hint: "M4A", href: share.audio_url, ext: "m4a", Icon: MusicIcon }]

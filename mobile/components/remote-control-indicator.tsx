@@ -1,39 +1,14 @@
-import { useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import Animated, { FadeInDown, FadeOutUp } from "react-native-reanimated";
 import { SymbolView } from "expo-symbols";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import {
-  subscribeRemotePlaybackControl,
-  type RemotePlaybackControlEvent,
-} from "@music-library/core";
+import { useRemoteControlIndicator } from "@music-library/core";
 import { useTheme } from "../theme/theme";
-
-const VISIBLE_MS = 6_000;
 
 export function RemoteControlIndicator() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const [event, setEvent] = useState<RemotePlaybackControlEvent | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return subscribeRemotePlaybackControl((nextEvent) => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      setEvent(nextEvent);
-      timerRef.current = setTimeout(() => {
-        timerRef.current = null;
-        setEvent(null);
-      }, VISIBLE_MS);
-    });
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    },
-    [],
-  );
+  const event = useRemoteControlIndicator();
 
   if (!event) return null;
 

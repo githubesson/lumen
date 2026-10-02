@@ -6,23 +6,20 @@ import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
 import {
   api,
-  isTidalTrack,
+  deleteOwnUploadMessage,
   libraryChanged,
   downloadStreamUrl,
+  prepareTrackDownload,
+  resolveTrackAlbumTarget,
+  trackActions,
   useAuth,
-  type TrackDetail,
   type TrackListItem,
 } from "@music-library/core";
 import { useFavorite, useFavoriteActions } from "../context/favorites";
 import { usePlayTrack } from "../context/player";
 import { AdaptiveGlass } from "./adaptive-glass";
 import { useTheme } from "../theme/theme";
-import {
-  downloadFilename,
-  downloadStreamToFile,
-  extensionForFormat,
-  extensionFromStream,
-} from "../lib/track-download";
+import { downloadStreamToFile } from "../lib/track-download";
 import {
   getOptionalSwiftUI,
   swiftAccessibilityLabel,
@@ -214,11 +211,13 @@ function TrackActionItems({
           systemImage="info.circle"
           onPress={actions.openInfo}
         />
-        <Button
-          label="Share..."
-          systemImage="square.and.arrow.up"
-          onPress={actions.openShare}
-        />
+        {actions.canShare ? (
+          <Button
+            label="Share..."
+            systemImage="square.and.arrow.up"
+            onPress={actions.openShare}
+          />
+        ) : null}
       </ControlGroup>
       <Divider />
       <Section title="Actions">
@@ -246,15 +245,17 @@ function TrackActionItems({
           </Section>
         </>
       ) : null}
-      {actions.isAdmin ? (
+      {actions.canEditMetadata || actions.hasEditableAlbum ? (
         <>
           <Divider />
           <Section title="Edit">
-            <Button
-              label="Edit Metadata"
-              systemImage="pencil"
-              onPress={actions.openEditMetadata}
-            />
+            {actions.canEditMetadata ? (
+              <Button
+                label="Edit Metadata"
+                systemImage="pencil"
+                onPress={actions.openEditMetadata}
+              />
+            ) : null}
             {actions.hasEditableAlbum ? (
               <Button
                 label="Edit Album & Cover"
@@ -287,7 +288,7 @@ export function useTrackActionModel(track: TrackListItem) {
   const favorite = useFavorite(track.id);
   const { toggle: toggleFav } = useFavoriteActions();
   const { me } = useAuth();
-  const isAdmin = me?.role === "admin";
+  const actions = trackActions(track, { isAdmin: me?.role === "admin" });
   const [downloading, setDownloading] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -305,31 +306,20 @@ export function useTrackActionModel(track: TrackListItem) {
   const openAlbum = useCallback(() => {
     void (async () => {
       try {
-        let localAlbumId = track.album_id;
-        let tidalAlbumId = isTidalTrack(track)
-          ? track.source_album_id
-          : undefined;
+        const target = await resolveTrackAlbumTarget(track);
 
-        if (!localAlbumId || (isTidalTrack(track) && !tidalAlbumId)) {
-          const detail = await api.getTrack(track.id);
-          localAlbumId = localAlbumId || detail.album_id;
-          if (isTidalTrack(detail)) {
-            tidalAlbumId = tidalAlbumId || detail.source_album_id;
-          }
-        }
-
-        if (isTidalTrack(track) && tidalAlbumId) {
+        if (target?.kind === "tidal") {
           router.push({
             pathname: "/(tabs)/(library)/tidal-albums/[id]" as never,
-            params: { id: tidalAlbumId },
+            params: { id: target.id },
           });
           return;
         }
 
-        if (localAlbumId) {
+        if (target) {
           router.push({
             pathname: "/(tabs)/(library)/albums/[id]",
-            params: { id: localAlbumId },
+            params: { id: target.id },
           });
           return;
         }
@@ -400,17 +390,7 @@ export function useTrackActionModel(track: TrackListItem) {
     }
     setDownloading(true);
     try {
-      let detail: TrackDetail | null = null;
-      try {
-        detail = await api.getTrack(track.id);
-      } catch {
-        // The stream can still be downloaded; metadata only improves the name.
-      }
-
-      const ext =
-        extensionForFormat(detail?.format) ??
-        (await extensionFromStream(track.id));
-      const filename = downloadFilename(track, detail, ext);
+      const { filename } = await prepareTrackDownload(track);
       const destination = new File(selectedDir, filename);
       const file = await downloadStreamToFile(downloadStreamUrl(track.id), destination);
 
@@ -431,7 +411,7 @@ export function useTrackActionModel(track: TrackListItem) {
   const deleteTrack = useCallback(() => {
     Alert.alert(
       "Delete Track",
-      `Delete "${track.title}" from your library? This permanently removes the file you uploaded.`,
+      deleteOwnUploadMessage(track),
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -462,28 +442,28 @@ export function useTrackActionModel(track: TrackListItem) {
         },
       ],
     );
-  }, [track.id, track.title]);
+  }, [track]);
 
   return {
+    canEditMetadata: actions.editMetadata,
+    canShare: actions.share,
     deleteTrack,
     deleting,
     download,
     downloading,
     favorite,
-    hasAlbum: Boolean(
-      track.album_id || track.album_title || isTidalTrack(track),
-    ),
-    hasEditableAlbum: Boolean(track.album_id && !isTidalTrack(track)),
-    isAdmin,
+    hasAlbum: actions.viewAlbum,
+    // Edit Album & Cover is mobile-only; web edits albums from the album page.
+    hasEditableAlbum: actions.editAlbum,
     openAlbum,
     openEditAlbum,
     openEditMetadata,
     openInfo,
     openPlaylistPicker,
     openShare,
-    owned: Boolean(track.owned),
+    owned: actions.deleteOwnUpload,
     // Dropped from TIDAL with no library copy: no stream to play or save.
-    available: !track.unavailable,
+    available: actions.play,
     play,
     toggleFavorite,
   };
