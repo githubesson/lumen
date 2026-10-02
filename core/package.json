@@ -32,6 +32,7 @@
     "./playlist-details": "./src/playlist-details.ts",
     "./playlist-tracks": "./src/playlist-tracks.ts",
     "./share-link-session": "./src/share-link-session.ts",
+    "./upload": "./src/upload.ts",
     "./replay/replay": "./src/replay/replay.ts",
     "./replay/use-local-day": "./src/replay/use-local-day.ts"
   },

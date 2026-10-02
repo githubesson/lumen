@@ -13,9 +13,16 @@ import * as Haptics from "expo-haptics";
 import {
   ApiError,
   api,
+  defaultUploadScope,
   libraryChanged,
+  summarizeUploadResults,
+  uploadAddedAny,
+  uploadResultStatus,
+  uploadStatusLabel,
+  uploadSummaryLabel,
   useAuth,
   type UploadResult,
+  type UploadScope,
 } from "@music-library/core";
 import { SegmentedControl } from "../../../components/segmented-control";
 import { PrimaryButton } from "../../../components/buttons";
@@ -32,12 +39,11 @@ interface PickedFile {
   size?: number;
 }
 
-type Scope = "personal" | "global";
-
 /**
  * Mobile upload screen. Pick audio files with the system document picker,
- * pick a scope (personal unless admin), and upload them through the shared
- * API client as RN-style `{ uri, name, type }` multipart parts.
+ * pick a scope (admins only; the shared library by default, as on the web),
+ * and upload them through the shared API client as RN-style
+ * `{ uri, name, type }` multipart parts.
  */
 export default function UploadScreen() {
   const theme = useTheme();
@@ -45,13 +51,14 @@ export default function UploadScreen() {
   const { me } = useAuth();
   const dockInset = useBottomDockInset();
 
+  const isAdmin = me?.role === "admin";
   const [files, setFiles] = useState<PickedFile[]>([]);
-  const [scope, setScope] = useState<Scope>("personal");
+  const [chosenScope, setScope] = useState<UploadScope>(() => defaultUploadScope(isAdmin));
+  // The choice is admin-only; anyone else always uploads to their own library.
+  const scope: UploadScope = isAdmin ? chosenScope : "personal";
   const [uploading, setUploading] = useState(false);
   const [results, setResults] = useState<UploadResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const isAdmin = me?.role === "admin";
 
   const pickFiles = async () => {
     try {
@@ -94,7 +101,8 @@ export default function UploadScreen() {
       setResults(json);
       // The root layout's libraryChanged subscriber invalidates the browse
       // lists and user-scoped queries, so emitting is the whole refresh.
-      libraryChanged.emit();
+      // Duplicates, skips and failures leave the library as it was.
+      if (uploadAddedAny(json)) libraryChanged.emit();
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -125,14 +133,7 @@ export default function UploadScreen() {
     }
   };
 
-  const summary = results
-    ? {
-        inserted: results.filter((r) => r.inserted).length,
-        dedup: results.filter((r) => r.dedup).length,
-        skipped: results.filter((r) => r.skipped).length,
-        errored: results.filter((r) => r.error).length,
-      }
-    : null;
+  const summary = results ? summarizeUploadResults(results) : null;
 
   return (
     <>
@@ -167,7 +168,7 @@ export default function UploadScreen() {
                     : "Adds to every user's library."
                 }
               >
-                <SegmentedControl<Scope>
+                <SegmentedControl<UploadScope>
                   options={[
                     { label: "Personal", value: "personal" },
                     { label: "Global", value: "global" },
@@ -257,8 +258,7 @@ export default function UploadScreen() {
                     fontVariant: ["tabular-nums"],
                   }}
                 >
-                  {summary.inserted} inserted · {summary.dedup} deduped ·{" "}
-                  {summary.skipped} skipped · {summary.errored} errors
+                  {uploadSummaryLabel(summary)}
                 </Text>
                 <View style={{ flexDirection: "row", gap: 12, marginTop: 8 }}>
                   <Pressable
@@ -379,15 +379,16 @@ function ResultRow({
   result: UploadResult;
   theme: ThemeTokens;
 }) {
-  const status = result.inserted
-    ? { label: "Inserted", color: theme.color.success }
-    : result.dedup
-      ? { label: "Deduped", color: theme.color.fgMuted }
-      : result.skipped
-        ? { label: "Skipped", color: theme.color.fgMuted }
-        : result.error
-          ? { label: "Error", color: theme.color.danger }
-          : { label: "—", color: theme.color.fgMuted };
+  const kind = uploadResultStatus(result);
+  const status = {
+    label: uploadStatusLabel(kind),
+    color:
+      kind === "added"
+        ? theme.color.success
+        : kind === "failed"
+          ? theme.color.danger
+          : theme.color.fgMuted,
+  };
   return (
     <View
       style={{
