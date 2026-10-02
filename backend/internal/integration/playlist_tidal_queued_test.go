@@ -20,8 +20,9 @@ import (
 )
 
 // The playlist screen polls while tidal_queued is above zero, so a TIDAL
-// entry whose download failed must not count: it waits out a backoff of up to
-// a day, and the screen would otherwise poll (and say "saving") all that time.
+// entry whose download failed must not count while it waits out a backoff of
+// up to a day; tidal_retry_at says when to look again, and once the retry is
+// due the entry counts again.
 func TestPlaylistTracksTIDALQueued(t *testing.T) {
 	url := os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL")
 	if url == "" {
@@ -85,15 +86,16 @@ func TestPlaylistTracksTIDALQueued(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	queued := func() int {
+	queued := func() (int, string) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/playlists/"+playlist.ID.String()+"/tracks", nil)
 		req.AddCookie(&http.Cookie{Name: "session", Value: token})
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		var body struct {
-			Tracks      []json.RawMessage `json:"tracks"`
-			TIDALQueued *int              `json:"tidal_queued"`
+			Tracks       []json.RawMessage `json:"tracks"`
+			TIDALQueued  *int              `json:"tidal_queued"`
+			TIDALRetryAt string            `json:"tidal_retry_at"`
 		}
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK {
 			t.Fatalf("tracks: %d %s", rec.Code, rec.Body)
@@ -101,17 +103,29 @@ func TestPlaylistTracksTIDALQueued(t *testing.T) {
 		if len(body.Tracks) != 2 || body.TIDALQueued == nil {
 			t.Fatalf("tracks response = %s", rec.Body)
 		}
-		return *body.TIDALQueued
+		return *body.TIDALQueued, body.TIDALRetryAt
 	}
 
 	// Not opted in: nothing is queued for this playlist.
-	if got := queued(); got != 0 {
-		t.Fatalf("queued without auto-download = %d, want 0", got)
+	if got, retry := queued(); got != 0 || retry != "" {
+		t.Fatalf("without auto-download = %d, %q; want 0 and no retry", got, retry)
 	}
 	if err := pls.SetTIDALAutoDownload(ctx, playlist.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if got := queued(); got != 1 {
-		t.Fatalf("queued with one failed = %d, want 1", got)
+	var retryAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT next_attempt_at FROM tidal_downloads WHERE tidal_id = $1`, failed).Scan(&retryAt); err != nil {
+		t.Fatal(err)
+	}
+	got, retry := queued()
+	if got != 1 || retry != retryAt.UTC().Format(time.RFC3339) {
+		t.Fatalf("with one failed = %d, %q; want 1 and %s", got, retry, retryAt.UTC().Format(time.RFC3339))
+	}
+	// Its backoff runs out: the worker retries it, so it counts again.
+	if _, err := pool.Exec(ctx, `UPDATE tidal_downloads SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE tidal_id = $1`, failed); err != nil {
+		t.Fatal(err)
+	}
+	if got, retry := queued(); got != 2 || retry != "" {
+		t.Fatalf("with the retry due = %d, %q; want 2 and no retry", got, retry)
 	}
 }

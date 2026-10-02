@@ -13,7 +13,7 @@ import {
   usePlayTrack,
   useRemotePlayback,
 } from "../../context/player";
-import { listPlaybackQueue } from "../../lib/offline-mode";
+import { listPlaybackQueue } from "../../lib/use-play-queue";
 import { useTheme } from "../../theme/theme";
 
 const PLAY_SIZE = 56;

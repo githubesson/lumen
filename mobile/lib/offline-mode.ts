@@ -1,11 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import { useSyncExternalStore } from "react";
-import {
-  canStartTrack,
-  playableTracks,
-  type TrackListItem,
-} from "@music-library/core";
+import { canStartTrack, type TrackListItem } from "@music-library/core";
 import { downloadStore } from "./downloads/download-store";
 
 /**
@@ -87,17 +83,6 @@ export function isTrackPlayableOffline(trackId: string): boolean {
  *  offline. */
 export function startableTracks<T extends TrackListItem>(tracks: readonly T[] = []): T[] {
   return tracks.filter((track) => canStartTrack(track, isTrackPlayableOffline));
-}
-
-/**
- * What a list's Play and Shuffle buttons queue. Offline that's the downloaded
- * tracks, so a list whose first track isn't stored still plays rather than
- * stopping at "Not available offline". With none stored it's every available
- * track, so the attempt still explains why nothing plays.
- */
-export function listPlaybackQueue<T extends TrackListItem>(tracks: readonly T[]): T[] {
-  const startable = startableTracks(tracks);
-  return startable.length ? startable : playableTracks(tracks);
 }
 
 // The third argument is required: app.json sets web.output "static", so Expo

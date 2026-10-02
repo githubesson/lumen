@@ -28,9 +28,8 @@ import {
 } from "../../../../components/dock/dock-context";
 import { TrackRow } from "../../../../components/track-row";
 import { usePlayTrack } from "../../../../context/player";
-import { listPlaybackQueue } from "../../../../lib/offline-mode";
 import { qk } from "../../../../lib/query-keys";
-import { usePlayQueue } from "../../../../lib/use-play-queue";
+import { listPlaybackQueue, usePlayQueue } from "../../../../lib/use-play-queue";
 import { useAlbumDownloadAction } from "../../../../lib/album-download";
 import { useTheme } from "../../../../theme/theme";
 import { AlbumHeader, ALBUM_ART_SIZE } from "../../../../components/album-header";

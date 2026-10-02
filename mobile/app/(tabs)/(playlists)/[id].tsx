@@ -18,7 +18,6 @@ import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS,
   SORT_DEFAULT_ASC,
   api,
   compareSortableTracks,
@@ -26,6 +25,7 @@ import {
   fisherYatesWithAnchor,
   movePlaylistEntry,
   playlistEntryToTrack as entryToTrack,
+  playlistAutoDownloadRefetchMs,
   playlistPermissions,
   playlistTidalQueued,
   pluralize,
@@ -64,14 +64,13 @@ import {
 } from "../../../components/dock/dock-context";
 import { TrackActionsContextMenu } from "../../../components/track-actions-menu";
 import { qk } from "../../../lib/query-keys";
-import { usePlayQueue } from "../../../lib/use-play-queue";
+import { listPlaybackQueue, usePlayQueue } from "../../../lib/use-play-queue";
 import {
   autoDownloadStore,
   downloadStore,
   useDownloadedPlaylistTracks,
 } from "../../../lib/downloads";
 import {
-  listPlaybackQueue,
   useIsOffline,
   useTrackUnavailableOffline,
 } from "../../../lib/offline-mode";
@@ -131,10 +130,11 @@ export default function PlaylistDetailScreen() {
     queryKey: playlistTracksQueryKey,
     queryFn: ({ signal }) => api.listPlaylistTracks(id!, { signal }),
     enabled: !!userId && !!id,
+    // While auto-download saves tracks, refetch so rows flip to their
+    // library copies; after a failure, look again when its retry is due.
     refetchInterval: (query) =>
-      playlistQuery.data?.tidal_auto_download &&
-      playlistTidalQueued(query.state.data) > 0
-        ? PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS
+      playlistQuery.data?.tidal_auto_download
+        ? playlistAutoDownloadRefetchMs(query.state.data)
         : false,
   });
 

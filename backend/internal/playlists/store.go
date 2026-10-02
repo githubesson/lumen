@@ -296,21 +296,35 @@ type TrackDetail struct {
 	PlayCount       int // viewer's all-time plays of this track
 }
 
-// TIDALQueued counts the playlist's TIDAL entries that auto-download has yet
-// to save: the playlist is opted in and the track's last attempt didn't fail.
-// A failed track waits out a backoff of up to a day before its retry, so it
-// isn't counted; clients poll for saved copies while this is above zero.
-func (s *Store) TIDALQueued(ctx context.Context, playlistID uuid.UUID) (int, error) {
-	var n int
+// TIDALQueue is where a playlist's auto-download stands, for clients that
+// poll for saved copies.
+type TIDALQueue struct {
+	// Queued entries are waiting for a download the worker will attempt now:
+	// a first attempt, or a failed one whose backoff has run out (the same
+	// rule as tidaldl's Pending).
+	Queued int
+	// RetryAt is when the next failed entry's backoff (up to a day) runs out,
+	// or nil when none is waiting.
+	RetryAt *time.Time
+}
+
+// TIDALQueue reports the playlist's TIDAL entries auto-download has yet to
+// save. Nothing is queued unless the playlist is opted in.
+func (s *Store) TIDALQueue(ctx context.Context, playlistID uuid.UUID) (TIDALQueue, error) {
+	var q TIDALQueue
 	err := s.db.QueryRow(ctx, `
-		SELECT COUNT(*)
+		SELECT
+			COUNT(*) FILTER (WHERE d.status IS DISTINCT FROM 'failed'
+			                    OR d.next_attempt_at IS NULL
+			                    OR d.next_attempt_at <= NOW()),
+			MIN(d.next_attempt_at) FILTER (WHERE d.status = 'failed' AND d.next_attempt_at > NOW())
 		FROM playlist_tracks pt
 		JOIN playlists p ON p.id = pt.playlist_id AND p.tidal_auto_download
 		JOIN tracks t ON t.id = pt.track_id
 		 AND t.source = 'tidal' AND t.external_id <> '' AND t.deleted_at IS NULL
 		LEFT JOIN tidal_downloads d ON d.tidal_id = t.external_id
-		WHERE pt.playlist_id = $1 AND d.status IS DISTINCT FROM 'failed'`, playlistID).Scan(&n)
-	return n, err
+		WHERE pt.playlist_id = $1`, playlistID).Scan(&q.Queued, &q.RetryAt)
+	return q, err
 }
 
 // TracksDetailed returns all tracks in a playlist visible to viewerID (global

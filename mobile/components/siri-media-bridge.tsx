@@ -2,7 +2,6 @@ import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
-  canStartTrack,
   fisherYatesWithAnchor,
   useAuth,
   type Playlist,
@@ -20,7 +19,8 @@ import {
   trackSiriMediaItem,
 } from "../lib/siri-media";
 import { diagnosticsLog } from "../lib/diagnostics/log";
-import { isTrackPlayableOffline, offlineStore } from "../lib/offline-mode";
+import { offlineStore } from "../lib/offline-mode";
+import { startableListTracks } from "../lib/use-play-queue";
 import { qk } from "../lib/query-keys";
 import { QUERY_STALE_TIME } from "../lib/query-policy";
 import {
@@ -182,9 +182,7 @@ export function SiriMediaBridge() {
         const loadedQueue = entity
           ? await loadSiriMediaQueue(entity, controller.signal, catalog)
           : await catalog.listRecent(100, { signal: controller.signal });
-        const playableQueue = loadedQueue.filter((track) =>
-          canStartTrack(track, isTrackPlayableOffline),
-        );
+        const playableQueue = startableListTracks(loadedQueue);
         if (!playableQueue.length) {
           diagnosticsLog.append({
             scope: "siri",

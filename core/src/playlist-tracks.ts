@@ -22,8 +22,8 @@ export function queuedTidalCount(entries: readonly { source?: string }[]): numbe
 }
 
 /**
- * How many entries auto-download is still saving, as the server counts them.
- * That leaves out failed downloads, which wait out a backoff of up to a day:
+ * How many entries auto-download is saving, as the server counts them. That
+ * leaves out failed downloads while they wait out a backoff of up to a day:
  * counting every row still on TIDAL kept a screen polling and showing them as
  * "saving" all that time. Servers without `tidal_queued` fall back to it.
  */
@@ -31,6 +31,22 @@ export function playlistTidalQueued(
   data: Pick<PlaylistTracks, "tracks" | "tidal_queued"> | undefined,
 ): number {
   return data?.tidal_queued ?? queuedTidalCount(data?.tracks ?? []);
+}
+
+/**
+ * When a playlist screen should refetch next to see auto-download progress:
+ * every 20 s while entries are queued, otherwise once the next failed
+ * download's retry is due (never sooner than 20 s, so clock skew can't make
+ * it spin), otherwise not at all.
+ */
+export function playlistAutoDownloadRefetchMs(
+  data: Pick<PlaylistTracks, "tracks" | "tidal_queued" | "tidal_retry_at"> | undefined,
+  now = Date.now(),
+): number | false {
+  if (playlistTidalQueued(data) > 0) return PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS;
+  const retryAt = data?.tidal_retry_at ? Date.parse(data.tidal_retry_at) : Number.NaN;
+  if (Number.isNaN(retryAt)) return false;
+  return Math.max(retryAt - now, PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS);
 }
 
 /**

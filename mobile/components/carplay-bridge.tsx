@@ -50,9 +50,9 @@ import { downloadStore } from "../lib/downloads";
 import {
   isTrackPlayableOffline,
   offlineStore,
-  startableTracks,
   useIsOffline,
 } from "../lib/offline-mode";
+import { startableListTracks } from "../lib/use-play-queue";
 import { qk } from "../lib/query-keys";
 import { QUERY_STALE_TIME } from "../lib/query-policy";
 import {
@@ -187,8 +187,10 @@ export function CarPlayBridge() {
   /** Track lists reachable from a row tap: the tabs, plus what's been pushed. */
   const tabListsRef = useRef(new Map<string, TrackedList>());
   const pushedRef = useRef(new Map<string, TrackedList>());
-  /** The installed tabs, for iOS 16's stand-in for selecting one. */
+  /** The installed tabs, and the copies iOS 16 pushes in place of selecting
+   *  one (pushed id → tab id), which follow their tab's updates. */
   const tabsRef = useRef<CarPlayListTemplate[]>([]);
+  const tabCopiesRef = useRef(new Map<string, string>());
 
   const enabled = connected && signedIn;
   const recent = useQuery({
@@ -348,12 +350,17 @@ export function CarPlayBridge() {
     if (installedKeyRef.current !== installKey) {
       installedKeyRef.current = installKey;
       pushedRef.current.clear();
+      tabCopiesRef.current.clear();
       void installRoot(signedIn, sessionLocked, tabs);
       return;
     }
 
     if (!signedIn) return;
     for (const tab of tabs) void updateCarPlayList(tab);
+    for (const [id, tabId] of tabCopiesRef.current) {
+      const tab = tabs.find((candidate) => candidate.id === tabId);
+      if (tab) void updateCarPlayList(tabCopy(tab, id));
+    }
   }, [installKey, sessionLocked, signedIn, tabs]);
 
   // Move the playing indicator on lists the user already pushed, and re-dim
@@ -468,7 +475,8 @@ export function CarPlayBridge() {
 
   const listFor = useCallback(
     (templateId: string) =>
-      pushedRef.current.get(templateId) ?? tabListsRef.current.get(templateId),
+      pushedRef.current.get(templateId) ??
+      tabListsRef.current.get(tabCopiesRef.current.get(templateId) ?? templateId),
     [],
   );
 
@@ -498,15 +506,13 @@ export function CarPlayBridge() {
               await selectCarPlayTab(tabId);
               return;
             }
-            const id = pushedTemplateId(destination);
-            // Track lists are tracked like any pushed list, so their rows and
-            // Play/Shuffle work and the playing indicator follows along.
-            const tracks = tabListsRef.current.get(tabId);
+            // The copy is updated with its tab (a list still loading fills
+            // in), and its rows play from the tab's list.
             const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
-            const template = tracks
-              ? trackList(id, tracks.title, tracks.tracks)
-              : tab && { ...tab, id, tabTitle: undefined, tabSymbol: undefined };
-            if (template) await pushCarPlayList(template);
+            if (!tab) return;
+            const id = pushedTemplateId(destination);
+            tabCopiesRef.current.set(id, tabId);
+            await pushCarPlayList(tabCopy(tab, id));
             return;
           }
 
@@ -534,7 +540,7 @@ export function CarPlayBridge() {
           // still plays in the car rather than raising an alert on the phone.
           // Play respects whatever shuffle mode is set, matching the phone.
           case "play-list": {
-            const startable = startableTracks(listFor(templateId)?.tracks);
+            const startable = startableListTracks(listFor(templateId)?.tracks);
             if (!startListPlayback(controls.play, startable, shuffle)) return;
             await pushCarPlayNowPlaying();
             return;
@@ -544,7 +550,7 @@ export function CarPlayBridge() {
           // queue: `setShuffle` would otherwise reorder the queue this render
           // still thinks is playing, not the one we're about to start.
           case "shuffle-list": {
-            const startable = startableTracks(listFor(templateId)?.tracks);
+            const startable = startableListTracks(listFor(templateId)?.tracks);
             if (!startable.length) return;
             const shuffled = fisherYatesWithAnchor(startable, null);
             if (!shuffle) controls.setShuffle(true);
@@ -562,7 +568,7 @@ export function CarPlayBridge() {
         void finishCarPlaySelection(selectionId);
       }
     },
-    [controls, listFor, shuffle, templateFor, trackList],
+    [controls, listFor, shuffle, templateFor],
   );
 
   useEffect(() => {
@@ -674,6 +680,12 @@ async function load<T>(
   } catch {
     return cached;
   }
+}
+
+/** A tab's list, pushed under its own id: what iOS 16 shows in place of
+ *  selecting the tab. */
+function tabCopy(tab: CarPlayListTemplate, id: string): CarPlayListTemplate {
+  return { ...tab, id, tabTitle: undefined, tabSymbol: undefined };
 }
 
 /** Playlist names come from the Playlists tab, which is always cached by the

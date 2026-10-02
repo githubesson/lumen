@@ -830,10 +830,13 @@ export interface PlaylistTrackEntry {
 export interface PlaylistTracks {
   tracks: PlaylistTrackEntry[];
   /**
-   * TIDAL entries auto-download has yet to save, failed downloads excluded.
-   * Missing from older servers; read it through `playlistTidalQueued`.
+   * TIDAL entries auto-download saves next; a failed download counts again
+   * once its retry is due. Missing from older servers; read it through
+   * `playlistTidalQueued`.
    */
   tidal_queued?: number;
+  /** When the next failed download is retried (RFC 3339), if one waits. */
+  tidal_retry_at?: string;
 }
 
 export interface TidalStatus {

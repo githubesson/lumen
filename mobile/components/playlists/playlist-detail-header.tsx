@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -32,6 +32,7 @@ import {
   usePlaylistDownload,
 } from "../../lib/downloads";
 import { useIsOffline } from "../../lib/offline-mode";
+import { useImageFailure } from "../../lib/use-image-failure";
 import type { ThemeTokens } from "../../theme/theme";
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
@@ -75,9 +76,8 @@ export function PlaylistHero({
         Math.round(size * PixelRatio.get()),
       )
     : null;
-  // Keyed by URL, so a new cover gets a fresh attempt.
-  const [failedUri, setFailedUri] = useState<string | null>(null);
-  const showCustom = customUri != null && failedUri !== customUri;
+  const customCoverFailure = useImageFailure(customUri);
+  const showCustom = customUri != null && !customCoverFailure.failed;
   const covers = useMemo(() => {
     const seen = new Set<string>();
     const unique: TrackListItem[] = [];
@@ -131,7 +131,7 @@ export function PlaylistHero({
             cachePolicy="memory-disk"
             priority="high"
             recyclingKey={customUri}
-            onError={() => setFailedUri(customUri)}
+            onError={customCoverFailure.onError}
           />
         ) : cells.length === 0 ? (
           <SymbolView
