@@ -10,11 +10,15 @@ import {
 } from "react";
 import { api, type TrackListItem } from "../api";
 import { useAuth } from "../auth/auth-core";
-import { withFavoriteId } from "./favorite-toggle";
+import { createToggleGuard, withFavoriteId } from "./favorite-toggle";
 
 export interface FavoritesState {
   ids: Set<string>;
-  /** Latest fetched rows, shared with Home to avoid a second startup request. */
+  /**
+   * Favorited rows, most recent first, shared with Home to avoid a second
+   * startup request. Always agrees with `ids`: a row leaves when its track is
+   * unfavorited, and a newly favorited track's row arrives with a refetch.
+   */
   tracks: TrackListItem[];
   loading: boolean;
   error: string | null;
@@ -32,16 +36,19 @@ const Ctx = createContext<FavoritesState | null>(null);
  * This is the web client's provider. The mobile app deliberately does not use
  * it: it keeps favorites in the React Query cache instead, which lets a single
  * row subscribe to its own boolean rather than re-rendering every row on any
- * toggle. Both share {@link withFavoriteId}/`withFavorite` so the transition
- * and rollback rules stay identical across the two storage strategies.
+ * toggle. Both share {@link withFavoriteId}/`withFavorite` and the in-flight
+ * guard, so the transition and rollback rules stay identical across the two
+ * storage strategies.
  */
 export function FavoritesProvider({ children }: { children: ReactNode }) {
   const { status } = useAuth();
   const [ids, setIds] = useState<Set<string>>(new Set());
-  const [tracks, setTracks] = useState<TrackListItem[]>([]);
+  const [rows, setRows] = useState<TrackListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const rowsRequestRef = useRef<AbortController | null>(null);
+  const [toggleGuard] = useState(createToggleGuard);
   // Mirrors `ids` for the callbacks below, so they can stay referentially
   // stable. Written from an effect (never during render) plus optimistically
   // inside `toggle`.
@@ -52,15 +59,17 @@ export function FavoritesProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     requestRef.current?.abort();
+    // A full refresh brings the rows too.
+    rowsRequestRef.current?.abort();
     const controller = new AbortController();
     requestRef.current = controller;
     setLoading(true);
     setError(null);
     try {
-      const rows = await api.listFavorites({ signal: controller.signal });
+      const fetched = await api.listFavorites({ signal: controller.signal });
       if (controller.signal.aborted) return;
-      setTracks(rows);
-      setIds(new Set(rows.map((t) => t.id)));
+      setRows(fetched);
+      setIds(new Set(fetched.map((t) => t.id)));
     } catch (err) {
       if (controller.signal.aborted) return;
       setError("Could not load favorites.");
@@ -78,32 +87,56 @@ export function FavoritesProvider({ children }: { children: ReactNode }) {
     // local cache when it transitions to authenticated.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (status === "authed") void refresh();
-    return () => requestRef.current?.abort();
+    return () => {
+      requestRef.current?.abort();
+      rowsRequestRef.current?.abort();
+    };
   }, [status, refresh]);
+
+  // Fetches the row of a newly favorited track, which `toggle` (given only an
+  // id) can't build. Rows only: `ids` may already be ahead of this response,
+  // and a background fetch shouldn't flag the list as loading.
+  const syncRows = useCallback(async () => {
+    rowsRequestRef.current?.abort();
+    const controller = new AbortController();
+    rowsRequestRef.current = controller;
+    try {
+      const next = await api.listFavorites({ signal: controller.signal });
+      if (!controller.signal.aborted) setRows(next);
+    } catch {
+      // The row arrives with the next refresh instead.
+    }
+  }, []);
 
   const isFavorite = useCallback((id: string) => ids.has(id), [ids]);
 
   const toggle = useCallback(async (id: string) => {
-    // Read through the ref, and write the optimistic result back to it
-    // immediately. Closing over `ids` meant (a) `toggle`'s identity changed on
-    // every favourite change, invalidating every memoized consumer, and (b) two
-    // rapid toggles dispatched before a re-render both saw the same pre-toggle
-    // value and issued the same request.
-    const had = idsRef.current.has(id);
-    const optimistic = withFavoriteId(idsRef.current, id, !had);
-    idsRef.current = optimistic;
-    setIds(optimistic);
-    try {
-      if (had) await api.unfavorite(id);
-      else await api.favorite(id);
-    } catch {
-      // Roll back on failure, from whatever the current set is — another
-      // toggle may have landed in the meantime.
-      const rolledBack = withFavoriteId(idsRef.current, id, had);
-      idsRef.current = rolledBack;
-      setIds(rolledBack);
-    }
-  }, []);
+    await toggleGuard.run(id, async () => {
+      // Read through the ref, and write the optimistic result back to it
+      // immediately. Closing over `ids` meant (a) `toggle`'s identity changed
+      // on every favourite change, invalidating every memoized consumer, and
+      // (b) toggles of different tracks dispatched before a re-render each
+      // started from a stale set.
+      const had = idsRef.current.has(id);
+      const optimistic = withFavoriteId(idsRef.current, id, !had);
+      idsRef.current = optimistic;
+      setIds(optimistic);
+      try {
+        if (had) await api.unfavorite(id);
+        else await api.favorite(id);
+      } catch {
+        // Roll back on failure, from whatever the current set is — another
+        // toggle may have landed in the meantime.
+        const rolledBack = withFavoriteId(idsRef.current, id, had);
+        idsRef.current = rolledBack;
+        setIds(rolledBack);
+        return;
+      }
+      if (!had) void syncRows();
+    });
+  }, [toggleGuard, syncRows]);
+
+  const tracks = useMemo(() => rows.filter((row) => ids.has(row.id)), [rows, ids]);
 
   const value = useMemo<FavoritesState>(
     () => ({ ids, tracks, loading, error, isFavorite, toggle, refresh }),

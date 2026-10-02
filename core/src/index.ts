@@ -21,7 +21,12 @@ export {
   useFavorites,
   type FavoritesState,
 } from "./favorites/favorites-core";
-export { withFavorite, withFavoriteId } from "./favorites/favorite-toggle";
+export {
+  createToggleGuard,
+  withFavorite,
+  withFavoriteId,
+  type ToggleGuard,
+} from "./favorites/favorite-toggle";
 export {
   buildPeriodOptions,
   formatListeningTime,

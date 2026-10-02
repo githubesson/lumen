@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import {
   api,
+  createToggleGuard,
   useAuth,
   withFavorite,
   type TrackListItem,
@@ -19,10 +20,12 @@ import { qk } from "../lib/query-keys";
  *
  * The optimistic transition itself is core's {@link withFavorite}, shared with
  * the web provider — the two had independently written rollback logic, which
- * is precisely the part that must not differ.
+ * is precisely the part that must not differ. So is the in-flight guard: a
+ * second toggle of a track while its request is out is dropped.
  */
 
-const pendingToggles = new Set<string>();
+// Module-level, like the query cache it guards; keys carry the user id.
+const toggleGuard = createToggleGuard();
 
 /**
  * Id set per favorites snapshot. Every mounted row runs its own `select` when
@@ -91,31 +94,33 @@ export function useFavoriteActions() {
   const toggle = useCallback(
     async (track: TrackListItem) => {
       if (!userId) return;
-      const pendingKey = `${userId}:${track.id}`;
-      if (pendingToggles.has(pendingKey)) return;
-      pendingToggles.add(pendingKey);
-
       const queryKey = qk.favorites(userId);
-      await queryClient.cancelQueries({ queryKey, exact: true });
-      const current = queryClient.getQueryData<TrackListItem[]>(queryKey) ?? [];
-      const wasFavorite = current.some((item) => item.id === track.id);
-
-      queryClient.setQueryData<TrackListItem[]>(queryKey, (rows = []) =>
-        withFavorite(rows, track, !wasFavorite),
-      );
-
+      let started = false;
       try {
-        if (wasFavorite) await api.unfavorite(track.id);
-        else await api.favorite(track.id);
-      } catch {
-        // Roll back only this track so concurrent toggles for other tracks are
-        // preserved instead of restoring an entire stale array snapshot.
-        queryClient.setQueryData<TrackListItem[]>(queryKey, (rows = []) =>
-          withFavorite(rows, track, wasFavorite),
-        );
+        await toggleGuard.run(`${userId}:${track.id}`, async () => {
+          started = true;
+          await queryClient.cancelQueries({ queryKey, exact: true });
+          const current = queryClient.getQueryData<TrackListItem[]>(queryKey) ?? [];
+          const wasFavorite = current.some((item) => item.id === track.id);
+
+          queryClient.setQueryData<TrackListItem[]>(queryKey, (rows = []) =>
+            withFavorite(rows, track, !wasFavorite),
+          );
+
+          try {
+            if (wasFavorite) await api.unfavorite(track.id);
+            else await api.favorite(track.id);
+          } catch {
+            // Roll back only this track so concurrent toggles for other tracks
+            // are preserved instead of restoring an entire stale array snapshot.
+            queryClient.setQueryData<TrackListItem[]>(queryKey, (rows = []) =>
+              withFavorite(rows, track, wasFavorite),
+            );
+          }
+        });
       } finally {
-        pendingToggles.delete(pendingKey);
-        await queryClient.invalidateQueries({ queryKey, exact: true });
+        // Outside the guard, so a tap during the refetch isn't dropped.
+        if (started) await queryClient.invalidateQueries({ queryKey, exact: true });
       }
     },
     [queryClient, userId],
