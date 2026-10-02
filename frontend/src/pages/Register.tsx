@@ -1,18 +1,27 @@
+import {
+  inviteCheckErrorMessage,
+  registrationErrorMessage,
+} from "@music-library/core/auth/errors";
 import { validateRegistrationInput } from "@music-library/core/auth/validation";
 import { FormEvent, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { api, errorMessage, type InviteCheck } from "../api";
+import { api, type InviteCheck } from "../api";
 import { useAuth } from "../context/Auth";
 import { Button } from "../components/Button";
 import CenteredCard from "../components/CenteredCard";
 import ErrorBanner from "../components/ErrorBanner";
 import { Field, TextInput } from "../components/Field";
 
+// Tagged with its token, so a result never answers for a different link.
+type InviteCheckResult =
+  | { token: string; check: InviteCheck; error?: never }
+  | { token: string; check?: never; error: string };
+
 export default function Register() {
   const [params] = useSearchParams();
   const token = params.get("token") ?? "";
-  const [check, setCheck] = useState<InviteCheck | null>(null);
-  const [checking, setChecking] = useState(true);
+  const [checkResult, setCheckResult] = useState<InviteCheckResult | null>(null);
+  const [checkAttempt, setCheckAttempt] = useState(0);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -21,18 +30,27 @@ export default function Register() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!token) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setCheck({ valid: false });
-      setChecking(false);
-      return;
-    }
-    api
-      .checkInvite(token)
-      .then(setCheck)
-      .catch(() => setCheck({ valid: false }))
-      .finally(() => setChecking(false));
-  }, [token]);
+    if (!token) return;
+    let cancelled = false;
+    // A failed check says nothing about the invite, so it isn't shown as a
+    // dead one.
+    api.checkInvite(token).then(
+      (check) => {
+        if (!cancelled) setCheckResult({ token, check });
+      },
+      (err) => {
+        if (!cancelled) {
+          setCheckResult({ token, error: inviteCheckErrorMessage(err) });
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [token, checkAttempt]);
+
+  const result = checkResult?.token === token ? checkResult : null;
+  const check: InviteCheck | null = token ? (result?.check ?? null) : { valid: false };
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -48,13 +66,31 @@ export default function Register() {
       setMe(me);
       navigate("/", { replace: true });
     } catch (err) {
-      setError(errorMessage(err, "Registration failed."));
+      setError(registrationErrorMessage(err));
     } finally {
       setBusy(false);
     }
   };
 
-  if (checking) {
+  if (result?.error) {
+    return (
+      <CenteredCard title="Couldn't check invite" intro={result.error}>
+        <Button
+          variant="primary"
+          size="md"
+          className="w-full"
+          onClick={() => {
+            setCheckResult(null);
+            setCheckAttempt((n) => n + 1);
+          }}
+        >
+          Try again
+        </Button>
+      </CenteredCard>
+    );
+  }
+
+  if (!check) {
     return (
       <CenteredCard title="Checking invite">
         <p className="text-center text-sm/5 text-(--muted-foreground)">
@@ -64,7 +100,7 @@ export default function Register() {
     );
   }
 
-  if (!check?.valid) {
+  if (!check.valid) {
     return (
       <CenteredCard
         title="Invite unavailable"

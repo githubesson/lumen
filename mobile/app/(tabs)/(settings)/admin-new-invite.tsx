@@ -10,7 +10,14 @@ import { Stack, useNavigation, useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, errorMessage, type Invite, type Role } from "@music-library/core";
+import {
+  api,
+  errorMessage,
+  inviteSummary,
+  validateInviteCreationInput,
+  type Invite,
+  type Role,
+} from "@music-library/core";
 import { PrimaryButton, SecondaryButton } from "../../../components/buttons";
 import {
   FormError,
@@ -23,7 +30,6 @@ import { SegmentedControl } from "../../../components/segmented-control";
 import {
   buildInviteRegistrationUrl,
   buildInviteShareMessage,
-  validateInviteCreationInput,
 } from "../../../lib/invite-registration";
 import { qk } from "../../../lib/query-keys";
 import { useTheme } from "../../../theme/theme";
@@ -49,12 +55,15 @@ export default function AdminNewInviteScreen() {
   const validation = validateInviteCreationInput(maxUses, expiresDays);
 
   const createMutation = useMutation({
-    mutationFn: () =>
-      api.createInvite({
+    mutationFn: () => {
+      // Expiry days count from the tap, not from when the form last rendered.
+      const input = validateInviteCreationInput(maxUses, expiresDays);
+      return api.createInvite({
         target_role: role,
-        max_uses: validation.maxUses ?? undefined,
-        expires_at: validation.expiresAt,
-      }),
+        max_uses: input.maxUses ?? undefined,
+        expires_at: input.expiresAt,
+      });
+    },
     onSuccess: (invite) => {
       void queryClient.invalidateQueries({ queryKey: qk.adminInvites });
       if (!invite.token) {
@@ -211,11 +220,7 @@ export default function AdminNewInviteScreen() {
               leave this screen.
             </Text>
             <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>
-              {created.target_role === "admin" ? "Admin" : "User"} ·{" "}
-              {created.max_uses} {created.max_uses === 1 ? "use" : "uses"}
-              {created.expires_at
-                ? ` · expires ${new Date(created.expires_at).toLocaleDateString()}`
-                : " · no expiry"}
+              {inviteSummary(created, (iso) => new Date(iso).toLocaleDateString())}
             </Text>
           </View>
 
@@ -284,7 +289,7 @@ export default function AdminNewInviteScreen() {
               keyboardType="number-pad"
               editable={!createMutation.isPending}
             />
-            <FormError message={validation.expiresDaysError} />
+            <FormError message={validation.expiresError} />
           </FormField>
 
           <View accessibilityLiveRegion="assertive">

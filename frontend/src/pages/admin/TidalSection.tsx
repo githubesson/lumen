@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { tidalStatusDetails, tidalStatusErrors } from "@music-library/core/tidal/status";
+import { useTidalDeviceLogin } from "@music-library/core/tidal/device-login";
 import {
   RefreshCw as ArrowPathIcon,
   ExternalLink as ArrowTopRightOnSquareIcon,
@@ -6,13 +7,7 @@ import {
   Link as LinkIcon,
   Trash2 as TrashIcon,
 } from "lucide-react";
-import {
-  api,
-  errorMessage,
-  type MusicRoot,
-  type TidalAuthStart,
-  type TidalStatus,
-} from "../../api";
+import { api, type MusicRoot, type TidalAccount, type TidalStatus } from "../../api";
 import { Button } from "../../components/Button";
 import ErrorBanner from "../../components/ErrorBanner";
 import {
@@ -22,21 +17,6 @@ import {
 } from "../../lib/platform";
 import { useApiResource } from "../../lib/useApiResource";
 import { TidalAutoDownloadCard } from "./TidalAutoDownloadCard";
-
-function normalizeTidalVerificationURL(rawURL: string): string {
-  const trimmed = rawURL.trim();
-  if (!trimmed || /^[a-z][a-z\d+.-]*:/i.test(trimmed)) return trimmed;
-
-  try {
-    const url = new URL(`https://${trimmed.replace(/^\/{2}/, "")}`);
-    if (url.hostname === "tidal.com" || url.hostname.endsWith(".tidal.com")) {
-      return url.href;
-    }
-  } catch {
-    // Let the platform URL validation return the user-facing error.
-  }
-  return trimmed;
-}
 
 const cardStyle = {
   padding: "16px 18px",
@@ -70,108 +50,51 @@ export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
     "Failed to load TIDAL status.",
     { cacheKey: "admin:tidal" },
   );
-  const [busy, setBusy] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const error = actionError ?? loadError;
-  const [notice, setNotice] = useState<string | null>(null);
-  const [flow, setFlow] = useState<TidalAuthStart | null>(null);
-
-  useEffect(() => {
-    if (!flow) return;
-    const controller = new AbortController();
-    const expiresIn = Date.parse(flow.expires_at) - Date.now();
-    void api
-      .waitForTidalAuthorization(flow.flow_id, {
-        signal: controller.signal,
-        timeoutMs: Number.isFinite(expiresIn)
-          ? Math.max(2500, expiresIn + 5000)
-          : undefined,
-      })
-      .then((result) => {
-        setFlow(null);
-        if (result.state === "linked") {
-          setNotice(
-            result.account?.user_id
-              ? `TIDAL account ${result.account.user_id} linked.`
-              : "TIDAL account linked.",
-          );
-          reload();
-          return;
-        }
-        setActionError(result.message || `TIDAL sign-in ${result.state}.`);
-      })
-      .catch((err) => {
-        if (err instanceof Error && err.name === "AbortError") return;
-        setFlow(null);
-        setActionError(errorMessage(err, "Could not complete TIDAL sign-in."));
-      });
-
-    return () => controller.abort();
-  }, [flow, reload]);
+  const {
+    flow,
+    starting,
+    unlinkingId,
+    error: actionError,
+    notice,
+    start,
+    reopen,
+    unlink,
+    clearError,
+  } = useTidalDeviceLogin<Window | null>({
+    openVerification: (url, reservedWindow) => openExternal(url, reservedWindow),
+    onAccountsChanged: reload,
+  });
+  const busy = starting || unlinkingId !== null;
+  const errors = tidalStatusErrors(actionError ?? loadError, status);
+  const { proxy, country, quality, version } = tidalStatusDetails(status);
 
   const details: Array<[string, string, boolean]> = [
-    ["Proxy", status?.proxy_url || "not configured", true],
-    ["Country", status?.country_code || "US", false],
-    ["Quality", status?.quality || "LOSSLESS", false],
-    ["Version", status?.version || "unknown", false],
+    ["Proxy", proxy, true],
+    ["Country", country, false],
+    ["Quality", quality, false],
+    ["Version", version, false],
   ];
 
   const connected = Boolean(status?.connected);
   const accounts = status?.accounts ?? [];
 
-  const openVerification = async (url: string, reservedWindow?: Window | null) => {
-    const opened = await openExternal(
-      normalizeTidalVerificationURL(url),
-      reservedWindow,
-    );
-    if (!opened.ok) {
-      setActionError(opened.error || "Could not open the TIDAL sign-in page.");
-      return;
-    }
-    setActionError(null);
-  };
-
   const startAuth = async () => {
     // Browser popup eligibility only lasts for the synchronous click handler.
     // Reserve the tab now, then navigate it when the API returns the TIDAL URL.
     const reservedWindow = reserveExternalWindow();
-    setBusy("link");
-    setActionError(null);
-    setNotice(null);
-    try {
-      const started = await api.startTidalAuth();
-      setFlow(started);
-      await openVerification(started.verification_url, reservedWindow);
-    } catch (err) {
-      setActionError(errorMessage(err, "Could not start TIDAL sign-in."));
-      closeExternalWindow(reservedWindow);
-    } finally {
-      setBusy(null);
-    }
+    if (!(await start(reservedWindow))) closeExternalWindow(reservedWindow);
   };
 
-  const removeAccount = async (accountID: string, userID: string) => {
-    if (!window.confirm(`Unlink TIDAL account ${userID || accountID}?`)) return;
-    setBusy(accountID);
-    setActionError(null);
-    setNotice(null);
-    try {
-      await api.removeTidalAccount(accountID);
-      setNotice("TIDAL account unlinked.");
-      // Keep the row busy until the refreshed list drops the unlinked account.
-      await reload();
-    } catch (err) {
-      setActionError(errorMessage(err, "Could not unlink the TIDAL account."));
-    } finally {
-      setBusy(null);
-    }
+  const removeAccount = (account: TidalAccount) => {
+    if (!window.confirm(`Unlink TIDAL account ${account.user_id || account.id}?`)) return;
+    void unlink(account);
   };
 
   return (
     <section aria-labelledby="tidal-account">
-      {error && <ErrorBanner message={error} />}
-      {status?.error && <ErrorBanner message={status.error} />}
-      {status?.management_error && <ErrorBanner message={status.management_error} />}
+      {errors.map((message) => (
+        <ErrorBanner key={message} message={message} />
+      ))}
 
       {notice && (
         <div
@@ -240,7 +163,7 @@ export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
             <Button
               size="sm"
               onClick={() => {
-                setActionError(null);
+                clearError();
                 reload();
               }}
               disabled={loading}
@@ -259,9 +182,9 @@ export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
               variant="primary"
               leadingIcon={<LinkIcon className="size-3.5" />}
               onClick={() => void startAuth()}
-              disabled={busy !== null || !!flow || !connected || !status?.management_supported}
+              disabled={busy || !!flow || !connected || !status?.management_supported}
             >
-              {busy === "link" ? "Starting..." : "Link account"}
+              {starting ? "Starting..." : "Link account"}
             </Button>
           </div>
 
@@ -315,10 +238,10 @@ export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
                     size="sm"
                     variant="danger"
                     leadingIcon={<TrashIcon className="size-3.5" />}
-                    disabled={busy !== null}
-                    onClick={() => void removeAccount(account.id, account.user_id)}
+                    disabled={busy}
+                    onClick={() => removeAccount(account)}
                   >
-                    {busy === account.id ? "Unlinking..." : "Unlink"}
+                    {unlinkingId === account.id ? "Unlinking..." : "Unlink"}
                   </Button>
                 )}
               </div>
@@ -354,7 +277,7 @@ export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
                 <Button
                   size="sm"
                   leadingIcon={<ArrowTopRightOnSquareIcon className="size-3.5" />}
-                  onClick={() => void openVerification(flow.verification_url)}
+                  onClick={() => void reopen()}
                 >
                   Open TIDAL
                 </Button>

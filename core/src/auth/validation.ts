@@ -19,12 +19,7 @@ export function validateRegistrationInput(
     Array.from(username).length >= 2
       ? null
       : "Username must be at least 2 characters.";
-  const passwordError =
-    Array.from(password).length < 8
-      ? "Password must be at least 8 characters."
-      : utf8ByteLength(password) > 256
-        ? "Password must be no more than 256 bytes."
-        : null;
+  const passwordError = passwordRuleError(password);
 
   return {
     username,
@@ -32,6 +27,42 @@ export function validateRegistrationInput(
     passwordError,
     valid: usernameError === null && passwordError === null,
   };
+}
+
+export type PasswordChangeValidation = {
+  currentError: string | null;
+  passwordError: string | null;
+  confirmError: string | null;
+  valid: boolean;
+};
+
+/**
+ * A new password follows the registration rule. The current one is only
+ * checked for presence: the server is the judge of whether it's right.
+ */
+export function validatePasswordChange(
+  current: string,
+  next: string,
+  confirm: string,
+): PasswordChangeValidation {
+  const currentError = current ? null : "Enter your current password.";
+  const passwordError = passwordRuleError(next);
+  const confirmError = confirm === next ? null : "Passwords don't match.";
+  return {
+    currentError,
+    passwordError,
+    confirmError,
+    valid:
+      currentError === null && passwordError === null && confirmError === null,
+  };
+}
+
+function passwordRuleError(password: string): string | null {
+  return Array.from(password).length < 8
+    ? "Password must be at least 8 characters."
+    : utf8ByteLength(password) > 256
+      ? "Password must be no more than 256 bytes."
+      : null;
 }
 
 function utf8ByteLength(value: string): number {

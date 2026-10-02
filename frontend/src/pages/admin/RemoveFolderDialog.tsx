@@ -1,3 +1,7 @@
+import {
+  musicRootName,
+  musicRootRemoval,
+} from "@music-library/core/admin/music-roots";
 import { useState } from "react";
 import { api, errorMessage, type MusicRoot } from "../../api";
 import { Button } from "../../components/Button";
@@ -12,14 +16,11 @@ import ErrorBanner from "../../components/ErrorBanner";
  */
 export function RemoveFolderDialog({
   root,
-  coveredBy,
   open,
   onClose,
   onRemoved,
 }: {
   root: MusicRoot | null;
-  /** Path of a still-watched folder that contains this one, if any. */
-  coveredBy: string | null;
   open: boolean;
   onClose: () => void;
   onRemoved: (result: { purged: boolean; deletedTracks: number }) => void | Promise<void>;
@@ -27,8 +28,10 @@ export function RemoveFolderDialog({
   const [busy, setBusy] = useState<"keep" | "purge" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const { canPurge, coveredBy } = musicRootRemoval(root ?? {});
+
   const remove = async (purge: boolean) => {
-    if (!root || busy) return;
+    if (!root || busy || (purge && !canPurge)) return;
     setBusy(purge ? "purge" : "keep");
     setError(null);
     try {
@@ -48,7 +51,7 @@ export function RemoveFolderDialog({
     onClose();
   };
 
-  const name = root ? root.label || root.path : "";
+  const name = root ? musicRootName(root) : "";
   return (
     <DialogShell
       open={open}
@@ -59,7 +62,7 @@ export function RemoveFolderDialog({
           <Button variant="ghost" onClick={close} disabled={busy !== null}>
             Cancel
           </Button>
-          {coveredBy ? (
+          {!canPurge ? (
             <Button
               variant="danger"
               onClick={() => void remove(false)}
@@ -97,8 +100,6 @@ export function RemoveFolderDialog({
           as its own folder. Nothing on disk is deleted.
         </p>
         {coveredBy ? (
-          // Removing the tracks here would only last until the next scan of
-          // the outer folder brings them back as new rows, minus their history.
           <p style={{ margin: 0, color: "var(--muted-foreground)" }}>
             It&apos;s inside{" "}
             <span className="font-mono" style={{ wordBreak: "break-all" }}>

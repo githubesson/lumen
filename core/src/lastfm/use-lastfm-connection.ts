@@ -104,3 +104,50 @@ export function useLastFMConnection({
 
   return { status, busy, error, connect, disconnect };
 }
+
+export type LastFMConnectionKind =
+  | "checking"
+  | "unavailable"
+  | "connected"
+  | "pending"
+  | "disconnected";
+
+/**
+ * Where the Last.fm connection stands, described for a settings row. The
+ * hook's own error (a failed connect, say) wins over the server's last one.
+ */
+export function lastFMConnectionState(
+  status: LastFMStatus | null,
+  error?: string | null,
+): { kind: LastFMConnectionKind; description: string; error: string | null } {
+  const shownError = error || status?.last_error || null;
+  if (!status) {
+    return { kind: "checking", description: "Checking…", error: shownError };
+  }
+  if (!status.configured) {
+    return {
+      kind: "unavailable",
+      description: "Not set up on this server.",
+      error: shownError,
+    };
+  }
+  if (status.connected) {
+    return {
+      kind: "connected",
+      description: `Scrobbling as ${status.username || "your account"}.`,
+      error: shownError,
+    };
+  }
+  if (status.pending) {
+    return {
+      kind: "pending",
+      description: "Waiting for you to approve Lumen on Last.fm.",
+      error: shownError,
+    };
+  }
+  return {
+    kind: "disconnected",
+    description: "Send what you play to your Last.fm profile.",
+    error: shownError,
+  };
+}

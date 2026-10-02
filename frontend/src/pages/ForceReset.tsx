@@ -1,6 +1,8 @@
+import { passwordChangeErrorMessage } from "@music-library/core/auth/errors";
+import { validatePasswordChange } from "@music-library/core/auth/validation";
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, errorMessage } from "../api";
+import { api } from "../api";
 import { useAuth } from "../context/Auth";
 import { Button } from "../components/Button";
 import CenteredCard from "../components/CenteredCard";
@@ -20,18 +22,23 @@ export default function ForceReset() {
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setError(null);
-    if (next !== confirm) {
-      setError("Passwords do not match.");
+    const validation = validatePasswordChange(current, next, confirm);
+    if (!validation.valid) {
+      setError(
+        validation.currentError ??
+          validation.passwordError ??
+          validation.confirmError,
+      );
       return;
     }
+    setError(null);
     setBusy(true);
     try {
       await api.resetPassword(current, next);
       await refresh();
       navigate("/", { replace: true });
     } catch (err) {
-      setError(errorMessage(err, "Reset failed."));
+      setError(passwordChangeErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -63,7 +70,6 @@ export default function ForceReset() {
             type="password"
             autoComplete="new-password"
             name="new"
-            minLength={8}
             value={next}
             onChange={(e) => setNext(e.target.value)}
             required
@@ -75,7 +81,6 @@ export default function ForceReset() {
             type="password"
             autoComplete="new-password"
             name="confirm"
-            minLength={8}
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             required

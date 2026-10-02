@@ -1,3 +1,4 @@
+import { tidalAutoDownloadProblems } from "@music-library/core/tidal/status";
 import { useMemo, useState, type FormEvent } from "react";
 import {
   RefreshCw as ArrowPathIcon,
@@ -135,12 +136,9 @@ export function TidalAutoDownloadCard({ roots }: { roots: MusicRoot[] | null }) 
       </div>
 
       {error && <ErrorBanner message={error} />}
-      {status && !status.ffmpeg && (
-        <ErrorBanner message="ffmpeg is not installed on the server, so downloads are paused." />
-      )}
-      {status?.destination_error && (
-        <ErrorBanner message={`Download folder unavailable: ${status.destination_error}`} />
-      )}
+      {tidalAutoDownloadProblems(status).map((problem) => (
+        <ErrorBanner key={problem} message={problem} />
+      ))}
 
       <div
         style={{
