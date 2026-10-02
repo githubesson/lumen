@@ -8,7 +8,7 @@ import {
   X as XMarkIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useLastFMConnection } from "@music-library/core";
+import { lastFMConnectionState, useLastFMConnection } from "@music-library/core";
 import { useTheme, type Density, type Layout, type Theme } from "../context/Theme";
 import { useAudioOutput, useAudioOutputDevices } from "../lib/audioOutput";
 import { useKey, useModalKeyScope } from "../lib/keybindings";
@@ -181,16 +181,7 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
     if (section) setActive(section);
   }, [open, section]);
 
-  const lastFMState = !lastFM
-    ? "Checking…"
-    : !lastFM.configured
-      ? "Not set up on this server."
-      : lastFM.connected
-        ? `Scrobbling as ${lastFM.username || "your account"}.`
-        : lastFM.pending
-          ? "Waiting for you to approve Lumen on Last.fm."
-          : "Send what you play to your Last.fm profile.";
-  const lastFMErrorText = lastFMError || lastFM?.last_error;
+  const lastFMState = lastFMConnectionState(lastFM, lastFMError);
 
   const sections: SectionDef[] = [
     {
@@ -326,8 +317,8 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
           render: () => (
             <SettingRow
               label="Last.fm scrobbling"
-              description={lastFMState}
-              error={lastFMErrorText}
+              description={lastFMState.description}
+              error={lastFMState.error}
             >
               {lastFM?.configured &&
                 (lastFM.connected ? (

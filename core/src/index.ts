@@ -99,3 +99,4 @@ export {
   type TidalVerificationOpenResult,
 } from "./tidal/use-tidal-device-login";
 export * from "./auth/errors";
+export { lastFMConnectionState, type LastFMConnectionKind } from "./lastfm/use-lastfm-connection";
