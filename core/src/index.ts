@@ -93,3 +93,4 @@ export * from "./playlist-details";
 export * from "./playlist-tracks";
 export * from "./replay/replay";
 export { useLocalDay, type ResumeSubscriber } from "./replay/use-local-day";
+export { useShareLinkSession } from "./share-link-session";
