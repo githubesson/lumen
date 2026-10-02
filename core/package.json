@@ -30,7 +30,9 @@
     "./auth/validation": "./src/auth/validation.ts",
     "./playlist-permissions": "./src/playlist-permissions.ts",
     "./playlist-details": "./src/playlist-details.ts",
-    "./playlist-tracks": "./src/playlist-tracks.ts"
+    "./playlist-tracks": "./src/playlist-tracks.ts",
+    "./replay/replay": "./src/replay/replay.ts",
+    "./replay/use-local-day": "./src/replay/use-local-day.ts"
   },
   "peerDependencies": {
     "react": "^18.3.1 || ^19.0.0"

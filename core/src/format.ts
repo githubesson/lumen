@@ -59,9 +59,15 @@ export function formatBytes(bytes: number | null | undefined): string {
   return `${v.toFixed(i === 0 || v >= 100 ? 0 : 1)} ${units[i]}`;
 }
 
-/** "1 track" / "2 tracks". */
-export function pluralize(n: number, singular: string, plural?: string): string {
-  return `${n} ${n === 1 ? singular : (plural ?? `${singular}s`)}`;
+/** "1 track" / "2 tracks"; `locale` groups the count ("1,234 plays"). */
+export function pluralize(
+  n: number,
+  singular: string,
+  plural?: string,
+  options?: { locale?: boolean },
+): string {
+  const count = options?.locale ? n.toLocaleString() : String(n);
+  return `${count} ${n === 1 ? singular : (plural ?? `${singular}s`)}`;
 }
 
 /**

@@ -13,6 +13,12 @@ import * as Haptics from "expo-haptics";
 import {
   ApiError,
   api,
+  playsById as playsByIdFor,
+  replayImageFilename,
+  replayImageRequest,
+  replayPlaylistRequest,
+  replayRequest,
+  useLocalDay,
   type ReplayAlbum,
   type ReplayData,
   type TrackListItem,
@@ -29,8 +35,6 @@ import { HorizontalShelf } from "../../../components/horizontal-shelf";
 import { Section } from "../../../components/section";
 import {
   buildPeriodOptions,
-  periodKey,
-  periodRange,
   periodTitle,
   type Period,
 } from "../../../components/replay/period";
@@ -48,6 +52,7 @@ import { usePlayQueue } from "../../../lib/use-play-queue";
 import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme } from "../../../theme/theme";
 import { isShareDismissal } from "../../../lib/share-dismissal";
+import { subscribeAppActive } from "../../../lib/app-resume";
 
 export default function ReplayScreen() {
   const theme = useTheme();
@@ -58,9 +63,18 @@ export default function ReplayScreen() {
   const [generating, setGenerating] = useState(false);
   const [sharingImage, setSharingImage] = useState(false);
 
-  const range = useMemo(() => periodRange(period), [period]);
+  // Rolling periods ("this month", "last 30 days") move with the date: the
+  // range is recomputed when the local day changes, and the cache (persisted
+  // to disk) keys on the days it covers, so a previous window's answer never
+  // comes back under the current one.
+  const today = useLocalDay(subscribeAppActive);
+  const request = useMemo(
+    () => ({ ...replayRequest(period), asOf: today }),
+    [period, today],
+  );
+  const { range } = request;
   const replayQuery = useQuery<ReplayData, ApiError>({
-    queryKey: qk.replay(periodKey(period)),
+    queryKey: qk.replay(request.cacheKey),
     queryFn: ({ signal }) => api.getReplay(range, { signal }),
     staleTime: QUERY_STALE_TIME.replay,
   });
@@ -76,11 +90,7 @@ export default function ReplayScreen() {
     () => (data?.top_tracks ?? []) as TrackListItem[],
     [data?.top_tracks],
   );
-  const playsById = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const t of data?.top_tracks ?? []) m.set(t.id, t.plays);
-    return m;
-  }, [data?.top_tracks]);
+  const playsById = useMemo(() => playsByIdFor(data?.top_tracks), [data?.top_tracks]);
   const onTrackPress = usePlayQueue(topTracks);
 
   const onAlbumPress = useCallback(
@@ -106,13 +116,9 @@ export default function ReplayScreen() {
     void Haptics.selectionAsync();
     setGenerating(true);
     try {
-      const r = periodRange(period);
-      const playlist = await api.generateReplayPlaylist({
-        from: r.from,
-        to: r.to,
-        name: `Replay · ${periodTitle(period)}`,
-        limit: 50,
-      });
+      const playlist = await api.generateReplayPlaylist(
+        replayPlaylistRequest(period, range),
+      );
       router.push({
         pathname: "/(tabs)/(playlists)/[id]",
         params: { id: playlist.id },
@@ -125,27 +131,19 @@ export default function ReplayScreen() {
     } finally {
       setGenerating(false);
     }
-  }, [data, period, router]);
+  }, [data, period, range, router]);
 
   const onShareImage = useCallback(async () => {
     if (!data || data.summary.total_plays === 0) return;
     void Haptics.selectionAsync();
     setSharingImage(true);
     try {
-      const r = periodRange(period);
-      const res = await api.getReplayImage({
-        from: r.from,
-        to: r.to,
-        title: periodTitle(period),
-      });
+      const res = await api.getReplayImage(replayImageRequest(period, range));
       const bytes = new Uint8Array(await res.arrayBuffer());
 
       const dir = new Directory(Paths.cache, "replay-share");
       dir.create({ idempotent: true, intermediates: true });
-      const file = new File(
-        dir,
-        `replay-${periodKey(period).replace(/[^a-z0-9-]/gi, "-")}.png`,
-      );
+      const file = new File(dir, replayImageFilename(period));
       file.create({ intermediates: true, overwrite: true });
       file.write(bytes);
 
@@ -160,7 +158,7 @@ export default function ReplayScreen() {
     } finally {
       setSharingImage(false);
     }
-  }, [data, period]);
+  }, [data, period, range]);
 
   const summary = data?.summary;
   const hasData = !!summary && summary.total_plays > 0;
