@@ -6,7 +6,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import { type TrackListItem } from "@music-library/core";
+import { displayText, type TrackListItem } from "@music-library/core";
 import { CoverArt } from "../cover-art";
 import { useTheme } from "../../theme/theme";
 
@@ -33,7 +33,9 @@ export function RankedTrackRow({
     plays == null
       ? null
       : `${plays.toLocaleString()} ${plays === 1 ? "play" : "plays"}`;
-  const subtitle = [track.artist, playsLabel].filter(Boolean).join(" · ");
+  const title = displayText(track.title);
+  const artist = displayText(track.artist);
+  const subtitle = [artist, playsLabel].filter(Boolean).join(" · ");
   return (
     <Pressable
       onPress={() => {
@@ -41,9 +43,7 @@ export function RankedTrackRow({
         onPress(track);
       }}
       accessibilityRole="button"
-      accessibilityLabel={
-        track.artist ? `${track.title} by ${track.artist}` : track.title
-      }
+      accessibilityLabel={artist ? `${title} by ${artist}` : title}
       style={({ pressed }) => [
         {
           flexDirection: "row",
@@ -75,7 +75,7 @@ export function RankedTrackRow({
           numberOfLines={1}
           style={{ color: theme.color.fg, fontSize: 16, fontWeight: "500" }}
         >
-          {track.title}
+          {title}
         </Text>
         <Text
           numberOfLines={1}

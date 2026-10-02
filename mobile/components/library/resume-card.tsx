@@ -7,7 +7,7 @@ import {
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
-import { type TrackListItem } from "@music-library/core";
+import { displayText, type TrackListItem } from "@music-library/core";
 import { AdaptiveGlass } from "../adaptive-glass";
 import { CoverArt } from "../cover-art";
 import { useTheme } from "../../theme/theme";
@@ -28,6 +28,8 @@ export function ResumeCard({
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
+  const title = displayText(track.title);
+  const artist = displayText(track.artist);
   return (
     <Pressable
       onPress={() => {
@@ -35,7 +37,7 @@ export function ResumeCard({
         onPress(track);
       }}
       accessibilityRole="button"
-      accessibilityLabel={`Resume ${track.title}${track.artist ? ` by ${track.artist}` : ""}`}
+      accessibilityLabel={`Resume ${title}${artist ? ` by ${artist}` : ""}`}
       style={({ pressed }) => [{ opacity: pressed ? 0.8 : 1 }, style]}
     >
       <AdaptiveGlass
@@ -60,14 +62,14 @@ export function ResumeCard({
               numberOfLines={1}
               style={{ color: theme.color.fg, fontSize: 17, fontWeight: "600" }}
             >
-              {track.title}
+              {title}
             </Text>
-            {track.artist ? (
+            {artist ? (
               <Text
                 numberOfLines={1}
                 style={{ color: theme.color.fgMuted, fontSize: 14 }}
               >
-                {track.artist}
+                {artist}
               </Text>
             ) : null}
           </View>

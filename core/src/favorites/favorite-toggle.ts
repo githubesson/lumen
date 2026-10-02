@@ -42,3 +42,31 @@ export function withFavorite<T extends { id: string }>(
   if (favorited) return present ? rows : [track, ...rows];
   return present ? rows.filter((row) => row.id !== track.id) : rows;
 }
+
+/**
+ * Drops a second toggle of a track while its first is still in flight. Two
+ * concurrent requests for one track (favorite, then unfavorite) can land in
+ * either order, leaving the server opposite to what the UI shows; dropping the
+ * second tap keeps them in step. Keys are per track (per user on mobile, whose
+ * guard outlives a session).
+ */
+export interface ToggleGuard {
+  /** Runs `task` unless one is in flight for `key`; resolves whether it ran. */
+  run(key: string, task: () => Promise<void>): Promise<boolean>;
+}
+
+export function createToggleGuard(): ToggleGuard {
+  const pending = new Set<string>();
+  return {
+    async run(key, task) {
+      if (pending.has(key)) return false;
+      pending.add(key);
+      try {
+        await task();
+      } finally {
+        pending.delete(key);
+      }
+      return true;
+    },
+  };
+}

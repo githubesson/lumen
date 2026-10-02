@@ -5,6 +5,8 @@
 export * from "./api";
 export * from "./artist-releases";
 export * from "./audio-format";
+export * from "./entity-labels";
+export * from "./entity-target";
 export * from "./events";
 export * from "./format";
 export * from "./storage";
@@ -19,7 +21,12 @@ export {
   useFavorites,
   type FavoritesState,
 } from "./favorites/favorites-core";
-export { withFavorite, withFavoriteId } from "./favorites/favorite-toggle";
+export {
+  createToggleGuard,
+  withFavorite,
+  withFavoriteId,
+  type ToggleGuard,
+} from "./favorites/favorite-toggle";
 export {
   buildPeriodOptions,
   formatListeningTime,

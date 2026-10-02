@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { errorMessage, type Page, type SearchOffsets } from "../api";
+import { errorMessage, nextPageParam, type Page, type SearchOffsets } from "../api";
 import { libraryChanged } from "./events";
 import { readCache, writeCache } from "./resourceCache";
 import { reconcileItems } from "./reconcileItems";
@@ -131,9 +131,7 @@ export function usePaginatedList<T>(
         const firstPageItems = limit > pageSize ? page.items.slice(0, pageSize) : page.items;
         const collected = [...page.items];
         while (collected.length < target && !controller.signal.aborted) {
-          const more = page.nextOffsets !== undefined
-            ? Object.keys(page.nextOffsets).length > 0
-            : collected.length < page.total;
+          const more = nextPageParam(page, collected.length) !== undefined;
           if (!more || page.items.length === 0) break;
           page = await fetcherRef.current({
             searchOffsets: page.nextOffsets,
@@ -146,9 +144,7 @@ export function usePaginatedList<T>(
         }
         if (controller.signal.aborted || token !== tokenRef.current) return;
         nextOffsets.current = page.nextOffsets;
-        const more = page.nextOffsets !== undefined
-          ? Object.keys(page.nextOffsets).length > 0
-          : offset + collected.length < page.total;
+        const more = nextPageParam(page, offset + collected.length) !== undefined;
         setHasMore(more);
         const nextTotal = page.nextOffsets !== undefined && more ? null : page.total;
         setTotal(nextTotal);

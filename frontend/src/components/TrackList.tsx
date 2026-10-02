@@ -11,6 +11,7 @@ import { SquarePen as PencilSquareIcon } from "lucide-react";
 import { trackCoverUrl, type TrackListItem } from "../api";
 import { displayText, fmtDurationMs } from "../lib/format";
 import { isLocalTrack, playableTracks } from "../lib/track";
+import { trackActions } from "@music-library/core/track";
 import CoverArt from "./CoverArt";
 import { EditTrackDialog } from "./edit/EditTrackDialog";
 import { MoveToAlbumDialog } from "./edit/MoveToAlbumDialog";
@@ -133,13 +134,13 @@ export default function TrackList({
       t: TrackListItem,
       e: { preventDefault: () => void; clientX: number; clientY: number },
     ) => {
-      const canModifyLocal = isAdmin && isLocalTrack(t);
+      const actions = trackActions(t, { isAdmin });
       // onInfo is wired by default via TrackInfoProvider; the bind() helper
       // falls back to the app-wide dialog when we don't override it here.
       bind(t, {
         queue: queueRef.current,
-        onEdit: canModifyLocal ? () => setEditId(t.id) : undefined,
-        onMoveToAlbum: canModifyLocal ? () => setMoveTrack(t) : undefined,
+        onEdit: actions.editMetadata ? () => setEditId(t.id) : undefined,
+        onMoveToAlbum: actions.moveToAlbum ? () => setMoveTrack(t) : undefined,
       })(e);
     },
     [bind, isAdmin],
@@ -238,7 +239,7 @@ export default function TrackList({
                   isNow={current?.id === t.id}
                   isPlaying={isPlaying && current?.id === t.id}
                   fav={isFavorite(t.id)}
-                  canEdit={isAdmin && isLocalTrack(t)}
+                  canEdit={trackActions(t, { isAdmin }).editMetadata}
                   selectionMode={selectionMode}
                   selected={selectedIds.has(t.id)}
                   onPlay={handlePlay}

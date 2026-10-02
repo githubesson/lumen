@@ -460,7 +460,7 @@ function PadTrackActionsButton({ track }: { track: TrackListItem }) {
         onPress: actions.toggleFavorite,
       },
       { label: "Track Info", onPress: actions.openInfo },
-      { label: "Share...", onPress: actions.openShare },
+      ...(actions.canShare ? [{ label: "Share...", onPress: actions.openShare }] : []),
       { label: "Add to Playlist...", onPress: actions.openPlaylistPicker },
       {
         label: actions.downloading ? "Downloading..." : "Download File...",
@@ -472,17 +472,17 @@ function PadTrackActionsButton({ track }: { track: TrackListItem }) {
     if (actions.hasAlbum) {
       items.push({ label: "View Album", onPress: actions.openAlbum });
     }
-    if (actions.isAdmin) {
+    if (actions.canEditMetadata) {
       items.push({
         label: "Edit Metadata",
         onPress: actions.openEditMetadata,
       });
-      if (actions.hasEditableAlbum) {
-        items.push({
-          label: "Edit Album & Cover",
-          onPress: actions.openEditAlbum,
-        });
-      }
+    }
+    if (actions.hasEditableAlbum) {
+      items.push({
+        label: "Edit Album & Cover",
+        onPress: actions.openEditAlbum,
+      });
     }
     if (actions.owned) {
       items.push({

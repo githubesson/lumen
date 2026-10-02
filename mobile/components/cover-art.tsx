@@ -1,15 +1,15 @@
 import { memo, useSyncExternalStore } from "react";
 import { PixelRatio, StyleSheet, View } from "react-native";
 import { Image, type ImageProps } from "expo-image";
-import { albumCoverUrl, trackCoverUrl, resolveCoverUrl } from "@music-library/core";
+import { albumArtUrl, trackArtUrl, type TrackSource } from "@music-library/core";
 import { useTheme } from "../theme/theme";
 import { downloadStore } from "../lib/downloads";
 
 interface Props {
-  /** Track source; cover URL comes from the shared `trackCoverUrl` helper. */
-  track?: { id: string; album_id?: string | null; has_cover?: boolean };
-  /** Album source; cover URL comes from `albumCoverUrl`. */
-  album?: { id: string; has_cover?: boolean; cover_url?: string };
+  /** Track source; cover URL comes from the shared `trackArtUrl` helper. */
+  track?: { id: string; album_id?: string | null; has_cover?: boolean; cover_url?: string | null };
+  /** Album source; cover URL comes from `albumArtUrl`. */
+  album?: { id: string; has_cover?: boolean; cover_url?: string; source?: TrackSource };
   size: number;
   transitionMs?: number;
   priority?: ImageProps["priority"];
@@ -43,14 +43,13 @@ function CoverArtImpl({
     () => downloadStore.coverUriFor(track?.id),
     () => downloadStore.coverUriFor(track?.id),
   );
-  const shouldLoadCover = localCover != null || !!album?.cover_url || (track ?? album)?.has_cover !== false;
   const uri =
     localCover ??
     (track
-      ? trackCoverUrl(track, requestSize)
+      ? trackArtUrl(track, requestSize)
       : album
-        ? album.cover_url ? resolveCoverUrl(album.cover_url) : albumCoverUrl(album.id, requestSize)
-        : undefined);
+        ? albumArtUrl(album, requestSize)
+        : null);
   return (
     <View
       style={[
@@ -63,7 +62,7 @@ function CoverArtImpl({
         },
       ]}
     >
-      {shouldLoadCover && uri ? (
+      {uri ? (
         <Image
           source={{ uri }}
           style={{ width: size, height: size }}

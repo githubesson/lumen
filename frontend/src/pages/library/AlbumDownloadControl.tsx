@@ -2,10 +2,7 @@ import { useEffect, useState } from "react";
 import { Download as DownloadIcon, X as XIcon } from "lucide-react";
 import { api, errorMessage, type TrackListItem } from "../../api";
 import { Button } from "../../components/Button";
-import { downloadableAlbumTracks } from "../../lib/track";
-
-// While tracks are queued, refresh so rows flip to their library copies.
-const QUEUED_REFRESH_MS = 15_000;
+import { ALBUM_DOWNLOAD_REFRESH_MS, albumDownloadState } from "@music-library/core/track";
 
 /**
  * Admin control that saves a TIDAL release into the library: the whole album
@@ -27,14 +24,14 @@ export function AlbumDownloadControl({
 }) {
   const [busy, setBusy] = useState(false);
 
+  // While tracks are queued, refresh so rows flip to their library copies.
   useEffect(() => {
     if (queuedCount === 0) return;
-    const timer = window.setInterval(onChanged, QUEUED_REFRESH_MS);
+    const timer = window.setInterval(onChanged, ALBUM_DOWNLOAD_REFRESH_MS);
     return () => window.clearInterval(timer);
   }, [queuedCount, onChanged]);
 
-  const remaining = downloadableAlbumTracks(tracks).length;
-  const anySaved = tracks.some((t) => t.source !== "tidal");
+  const state = albumDownloadState(tracks, queuedCount);
 
   const run = async (action: () => Promise<unknown>, failure: string) => {
     setBusy(true);
@@ -48,11 +45,11 @@ export function AlbumDownloadControl({
     }
   };
 
-  if (queuedCount > 0) {
+  if (state.kind === "queued") {
     return (
       <>
         <Button disabled leadingIcon={<DownloadIcon className="size-4" />}>
-          Downloading · {queuedCount} left
+          {state.label}
         </Button>
         <Button
           variant="ghost"
@@ -67,7 +64,7 @@ export function AlbumDownloadControl({
       </>
     );
   }
-  if (remaining === 0) return null;
+  if (state.kind === "none") return null;
   return (
     <Button
       disabled={busy}
@@ -77,7 +74,7 @@ export function AlbumDownloadControl({
       title="Save these TIDAL tracks into the server library"
       leadingIcon={<DownloadIcon className="size-4" />}
     >
-      {anySaved ? `Download ${remaining} remaining` : "Download album"}
+      {state.label}
     </Button>
   );
 }

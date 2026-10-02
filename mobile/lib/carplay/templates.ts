@@ -1,7 +1,7 @@
 import {
-  albumCoverUrl,
+  albumArtUrl,
   playlistArtUrl,
-  trackCoverUrl,
+  trackArtUrl,
   type Album,
   type Playlist,
   type TrackListItem,
@@ -142,12 +142,11 @@ export function trackSubtitle(track: TrackListItem): string | undefined {
 
 /** Cover URL for a track row, or nothing when the track has no artwork. */
 export function trackArtwork(track: TrackListItem): string | undefined {
-  if (track.has_cover === false) return undefined;
-  return trackCoverUrl(track, COVER_PIXELS);
+  return trackArtUrl(track, COVER_PIXELS) ?? undefined;
 }
 
 function albumArtwork(album: Album): string | undefined {
-  return album.has_cover ? albumCoverUrl(album.id, COVER_PIXELS) : undefined;
+  return albumArtUrl(album, COVER_PIXELS) ?? undefined;
 }
 
 /** Resolves a track's artwork. The bridge substitutes downloaded covers so

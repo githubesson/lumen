@@ -1,5 +1,12 @@
 import { memo } from "react";
-import { type Album, type SearchAlbum } from "@music-library/core";
+import {
+  albumArtistName,
+  albumSubtitle,
+  displayText,
+  pluralize,
+  type Album,
+  type SearchAlbum,
+} from "@music-library/core";
 import { CoverArt } from "./cover-art";
 import { ListRow } from "./list-row";
 
@@ -12,13 +19,15 @@ interface Props<T extends Album | SearchAlbum> {
 const ART_SIZE = 40;
 
 function AlbumRowImpl<T extends Album | SearchAlbum>({ album, onPress }: Props<T>) {
+  const title = displayText(album.title);
+  const tracks = pluralize(album.track_count, "track");
   return (
     <ListRow
       onPress={() => onPress(album)}
       accessibilityLabel={
-        album.artist_name
-          ? `${album.title} by ${album.artist_name}, ${album.track_count} tracks`
-          : `${album.title}, ${album.track_count} tracks`
+        album.artist_name || album.is_compilation
+          ? `${title} by ${albumArtistName(album)}, ${tracks}`
+          : `${title}, ${tracks}`
       }
       leading={
         <CoverArt
@@ -29,9 +38,9 @@ function AlbumRowImpl<T extends Album | SearchAlbum>({ album, onPress }: Props<T
           recyclingKey={album.id}
         />
       }
-      title={album.title}
-      subtitle={[album.artist_name, "source" in album && album.source === "tidal" ? "TIDAL" : null].filter(Boolean).join(" · ")}
-      trailing={`${album.track_count} ${album.track_count === 1 ? "track" : "tracks"}`}
+      title={title}
+      subtitle={albumSubtitle(album, { trackCount: false })}
+      trailing={tracks}
     />
   );
 }

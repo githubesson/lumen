@@ -13,8 +13,10 @@ import {
 } from "expo-router";
 import {
   api,
-  pluralize,
-  trackCoverUrl,
+  artistImageUrl,
+  artistMetaParts,
+  displayText,
+  metaLine,
   useAuth,
   type TrackListItem,
 } from "@music-library/core";
@@ -94,25 +96,17 @@ export default function ArtistDetailScreen() {
   const header = useMemo(() => {
     const artist = artistQuery.data;
     if (!artist) return null;
-    const cover = tracks[0];
-    const imageUri =
-      cover && cover.has_cover !== false
-        ? trackCoverUrl(
-            cover,
-            Math.round(ARTIST_AVATAR_SIZE * PixelRatio.get()),
-          )
-        : null;
-    const detail = [
-      pluralize(artist.track_count, "track"),
-      artist.album_count > 0 && pluralize(artist.album_count, "album"),
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    const imageUri = artistImageUrl(
+      artist,
+      tracks,
+      Math.round(ARTIST_AVATAR_SIZE * PixelRatio.get()),
+    );
+    const detail = metaLine(artistMetaParts(artist));
     return (
       <View style={{ gap: theme.space.lg, paddingBottom: theme.space.sm }}>
         <ArtistHero name={artist.name} kind="Artist" imageUri={imageUri} />
         <ArtistPlayControls
-          name={artist.name}
+          name={displayText(artist.name)}
           tracks={tracks}
           detail={detail}
         />
@@ -138,7 +132,7 @@ export default function ArtistDetailScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: artistQuery.data.name }} />
+      <Stack.Screen options={{ title: displayText(artistQuery.data.name) }} />
       <FlashList
         {...TRACK_FLASH_LIST_PERFORMANCE_PROPS}
         {...dockScroll}

@@ -2,6 +2,7 @@ import { Pressable, Text, View } from "react-native";
 import { Image } from "expo-image";
 import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
+import { displayText } from "@music-library/core";
 import { useTheme } from "../theme/theme";
 
 export const ALBUM_ART_SIZE = 220;
@@ -75,14 +76,14 @@ export function AlbumHeader({
             }}
             numberOfLines={2}
           >
-            {title}
+            {displayText(title)}
           </Text>
           {artist ? (
             <Text
               style={{ fontSize: 16, color: theme.color.fgMuted }}
               numberOfLines={1}
             >
-              {artist}
+              {displayText(artist)}
             </Text>
           ) : null}
           <Text

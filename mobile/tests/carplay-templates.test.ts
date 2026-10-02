@@ -22,6 +22,7 @@ import {
   nowPlayingNavButton,
   pushedTemplateId,
   recentAlbumTiles,
+  trackArtwork,
   type CarPlayDestination,
 } from "../lib/carplay/templates";
 import type { CarPlayListItem, CarPlayListTemplate } from "../modules/carplay";
@@ -570,5 +571,17 @@ describe("browse templates", () => {
     expect(
       buildAlbumsTemplate({ limits: LIMITS, albums: undefined }).emptyTitle,
     ).toMatch(/offline/i);
+  });
+});
+
+describe("CarPlay artwork", () => {
+  it("prefers a payload's remote cover over the library endpoint", () => {
+    expect(
+      trackArtwork({ id: "t1", title: "T", duration_ms: 1, album_id: "a1", cover_url: "/api/covers/remote?u=x" }),
+    ).toContain("/api/covers/remote?u=x");
+    expect(
+      trackArtwork({ id: "t1", title: "T", duration_ms: 1, has_cover: false, cover_url: "/api/covers/remote?u=x" }),
+    ).toContain("/api/covers/remote?u=x");
+    expect(trackArtwork({ id: "t1", title: "T", duration_ms: 1, has_cover: false })).toBeUndefined();
   });
 });

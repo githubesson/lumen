@@ -1,45 +1,35 @@
 import {
-  albumCoverUrl,
-  resolveCoverUrl,
+  albumArtUrl,
+  artistImageUrl,
   type Album,
   type Artist,
   type SearchAlbum,
   type SearchArtist,
 } from "../../api";
+import { albumSubtitle, artistSubtitle } from "@music-library/core/entity-labels";
+import { searchEntityTarget, type EntityTarget } from "@music-library/core/entity-target";
 import CoverArt from "../../components/CoverArt";
-import { displayText, pluralize } from "../../lib/format";
+import { displayText } from "../../lib/format";
 
 export function AlbumCard({
   album: a,
   onOpen,
 }: {
   album: Album | SearchAlbum;
-  onOpen: (id: string) => void;
+  onOpen: (target: EntityTarget) => void;
 }) {
+  const src = albumArtUrl(a, 384);
   return (
-    <button type="button" className="card" onClick={() => onOpen(a.id)}>
+    <button type="button" className="card" onClick={() => onOpen(searchEntityTarget(a))}>
       <CoverArt
         className="card-art"
-        src={
-          "cover_url" in a && a.cover_url
-            ? resolveCoverUrl(a.cover_url, 384)
-            : a.has_cover
-              ? albumCoverUrl(a.id, 384)
-              : null
-        }
+        src={src}
         label={a.title}
-        forcePlaceholder={!("cover_url" in a && a.cover_url) && !a.has_cover}
+        forcePlaceholder={!src}
       />
       <div>
         <div className="card-title">{displayText(a.title)}</div>
-        <div className="card-sub">
-          {displayText(
-            a.artist_name ||
-              (a.is_compilation ? "Various Artists" : "Unknown artist"),
-          )}{" "}
-          · {pluralize(a.track_count, "track")}
-          {"source" in a && a.source === "tidal" && " · TIDAL"}
-        </div>
+        <div className="card-sub">{albumSubtitle(a)}</div>
       </div>
     </button>
   );
@@ -50,27 +40,21 @@ export function ArtistCard({
   onOpen,
 }: {
   artist: Artist | SearchArtist;
-  onOpen: (id: string, name?: string) => void;
+  onOpen: (target: EntityTarget, name?: string) => void;
 }) {
+  const src = artistImageUrl(a, [], 384);
   return (
-    <button type="button" className="card" onClick={() => onOpen(a.id, a.name)}>
+    <button type="button" className="card" onClick={() => onOpen(searchEntityTarget(a), a.name)}>
       <CoverArt
         className="card-art"
-        src={
-          "cover_url" in a && a.cover_url ? resolveCoverUrl(a.cover_url, 384) : null
-        }
+        src={src}
         label={a.name}
         radius={999}
-        forcePlaceholder={!("cover_url" in a && a.cover_url)}
+        forcePlaceholder={!src}
       />
       <div style={{ textAlign: "center" }}>
         <div className="card-title">{displayText(a.name)}</div>
-        <div className="card-sub">
-          {"source" in a && a.source === "tidal"
-            ? "TIDAL artist"
-            : pluralize(a.track_count, "track")}
-          {a.album_count > 0 && <> · {pluralize(a.album_count, "album")}</>}
-        </div>
+        <div className="card-sub">{artistSubtitle(a)}</div>
       </div>
     </button>
   );

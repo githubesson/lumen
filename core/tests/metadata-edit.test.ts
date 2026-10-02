@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Album, TrackDetail } from "../src/api";
-import { buildAlbumPatch, buildTrackPatch } from "../src/metadata-edit";
+import {
+  albumEditForm,
+  buildAlbumPatch,
+  buildTrackPatch,
+  trackEditForm,
+} from "../src/metadata-edit";
 
 const track: TrackDetail = {
   id: "t",
@@ -105,5 +110,48 @@ describe("metadata patches", () => {
         isCompilation: true,
       }),
     ).toEqual({ release_year: 0, album_artist: "", is_compilation: true });
+  });
+});
+
+describe("edit form seeding", () => {
+  it("seeds forms that diff to an empty patch", () => {
+    expect(trackEditForm(track)).toEqual(form);
+    expect(buildTrackPatch(track, trackEditForm(track))).toEqual({});
+    expect(albumEditForm(album)).toEqual(albumForm);
+    expect(buildAlbumPatch(album, albumEditForm(album))).toEqual({});
+  });
+  it("leaves unset fields blank and skips composer credits", () => {
+    const sparse: TrackDetail = {
+      ...track,
+      album_title: undefined,
+      year: undefined,
+      genre: undefined,
+      track_no: 0,
+      disc_no: undefined,
+      artists: [
+        { id: "a", name: "A", role: "primary" },
+        { id: "c", name: "C", role: "composer" },
+        { id: "f", name: "F", role: "featured" },
+      ],
+    };
+    expect(trackEditForm(sparse)).toEqual({
+      title: "Song",
+      artists: "A, F",
+      albumTitle: "",
+      albumArtist: "",
+      year: "",
+      genre: "",
+      trackNo: "",
+      discNo: "",
+    });
+    expect(buildTrackPatch(sparse, trackEditForm(sparse))).toEqual({});
+    const bare: Album = { ...album, artist_name: undefined, release_year: undefined, is_compilation: true };
+    expect(albumEditForm(bare)).toEqual({
+      title: "Album",
+      albumArtist: "",
+      year: "",
+      isCompilation: true,
+    });
+    expect(buildAlbumPatch(bare, albumEditForm(bare))).toEqual({});
   });
 });

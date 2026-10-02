@@ -1,10 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
 import {
   api,
+  mergeSearchWarnings,
   type Page,
   type SearchResult,
   type SearchType,
 } from "../../api";
+import type { EntityTarget } from "@music-library/core/entity-target";
 import { usePaginatedList, type PageRequest } from "../../lib/usePaginatedList";
 import TrackList from "../../components/TrackList";
 import ErrorBanner from "../../components/ErrorBanner";
@@ -22,14 +24,14 @@ export default function SearchResults({
 }: {
   query: string;
   type: SearchType;
-  onOpenAlbum: (id: string) => void;
-  onOpenArtist: (id: string, name?: string) => void;
+  onOpenAlbum: (target: EntityTarget) => void;
+  onOpenArtist: (target: EntityTarget, name?: string) => void;
 }) {
   // Tagged with the search it came from: results stay mounted across
   // queries, and an old warning mustn't read as the new search's.
-  const [taggedWarning, setWarning] = useState<{ search: string; text: string | null }>({
+  const [taggedWarnings, setWarnings] = useState<{ search: string; warnings: string[] }>({
     search: "",
-    text: null,
+    warnings: [],
   });
   const fetcher = useCallback(
     async (params: PageRequest): Promise<Page<SearchResult>> => {
@@ -37,24 +39,21 @@ export default function SearchResults({
       const result = await api.searchPage({ ...params, type });
       const search = `${type}\u0000${params.q}`;
       if (!params.signal.aborted)
-        setWarning((previous) => ({
+        setWarnings((previous) => ({
           search,
-          text:
-            [
-              ...new Set(
-                [
-                  params.offset === 0 || previous.search !== search ? null : previous.text,
-                  ...(result.warnings ?? []),
-                ].filter(Boolean),
-              ),
-            ].join(" ") || null,
+          warnings: mergeSearchWarnings(
+            params.offset === 0 || previous.search !== search ? null : previous.warnings,
+            result.warnings,
+          ),
         }));
       return result;
     },
     [type],
   );
   const warning =
-    taggedWarning.search === `${type}\u0000${query.trim()}` ? taggedWarning.text : null;
+    taggedWarnings.search === `${type}\u0000${query.trim()}`
+      ? taggedWarnings.warnings.join(" ") || null
+      : null;
   const { items, total, hasMore, loadingMore, error, stale, sentinelRef, reload } =
     usePaginatedList(fetcher, query, { pageSize: 25, resourceKey: type, keepPrevious: true });
   const tracks = useMemo(() =>

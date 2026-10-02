@@ -59,6 +59,18 @@ export function formatBytes(bytes: number | null | undefined): string {
   return `${v.toFixed(i === 0 || v >= 100 ? 0 : 1)} ${units[i]}`;
 }
 
+/** Sample rate in Hz -> "44.1 kHz" / "48 kHz"; em dash when unknown. */
+export function formatSampleRate(hz: number | null | undefined): string {
+  if (hz == null || !Number.isFinite(hz) || hz <= 0) return "—";
+  return `${Number((hz / 1000).toFixed(1))} kHz`;
+}
+
+/** Bitrate in bits per second -> "320 kbps"; em dash when unknown. */
+export function formatBitrate(bps: number | null | undefined): string {
+  if (bps == null || !Number.isFinite(bps) || bps <= 0) return "—";
+  return `${Math.round(bps / 1000)} kbps`;
+}
+
 /** "1 track" / "2 tracks"; `locale` groups the count ("1,234 plays"). */
 export function pluralize(
   n: number,

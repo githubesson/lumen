@@ -1,4 +1,4 @@
-import { buildTrackPatch } from "@music-library/core/metadata-edit";
+import { buildTrackPatch, trackEditForm } from "@music-library/core/metadata-edit";
 import { useEffect, useState } from "react";
 import {
   ScrollView,
@@ -10,7 +10,9 @@ import * as Haptics from "expo-haptics";
 import {
   api,
   ApiError,
+  isLocalTrack,
   libraryChanged,
+  trackActions,
   useAuth,
 } from "@music-library/core";
 import { PrimaryButton } from "../../../../components/buttons";
@@ -43,6 +45,11 @@ export default function TrackEditScreen() {
   });
 
   const track = trackQuery.data;
+  // The server only edits library tracks, and only for admins; a TIDAL track
+  // reached by a stale link or deep link gets an explanation, not a form.
+  const canEdit = track
+    ? trackActions(track, { isAdmin: me?.role === "admin" }).editMetadata
+    : false;
 
   const [title, setTitle] = useState("");
   const [artists, setArtists] = useState("");
@@ -60,27 +67,23 @@ export default function TrackEditScreen() {
   // doesn't clobber in-progress edits.
   useEffect(() => {
     if (!track) return;
+    const form = trackEditForm(track);
     // The edit draft intentionally snapshots the queried track.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setTitle(track.title);
-    setArtists(
-      track.artists
-        .filter((a) => a.role !== "composer")
-        .map((a) => a.name)
-        .join(", "),
-    );
-    setAlbumTitle(track.album_title ?? "");
-    setAlbumArtist("");
-    setYear(track.year ? String(track.year) : "");
-    setGenre(track.genre ?? "");
-    setTrackNo(track.track_no ? String(track.track_no) : "");
-    setDiscNo(track.disc_no ? String(track.disc_no) : "");
+    setTitle(form.title);
+    setArtists(form.artists);
+    setAlbumTitle(form.albumTitle);
+    setAlbumArtist(form.albumArtist);
+    setYear(form.year);
+    setGenre(form.genre);
+    setTrackNo(form.trackNo);
+    setDiscNo(form.discNo);
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [track?.id]);
 
   const onSave = async () => {
-    if (!id || !track || saving) return;
+    if (!id || !track || !canEdit || saving) return;
     setSaving(true);
     setError(null);
     try {
@@ -122,6 +125,21 @@ export default function TrackEditScreen() {
         message="Couldn't load track."
         action={retryAction(trackQuery)}
       />
+    );
+  }
+  if (!canEdit) {
+    return (
+      <>
+        <Stack.Screen options={{ title: "Edit Track" }} />
+        <EmptyState
+          fill
+          message={
+            isLocalTrack(track)
+              ? "Only admins can edit track metadata."
+              : "Only tracks in the library can be edited. This one streams from TIDAL."
+          }
+        />
+      </>
     );
   }
 

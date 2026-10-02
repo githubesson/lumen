@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ArrowLeft as ArrowLeftIcon,
   Library as LibraryIcon,
@@ -8,13 +8,20 @@ import {
 import {
   api,
   ApiError,
-  albumCoverUrl,
+  albumArtUrl,
   errorMessage,
   type Album,
   type TidalAlbum,
   type TrackListItem,
 } from "../../api";
-import { displayText, pluralize } from "../../lib/format";
+import {
+  albumArtists,
+  libraryAlbumMetaParts,
+  tidalAlbumMetaParts,
+  type AlbumMetaPart,
+} from "@music-library/core/entity-labels";
+import type { EntityTarget } from "@music-library/core/entity-target";
+import { displayText } from "../../lib/format";
 import { useEntityDetail } from "../../lib/useEntityDetail";
 import { dropCache, readCache, writeCache } from "../../lib/resourceCache";
 import TrackList from "../../components/TrackList";
@@ -72,40 +79,16 @@ export function AlbumDetailView({
         art={
           <CoverArt
             className="detail-art"
-            src={
-              album.has_cover
-                ? `${albumCoverUrl(album.id)}${coverNonce ? `?v=${coverNonce}` : ""}`
-                : null
-            }
+            src={albumArtUrl(album, undefined, coverNonce)}
             label={album.title}
           />
         }
         meta={
-          <>
-            {(album.artist_names?.length || album.artist_name) && (
-              <>
-                <span>
-                  {displayText(album.artist_names?.join(", ") || album.artist_name)}
-                </span>
-                <span className="dot" />
-              </>
-            )}
-            <span>{pluralize(album.track_count, "track")}</span>
-            {album.tidal_album_id && album.saved_count !== undefined && (
-              <>
-                <span className="dot" />
-                <span title="The rest of the release plays from TIDAL">
-                  {album.saved_count} saved
-                </span>
-              </>
-            )}
-            {album.release_year ? (
-              <>
-                <span className="dot" />
-                <span>{album.release_year}</span>
-              </>
-            ) : null}
-          </>
+          <AlbumMeta
+            artists={albumArtists(album)}
+            parts={libraryAlbumMetaParts(album)}
+            savedHint="The rest of the release plays from TIDAL"
+          />
         }
         actions={
           <>
@@ -183,7 +166,7 @@ export function TidalAlbumDetailView({
 }: {
   id: string;
   onBack: () => void;
-  onOpenAlbum: (id: string) => void;
+  onOpenAlbum: (target: EntityTarget) => void;
 }) {
   const [album, setAlbum] = useState<TidalAlbum | null>(
     () => readCache<TidalAlbum>(`tidal-album:${id}`) ?? null,
@@ -256,35 +239,17 @@ export function TidalAlbumDetailView({
             art={
               <CoverArt
                 className="detail-art"
-                src={album.cover_url ?? null}
+                src={albumArtUrl({ ...album, source: "tidal" })}
                 label={album.title}
                 forcePlaceholder={!album.cover_url}
               />
             }
             meta={
-              <>
-                {(album.artists?.length || album.artist) && (
-                  <>
-                    <span>{displayText(album.artists?.join(", ") || album.artist)}</span>
-                    <span className="dot" />
-                  </>
-                )}
-                <span>{pluralize(album.track_count, "track")}</span>
-                {album.saved_count ? (
-                  <>
-                    <span className="dot" />
-                    <span title="Played from the library instead of TIDAL">
-                      {album.saved_count} saved
-                    </span>
-                  </>
-                ) : null}
-                {album.release_year ? (
-                  <>
-                    <span className="dot" />
-                    <span>{album.release_year}</span>
-                  </>
-                ) : null}
-              </>
+              <AlbumMeta
+                artists={albumArtists(album)}
+                parts={tidalAlbumMetaParts(album)}
+                savedHint="Played from the library instead of TIDAL"
+              />
             }
             actions={
               <>
@@ -310,7 +275,7 @@ export function TidalAlbumDetailView({
                 )}
                 {album.library_album_id && (
                   <Button
-                    onClick={() => onOpenAlbum(album.library_album_id!)}
+                    onClick={() => onOpenAlbum({ kind: "local", id: album.library_album_id! })}
                     leadingIcon={<LibraryIcon className="size-4" />}
                   >
                     Open in library
@@ -540,5 +505,34 @@ export function NotFound({
         </Button>
       </div>
     </div>
+  );
+}
+
+/** An album page's meta row: who it's by, then its facts, dot-separated. */
+function AlbumMeta({
+  artists,
+  parts,
+  savedHint,
+}: {
+  artists: string;
+  parts: AlbumMetaPart[];
+  /** What the "N saved" count means on this kind of album page. */
+  savedHint: string;
+}) {
+  return (
+    <>
+      {artists && (
+        <>
+          <span>{artists}</span>
+          <span className="dot" />
+        </>
+      )}
+      {parts.map((part, index) => (
+        <Fragment key={part.key}>
+          {index > 0 && <span className="dot" />}
+          <span title={part.key === "saved" ? savedHint : undefined}>{part.text}</span>
+        </Fragment>
+      ))}
+    </>
   );
 }

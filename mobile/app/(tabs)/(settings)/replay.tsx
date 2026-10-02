@@ -14,6 +14,7 @@ import {
   ApiError,
   api,
   playsById as playsByIdFor,
+  replayAlbumTarget,
   replayImageFilename,
   replayImageRequest,
   replayPlaylistRequest,
@@ -47,7 +48,6 @@ import { SummaryGrid } from "../../../components/replay/summary-grid";
 import { TopTrackList } from "../../../components/replay/top-track-list";
 import { qk } from "../../../lib/query-keys";
 import { QUERY_STALE_TIME } from "../../../lib/query-policy";
-import { replayAlbumTarget } from "../../../lib/replay-album-target";
 import { usePlayQueue } from "../../../lib/use-play-queue";
 import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme } from "../../../theme/theme";

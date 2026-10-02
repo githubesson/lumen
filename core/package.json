@@ -12,6 +12,8 @@
     "./api": "./src/api.ts",
     "./artist-releases": "./src/artist-releases.ts",
     "./audio-format": "./src/audio-format.ts",
+    "./entity-labels": "./src/entity-labels.ts",
+    "./entity-target": "./src/entity-target.ts",
     "./storage": "./src/storage.ts",
     "./events": "./src/events.ts",
     "./format": "./src/format.ts",

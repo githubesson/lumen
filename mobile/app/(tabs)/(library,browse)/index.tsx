@@ -6,6 +6,7 @@ import * as Haptics from "expo-haptics";
 import {
   api,
   playsById,
+  replayAlbumTarget,
   replayRequest,
   useAuth,
   useLocalDay,
@@ -31,7 +32,6 @@ import { usePlayTrack } from "../../../context/player";
 import { subscribeAppActive } from "../../../lib/app-resume";
 import { qk } from "../../../lib/query-keys";
 import { QUERY_STALE_TIME } from "../../../lib/query-policy";
-import { replayAlbumTarget } from "../../../lib/replay-album-target";
 import { usePlayQueue } from "../../../lib/use-play-queue";
 import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme } from "../../../theme/theme";

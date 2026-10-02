@@ -1,4 +1,8 @@
-import { buildAlbumPatch } from "@music-library/core/metadata-edit";
+import {
+  albumEditForm,
+  buildAlbumPatch,
+  type AlbumEditForm,
+} from "@music-library/core/metadata-edit";
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { Image as PhotoIcon, Trash2 as TrashIcon } from "lucide-react";
 import { api, albumCoverUrl, errorMessage, type Album } from "../../api";
@@ -11,9 +15,7 @@ import { Field, FieldRow, TextInput } from "../Field";
 import { libraryChanged } from "../../lib/events";
 import { useFormDraft } from "../../lib/useFormDraft";
 
-type AlbumDraft = Parameters<typeof buildAlbumPatch>[1];
-
-const EMPTY_ALBUM_DRAFT: AlbumDraft = {
+const EMPTY_ALBUM_DRAFT: AlbumEditForm = {
   title: "",
   albumArtist: "",
   year: "",
@@ -51,12 +53,7 @@ export function EditAlbumDialog({
     // The form draft intentionally snapshots the selected album on open.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setError(null);
-    resetDraft({
-      title: album.title,
-      albumArtist: album.artist_name ?? "",
-      year: album.release_year ? String(album.release_year) : "",
-      isCompilation: album.is_compilation,
-    });
+    resetDraft(albumEditForm(album));
     setHasCover(album.has_cover);
     setCoverNonce(0);
     // Re-init only when the dialog opens or switches to a different album —
@@ -67,9 +64,7 @@ export function EditAlbumDialog({
   }, [open, album?.id]);
 
   const coverPreviewSrc =
-    hasCover && album
-      ? `${albumCoverUrl(album.id)}${coverNonce ? `?v=${coverNonce}` : ""}`
-      : null;
+    hasCover && album ? albumCoverUrl(album.id, undefined, coverNonce) : null;
 
   const onPickCover = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
