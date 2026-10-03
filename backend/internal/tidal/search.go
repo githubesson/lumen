@@ -88,6 +88,8 @@ func (c *Client) ArtistReleases(ctx context.Context, id string) (ArtistReleases,
 		} `json:"albums"`
 		Tracks         []apiTrack `json:"tracks"`
 		FailedSections []string   `json:"failed_sections"`
+		// TIDAL's reason for each failed section it refused.
+		RefusedSections map[string]string `json:"refused_sections"`
 	}
 	if err := c.doHifiJSON(ctx, u.String(), &out); err != nil {
 		return ArtistReleases{}, err
@@ -99,15 +101,25 @@ func (c *Client) ArtistReleases(ctx context.Context, id string) (ArtistReleases,
 		return ArtistReleases{}, fmt.Errorf("invalid tidal artist response")
 	}
 	for _, section := range out.FailedSections {
+		var name string
 		switch section {
 		case "albums":
-			result.Warnings = append(result.Warnings, "Couldn't load albums.")
+			name = "albums"
 		case "singles":
-			result.Warnings = append(result.Warnings, "Couldn't load singles and EPs.")
+			name = "singles and EPs"
 		case "tracks":
-			result.Warnings = append(result.Warnings, "Couldn't load top songs.")
+			name = "top songs"
 		default:
 			return ArtistReleases{}, fmt.Errorf("invalid tidal artist section status")
+		}
+		detail, refused := out.RefusedSections[section]
+		switch reason := cleanRefusalReason(detail); {
+		case !refused:
+			result.Warnings = append(result.Warnings, "Couldn't load "+name+".")
+		case reason != "":
+			result.Warnings = append(result.Warnings, "TIDAL refused this artist's "+name+": "+reason)
+		default:
+			result.Warnings = append(result.Warnings, "TIDAL refused this artist's "+name+".")
 		}
 	}
 	if out.Artist != nil && strings.TrimSpace(out.Artist.Name) != "" {

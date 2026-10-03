@@ -259,16 +259,19 @@ export function usePlayerCore({
 
   // A failed source stays failed, so play() alone can't revive it. Load it
   // again as a fresh start does, and start it here the way next() does.
+  // load() drops the adapter's prepared next track, so drop its marker too,
+  // or it is never prepared again.
   const retryFailedTrack = useCallback(
     (track: TrackListItem) => {
       clearPlaybackError();
+      clearPreparedNext();
       loadedTrackIdRef.current = track.id;
       adapter.load(resolvePlayableUri(track.id));
       startPlayback();
       handoffRef.current = { track, attempt: playbackAttemptRef.current };
       setIsPlaying(true);
     },
-    [adapter, clearPlaybackError, resolvePlayableUri, startPlayback],
+    [adapter, clearPlaybackError, clearPreparedNext, resolvePlayableUri, startPlayback],
   );
 
   // Start the selected track: the failed one is retried, and any other
@@ -430,11 +433,19 @@ export function usePlayerCore({
 
   const prev = useCallback<PlayerControls["prev"]>(() => {
     if (!queue.length) return;
+    const restartCurrent = () => {
+      // A failed source can't restart in place; it is loaded again.
+      if (current && failureRef.current?.trackId === current.id) {
+        retryFailedTrack(current);
+        return;
+      }
+      adapter.seek(0);
+      setCurrentTime(0);
+    };
     // If you're more than 3s into the current track, restart instead of
     // going back.
     if (adapter.currentTime() > 3) {
-      adapter.seek(0);
-      setCurrentTime(0);
+      restartCurrent();
       return;
     }
     const ni =
@@ -444,8 +455,7 @@ export function usePlayerCore({
     if (ni === -1) {
       // Nothing playable behind us — restart the current track instead of
       // landing on an unplayable one.
-      adapter.seek(0);
-      setCurrentTime(0);
+      restartCurrent();
       return;
     }
     clearPreparedNext();
@@ -454,7 +464,7 @@ export function usePlayerCore({
     startTrack(queue[ni]);
     resetClockForTrackChange(queue[ni].id);
     playbackReportedRef.current = null;
-  }, [adapter, clearPreparedNext, queue, index, isTrackPlayable, resetClockForTrackChange, startTrack]);
+  }, [adapter, clearPreparedNext, current, queue, index, isTrackPlayable, resetClockForTrackChange, retryFailedTrack, startTrack]);
 
   const jumpTo = useCallback<PlayerControls["jumpTo"]>(
     (i) => {
@@ -754,13 +764,13 @@ export function usePlayerCore({
       const report = (message: string) => {
         if (failureRef.current === failure) setPlaybackError({ trackId: track.id, message });
       };
+      // Say so right away; the server's reason, if any, replaces it.
+      report(PLAYBACK_ERROR_FALLBACK);
       // Only the server can say why its TIDAL stream failed. A downloaded
       // copy or a library file just didn't play.
       const url = streamUrl(track.id);
       if (isTidalTrack(track) && resolveUri(track.id) === url) {
         void streamFailureMessage(url).then(report);
-      } else {
-        report(PLAYBACK_ERROR_FALLBACK);
       }
     });
     return () => {

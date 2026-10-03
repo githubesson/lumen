@@ -19,8 +19,9 @@ import (
 
 // assembleHLSFile fetches the playlist at rawURL, descends into a master
 // playlist if present, then streams a concatenated, decrypted body of all
-// media segments.
-func (c *Client) assembleHLSFile(ctx context.Context, rawURL string) (*http.Response, error) {
+// media segments. onRefused runs when TIDAL's media host refuses a segment
+// after the response has started, too late to report as an error.
+func (c *Client) assembleHLSFile(ctx context.Context, rawURL string, onRefused func()) (*http.Response, error) {
 	if err := validateTIDALMediaURL(rawURL); err != nil {
 		slog.Warn("tidal hls file url rejected", "url", logSafeURL(rawURL), "err", err)
 		return nil, err
@@ -90,6 +91,9 @@ func (c *Client) assembleHLSFile(ctx context.Context, rawURL string) (*http.Resp
 		}()
 		err := c.streamSegments(ctx, parsed, base, keys, pw)
 		if err != nil {
+			if errors.Is(err, ErrRefused) {
+				onRefused()
+			}
 			_ = pw.CloseWithError(err)
 			return
 		}
@@ -144,6 +148,9 @@ func (c *Client) fetchKey(ctx context.Context, keyURL string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden {
+		return nil, mediaRefusal(keyURL, resp.Status)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("tidal hls key fetch status %s", resp.Status)
 	}
@@ -202,6 +209,9 @@ const maxEncryptedHLSSegmentBytes = 32 << 20
 
 func writeHLSSegment(resp *http.Response, w io.Writer, keyIndex int, keys [][]byte, refs []hlsKeyRef, sequence uint64) error {
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden {
+		return &RefusedError{cause: fmt.Errorf("tidal media host refused a segment: %s", resp.Status)}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("status %s", resp.Status)
 	}

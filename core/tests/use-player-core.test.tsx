@@ -617,6 +617,53 @@ describe("usePlayerCore playback errors", () => {
     expect(result.current.state.playbackError).toBeNull();
   });
 
+  it("shows the generic message while it asks the server why", async () => {
+    let answer!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { answer = resolve; })));
+    const { result, emit } = await setup();
+    act(() => result.current.controls.play(tidal("1")));
+
+    act(() => emit("error"));
+    expect(result.current.state.playbackError?.message).toBe("Couldn't play this track.");
+    answer(new Response(refusal, { status: 502 }));
+    await settle();
+    expect(result.current.state.playbackError?.message).toBe(refusal);
+  });
+
+  it.each([
+    ["more than 3s in", 10],
+    ["with nothing behind it", 0],
+  ])("reloads the failed track on prev %s", async (_case, time) => {
+    const { result, adapter, emit, state } = await setup();
+    act(() => result.current.controls.play(t("a"), [t("a"), t("b")]));
+    act(() => emit("error"));
+    vi.mocked(adapter.load).mockClear();
+    vi.mocked(adapter.seek).mockClear();
+
+    state.time = time;
+    act(() => result.current.controls.prev());
+    expect(adapter.load).toHaveBeenCalledExactlyOnceWith("test://stream/a");
+    expect(adapter.seek).not.toHaveBeenCalled();
+    expect(result.current.state.isPlaying).toBe(true);
+    expect(result.current.state.playbackError).toBeNull();
+  });
+
+  it("prepares the next track again after a retry", async () => {
+    const { result, adapter, emit, state } = await setup();
+    act(() => result.current.controls.play(t("a"), [t("a"), t("b")]));
+    state.dur = 100;
+    state.time = 80;
+    act(() => emit("timeupdate"));
+    expect(adapter.prepareNext).toHaveBeenCalledTimes(1);
+
+    act(() => emit("error"));
+    act(() => result.current.controls.toggle());
+    state.time = 80; // the reload started the track over
+    act(() => emit("timeupdate"));
+    expect(adapter.prepareNext).toHaveBeenCalledTimes(2);
+    expect(adapter.prepareNext).toHaveBeenLastCalledWith("test://stream/b");
+  });
+
   it("reloads a failed single-track loop instead of restarting it in place", async () => {
     const { result, adapter, emit } = await setup();
     act(() => result.current.controls.play(t("a")));

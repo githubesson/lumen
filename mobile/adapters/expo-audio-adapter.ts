@@ -75,6 +75,10 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
     null,
   );
   const awaitingSourceStatusRef = useRef(false);
+  // Whether the source replaced by the last swap was still loading, so its
+  // failure could already be on its way when the swap happened.
+  const outgoingMayFailRef = useRef(false);
+  const hasSourceRef = useRef(false);
   // In-flight seekTo(). expo-audio's seekTo is an async native function while
   // play() is sync, so an unawaited seek(0)+play() pair reaches the native
   // player in reverse order. At a natural track end (repeat-one restart) the
@@ -159,20 +163,20 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         return;
       }
       const firstSourceStatus = awaitingSourceStatusRef.current;
+      const outgoingMayFail = outgoingMayFailRef.current;
       awaitingSourceStatusRef.current = false;
+      outgoingMayFailRef.current = false;
       const prev = prevStatusRef.current;
       const isLoaded = status.isLoaded;
       const didJustFinish = status.didJustFinish;
       const duration = status.duration;
-      // expo-audio reports a failed source once, in a status whose `error` is
-      // set (and clears it for the next source). The first status after a
-      // swap may still be the outgoing source's, so like an end above it
-      // can't fail the new one; the new source's own failure arrives after
-      // its loading statuses.
-      if (status.error && firstSourceStatus) {
-        diagnostics.record("audio-error-suppressed", {}, status);
-      }
-      const failed = Boolean(status.error) && !firstSourceStatus;
+      // expo-audio reports a failed source once, in the one status whose
+      // `error` is set. A new source that fails at once (a refused stream)
+      // reports it in its first status. That status is the outgoing source's
+      // failure instead only if that source was still loading when replaced.
+      const staleError = Boolean(status.error) && firstSourceStatus && outgoingMayFail;
+      if (staleError) diagnostics.record("audio-error-suppressed", {}, status);
+      const failed = Boolean(status.error) && !staleError;
       // iOS's periodic observer can see the stopped playhead before its
       // separate end notification arrives. That ordinary snapshot still has
       // didJustFinish=false. Treat it as an end transition, or the core's
@@ -245,6 +249,13 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
     };
   }, [diagnostics, dispatch, player, startPreparedPlaybackIfReady]);
 
+  // Before each swap: whether the source being replaced was still loading.
+  const noteOutgoingSource = useCallback(() => {
+    const outgoing = prevStatusRef.current;
+    outgoingMayFailRef.current = hasSourceRef.current && !outgoing.isLoaded && !outgoing.failed;
+    hasSourceRef.current = true;
+  }, []);
+
   const adapter = useMemo<ExpoAudioAdapter>(
     () => ({
       load(url) {
@@ -259,6 +270,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
           prepareGenerationRef.current += 1;
           void clearPreloadedSource(prepared.url).catch(() => {});
         }
+        noteOutgoingSource();
         awaitingSourceStatusRef.current = true;
         player.replace({ uri: url });
         diagnostics.record("audio-source-replaced");
@@ -310,6 +322,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
             shouldPlay: true,
           };
           pendingSeekRef.current = null;
+          noteOutgoingSource();
           awaitingSourceStatusRef.current = true;
           player.replace({ uri: url });
           diagnostics.record("audio-source-replaced");
@@ -430,7 +443,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         listeners.clear();
       },
     }),
-    [diagnostics, dispatch, listeners, player, startPreparedPlaybackIfReady],
+    [diagnostics, dispatch, listeners, noteOutgoingSource, player, startPreparedPlaybackIfReady],
   );
 
   return adapter;

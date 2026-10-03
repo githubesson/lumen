@@ -53,16 +53,24 @@ func (e *RefusedError) Is(target error) bool { return target == ErrRefused }
 const maxRefusalReason = 200
 
 // refusalReason extracts TIDAL's reason from a hifi-api error body
-// ({"detail": "..."}), as a single printable line. Upstream's own fixed
-// detail says nothing, so it counts as no reason.
+// ({"detail": "..."}).
 func refusalReason(body []byte) string {
 	var out struct {
 		Detail string `json:"detail"`
 	}
-	if json.Unmarshal(body, &out) != nil || out.Detail == "Upstream API error" {
+	if json.Unmarshal(body, &out) != nil {
 		return ""
 	}
-	reason := strings.Join(strings.FieldsFunc(out.Detail, func(r rune) bool {
+	return cleanRefusalReason(out.Detail)
+}
+
+// cleanRefusalReason makes a refusal detail from hifi-api a single printable
+// line. Upstream's own fixed detail says nothing, so it counts as no reason.
+func cleanRefusalReason(detail string) string {
+	if detail == "Upstream API error" {
+		return ""
+	}
+	reason := strings.Join(strings.FieldsFunc(detail, func(r rune) bool {
 		return unicode.IsSpace(r) || !unicode.IsPrint(r)
 	}), " ")
 	if runes := []rune(reason); len(runes) > maxRefusalReason {
@@ -511,7 +519,7 @@ func (c *Client) FileResponse(ctx context.Context, id string, incoming *http.Req
 	slog.Debug("tidal hifi file resolve start", "track", id)
 	resp, err := c.withStreamURL(ctx, id, func(streamURL string) (*http.Response, error) {
 		slog.Debug("tidal hifi file resolved", "track", id, "url", logSafeURL(streamURL))
-		return c.assembleHLSFile(ctx, streamURL)
+		return c.assembleHLSFile(ctx, streamURL, func() { c.ForgetStreamURL(id) })
 	})
 	if err != nil {
 		slog.Warn("tidal hifi file resolve failed", "track", id, "err", err)
@@ -641,6 +649,19 @@ func (c *Client) withStreamURL(ctx context.Context, id string, open func(streamU
 		c.replaceCachedStream(c.cacheKey(id), streamURL, err)
 	}
 	return resp, err
+}
+
+// ForgetStreamURL drops id's cached stream URL, so the next playback or
+// download resolves a fresh one. TIDAL's media host refusing a URL from
+// inside its playlist (a variant or segment) means the signed URLs have most
+// likely expired. A remembered refusal stays.
+func (c *Client) ForgetStreamURL(id string) {
+	key := c.cacheKey(id)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cached, ok := c.streamCache[key]; ok && cached.Err == nil {
+		delete(c.streamCache, key)
+	}
 }
 
 // mediaRefusal reports a 403 from TIDAL's media host. Only refusals from

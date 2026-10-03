@@ -302,6 +302,12 @@ func (h *Tracks) TIDALHLS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, tidalStreamErrorMessage(err), http.StatusBadGateway)
 		return
 	}
+	if resp.StatusCode == http.StatusForbidden {
+		// The player can't recover with these URLs; make sure reloading the
+		// track gets fresh ones.
+		h.log().Info("stream: tidal media host refused a playlist url; dropping the cached stream", "tidal_track", ref.ID)
+		h.TIDAL.ForgetStreamURL(ref.ID)
+	}
 	h.log().Debug("stream: tidal hls response ready",
 		"tidal_track", ref.ID,
 		"status", resp.StatusCode,

@@ -3,12 +3,14 @@ package tidal
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -174,5 +176,54 @@ func TestFreshStreamURLTheMediaHostRefusesIsARefusal(t *testing.T) {
 	// The refusal was remembered, so the download didn't resolve again.
 	if got := resolutions.Load(); got != 1 {
 		t.Fatalf("resolutions = %d, want 1", got)
+	}
+}
+
+func TestSegmentRefusedMidDownloadDropsTheCachedStream(t *testing.T) {
+	streamClient, restore := allowLoopbackMedia()
+	defer restore()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/trackManifests/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"data":{"attributes":{"trackPresentation":"FULL","uri":"` + srv.URL + `/media/playlist.m3u8"}}}}`))
+		case "/media/playlist.m3u8":
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			_, _ = w.Write([]byte("#EXTM3U\n#EXTINF:10.0,\nseg1.aac\n#EXT-X-ENDLIST\n"))
+		default:
+			http.Error(w, "<Error>AccessDenied</Error>", http.StatusForbidden)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Config{HifiAPIURL: srv.URL})
+	c.stream = streamClient
+
+	resp, err := c.FileResponse(context.Background(), "123", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !errors.Is(err, ErrRefused) {
+		t.Fatalf("body err = %v, want a refusal", err)
+	}
+	if _, ok := c.cachedStreamURL(c.cacheKey("123"), time.Now()); ok {
+		t.Fatal("the stream with the refused segment is still cached")
+	}
+}
+
+func TestForgetStreamURLKeepsARememberedRefusal(t *testing.T) {
+	c := NewClient(Config{})
+	now := time.Now()
+	c.storeCachedStream(c.cacheKey("1"), cachedStream{URL: "https://a.tidal.com/1.m3u8"}, streamCacheTTL, now)
+	c.storeCachedStream(c.cacheKey("2"), cachedStream{Err: &RefusedError{cause: errors.New("refused")}}, streamRefusalTTL, now)
+	c.ForgetStreamURL("1")
+	c.ForgetStreamURL("2")
+	if _, ok := c.cachedStreamURL(c.cacheKey("1"), now); ok {
+		t.Fatal("stream URL was not forgotten")
+	}
+	if cached, ok := c.cachedStreamURL(c.cacheKey("2"), now); !ok || cached.Err == nil {
+		t.Fatal("refusal was forgotten")
 	}
 }

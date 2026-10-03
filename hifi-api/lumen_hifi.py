@@ -735,6 +735,8 @@ async def get_lumen_artist(id: int):
         logger.warning("Lumen TIDAL artist profile unavailable artist=%s", id)
         profile = None
     failed_sections = []
+    # TIDAL's reason for each section it refused, so Lumen can say why.
+    refused_sections = {}
     releases = []
     tracks = []
     seen_ids = set()
@@ -744,6 +746,8 @@ async def get_lumen_artist(id: int):
                 raise result
             logger.warning("Lumen TIDAL artist section unavailable artist=%s section=%s", id, section)
             failed_sections.append(section)
+            if isinstance(result, HTTPException) and result.status_code == 403:
+                refused_sections[section] = str(result.detail)
             continue
         if section == "tracks":
             tracks = result
@@ -754,16 +758,16 @@ async def get_lumen_artist(id: int):
                     releases.append(item)
                     seen_ids.add(release_id)
     if len(failed_sections) == len(sections):
-        # Pass a refusal on as one, so Lumen can say why.
-        for result in results:
-            if isinstance(result, HTTPException) and result.status_code == 403:
-                raise HTTPException(status_code=403, detail=result.detail)
+        # Pass a refusal on as one.
+        for reason in refused_sections.values():
+            raise HTTPException(status_code=403, detail=reason)
         raise HTTPException(status_code=502, detail="TIDAL artist unavailable")
     return {
         "artist": profile,
         "albums": {"items": releases},
         "tracks": tracks,
         "failed_sections": failed_sections,
+        "refused_sections": refused_sections,
     }
 
 

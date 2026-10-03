@@ -520,19 +520,34 @@ describe("useExpoAudioAdapter source failures", () => {
     expect(h.record).toHaveBeenCalledWith("audio-event", expect.objectContaining({ event: "error" }));
   });
 
-  it("does not fail the new source with the outgoing one's queued error", () => {
+  it("reports a source that fails in its first status", () => {
     const { adapter, error } = setup();
+    // A refused stream fails before any other status.
+    h.emitStatus(status({ error: "The server returned 502." }));
+    expect(error).toHaveBeenCalledOnce();
+
+    // Retrying loads it again; failing at once again is a new failure.
+    adapter.load("https://example.test/tidal.m3u8");
+    h.emitStatus(status({ error: "The server returned 502." }));
+    expect(error).toHaveBeenCalledTimes(2);
+
+    // So is the first status of a source that replaced a loaded one.
+    adapter.load("https://example.test/local.flac");
+    h.emitStatus(status({ isLoaded: true, duration: 200 }));
+    adapter.load("https://example.test/tidal.m3u8");
+    h.emitStatus(status({ error: "The server returned 502." }));
+    expect(error).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not fail the new source with a still-loading outgoing one's queued error", () => {
+    const { adapter, error } = setup();
+    // Replaced while still loading: its failure was already on its way.
+    adapter.load("https://example.test/other.m3u8");
     h.emitStatus(status({ error: "The outgoing item failed." }));
     expect(error).not.toHaveBeenCalled();
     expect(h.record).toHaveBeenCalledWith("audio-error-suppressed", {}, expect.anything());
 
     h.emitStatus(status({ error: "The new item failed." }));
     expect(error).toHaveBeenCalledOnce();
-
-    // Retrying loads the source again; its failure is a new one.
-    adapter.load("https://example.test/tidal.m3u8");
-    h.emitStatus(status());
-    h.emitStatus(status({ error: "The new item failed." }));
-    expect(error).toHaveBeenCalledTimes(2);
   });
 });

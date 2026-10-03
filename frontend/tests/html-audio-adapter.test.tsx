@@ -105,3 +105,18 @@ it("reports a native media error on the playing element, but not on the prepared
   expect(error).toHaveBeenCalledOnce();
   await vi.waitFor(() => expect(mock.instances).toHaveLength(1));
 });
+
+it("gives up on a playlist or segment the server refused", async () => {
+  const { adapter, active, error } = setup();
+  act(() => adapter.load("/api/tracks/tidal%3Aone/stream"));
+  await vi.waitFor(() => expect(mock.instances).toHaveLength(1));
+  const current = mock.instances.find((hls) => hls.media === active)!;
+
+  // A server error may pass; an expired URL's 403 won't.
+  current.fail({ fatal: true, type: "networkError", details: "fragLoadError", response: { code: 502, text: "" } });
+  expect(current.startLoad).toHaveBeenCalledOnce();
+  current.fail({ fatal: true, type: "networkError", details: "fragLoadError", response: { code: 403, text: "" } });
+  expect(current.startLoad).toHaveBeenCalledOnce();
+  expect(current.destroy).toHaveBeenCalled();
+  expect(error).toHaveBeenCalledOnce();
+});

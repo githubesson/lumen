@@ -96,6 +96,7 @@ class ArtistTests(unittest.IsolatedAsyncioTestCase):
                 "albums": {"items": []},
                 "tracks": [],
                 "failed_sections": [],
+                "refused_sections": {},
             },
         )
         self.responses["albums"] = RuntimeError("failed")
@@ -142,6 +143,15 @@ class ArtistTests(unittest.IsolatedAsyncioTestCase):
         self.responses = {section: RuntimeError("failed") for section in self.responses}
         response = await self.client.get("/lumen/artist?id=123")
         self.assertEqual(response.status_code, 502)
+
+    async def test_partial_refusal_keeps_tidals_reason(self):
+        self.responses["singles"] = HTTPException(status_code=403, detail="Not available in your region")
+        self.responses["tracks"] = RuntimeError("failed")
+        response = await self.client.get("/lumen/artist?id=123")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["failed_sections"], ["singles", "tracks"])
+        self.assertEqual(data["refused_sections"], {"singles": "Not available in your region"})
 
     async def test_total_refusal_keeps_tidals_reason(self):
         self.responses = {section: RuntimeError("failed") for section in self.responses}

@@ -360,15 +360,19 @@ export function useHtmlAudioAdapter(): {
  * Recover from a fatal hls.js error where hls.js can, else destroy it.
  * Returns true when it gave up and the source is gone. A playlist that never
  * loaded is past recovery: hls.js has already retried it per its load
- * policy, and startLoad() only resumes loading segments.
+ * policy, and startLoad() only resumes loading segments. So is a playlist or
+ * segment the server refused (4xx, e.g. an expired TIDAL URL): loading it
+ * again gets the same answer, and only a reload of the source gets new URLs.
  */
 function giveUpOnFatalHlsError(HlsRuntime: typeof Hls, hls: Hls, data: ErrorData): boolean {
   const { ErrorDetails, ErrorTypes } = HlsRuntime;
+  const status = data.response?.code ?? 0;
   const manifestFailed =
     data.details === ErrorDetails.MANIFEST_LOAD_ERROR ||
     data.details === ErrorDetails.MANIFEST_LOAD_TIMEOUT ||
     data.details === ErrorDetails.MANIFEST_PARSING_ERROR;
-  if (!manifestFailed && data.type === ErrorTypes.NETWORK_ERROR) {
+  const refused = status >= 400 && status < 500;
+  if (!manifestFailed && !refused && data.type === ErrorTypes.NETWORK_ERROR) {
     hls.startLoad();
     return false;
   }
