@@ -110,3 +110,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Forced colors drop the background fills, so outline the active option and
+   fill a checked box with system colors. */
+@media (forced-colors: active) {
+  .multi-select-option[data-active] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  .multi-select-box[data-checked] {
+    background: Highlight;
+    border-color: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+}

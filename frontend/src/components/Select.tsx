@@ -159,8 +159,9 @@ export function Select<V extends string = string>({
         return;
       case "Tab":
         // Like a native select: close and let Tab carry on from the trigger
-        // (focus moves back there first, then the default Tab moves on).
-        buttonRef.current?.focus();
+        // (focus moves back there first, then the default Tab moves on). A
+        // dialog's focus trap may already have wrapped focus round instead.
+        if (!e.nativeEvent.defaultPrevented) buttonRef.current?.focus();
         setOpen(false);
         return;
       case "Enter":

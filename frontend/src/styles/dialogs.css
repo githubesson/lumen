@@ -221,3 +221,8 @@
   background: var(--popover);
   border-color: var(--border);
 }
+/* Forced colors override the fade; GrayText keeps matching values dimmer. */
+@media (forced-colors: active) {
+  .track-versions tbody td[data-same],
+  .track-info-fields dd[data-empty] { color: GrayText; }
+}

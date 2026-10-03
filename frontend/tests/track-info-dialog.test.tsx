@@ -121,6 +121,17 @@ it("closes the list on Escape or a click elsewhere without closing the dialog", 
   expect(onClose).not.toHaveBeenCalled();
 });
 
+it("wraps Tab from the open list round the dialog instead of out of it", async () => {
+  render(<TrackInfoDialog open trackId="t1" onClose={() => {}} />);
+  const list = await openPicker();
+  await waitFor(() => expect(document.activeElement).toBe(list));
+
+  // The picker is the dialog's last control.
+  fireEvent.keyDown(list, { key: "Tab" });
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+});
+
 it("takes focus back when reopened while fading out", async () => {
   render(<TrackInfoDialog open trackId="t1" onClose={() => {}} />);
   const list = await openPicker();

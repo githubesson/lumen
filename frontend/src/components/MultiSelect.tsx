@@ -95,11 +95,18 @@ export function MultiSelect<V extends string = string>({
     const button = buttonRef.current;
     if (!shown || !list || !button) return;
     delete list.dataset.side;
+    list.style.maxHeight = "";
     const clip = clipRect(button);
-    const below = clip.bottom - button.getBoundingClientRect().bottom;
-    const above = button.getBoundingClientRect().top - clip.top;
-    if (list.offsetHeight + 8 > below && above > below) {
-      list.dataset.side = "top";
+    const box = button.getBoundingClientRect();
+    const below = clip.bottom - box.bottom;
+    const above = box.top - clip.top;
+    const up = list.offsetHeight + 8 > below && above > below;
+    if (up) list.dataset.side = "top";
+    // Neither side may fit (a short window, high zoom): shrink the list to
+    // its side so it scrolls inside itself rather than being cut off.
+    const room = (up ? above : below) - 8;
+    if (list.offsetHeight > room) {
+      list.style.maxHeight = `${Math.max(room, MIN_LIST_HEIGHT)}px`;
     }
   }, [shown]);
 
@@ -139,7 +146,9 @@ export function MultiSelect<V extends string = string>({
         close();
         return;
       case "Tab":
-        buttonRef.current?.focus();
+        // As in Select: Tab carries on from the trigger, unless a dialog's
+        // focus trap already wrapped it round.
+        if (!e.nativeEvent.defaultPrevented) buttonRef.current?.focus();
         setOpen(false);
         return;
       case "Enter":
@@ -235,6 +244,9 @@ export function MultiSelect<V extends string = string>({
     </div>
   );
 }
+
+// About one and a half options: enough to show the list scrolls.
+const MIN_LIST_HEIGHT = 56;
 
 /** The box of the nearest ancestor that clips `el`, else the window's. */
 function clipRect(el: HTMLElement): { top: number; bottom: number } {
