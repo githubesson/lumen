@@ -49,8 +49,8 @@ export interface ExpoAudioAdapter extends AudioAdapter {
  * Event translation: `expo-audio`'s single `playbackStatusUpdate` stream of
  * status snapshots is diffed into the web-style events the shared
  * `usePlayerCore` hook expects (loadedmetadata, play, pause, timeupdate,
- * ended). `seeked` is synthesized from the adapter's own `seek()` call since
- * `expo-audio` doesn't emit a discrete event for it. `pause` is dispatched
+ * ended, error). `seeked` is synthesized from the adapter's own `seek()` call
+ * since `expo-audio` doesn't emit a discrete event for it. `pause` is dispatched
  * only for genuine pauses (user or system — e.g. headphones disconnecting or
  * an audio interruption): buffering stalls, source swaps and natural track
  * end all pass through `playing: false` natively but must not be forwarded
@@ -75,6 +75,10 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
     null,
   );
   const awaitingSourceStatusRef = useRef(false);
+  // Whether the source replaced by the last swap was still loading, so its
+  // failure could already be on its way when the swap happened.
+  const outgoingMayFailRef = useRef(false);
+  const hasSourceRef = useRef(false);
   // In-flight seekTo(). expo-audio's seekTo is an async native function while
   // play() is sync, so an unawaited seek(0)+play() pair reaches the native
   // player in reverse order. At a natural track end (repeat-one restart) the
@@ -88,11 +92,13 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
     playing: boolean;
     didJustFinish: boolean;
     duration: number;
+    failed: boolean;
   }>({
     isLoaded: false,
     playing: false,
     didJustFinish: false,
     duration: 0,
+    failed: false,
   });
 
   const dispatch = useCallback((event: AudioAdapterEvent) => {
@@ -141,6 +147,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       playing: current.playing,
       didJustFinish: current.didJustFinish,
       duration: current.duration,
+      failed: false,
     };
 
     const subscription = player.addListener("playbackStatusUpdate", (status) => {
@@ -155,11 +162,21 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         diagnostics.record("audio-end-suppressed", {}, status);
         return;
       }
+      const firstSourceStatus = awaitingSourceStatusRef.current;
+      const outgoingMayFail = outgoingMayFailRef.current;
       awaitingSourceStatusRef.current = false;
+      outgoingMayFailRef.current = false;
       const prev = prevStatusRef.current;
       const isLoaded = status.isLoaded;
       const didJustFinish = status.didJustFinish;
       const duration = status.duration;
+      // expo-audio reports a failed source once, in the one status whose
+      // `error` is set. A new source that fails at once (a refused stream)
+      // reports it in its first status. That status is the outgoing source's
+      // failure instead only if that source was still loading when replaced.
+      const staleError = Boolean(status.error) && firstSourceStatus && outgoingMayFail;
+      if (staleError) diagnostics.record("audio-error-suppressed", {}, status);
+      const failed = Boolean(status.error) && !staleError;
       // iOS's periodic observer can see the stopped playhead before its
       // separate end notification arrives. That ordinary snapshot still has
       // didJustFinish=false. Treat it as an end transition, or the core's
@@ -194,7 +211,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
 
       // Commit before dispatch: an ended listener can synchronously replace
       // the source and reset this diff for the incoming track.
-      prevStatusRef.current = { isLoaded, playing, didJustFinish, duration };
+      prevStatusRef.current = { isLoaded, playing, didJustFinish, duration, failed };
 
       // Loading succeeded even if starting playback fails. Publish metadata
       // before that attempt so a paused song still has a usable timeline.
@@ -224,12 +241,20 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       if (prev.playing && !playing && !didJustFinish && !atEnd) dispatch("pause");
       if (isLoaded) dispatch("timeupdate");
       if (!prev.didJustFinish && didJustFinish) dispatch("ended");
+      if (!prev.failed && failed) dispatch("error");
     });
 
     return () => {
       subscription.remove();
     };
   }, [diagnostics, dispatch, player, startPreparedPlaybackIfReady]);
+
+  // Before each swap: whether the source being replaced was still loading.
+  const noteOutgoingSource = useCallback(() => {
+    const outgoing = prevStatusRef.current;
+    outgoingMayFailRef.current = hasSourceRef.current && !outgoing.isLoaded && !outgoing.failed;
+    hasSourceRef.current = true;
+  }, []);
 
   const adapter = useMemo<ExpoAudioAdapter>(
     () => ({
@@ -245,6 +270,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
           prepareGenerationRef.current += 1;
           void clearPreloadedSource(prepared.url).catch(() => {});
         }
+        noteOutgoingSource();
         awaitingSourceStatusRef.current = true;
         player.replace({ uri: url });
         diagnostics.record("audio-source-replaced");
@@ -252,6 +278,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         prevStatusRef.current.isLoaded = false;
         prevStatusRef.current.duration = 0;
         prevStatusRef.current.didJustFinish = false;
+        prevStatusRef.current.failed = false;
         // The outgoing track may have been playing; the incoming item's
         // paused statuses during the swap are a transition, not a pause the
         // core should mirror into isPlaying.
@@ -295,12 +322,14 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
             shouldPlay: true,
           };
           pendingSeekRef.current = null;
+          noteOutgoingSource();
           awaitingSourceStatusRef.current = true;
           player.replace({ uri: url });
           diagnostics.record("audio-source-replaced");
           prevStatusRef.current.isLoaded = false;
           prevStatusRef.current.duration = 0;
           prevStatusRef.current.didJustFinish = false;
+          prevStatusRef.current.failed = false;
           // Same as load(): the swap's paused statuses are not a real pause.
           prevStatusRef.current.playing = false;
           startPreparedPlaybackIfReady(player.currentStatus);
@@ -414,7 +443,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         listeners.clear();
       },
     }),
-    [diagnostics, dispatch, listeners, player, startPreparedPlaybackIfReady],
+    [diagnostics, dispatch, listeners, noteOutgoingSource, player, startPreparedPlaybackIfReady],
   );
 
   return adapter;

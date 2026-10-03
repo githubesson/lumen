@@ -140,6 +140,17 @@ This is intentionally a passthrough setup:
   Deploy the updated `hifi-api/lumen_hifi.py` extension and restart `hifi-api`
   when upgrading, including on independently hosted proxy deployments; the
   upstream service alone does not provide `/lumen/artist`.
+- When TIDAL refuses a request with HTTP 403 (content restricted for the
+  server's region or accounts, or the accounts themselves turned away), the
+  `hifi-api/lumen_hifi.py` extension passes on TIDAL's own reason instead of
+  upstream's generic "Upstream API error". Lumen answers 502 with "TIDAL
+  refused …: <reason>": the players show it in place of the track's artist,
+  and album, artist, track info and search views show it as their error or
+  warning. A
+  refused stream is remembered for a minute, so retries and preloads don't keep
+  asking TIDAL, and refusals don't fall back to lower qualities. Restart
+  `hifi-api` after deploying; without the updated extension the reason is
+  missing but the rest still works.
 - Playlists can contain both local tracks and TIDAL tracks.
 - TIDAL playlist entries store track metadata plus the remote TIDAL id, not an
   audio file.

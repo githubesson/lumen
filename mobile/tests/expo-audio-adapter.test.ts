@@ -48,6 +48,7 @@ const h = vi.hoisted(() => {
   };
   return {
     calls,
+    record: vi.fn(),
     fakePlayer,
     finishSeek: () => resolveSeek?.(),
     captureSeekCompletion: () => resolveSeek,
@@ -87,7 +88,7 @@ vi.mock("react-native", () => ({
 }));
 vi.mock("expo-updates", () => ({ updateId: "test-update", runtimeVersion: "test-runtime" }));
 vi.mock("../lib/diagnostics/playback", () => ({
-  createPlaybackDiagnostics: () => ({ record() {}, source() {}, observe() {} }),
+  createPlaybackDiagnostics: () => ({ record: h.record, source() {}, observe() {} }),
 }));
 
 vi.mock("expo-modules-core", () => ({
@@ -109,6 +110,7 @@ const flushMicrotasks = () => new Promise<void>((r) => setTimeout(r, 0));
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  h.record.mockClear();
   h.calls.length = 0;
   h.fakePlayer.currentTime = 0;
   h.fakePlayer.duration = 0;
@@ -485,5 +487,67 @@ describe("useExpoAudioAdapter prepared track handoff", () => {
     h.finishSeek();
     await pendingPlay;
     expect(h.calls).toEqual(["seekTo", "replace", "play", "pause"]);
+  });
+});
+
+describe("useExpoAudioAdapter source failures", () => {
+  const status = (over: Record<string, unknown> = {}) => ({
+    isLoaded: false,
+    playing: false,
+    didJustFinish: false,
+    duration: 0,
+    timeControlStatus: "paused",
+    reasonForWaitingToPlay: "unknown",
+    error: null,
+    ...over,
+  });
+
+  function setup() {
+    const adapter = createTestAdapter();
+    const error = vi.fn();
+    adapter.on("error", error);
+    adapter.load("https://example.test/tidal.m3u8");
+    return { adapter, error };
+  }
+
+  it("reports a failed source once and records it in the diagnostics", () => {
+    const { error } = setup();
+    // The swap's own status, then the native failure (sent once).
+    h.emitStatus(status());
+    h.emitStatus(status({ error: "The server returned 502." }));
+    h.emitStatus(status());
+    expect(error).toHaveBeenCalledOnce();
+    expect(h.record).toHaveBeenCalledWith("audio-event", expect.objectContaining({ event: "error" }));
+  });
+
+  it("reports a source that fails in its first status", () => {
+    const { adapter, error } = setup();
+    // A refused stream fails before any other status.
+    h.emitStatus(status({ error: "The server returned 502." }));
+    expect(error).toHaveBeenCalledOnce();
+
+    // Retrying loads it again; failing at once again is a new failure.
+    adapter.load("https://example.test/tidal.m3u8");
+    h.emitStatus(status({ error: "The server returned 502." }));
+    expect(error).toHaveBeenCalledTimes(2);
+
+    // So is the first status of a source that replaced a loaded one.
+    adapter.load("https://example.test/local.flac");
+    h.emitStatus(status({ isLoaded: true, duration: 200 }));
+    adapter.load("https://example.test/tidal.m3u8");
+    h.emitStatus(status({ error: "The server returned 502." }));
+    expect(error).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not fail the new source with a still-loading outgoing one's queued error", () => {
+    const { adapter, error } = setup();
+    // Replaced while still loading: its failure was already on its way.
+    adapter.load("https://example.test/other.m3u8");
+    h.emitStatus(status({ error: "The outgoing item failed." }));
+    expect(error).not.toHaveBeenCalled();
+    expect(h.record).toHaveBeenCalledWith("audio-error-suppressed", {}, expect.anything());
+
+    h.emitStatus(status({ error: "The new item failed." }));
+    expect(error).toHaveBeenCalledOnce();
   });
 });

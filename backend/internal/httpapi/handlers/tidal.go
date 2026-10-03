@@ -60,8 +60,14 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 	if h.TIDAL != nil {
 		album, err = h.TIDAL.Album(r.Context(), id, limit, offset)
 		if err == nil && unpaged && len(album.Tracks) < album.TrackCount {
-			if full, ferr := h.TIDAL.FullAlbum(r.Context(), id); ferr == nil {
+			full, ferr := h.TIDAL.FullAlbum(r.Context(), id)
+			switch {
+			case ferr == nil:
 				album = full
+			case errors.Is(ferr, tidal.ErrRefused):
+				// TIDAL refusing the rest refuses the album: say why rather
+				// than pass the first page off as the release.
+				err = ferr
 			}
 		}
 	}
@@ -93,6 +99,10 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, tidal.ErrNotConfigured) {
 			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		if errors.Is(err, tidal.ErrRefused) {
+			http.Error(w, tidalRefusalText("TIDAL refused this album", err), http.StatusBadGateway)
 			return
 		}
 		http.Error(w, "tidal album unavailable", http.StatusBadGateway)
@@ -181,6 +191,10 @@ func (h *TIDAL) Artist(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
 			return
 		}
+		if errors.Is(err, tidal.ErrRefused) {
+			http.Error(w, tidalRefusalText("TIDAL refused this artist", err), http.StatusBadGateway)
+			return
+		}
 		http.Error(w, "tidal artist unavailable", http.StatusBadGateway)
 		return
 	}
@@ -232,6 +246,11 @@ type tidalTrackResp struct {
 	Credits         []tidalTrackCreditResp `json:"credits"`
 	// CreditsFailed means Credits is empty because they couldn't be loaded.
 	CreditsFailed bool `json:"credits_failed,omitempty"`
+	// CreditsFailure says why, when TIDAL refused them.
+	CreditsFailure string `json:"credits_failure,omitempty"`
+	// ReleaseFailure says why ReleaseDate may be missing or only the stream
+	// start date: TIDAL refused the album lookup.
+	ReleaseFailure string `json:"release_failure,omitempty"`
 }
 
 // Track serves a TIDAL track's details, fetched from TIDAL on each request.
@@ -250,6 +269,8 @@ func (h *TIDAL) Track(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid tidal track id", http.StatusBadRequest)
 		case errors.Is(err, tidal.ErrNotConfigured):
 			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+		case errors.Is(err, tidal.ErrRefused):
+			http.Error(w, tidalRefusalText("TIDAL refused this track", err), http.StatusBadGateway)
 		default:
 			http.Error(w, "tidal track unavailable", http.StatusBadGateway)
 		}
@@ -267,6 +288,12 @@ func (h *TIDAL) Track(w http.ResponseWriter, r *http.Request) {
 		MaxQuality:      d.MaxQuality,
 		Credits:         make([]tidalTrackCreditResp, 0, len(d.Credits)),
 		CreditsFailed:   d.CreditsFailed,
+	}
+	if d.CreditsRefused {
+		out.CreditsFailure = refusalText("TIDAL refused the credits", d.CreditsRefusal)
+	}
+	if d.AlbumRefused {
+		out.ReleaseFailure = refusalText("TIDAL refused the album's release date", d.AlbumRefusal)
 	}
 	// Immersive formats are never requested, so a track TIDAL offers in
 	// stereo streams in stereo.

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TrackListItem } from "../src/api";
 import { api } from "../src/api";
 import type { AudioAdapter, AudioAdapterEvent } from "../src/player/audio-adapter";
@@ -513,5 +513,182 @@ describe("usePlayerCore with unavailable tracks", () => {
     state.time = 80;
     act(() => emit("timeupdate"));
     expect(adapter.prepareNext).toHaveBeenCalledExactlyOnceWith("test://stream/c");
+  });
+});
+
+describe("usePlayerCore playback errors", () => {
+  const tidal = (id: string): TrackListItem => ({ ...t(`tidal:${id}`), source: "tidal" });
+  const refusal = "TIDAL refused to stream this track: Not available in your region";
+  // The probe resolves over several promise hops; a macrotask drains them.
+  const settle = () => act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("stops on the failed track and shows the server's reason for a TIDAL stream", async () => {
+    const fetchMock = vi.fn(async () => new Response(refusal, { status: 502 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result, emit } = await setup();
+    act(() => result.current.controls.play(tidal("1"), [tidal("1"), t("b")]));
+
+    act(() => emit("error"));
+    expect(result.current.state.isPlaying).toBe(false);
+    await settle();
+    expect(result.current.state.playbackError).toEqual({ trackId: "tidal:1", message: refusal });
+    expect(result.current.state.current?.id).toBe("tidal:1");
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith("test://stream/tidal:1", expect.anything());
+  });
+
+  it.each([
+    ["a library track", t("a"), undefined],
+    ["a reverse proxy's HTML page", tidal("1"), () => new Response("<html><body>502 Bad Gateway</body></html>", { status: 502 })],
+    ["a stream that answers now", tidal("1"), () => new Response("#EXTM3U\n", { status: 200 })],
+    ["an error that isn't TIDAL's", tidal("1"), () => new Response("internal error", { status: 500 })],
+    ["an unreachable server", tidal("1"), () => Promise.reject(new TypeError("Failed to fetch"))],
+  ])("shows a generic message for %s", async (_case, track, respond) => {
+    const fetchMock = vi.fn(async () => respond ? respond() : new Response(refusal, { status: 502 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result, emit } = await setup();
+    act(() => result.current.controls.play(track));
+
+    act(() => emit("error"));
+    await settle();
+    expect(result.current.state.playbackError).toEqual({
+      trackId: track.id,
+      message: "Couldn't play this track.",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(respond ? 1 : 0);
+  });
+
+  it("does not ask the server about a downloaded TIDAL track", async () => {
+    const fetchMock = vi.fn(async () => new Response(refusal, { status: 502 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result, emit } = await setup({ resolveTrackUri: () => "file:///offline.flac" });
+    act(() => result.current.controls.play(tidal("1")));
+
+    act(() => emit("error"));
+    await settle();
+    expect(result.current.state.playbackError?.message).toBe("Couldn't play this track.");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores a probe that answers after another track started", async () => {
+    let answer!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { answer = resolve; })));
+    const { result, emit } = await setup();
+    act(() => result.current.controls.play(tidal("1"), [tidal("1"), t("b")]));
+    act(() => emit("error"));
+
+    act(() => result.current.controls.next());
+    answer(new Response(refusal, { status: 502 }));
+    await settle();
+    expect(result.current.state.current?.id).toBe("b");
+    expect(result.current.state.playbackError).toBeNull();
+  });
+
+  it("clears the error when another track starts", async () => {
+    const { result, emit } = await setup();
+    act(() => result.current.controls.play(t("a"), [t("a"), t("b")]));
+    act(() => emit("error"));
+    expect(result.current.state.playbackError?.trackId).toBe("a");
+
+    act(() => result.current.controls.next());
+    expect(result.current.state.playbackError).toBeNull();
+    expect(result.current.state.isPlaying).toBe(true);
+  });
+
+  it.each(["toggle", "resume", "play"] as const)("reloads the failed track on %s", async (control) => {
+    const { result, adapter, emit } = await setup();
+    act(() => result.current.controls.play(t("a"), [t("a"), t("b")]));
+    act(() => emit("error"));
+    vi.mocked(adapter.load).mockClear();
+    vi.mocked(adapter.play).mockClear();
+
+    act(() => {
+      if (control === "play") result.current.controls.play(t("a"), [t("a"), t("b")]);
+      else result.current.controls[control]();
+    });
+    expect(adapter.load).toHaveBeenCalledExactlyOnceWith("test://stream/a");
+    expect(adapter.play).toHaveBeenCalledTimes(1);
+    expect(result.current.state.isPlaying).toBe(true);
+    expect(result.current.state.playbackError).toBeNull();
+  });
+
+  it("shows the generic message while it asks the server why", async () => {
+    let answer!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { answer = resolve; })));
+    const { result, emit } = await setup();
+    act(() => result.current.controls.play(tidal("1")));
+
+    act(() => emit("error"));
+    expect(result.current.state.playbackError?.message).toBe("Couldn't play this track.");
+    answer(new Response(refusal, { status: 502 }));
+    await settle();
+    expect(result.current.state.playbackError?.message).toBe(refusal);
+  });
+
+  it.each([
+    ["more than 3s in", 10],
+    ["with nothing behind it", 0],
+  ])("reloads the failed track on prev %s", async (_case, time) => {
+    const { result, adapter, emit, state } = await setup();
+    act(() => result.current.controls.play(t("a"), [t("a"), t("b")]));
+    act(() => emit("error"));
+    vi.mocked(adapter.load).mockClear();
+    vi.mocked(adapter.seek).mockClear();
+
+    state.time = time;
+    act(() => result.current.controls.prev());
+    expect(adapter.load).toHaveBeenCalledExactlyOnceWith("test://stream/a");
+    expect(adapter.seek).not.toHaveBeenCalled();
+    expect(result.current.state.isPlaying).toBe(true);
+    expect(result.current.state.playbackError).toBeNull();
+  });
+
+  it("prepares the next track again after a retry", async () => {
+    const { result, adapter, emit, state } = await setup();
+    act(() => result.current.controls.play(t("a"), [t("a"), t("b")]));
+    state.dur = 100;
+    state.time = 80;
+    act(() => emit("timeupdate"));
+    expect(adapter.prepareNext).toHaveBeenCalledTimes(1);
+
+    act(() => emit("error"));
+    act(() => result.current.controls.toggle());
+    state.time = 80; // the reload started the track over
+    act(() => emit("timeupdate"));
+    expect(adapter.prepareNext).toHaveBeenCalledTimes(2);
+    expect(adapter.prepareNext).toHaveBeenLastCalledWith("test://stream/b");
+  });
+
+  it("counts a retried track as a fresh listen", async () => {
+    const { result, emit, state } = await setup();
+    act(() => result.current.controls.play(t("a"), [t("a"), t("b")]));
+    state.dur = 100;
+    state.time = 31;
+    act(() => emit("timeupdate"));
+    expect(api.recordPlay).toHaveBeenCalledTimes(1);
+
+    act(() => emit("error"));
+    act(() => result.current.controls.toggle());
+    expect(result.current.state.isPlaying).toBe(true);
+    state.time = 31; // the reload started the track over
+    act(() => emit("timeupdate"));
+    expect(api.recordPlay).toHaveBeenCalledTimes(2);
+  });
+
+  it("reloads a failed single-track loop instead of restarting it in place", async () => {
+    const { result, adapter, emit } = await setup();
+    act(() => result.current.controls.play(t("a")));
+    act(() => result.current.controls.setRepeat("all"));
+    act(() => emit("error"));
+    vi.mocked(adapter.load).mockClear();
+
+    act(() => result.current.controls.next());
+    expect(adapter.load).toHaveBeenCalledExactlyOnceWith("test://stream/a");
+    expect(result.current.state.playbackError).toBeNull();
   });
 });

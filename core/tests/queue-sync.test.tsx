@@ -28,7 +28,7 @@ class Socket {
 const tracks = Array.from({ length: 120 }, (_, i) => ({ id: `t${i}`, title: `Track ${i}`, duration_ms: 1000 }));
 const state: PlayerState = {
   queue: tracks, current: tracks[70], index: 70, isPlaying: true,
-  volume: 0.5, muted: false, shuffle: false, repeat: "off",
+  volume: 0.5, muted: false, shuffle: false, repeat: "off", playbackError: null,
 };
 const storage = { getItem: vi.fn().mockResolvedValue("local"), setItem: vi.fn(), removeItem: vi.fn() };
 const time = { currentTime: 0, duration: 1 };

@@ -36,6 +36,14 @@ type TrackDetails struct {
 	// CreditsFailed means TIDAL's credits couldn't be loaded, so an empty
 	// Credits doesn't mean there are none.
 	CreditsFailed bool
+	// CreditsRefused means TIDAL refused them, for CreditsRefusal's reason
+	// ("" when it gave none).
+	CreditsRefused bool
+	CreditsRefusal string
+	// AlbumRefused means TIDAL refused the album lookup, for AlbumRefusal's
+	// reason, so ReleaseDate is the stream start date, if anything.
+	AlbumRefused bool
+	AlbumRefusal string
 }
 
 // Credit is one role on a track and who filled it, in TIDAL's order.
@@ -87,6 +95,8 @@ func (c *Client) TrackDetails(ctx context.Context, id string) (TrackDetails, err
 			Names []string `json:"names"`
 		} `json:"credits"`
 		FailedSections []string `json:"failed_sections"`
+		// TIDAL's reason for each failed section it refused.
+		RefusedSections map[string]string `json:"refused_sections"`
 	}
 	if err := c.doHifiJSON(ctx, u.String(), &out); err != nil {
 		return TrackDetails{}, err
@@ -140,8 +150,16 @@ func (c *Client) TrackDetails(ctx context.Context, id string) (TrackDetails, err
 		switch section {
 		case "credits":
 			d.CreditsFailed = true
+			if detail, ok := out.RefusedSections[section]; ok {
+				d.CreditsRefused = true
+				d.CreditsRefusal = cleanRefusalReason(detail)
+			}
 		case "album":
 			// The stream start date above stands in for it.
+			if detail, ok := out.RefusedSections[section]; ok {
+				d.AlbumRefused = true
+				d.AlbumRefusal = cleanRefusalReason(detail)
+			}
 		default:
 			return TrackDetails{}, fmt.Errorf("invalid tidal track section status")
 		}

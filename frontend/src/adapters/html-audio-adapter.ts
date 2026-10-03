@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type Hls from "hls.js";
+import type { ErrorData } from "hls.js";
 import {
   createAudioAdapterEmitter,
   type AudioAdapter,
@@ -48,6 +49,7 @@ export function useHtmlAudioAdapter(): {
       const dispatchIfActive = (event: AudioAdapterEvent) => () => {
         if (activeAudioRef.current === a) listeners.emit(event);
       };
+      const dispatchError = dispatchIfActive("error");
       const handlers = {
         timeupdate: dispatchIfActive("timeupdate"),
         loadedmetadata: dispatchIfActive("loadedmetadata"),
@@ -55,6 +57,12 @@ export function useHtmlAudioAdapter(): {
         seeked: dispatchIfActive("seeked"),
         play: dispatchIfActive("play"),
         pause: dispatchIfActive("pause"),
+        // An element emptied by load() or resetAudio has no source to fail
+        // (it may still report the missing src), and hls.js reports and
+        // recovers the media it drives itself.
+        error: () => {
+          if (a.getAttribute("src") && !hlsRef.current) dispatchError();
+        },
       };
       for (const [event, handler] of Object.entries(handlers)) {
         a.addEventListener(event, handler);
@@ -125,17 +133,11 @@ export function useHtmlAudioAdapter(): {
                 hls.attachMedia(a);
                 hls.loadSource(url);
                 hls.on(HlsRuntime.Events.ERROR, (_event, data) => {
-                  if (!data.fatal) return;
-                  if (data.type === HlsRuntime.ErrorTypes.NETWORK_ERROR) {
-                    hls.startLoad();
-                    return;
+                  if (!data.fatal || !giveUpOnFatalHlsError(HlsRuntime, hls, data)) return;
+                  if (hlsRef.current === hls) {
+                    hlsRef.current = null;
+                    listeners.emit("error");
                   }
-                  if (data.type === HlsRuntime.ErrorTypes.MEDIA_ERROR) {
-                    hls.recoverMediaError();
-                    return;
-                  }
-                  hls.destroy();
-                  if (hlsRef.current === hls) hlsRef.current = null;
                 });
                 return;
               }
@@ -204,22 +206,16 @@ export function useHtmlAudioAdapter(): {
                 hls.attachMedia(next);
                 hls.loadSource(url);
                 hls.on(HlsRuntime.Events.ERROR, (_event, data) => {
-                  if (!data.fatal) return;
-                  if (data.type === HlsRuntime.ErrorTypes.NETWORK_ERROR) {
-                    hls.startLoad();
-                    return;
-                  }
-                  if (data.type === HlsRuntime.ErrorTypes.MEDIA_ERROR) {
-                    hls.recoverMediaError();
-                    return;
-                  }
-                  hls.destroy();
+                  if (!data.fatal || !giveUpOnFatalHlsError(HlsRuntime, hls, data)) return;
+                  // Still prepared: drop it quietly, and activatePrepared()
+                  // falls back to load(), which reports a failure for real.
                   if (preparedHlsRef.current === hls) {
                     preparedHlsRef.current = null;
                     preparedAudioRef.current = null;
                     preparedUrlRef.current = null;
                   } else if (hlsRef.current === hls) {
                     hlsRef.current = null;
+                    listeners.emit("error");
                   }
                 });
                 return;
@@ -358,6 +354,34 @@ export function useHtmlAudioAdapter(): {
   );
 
   return { adapter, audioRefs };
+}
+
+/**
+ * Recover from a fatal hls.js error where hls.js can, else destroy it.
+ * Returns true when it gave up and the source is gone. A playlist that never
+ * loaded is past recovery: hls.js has already retried it per its load
+ * policy, and startLoad() only resumes loading segments. So is a playlist or
+ * segment the server refused (4xx, e.g. an expired TIDAL URL): loading it
+ * again gets the same answer, and only a reload of the source gets new URLs.
+ */
+function giveUpOnFatalHlsError(HlsRuntime: typeof Hls, hls: Hls, data: ErrorData): boolean {
+  const { ErrorDetails, ErrorTypes } = HlsRuntime;
+  const status = data.response?.code ?? 0;
+  const manifestFailed =
+    data.details === ErrorDetails.MANIFEST_LOAD_ERROR ||
+    data.details === ErrorDetails.MANIFEST_LOAD_TIMEOUT ||
+    data.details === ErrorDetails.MANIFEST_PARSING_ERROR;
+  const refused = status >= 400 && status < 500;
+  if (!manifestFailed && !refused && data.type === ErrorTypes.NETWORK_ERROR) {
+    hls.startLoad();
+    return false;
+  }
+  if (data.type === ErrorTypes.MEDIA_ERROR) {
+    hls.recoverMediaError();
+    return false;
+  }
+  hls.destroy();
+  return true;
 }
 
 function resetAudio(audio: HTMLAudioElement): void {

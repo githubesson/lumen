@@ -7,6 +7,7 @@ import {
 } from "react-native";
 import Animated, { FadeInDown, FadeOutUp } from "react-native-reanimated";
 import { displayText, type TrackListItem } from "@music-library/core";
+import { usePlaybackErrorMessage } from "../../context/player";
 import { useTheme } from "../../theme/theme";
 
 export const HERO_META_STAGE_HEIGHT = 48;
@@ -25,6 +26,7 @@ export function HeroMeta({
 }) {
   const theme = useTheme();
   const artist = displayText(track.artist);
+  const error = usePlaybackErrorMessage(track);
   return (
     <View style={[styles.stage, style]}>
       <Animated.View
@@ -48,7 +50,16 @@ export function HeroMeta({
             {displayText(track.title)}
           </Text>
         </View>
-        {artist ? (
+        {error ? (
+          <Text
+            key="error"
+            numberOfLines={1}
+            accessibilityLiveRegion="polite"
+            style={{ color: theme.color.danger, fontSize: 17 }}
+          >
+            {error}
+          </Text>
+        ) : artist ? (
           <Text
             numberOfLines={1}
             style={{ color: theme.color.fgMuted, fontSize: 17 }}

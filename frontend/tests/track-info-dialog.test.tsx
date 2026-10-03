@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TrackInfoDialog } from "../src/components/TrackInfoDialog";
-import type { TidalTrackInfo, TrackDetail } from "../src/api";
+import { ApiError, type TidalTrackInfo, type TrackDetail } from "../src/api";
 
 const mock = vi.hoisted(() => ({ getTrack: vi.fn(), getTidalTrack: vi.fn() }));
 vi.mock("../../core/src/api", async (original) => ({
@@ -272,6 +272,24 @@ it("shows the stored fields when TIDAL can't answer", async () => {
   expect(field("Duration")).toBe("3:48");
 });
 
+it("says why TIDAL refused the track", async () => {
+  mock.getTrack.mockResolvedValueOnce(tidalRow);
+  const reason = "TIDAL refused this track: Not available in your region";
+  mock.getTidalTrack.mockRejectedValueOnce(new ApiError(502, reason));
+  render(<TrackInfoDialog open trackId="tidal:500" onClose={() => {}} />);
+  await screen.findByText(reason);
+  expect(screen.queryByText(/Couldn't load more from TIDAL/)).toBeNull();
+  expect(field("Primary artist")).toBe("BabyTron");
+});
+
+it("keeps the generic note for a failure that isn't a refusal", async () => {
+  mock.getTrack.mockResolvedValueOnce(tidalRow);
+  mock.getTidalTrack.mockRejectedValueOnce(new ApiError(502, "tidal track unavailable"));
+  render(<TrackInfoDialog open trackId="tidal:500" onClose={() => {}} />);
+  await screen.findByText(/Couldn't load more from TIDAL/);
+  expect(screen.queryByText("tidal track unavailable")).toBeNull();
+});
+
 it("says when only TIDAL's credits are missing", async () => {
   mock.getTrack.mockResolvedValueOnce(tidalRow);
   mock.getTidalTrack.mockResolvedValueOnce({ ...tidalInfo, credits: [], credits_failed: true });
@@ -279,6 +297,23 @@ it("says when only TIDAL's credits are missing", async () => {
   await screen.findByText("Couldn't load credits from TIDAL.");
   expect(field("Producers")).toBe("—");
   expect(screen.queryByText(/Couldn't load more/)).toBeNull();
+});
+
+it("says why TIDAL refused the credits", async () => {
+  mock.getTrack.mockResolvedValueOnce(tidalRow);
+  const reason = "TIDAL refused the credits: Not available in your region";
+  mock.getTidalTrack.mockResolvedValueOnce({ ...tidalInfo, credits: [], credits_failed: true, credits_failure: reason });
+  render(<TrackInfoDialog open trackId="tidal:500" onClose={() => {}} />);
+  await screen.findByText(reason);
+  expect(screen.queryByText("Couldn't load credits from TIDAL.")).toBeNull();
+});
+
+it("says why TIDAL refused the album's release date", async () => {
+  mock.getTrack.mockResolvedValueOnce(tidalRow);
+  const reason = "TIDAL refused the album's release date: Not available in your region";
+  mock.getTidalTrack.mockResolvedValueOnce({ ...tidalInfo, release_failure: reason });
+  render(<TrackInfoDialog open trackId="tidal:500" onClose={() => {}} />);
+  await screen.findByText(reason);
 });
 
 it("never asks TIDAL about a local track", async () => {

@@ -6,7 +6,9 @@ import {
   useState,
 } from "react";
 import { api, streamUrl, type TrackListItem } from "../api";
+import { ApiError, rawFetch } from "../api-transport";
 import type { Storage } from "../storage";
+import { isTidalTrack } from "../track";
 import type { AudioAdapter } from "./audio-adapter";
 import {
   VOLUME_STORAGE_KEY,
@@ -15,6 +17,7 @@ import {
   fisherYatesWithAnchor,
   nextRepeatMode,
   shouldReportPlay,
+  type PlaybackError,
   type PlayerControls,
   type PlayerState,
   type RepeatMode,
@@ -75,6 +78,33 @@ function firstPlayableIndex(
   return -1;
 }
 
+const PLAYBACK_ERROR_FALLBACK = "Couldn't play this track.";
+
+/**
+ * Why a stream failed, in the server's words: request it once more. The
+ * backend answers a TIDAL stream it can't serve with a 502 or 503 and a short
+ * plain-text reason (and remembers TIDAL's refusal, so this doesn't ask TIDAL
+ * again). Anything else, such as a stream that works now, a network failure,
+ * another error or a reverse proxy's HTML error page, gets the generic
+ * message.
+ */
+async function streamFailureMessage(url: string): Promise<string> {
+  try {
+    const response = await rawFetch(url);
+    // Nothing to explain; don't download the playlist.
+    void response.body?.cancel().catch(() => {});
+  } catch (error) {
+    const text =
+      error instanceof ApiError && (error.status === 502 || error.status === 503)
+        ? error.message
+        : "";
+    if (text && text.length <= 300 && !text.startsWith("<") && !text.includes("\n")) {
+      return text;
+    }
+  }
+  return PLAYBACK_ERROR_FALLBACK;
+}
+
 /**
  * Platform-agnostic player state machine. Drives an `AudioAdapter` (HTML audio
  * on web, `expo-audio` on mobile), owns queue / shuffle / repeat / volume
@@ -108,6 +138,11 @@ export function usePlayerCore({
   const [muted, setMuted] = useState(false);
   const [shuffle, setShuffleState] = useState(false);
   const [repeat, setRepeatState] = useState<RepeatMode>("off");
+  const [playbackError, setPlaybackError] = useState<PlaybackError | null>(null);
+  // The current track's failure, set as soon as the adapter reports it (its
+  // message may still be on the way): playing that track again retries it,
+  // and a message only lands while this is still the same failure.
+  const failureRef = useRef<{ trackId: string } | null>(null);
   const playbackReportedRef = useRef<string | null>(null);
   const lastFMScrobbledRef = useRef<string | null>(null);
   // Lazily seeded (see the track-change effect below) rather than
@@ -197,41 +232,6 @@ export function usePlayerCore({
     anchorRef.current = { audioTime: 0, wallTime: performance.now() };
   }, []);
 
-  const play = useCallback<PlayerControls["play"]>(
-    (track, q) => {
-      if (!canStartTrack(track, isTrackPlayable)) return false;
-      const base = q && q.length ? q : [track];
-      setSourceQueue(base);
-      if (shuffle) {
-        // Pin the clicked track at position 0, shuffle the rest. The user
-        // will play through every track exactly once before any wrap.
-        setQueue(fisherYatesWithAnchor(base, track.id));
-        setIndex(0);
-      } else {
-        setQueue(base);
-        setIndex(Math.max(0, base.findIndex((t) => t.id === track.id)));
-      }
-      setCurrent(track);
-      setIsPlaying(true);
-      resetClockForTrackChange(track.id);
-      playbackReportedRef.current = null;
-    },
-    [isTrackPlayable, resetClockForTrackChange, shuffle],
-  );
-
-  const toggle = useCallback<PlayerControls["toggle"]>(() => {
-    if (!current) return;
-    setIsPlaying((p) => !p);
-  }, [current]);
-
-  const resume = useCallback<PlayerControls["resume"]>(() => {
-    if (current) setIsPlaying(true);
-  }, [current]);
-
-  const pause = useCallback<PlayerControls["pause"]>(() => {
-    if (current) setIsPlaying(false);
-  }, [current]);
-
   const resolvePlayableUri = useCallback(
     (trackId: string) => resolveTrackUri?.(trackId) || streamUrl(trackId),
     [resolveTrackUri],
@@ -250,6 +250,88 @@ export function usePlayerCore({
       if (attempt === playbackAttemptRef.current) setIsPlaying(false);
     });
   }, [adapter]);
+
+  const clearPlaybackError = useCallback(() => {
+    if (!failureRef.current) return;
+    failureRef.current = null;
+    setPlaybackError(null);
+  }, []);
+
+  // A failed source stays failed, so play() alone can't revive it. Load it
+  // again as a fresh start does, and start it here the way next() does.
+  // load() drops the adapter's prepared next track, so drop its marker too,
+  // or it is never prepared again. The reload starts over, so it is a fresh
+  // listen for play history and Last.fm, as a repeat-one restart is.
+  const retryFailedTrack = useCallback(
+    (track: TrackListItem) => {
+      clearPlaybackError();
+      clearPreparedNext();
+      playbackReportedRef.current = null;
+      lastFMScrobbledRef.current = null;
+      trackStartedAtRef.current = Math.floor(Date.now() / 1000);
+      listenedSecondsRef.current = 0;
+      listeningTickRef.current = performance.now();
+      setCurrentTime(0);
+      setDuration(0);
+      anchorRef.current = { audioTime: 0, wallTime: performance.now() };
+      loadedTrackIdRef.current = track.id;
+      adapter.load(resolvePlayableUri(track.id));
+      startPlayback();
+      handoffRef.current = { track, attempt: playbackAttemptRef.current };
+      setIsPlaying(true);
+    },
+    [adapter, clearPlaybackError, clearPreparedNext, resolvePlayableUri, startPlayback],
+  );
+
+  // Start the selected track: the failed one is retried, and any other
+  // drops the previous track's failure.
+  const startTrack = useCallback(
+    (track: TrackListItem) => {
+      if (failureRef.current?.trackId === track.id) {
+        retryFailedTrack(track);
+        return;
+      }
+      clearPlaybackError();
+      setIsPlaying(true);
+    },
+    [clearPlaybackError, retryFailedTrack],
+  );
+
+  const play = useCallback<PlayerControls["play"]>(
+    (track, q) => {
+      if (!canStartTrack(track, isTrackPlayable)) return false;
+      const base = q && q.length ? q : [track];
+      setSourceQueue(base);
+      if (shuffle) {
+        // Pin the clicked track at position 0, shuffle the rest. The user
+        // will play through every track exactly once before any wrap.
+        setQueue(fisherYatesWithAnchor(base, track.id));
+        setIndex(0);
+      } else {
+        setQueue(base);
+        setIndex(Math.max(0, base.findIndex((t) => t.id === track.id)));
+      }
+      setCurrent(track);
+      startTrack(track);
+      resetClockForTrackChange(track.id);
+      playbackReportedRef.current = null;
+    },
+    [isTrackPlayable, resetClockForTrackChange, shuffle, startTrack],
+  );
+
+  const toggle = useCallback<PlayerControls["toggle"]>(() => {
+    if (!current) return;
+    if (failureRef.current?.trackId === current.id) retryFailedTrack(current);
+    else setIsPlaying((p) => !p);
+  }, [current, retryFailedTrack]);
+
+  const resume = useCallback<PlayerControls["resume"]>(() => {
+    if (current) startTrack(current);
+  }, [current, startTrack]);
+
+  const pause = useCallback<PlayerControls["pause"]>(() => {
+    if (current) setIsPlaying(false);
+  }, [current]);
 
   const next = useCallback<PlayerControls["next"]>(() => {
     if (!queue.length) return;
@@ -300,7 +382,8 @@ export function usePlayerCore({
 
     const prepared = preparedNextRef.current;
     const nextUri = resolvePlayableUri(nextTrack.id);
-    const sameTrack = loadedTrackIdRef.current === nextTrack.id;
+    // A failed source can't restart in place; it is loaded again.
+    const sameTrack = loadedTrackIdRef.current === nextTrack.id && !failureRef.current;
     playbackAttemptRef.current += 1;
     const activated =
       prepared?.trackId === nextTrack.id &&
@@ -334,6 +417,7 @@ export function usePlayerCore({
       listeningTickRef.current = performance.now();
     }
 
+    clearPlaybackError();
     if (nextQueue) setQueue(nextQueue);
     setIndex(nextIndex);
     setCurrent(nextTrack);
@@ -344,6 +428,7 @@ export function usePlayerCore({
     playbackReportedRef.current = null;
   }, [
     adapter,
+    clearPlaybackError,
     clearPreparedNext,
     index,
     isTrackPlayable,
@@ -357,11 +442,19 @@ export function usePlayerCore({
 
   const prev = useCallback<PlayerControls["prev"]>(() => {
     if (!queue.length) return;
+    const restartCurrent = () => {
+      // A failed source can't restart in place; it is loaded again.
+      if (current && failureRef.current?.trackId === current.id) {
+        retryFailedTrack(current);
+        return;
+      }
+      adapter.seek(0);
+      setCurrentTime(0);
+    };
     // If you're more than 3s into the current track, restart instead of
     // going back.
     if (adapter.currentTime() > 3) {
-      adapter.seek(0);
-      setCurrentTime(0);
+      restartCurrent();
       return;
     }
     const ni =
@@ -371,17 +464,16 @@ export function usePlayerCore({
     if (ni === -1) {
       // Nothing playable behind us — restart the current track instead of
       // landing on an unplayable one.
-      adapter.seek(0);
-      setCurrentTime(0);
+      restartCurrent();
       return;
     }
     clearPreparedNext();
     setIndex(ni);
     setCurrent(queue[ni]);
-    setIsPlaying(true);
+    startTrack(queue[ni]);
     resetClockForTrackChange(queue[ni].id);
     playbackReportedRef.current = null;
-  }, [adapter, clearPreparedNext, queue, index, isTrackPlayable, resetClockForTrackChange]);
+  }, [adapter, clearPreparedNext, current, queue, index, isTrackPlayable, resetClockForTrackChange, retryFailedTrack, startTrack]);
 
   const jumpTo = useCallback<PlayerControls["jumpTo"]>(
     (i) => {
@@ -392,11 +484,11 @@ export function usePlayerCore({
       clearPreparedNext();
       setIndex(i);
       setCurrent(queue[i]);
-      setIsPlaying(true);
+      startTrack(queue[i]);
       resetClockForTrackChange(queue[i].id);
       playbackReportedRef.current = null;
     },
-    [clearPreparedNext, queue, isTrackPlayable, resetClockForTrackChange],
+    [clearPreparedNext, queue, isTrackPlayable, resetClockForTrackChange, startTrack],
   );
 
   const seek = useCallback<PlayerControls["seek"]>(
@@ -669,6 +761,27 @@ export function usePlayerCore({
       playbackAttemptRef.current += 1;
       setIsPlaying(false);
     });
+    const offError = adapter.on("error", () => {
+      // Stop on the failed track rather than skipping it: the failure is
+      // shown there, and playing the track again retries it.
+      playbackAttemptRef.current += 1;
+      setIsPlaying(false);
+      const { current: track, resolvePlayableUri: resolveUri } = eventStateRef.current;
+      if (!track) return;
+      const failure = { trackId: track.id };
+      failureRef.current = failure;
+      const report = (message: string) => {
+        if (failureRef.current === failure) setPlaybackError({ trackId: track.id, message });
+      };
+      // Say so right away; the server's reason, if any, replaces it.
+      report(PLAYBACK_ERROR_FALLBACK);
+      // Only the server can say why its TIDAL stream failed. A downloaded
+      // copy or a library file just didn't play.
+      const url = streamUrl(track.id);
+      if (isTidalTrack(track) && resolveUri(track.id) === url) {
+        void streamFailureMessage(url).then(report);
+      }
+    });
     return () => {
       offTime();
       offMeta();
@@ -676,6 +789,7 @@ export function usePlayerCore({
       offSeeked();
       offPlay();
       offPause();
+      offError();
     };
   }, [adapter, startPlayback]);
 
@@ -707,8 +821,9 @@ export function usePlayerCore({
       muted,
       shuffle,
       repeat,
+      playbackError,
     }),
-    [current, queue, index, isPlaying, volume, muted, shuffle, repeat],
+    [current, queue, index, isPlaying, volume, muted, shuffle, repeat, playbackError],
   );
 
   const controls = useMemo<PlayerControls>(

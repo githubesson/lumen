@@ -13,7 +13,7 @@ it("respects an exact snapshot budget and never sends an empty replacement for a
   const track = { id: "t", title: "Track", duration_ms: 1000 };
   const state: PlayerState = {
     current: track, queue: [track], index: 0, isPlaying: true,
-    volume: 1, muted: false, shuffle: false, repeat: "off",
+    volume: 1, muted: false, shuffle: false, repeat: "off", playbackError: null,
   };
   const original = buildPlaybackQueueSnapshot(state, "revision")!;
   const bytes = new Blob([JSON.stringify(original)]).size;

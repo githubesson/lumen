@@ -55,6 +55,7 @@ const localState: PlayerState = {
   muted: false,
   shuffle: false,
   repeat: "off",
+  playbackError: null,
 };
 const localTime: TimeState = { currentTime: 42, duration: 200 };
 

@@ -4,10 +4,10 @@ import { beforeEach, expect, it, vi } from "vitest";
 import type { TidalTrackInfo, TrackDetail } from "@music-library/core";
 import TrackInfoScreen from "../app/(tabs)/(library,browse)/track/[id]";
 
-type QueryState = { data?: unknown; isLoading?: boolean; isError?: boolean };
+type QueryState = { data?: unknown; isLoading?: boolean; isError?: boolean; error?: unknown };
 const mock = vi.hoisted(() => ({
   track: {} as { data?: unknown; isLoading?: boolean; isError?: boolean },
-  tidal: {} as { data?: unknown; isLoading?: boolean; isError?: boolean },
+  tidal: {} as QueryState,
   tidalOptions: undefined as Record<string, unknown> | undefined,
 }));
 vi.mock("react-native", () => ({
@@ -146,11 +146,34 @@ it("shows the stored rows with a note when TIDAL can't answer", () => {
   expect(out).not.toContain("Released");
 });
 
+it("says why TIDAL refused the track", async () => {
+  const { ApiError } = await import("@music-library/core");
+  mock.tidal = { isError: true, error: new ApiError(502, "TIDAL refused this track: Not available in your region") };
+  const out = html();
+  expect(out).toContain("TIDAL refused this track: Not available in your region");
+  expect(out).not.toContain("Couldn&#x27;t load more from TIDAL");
+  expect(out).toContain(pair("Primary artist", "BabyTron"));
+});
+
 it("notes missing credits on their own", () => {
   mock.tidal = { data: { ...info, credits: [], credits_failed: true } };
   const out = html();
   expect(out).toContain("Couldn&#x27;t load credits from TIDAL.");
   expect(out).not.toContain("Couldn&#x27;t load more");
+});
+
+it("says why TIDAL refused the credits", () => {
+  const reason = "TIDAL refused the credits: Not available in your region";
+  mock.tidal = { data: { ...info, credits: [], credits_failed: true, credits_failure: reason } };
+  const out = html();
+  expect(out).toContain(reason);
+  expect(out).not.toContain("Couldn&#x27;t load credits");
+});
+
+it("says why TIDAL refused the album's release date", () => {
+  const reason = "TIDAL refused the album&#x27;s release date: Not available in your region";
+  mock.tidal = { data: { ...info, release_failure: reason.replace("&#x27;", "'") } };
+  expect(html()).toContain(reason);
 });
 
 it("never asks TIDAL about a local track", () => {

@@ -426,6 +426,8 @@ export function remotePlayerState(
     queue: snapshot?.tracks ?? (current ? [current] : []),
     index: snapshot?.index ?? 0,
     isPlaying: !!device.activity?.is_playing,
+    // A failure is reported where it happened, not on the controlling device.
+    playbackError: null,
   };
 }
 

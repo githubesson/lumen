@@ -83,6 +83,8 @@ const [PlayerHasTrackCtx, useHasCurrentTrackCtx] =
   createRequiredContext<boolean>("useHasCurrentTrack");
 const [PlayerIsPlayingCtx, useIsPlayingCtx] =
   createRequiredContext<boolean>("useIsPlaying");
+const [PlayerErrorCtx, usePlaybackErrorCtx] =
+  createRequiredContext<PlayerState["playbackError"]>("usePlaybackErrorMessage");
 const [PlayerQueueCtx, usePlayerQueueCtx] =
   createRequiredContext<PlayerQueueState>("usePlayerQueue");
 const [PlayerPlaybackCtx, usePlayerPlaybackCtx] =
@@ -102,6 +104,12 @@ export const usePlayerQueue = usePlayerQueueCtx;
 export const usePlayerPlayback = usePlayerPlaybackCtx;
 export const usePlayerVolume = usePlayerVolumeCtx;
 export const useRemotePlayback = useRemotePlaybackCtx;
+
+/** Why `track` stopped playing, if it's the current track and failed. */
+export function usePlaybackErrorMessage(track: TrackListItem | null): string | null {
+  const error = usePlaybackErrorCtx();
+  return track && error?.trackId === track.id ? error.message : null;
+}
 
 const LOCK_SCREEN_OPTIONS: AudioLockScreenOptions = {};
 
@@ -314,7 +322,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
                   <PlayerPlayCtx.Provider value={routedControls.play}>
                     <PlayerControlsCtx.Provider value={routedControls}>
                       <PlayerTimeCtx.Provider value={displayedTime}>
-                        {children}
+                        <PlayerErrorCtx.Provider value={displayedState.playbackError}>
+                          {children}
+                        </PlayerErrorCtx.Provider>
                       </PlayerTimeCtx.Provider>
                     </PlayerControlsCtx.Provider>
                   </PlayerPlayCtx.Provider>

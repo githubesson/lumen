@@ -26,6 +26,8 @@ func TestTIDALArtistFailureResponse(t *testing.T) {
 		{"total failure", 502, `{"detail":"private upstream failure"}`, "", 0, nil},
 		{"partial failure", 200, `{"albums":{"items":[{"id":456,"title":"Release"}]},"tracks":[],"failed_sections":["singles"]}`, "Couldn't load singles and EPs.", 1, nil},
 		{"incomplete empty", 200, `{"albums":{"items":[]},"tracks":[],"failed_sections":["albums"]}`, "Couldn't load albums.", 0, nil},
+		{"refused section", 200, `{"albums":{"items":[]},"tracks":[],"failed_sections":["singles"],"refused_sections":{"singles":"Not available\nin your region"}}`, "TIDAL refused this artist's singles and EPs: Not available in your region", 0, nil},
+		{"refused section without a reason", 200, `{"albums":{"items":[]},"tracks":[],"failed_sections":["tracks"],"refused_sections":{"tracks":"Upstream API error"}}`, "TIDAL refused this artist's top songs.", 0, nil},
 		{"confirmed empty", 200, `{"albums":{"items":[]},"tracks":[],"failed_sections":[]}`, "", 0, nil},
 		{"profile", 200, `{"artist":{"name":"Artist","picture":"a-b-c"},"albums":{"items":[]},"tracks":[],"failed_sections":[]}`, "", 0, &tidalArtistProfileResp{
 			Name:     "Artist",

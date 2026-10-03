@@ -524,11 +524,7 @@ func (h *Playlists) AddTracks(w http.ResponseWriter, r *http.Request) {
 	for _, s := range req.TrackIDs {
 		id, origin, err := resolveTrackEntry(r.Context(), h.Library, h.TIDAL, u.ID, s, true)
 		if err != nil {
-			if errors.Is(err, tidal.ErrNotConfigured) {
-				http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-				return
-			}
-			http.Error(w, "bad track id", http.StatusBadRequest)
+			writeTrackResolveError(w, err)
 			return
 		}
 		ids = append(ids, id)
@@ -639,11 +635,7 @@ func (h *Playlists) Reorder(w http.ResponseWriter, r *http.Request) {
 		// materialize a new remote track before the exact-multiset validation.
 		id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, s, false)
 		if err != nil {
-			if errors.Is(err, tidal.ErrNotConfigured) {
-				http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-				return
-			}
-			http.Error(w, "bad track id", http.StatusBadRequest)
+			writeTrackResolveError(w, err)
 			return
 		}
 		ids = append(ids, id)
