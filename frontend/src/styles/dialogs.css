@@ -27,9 +27,112 @@
   overscroll-behavior: contain;
 }
 
+/* Track info: the track as a player shows it on the left third, every other
+   field on the right two thirds. Each side scrolls on its own. */
+.track-info {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  font-size: 14px;
+}
+.track-info-summary,
+.track-info-details {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.track-info-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border-right: 1px solid var(--border);
+}
+.track-info-details {
+  display: grid;
+  /* A wide versions table scrolls inside its box instead of widening this. */
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 20px;
+  padding: 20px 24px;
+}
+.track-info-cover {
+  width: 100%;
+  aspect-ratio: 1;
+  flex: none;
+  border-radius: var(--radius-lg);
+}
+.track-info-heading {
+  display: grid;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+.track-info-title {
+  margin-bottom: 2px;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.track-info-artist { color: var(--muted-foreground); }
+.track-info-album {
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+.track-info-section .eyebrow { margin: 0 0 8px; }
+.track-info-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 12px 16px;
+  margin: 0;
+}
+.track-info-fields > [data-wide] { grid-column: 1 / -1; }
+.track-info-fields dt {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.track-info-fields dd {
+  margin: 2px 0 0;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+.track-info-fields dd[data-empty] { color: var(--muted-foreground); }
+
+/* Phones: one column that scrolls as a whole, with a small cover beside
+   the title instead of above it. */
+@media (max-width: 640px) {
+  .track-info {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+  .track-info-summary,
+  .track-info-details { overflow: visible; }
+  .track-info-summary {
+    flex-direction: row;
+    align-items: center;
+    padding: 16px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .track-info-cover { width: 88px; }
+  .track-info-title { font-size: 16px; }
+  .track-info-details { padding: 16px; }
+}
+
 /* Track info: metadata versions merged by dedup, compared field by field */
-.track-versions-caption {
+.track-versions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 4px;
+}
+.track-info-section .track-versions-head .eyebrow { margin: 0; }
+.track-versions-caption {
+  margin-bottom: 8px;
   font-size: 12px;
   color: var(--muted-foreground);
 }
@@ -55,14 +158,16 @@
   overflow-wrap: anywhere;
 }
 .track-versions tbody > tr > * { border-top: 1px solid var(--border); }
+/* Lines between the columns keep each version's values under its header. */
+.track-versions thead th + th,
+.track-versions tbody td + td { border-left: 1px solid var(--border); }
 /* Scrolled columns settle flush against the sticky labels. */
 .track-versions thead th {
+  padding-top: 9px;
+  padding-bottom: 9px;
+  vertical-align: middle;
   scroll-snap-align: start;
   scroll-margin-left: 72px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--muted-foreground);
-  white-space: nowrap;
 }
 /* Field labels stay put while wide comparisons scroll sideways. */
 .track-versions thead td,
@@ -79,10 +184,40 @@
   color: var(--muted-foreground);
 }
 .track-versions [data-shown] { background: var(--muted); }
+.track-versions tbody td { color: var(--foreground); }
+.track-versions tbody td[data-same] { color: var(--muted-foreground); }
+
+/* A version's number, shared by the dropdown and its column's header. */
+.version-mark {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+/* The number stays beside a long file name as it wraps. */
+.version-name {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.version-file { overflow-wrap: anywhere; }
 /* The default badge fill matches the shown column's; outline it instead. */
-.track-versions .badge {
+.version-name .badge {
+  margin-left: 6px;
+  vertical-align: 1px;
   background: var(--popover);
   border-color: var(--border);
 }
-.track-versions tbody td { color: var(--foreground); }
-.track-versions tbody td[data-same] { color: var(--muted-foreground); }

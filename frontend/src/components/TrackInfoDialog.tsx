@@ -1,10 +1,19 @@
-import { displayArtists, primaryArtistName, trackCredits, type TrackDetail } from "../api";
+import {
+  displayArtists,
+  primaryArtistName,
+  trackArtUrl,
+  trackCredits,
+  type TrackDetail,
+} from "../api";
 import {
   formatBitrate,
   formatDurationMs,
   formatSampleRate,
 } from "@music-library/core/format";
+import { useState } from "react";
+import CoverArt from "./CoverArt";
 import { DialogShell } from "./DialogShell";
+import { MultiSelect, type MultiSelectOption } from "./MultiSelect";
 import { fmtBytes } from "../lib/format";
 import { useTrackDetail } from "../lib/useTrackDetail";
 
@@ -21,6 +30,9 @@ interface Props {
  * rate, other versions from dedup hits, etc.) are visible in one place. Deliberately
  * separate from EditTrackDialog so non-admins can see the same information
  * without accidentally opening an editor they can't submit.
+ *
+ * Laid out landscape: the cover, title, artists and album take the left third,
+ * and every other field fills the right two thirds, which scroll on their own.
  */
 export function TrackInfoDialog({
   open,
@@ -30,75 +42,89 @@ export function TrackInfoDialog({
 }: Props) {
   const { track, error } = useTrackDetail(open, trackId, requestNonce);
 
-  const body = error ? (
-    <div
-      className="dialog-scroll"
-      style={{ padding: 16, color: "var(--destructive)" }}
-    >
-      {error}
-    </div>
-  ) : !track ? (
-    <div
-      className="dialog-scroll"
-      style={{ padding: 16, color: "var(--muted-foreground)", fontSize: 14 }}
-    >
-      Loading…
-    </div>
-  ) : (
-    <div className="dialog-scroll" style={{ padding: 16, fontSize: 14 }}>
-      <HeaderBlock track={track} />
-
-      {track.aliases && track.aliases.length > 0 && (
-        <Versions track={track} />
-      )}
-
-      <Section label="Identity">
-        <Field k="Title" v={track.title} />
-        {trackCredits(track).map((credit) => (
-          <Field key={credit.label} k={credit.label} v={credit.value} />
-        ))}
-        <Field k="Album" v={track.album_title || "—"} />
-        <Field k="Year" v={track.year ? String(track.year) : "—"} />
-        <Field k="Genre" v={track.genre || "—"} />
-        {track.comments && <Field k="Comments" v={track.comments} />}
-        <Field
-          k="Track · Disc"
-          v={
-            track.track_no || track.disc_no
-              ? `${track.track_no ?? "—"} · ${track.disc_no ?? "—"}`
-              : "—"
-          }
-        />
-      </Section>
-
-      <Section label="Audio">
-        <Field k="Format" v={track.format || "—"} />
-        <Field k="Bitrate" v={formatBitrate(track.bitrate)} />
-        <Field k="Sample rate" v={formatSampleRate(track.sample_rate)} />
-        <Field k="Channels" v={track.channels ? String(track.channels) : "—"} />
-        <Field k="Duration" v={formatDurationMs(track.duration_ms, "—")} />
-        <Field k="File size" v={fmtBytes(track.file_size)} />
-        {track.file_name && <Field k="File" v={track.file_name} />}
-      </Section>
-    </div>
-  );
-
   return (
-    <DialogShell open={open} title="Track info" onClose={onClose}>
-      {body}
+    <DialogShell open={open} title="Track info" onClose={onClose} maxWidth={880}>
+      <div className="track-info">
+        <Summary track={track} />
+        <div className="track-info-details">
+          {error ? (
+            <div style={{ color: "var(--destructive)" }}>{error}</div>
+          ) : !track ? (
+            <div style={{ color: "var(--muted-foreground)" }}>Loading…</div>
+          ) : (
+            <Details track={track} />
+          )}
+        </div>
+      </div>
     </DialogShell>
   );
 }
 
-function HeaderBlock({ track }: { track: TrackDetail }) {
+/** The left third: artwork and the lines a player shows for the track. */
+function Summary({ track }: { track: TrackDetail | null }) {
   return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 16, fontWeight: 600 }}>{track.title}</div>
-      <div style={{ color: "var(--muted-foreground)" }}>
-        {primaryArtistName(track)}
-        {track.album_title ? ` · ${track.album_title}` : ""}
-      </div>
+    <div className="track-info-summary">
+      {track ? (
+        <CoverArt
+          className="track-info-cover"
+          src={trackArtUrl(track, 512)}
+          label={track.title}
+        />
+      ) : (
+        <div className="track-info-cover cover-art" aria-hidden="true" />
+      )}
+      {track && (
+        <div className="track-info-heading">
+          <div className="track-info-title">{track.title}</div>
+          <div className="track-info-artist">
+            {displayArtists(track) || primaryArtistName(track)}
+          </div>
+          {track.album_title && (
+            <div className="track-info-album">{track.album_title}</div>
+          )}
+        </div>
+      )}
     </div>
+  );
+}
+
+function Details({ track }: { track: TrackDetail }) {
+  return (
+    <>
+      <Section label="Credits">
+        <Fields>
+          {trackCredits(track).map((credit) => (
+            <Field key={credit.label} k={credit.label} v={credit.value} />
+          ))}
+        </Fields>
+      </Section>
+
+      <Section label="Release">
+        <Fields>
+          <Field k="Year" v={track.year ? String(track.year) : ""} />
+          <Field k="Genre" v={track.genre} />
+          <Field k="Track" v={track.track_no ? String(track.track_no) : ""} />
+          <Field k="Disc" v={track.disc_no ? String(track.disc_no) : ""} />
+          {track.comments && <Field k="Comments" v={track.comments} wide />}
+        </Fields>
+      </Section>
+
+      <Section label="Audio">
+        <Fields>
+          <Field k="Format" v={track.format} />
+          <Field k="Bitrate" v={formatBitrate(track.bitrate)} />
+          <Field k="Sample rate" v={formatSampleRate(track.sample_rate)} />
+          <Field k="Channels" v={track.channels ? String(track.channels) : ""} />
+          <Field k="Duration" v={formatDurationMs(track.duration_ms, "")} />
+          <Field k="File size" v={fmtBytes(track.file_size)} />
+          {track.file_name && <Field k="File" v={track.file_name} wide />}
+        </Fields>
+      </Section>
+
+      {track.aliases && track.aliases.length > 0 && (
+        <Versions key={track.id} track={track} />
+      )}
+    </>
   );
 }
 
@@ -109,21 +135,22 @@ interface Version {
   file: string;
 }
 
-const versionFields: { key: keyof Version; label: string }[] = [
+const versionFields: { key: Exclude<keyof Version, "file">; label: string }[] = [
   { key: "title", label: "Title" },
   { key: "artists", label: "Artists" },
   { key: "album", label: "Album" },
-  { key: "file", label: "File" },
 ];
 
 const sameValue = (a: string, b: string) =>
   a.trim().toLowerCase() === b.trim().toLowerCase();
 
 /**
- * Versions compares every copy of the track's audio that ingest merged into
- * it, field by field: the copy whose tags are shown, then the others. An
- * alternate's value that matches the shown one is faded, so what differs
- * stands out.
+ * Versions compares the copies of the track's audio that ingest merged into
+ * it, field by field: the copy whose tags are shown, then the others. A
+ * dropdown picks which copies sit side by side, starting with the shown one
+ * and the first other, so a long list doesn't crowd the view. Each copy keeps
+ * its number in the dropdown and in its column's header. A value that matches
+ * the shown copy's is faded, so what differs stands out.
  */
 function Versions({ track }: { track: TrackDetail }) {
   const shown: Version = {
@@ -131,7 +158,7 @@ function Versions({ track }: { track: TrackDetail }) {
     artists: displayArtists(track),
     album: track.album_title ?? "",
     file: track.metadata_edited
-      ? "Edited"
+      ? "Edited tags"
       : (track.tags_file_name ?? track.file_name ?? ""),
   };
   const versions: Version[] = [
@@ -145,29 +172,50 @@ function Versions({ track }: { track: TrackDetail }) {
   ];
   // The server sends only the first few of a long list.
   const total = Math.max(track.alias_count ?? 0, versions.length - 1) + 1;
+  const [picked, setPicked] = useState<string[]>(["0", "1"]);
+  const compared = picked.map(Number).filter((i) => i < versions.length);
+  const options: MultiSelectOption[] = versions.map((v, i) => ({
+    value: String(i),
+    label: versionLabel(v, i),
+    detail: [v.title, v.artists].filter(Boolean).join(" · "),
+    tag: i === 0 ? "Shown" : undefined,
+    icon: <VersionMark n={i + 1} />,
+  }));
   return (
-    <Section label={`Versions (${total})`}>
+    <section className="track-info-section">
+      <div className="track-versions-head">
+        <h3 className="eyebrow">Versions ({total})</h3>
+        <MultiSelect
+          aria-label="Versions to compare"
+          values={compared.map(String)}
+          onChange={setPicked}
+          options={options}
+          summary={`Comparing ${compared.length} of ${versions.length}`}
+        />
+      </div>
       <div className="track-versions-caption">
         Same audio, different tags; the fullest is shown. Faded values match
         it.
         {total > versions.length &&
-          ` Showing ${versions.length} of ${total}.`}
+          ` Listing the first ${versions.length} of ${total}.`}
       </div>
       <div className="track-versions">
-        <table style={{ minWidth: 72 + versions.length * 128 }}>
+        <table style={{ minWidth: 72 + compared.length * 136 }}>
           <colgroup>
             <col style={{ width: 72 }} />
           </colgroup>
           <thead>
             <tr>
               <td />
-              {versions.map((_, i) => (
-                <th key={i} scope="col" data-shown={i === 0 ? "" : undefined}>
-                  {i === 0 ? (
-                    <span className="badge">Shown</span>
-                  ) : (
-                    `Version ${i + 1}`
-                  )}
+              {compared.map((i) => (
+                <th key={i} scope="col" data-shown={i === 0 || undefined}>
+                  <span className="version-name">
+                    <VersionMark n={i + 1} />
+                    <span className="version-file">
+                      {versionLabel(versions[i], i)}
+                      {i === 0 && <span className="badge">Shown</span>}
+                    </span>
+                  </span>
                 </th>
               ))}
             </tr>
@@ -176,16 +224,15 @@ function Versions({ track }: { track: TrackDetail }) {
             {versionFields.map(({ key, label }) => (
               <tr key={key}>
                 <th scope="row">{label}</th>
-                {versions.map((v, i) => {
-                  const same = i > 0 && sameValue(v[key], shown[key]);
+                {compared.map((i) => {
+                  const same = i > 0 && sameValue(versions[i][key], shown[key]);
                   return (
                     <td
                       key={i}
-                      data-shown={i === 0 ? "" : undefined}
-                      data-same={same ? "" : undefined}
-                      title={same ? "Same as the shown version" : undefined}
+                      data-shown={i === 0 || undefined}
+                      data-same={same || undefined}
                     >
-                      {v[key] || "—"}
+                      {versions[i][key] || "—"}
                       {same && <span className="sr-only"> (same as shown)</span>}
                     </td>
                   );
@@ -195,7 +242,18 @@ function Versions({ track }: { track: TrackDetail }) {
           </tbody>
         </table>
       </div>
-    </Section>
+    </section>
+  );
+}
+
+const versionLabel = (v: Version, i: number) => v.file || `Version ${i + 1}`;
+
+/** A version's number, the same in the dropdown and its column's header. */
+function VersionMark({ n }: { n: number }) {
+  return (
+    <span className="version-mark" aria-hidden="true">
+      {n}
+    </span>
   );
 }
 
@@ -207,34 +265,24 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div style={{ marginBottom: 14 }}>
-      <div
-        className="eyebrow"
-        style={{
-          marginBottom: 6,
-        }}
-      >
-        {label}
-      </div>
-      <div style={{ display: "grid", gap: 4 }}>{children}</div>
-    </div>
+    <section className="track-info-section">
+      <h3 className="eyebrow">{label}</h3>
+      {children}
+    </section>
   );
 }
 
-function Field({ k, v }: { k: string; v: string }) {
+function Fields({ children }: { children: React.ReactNode }) {
+  return <dl className="track-info-fields">{children}</dl>;
+}
+
+/** One labelled value. Empty values (or core's "—") show a faded dash. */
+function Field({ k, v, wide }: { k: string; v?: string; wide?: boolean }) {
+  const empty = !v || v === "—";
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "110px 1fr",
-        gap: 10,
-        alignItems: "baseline",
-      }}
-    >
-      <div style={{ color: "var(--muted-foreground)", fontSize: 12 }}>{k}</div>
-      <div style={{ color: "var(--foreground)", wordBreak: "break-all" }}>
-        {v}
-      </div>
+    <div data-wide={wide || undefined}>
+      <dt>{k}</dt>
+      <dd data-empty={empty || undefined}>{empty ? "—" : v}</dd>
     </div>
   );
 }

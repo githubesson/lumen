@@ -28,3 +28,85 @@
   color: var(--popover-foreground);
   background: var(--popover);
 }
+
+/* MultiSelect: a compact outlined trigger and a list of checkable options. */
+.multi-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  color: var(--foreground);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.multi-select-trigger:hover { background: var(--accent); }
+.multi-select-trigger:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.multi-select-trigger svg { color: var(--muted-foreground); }
+.multi-select-list {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 30;
+  margin-top: 4px;
+  width: max-content;
+  min-width: 100%;
+  max-width: min(360px, 80vw);
+  max-height: 260px;
+  overflow-y: auto;
+  outline: none;
+  transform-origin: top right;
+}
+.multi-select-list[data-side="top"] {
+  top: auto;
+  bottom: 100%;
+  margin: 0 0 4px;
+  transform-origin: bottom right;
+}
+.multi-select-option {
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+.multi-select-option[aria-disabled="true"] { cursor: default; }
+.multi-select-option[aria-disabled="true"] .multi-select-box { opacity: 0.5; }
+.multi-select-option[data-active] { background: var(--accent); }
+.multi-select-box {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 1px solid var(--input);
+  border-radius: 4px;
+}
+.multi-select-box[data-checked] {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+}
+.multi-select-text {
+  display: grid;
+  min-width: 0;
+}
+.multi-select-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.multi-select-detail {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
