@@ -95,7 +95,7 @@ func TestTrackDetailsInvalidID(t *testing.T) {
 func TestStreamQuality(t *testing.T) {
 	for _, tc := range []struct {
 		configured, audioQuality, want string
-		tags                             []string
+		tags                           []string
 	}{
 		{"HI_RES_LOSSLESS", "LOSSLESS", "HI_RES_LOSSLESS", []string{"LOSSLESS", "HIRES_LOSSLESS"}},
 		{"MAX", "LOSSLESS", "HI_RES_LOSSLESS", []string{"HIRES_LOSSLESS"}},
