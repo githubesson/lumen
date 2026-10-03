@@ -32,6 +32,7 @@ interface MultiSelectProps<V extends string = string> {
   /** The fewest options that may stay selected. */
   min?: number;
   className?: string;
+  /** Names the list, and the trigger ahead of its summary. */
   "aria-label"?: string;
 }
 
@@ -175,7 +176,8 @@ export function MultiSelect<V extends string = string>({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
-        aria-label={ariaLabel}
+        // Keep the visible summary in the name, after what it picks.
+        aria-label={ariaLabel ? `${ariaLabel}: ${summary}` : undefined}
         onClick={() => setOpen((o) => !o)}
         onKeyDown={onButtonKey}
         className="multi-select-trigger"
@@ -189,6 +191,7 @@ export function MultiSelect<V extends string = string>({
           id={listId}
           role="listbox"
           aria-multiselectable="true"
+          aria-label={ariaLabel}
           tabIndex={-1}
           aria-activedescendant={`${buttonId}-opt-${active}`}
           data-closed={!visible || undefined}

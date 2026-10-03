@@ -52,12 +52,12 @@ afterEach(() => {
 
 const columns = () =>
   screen.getAllByRole("columnheader").map((th) => th.textContent);
-const picker = () => screen.getByRole("combobox", { name: "Versions to compare" });
+const picker = () => screen.getByRole("combobox", { name: /^Versions to compare/ });
 // jsdom drops the space after "Version n:" that browsers keep in the name.
 const option = (name: RegExp) => screen.getByRole("option", { name });
 // The list mounts a frame after the trigger opens it.
 const openPicker = async () => {
-  fireEvent.click(await screen.findByRole("combobox", { name: "Versions to compare" }));
+  fireEvent.click(await screen.findByRole("combobox", { name: /^Versions to compare/ }));
   return screen.findByRole("listbox");
 };
 
@@ -71,6 +71,7 @@ it("shows the track beside its fields and compares the shown copy with the first
 
   expect(columns()).toEqual(["1Version 1: Sanfran.flacShown", "2Version 2: Sanfran v1.mp3"]);
   expect(picker().textContent).toBe("Comparing 2 of 4");
+  expect(picker().getAttribute("aria-label")).toBe("Versions to compare: Comparing 2 of 4");
   // Matching the shown copy (only the album here) reads as such, not just
   // as a fade.
   expect(screen.getAllByText("(same as shown)")).toHaveLength(1);
@@ -99,6 +100,7 @@ it("closes the list on Escape or a click elsewhere without closing the dialog", 
   render(<TrackInfoDialog open trackId="t1" onClose={onClose} />);
   const list = await openPicker();
   await waitFor(() => expect(document.activeElement).toBe(list));
+  expect(screen.getByRole("listbox", { name: "Versions to compare" })).toBe(list);
 
   fireEvent.keyDown(list, { key: "ArrowDown" });
   fireEvent.keyDown(list, { key: "ArrowDown" });
