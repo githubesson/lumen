@@ -664,6 +664,22 @@ describe("usePlayerCore playback errors", () => {
     expect(adapter.prepareNext).toHaveBeenLastCalledWith("test://stream/b");
   });
 
+  it("counts a retried track as a fresh listen", async () => {
+    const { result, emit, state } = await setup();
+    act(() => result.current.controls.play(t("a"), [t("a"), t("b")]));
+    state.dur = 100;
+    state.time = 31;
+    act(() => emit("timeupdate"));
+    expect(api.recordPlay).toHaveBeenCalledTimes(1);
+
+    act(() => emit("error"));
+    act(() => result.current.controls.toggle());
+    expect(result.current.state.isPlaying).toBe(true);
+    state.time = 31; // the reload started the track over
+    act(() => emit("timeupdate"));
+    expect(api.recordPlay).toHaveBeenCalledTimes(2);
+  });
+
   it("reloads a failed single-track loop instead of restarting it in place", async () => {
     const { result, adapter, emit } = await setup();
     act(() => result.current.controls.play(t("a")));

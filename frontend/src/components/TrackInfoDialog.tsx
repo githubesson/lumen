@@ -68,7 +68,12 @@ export function TrackInfoDialog({
           ) : !track || tidal.loading ? (
             <div style={{ color: "var(--muted-foreground)" }}>Loading…</div>
           ) : (
-            <Details track={track} tidal={tidal.info} tidalFailed={tidal.failed} />
+            <Details
+              track={track}
+              tidal={tidal.info}
+              tidalFailed={tidal.failed}
+              tidalRefusal={tidal.refusal}
+            />
           )}
         </div>
       </div>
@@ -108,11 +113,14 @@ function Details({
   track,
   tidal,
   tidalFailed,
+  tidalRefusal,
 }: {
   track: TrackDetail;
   /** TIDAL's details, for a TIDAL track that has them. */
   tidal: TidalTrackInfo | null;
   tidalFailed: boolean;
+  /** Why, when TIDAL refused the track. */
+  tidalRefusal: string | null;
 }) {
   const isTidal = track.source === "tidal";
   const credits = tidal ? tidalTrackCredits(track, tidal) : trackCredits(track);
@@ -120,7 +128,7 @@ function Details({
     <>
       {tidalFailed && (
         <p className="track-info-note">
-          Couldn't load more from TIDAL, so some fields are missing.
+          {tidalRefusal ?? "Couldn't load more from TIDAL, so some fields are missing."}
         </p>
       )}
 

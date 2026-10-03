@@ -4,10 +4,10 @@ import { beforeEach, expect, it, vi } from "vitest";
 import type { TidalTrackInfo, TrackDetail } from "@music-library/core";
 import TrackInfoScreen from "../app/(tabs)/(library,browse)/track/[id]";
 
-type QueryState = { data?: unknown; isLoading?: boolean; isError?: boolean };
+type QueryState = { data?: unknown; isLoading?: boolean; isError?: boolean; error?: unknown };
 const mock = vi.hoisted(() => ({
   track: {} as { data?: unknown; isLoading?: boolean; isError?: boolean },
-  tidal: {} as { data?: unknown; isLoading?: boolean; isError?: boolean },
+  tidal: {} as QueryState,
   tidalOptions: undefined as Record<string, unknown> | undefined,
 }));
 vi.mock("react-native", () => ({
@@ -144,6 +144,15 @@ it("shows the stored rows with a note when TIDAL can't answer", () => {
   expect(out).toContain(pair("Source", "TIDAL"));
   expect(out).toContain(pair("Quality", "—"));
   expect(out).not.toContain("Released");
+});
+
+it("says why TIDAL refused the track", async () => {
+  const { ApiError } = await import("@music-library/core");
+  mock.tidal = { isError: true, error: new ApiError(502, "TIDAL refused this track: Not available in your region") };
+  const out = html();
+  expect(out).toContain("TIDAL refused this track: Not available in your region");
+  expect(out).not.toContain("Couldn&#x27;t load more from TIDAL");
+  expect(out).toContain(pair("Primary artist", "BabyTron"));
 });
 
 it("notes missing credits on their own", () => {

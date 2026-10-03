@@ -412,7 +412,8 @@ func tidalStreamErrorMessage(err error) string {
 
 // tidalRefusalText is lead, plus TIDAL's reason for refusing when it gave
 // one. That reason is TIDAL's own user-facing text, unlike the rest of an
-// upstream error.
+// upstream error. Leads start with "TIDAL refused": clients tell a refusal
+// from other 502s by it (core's tidalRefusalMessage).
 func tidalRefusalText(lead string, err error) string {
 	var refused *tidal.RefusedError
 	if errors.As(err, &refused) {

@@ -1,4 +1,15 @@
-import { trackCredits, type TidalStreamQuality, type TidalTrackInfo, type TrackArtist } from "../api";
+import { ApiError, trackCredits, type TidalStreamQuality, type TidalTrackInfo, type TrackArtist } from "../api";
+
+/**
+ * The server's explanation when TIDAL refused a request ("TIDAL refused …:
+ * <reason>", always a 502), or null for any other failure, whose text isn't
+ * written for users.
+ */
+export function tidalRefusalMessage(error: unknown): string | null {
+  return error instanceof ApiError && error.status === 502 && error.message.startsWith("TIDAL refused")
+    ? error.message
+    : null;
+}
 
 /**
  * The credit rows of a TIDAL track's info view: Primary artist, Featured and

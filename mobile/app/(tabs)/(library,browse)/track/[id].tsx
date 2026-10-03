@@ -8,6 +8,7 @@ import {
   formatCalendarDate,
   formatSampleRate,
   tidalAudioRows,
+  tidalRefusalMessage,
   tidalTrackCredits,
   trackCredits,
   useAuth,
@@ -61,6 +62,7 @@ export default function TrackInfoScreen() {
     tidalId && !tidalQuery.isError && tidalQuery.data?.id === tidalId ? tidalQuery.data : null;
   // An error, or no answer at all (a paused query while offline).
   const tidalFailed = !!tidalId && !tidal;
+  const tidalRefusal = tidalQuery.isError ? tidalRefusalMessage(tidalQuery.error) : null;
   const credits = tidal ? tidalTrackCredits(t, tidal) : trackCredits(t);
 
   return (
@@ -103,7 +105,9 @@ export default function TrackInfoScreen() {
         </View>
 
         {tidalFailed ? (
-          <Note theme={theme}>{"Couldn't load more from TIDAL, so some fields are missing."}</Note>
+          <Note theme={theme}>
+            {tidalRefusal ?? "Couldn't load more from TIDAL, so some fields are missing."}
+          </Note>
         ) : null}
 
         <InfoBlock title="Credits">

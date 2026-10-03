@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { formatBitrate, formatCalendarDate, formatDurationMs, formatSampleRate } from "../src/format";
 import { trackCredits } from "../src/api-media";
-import type { TidalTrackInfo } from "../src/api";
-import { tidalAudioRows, tidalTrackCredits } from "../src/tidal/track-info";
+import { ApiError, type TidalTrackInfo } from "../src/api";
+import { tidalAudioRows, tidalRefusalMessage, tidalTrackCredits } from "../src/tidal/track-info";
 
 describe("track info formatters", () => {
   it("formats sample rates in kHz with at most one decimal", () => {
@@ -160,5 +160,15 @@ describe("tidalAudioRows", () => {
     for (const unknown of [null, info({}), info({ streamed_quality: "DOLBY_ATMOS" as never })]) {
       expect(tidalAudioRows(unknown)).toEqual([{ label: "Quality", value: "—", wide: false }]);
     }
+  });
+});
+
+describe("tidalRefusalMessage", () => {
+  it("passes on the server's text only for a TIDAL refusal", () => {
+    const refusal = "TIDAL refused this track: Not available in your region";
+    expect(tidalRefusalMessage(new ApiError(502, refusal))).toBe(refusal);
+    expect(tidalRefusalMessage(new ApiError(502, "tidal track unavailable"))).toBeNull();
+    expect(tidalRefusalMessage(new ApiError(500, refusal))).toBeNull();
+    expect(tidalRefusalMessage(new Error(refusal))).toBeNull();
   });
 });

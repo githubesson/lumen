@@ -260,11 +260,20 @@ export function usePlayerCore({
   // A failed source stays failed, so play() alone can't revive it. Load it
   // again as a fresh start does, and start it here the way next() does.
   // load() drops the adapter's prepared next track, so drop its marker too,
-  // or it is never prepared again.
+  // or it is never prepared again. The reload starts over, so it is a fresh
+  // listen for play history and Last.fm, as a repeat-one restart is.
   const retryFailedTrack = useCallback(
     (track: TrackListItem) => {
       clearPlaybackError();
       clearPreparedNext();
+      playbackReportedRef.current = null;
+      lastFMScrobbledRef.current = null;
+      trackStartedAtRef.current = Math.floor(Date.now() / 1000);
+      listenedSecondsRef.current = 0;
+      listeningTickRef.current = performance.now();
+      setCurrentTime(0);
+      setDuration(0);
+      anchorRef.current = { audioTime: 0, wallTime: performance.now() };
       loadedTrackIdRef.current = track.id;
       adapter.load(resolvePlayableUri(track.id));
       startPlayback();
