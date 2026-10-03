@@ -60,8 +60,14 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 	if h.TIDAL != nil {
 		album, err = h.TIDAL.Album(r.Context(), id, limit, offset)
 		if err == nil && unpaged && len(album.Tracks) < album.TrackCount {
-			if full, ferr := h.TIDAL.FullAlbum(r.Context(), id); ferr == nil {
+			full, ferr := h.TIDAL.FullAlbum(r.Context(), id)
+			switch {
+			case ferr == nil:
 				album = full
+			case errors.Is(ferr, tidal.ErrRefused):
+				// TIDAL refusing the rest refuses the album: say why rather
+				// than pass the first page off as the release.
+				err = ferr
 			}
 		}
 	}
@@ -240,6 +246,8 @@ type tidalTrackResp struct {
 	Credits         []tidalTrackCreditResp `json:"credits"`
 	// CreditsFailed means Credits is empty because they couldn't be loaded.
 	CreditsFailed bool `json:"credits_failed,omitempty"`
+	// CreditsFailure says why, when TIDAL refused them.
+	CreditsFailure string `json:"credits_failure,omitempty"`
 }
 
 // Track serves a TIDAL track's details, fetched from TIDAL on each request.
@@ -277,6 +285,9 @@ func (h *TIDAL) Track(w http.ResponseWriter, r *http.Request) {
 		MaxQuality:      d.MaxQuality,
 		Credits:         make([]tidalTrackCreditResp, 0, len(d.Credits)),
 		CreditsFailed:   d.CreditsFailed,
+	}
+	if d.CreditsRefused {
+		out.CreditsFailure = refusalText("TIDAL refused the credits", d.CreditsRefusal)
 	}
 	// Immersive formats are never requested, so a track TIDAL offers in
 	// stereo streams in stereo.

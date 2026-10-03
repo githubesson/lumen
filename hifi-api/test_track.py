@@ -75,6 +75,7 @@ class TrackTests(unittest.IsolatedAsyncioTestCase):
                 # Names are trimmed and roles without anyone are dropped.
                 "credits": [{"type": "Producer", "names": ["Maker", "Other"]}],
                 "failed_sections": [],
+                "refused_sections": {},
             },
         )
         self.assertEqual(sorted(self.calls), sorted([TRACK_URL, CREDITS_URL, ALBUM_URL]))
@@ -145,6 +146,15 @@ class TrackTests(unittest.IsolatedAsyncioTestCase):
                 response = await self.client.get("/lumen/track?id=123")
                 self.assertEqual(response.status_code, 502)
                 self.assertEqual(response.json(), {"detail": "TIDAL track unavailable"})
+
+    async def test_refused_section_keeps_tidals_reason(self):
+        self.responses[CREDITS_URL] = HTTPException(status_code=403, detail="Not available in your region")
+        self.responses[ALBUM_URL] = RuntimeError("failed")
+        response = await self.client.get("/lumen/track?id=123")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(sorted(data["failed_sections"]), ["album", "credits"])
+        self.assertEqual(data["refused_sections"], {"credits": "Not available in your region"})
 
     async def test_refused_track_keeps_tidals_reason(self):
         self.responses[TRACK_URL] = HTTPException(status_code=403, detail="Not available in your region")

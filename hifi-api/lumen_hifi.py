@@ -852,15 +852,20 @@ async def get_lumen_track(id: int):
         return_exceptions=True,
     )
     failed_sections = []
+    # TIDAL's reason for each section it refused, so Lumen can say why.
+    refused_sections = {}
     for section, result in (("album", album), ("credits", credits)):
         if isinstance(result, BaseException):
             if isinstance(result, asyncio.CancelledError):
                 raise result
             logger.warning("Lumen TIDAL track section unavailable track=%s section=%s", id, section)
             failed_sections.append(section)
+            if isinstance(result, HTTPException) and result.status_code == 403:
+                refused_sections[section] = str(result.detail)
     return {
         "track": track,
         "album": None if isinstance(album, BaseException) else album,
         "credits": [] if isinstance(credits, BaseException) else credits,
         "failed_sections": failed_sections,
+        "refused_sections": refused_sections,
     }

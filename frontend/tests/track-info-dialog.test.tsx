@@ -281,6 +281,15 @@ it("says when only TIDAL's credits are missing", async () => {
   expect(screen.queryByText(/Couldn't load more/)).toBeNull();
 });
 
+it("says why TIDAL refused the credits", async () => {
+  mock.getTrack.mockResolvedValueOnce(tidalRow);
+  const reason = "TIDAL refused the credits: Not available in your region";
+  mock.getTidalTrack.mockResolvedValueOnce({ ...tidalInfo, credits: [], credits_failed: true, credits_failure: reason });
+  render(<TrackInfoDialog open trackId="tidal:500" onClose={() => {}} />);
+  await screen.findByText(reason);
+  expect(screen.queryByText("Couldn't load credits from TIDAL.")).toBeNull();
+});
+
 it("never asks TIDAL about a local track", async () => {
   render(<TrackInfoDialog open trackId="t1" onClose={() => {}} />);
   await screen.findByText("Versions (4)");

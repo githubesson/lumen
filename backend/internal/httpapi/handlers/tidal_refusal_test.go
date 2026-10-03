@@ -95,3 +95,23 @@ func TestSearchWarnsWithTIDALsRefusal(t *testing.T) {
 		}
 	}
 }
+
+func TestAlbumRefusedPartWayIsARefusal(t *testing.T) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("offset") != "0" {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"detail":"Not available in your region"}`))
+			return
+		}
+		// The first page lists one of the release's two tracks.
+		_, _ = w.Write([]byte(`{"data":{"id":456,"title":"Album","numberOfTracks":2,"items":[{"type":"track","item":{"id":1,"title":"One"}}]}}`))
+	}))
+	defer proxy.Close()
+	browse := &TIDAL{TIDAL: tidal.NewClient(tidal.Config{HifiAPIURL: proxy.URL})}
+	w := serveAuthenticated(t, "/api/tidal/albums/{id}", browse.Album, "/api/tidal/albums/456")
+	want := "TIDAL refused this album: Not available in your region\n"
+	if w.Code != http.StatusBadGateway || w.Body.String() != want {
+		t.Fatalf("status=%d body=%q, want 502 %q", w.Code, w.Body.String(), want)
+	}
+}

@@ -113,7 +113,7 @@ export default function TrackInfoScreen() {
         </InfoBlock>
         {tidal?.credits_failed ? (
           <Note theme={theme} under>
-            {"Couldn't load credits from TIDAL."}
+            {tidal.credits_failure ?? "Couldn't load credits from TIDAL."}
           </Note>
         ) : null}
 

@@ -946,6 +946,8 @@ export interface TidalTrackInfo {
   credits: { role: string; names: string[] }[];
   /** The credits couldn't be loaded, so an empty list doesn't mean none. */
   credits_failed?: boolean;
+  /** Why, in the server's words, when TIDAL refused them. */
+  credits_failure?: string;
 }
 
 export interface TidalAlbum {

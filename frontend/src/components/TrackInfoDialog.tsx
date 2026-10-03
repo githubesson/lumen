@@ -131,7 +131,9 @@ function Details({
           ))}
         </Fields>
         {tidal?.credits_failed && (
-          <p className="track-info-note">Couldn't load credits from TIDAL.</p>
+          <p className="track-info-note">
+            {tidal.credits_failure ?? "Couldn't load credits from TIDAL."}
+          </p>
         )}
       </Section>
 

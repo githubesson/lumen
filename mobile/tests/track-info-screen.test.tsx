@@ -153,6 +153,14 @@ it("notes missing credits on their own", () => {
   expect(out).not.toContain("Couldn&#x27;t load more");
 });
 
+it("says why TIDAL refused the credits", () => {
+  const reason = "TIDAL refused the credits: Not available in your region";
+  mock.tidal = { data: { ...info, credits: [], credits_failed: true, credits_failure: reason } };
+  const out = html();
+  expect(out).toContain(reason);
+  expect(out).not.toContain("Couldn&#x27;t load credits");
+});
+
 it("never asks TIDAL about a local track", () => {
   mock.track = {
     data: { ...row, id: "t1", source: "local", source_id: undefined, format: "FLAC", file_size: 2048 },

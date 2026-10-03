@@ -415,8 +415,16 @@ func tidalStreamErrorMessage(err error) string {
 // upstream error.
 func tidalRefusalText(lead string, err error) string {
 	var refused *tidal.RefusedError
-	if errors.As(err, &refused) && refused.Reason != "" {
-		return lead + ": " + refused.Reason
+	if errors.As(err, &refused) {
+		return refusalText(lead, refused.Reason)
+	}
+	return refusalText(lead, "")
+}
+
+// refusalText is lead, plus reason when there is one.
+func refusalText(lead, reason string) string {
+	if reason != "" {
+		return lead + ": " + reason
 	}
 	return lead + "."
 }
