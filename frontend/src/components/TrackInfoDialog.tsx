@@ -154,6 +154,7 @@ function Details({
           {track.comments && <Field k="Comments" v={track.comments} wide />}
           {tidal?.copyright && <Field k="Copyright" v={tidal.copyright} wide />}
         </Fields>
+        {tidal?.release_failure && <p className="track-info-note">{tidal.release_failure}</p>}
       </Section>
 
       <Section label="Audio">

@@ -161,6 +161,12 @@ it("says why TIDAL refused the credits", () => {
   expect(out).not.toContain("Couldn&#x27;t load credits");
 });
 
+it("says why TIDAL refused the album's release date", () => {
+  const reason = "TIDAL refused the album&#x27;s release date: Not available in your region";
+  mock.tidal = { data: { ...info, release_failure: reason.replace("&#x27;", "'") } };
+  expect(html()).toContain(reason);
+});
+
 it("never asks TIDAL about a local track", () => {
   mock.track = {
     data: { ...row, id: "t1", source: "local", source_id: undefined, format: "FLAC", file_size: 2048 },

@@ -948,6 +948,8 @@ export interface TidalTrackInfo {
   credits_failed?: boolean;
   /** Why, in the server's words, when TIDAL refused them. */
   credits_failure?: string;
+  /** Why the release date may be missing or only the stream start date. */
+  release_failure?: string;
 }
 
 export interface TidalAlbum {

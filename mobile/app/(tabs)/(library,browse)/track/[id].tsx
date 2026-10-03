@@ -173,6 +173,11 @@ export default function TrackInfoScreen() {
             </>
           )}
         </InfoBlock>
+        {tidal?.release_failure ? (
+          <Note theme={theme} under>
+            {tidal.release_failure}
+          </Note>
+        ) : null}
       </ScrollView>
     </>
   );

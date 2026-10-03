@@ -290,6 +290,14 @@ it("says why TIDAL refused the credits", async () => {
   expect(screen.queryByText("Couldn't load credits from TIDAL.")).toBeNull();
 });
 
+it("says why TIDAL refused the album's release date", async () => {
+  mock.getTrack.mockResolvedValueOnce(tidalRow);
+  const reason = "TIDAL refused the album's release date: Not available in your region";
+  mock.getTidalTrack.mockResolvedValueOnce({ ...tidalInfo, release_failure: reason });
+  render(<TrackInfoDialog open trackId="tidal:500" onClose={() => {}} />);
+  await screen.findByText(reason);
+});
+
 it("never asks TIDAL about a local track", async () => {
   render(<TrackInfoDialog open trackId="t1" onClose={() => {}} />);
   await screen.findByText("Versions (4)");

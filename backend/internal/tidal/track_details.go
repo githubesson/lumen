@@ -40,6 +40,10 @@ type TrackDetails struct {
 	// ("" when it gave none).
 	CreditsRefused bool
 	CreditsRefusal string
+	// AlbumRefused means TIDAL refused the album lookup, for AlbumRefusal's
+	// reason, so ReleaseDate is the stream start date, if anything.
+	AlbumRefused bool
+	AlbumRefusal string
 }
 
 // Credit is one role on a track and who filled it, in TIDAL's order.
@@ -152,6 +156,10 @@ func (c *Client) TrackDetails(ctx context.Context, id string) (TrackDetails, err
 			}
 		case "album":
 			// The stream start date above stands in for it.
+			if detail, ok := out.RefusedSections[section]; ok {
+				d.AlbumRefused = true
+				d.AlbumRefusal = cleanRefusalReason(detail)
+			}
 		default:
 			return TrackDetails{}, fmt.Errorf("invalid tidal track section status")
 		}

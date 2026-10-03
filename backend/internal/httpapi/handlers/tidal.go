@@ -248,6 +248,9 @@ type tidalTrackResp struct {
 	CreditsFailed bool `json:"credits_failed,omitempty"`
 	// CreditsFailure says why, when TIDAL refused them.
 	CreditsFailure string `json:"credits_failure,omitempty"`
+	// ReleaseFailure says why ReleaseDate may be missing or only the stream
+	// start date: TIDAL refused the album lookup.
+	ReleaseFailure string `json:"release_failure,omitempty"`
 }
 
 // Track serves a TIDAL track's details, fetched from TIDAL on each request.
@@ -288,6 +291,9 @@ func (h *TIDAL) Track(w http.ResponseWriter, r *http.Request) {
 	}
 	if d.CreditsRefused {
 		out.CreditsFailure = refusalText("TIDAL refused the credits", d.CreditsRefusal)
+	}
+	if d.AlbumRefused {
+		out.ReleaseFailure = refusalText("TIDAL refused the album's release date", d.AlbumRefusal)
 	}
 	// Immersive formats are never requested, so a track TIDAL offers in
 	// stereo streams in stereo.

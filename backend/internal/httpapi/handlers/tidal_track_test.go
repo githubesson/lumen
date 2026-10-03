@@ -46,6 +46,12 @@ func TestTIDALTrackResponse(t *testing.T) {
 			CreditsFailed:  true,
 			CreditsFailure: "TIDAL refused the credits: Not available in your region",
 		}},
+		{"album refused", "123", `{"track":{"id":123,"title":"Song"},"album":null,"credits":[],"failed_sections":["album"],"refused_sections":{"album":"Upstream API error"}}`, 200, 200, &tidalTrackResp{
+			ID:             "123",
+			Artists:        []tidalTrackArtistResp{},
+			Credits:        []tidalTrackCreditResp{},
+			ReleaseFailure: "TIDAL refused the album's release date.",
+		}},
 		{"upstream failure", "123", `{"detail":"private upstream failure"}`, 502, 502, nil},
 		{"invalid id", "12a", "", 0, 400, nil},
 	} {
