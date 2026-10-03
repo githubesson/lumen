@@ -248,12 +248,19 @@ function Versions({ track }: { track: TrackDetail }) {
 
 const versionLabel = (v: Version, i: number) => v.file || `Version ${i + 1}`;
 
-/** A version's number, the same in the dropdown and its column's header. */
+/**
+ * A version's number, the same in the dropdown and its column's header.
+ * Screen readers hear it too: copies can share a file name and tags, and
+ * then the number is all that tells them apart.
+ */
 function VersionMark({ n }: { n: number }) {
   return (
-    <span className="version-mark" aria-hidden="true">
-      {n}
-    </span>
+    <>
+      <span className="version-mark" aria-hidden="true">
+        {n}
+      </span>
+      <span className="sr-only">Version {n}: </span>
+    </>
   );
 }
 

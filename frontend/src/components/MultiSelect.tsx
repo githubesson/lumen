@@ -65,37 +65,42 @@ export function MultiSelect<V extends string = string>({
     (t: Node) => buttonRef.current?.contains(t) ?? false,
     [],
   );
-  const dismiss = useCallback(() => setOpen(false), []);
   // Capture phase: a dialog layer stops mousedown from bubbling to window, so
   // clicks elsewhere in the dialog would otherwise leave the list open.
+  // Focus goes back to the trigger rather than leaving with the list; a
+  // focusable click target still takes it from there.
   useDismiss(listRef, {
-    onDismiss: dismiss,
+    onDismiss: close,
     enabled: open,
     capture: true,
     ignore: ignoreTrigger,
   });
 
+  // Keyed to `open` as well as `mounted`: reopening during the exit fade
+  // keeps the list mounted, and it must still take focus again.
+  const shown = open && mounted;
   useEffect(() => {
-    if (!mounted) return;
+    if (!shown) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setActive(0);
     listRef.current?.focus();
-  }, [mounted]);
+  }, [shown]);
 
   // Open upward when the list would run past the bottom of whatever clips it
   // (a dialog's scrolling pane, or the window) and there's more room above.
-  // The list is a fresh element on every open, so set it directly.
+  // Set directly on the element, and afresh on every open.
   useLayoutEffect(() => {
     const list = listRef.current;
     const button = buttonRef.current;
-    if (!mounted || !list || !button) return;
+    if (!shown || !list || !button) return;
+    delete list.dataset.side;
     const clip = clipRect(button);
     const below = clip.bottom - button.getBoundingClientRect().bottom;
     const above = button.getBoundingClientRect().top - clip.top;
     if (list.offsetHeight + 8 > below && above > below) {
       list.dataset.side = "top";
     }
-  }, [mounted]);
+  }, [shown]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -125,6 +130,7 @@ export function MultiSelect<V extends string = string>({
   };
 
   const onListKey = (e: ReactKeyboardEvent<HTMLUListElement>) => {
+    if (!open) return;
     const last = options.length - 1;
     switch (e.key) {
       case "Escape":
@@ -186,6 +192,8 @@ export function MultiSelect<V extends string = string>({
           tabIndex={-1}
           aria-activedescendant={`${buttonId}-opt-${active}`}
           data-closed={!visible || undefined}
+          // Inert while it fades out.
+          style={open ? undefined : { pointerEvents: "none" }}
           onKeyDown={onListKey}
           className="multi-select-list menu transition-[opacity,transform] duration-150 ease-out data-closed:scale-95 data-closed:opacity-0 motion-reduce:transition-none"
         >

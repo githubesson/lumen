@@ -53,6 +53,7 @@ afterEach(() => {
 const columns = () =>
   screen.getAllByRole("columnheader").map((th) => th.textContent);
 const picker = () => screen.getByRole("combobox", { name: "Versions to compare" });
+// jsdom drops the space after "Version n:" that browsers keep in the name.
 const option = (name: RegExp) => screen.getByRole("option", { name });
 // The list mounts a frame after the trigger opens it.
 const openPicker = async () => {
@@ -68,7 +69,7 @@ it("shows the track beside its fields and compares the shown copy with the first
   expect(within(summary).getByText("Oki, Young Igi")).toBeTruthy();
   expect(within(summary).getByText("Pusto")).toBeTruthy();
 
-  expect(columns()).toEqual(["1Sanfran.flacShown", "2Sanfran v1.mp3"]);
+  expect(columns()).toEqual(["1Version 1: Sanfran.flacShown", "2Version 2: Sanfran v1.mp3"]);
   expect(picker().textContent).toBe("Comparing 2 of 4");
   // Matching the shown copy (only the album here) reads as such, not just
   // as a fade.
@@ -80,17 +81,17 @@ it("adds and removes columns from the dropdown, keeping at least one", async () 
   await openPicker();
 
   fireEvent.click(option(/SANFRAN\.mp3/));
-  expect(columns()).toEqual(["1Sanfran.flacShown", "2Sanfran v1.mp3", "4SANFRAN.mp3"]);
+  expect(columns()).toEqual(["1Version 1: Sanfran.flacShown", "2Version 2: Sanfran v1.mp3", "4Version 4: SANFRAN.mp3"]);
   // The list stays open for more picks.
   expect(screen.getByRole("listbox")).toBeTruthy();
 
-  fireEvent.click(option(/^Sanfran\.flac/));
+  fireEvent.click(option(/^Version 1:\s*Sanfran\.flac/));
   fireEvent.click(option(/Sanfran v1\.mp3/));
-  expect(columns()).toEqual(["4SANFRAN.mp3"]);
+  expect(columns()).toEqual(["4Version 4: SANFRAN.mp3"]);
   const last = option(/SANFRAN\.mp3/);
   expect(last.getAttribute("aria-disabled")).toBe("true");
   fireEvent.click(last);
-  expect(columns()).toEqual(["4SANFRAN.mp3"]);
+  expect(columns()).toEqual(["4Version 4: SANFRAN.mp3"]);
 });
 
 it("closes the list on Escape or a click elsewhere without closing the dialog", async () => {
@@ -112,8 +113,34 @@ it("closes the list on Escape or a click elsewhere without closing the dialog", 
   fireEvent.click(picker());
   await screen.findByRole("listbox");
   fireEvent.mouseDown(screen.getByText("Credits"));
+  // Focus stays in the dialog rather than leaving with the list.
+  expect(document.activeElement).toBe(picker());
   await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
   expect(onClose).not.toHaveBeenCalled();
+});
+
+it("takes focus back when reopened while fading out", async () => {
+  render(<TrackInfoDialog open trackId="t1" onClose={() => {}} />);
+  const list = await openPicker();
+  await waitFor(() => expect(document.activeElement).toBe(list));
+
+  // A press on the trigger focuses it, then the click closes the list.
+  picker().focus();
+  fireEvent.click(picker());
+  // Still mounted for its exit fade when the trigger opens it again.
+  fireEvent.click(picker());
+  await waitFor(() => expect(document.activeElement).toBe(list));
+  expect(screen.getByRole("listbox")).toBe(list);
+});
+
+it("names each version by its number, so identical copies stay distinct", async () => {
+  mock.getTrack.mockResolvedValueOnce(
+    track("t3", [{ file_name: "Twin.mp3" }, { file_name: "Twin.mp3" }]),
+  );
+  render(<TrackInfoDialog open trackId="t3" onClose={() => {}} />);
+  await openPicker();
+  expect(screen.getByRole("option", { name: /^Version 2:\s*Twin\.mp3/ })).toBeTruthy();
+  expect(screen.getByRole("option", { name: /^Version 3:\s*Twin\.mp3/ })).toBeTruthy();
 });
 
 it("starts each track's comparison afresh", async () => {
@@ -124,5 +151,5 @@ it("starts each track's comparison afresh", async () => {
 
   rerender(<TrackInfoDialog open trackId="t2" onClose={() => {}} />);
   await screen.findByText("Versions (2)");
-  expect(columns()).toEqual(["1Sanfran.flacShown", "2Other.mp3"]);
+  expect(columns()).toEqual(["1Version 1: Sanfran.flacShown", "2Version 2: Other.mp3"]);
 });
