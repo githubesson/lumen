@@ -34,6 +34,7 @@
     "./admin/invites": "./src/admin/invites.ts",
     "./admin/music-roots": "./src/admin/music-roots.ts",
     "./tidal/status": "./src/tidal/status.ts",
+    "./tidal/track-info": "./src/tidal/track-info.ts",
     "./tidal/device-login": "./src/tidal/use-tidal-device-login.ts",
     "./auth/errors": "./src/auth/errors.ts",
     "./playlist-permissions": "./src/playlist-permissions.ts",

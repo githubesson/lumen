@@ -650,6 +650,8 @@ type apiArtist struct {
 	ID      tidalID `json:"id"`
 	Picture string  `json:"picture"`
 	Name    string  `json:"name"`
+	// Type is MAIN or FEATURED on a track's artists.
+	Type string `json:"type"`
 }
 
 type apiAlbum struct {

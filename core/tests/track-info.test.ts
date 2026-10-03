@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { formatBitrate, formatDurationMs, formatSampleRate } from "../src/format";
+import { formatBitrate, formatCalendarDate, formatDurationMs, formatSampleRate } from "../src/format";
 import { trackCredits } from "../src/api-media";
+import type { TidalTrackInfo } from "../src/api";
+import { tidalStreamAudio, tidalTrackCredits } from "../src/tidal/track-info";
 
 describe("track info formatters", () => {
   it("formats sample rates in kHz with at most one decimal", () => {
@@ -59,5 +61,89 @@ describe("trackCredits", () => {
       "—",
     ]);
     expect(trackCredits({}).map((row) => row.value)).toEqual(["—", "—", "—"]);
+  });
+});
+
+describe("formatCalendarDate", () => {
+  it("formats a calendar day without shifting it across time zones", () => {
+    expect(formatCalendarDate("2023-03-17", "en-GB")).toBe("17 Mar 2023");
+    expect(formatCalendarDate("1969-01-01", "en-US")).toBe("Jan 1, 1969");
+  });
+
+  it("shows an em dash for anything else", () => {
+    for (const value of [undefined, null, "", "2023", "2023-02-30", "2023-03-17T00:00:00Z", "17/03/2023"]) {
+      expect(formatCalendarDate(value)).toBe("—");
+    }
+  });
+});
+
+describe("tidalTrackCredits", () => {
+  const info = (over: Partial<TidalTrackInfo> = {}): TidalTrackInfo => ({
+    id: "1",
+    artists: [
+      { name: "Main", role: "main" },
+      { name: "Co", role: "main" },
+      { name: "Guest", role: "featured" },
+    ],
+    credits: [
+      { role: "Composer", names: ["Writer"] },
+      { role: "Producer", names: ["Maker"] },
+      { role: "Mixing Engineer", names: ["Mixer"] },
+      { role: "producer", names: ["Maker", "Second"] },
+      { role: "A&R Administrator", names: ["Scout"] },
+      { role: "Vocal", names: [] },
+    ],
+    ...over,
+  });
+  // How a TIDAL row stores artists: the first primary, the rest featured.
+  const stored = {
+    artists: [
+      { id: "a", name: "Main", role: "primary" },
+      { id: "b", name: "Co", role: "featured" },
+    ],
+  };
+
+  it("uses TIDAL's artists and lists every role after the producers", () => {
+    expect(tidalTrackCredits(stored, info())).toEqual([
+      { label: "Primary artist", value: "Main, Co" },
+      { label: "Featured", value: "Guest" },
+      { label: "Producers", value: "Maker, Second" },
+      { label: "Composer", value: "Writer" },
+      { label: "Mixing engineer", value: "Mixer" },
+      { label: "A&R administrator", value: "Scout" },
+    ]);
+  });
+
+  it("trusts TIDAL's split once it names a main artist", () => {
+    const rows = tidalTrackCredits(stored, info({ artists: [{ name: "Main", role: "main" }] }));
+    expect(rows[1]).toEqual({ label: "Featured", value: "—" });
+  });
+
+  it("falls back to the stored track for what TIDAL lacks", () => {
+    expect(tidalTrackCredits(stored, info({ artists: [], credits: [] }))).toEqual([
+      { label: "Primary artist", value: "Main" },
+      { label: "Featured", value: "Co" },
+      { label: "Producers", value: "—" },
+    ]);
+  });
+});
+
+describe("tidalStreamAudio", () => {
+  it("describes each stream tier", () => {
+    expect(tidalStreamAudio("LOSSLESS")).toEqual({
+      format: "FLAC",
+      quality: "Lossless",
+      bitDepth: "16-bit",
+      sampleRate: "44.1 kHz",
+      bitrate: "",
+    });
+    expect(tidalStreamAudio("HI_RES_LOSSLESS")?.sampleRate).toBe("Up to 192 kHz");
+    expect(tidalStreamAudio("HIGH")).toMatchObject({ format: "AAC", bitrate: "320 kbps", bitDepth: "" });
+    expect(tidalStreamAudio("LOW")?.bitrate).toBe("96 kbps");
+  });
+
+  it("knows nothing about an unknown tier", () => {
+    expect(tidalStreamAudio(undefined)).toBeNull();
+    expect(tidalStreamAudio("DOLBY_ATMOS")).toBeNull();
   });
 });

@@ -201,3 +201,82 @@ func (h *TIDAL) Artist(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+type tidalTrackArtistResp struct {
+	Name string `json:"name"`
+	Role string `json:"role"` // "main" or "featured"
+}
+
+type tidalTrackCreditResp struct {
+	Role  string   `json:"role"`
+	Names []string `json:"names"`
+}
+
+// tidalTrackResp is TIDAL's side of a track's info view, beyond what the
+// track's row stores.
+type tidalTrackResp struct {
+	ID          string                 `json:"id"`
+	Artists     []tidalTrackArtistResp `json:"artists"`
+	ReleaseDate string                 `json:"release_date,omitempty"`
+	Copyright   string                 `json:"copyright,omitempty"`
+	ISRC        string                 `json:"isrc,omitempty"`
+	BPM         int                    `json:"bpm,omitempty"`
+	Key         string                 `json:"key,omitempty"`
+	// Quality is what this server streams the track at: HI_RES_LOSSLESS,
+	// LOSSLESS, HIGH or LOW.
+	Quality  string                 `json:"quality,omitempty"`
+	Channels int                    `json:"channels,omitempty"`
+	Credits  []tidalTrackCreditResp `json:"credits"`
+	// CreditsFailed means Credits is empty because they couldn't be loaded.
+	CreditsFailed bool `json:"credits_failed,omitempty"`
+}
+
+// Track serves a TIDAL track's details, fetched from TIDAL on each request.
+func (h *TIDAL) Track(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireUser(w, r); !ok {
+		return
+	}
+	if h.TIDAL == nil {
+		http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	d, err := h.TIDAL.TrackDetails(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, tidal.ErrInvalidID):
+			http.Error(w, "invalid tidal track id", http.StatusBadRequest)
+		case errors.Is(err, tidal.ErrNotConfigured):
+			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+		default:
+			http.Error(w, "tidal track unavailable", http.StatusBadGateway)
+		}
+		return
+	}
+	out := tidalTrackResp{
+		ID:            d.ID,
+		Artists:       make([]tidalTrackArtistResp, 0, len(d.MainArtists)+len(d.FeaturedArtists)),
+		ReleaseDate:   d.ReleaseDate,
+		Copyright:     d.Copyright,
+		ISRC:          d.ISRC,
+		BPM:           d.BPM,
+		Key:           d.Key,
+		Quality:       d.Quality,
+		Credits:       make([]tidalTrackCreditResp, 0, len(d.Credits)),
+		CreditsFailed: d.CreditsFailed,
+	}
+	// Immersive formats are never requested, so a track TIDAL offers in
+	// stereo streams in stereo.
+	if d.Stereo {
+		out.Channels = 2
+	}
+	for _, name := range d.MainArtists {
+		out.Artists = append(out.Artists, tidalTrackArtistResp{Name: name, Role: "main"})
+	}
+	for _, name := range d.FeaturedArtists {
+		out.Artists = append(out.Artists, tidalTrackArtistResp{Name: name, Role: "featured"})
+	}
+	for _, c := range d.Credits {
+		out.Credits = append(out.Credits, tidalTrackCreditResp{Role: c.Role, Names: c.Names})
+	}
+	writeJSON(w, http.StatusOK, out)
+}

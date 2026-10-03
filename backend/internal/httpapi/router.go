@@ -252,6 +252,7 @@ func NewRouter(d Deps) http.Handler {
 			ordinary.With(appmw.RateLimitByIP(60, time.Minute)).Get("/lyrics", lyricsH.Handle)
 			ordinary.Get("/tidal/albums/{id}", tidalH.Album)
 			ordinary.Get("/tidal/artists/{id}", tidalH.Artist)
+			ordinary.Get("/tidal/tracks/{id}", tidalH.Track)
 			ordinary.Get("/tracks/{id}", tracksH.Get)
 			ordinary.Delete("/tracks/{id}", tracksH.Delete)
 			r.Get("/tracks/{id}/stream", tracksH.Stream)

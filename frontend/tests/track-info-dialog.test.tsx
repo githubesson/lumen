@@ -1,12 +1,12 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TrackInfoDialog } from "../src/components/TrackInfoDialog";
-import type { TrackDetail } from "../src/api";
+import type { TidalTrackInfo, TrackDetail } from "../src/api";
 
-const mock = vi.hoisted(() => ({ getTrack: vi.fn() }));
+const mock = vi.hoisted(() => ({ getTrack: vi.fn(), getTidalTrack: vi.fn() }));
 vi.mock("../../core/src/api", async (original) => ({
   ...await original<typeof import("../../core/src/api")>(),
-  api: { getTrack: mock.getTrack },
+  api: { getTrack: mock.getTrack, getTidalTrack: mock.getTidalTrack },
 }));
 
 const track = (id: string, aliases: TrackDetail["aliases"]): TrackDetail => ({
@@ -41,6 +41,7 @@ beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
     {} as DOMRect,
   ] as unknown as DOMRectList);
+  mock.getTidalTrack.mockReset();
   mock.getTrack.mockImplementation((id: string) =>
     Promise.resolve(id === "t1" ? sanfran : track(id, [{ file_name: "Other.mp3" }])),
   );
@@ -165,4 +166,114 @@ it("starts each track's comparison afresh", async () => {
   rerender(<TrackInfoDialog open trackId="t2" onClose={() => {}} />);
   await screen.findByText("Versions (2)");
   expect(columns()).toEqual(["1Version 1: Sanfran.flacShown", "2Version 2: Other.mp3"]);
+});
+
+// A TIDAL track's row, as the server materializes it from a stream.
+const tidalRow: TrackDetail = {
+  id: "tidal:500",
+  db_track_id: "r1",
+  source: "tidal",
+  source_id: "500",
+  title: "Forever $cams",
+  album_title: "Bin Reaper 3: New Testament",
+  track_no: 1,
+  disc_no: 1,
+  duration_ms: 228000,
+  format: "tidal",
+  file_size: 0,
+  artists: [{ id: "a1", name: "BabyTron", role: "primary" }],
+  has_cover: false,
+  favorited: false,
+};
+
+const tidalInfo: TidalTrackInfo = {
+  id: "500",
+  artists: [{ name: "BabyTron", role: "main" }],
+  release_date: "2023-03-17",
+  copyright: "(P) 2023 The Hip Hop Lab",
+  isrc: "QZES72300001",
+  bpm: 140,
+  key: "F♯ minor",
+  quality: "LOSSLESS",
+  channels: 2,
+  credits: [
+    { role: "Producer", names: ["Helluva"] },
+    { role: "Mixing Engineer", names: ["Mixer"] },
+  ],
+};
+
+const field = (label: string) =>
+  screen.getByText(label, { selector: "dt" }).nextElementSibling?.textContent;
+
+it("fills a TIDAL track's fields from TIDAL", async () => {
+  mock.getTrack.mockResolvedValueOnce(tidalRow);
+  mock.getTidalTrack.mockResolvedValueOnce(tidalInfo);
+  render(<TrackInfoDialog open trackId="tidal:500" onClose={() => {}} />);
+  await screen.findByText("Released");
+  expect(mock.getTidalTrack).toHaveBeenCalledWith("500", expect.anything());
+
+  expect(field("Producers")).toBe("Helluva");
+  expect(field("Mixing engineer")).toBe("Mixer");
+  expect(field("Released")).toBe(
+    new Date(Date.UTC(2023, 2, 17)).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    }),
+  );
+  expect(field("BPM")).toBe("140");
+  expect(field("Key")).toBe("F♯ minor");
+  expect(field("ISRC")).toBe("QZES72300001");
+  expect(field("Copyright")).toBe("(P) 2023 The Hip Hop Lab");
+  expect(field("Source")).toBe("TIDAL");
+  expect(field("Format")).toBe("FLAC");
+  expect(field("Quality")).toBe("Lossless");
+  expect(field("Sample rate")).toBe("44.1 kHz");
+  expect(field("Channels")).toBe("2");
+  // A stream has no file, and TIDAL no genres.
+  expect(screen.queryByText("File size")).toBeNull();
+  expect(screen.queryByText("Genre")).toBeNull();
+  expect(screen.queryByText("Year")).toBeNull();
+});
+
+it("waits for TIDAL before showing a TIDAL track's fields", async () => {
+  mock.getTrack.mockResolvedValueOnce(tidalRow);
+  let answer!: (info: TidalTrackInfo) => void;
+  mock.getTidalTrack.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+  render(<TrackInfoDialog open trackId="tidal:500" onClose={() => {}} />);
+  await waitFor(() => expect(mock.getTidalTrack).toHaveBeenCalled());
+  expect(screen.getByText("Loading…")).toBeTruthy();
+  expect(screen.queryByText("Credits")).toBeNull();
+  answer(tidalInfo);
+  await screen.findByText("Released");
+});
+
+it("shows the stored fields when TIDAL can't answer", async () => {
+  mock.getTrack.mockResolvedValueOnce({ ...tidalRow, year: 2023 });
+  mock.getTidalTrack.mockRejectedValueOnce(new Error("tidal track unavailable"));
+  render(<TrackInfoDialog open trackId="tidal:500" onClose={() => {}} />);
+  await screen.findByText(/Couldn't load more from TIDAL/);
+  expect(field("Primary artist")).toBe("BabyTron");
+  expect(field("Year")).toBe("2023");
+  expect(field("Source")).toBe("TIDAL");
+  expect(field("Format")).toBe("—");
+  expect(field("Duration")).toBe("3:48");
+});
+
+it("says when only TIDAL's credits are missing", async () => {
+  mock.getTrack.mockResolvedValueOnce(tidalRow);
+  mock.getTidalTrack.mockResolvedValueOnce({ ...tidalInfo, credits: [], credits_failed: true });
+  render(<TrackInfoDialog open trackId="tidal:500" onClose={() => {}} />);
+  await screen.findByText("Couldn't load credits from TIDAL.");
+  expect(field("Producers")).toBe("—");
+  expect(screen.queryByText(/Couldn't load more/)).toBeNull();
+});
+
+it("never asks TIDAL about a local track", async () => {
+  render(<TrackInfoDialog open trackId="t1" onClose={() => {}} />);
+  await screen.findByText("Versions (4)");
+  expect(mock.getTidalTrack).not.toHaveBeenCalled();
+  expect(field("Format")).toBe("FLAC");
+  expect(screen.queryByText("Source")).toBeNull();
 });

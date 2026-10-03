@@ -330,6 +330,8 @@ export const api = {
   },
   getTidalArtist: (id: string, options: RequestOptions = {}) =>
     request<TidalArtist>(`/api/tidal/artists/${pathID(id)}`, options),
+  getTidalTrack: (id: string, options: RequestOptions = {}) =>
+    request<TidalTrackInfo>(`/api/tidal/tracks/${pathID(id)}`, options),
 
   listAlbumsPage: (params: PageParams = {}) =>
     fetchPage<Album>("/api/albums", params),
@@ -912,6 +914,32 @@ export interface TidalArtist {
   albums: SearchAlbum[];
   tracks: TrackListItem[];
   warnings?: string[];
+}
+
+/** What this server streams a TIDAL track at, best first. */
+export type TidalStreamQuality = "HI_RES_LOSSLESS" | "LOSSLESS" | "HIGH" | "LOW";
+
+/**
+ * TIDAL's side of a track's info view, fetched from TIDAL on each request
+ * and never stored: a saved copy has its own tags.
+ */
+export interface TidalTrackInfo {
+  id: string;
+  /** TIDAL's split of the track's artists, main ones first. */
+  artists: { name: string; role: "main" | "featured" }[];
+  /** YYYY-MM-DD: the album's release, else when TIDAL started streaming it. */
+  release_date?: string;
+  copyright?: string;
+  isrc?: string;
+  bpm?: number;
+  /** E.g. "F♯ minor". */
+  key?: string;
+  quality?: TidalStreamQuality;
+  channels?: number;
+  /** Each role and who filled it, in TIDAL's order. */
+  credits: { role: string; names: string[] }[];
+  /** The credits couldn't be loaded, so an empty list doesn't mean none. */
+  credits_failed?: boolean;
 }
 
 export interface TidalAlbum {
