@@ -1,14 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, type TidalTrackInfo } from "../api";
 
-/** TIDAL can be slow; past this the view shows what the server stores. */
-const TIDAL_INFO_TIMEOUT_MS = 10000;
-
 /**
  * Fetch TIDAL's details for a TIDAL track while its info view is open. Like
  * useTrackDetail, a changed id or nonce drops the previous answer and
- * cancels its request. `failed` covers errors and the timeout alike: the
- * view then falls back to the track's stored fields.
+ * cancels its request. `failed` covers errors and the request's timeout
+ * alike: the view then falls back to the track's stored fields.
  */
 export function useTidalTrackInfo(
   open: boolean,
@@ -24,7 +21,6 @@ export function useTidalTrackInfo(
     if (!open || !tidalId) return;
     let cancelled = false;
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), TIDAL_INFO_TIMEOUT_MS);
     // A changed id or nonce invalidates the previous answer.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setResult(null);
@@ -35,11 +31,9 @@ export function useTidalTrackInfo(
       })
       .catch(() => {
         if (!cancelled) setResult({ tidalId, info: null });
-      })
-      .finally(() => window.clearTimeout(timeout));
+      });
     return () => {
       cancelled = true;
-      window.clearTimeout(timeout);
       controller.abort();
     };
   }, [open, tidalId, requestNonce]);

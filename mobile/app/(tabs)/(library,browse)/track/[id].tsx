@@ -5,7 +5,10 @@ import {
   api,
   displayText,
   formatBitrate,
+  formatCalendarDate,
   formatSampleRate,
+  tidalStreamAudio,
+  tidalTrackCredits,
   trackCredits,
   useAuth,
 } from "@music-library/core";
@@ -27,8 +30,20 @@ export default function TrackInfoScreen() {
     queryFn: ({ signal }) => api.getTrack(id!, { signal }),
     enabled: !!userId && !!id,
   });
+  // A TIDAL track's row stores little, so the rest comes live from TIDAL on
+  // each visit. Without it the screen shows what the row has.
+  const tidalId =
+    trackQuery.data?.source === "tidal" ? trackQuery.data.source_id : undefined;
+  const tidalQuery = useQuery({
+    queryKey: qk.tidalTrack(userId, tidalId),
+    queryFn: ({ signal }) => api.getTidalTrack(tidalId!, { signal }),
+    enabled: !!userId && !!tidalId,
+    // Show the stored fields rather than wait on a second slow attempt.
+    retry: false,
+    staleTime: 0,
+  });
 
-  if (trackQuery.isLoading) {
+  if (trackQuery.isLoading || tidalQuery.isLoading) {
     return <EmptyState fill loading />;
   }
   if (trackQuery.isError || !trackQuery.data) {
@@ -36,6 +51,12 @@ export default function TrackInfoScreen() {
   }
 
   const t = trackQuery.data;
+  const isTidal = t.source === "tidal";
+  const tidal = tidalId && tidalQuery.data?.id === tidalId ? tidalQuery.data : null;
+  // An error, or no answer at all (a paused query while offline).
+  const tidalFailed = !!tidalId && !tidal;
+  const credits = tidal ? tidalTrackCredits(t, tidal) : trackCredits(t);
+  const audio = tidalStreamAudio(tidal?.quality);
 
   return (
     <>
@@ -76,11 +97,20 @@ export default function TrackInfoScreen() {
           ) : null}
         </View>
 
-        <InfoBlock title="Artists">
-          {trackCredits(t).map((credit) => (
-            <InfoRow key={credit.label} label={credit.label} value={credit.value} theme={theme} />
+        {tidalFailed ? (
+          <Note theme={theme}>{"Couldn't load more from TIDAL, so some fields are missing."}</Note>
+        ) : null}
+
+        <InfoBlock title="Credits">
+          {credits.map((credit) => (
+            <InfoRow key={credit.label} label={credit.label} value={credit.value} theme={theme} lines={4} />
           ))}
         </InfoBlock>
+        {tidal?.credits_failed ? (
+          <Note theme={theme} under>
+            {"Couldn't load credits from TIDAL."}
+          </Note>
+        ) : null}
 
         <InfoBlock title="Details">
           <InfoRow label="Duration" value={formatDurationMs(t.duration_ms)} theme={theme} />
@@ -90,27 +120,61 @@ export default function TrackInfoScreen() {
           {typeof t.disc_no === "number" ? (
             <InfoRow label="Disc" value={String(t.disc_no)} theme={theme} />
           ) : null}
-          {t.year ? (
+          {tidal?.release_date ? (
+            <InfoRow label="Released" value={formatCalendarDate(tidal.release_date)} theme={theme} />
+          ) : t.year ? (
             <InfoRow label="Year" value={String(t.year)} theme={theme} />
           ) : null}
           {t.genre ? (
             <InfoRow label="Genre" value={t.genre} theme={theme} />
           ) : null}
-          <InfoRow label="Format" value={t.format} theme={theme} />
-          {t.bitrate ? (
-            <InfoRow label="Bitrate" value={formatBitrate(t.bitrate)} theme={theme} />
+          {tidal?.bpm ? (
+            <InfoRow label="BPM" value={String(tidal.bpm)} theme={theme} />
           ) : null}
-          {t.sample_rate ? (
-            <InfoRow label="Sample rate" value={formatSampleRate(t.sample_rate)} theme={theme} />
+          {tidal?.key ? <InfoRow label="Key" value={tidal.key} theme={theme} /> : null}
+          {tidal?.isrc ? <InfoRow label="ISRC" value={tidal.isrc} theme={theme} /> : null}
+          {tidal?.copyright ? (
+            <InfoRow label="Copyright" value={tidal.copyright} theme={theme} lines={4} />
           ) : null}
-          {t.channels ? (
-            <InfoRow
-              label="Channels"
-              value={String(t.channels)}
-              theme={theme}
-            />
-          ) : null}
-          <InfoRow label="File size" value={formatBytes(t.file_size)} theme={theme} />
+          {isTidal ? (
+            // A stream, not a file: what this server streams it at, and no
+            // file size.
+            <>
+              <InfoRow label="Source" value="TIDAL" theme={theme} />
+              <InfoRow label="Format" value={audio?.format || "—"} theme={theme} />
+              <InfoRow label="Quality" value={audio?.quality || "—"} theme={theme} />
+              {audio?.bitDepth ? (
+                <InfoRow label="Bit depth" value={audio.bitDepth} theme={theme} />
+              ) : null}
+              {audio?.sampleRate ? (
+                <InfoRow label="Sample rate" value={audio.sampleRate} theme={theme} />
+              ) : null}
+              {audio?.bitrate ? (
+                <InfoRow label="Bitrate" value={audio.bitrate} theme={theme} />
+              ) : null}
+              {tidal?.channels ? (
+                <InfoRow label="Channels" value={String(tidal.channels)} theme={theme} />
+              ) : null}
+            </>
+          ) : (
+            <>
+              <InfoRow label="Format" value={t.format} theme={theme} />
+              {t.bitrate ? (
+                <InfoRow label="Bitrate" value={formatBitrate(t.bitrate)} theme={theme} />
+              ) : null}
+              {t.sample_rate ? (
+                <InfoRow label="Sample rate" value={formatSampleRate(t.sample_rate)} theme={theme} />
+              ) : null}
+              {t.channels ? (
+                <InfoRow
+                  label="Channels"
+                  value={String(t.channels)}
+                  theme={theme}
+                />
+              ) : null}
+              <InfoRow label="File size" value={formatBytes(t.file_size)} theme={theme} />
+            </>
+          )}
         </InfoBlock>
       </ScrollView>
     </>
@@ -132,14 +196,42 @@ function InfoBlock({
   );
 }
 
+function Note({
+  children,
+  theme,
+  under,
+}: {
+  children: React.ReactNode;
+  theme: ThemeTokens;
+  /** Sits under the block it's about rather than a full gap away. */
+  under?: boolean;
+}) {
+  return (
+    <Text
+      style={{
+        alignSelf: "stretch",
+        paddingHorizontal: 4,
+        marginTop: under ? -theme.space.sm : 0,
+        fontSize: 13,
+        color: theme.color.fgMuted,
+      }}
+    >
+      {children}
+    </Text>
+  );
+}
+
 function InfoRow({
   label,
   value,
   theme,
+  lines = 2,
 }: {
   label: string;
   value: string;
   theme: ThemeTokens;
+  /** Long credit lists and copyright lines get more room. */
+  lines?: number;
 }) {
   return (
     <View
@@ -162,7 +254,7 @@ function InfoRow({
           flexShrink: 1,
           textAlign: "right",
         }}
-        numberOfLines={2}
+        numberOfLines={lines}
       >
         {value}
       </Text>

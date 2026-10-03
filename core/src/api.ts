@@ -330,8 +330,11 @@ export const api = {
   },
   getTidalArtist: (id: string, options: RequestOptions = {}) =>
     request<TidalArtist>(`/api/tidal/artists/${pathID(id)}`, options),
+  /** TIDAL can be slow; past 10 s the info view shows what the server stores. */
   getTidalTrack: (id: string, options: RequestOptions = {}) =>
-    request<TidalTrackInfo>(`/api/tidal/tracks/${pathID(id)}`, options),
+    request<TidalTrackInfo>(`/api/tidal/tracks/${pathID(id)}`, options, {
+      timeoutMs: 10_000,
+    }),
 
   listAlbumsPage: (params: PageParams = {}) =>
     fetchPage<Album>("/api/albums", params),

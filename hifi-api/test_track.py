@@ -32,6 +32,7 @@ class TrackTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         hifi.get_catalog_token_for_cred = AsyncMock(return_value=("token", {"test": True}))
         self.calls = []
+        self.delays = {}
         self.responses = {
             TRACK_URL: {"id": 123, "title": "Song", "copyright": "(P) 2023 Label", "album": {"id": 77, "title": "Album"}},
             CREDITS_URL: [
@@ -46,6 +47,8 @@ class TrackTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(cred, {"test": True})
             self.assertEqual(params, {"countryCode": "US"})
             self.calls.append(url)
+            if url in self.delays:
+                await asyncio.sleep(self.delays[url])
             result = self.responses[url]
             if isinstance(result, BaseException):
                 raise result
@@ -140,6 +143,31 @@ class TrackTests(unittest.IsolatedAsyncioTestCase):
                 response = await self.client.get("/lumen/track?id=123")
                 self.assertEqual(response.status_code, 502)
                 self.assertEqual(response.json(), {"detail": "TIDAL track unavailable"})
+
+    async def test_credits_failure_before_a_track_failure_is_not_left_unread(self):
+        self.responses[CREDITS_URL] = RuntimeError("upstream secret must not leak")
+        self.responses[TRACK_URL] = RuntimeError("track failed")
+        # The credits task has failed by the time the track lookup does.
+        self.delays[TRACK_URL] = 0.05
+        started = []
+        ensure_future = asyncio.ensure_future
+
+        def record(coro, **kwargs):
+            task = ensure_future(coro, **kwargs)
+            started.append(task)
+            return task
+
+        with patch.object(asyncio, "ensure_future", side_effect=record):
+            response = await self.client.get("/lumen/track?id=123")
+        self.assertEqual(response.status_code, 502)
+        await asyncio.sleep(0)
+        credits = [t for t in started if t.get_coro().__name__ == "fetch_credits"]
+        self.assertEqual(len(credits), 1)
+        self.assertTrue(credits[0].done() and not credits[0].cancelled())
+        # asyncio logs an exception it finds unread when the task is freed.
+        # Cancelling a finished task marks it read (Future.cancel clears the
+        # flag before checking the state), so the error never reaches the log.
+        self.assertFalse(credits[0]._log_traceback)
 
     async def test_token_failure_is_gateway_error(self):
         hifi.get_catalog_token_for_cred.side_effect = RuntimeError("private auth error")
