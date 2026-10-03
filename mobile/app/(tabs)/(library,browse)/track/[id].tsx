@@ -7,7 +7,7 @@ import {
   formatBitrate,
   formatCalendarDate,
   formatSampleRate,
-  tidalStreamAudio,
+  tidalAudioRows,
   tidalTrackCredits,
   trackCredits,
   useAuth,
@@ -38,9 +38,14 @@ export default function TrackInfoScreen() {
     queryKey: qk.tidalTrack(userId, tidalId),
     queryFn: ({ signal }) => api.getTidalTrack(tidalId!, { signal }),
     enabled: !!userId && !!tidalId,
+    // One fresh fetch per visit: nothing kept from the last visit to show
+    // in its place, and no background refetch to fail behind a good answer.
+    gcTime: 0,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     // Show the stored fields rather than wait on a second slow attempt.
     retry: false,
-    staleTime: 0,
   });
 
   if (trackQuery.isLoading || tidalQuery.isLoading) {
@@ -52,11 +57,11 @@ export default function TrackInfoScreen() {
 
   const t = trackQuery.data;
   const isTidal = t.source === "tidal";
-  const tidal = tidalId && tidalQuery.data?.id === tidalId ? tidalQuery.data : null;
+  const tidal =
+    tidalId && !tidalQuery.isError && tidalQuery.data?.id === tidalId ? tidalQuery.data : null;
   // An error, or no answer at all (a paused query while offline).
   const tidalFailed = !!tidalId && !tidal;
   const credits = tidal ? tidalTrackCredits(t, tidal) : trackCredits(t);
-  const audio = tidalStreamAudio(tidal?.quality);
 
   return (
     <>
@@ -141,17 +146,9 @@ export default function TrackInfoScreen() {
             // file size.
             <>
               <InfoRow label="Source" value="TIDAL" theme={theme} />
-              <InfoRow label="Format" value={audio?.format || "—"} theme={theme} />
-              <InfoRow label="Quality" value={audio?.quality || "—"} theme={theme} />
-              {audio?.bitDepth ? (
-                <InfoRow label="Bit depth" value={audio.bitDepth} theme={theme} />
-              ) : null}
-              {audio?.sampleRate ? (
-                <InfoRow label="Sample rate" value={audio.sampleRate} theme={theme} />
-              ) : null}
-              {audio?.bitrate ? (
-                <InfoRow label="Bitrate" value={audio.bitrate} theme={theme} />
-              ) : null}
+              {tidalAudioRows(tidal).map((row) => (
+                <InfoRow key={row.label} label={row.label} value={row.value} theme={theme} />
+              ))}
               {tidal?.channels ? (
                 <InfoRow label="Channels" value={String(tidal.channels)} theme={theme} />
               ) : null}

@@ -194,7 +194,8 @@ const tidalInfo: TidalTrackInfo = {
   isrc: "QZES72300001",
   bpm: 140,
   key: "F♯ minor",
-  quality: "LOSSLESS",
+  streamed_quality: "LOSSLESS",
+  max_quality: "HI_RES_LOSSLESS",
   channels: 2,
   credits: [
     { role: "Producer", names: ["Helluva"] },
@@ -237,6 +238,16 @@ it("fills a TIDAL track's fields from TIDAL", async () => {
   expect(screen.queryByText("Year")).toBeNull();
 });
 
+it("shows only the most it would stream before the server has streamed it", async () => {
+  mock.getTrack.mockResolvedValueOnce(tidalRow);
+  mock.getTidalTrack.mockResolvedValueOnce({ ...tidalInfo, streamed_quality: undefined });
+  render(<TrackInfoDialog open trackId="tidal:500" onClose={() => {}} />);
+  await screen.findByText("Released");
+  expect(field("Quality")).toBe("Up to Hi-Res Lossless (24-bit FLAC)");
+  expect(screen.queryByText("Format")).toBeNull();
+  expect(screen.queryByText("Bit depth")).toBeNull();
+});
+
 it("waits for TIDAL before showing a TIDAL track's fields", async () => {
   mock.getTrack.mockResolvedValueOnce(tidalRow);
   let answer!: (info: TidalTrackInfo) => void;
@@ -257,7 +268,7 @@ it("shows the stored fields when TIDAL can't answer", async () => {
   expect(field("Primary artist")).toBe("BabyTron");
   expect(field("Year")).toBe("2023");
   expect(field("Source")).toBe("TIDAL");
-  expect(field("Format")).toBe("—");
+  expect(field("Quality")).toBe("—");
   expect(field("Duration")).toBe("3:48");
 });
 

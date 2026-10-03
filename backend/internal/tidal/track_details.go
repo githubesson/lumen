@@ -24,11 +24,15 @@ type TrackDetails struct {
 	ISRC        string
 	BPM         int
 	Key         string // e.g. "F♯ minor"
-	// Quality is what this server streams the track at: the best TIDAL
-	// offers for it, capped by the configured quality. "" when unknown.
-	Quality string
-	Stereo  bool
-	Credits []Credit
+	// StreamedQuality is the tier of the stream this server is serving for
+	// the track right now; "" when it hasn't resolved one lately.
+	StreamedQuality string
+	// MaxQuality is the best tier this server would ask for: TIDAL's best
+	// for the track, capped by the configured quality. Playback can still
+	// fall back lower. "" when unknown.
+	MaxQuality string
+	Stereo     bool
+	Credits    []Credit
 	// CreditsFailed means TIDAL's credits couldn't be loaded, so an empty
 	// Credits doesn't mean there are none.
 	CreditsFailed bool
@@ -97,12 +101,13 @@ func (c *Client) TrackDetails(ctx context.Context, id string) (TrackDetails, err
 		return TrackDetails{}, fmt.Errorf("invalid tidal track response")
 	}
 	d := TrackDetails{
-		ID:        string(t.ID),
-		Copyright: strings.TrimSpace(t.Copyright),
-		ISRC:      strings.TrimSpace(t.ISRC),
-		Key:       musicalKey(t.Key, t.KeyScale),
-		Quality:   streamQuality(c.cfg.Quality, availableQuality(t.MediaMetadata.Tags, t.AudioQuality)),
-		Credits:   []Credit{},
+		ID:              string(t.ID),
+		Copyright:       strings.TrimSpace(t.Copyright),
+		ISRC:            strings.TrimSpace(t.ISRC),
+		Key:             musicalKey(t.Key, t.KeyScale),
+		StreamedQuality: c.streamedQuality(string(t.ID)),
+		MaxQuality:      streamQuality(c.cfg.Quality, availableQuality(t.MediaMetadata.Tags, t.AudioQuality)),
+		Credits:         []Credit{},
 	}
 	if t.BPM != nil && *t.BPM > 0 && *t.BPM < 1000 {
 		d.BPM = int(math.Round(*t.BPM))

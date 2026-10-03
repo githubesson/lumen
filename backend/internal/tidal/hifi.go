@@ -18,23 +18,30 @@ import (
 	"github.com/githubesson/lumen/internal/httpx"
 )
 
-func (c *Client) resolveHifiStream(ctx context.Context, id string) (string, error) {
-	streamURL, err := c.resolveHifiTrackManifest(ctx, id)
+// resolvedStream is a playable stream and the tier TIDAL served it at
+// (HI_RES_LOSSLESS, LOSSLESS, HIGH or LOW; "" when the response didn't say).
+type resolvedStream struct {
+	URL     string
+	Quality string
+}
+
+func (c *Client) resolveHifiStream(ctx context.Context, id string) (resolvedStream, error) {
+	stream, err := c.resolveHifiTrackManifest(ctx, id)
 	if err == nil {
-		return streamURL, nil
+		return stream, nil
 	}
 	slog.Warn("tidal hifi hls manifest resolve failed; falling back to playbackinfo",
 		"track", id,
 		"quality", defaultQuality(c.cfg.Quality),
 		"err", err)
-	fallbackURL, fallbackErr := c.resolveHifiPlaybackInfo(ctx, id)
+	fallback, fallbackErr := c.resolveHifiPlaybackInfo(ctx, id)
 	if fallbackErr == nil {
-		return fallbackURL, nil
+		return fallback, nil
 	}
-	return "", errors.Join(err, fallbackErr)
+	return resolvedStream{}, errors.Join(err, fallbackErr)
 }
 
-func (c *Client) resolveHifiTrackManifest(ctx context.Context, id string) (string, error) {
+func (c *Client) resolveHifiTrackManifest(ctx context.Context, id string) (resolvedStream, error) {
 	u := c.hifiURL("/trackManifests/")
 	q := u.Query()
 	q.Set("id", id)
@@ -66,9 +73,10 @@ func (c *Client) resolveHifiTrackManifest(ctx context.Context, id string) (strin
 		} `json:"data"`
 	}
 	if err := c.doHifiJSON(ctx, u.String(), &out); err != nil {
-		return "", err
+		return resolvedStream{}, err
 	}
 	attrs := out.Data.Data.Attributes
+	quality := manifestQuality(attrs.Formats)
 	slog.Debug("tidal hifi track manifest response",
 		"track", id,
 		"version", out.Version,
@@ -82,36 +90,65 @@ func (c *Client) resolveHifiTrackManifest(ctx context.Context, id string) (strin
 		if reason == "" {
 			reason = "unknown reason"
 		}
-		return "", fmt.Errorf("%w (%s)", ErrPreviewManifest, reason)
+		return resolvedStream{}, fmt.Errorf("%w (%s)", ErrPreviewManifest, reason)
 	}
 	if attrs.URI != "" {
 		if err := validateTIDALMediaURL(attrs.URI); err != nil {
 			slog.Warn("tidal hifi track manifest uri rejected", "track", id, "uri", logSafeURL(attrs.URI), "err", err)
-			return "", err
+			return resolvedStream{}, err
 		}
-		return attrs.URI, nil
+		return resolvedStream{URL: attrs.URI, Quality: quality}, nil
 	}
 	if attrs.Manifest != "" {
 		streamURL, err := extractStreamURL(attrs.Manifest)
 		if err != nil {
-			return "", err
+			return resolvedStream{}, err
 		}
 		if err := validateTIDALMediaURL(streamURL); err != nil {
 			slog.Warn("tidal hifi inline manifest url rejected", "track", id, "url", logSafeURL(streamURL), "err", err)
-			return "", err
+			return resolvedStream{}, err
 		}
-		return streamURL, nil
+		return resolvedStream{URL: streamURL, Quality: quality}, nil
 	}
-	return "", errors.New("hifi-api track manifest response did not include uri or manifest")
+	return resolvedStream{}, errors.New("hifi-api track manifest response did not include uri or manifest")
 }
 
-func (c *Client) resolveHifiPlaybackInfo(ctx context.Context, id string) (string, error) {
+// manifestQuality is the tier of a non-adaptive manifest's one format, or
+// "" when it lists none, several, or one it doesn't know.
+func manifestQuality(formats []string) string {
+	if len(formats) != 1 {
+		return ""
+	}
+	switch strings.ToUpper(strings.TrimSpace(formats[0])) {
+	case "FLAC_HIRES":
+		return "HI_RES_LOSSLESS"
+	case "FLAC":
+		return "LOSSLESS"
+	case "AACLC":
+		return "HIGH"
+	case "HEAACV1":
+		return "LOW"
+	}
+	return ""
+}
+
+// playbackQuality is the tier a playbackinfo response names, or "" for
+// anything else.
+func playbackQuality(audioQuality string) string {
+	switch q := strings.ToUpper(strings.TrimSpace(audioQuality)); q {
+	case "HI_RES_LOSSLESS", "LOSSLESS", "HIGH", "LOW":
+		return q
+	}
+	return ""
+}
+
+func (c *Client) resolveHifiPlaybackInfo(ctx context.Context, id string) (resolvedStream, error) {
 	var lastErr error
 	qualities := hifiQualityAttempts(c.cfg.Quality)
 	for i, quality := range qualities {
-		streamURL, err := c.resolveHifiPlaybackInfoWithQuality(ctx, id, quality, i+1, len(qualities))
+		stream, err := c.resolveHifiPlaybackInfoWithQuality(ctx, id, quality, i+1, len(qualities))
 		if err == nil {
-			return streamURL, nil
+			return stream, nil
 		}
 		lastErr = err
 		if i+1 < len(qualities) {
@@ -126,10 +163,10 @@ func (c *Client) resolveHifiPlaybackInfo(ctx context.Context, id string) (string
 	if lastErr == nil {
 		lastErr = errors.New("no hifi-api playback qualities configured")
 	}
-	return "", lastErr
+	return resolvedStream{}, lastErr
 }
 
-func (c *Client) resolveHifiPlaybackInfoWithQuality(ctx context.Context, id, quality string, attempt, totalAttempts int) (string, error) {
+func (c *Client) resolveHifiPlaybackInfoWithQuality(ctx context.Context, id, quality string, attempt, totalAttempts int) (resolvedStream, error) {
 	u := c.hifiURL("/track/")
 	q := u.Query()
 	q.Set("id", id)
@@ -153,7 +190,7 @@ func (c *Client) resolveHifiPlaybackInfoWithQuality(ctx context.Context, id, qua
 		} `json:"data"`
 	}
 	if err := c.doHifiJSON(ctx, u.String(), &out); err != nil {
-		return "", err
+		return resolvedStream{}, err
 	}
 	slog.Debug("tidal hifi playback response",
 		"track", id,
@@ -163,20 +200,20 @@ func (c *Client) resolveHifiPlaybackInfoWithQuality(ctx context.Context, id, qua
 		"manifest_mime", out.Data.ManifestMimeType,
 		"manifest_inline", out.Data.Manifest != "")
 	if strings.EqualFold(out.Data.AssetPresentation, "PREVIEW") {
-		return "", ErrPreviewManifest
+		return resolvedStream{}, ErrPreviewManifest
 	}
 	if !strings.EqualFold(out.Data.AssetPresentation, "FULL") {
 		slog.Warn("tidal hifi playback unexpected presentation", "track", id, "presentation", out.Data.AssetPresentation)
 	}
 	streamURL, err := extractStreamURL(out.Data.Manifest)
 	if err != nil {
-		return "", err
+		return resolvedStream{}, err
 	}
 	if err := validateTIDALMediaURL(streamURL); err != nil {
 		slog.Warn("tidal hifi stream url rejected", "track", id, "url", logSafeURL(streamURL), "err", err)
-		return "", err
+		return resolvedStream{}, err
 	}
-	return streamURL, nil
+	return resolvedStream{URL: streamURL, Quality: playbackQuality(out.Data.AudioQuality)}, nil
 }
 
 func (c *Client) doHifiJSON(ctx context.Context, rawURL string, dst any) error {

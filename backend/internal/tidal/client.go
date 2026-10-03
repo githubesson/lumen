@@ -61,6 +61,8 @@ type Client struct {
 type cachedStream struct {
 	URL       string
 	ExpiresAt time.Time
+	// Quality is the tier the stream was served at ("" if unknown).
+	Quality string
 }
 
 const (
@@ -531,14 +533,14 @@ func (c *Client) StreamURL(ctx context.Context, id string) (string, error) {
 		// later waiters can still use the result if that client disconnects.
 		resolveCtx, cancel := context.WithTimeout(c.ctx, streamResolveTimeout)
 		defer cancel()
-		streamURL, err := c.resolveHifiStream(resolveCtx, id)
+		stream, err := c.resolveHifiStream(resolveCtx, id)
 		if err != nil {
 			slog.Warn("tidal hifi stream manifest resolve failed", "track", id, "quality", defaultQuality(c.cfg.Quality), "err", err)
 			return "", fmt.Errorf("hifi-api playback failed: %w", err)
 		}
-		c.storeCachedStream(key, streamURL, time.Now())
-		slog.Debug("tidal hifi stream cached", "track", id, "quality", defaultQuality(c.cfg.Quality), "url", logSafeURL(streamURL))
-		return streamURL, nil
+		c.storeCachedStream(key, stream, time.Now())
+		slog.Debug("tidal hifi stream cached", "track", id, "quality", defaultQuality(c.cfg.Quality), "served", stream.Quality, "url", logSafeURL(stream.URL))
+		return stream.URL, nil
 	})
 	select {
 	case <-ctx.Done():
@@ -572,7 +574,17 @@ func (c *Client) cachedStreamURL(key string, now time.Time) (cachedStream, bool)
 	return cached, true
 }
 
-func (c *Client) storeCachedStream(key, streamURL string, now time.Time) {
+// streamedQuality is the tier of the stream this server is serving for a
+// track right now, or "" when it hasn't resolved one lately or couldn't tell.
+func (c *Client) streamedQuality(id string) string {
+	cached, ok := c.cachedStreamURL(c.cacheKey(id), time.Now())
+	if !ok {
+		return ""
+	}
+	return cached.Quality
+}
+
+func (c *Client) storeCachedStream(key string, stream resolvedStream, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for cacheKey, cached := range c.streamCache {
@@ -588,7 +600,7 @@ func (c *Client) storeCachedStream(key, streamURL string, now time.Time) {
 			break
 		}
 	}
-	c.streamCache[key] = cachedStream{URL: streamURL, ExpiresAt: now.Add(streamCacheTTL)}
+	c.streamCache[key] = cachedStream{URL: stream.URL, ExpiresAt: now.Add(streamCacheTTL), Quality: stream.Quality}
 }
 
 func (c *Client) cacheKey(id string) string {

@@ -50,29 +50,52 @@ function roleLabel(role: string): string {
     .join(" ");
 }
 
-export interface TidalStreamAudio {
+interface TierAudio {
   format: string;
   quality: string;
-  /** Empty when the quality doesn't fix it. */
+  /** Empty when the tier doesn't fix it. */
   bitDepth: string;
   sampleRate: string;
   bitrate: string;
+  /** The tier in one phrase, for when it's only a ceiling. */
+  summary: string;
 }
 
-/** What a stream at `quality` is, as TIDAL defines its tiers. */
-export function tidalStreamAudio(
-  quality: TidalStreamQuality | string | undefined,
-): TidalStreamAudio | null {
-  switch (quality) {
+/** What a stream at `tier` is, as TIDAL defines its tiers. */
+function tierAudio(tier: TidalStreamQuality | string | undefined): TierAudio | null {
+  switch (tier) {
     case "HI_RES_LOSSLESS":
-      return { format: "FLAC", quality: "Hi-Res Lossless", bitDepth: "24-bit", sampleRate: "Up to 192 kHz", bitrate: "" };
+      return { format: "FLAC", quality: "Hi-Res Lossless", bitDepth: "24-bit", sampleRate: "Up to 192 kHz", bitrate: "", summary: "Hi-Res Lossless (24-bit FLAC)" };
     case "LOSSLESS":
-      return { format: "FLAC", quality: "Lossless", bitDepth: "16-bit", sampleRate: "44.1 kHz", bitrate: "" };
+      return { format: "FLAC", quality: "Lossless", bitDepth: "16-bit", sampleRate: "44.1 kHz", bitrate: "", summary: "Lossless (16-bit / 44.1 kHz FLAC)" };
     case "HIGH":
-      return { format: "AAC", quality: "Lossy", bitDepth: "", sampleRate: "", bitrate: "320 kbps" };
+      return { format: "AAC", quality: "Lossy", bitDepth: "", sampleRate: "", bitrate: "320 kbps", summary: "AAC 320 kbps" };
     case "LOW":
-      return { format: "AAC", quality: "Lossy", bitDepth: "", sampleRate: "", bitrate: "96 kbps" };
+      return { format: "AAC", quality: "Lossy", bitDepth: "", sampleRate: "", bitrate: "96 kbps", summary: "AAC 96 kbps" };
     default:
       return null;
   }
+}
+
+/**
+ * The stream rows of a TIDAL track's info view. The stream this server is
+ * serving right now fixes them; without one, only the best tier it would
+ * ask for is known, since playback can fall back lower, so that shows as a
+ * ceiling.
+ */
+export function tidalAudioRows(
+  info: TidalTrackInfo | null,
+): { label: string; value: string; wide?: boolean }[] {
+  const streamed = tierAudio(info?.streamed_quality);
+  if (streamed) {
+    return [
+      { label: "Format", value: streamed.format },
+      { label: "Quality", value: streamed.quality },
+      { label: "Bit depth", value: streamed.bitDepth },
+      { label: "Sample rate", value: streamed.sampleRate },
+      { label: "Bitrate", value: streamed.bitrate },
+    ].filter((row) => row.value);
+  }
+  const ceiling = tierAudio(info?.max_quality);
+  return [{ label: "Quality", value: ceiling ? `Up to ${ceiling.summary}` : "—", wide: !!ceiling }];
 }

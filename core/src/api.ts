@@ -919,7 +919,7 @@ export interface TidalArtist {
   warnings?: string[];
 }
 
-/** What this server streams a TIDAL track at, best first. */
+/** A TIDAL stream tier, best first. */
 export type TidalStreamQuality = "HI_RES_LOSSLESS" | "LOSSLESS" | "HIGH" | "LOW";
 
 /**
@@ -937,7 +937,10 @@ export interface TidalTrackInfo {
   bpm?: number;
   /** E.g. "F♯ minor". */
   key?: string;
-  quality?: TidalStreamQuality;
+  /** The tier of the stream this server is serving now, if it has one. */
+  streamed_quality?: TidalStreamQuality;
+  /** The best tier this server would ask for; playback can fall below it. */
+  max_quality?: TidalStreamQuality;
   channels?: number;
   /** Each role and who filled it, in TIDAL's order. */
   credits: { role: string; names: string[] }[];

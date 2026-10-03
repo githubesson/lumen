@@ -13,7 +13,7 @@ import {
   formatSampleRate,
 } from "@music-library/core/format";
 import {
-  tidalStreamAudio,
+  tidalAudioRows,
   tidalTrackCredits,
 } from "@music-library/core/tidal/track-info";
 import { useState } from "react";
@@ -181,8 +181,9 @@ function Details({
 
 /**
  * A TIDAL track's stream rather than a file: its source, and what this
- * server streams it at. Fields a stream doesn't have (file size) or this
- * tier doesn't fix are left out instead of showing a dash.
+ * server streams it at (or, before it has, the most it would). Fields a
+ * stream doesn't have (file size) or its tier doesn't fix are left out
+ * instead of showing a dash.
  */
 function TidalAudio({
   track,
@@ -191,15 +192,12 @@ function TidalAudio({
   track: TrackDetail;
   tidal: TidalTrackInfo | null;
 }) {
-  const audio = tidalStreamAudio(tidal?.quality);
   return (
     <>
       <Field k="Source" v="TIDAL" />
-      <Field k="Format" v={audio?.format} />
-      <Field k="Quality" v={audio?.quality} />
-      {audio?.bitDepth && <Field k="Bit depth" v={audio.bitDepth} />}
-      {audio?.sampleRate && <Field k="Sample rate" v={audio.sampleRate} />}
-      {audio?.bitrate && <Field k="Bitrate" v={audio.bitrate} />}
+      {tidalAudioRows(tidal).map((row) => (
+        <Field key={row.label} k={row.label} v={row.value} wide={row.wide} />
+      ))}
       {!!tidal?.channels && <Field k="Channels" v={String(tidal.channels)} />}
       <Field k="Duration" v={formatDurationMs(track.duration_ms, "")} />
     </>

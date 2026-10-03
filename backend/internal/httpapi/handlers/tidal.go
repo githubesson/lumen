@@ -222,11 +222,14 @@ type tidalTrackResp struct {
 	ISRC        string                 `json:"isrc,omitempty"`
 	BPM         int                    `json:"bpm,omitempty"`
 	Key         string                 `json:"key,omitempty"`
-	// Quality is what this server streams the track at: HI_RES_LOSSLESS,
-	// LOSSLESS, HIGH or LOW.
-	Quality  string                 `json:"quality,omitempty"`
-	Channels int                    `json:"channels,omitempty"`
-	Credits  []tidalTrackCreditResp `json:"credits"`
+	// StreamedQuality is the tier of the stream this server is serving for
+	// the track right now, when it has one; MaxQuality the best it would ask
+	// for, which playback can fall below. Each is HI_RES_LOSSLESS, LOSSLESS,
+	// HIGH or LOW.
+	StreamedQuality string                 `json:"streamed_quality,omitempty"`
+	MaxQuality      string                 `json:"max_quality,omitempty"`
+	Channels        int                    `json:"channels,omitempty"`
+	Credits         []tidalTrackCreditResp `json:"credits"`
 	// CreditsFailed means Credits is empty because they couldn't be loaded.
 	CreditsFailed bool `json:"credits_failed,omitempty"`
 }
@@ -253,16 +256,17 @@ func (h *TIDAL) Track(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := tidalTrackResp{
-		ID:            d.ID,
-		Artists:       make([]tidalTrackArtistResp, 0, len(d.MainArtists)+len(d.FeaturedArtists)),
-		ReleaseDate:   d.ReleaseDate,
-		Copyright:     d.Copyright,
-		ISRC:          d.ISRC,
-		BPM:           d.BPM,
-		Key:           d.Key,
-		Quality:       d.Quality,
-		Credits:       make([]tidalTrackCreditResp, 0, len(d.Credits)),
-		CreditsFailed: d.CreditsFailed,
+		ID:              d.ID,
+		Artists:         make([]tidalTrackArtistResp, 0, len(d.MainArtists)+len(d.FeaturedArtists)),
+		ReleaseDate:     d.ReleaseDate,
+		Copyright:       d.Copyright,
+		ISRC:            d.ISRC,
+		BPM:             d.BPM,
+		Key:             d.Key,
+		StreamedQuality: d.StreamedQuality,
+		MaxQuality:      d.MaxQuality,
+		Credits:         make([]tidalTrackCreditResp, 0, len(d.Credits)),
+		CreditsFailed:   d.CreditsFailed,
 	}
 	// Immersive formats are never requested, so a track TIDAL offers in
 	// stereo streams in stereo.

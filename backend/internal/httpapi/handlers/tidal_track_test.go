@@ -29,7 +29,7 @@ func TestTIDALTrackResponse(t *testing.T) {
 			Artists:     []tidalTrackArtistResp{{Name: "Main", Role: "main"}, {Name: "Guest", Role: "featured"}},
 			ReleaseDate: "2023-03-17",
 			Copyright:   "(P) 2023 Label",
-			Quality:     "LOSSLESS",
+			MaxQuality:  "LOSSLESS",
 			Channels:    2,
 			Credits:     []tidalTrackCreditResp{{Role: "Producer", Names: []string{"Maker"}}},
 		}},

@@ -8,7 +8,7 @@ type QueryState = { data?: unknown; isLoading?: boolean; isError?: boolean };
 const mock = vi.hoisted(() => ({
   track: {} as { data?: unknown; isLoading?: boolean; isError?: boolean },
   tidal: {} as { data?: unknown; isLoading?: boolean; isError?: boolean },
-  tidalOptions: undefined as { enabled?: boolean; queryKey?: unknown } | undefined,
+  tidalOptions: undefined as Record<string, unknown> | undefined,
 }));
 vi.mock("react-native", () => ({
   ScrollView: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -73,7 +73,7 @@ const info: TidalTrackInfo = {
   release_date: "2023-03-17",
   copyright: "(P) 2023 The Hip Hop Lab",
   bpm: 140,
-  quality: "LOSSLESS",
+  streamed_quality: "LOSSLESS",
   channels: 2,
   credits: [{ role: "Producer", names: ["Helluva"] }],
 };
@@ -105,6 +105,32 @@ it("fills a TIDAL track's rows from TIDAL", () => {
   expect(out).not.toContain("Couldn&#x27;t");
 });
 
+it("fetches afresh on each visit, with nothing kept to show in its place", () => {
+  html();
+  expect(mock.tidalOptions).toMatchObject({
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: false,
+  });
+});
+
+it("doesn't show an earlier answer when this visit's fetch failed", () => {
+  // React Query keeps the last data alongside a failed refetch.
+  mock.tidal = { data: info, isError: true };
+  const out = html();
+  expect(out).toContain("Couldn&#x27;t load more from TIDAL");
+  expect(out).not.toContain("Released");
+  expect(out).not.toContain("Helluva");
+});
+
+it("shows only the most it would stream before the server has streamed it", () => {
+  mock.tidal = { data: { ...info, streamed_quality: undefined, max_quality: "LOSSLESS" } };
+  const out = html();
+  expect(out).toContain(pair("Quality", "Up to Lossless (16-bit / 44.1 kHz FLAC)"));
+  expect(out).not.toContain("<span>Format</span>");
+});
+
 it("waits for TIDAL before showing the rows", () => {
   mock.tidal = { isLoading: true };
   expect(html()).toBe("<p>loading</p>");
@@ -116,7 +142,7 @@ it("shows the stored rows with a note when TIDAL can't answer", () => {
   expect(out).toContain("Couldn&#x27;t load more from TIDAL");
   expect(out).toContain(pair("Primary artist", "BabyTron"));
   expect(out).toContain(pair("Source", "TIDAL"));
-  expect(out).toContain(pair("Format", "—"));
+  expect(out).toContain(pair("Quality", "—"));
   expect(out).not.toContain("Released");
 });
 

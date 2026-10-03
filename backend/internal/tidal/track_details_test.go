@@ -45,7 +45,7 @@ func TestTrackDetails(t *testing.T) {
 		ISRC:            "USX1",
 		BPM:             140,
 		Key:             "F♯ minor",
-		Quality:         "HI_RES_LOSSLESS",
+		MaxQuality:      "HI_RES_LOSSLESS",
 		Stereo:          true,
 		Credits:         []Credit{{Role: "Producer", Names: []string{"Maker"}}, {Role: "Composer", Names: []string{"Writer"}}},
 	}
@@ -88,6 +88,58 @@ func TestTrackDetailsInvalidID(t *testing.T) {
 	for _, id := range []string{"", "0", "000", "-1", "12a", "1/2", "../x"} {
 		if _, err := c.TrackDetails(context.Background(), id); !errors.Is(err, ErrInvalidID) {
 			t.Errorf("%q: err = %v", id, err)
+		}
+	}
+}
+
+func TestTrackDetailsReportsTheStreamBeingServed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/trackManifests/":
+			// The track has lossless, but TIDAL served AAC.
+			_, _ = fmt.Fprint(w, `{"data":{"data":{"attributes":{"trackPresentation":"FULL","uri":"https://audio.tidal.com/test.m3u8","formats":["AACLC"]}}}}`)
+		case "/lumen/track":
+			_, _ = fmt.Fprint(w, `{"track":`+detailsTrack+`,"album":null,"credits":[],"failed_sections":[]}`)
+		default:
+			t.Errorf("unexpected request %s", r.URL)
+		}
+	}))
+	defer server.Close()
+	c := NewClient(Config{HifiAPIURL: server.URL})
+	d, err := c.TrackDetails(context.Background(), "123")
+	if err != nil || d.StreamedQuality != "" || d.MaxQuality != "LOSSLESS" {
+		t.Fatalf("before streaming: %+v %v", d, err)
+	}
+	if _, err := c.StreamURL(context.Background(), "123"); err != nil {
+		t.Fatal(err)
+	}
+	d, err = c.TrackDetails(context.Background(), "123")
+	if err != nil || d.StreamedQuality != "HIGH" || d.MaxQuality != "LOSSLESS" {
+		t.Fatalf("while streaming: %+v %v", d, err)
+	}
+}
+
+func TestServedQuality(t *testing.T) {
+	for _, tc := range []struct {
+		formats []string
+		want    string
+	}{
+		{[]string{"FLAC_HIRES"}, "HI_RES_LOSSLESS"},
+		{[]string{"flac"}, "LOSSLESS"},
+		{[]string{"AACLC"}, "HIGH"},
+		{[]string{"HEAACV1"}, "LOW"},
+		// Which of several plays isn't knowable from the response.
+		{[]string{"FLAC", "AACLC"}, ""},
+		{[]string{"EAC3_JOC"}, ""},
+		{nil, ""},
+	} {
+		if got := manifestQuality(tc.formats); got != tc.want {
+			t.Errorf("manifestQuality(%v) = %q, want %q", tc.formats, got, tc.want)
+		}
+	}
+	for in, want := range map[string]string{"HI_RES_LOSSLESS": "HI_RES_LOSSLESS", " lossless ": "LOSSLESS", "HIGH": "HIGH", "LOW": "LOW", "HI_RES": "", "": ""} {
+		if got := playbackQuality(in); got != want {
+			t.Errorf("playbackQuality(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

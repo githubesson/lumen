@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { formatBitrate, formatCalendarDate, formatDurationMs, formatSampleRate } from "../src/format";
 import { trackCredits } from "../src/api-media";
 import type { TidalTrackInfo } from "../src/api";
-import { tidalStreamAudio, tidalTrackCredits } from "../src/tidal/track-info";
+import { tidalAudioRows, tidalTrackCredits } from "../src/tidal/track-info";
 
 describe("track info formatters", () => {
   it("formats sample rates in kHz with at most one decimal", () => {
@@ -128,22 +128,37 @@ describe("tidalTrackCredits", () => {
   });
 });
 
-describe("tidalStreamAudio", () => {
-  it("describes each stream tier", () => {
-    expect(tidalStreamAudio("LOSSLESS")).toEqual({
-      format: "FLAC",
-      quality: "Lossless",
-      bitDepth: "16-bit",
-      sampleRate: "44.1 kHz",
-      bitrate: "",
+describe("tidalAudioRows", () => {
+  const info = (over: Partial<TidalTrackInfo>): TidalTrackInfo => ({ id: "1", artists: [], credits: [], ...over });
+
+  it("describes the stream being served", () => {
+    expect(tidalAudioRows(info({ streamed_quality: "LOSSLESS", max_quality: "HI_RES_LOSSLESS" }))).toEqual([
+      { label: "Format", value: "FLAC" },
+      { label: "Quality", value: "Lossless" },
+      { label: "Bit depth", value: "16-bit" },
+      { label: "Sample rate", value: "44.1 kHz" },
+    ]);
+    expect(tidalAudioRows(info({ streamed_quality: "HI_RES_LOSSLESS" }))).toContainEqual({
+      label: "Sample rate",
+      value: "Up to 192 kHz",
     });
-    expect(tidalStreamAudio("HI_RES_LOSSLESS")?.sampleRate).toBe("Up to 192 kHz");
-    expect(tidalStreamAudio("HIGH")).toMatchObject({ format: "AAC", bitrate: "320 kbps", bitDepth: "" });
-    expect(tidalStreamAudio("LOW")?.bitrate).toBe("96 kbps");
+    expect(tidalAudioRows(info({ streamed_quality: "HIGH" }))).toEqual([
+      { label: "Format", value: "AAC" },
+      { label: "Quality", value: "Lossy" },
+      { label: "Bitrate", value: "320 kbps" },
+    ]);
   });
 
-  it("knows nothing about an unknown tier", () => {
-    expect(tidalStreamAudio(undefined)).toBeNull();
-    expect(tidalStreamAudio("DOLBY_ATMOS")).toBeNull();
+  it("shows only a ceiling before anything has streamed, since playback can fall back", () => {
+    expect(tidalAudioRows(info({ max_quality: "LOSSLESS" }))).toEqual([
+      { label: "Quality", value: "Up to Lossless (16-bit / 44.1 kHz FLAC)", wide: true },
+    ]);
+    expect(tidalAudioRows(info({ max_quality: "LOW" }))[0].value).toBe("Up to AAC 96 kbps");
+  });
+
+  it("knows nothing without a tier it recognizes", () => {
+    for (const unknown of [null, info({}), info({ streamed_quality: "DOLBY_ATMOS" as never })]) {
+      expect(tidalAudioRows(unknown)).toEqual([{ label: "Quality", value: "—", wide: false }]);
+    }
   });
 });
