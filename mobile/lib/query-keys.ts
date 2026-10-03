@@ -33,6 +33,8 @@ export const qk = {
 
   search: (userId: UserId, query: string, type: SearchType) => ["user", userId, "search", query, type] as const,
   tidalArtist: (userId: UserId, id: Id) => ["user", userId, "tidal-artist", id] as const,
+  /** TIDAL's details for a track's info screen; fetched live, never persisted. */
+  tidalTrack: (userId: UserId, id: Id) => ["user", userId, "tidal-track", id] as const,
 
   // ---- user-scoped ----
   playlists: (userId: UserId) => ["user", userId, "playlists"] as const,

@@ -71,6 +71,18 @@ export function formatBitrate(bps: number | null | undefined): string {
   return `${Math.round(bps / 1000)} kbps`;
 }
 
+/**
+ * A YYYY-MM-DD date in the reader's locale ("17 Mar 2023"), read as a
+ * calendar day so no time zone moves it; em dash when it isn't one.
+ */
+export function formatCalendarDate(date: string | null | undefined, locale?: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date?.trim() ?? "");
+  if (!match) return "—";
+  const day = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  if (day.getUTCDate() !== Number(match[3])) return "—";
+  return day.toLocaleDateString(locale, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
+}
+
 /** "1 track" / "2 tracks"; `locale` groups the count ("1,234 plays"). */
 export function pluralize(
   n: number,

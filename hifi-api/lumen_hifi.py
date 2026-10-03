@@ -704,3 +704,95 @@ async def get_lumen_artist(id: int):
         "tracks": tracks,
         "failed_sections": failed_sections,
     }
+
+
+@app.get("/lumen/track")
+async def get_lumen_track(id: int):
+    """One track's catalog details for Lumen's track info view.
+
+    The upstream /info/ route returns only the track, whose album stub has no
+    release date, and nothing upstream exposes credits. This fetches the
+    track, its credits and its album with one catalog token. The track is
+    required (502 without it). A failed credits or album lookup is listed in
+    failed_sections, so an empty credit list still means TIDAL has none.
+    """
+    if id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid track ID")
+    try:
+        token, cred = await hifi.get_catalog_token_for_cred()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="TIDAL track unavailable") from exc
+
+    async def fetch(path: str):
+        data, _, _ = await hifi.authed_get_json(
+            f"https://api.tidal.com/v1/{path}",
+            params={"countryCode": hifi.COUNTRY_CODE},
+            token=token,
+            cred=cred,
+        )
+        return data
+
+    async def fetch_credits():
+        data = await fetch(f"tracks/{id}/credits")
+        if not isinstance(data, list):
+            raise ValueError("Invalid TIDAL track credits")
+        credits = []
+        for credit in data:
+            if not isinstance(credit, dict):
+                raise ValueError("Invalid TIDAL track credits")
+            role, contributors = credit.get("type"), credit.get("contributors")
+            if not isinstance(role, str) or not isinstance(contributors, list):
+                raise ValueError("Invalid TIDAL track credits")
+            names = [c.get("name") if isinstance(c, dict) else None for c in contributors]
+            if not all(isinstance(name, str) for name in names):
+                raise ValueError("Invalid TIDAL track credits")
+            names = [name.strip() for name in names if name.strip()]
+            if role.strip() and names:
+                credits.append({"type": role.strip(), "names": names})
+        return credits
+
+    async def fetch_album(album_id):
+        data = await fetch(f"albums/{album_id}")
+        release_date = data.get("releaseDate") if isinstance(data, dict) else None
+        if not isinstance(data, dict) or not (release_date is None or isinstance(release_date, str)):
+            raise ValueError("Invalid TIDAL album")
+        return {"releaseDate": release_date}
+
+    async def no_album():
+        return None
+
+    credits_task = asyncio.ensure_future(fetch_credits())
+    try:
+        track = await fetch(f"tracks/{id}")
+        title = track.get("title") if isinstance(track, dict) else None
+        if not isinstance(track, dict) or not track.get("id") or not isinstance(title, str) or not title:
+            raise ValueError("Invalid TIDAL track")
+    except asyncio.CancelledError:
+        credits_task.cancel()
+        raise
+    except Exception as exc:
+        credits_task.cancel()
+        logger.warning("Lumen TIDAL track unavailable track=%s", id)
+        raise HTTPException(status_code=502, detail="TIDAL track unavailable") from exc
+
+    album = track.get("album")
+    album_id = album.get("id") if isinstance(album, dict) else None
+    has_album = isinstance(album_id, (int, str)) and not isinstance(album_id, bool) and str(album_id).isdigit()
+    album, credits = await asyncio.gather(
+        fetch_album(album_id) if has_album else no_album(),
+        credits_task,
+        return_exceptions=True,
+    )
+    failed_sections = []
+    for section, result in (("album", album), ("credits", credits)):
+        if isinstance(result, BaseException):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            logger.warning("Lumen TIDAL track section unavailable track=%s section=%s", id, section)
+            failed_sections.append(section)
+    return {
+        "track": track,
+        "album": None if isinstance(album, BaseException) else album,
+        "credits": [] if isinstance(credits, BaseException) else credits,
+        "failed_sections": failed_sections,
+    }

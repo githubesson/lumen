@@ -172,7 +172,7 @@ func TestStreamCacheIsBoundedAndDropsExpiredEntries(t *testing.T) {
 	c := NewClient(Config{})
 	now := time.Now()
 	for i := 0; i < streamCacheMaxEntries+25; i++ {
-		c.storeCachedStream(fmt.Sprintf("key-%d", i), fmt.Sprintf("url-%d", i), now)
+		c.storeCachedStream(fmt.Sprintf("key-%d", i), resolvedStream{URL: fmt.Sprintf("url-%d", i)}, now)
 	}
 	if got := len(c.streamCache); got != streamCacheMaxEntries {
 		t.Fatalf("cache size = %d, want %d", got, streamCacheMaxEntries)
@@ -217,6 +217,10 @@ func TestHifiResolverExtractsStreamURL(t *testing.T) {
 	}
 	if gotQuality != "LOSSLESS" {
 		t.Fatalf("quality = %q, want LOSSLESS", gotQuality)
+	}
+	// The tier TIDAL served is kept with the stream for the track info view.
+	if served := c.streamedQuality("123"); served != "LOSSLESS" {
+		t.Fatalf("streamed quality = %q, want LOSSLESS", served)
 	}
 }
 
