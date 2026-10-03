@@ -120,6 +120,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* A playback failure in place of the artist. Specific enough to beat the
+   mini player's own artist color. */
+.np-text .np-artist.np-error {
+  color: var(--destructive);
+}
 
 .transport {
   display: flex;

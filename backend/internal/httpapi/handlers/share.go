@@ -227,6 +227,10 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 			}
 			slog.Warn("share create: tidal track materialize failed",
 				"tidal_track", ref.ID, "user", u.ID, "err", err)
+			if errors.Is(err, tidal.ErrRefused) {
+				http.Error(w, tidalRefusalText("TIDAL refused this track", err), http.StatusBadGateway)
+				return
+			}
 			http.Error(w, "tidal track lookup failed", http.StatusBadGateway)
 			return
 		}
@@ -713,6 +717,10 @@ func (h *Share) audioPathForBuild(ctx context.Context, t *library.TrackDetail) (
 func writeAudioResolveError(w http.ResponseWriter, err error) {
 	if errors.Is(err, tidal.ErrNotConfigured) {
 		http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if errors.Is(err, tidal.ErrRefused) {
+		http.Error(w, tidalRefusalText("TIDAL refused this track", err), http.StatusBadGateway)
 		return
 	}
 	http.Error(w, "preview generation failed", http.StatusInternalServerError)

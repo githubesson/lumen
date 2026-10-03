@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 
 PROFILE_URL = "https://api.tidal.com/v1/artists/123"
@@ -21,6 +21,8 @@ hifi._creds = []
 hifi._catalog_cred = None
 hifi._refresh_locks = {}
 hifi.COUNTRY_CODE = "US"
+hifi.make_request = AsyncMock()
+hifi.authed_get_json = AsyncMock()
 auth = types.ModuleType("tidal_auth")
 auth.tidal_auth = types.SimpleNamespace()
 with patch.dict(sys.modules, {"main": hifi, "tidal_auth": auth}):
@@ -140,6 +142,13 @@ class ArtistTests(unittest.IsolatedAsyncioTestCase):
         self.responses = {section: RuntimeError("failed") for section in self.responses}
         response = await self.client.get("/lumen/artist?id=123")
         self.assertEqual(response.status_code, 502)
+
+    async def test_total_refusal_keeps_tidals_reason(self):
+        self.responses = {section: RuntimeError("failed") for section in self.responses}
+        self.responses["singles"] = HTTPException(status_code=403, detail="Not available in your region")
+        response = await self.client.get("/lumen/artist?id=123")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), {"detail": "Not available in your region"})
 
     async def test_deduplicates_releases_and_accepts_list_payloads(self):
         self.responses["singles"] = [{"id": "1", "title": "Album"}, {"id": 2, "title": "Single"}]

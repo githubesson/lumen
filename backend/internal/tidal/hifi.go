@@ -151,6 +151,11 @@ func (c *Client) resolveHifiPlaybackInfo(ctx context.Context, id string) (resolv
 			return stream, nil
 		}
 		lastErr = err
+		// A refusal isn't about the quality, and every attempt takes one of
+		// hifi-api's playback slots.
+		if errors.Is(err, ErrRefused) {
+			break
+		}
 		if i+1 < len(qualities) {
 			slog.Warn("tidal hifi playback attempt failed; retrying lower quality",
 				"track", id,
@@ -237,7 +242,12 @@ func (c *Client) doHifiJSON(ctx context.Context, rawURL string, dst any) error {
 			"status", resp.StatusCode,
 			"duration_ms", time.Since(start).Milliseconds(),
 			"body", strings.TrimSpace(string(body)))
-		return fmt.Errorf("hifi-api request failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		err := fmt.Errorf("hifi-api request failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		// hifi-api answers 403 only when TIDAL did.
+		if resp.StatusCode == http.StatusForbidden {
+			return &RefusedError{Reason: refusalReason(body), cause: err}
+		}
+		return err
 	}
 	slog.Debug("tidal hifi request ok",
 		"url", logSafeURL(rawURL),

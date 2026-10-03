@@ -52,6 +52,8 @@ hifi.REFRESH_TOKEN = hifi.USER_ID = None
 hifi._creds = [credential("1", "playback-1"), credential("5", "environment-5")]
 hifi._catalog_cred = credential("9", "catalog-9")
 hifi._refresh_locks = {}
+hifi.make_request = AsyncMock()
+hifi.authed_get_json = AsyncMock()
 auth = types.ModuleType("tidal_auth")
 auth.tidal_auth = types.SimpleNamespace(
     AUTH_CLIENT_ID="auth-client",

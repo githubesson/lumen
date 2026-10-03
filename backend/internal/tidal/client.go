@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/githubesson/lumen/internal/httpx"
 	"golang.org/x/sync/singleflight"
@@ -28,7 +29,47 @@ var (
 	ErrIncompleteAlbum = errors.New("tidal album listing is incomplete")
 	ErrDASHManifest    = errors.New("tidal returned a DASH manifest, which this proxy does not yet transcode")
 	ErrPreviewManifest = errors.New("tidal returned a preview manifest instead of full playback")
+	// ErrRefused reports that TIDAL answered 403 Forbidden: the content is
+	// restricted for the server's region or accounts, or TIDAL is turning
+	// the accounts themselves away. Retrying right away won't help.
+	// errors.As a *RefusedError for TIDAL's reason.
+	ErrRefused = errors.New("tidal refused the request")
 )
+
+// RefusedError is a TIDAL 403. Reason is TIDAL's own explanation, as
+// hifi-api passes it on, cleaned up for display; it's empty when TIDAL gave
+// none.
+type RefusedError struct {
+	Reason string
+	// cause is the full upstream error, for the log only.
+	cause error
+}
+
+func (e *RefusedError) Error() string        { return e.cause.Error() }
+func (e *RefusedError) Is(target error) bool { return target == ErrRefused }
+
+// maxRefusalReason caps TIDAL's reason; hifi-api already caps it, but the
+// text is shown to users and comes from upstream.
+const maxRefusalReason = 200
+
+// refusalReason extracts TIDAL's reason from a hifi-api error body
+// ({"detail": "..."}), as a single printable line. Upstream's own fixed
+// detail says nothing, so it counts as no reason.
+func refusalReason(body []byte) string {
+	var out struct {
+		Detail string `json:"detail"`
+	}
+	if json.Unmarshal(body, &out) != nil || out.Detail == "Upstream API error" {
+		return ""
+	}
+	reason := strings.Join(strings.FieldsFunc(out.Detail, func(r rune) bool {
+		return unicode.IsSpace(r) || !unicode.IsPrint(r)
+	}), " ")
+	if runes := []rune(reason); len(runes) > maxRefusalReason {
+		reason = strings.TrimSpace(string(runes[:maxRefusalReason])) + "…"
+	}
+	return reason
+}
 
 type Config struct {
 	CountryCode string
@@ -59,7 +100,10 @@ type Client struct {
 }
 
 type cachedStream struct {
-	URL       string
+	URL string
+	// Err is a refusal, remembered so a player's retries, preloads and
+	// error probes don't each ask TIDAL again.
+	Err       error
 	ExpiresAt time.Time
 	// Quality is the tier the stream was served at ("" if unknown).
 	Quality string
@@ -67,6 +111,7 @@ type cachedStream struct {
 
 const (
 	streamCacheTTL        = 10 * time.Minute
+	streamRefusalTTL      = time.Minute
 	streamCacheMaxEntries = 1024
 	streamResolveTimeout  = 30 * time.Second
 )
@@ -335,13 +380,20 @@ func (c *Client) Track(ctx context.Context, id string) (Track, error) {
 
 func (c *Client) HLSResponse(ctx context.Context, id string, incoming *http.Request, proxyURL func(string) string) (*http.Response, error) {
 	slog.Debug("tidal hifi stream resolve start", "track", id)
-	streamURL, err := c.StreamURL(ctx, id)
+	resp, err := c.withStreamURL(ctx, id, func(streamURL string) (*http.Response, error) {
+		slog.Debug("tidal hifi stream resolved", "track", id, "url", logSafeURL(streamURL))
+		resp, err := c.HLSProxyResponse(ctx, streamURL, incoming, proxyURL)
+		if err == nil && resp.StatusCode == http.StatusForbidden {
+			resp.Body.Close()
+			return nil, mediaRefusal(streamURL, resp.Status)
+		}
+		return resp, err
+	})
 	if err != nil {
 		slog.Warn("tidal hifi stream resolve failed", "track", id, "err", err)
 		return nil, err
 	}
-	slog.Debug("tidal hifi stream resolved", "track", id, "url", logSafeURL(streamURL))
-	return c.HLSProxyResponse(ctx, streamURL, incoming, proxyURL)
+	return resp, nil
 }
 
 func (c *Client) HLSProxyResponse(ctx context.Context, rawURL string, incoming *http.Request, proxyURL func(string) string) (*http.Response, error) {
@@ -457,13 +509,15 @@ func tidalMediaClient(base *http.Client) *http.Client {
 // forwarded to segment or playlist fetches.
 func (c *Client) FileResponse(ctx context.Context, id string, incoming *http.Request) (*http.Response, error) {
 	slog.Debug("tidal hifi file resolve start", "track", id)
-	streamURL, err := c.StreamURL(ctx, id)
+	resp, err := c.withStreamURL(ctx, id, func(streamURL string) (*http.Response, error) {
+		slog.Debug("tidal hifi file resolved", "track", id, "url", logSafeURL(streamURL))
+		return c.assembleHLSFile(ctx, streamURL)
+	})
 	if err != nil {
 		slog.Warn("tidal hifi file resolve failed", "track", id, "err", err)
 		return nil, err
 	}
-	slog.Debug("tidal hifi file resolved", "track", id, "url", logSafeURL(streamURL))
-	return c.assembleHLSFile(ctx, streamURL)
+	return resp, nil
 }
 
 const maxCoverBytes = 10 << 20
@@ -506,12 +560,19 @@ func readCapped(r io.Reader, max int64) ([]byte, error) {
 }
 
 func (c *Client) StreamURL(ctx context.Context, id string) (string, error) {
+	streamURL, _, err := c.streamURL(ctx, id)
+	return streamURL, err
+}
+
+// streamURL is StreamURL, also reporting whether the URL came from the
+// cache rather than a fresh resolution.
+func (c *Client) streamURL(ctx context.Context, id string) (string, bool, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return "", errors.New("tidal track id is required")
+		return "", false, errors.New("tidal track id is required")
 	}
 	if strings.TrimSpace(c.cfg.HifiAPIURL) == "" {
-		return "", ErrNotConfigured
+		return "", false, ErrNotConfigured
 	}
 	key := c.cacheKey(id)
 	if cached, ok := c.cachedStreamURL(key, time.Now()); ok {
@@ -519,15 +580,16 @@ func (c *Client) StreamURL(ctx context.Context, id string) (string, error) {
 			"track", id,
 			"quality", defaultQuality(c.cfg.Quality),
 			"url", logSafeURL(cached.URL),
+			"refused", cached.Err != nil,
 			"expires_in_sec", int(time.Until(cached.ExpiresAt).Seconds()))
-		return cached.URL, nil
+		return cached.URL, true, cached.Err
 	}
 	slog.Debug("tidal hifi stream cache miss", "track", id, "quality", defaultQuality(c.cfg.Quality))
 	result := c.streamGroup.DoChan(key, func() (any, error) {
 		// A request may have filled the cache while this caller was joining the
 		// singleflight operation.
 		if cached, ok := c.cachedStreamURL(key, time.Now()); ok {
-			return cached.URL, nil
+			return cached.URL, cached.Err
 		}
 		// Shared resolution must not be owned by the first request's lifetime:
 		// later waiters can still use the result if that client disconnects.
@@ -536,21 +598,55 @@ func (c *Client) StreamURL(ctx context.Context, id string) (string, error) {
 		stream, err := c.resolveHifiStream(resolveCtx, id)
 		if err != nil {
 			slog.Warn("tidal hifi stream manifest resolve failed", "track", id, "quality", defaultQuality(c.cfg.Quality), "err", err)
-			return "", fmt.Errorf("hifi-api playback failed: %w", err)
+			err = fmt.Errorf("hifi-api playback failed: %w", err)
+			if errors.Is(err, ErrRefused) {
+				c.storeCachedStream(key, cachedStream{Err: err}, streamRefusalTTL, time.Now())
+			}
+			return "", err
 		}
-		c.storeCachedStream(key, stream, time.Now())
+		c.storeCachedStream(key, cachedStream{URL: stream.URL, Quality: stream.Quality}, streamCacheTTL, time.Now())
 		slog.Debug("tidal hifi stream cached", "track", id, "quality", defaultQuality(c.cfg.Quality), "served", stream.Quality, "url", logSafeURL(stream.URL))
 		return stream.URL, nil
 	})
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", false, ctx.Err()
 	case res := <-result:
 		if res.Err != nil {
-			return "", res.Err
+			return "", false, res.Err
 		}
-		return res.Val.(string), nil
+		return res.Val.(string), false, nil
 	}
+}
+
+// withStreamURL runs open against id's stream URL. TIDAL's media host refusing
+// a cached URL most likely means it expired, so the URL is dropped and open
+// runs once more against a freshly resolved one.
+func (c *Client) withStreamURL(ctx context.Context, id string, open func(streamURL string) (*http.Response, error)) (*http.Response, error) {
+	streamURL, cached, err := c.streamURL(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := open(streamURL)
+	if cached && errors.Is(err, ErrRefused) {
+		slog.Info("tidal media host refused a cached stream url; resolving a fresh one", "track", id, "err", err)
+		c.replaceCachedStream(c.cacheKey(id), streamURL, nil)
+		if streamURL, _, err = c.streamURL(ctx, id); err != nil {
+			return nil, err
+		}
+		resp, err = open(streamURL)
+	}
+	if errors.Is(err, ErrRefused) {
+		// Remembered like a refusal from TIDAL's API.
+		c.replaceCachedStream(c.cacheKey(id), streamURL, err)
+	}
+	return resp, err
+}
+
+// mediaRefusal reports a 403 from TIDAL's media host. Only refusals from
+// TIDAL's API, via hifi-api, carry a reason.
+func mediaRefusal(rawURL string, status string) error {
+	return &RefusedError{cause: fmt.Errorf("tidal media host refused %s: %s", logSafeURL(rawURL), status)}
 }
 
 func backgroundContext(ctx context.Context) context.Context {
@@ -584,9 +680,27 @@ func (c *Client) streamedQuality(id string) string {
 	return cached.Quality
 }
 
-func (c *Client) storeCachedStream(key string, stream resolvedStream, now time.Time) {
+// replaceCachedStream drops key's stream URL, or replaces it with refusal
+// when there is one, unless another URL has replaced it since.
+func (c *Client) replaceCachedStream(key, streamURL string, refusal error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if cached, ok := c.streamCache[key]; ok && cached.URL != streamURL {
+		return
+	}
+	delete(c.streamCache, key)
+	if refusal != nil {
+		c.storeCachedStreamLocked(key, cachedStream{Err: refusal}, streamRefusalTTL, time.Now())
+	}
+}
+
+func (c *Client) storeCachedStream(key string, entry cachedStream, ttl time.Duration, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.storeCachedStreamLocked(key, entry, ttl, now)
+}
+
+func (c *Client) storeCachedStreamLocked(key string, entry cachedStream, ttl time.Duration, now time.Time) {
 	for cacheKey, cached := range c.streamCache {
 		if !now.Before(cached.ExpiresAt) {
 			delete(c.streamCache, cacheKey)
@@ -600,7 +714,8 @@ func (c *Client) storeCachedStream(key string, stream resolvedStream, now time.T
 			break
 		}
 	}
-	c.streamCache[key] = cachedStream{URL: stream.URL, ExpiresAt: now.Add(streamCacheTTL), Quality: stream.Quality}
+	entry.ExpiresAt = now.Add(ttl)
+	c.streamCache[key] = entry
 }
 
 func (c *Client) cacheKey(id string) string {

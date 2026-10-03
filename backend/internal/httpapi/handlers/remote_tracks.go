@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"net/http"
 
 	"github.com/google/uuid"
 
@@ -10,6 +11,19 @@ import (
 	"github.com/githubesson/lumen/internal/tidal"
 	"github.com/githubesson/lumen/internal/trackref"
 )
+
+// writeTrackResolveError answers a failure to resolve a request's track id,
+// which may have looked the track up on TIDAL.
+func writeTrackResolveError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, tidal.ErrNotConfigured):
+		http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+	case errors.Is(err, tidal.ErrRefused):
+		http.Error(w, tidalRefusalText("TIDAL refused this track", err), http.StatusBadGateway)
+	default:
+		http.Error(w, "bad track id", http.StatusBadRequest)
+	}
+}
 
 func materializeTIDALTrack(ctx context.Context, lib *library.Store, tidalClient *tidal.Client, tidalID string) (uuid.UUID, error) {
 	// A track saved by playlist auto-download is referenced by its local copy

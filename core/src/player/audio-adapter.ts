@@ -12,6 +12,10 @@
  *                       buffering, source changes and natural track end.
  *   - `seeked`:         seek completed and position settled.
  *   - `ended`:          reached end of source.
+ *   - `error`:          the current source failed to load or play and won't
+ *                       recover on its own; only `load` brings it back. Never
+ *                       fired for a source passed to `prepareNext` until it
+ *                       is activated.
  *
  * Every call to `on` must return an unsubscribe function.
  */
@@ -21,7 +25,8 @@ export type AudioAdapterEvent =
   | "play"
   | "pause"
   | "seeked"
-  | "ended";
+  | "ended"
+  | "error";
 
 export interface AudioAdapter {
   /** Replace the current source; does not auto-play. */

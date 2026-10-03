@@ -23,6 +23,7 @@ import {
 import {
   useCurrentTrack,
   useIsPlaying,
+  usePlaybackErrorMessage,
   usePlayerPlayback,
   usePlayerControls,
 } from "../../context/player";
@@ -72,6 +73,14 @@ function useOpenNowPlaying() {
   );
 }
 
+/** The mini player's track button; a playback error stands in for the artist. */
+function trackButtonLabel(title: string, artist: string, error: string | null): string {
+  if (error) return `${title}. ${error}. Tap to open full player.`;
+  return artist
+    ? `${title} by ${artist}. Tap to open full player.`
+    : `${title}. Tap to open full player.`;
+}
+
 // Shared size for everything on the phone row so `alignItems: center`
 // holds true across cover, text block, and controls.
 const CONTROL_SIZE = 36;
@@ -86,8 +95,10 @@ const PAD_ICON_BUTTON_SIZE = 32;
  */
 export function PhoneMiniPlayer() {
   const openNowPlaying = useOpenNowPlaying();
+  const theme = useTheme();
   const colors = useDockColors();
   const current = useCurrentTrack();
+  const error = usePlaybackErrorMessage(current);
   const isPlaying = useIsPlaying();
   const player = usePlayerControls();
   const { collapseProgress } = useDockControls();
@@ -137,11 +148,7 @@ export function PhoneMiniPlayer() {
           openNowPlaying();
         }}
         accessibilityRole="button"
-        accessibilityLabel={
-          artist
-            ? `${title} by ${artist}. Tap to open full player.`
-            : `${title}. Tap to open full player.`
-        }
+        accessibilityLabel={trackButtonLabel(title, artist, error)}
         style={styles.phoneRow}
       >
         <CoverArt track={current} size={CONTROL_SIZE} />
@@ -156,7 +163,16 @@ export function PhoneMiniPlayer() {
           >
             {title}
           </Text>
-          {artist ? (
+          {error ? (
+            <Text
+              key="error"
+              numberOfLines={1}
+              accessibilityLiveRegion="polite"
+              style={{ fontSize: 13, color: theme.color.danger }}
+            >
+              {error}
+            </Text>
+          ) : artist ? (
             <Text
               numberOfLines={1}
               style={{ fontSize: 13, color: colors.muted }}
@@ -236,8 +252,10 @@ function ControlButton({
  */
 export function PadMiniPlayer() {
   const openNowPlaying = useOpenNowPlaying();
+  const theme = useTheme();
   const colors = useDockColors();
   const current = useCurrentTrack();
+  const error = usePlaybackErrorMessage(current);
   const isPlaying = useIsPlaying();
   const playback = usePlayerPlayback();
   const player = usePlayerControls();
@@ -352,11 +370,7 @@ export function PadMiniPlayer() {
         <Pressable
           onPress={() => openNowPlaying()}
           accessibilityRole="button"
-          accessibilityLabel={
-            artist
-              ? `${title} by ${artist}. Tap to open full player.`
-              : `${title}. Tap to open full player.`
-          }
+          accessibilityLabel={trackButtonLabel(title, artist, error)}
           style={({ pressed }) => [
             styles.padTrackButton,
             { opacity: pressed ? 0.65 : 1 },
@@ -370,7 +384,16 @@ export function PadMiniPlayer() {
             >
               {title}
             </Text>
-            {artist ? (
+            {error ? (
+              <Text
+                key="error"
+                numberOfLines={1}
+                accessibilityLiveRegion="polite"
+                style={[styles.padArtist, { color: theme.color.danger }]}
+              >
+                {error}
+              </Text>
+            ) : artist ? (
               <Text
                 numberOfLines={1}
                 style={[styles.padArtist, { color: colors.muted }]}

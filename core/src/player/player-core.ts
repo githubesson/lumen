@@ -2,6 +2,13 @@ import type { TrackListItem } from "../api";
 
 export type RepeatMode = "off" | "all" | "one";
 
+/** Why the current track stopped: its source failed to load or play. */
+export interface PlaybackError {
+  trackId: string;
+  /** Short and user-facing: the server's reason, or a generic one. */
+  message: string;
+}
+
 export interface PlayerState {
   current: TrackListItem | null;
   queue: TrackListItem[];
@@ -11,6 +18,11 @@ export interface PlayerState {
   muted: boolean;
   shuffle: boolean;
   repeat: RepeatMode;
+  /**
+   * The current track's playback failure. Cleared when another track starts
+   * or this one is played again (which retries it).
+   */
+  playbackError: PlaybackError | null;
 }
 
 export interface PlayerControls {

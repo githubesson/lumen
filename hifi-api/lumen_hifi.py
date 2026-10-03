@@ -10,6 +10,7 @@ the authenticated public boundary.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
@@ -186,6 +187,62 @@ class PlaybackPool:
 # Upstream resolves _playback_pool on every use, so swapping it here, before
 # the app serves anything, routes all playback through the resizable pool.
 hifi._playback_pool = PlaybackPool(hifi._creds)
+
+
+_UPSTREAM_ERROR_DETAIL = "Upstream API error"
+_MAX_REASON_LENGTH = 200
+
+
+def _tidal_reason(response: httpx.Response) -> str | None:
+    """TIDAL's own explanation of an error response, if it gave one.
+
+    The v1 API answers ``{"status", "subStatus", "userMessage"}``; the v2
+    (JSON:API) one answers ``{"errors": [{"code", "detail"}]}``.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    reason = body.get("userMessage")
+    if not isinstance(reason, str) or not reason.strip():
+        errors = body.get("errors")
+        first = errors[0] if isinstance(errors, list) and errors else None
+        reason = first.get("detail") if isinstance(first, dict) else None
+    if not isinstance(reason, str):
+        return None
+    return " ".join(reason.split())[:_MAX_REASON_LENGTH] or None
+
+
+def _with_tidal_reason(request):
+    """Make an upstream request helper's errors carry TIDAL's reason.
+
+    Upstream logs TIDAL's error body and raises a fixed "Upstream API error"
+    detail. The detail is all that reaches Lumen (queued playback jobs keep
+    only the status and ``str(detail)``), so it becomes TIDAL's explanation:
+    why a track or album was refused is otherwise lost.
+    """
+
+    @functools.wraps(request)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await request(*args, **kwargs)
+        except HTTPException as exc:
+            upstream = exc.__context__
+            if exc.detail != _UPSTREAM_ERROR_DETAIL or not isinstance(upstream, httpx.HTTPStatusError):
+                raise
+            reason = _tidal_reason(upstream.response)
+            if reason is None:
+                raise
+            raise HTTPException(status_code=exc.status_code, detail=reason, headers=exc.headers) from upstream
+
+    return wrapper
+
+
+# Every upstream route looks these up by name at call time.
+hifi.make_request = _with_tidal_reason(hifi.make_request)
+hifi.authed_get_json = _with_tidal_reason(hifi.authed_get_json)
 
 
 # Preserve credentials supplied exclusively through environment variables when
@@ -697,6 +754,10 @@ async def get_lumen_artist(id: int):
                     releases.append(item)
                     seen_ids.add(release_id)
     if len(failed_sections) == len(sections):
+        # Pass a refusal on as one, so Lumen can say why.
+        for result in results:
+            if isinstance(result, HTTPException) and result.status_code == 403:
+                raise HTTPException(status_code=403, detail=result.detail)
         raise HTTPException(status_code=502, detail="TIDAL artist unavailable")
     return {
         "artist": profile,
@@ -773,6 +834,9 @@ async def get_lumen_track(id: int):
     except Exception as exc:
         credits_task.cancel()
         logger.warning("Lumen TIDAL track unavailable track=%s", id)
+        # Pass a refusal on as one, so Lumen can say why.
+        if isinstance(exc, HTTPException) and exc.status_code == 403:
+            raise HTTPException(status_code=403, detail=exc.detail) from exc
         raise HTTPException(status_code=502, detail="TIDAL track unavailable") from exc
 
     album = track.get("album")

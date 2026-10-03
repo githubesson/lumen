@@ -123,6 +123,9 @@ func (c *Client) fetchAndParsePlaylist(ctx context.Context, rawURL string) (pars
 		slog.Warn("tidal hls playlist read failed", "url", logSafeURL(rawURL), "err", err)
 		return parsedPlaylist{}, nil, err
 	}
+	if resp.StatusCode == http.StatusForbidden {
+		return parsedPlaylist{}, nil, mediaRefusal(rawURL, resp.Status)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return parsedPlaylist{}, nil, fmt.Errorf("tidal hls playlist fetch failed: %s", resp.Status)
 	}

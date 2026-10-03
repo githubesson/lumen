@@ -95,6 +95,10 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
 			return
 		}
+		if errors.Is(err, tidal.ErrRefused) {
+			http.Error(w, tidalRefusalText("TIDAL refused this album", err), http.StatusBadGateway)
+			return
+		}
 		http.Error(w, "tidal album unavailable", http.StatusBadGateway)
 		return
 	}
@@ -181,6 +185,10 @@ func (h *TIDAL) Artist(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
 			return
 		}
+		if errors.Is(err, tidal.ErrRefused) {
+			http.Error(w, tidalRefusalText("TIDAL refused this artist", err), http.StatusBadGateway)
+			return
+		}
 		http.Error(w, "tidal artist unavailable", http.StatusBadGateway)
 		return
 	}
@@ -250,6 +258,8 @@ func (h *TIDAL) Track(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid tidal track id", http.StatusBadRequest)
 		case errors.Is(err, tidal.ErrNotConfigured):
 			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+		case errors.Is(err, tidal.ErrRefused):
+			http.Error(w, tidalRefusalText("TIDAL refused this track", err), http.StatusBadGateway)
 		default:
 			http.Error(w, "tidal track unavailable", http.StatusBadGateway)
 		}

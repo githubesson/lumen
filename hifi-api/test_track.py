@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 
 TRACK_URL = "https://api.tidal.com/v1/tracks/123"
@@ -22,6 +22,8 @@ hifi._creds = []
 hifi._catalog_cred = None
 hifi._refresh_locks = {}
 hifi.COUNTRY_CODE = "US"
+hifi.make_request = AsyncMock()
+hifi.authed_get_json = AsyncMock()
 auth = types.ModuleType("tidal_auth")
 auth.tidal_auth = types.SimpleNamespace()
 with patch.dict(sys.modules, {"main": hifi, "tidal_auth": auth}):
@@ -143,6 +145,12 @@ class TrackTests(unittest.IsolatedAsyncioTestCase):
                 response = await self.client.get("/lumen/track?id=123")
                 self.assertEqual(response.status_code, 502)
                 self.assertEqual(response.json(), {"detail": "TIDAL track unavailable"})
+
+    async def test_refused_track_keeps_tidals_reason(self):
+        self.responses[TRACK_URL] = HTTPException(status_code=403, detail="Not available in your region")
+        response = await self.client.get("/lumen/track?id=123")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), {"detail": "Not available in your region"})
 
     async def test_credits_failure_before_a_track_failure_is_not_left_unread(self):
         self.responses[CREDITS_URL] = RuntimeError("upstream secret must not leak")

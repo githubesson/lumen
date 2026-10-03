@@ -16,7 +16,7 @@ export function usePlayerDisplay() {
   // The provider's displayed state already follows a remote target (its
   // track, play state and controlled volume/shuffle/repeat), so the bar
   // agrees with the queue and lyrics views.
-  const { current, isPlaying, volume, muted, shuffle, repeat, seek } =
+  const { current, isPlaying, volume, muted, shuffle, repeat, playbackError, seek } =
     usePlayer();
   const { targetDevice, commandPending } = useRemotePlayback();
   const fh6Snapshot = useFH6Snapshot();
@@ -46,6 +46,11 @@ export function usePlayerDisplay() {
           current.album_title ? ` · ${displayText(current.album_title)}` : ""
         }`
       : (targetDevice?.deviceName ?? "—");
+  // Why the current track stopped, shown in place of its artist.
+  const displayError =
+    !isFH6Mode && current && playbackError?.trackId === current.id
+      ? playbackError.message
+      : null;
 
   // Previous, play/pause and next need something to act on in the active
   // mode. A pending remote command doesn't disable them: the target applies
@@ -80,6 +85,7 @@ export function usePlayerDisplay() {
     displayPlaying,
     displayTitle,
     displayArtist,
+    displayError,
     shownVolume: volume,
     shownMuted: muted,
     shownShuffle: shuffle,

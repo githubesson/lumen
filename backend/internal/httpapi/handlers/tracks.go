@@ -204,11 +204,7 @@ func (h *Tracks) Favorite(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
 	if err != nil {
-		if errors.Is(err, tidal.ErrNotConfigured) {
-			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-			return
-		}
-		http.Error(w, "bad track id", http.StatusBadRequest)
+		writeTrackResolveError(w, err)
 		return
 	}
 	if err := h.Library.SetFavorite(r.Context(), u.ID, id, true); err != nil {
@@ -299,11 +295,7 @@ func (h *Tracks) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
 	if err != nil {
-		if errors.Is(err, tidal.ErrNotConfigured) {
-			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-			return
-		}
-		http.Error(w, "bad track id", http.StatusBadRequest)
+		writeTrackResolveError(w, err)
 		return
 	}
 	t, err := h.Library.GetTrack(r.Context(), id, u.ID)
@@ -630,11 +622,7 @@ func (h *Tracks) RecordPlay(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
 	if err != nil {
-		if errors.Is(err, tidal.ErrNotConfigured) {
-			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-			return
-		}
-		http.Error(w, "bad track id", http.StatusBadRequest)
+		writeTrackResolveError(w, err)
 		return
 	}
 	if err := h.Library.RecordPlay(r.Context(), u.ID, id, req.Completion); err != nil {

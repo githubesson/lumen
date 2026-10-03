@@ -165,6 +165,10 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			slog.Warn("tidal search failed", "type", stream.kind, "err", result.err)
+			if errors.Is(result.err, tidal.ErrRefused) {
+				resp.Warnings = append(resp.Warnings, tidalRefusalText("TIDAL refused the "+stream.kind+" search", result.err))
+				continue
+			}
 			resp.Warnings = append(resp.Warnings, "TIDAL "+stream.kind+" search is unavailable. Try again later.")
 			continue
 		}

@@ -32,6 +32,7 @@ export default function MiniPlayer() {
     displayPlaying,
     displayTitle,
     displayArtist,
+    displayError,
     shownVolume,
     shownMuted,
     shownShuffle,
@@ -97,6 +98,7 @@ export default function MiniPlayer() {
           track={displayCurrent}
           title={displayTitle}
           artist={displayArtist}
+          error={displayError}
           isFH6Mode={isFH6Mode}
           onContextMenu={
             displayCurrent && !isRemoteMode

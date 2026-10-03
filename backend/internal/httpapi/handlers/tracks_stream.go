@@ -128,30 +128,14 @@ func (h *Tracks) Stream(w http.ResponseWriter, r *http.Request) {
 func (h *Tracks) streamTIDAL(w http.ResponseWriter, r *http.Request, tidalID string) {
 	if h.TIDAL == nil {
 		h.log().Warn("stream: tidal client not configured", "tidal_track", tidalID)
-		http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+		http.Error(w, tidalStreamErrorMessage(tidal.ErrNotConfigured), http.StatusServiceUnavailable)
 		return
 	}
 	resp, err := h.TIDAL.HLSResponse(r.Context(), tidalID, r, func(rawURL string) string {
 		return tidalHLSProxyURL(tidalID, rawURL)
 	})
 	if err != nil {
-		if errors.Is(err, tidal.ErrNotConfigured) {
-			h.log().Warn("stream: tidal proxy not configured", "tidal_track", tidalID, "err", err)
-			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-			return
-		}
-		if errors.Is(err, tidal.ErrDASHManifest) {
-			h.log().Warn("stream: tidal dash manifest unsupported", "tidal_track", tidalID, "err", err)
-			http.Error(w, "tidal stream format is not supported yet", http.StatusBadGateway)
-			return
-		}
-		if errors.Is(err, tidal.ErrPreviewManifest) {
-			h.log().Warn("stream: tidal preview manifest rejected", "tidal_track", tidalID, "err", err)
-			http.Error(w, tidalStreamErrorMessage(err), http.StatusBadGateway)
-			return
-		}
-		h.log().Warn("stream: tidal proxy failed", "tidal_track", tidalID, "err", err)
-		http.Error(w, tidalStreamErrorMessage(err), http.StatusBadGateway)
+		h.writeTIDALStreamError(w, "stream", tidalID, err)
 		return
 	}
 	h.log().Info("stream: tidal track started playing",
@@ -174,28 +158,12 @@ func (h *Tracks) streamTIDAL(w http.ResponseWriter, r *http.Request, tidalID str
 func (h *Tracks) streamTIDALDownload(w http.ResponseWriter, r *http.Request, tidalID string) {
 	if h.TIDAL == nil {
 		h.log().Warn("download: tidal client not configured", "tidal_track", tidalID)
-		http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
+		http.Error(w, tidalStreamErrorMessage(tidal.ErrNotConfigured), http.StatusServiceUnavailable)
 		return
 	}
 	resp, err := h.TIDAL.FileResponse(r.Context(), tidalID, r)
 	if err != nil {
-		if errors.Is(err, tidal.ErrNotConfigured) {
-			h.log().Warn("download: tidal proxy not configured", "tidal_track", tidalID, "err", err)
-			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-			return
-		}
-		if errors.Is(err, tidal.ErrDASHManifest) {
-			h.log().Warn("download: tidal dash manifest unsupported", "tidal_track", tidalID, "err", err)
-			http.Error(w, "tidal stream format is not supported yet", http.StatusBadGateway)
-			return
-		}
-		if errors.Is(err, tidal.ErrPreviewManifest) {
-			h.log().Warn("download: tidal preview manifest rejected", "tidal_track", tidalID, "err", err)
-			http.Error(w, tidalStreamErrorMessage(err), http.StatusBadGateway)
-			return
-		}
-		h.log().Warn("download: tidal file assembly failed", "tidal_track", tidalID, "err", err)
-		http.Error(w, tidalStreamErrorMessage(err), http.StatusBadGateway)
+		h.writeTIDALStreamError(w, "download", tidalID, err)
 		return
 	}
 
@@ -225,8 +193,7 @@ func (h *Tracks) streamTIDALDownload(w http.ResponseWriter, r *http.Request, tid
 		// raw fallback path below needs a fresh FileResponse.
 		resp, err = h.TIDAL.FileResponse(r.Context(), tidalID, r)
 		if err != nil {
-			h.log().Warn("download: tidal raw fallback failed", "tidal_track", tidalID, "err", err)
-			http.Error(w, tidalStreamErrorMessage(err), http.StatusBadGateway)
+			h.writeTIDALStreamError(w, "download: raw fallback", tidalID, err)
 			return
 		}
 	}
@@ -399,15 +366,53 @@ func decodeTIDALHLSURL(raw string) (string, error) {
 	return string(b), nil
 }
 
-// tidalStreamErrorMessage is the client-facing text for a failed TIDAL
-// stream. Upstream errors carry dial targets (internal IPs and ports), hifi
-// API bodies and account details, so they only go to the log — every caller
-// logs err before responding.
-func tidalStreamErrorMessage(err error) string {
-	if errors.Is(err, tidal.ErrPreviewManifest) {
-		return "tidal stream unavailable: " + tidal.ErrPreviewManifest.Error()
+// writeTIDALStreamError answers a failed TIDAL stream or download. op
+// prefixes the log message.
+func (h *Tracks) writeTIDALStreamError(w http.ResponseWriter, op, tidalID string, err error) {
+	status := http.StatusBadGateway
+	switch {
+	case errors.Is(err, tidal.ErrNotConfigured):
+		status = http.StatusServiceUnavailable
+		h.log().Warn(op+": tidal proxy not configured", "tidal_track", tidalID, "err", err)
+	case errors.Is(err, tidal.ErrDASHManifest):
+		h.log().Warn(op+": tidal dash manifest unsupported", "tidal_track", tidalID, "err", err)
+	case errors.Is(err, tidal.ErrPreviewManifest):
+		h.log().Warn(op+": tidal preview manifest rejected", "tidal_track", tidalID, "err", err)
+	case errors.Is(err, tidal.ErrRefused):
+		h.log().Warn(op+": tidal refused the track", "tidal_track", tidalID, "err", err)
+	default:
+		h.log().Warn(op+": tidal proxy failed", "tidal_track", tidalID, "err", err)
 	}
-	return "tidal stream unavailable"
+	http.Error(w, tidalStreamErrorMessage(err), status)
+}
+
+// tidalStreamErrorMessage is the client-facing text for a failed TIDAL
+// stream; the players show it to the user as is. Upstream errors carry dial
+// targets (internal IPs and ports), hifi API bodies and account details, so
+// they only go to the log — every caller logs err before responding.
+func tidalStreamErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, tidal.ErrNotConfigured):
+		return "TIDAL isn't set up on this server."
+	case errors.Is(err, tidal.ErrDASHManifest):
+		return "TIDAL sent a stream format Lumen can't play yet."
+	case errors.Is(err, tidal.ErrPreviewManifest):
+		return "TIDAL only has a preview of this track."
+	case errors.Is(err, tidal.ErrRefused):
+		return tidalRefusalText("TIDAL refused to stream this track", err)
+	}
+	return "Couldn't stream this track from TIDAL. Try again later."
+}
+
+// tidalRefusalText is lead, plus TIDAL's reason for refusing when it gave
+// one. That reason is TIDAL's own user-facing text, unlike the rest of an
+// upstream error.
+func tidalRefusalText(lead string, err error) string {
+	var refused *tidal.RefusedError
+	if errors.As(err, &refused) && refused.Reason != "" {
+		return lead + ": " + refused.Reason
+	}
+	return lead + "."
 }
 
 // pathWithinAnyRoot returns true when p lives inside any of the configured
