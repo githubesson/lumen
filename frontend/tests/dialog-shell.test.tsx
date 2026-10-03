@@ -2,10 +2,12 @@ import { useState } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DialogShell } from "../src/components/DialogShell";
+import { Select } from "../src/components/Select";
 
 // jsdom lays nothing out, so every element reports no client rects and the
 // Tab trap would treat all controls as hidden.
 beforeEach(() => {
+  Element.prototype.scrollIntoView = vi.fn();
   vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
     {} as DOMRect,
   ] as unknown as DOMRectList);
@@ -84,4 +86,42 @@ it("closes only the innermost dialog on Escape", async () => {
   expect(screen.getByRole("dialog")).toHaveProperty("textContent", expect.stringContaining("Outer"));
   // Focus goes back to the control in the outer dialog that opened the inner one.
   expect(document.activeElement).toBe(last);
+});
+
+it("keeps Tab inside when it leaves an open Select that is the last control", async () => {
+  function WithSelect() {
+    const [value, setValue] = useState("a");
+    return (
+      <DialogShell open title="Outer" onClose={() => {}}>
+        <div>
+          <button type="button">First</button>
+          <Select
+            aria-label="Pick"
+            value={value}
+            onChange={setValue}
+            options={[
+              { value: "a", label: "A" },
+              { value: "b", label: "B" },
+            ]}
+          />
+        </div>
+      </DialogShell>
+    );
+  }
+  render(<WithSelect />);
+  fireEvent.click(await screen.findByRole("combobox", { name: "Pick" }));
+  const list = await screen.findByRole("listbox");
+  await waitFor(() => expect(document.activeElement).toBe(list));
+
+  // Tab closes the list and wraps round instead of leaving the dialog.
+  fireEvent.keyDown(list, { key: "Tab" });
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+
+  // Short of the end, Tab still carries on from the trigger.
+  fireEvent.click(screen.getByRole("combobox", { name: "Pick" }));
+  const again = await screen.findByRole("listbox");
+  await waitFor(() => expect(document.activeElement).toBe(again));
+  fireEvent.keyDown(again, { key: "Tab", shiftKey: true });
+  expect(document.activeElement).toBe(screen.getByRole("combobox", { name: "Pick" }));
 });

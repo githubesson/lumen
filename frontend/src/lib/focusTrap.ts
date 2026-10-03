@@ -17,7 +17,7 @@ export function trapTab(event: KeyboardEvent, panel: HTMLElement | null) {
   }
   const first = items[0];
   const last = items[items.length - 1];
-  const current = document.activeElement;
+  const current = tabOrigin(document.activeElement, panel);
   const inside = current instanceof Node && panel.contains(current);
   if (event.shiftKey && (!inside || current === first || current === panel)) {
     event.preventDefault();
@@ -26,4 +26,18 @@ export function trapTab(event: KeyboardEvent, panel: HTMLElement | null) {
     event.preventDefault();
     first.focus();
   }
+}
+
+/**
+ * Where Tab moves on from. An open listbox (Select, MultiSelect) holds focus
+ * itself but closes on Tab and lets it carry on from its trigger, so the trap
+ * must judge the ends of the cycle from that trigger.
+ */
+function tabOrigin(current: Element | null, panel: HTMLElement): Element | null {
+  const listbox = current?.closest('[role="listbox"]');
+  if (!listbox?.id) return current;
+  const trigger = [...panel.querySelectorAll("[aria-controls]")].find(
+    (el) => el.getAttribute("aria-controls") === listbox.id,
+  );
+  return trigger ?? current;
 }

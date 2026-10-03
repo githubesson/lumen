@@ -59,12 +59,13 @@ export function DialogShell({
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (openDialogs[openDialogs.length - 1] !== token) return;
-      // An open Select owns Tab and Escape until it closes.
-      if (event.target instanceof Element && event.target.closest('[role="listbox"]')) {
-        return;
-      }
+      // An open Select's Tab carries on from its trigger, so it's trapped too.
       if (event.key === "Tab") {
         trapTab(event, panel);
+        return;
+      }
+      // An open Select owns Escape until it closes.
+      if (event.target instanceof Element && event.target.closest('[role="listbox"]')) {
         return;
       }
       if (event.key !== "Escape") return;
