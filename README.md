@@ -34,7 +34,7 @@ surface for invites and library management.
 
 ### Sharing
 
-- Public share pages with Open Graph tags — links unfurl with cover, title, and a playable preview in Discord and chat apps
+- Public share pages with Open Graph tags — links unfurl with cover, title, and a playable preview in Discord and chat apps; in Discord the card is a component embed with Open, Download video, and Download audio buttons
 - Embeddable players advertised in the link-preview metadata
 - Server-rendered preview images/videos for shares
 - HMAC-signed cover/share/preview URLs — public links need no session, but can't be forged

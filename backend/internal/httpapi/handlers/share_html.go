@@ -37,6 +37,11 @@ type shareMeta struct {
 	ThemeColor  string
 	Landing     string
 	DurationSec int
+	// Browser-download forms of the clip (Content-Disposition: attachment).
+	// Share-signed and non-expiring, since Discord keeps the component embed
+	// payload for as long as the message exists.
+	VideoDownloadURL string
+	AudioDownloadURL string
 }
 
 // renderSharePage writes the scraper-facing HTML. Minimal on purpose: the
@@ -92,6 +97,14 @@ func renderSharePage(m shareMeta) string {
 	writeMetaProp(&b, "twitter:player:width", "720")
 	writeMetaProp(&b, "twitter:player:height", "720")
 	writeMetaProp(&b, "twitter:image", "0")
+
+	// Discord component embed: a richer card with download buttons. Discord
+	// falls back to the OG tags above if this payload fails validation.
+	if payload, ok := buildDiscordComponentEmbed(m); ok {
+		b.WriteString(`<script id="discord:component-embed" type="application/json">`)
+		b.Write(payload)
+		b.WriteString(`</script>`)
+	}
 
 	b.WriteString("\n</head>\n<body>")
 	b.WriteString(`<p>Opening <a href="` + html.EscapeString(m.Landing) + `">Lumen</a>&hellip;</p>`)

@@ -150,6 +150,22 @@ func shareEmbedURL(base string, id uuid.UUID, startSec, durationSec int, sig str
 	return signedShareURL(base+"/embed/track/"+id.String(), startSec, durationSec, sig)
 }
 
+// sharePreviewAudioURL is the share-signed, non-expiring form of the clip's
+// M4A. It sits beside sharePreviewVideoURL for surfaces that keep URLs
+// indefinitely (Discord component embeds); PublicInfo keeps handing the
+// browser the hourly-rotating form.
+func sharePreviewAudioURL(base string, id uuid.UUID, startSec, durationSec int, sig string) string {
+	return signedShareURL(base+"/api/public/preview-audio/"+id.String()+".m4a", startSec, durationSec, sig)
+}
+
+// downloadURL marks a signed media URL as a browser download. The flag is
+// outside the signed payload on purpose: it only changes Content-Disposition,
+// never which bytes are served. Every signed media URL already carries a
+// query string (t= at minimum), so the flag is appended with "&".
+func downloadURL(mediaURL string) string {
+	return mediaURL + "&download=1"
+}
+
 // durationSec == 0 intentionally emits the original URL shape. It is used
 // while resolving already-issued 30-second links whose signatures predate the
 // duration field.
