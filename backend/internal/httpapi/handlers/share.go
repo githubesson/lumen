@@ -426,6 +426,7 @@ func (h *Share) Page(w http.ResponseWriter, r *http.Request) {
 	// FxEmbed-style direct video: scrapers see a stable, video-looking URL on
 	// our domain, and that URL serves the generated MP4 directly.
 	videoURL := sharePreviewVideoURL(base, id, req.startSec, req.urlDurationSec(), sig)
+	audioURL := sharePreviewAudioURL(base, id, req.startSec, req.urlDurationSec(), sig)
 
 	// Cover URL — reuse the existing cover-sign logic. If the track has no
 	// album/cover, omit og:image; Discord falls back to the first frame of
@@ -471,6 +472,9 @@ func (h *Share) Page(w http.ResponseWriter, r *http.Request) {
 		ThemeColor:  accentColor,
 		Landing:     landing,
 		DurationSec: effectivePreviewDurationSec(req.durationSec, t.DurationMS),
+
+		VideoDownloadURL: downloadURL(videoURL),
+		AudioDownloadURL: downloadURL(audioURL),
 	})
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -781,18 +785,23 @@ func (h *Share) PublicPreviewVideo(w http.ResponseWriter, r *http.Request) {
 	}
 	// Already built → serve straight from disk without touching the DB or
 	// (for TIDAL tracks) re-downloading the audio.
-	if outPath, ok := h.Preview.CachedPreview(req.id.String(), req.startSec, req.durationSec); ok {
-		serveMediaFile(w, r, outPath, "preview missing", "public, max-age=3600")
-		return
+	outPath, cached := h.Preview.CachedPreview(req.id.String(), req.startSec, req.durationSec)
+	if !cached {
+		t, ok := h.loadPublicTrack(w, r, req.id, "preview video serve")
+		if !ok {
+			return
+		}
+		var err error
+		outPath, err = h.buildPublicPreview(r, t, req, "preview video serve")
+		if err != nil {
+			writePublicBuildError(w, err, "preview generation failed")
+			return
+		}
 	}
-	t, ok := h.loadPublicTrack(w, r, req.id, "preview video serve")
-	if !ok {
-		return
-	}
-	outPath, err := h.buildPublicPreview(r, t, req, "preview video serve")
-	if err != nil {
-		writePublicBuildError(w, err, "preview generation failed")
-		return
+	// ?download=1 (the Discord card's button) names the file after the
+	// track so the browser saves it instead of playing it.
+	if wantsDownload(r) {
+		h.setClipAttachment(w, r, req.id, ".mp4")
 	}
 	serveMediaFile(w, r, outPath, "preview missing", "public, max-age=3600")
 }
