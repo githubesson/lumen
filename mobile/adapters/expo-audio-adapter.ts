@@ -272,7 +272,18 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         }
         noteOutgoingSource();
         awaitingSourceStatusRef.current = true;
-        player.replace({ uri: url });
+        try {
+          player.replace({ uri: url });
+        } catch {
+          // replace() hands a still-preloaded copy of this URL to the player.
+          // Picking the prepared next track gets here before the async
+          // clearPreloadedSource() drops that copy, and iOS can refuse the
+          // handoff with an Objective-C exception ("Exception in HostFunction:
+          // <unknown>"). The failed call has already taken the copy out of
+          // the preload cache, so a second replace() loads the URL afresh.
+          diagnostics.record("audio-preload-handoff-failed");
+          player.replace({ uri: url });
+        }
         diagnostics.record("audio-source-replaced");
         // Reset the status diff so the new track's first loadedmetadata fires.
         prevStatusRef.current.isLoaded = false;
