@@ -488,6 +488,37 @@ describe("useExpoAudioAdapter prepared track handoff", () => {
     await pendingPlay;
     expect(h.calls).toEqual(["seekTo", "replace", "play", "pause"]);
   });
+
+  it("loads the still-preloaded next track afresh when iOS refuses the handoff", async () => {
+    const adapter = createTestAdapter();
+    const metadata = vi.fn();
+    adapter.on("loadedmetadata", metadata);
+    adapter.prepareNext!("https://example.test/next.mp3");
+    await flushMicrotasks();
+    // Picking that track in the queue drops the preload, but natively only
+    // once clearPreloadedSource() runs, after load()'s replace().
+    adapter.clearPrepared!();
+    const replace = vi.spyOn(h.fakePlayer, "replace").mockImplementationOnce(() => {
+      throw new Error("Exception in HostFunction: <unknown>");
+    });
+
+    expect(() => adapter.load("https://example.test/next.mp3")).not.toThrow();
+    expect(replace).toHaveBeenCalledTimes(2);
+    expect(replace).toHaveBeenLastCalledWith({ uri: "https://example.test/next.mp3" });
+    expect(h.record).toHaveBeenCalledWith("audio-preload-handoff-failed");
+
+    h.emitStatus({ ...ready, isLoaded: false, duration: 0 });
+    h.emitStatus(ready);
+    expect(metadata).toHaveBeenCalledOnce();
+  });
+
+  it("still throws when loading a fresh copy fails too", () => {
+    const adapter = createTestAdapter();
+    vi.spyOn(h.fakePlayer, "replace").mockImplementation(() => {
+      throw new Error("Exception in HostFunction: <unknown>");
+    });
+    expect(() => adapter.load("https://example.test/next.mp3")).toThrow("HostFunction");
+  });
 });
 
 describe("useExpoAudioAdapter source failures", () => {
