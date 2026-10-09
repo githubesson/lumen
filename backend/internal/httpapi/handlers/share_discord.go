@@ -118,7 +118,7 @@ func discordComponentEmbedFor(m shareMeta, level discordEmbedLevel) discordCompo
 	}
 
 	var text strings.Builder
-	text.WriteString(discordHeading(title, m.Landing))
+	text.WriteString(discordHeading(title))
 	if level < discordEmbedNoSubtitle {
 		subtitle := artist
 		if album != "" {
@@ -234,46 +234,19 @@ func discordAccentColor(hex string) (int, bool) {
 	return int(v), true
 }
 
-// discordHeading renders the card's "## Title" line. The title is a markdown
-// link to the landing page so it is clickable the way Open Graph titles are.
-// Discord's link label allows one level of nested brackets but no escapes,
-// so "Song [Live]" links fine while a title with a stray "]" would cut the
-// label short; such titles are rendered as a plain heading instead.
-func discordHeading(title, landing string) string {
-	escaped := escapeDiscordMarkdown(title)
-	if !bracketsBalanced(title) {
-		return "## " + escaped
-	}
-	return "## [" + escaped + "](" + landing + ")"
-}
-
-// bracketsBalanced reports whether every "[" in s has a matching "]" at one
-// level of nesting at most, the shape Discord's link parser accepts inside a
-// label.
-func bracketsBalanced(s string) bool {
-	depth := 0
-	for _, r := range s {
-		switch r {
-		case '[':
-			depth++
-			if depth > 1 {
-				return false
-			}
-		case ']':
-			depth--
-			if depth < 0 {
-				return false
-			}
-		}
-	}
-	return depth == 0
+// discordHeading renders the card's "## Title" line as plain text. It used
+// to be a markdown link to the landing page, but Discord sometimes refuses
+// to render a masked link and then shows the raw "[Title](https://...)"
+// instead; the "Open in Lumen" button is the click target.
+func discordHeading(title string) string {
+	return "## " + escapeDiscordMarkdown(title)
 }
 
 // escapeDiscordMarkdown backslash-escapes the inline characters Discord's
 // markdown lets a backslash neutralise (emphasis, strikethrough, code,
 // spoilers), so a title like "*NSYNC" renders literally. Discord shows the
 // backslash itself for anything else, brackets included, so nothing more is
-// escaped here. Line breaks collapse to spaces: a newline inside the heading
+// escaped here; a title like "Song [Live]" is plain text in a heading anyway. Line breaks collapse to spaces: a newline inside the heading
 // would end it.
 func escapeDiscordMarkdown(s string) string {
 	var b strings.Builder

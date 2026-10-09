@@ -217,11 +217,12 @@ func TestRenderSharePageIncludesDiscordComponentEmbed(t *testing.T) {
 	text := section.Components[0].Content
 	// The script element must not be closable from inside the JSON, and the
 	// title text must render literally: Discord shows a backslash before a
-	// bracket as-is, so brackets stay unescaped inside the link label.
+	// bracket as-is, so brackets stay unescaped. The heading is plain text,
+	// not a masked link, which Discord sometimes refuses to render.
 	if strings.Contains(raw, "</script>") {
 		t.Fatalf("payload contains an unescaped </script>: %s", raw)
 	}
-	wantText := "## [Song [Live] </script>](" + landing + ")\n-# \\*NSYNC · No\\_Strings"
+	wantText := "## Song [Live] </script>\n-# \\*NSYNC · No\\_Strings"
 	if text != wantText {
 		t.Fatalf("heading text = %q, want %q", text, wantText)
 	}
@@ -254,23 +255,6 @@ func TestRenderSharePageIncludesDiscordComponentEmbed(t *testing.T) {
 	// Open Graph stays as the fallback.
 	if !strings.Contains(html, `<meta property="og:video" content=`) {
 		t.Fatalf("component embed must not replace the og:video fallback")
-	}
-}
-
-func TestDiscordHeadingFallsBackToPlainTextOnUnbalancedBrackets(t *testing.T) {
-	landing := "https://lumen.test/shared/track/abc?t=0&sig=s"
-	cases := map[string]string{
-		"Plain":          "## [Plain](" + landing + ")",
-		"Song [Live]":    "## [Song [Live]](" + landing + ")",
-		"a [b [c]] d":    "## a [b [c]] d",
-		"Broken ] title": "## Broken ] title",
-		"Open [ title":   "## Open [ title",
-		"*Star* [x]":     "## [\\*Star\\* [x]](" + landing + ")",
-	}
-	for title, want := range cases {
-		if got := discordHeading(title, landing); got != want {
-			t.Errorf("discordHeading(%q) = %q, want %q", title, got, want)
-		}
 	}
 }
 
