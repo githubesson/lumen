@@ -249,8 +249,10 @@ func discordHeading(title string) string {
 // alone; "Song [Live]" is plain text in a heading anyway. A title shaped
 // like a masked link, "[click](https://…)", would still become one, so the
 // "](" joining label and target gets a zero-width space between the two
-// characters: invisible, but no longer link syntax. Line breaks collapse to
-// spaces: a newline inside the heading would end it.
+// characters: invisible, but no longer link syntax. A bare URL in a title
+// would autolink to a title-supplied destination the same way, so "://"
+// gets the same treatment, which Discord's URL rule does not match. Line
+// breaks collapse to spaces: a newline inside the heading would end it.
 func escapeDiscordMarkdown(s string) string {
 	var b strings.Builder
 	b.Grow(len(s) + 8)
@@ -265,7 +267,8 @@ func escapeDiscordMarkdown(s string) string {
 			b.WriteRune(r)
 		}
 	}
-	return strings.ReplaceAll(b.String(), "](", "]\u200b(")
+	out := strings.ReplaceAll(b.String(), "](", "]\u200b(")
+	return strings.ReplaceAll(out, "://", ":\u200b//")
 }
 
 func truncateRunes(s string, max int) string {
