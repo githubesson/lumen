@@ -245,9 +245,12 @@ func discordHeading(title string) string {
 // escapeDiscordMarkdown backslash-escapes the inline characters Discord's
 // markdown lets a backslash neutralise (emphasis, strikethrough, code,
 // spoilers), so a title like "*NSYNC" renders literally. Discord shows the
-// backslash itself for anything else, brackets included, so nothing more is
-// escaped here; a title like "Song [Live]" is plain text in a heading anyway. Line breaks collapse to spaces: a newline inside the heading
-// would end it.
+// backslash itself for anything else, brackets included, so they are left
+// alone; "Song [Live]" is plain text in a heading anyway. A title shaped
+// like a masked link, "[click](https://…)", would still become one, so the
+// "](" joining label and target gets a zero-width space between the two
+// characters: invisible, but no longer link syntax. Line breaks collapse to
+// spaces: a newline inside the heading would end it.
 func escapeDiscordMarkdown(s string) string {
 	var b strings.Builder
 	b.Grow(len(s) + 8)
@@ -262,7 +265,7 @@ func escapeDiscordMarkdown(s string) string {
 			b.WriteRune(r)
 		}
 	}
-	return b.String()
+	return strings.ReplaceAll(b.String(), "](", "]\u200b(")
 }
 
 func truncateRunes(s string, max int) string {

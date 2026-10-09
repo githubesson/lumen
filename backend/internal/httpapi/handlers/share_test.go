@@ -359,6 +359,13 @@ func TestEscapeDiscordMarkdown(t *testing.T) {
 	if got != want {
 		t.Fatalf("escape = %q, want %q", got, want)
 	}
+	// A title shaped like a masked link must not become one: the "](" is
+	// split by a zero-width space, which Discord renders as nothing.
+	got = escapeDiscordMarkdown("[download](https://attacker.example) [x] (y)")
+	want = "[download]\u200b(https://attacker.example) [x] (y)"
+	if got != want {
+		t.Fatalf("escape = %q, want %q", got, want)
+	}
 }
 
 func TestSharePreviewAudioURLIsShareSigned(t *testing.T) {
