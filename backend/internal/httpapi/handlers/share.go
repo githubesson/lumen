@@ -472,6 +472,7 @@ func (h *Share) Page(w http.ResponseWriter, r *http.Request) {
 		ThemeColor:  accentColor,
 		Landing:     landing,
 		DurationSec: effectivePreviewDurationSec(req.durationSec, t.DurationMS),
+		IconURL:     base + lumenIconPath,
 
 		VideoDownloadURL: downloadURL(videoURL),
 		AudioDownloadURL: downloadURL(audioURL),

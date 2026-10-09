@@ -37,6 +37,8 @@ type shareMeta struct {
 	ThemeColor  string
 	Landing     string
 	DurationSec int
+	// IconURL is the app icon, shown as the Discord card's thumbnail.
+	IconURL string
 	// Browser-download forms of the clip (Content-Disposition: attachment).
 	// Share-signed and non-expiring, since Discord keeps the component embed
 	// payload for as long as the message exists.
