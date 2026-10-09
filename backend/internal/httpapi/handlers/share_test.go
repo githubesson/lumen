@@ -203,8 +203,8 @@ func TestRenderSharePageIncludesDiscordComponentEmbed(t *testing.T) {
 	if c.AccentColor == nil || *c.AccentColor != 0x1abc9c {
 		t.Fatalf("accent color = %v, want %d", c.AccentColor, 0x1abc9c)
 	}
-	if len(c.Components) != 4 {
-		t.Fatalf("container has %d children, want section, gallery, separator, buttons:\n%s", len(c.Components), raw)
+	if len(c.Components) != 5 {
+		t.Fatalf("container has %d children, want section, separator, gallery, separator, buttons:\n%s", len(c.Components), raw)
 	}
 	section := c.Components[0]
 	if section.Type != discordComponentSection || section.Accessory == nil || section.Accessory.Type != discordComponentThumbnail {
@@ -226,14 +226,20 @@ func TestRenderSharePageIncludesDiscordComponentEmbed(t *testing.T) {
 	if text != wantText {
 		t.Fatalf("heading text = %q, want %q", text, wantText)
 	}
-	gallery := c.Components[1]
+	if sep := c.Components[1]; sep.Type != discordComponentSeparator || sep.Spacing != 1 {
+		t.Fatalf("second child should be a separator under the title block: %+v", sep)
+	}
+	gallery := c.Components[2]
 	if gallery.Type != discordComponentMediaGallery || len(gallery.Items) != 1 || gallery.Items[0].Media.URL != video {
-		t.Fatalf("second child should be a gallery with the preview video: %+v", gallery)
+		t.Fatalf("third child should be a gallery with the preview video: %+v", gallery)
 	}
 	if gallery.Items[0].Description != "30-second preview clip" {
 		t.Fatalf("gallery description = %q", gallery.Items[0].Description)
 	}
-	row := c.Components[3]
+	if sep := c.Components[3]; sep.Type != discordComponentSeparator {
+		t.Fatalf("fourth child should be a separator above the buttons: %+v", sep)
+	}
+	row := c.Components[4]
 	if row.Type != discordComponentActionRow {
 		t.Fatalf("last child should be an action row: %+v", row)
 	}
@@ -307,8 +313,8 @@ func TestDiscordComponentEmbedWithoutIconUsesOpenAccessory(t *testing.T) {
 	if embed.Component.AccentColor != nil {
 		t.Fatalf("no theme color should mean no accent_color, got %d", *embed.Component.AccentColor)
 	}
-	if len(embed.Component.Components) != 2 {
-		t.Fatalf("with no download URLs the card should be section + gallery only, got %d children", len(embed.Component.Components))
+	if len(embed.Component.Components) != 3 {
+		t.Fatalf("with no download URLs the card should be section + separator + gallery only, got %d children", len(embed.Component.Components))
 	}
 }
 

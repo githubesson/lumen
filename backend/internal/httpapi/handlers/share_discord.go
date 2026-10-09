@@ -195,10 +195,13 @@ func discordComponentEmbedFor(m shareMeta, level discordEmbedLevel) discordCompo
 		})
 	}
 
-	children := []discordComponent{heading, gallery}
+	// Separators (a thin rule with small spacing) set the title block apart
+	// from the video and the video from the buttons.
+	separator := discordComponent{Type: discordComponentSeparator, Spacing: 1}
+	children := []discordComponent{heading, separator, gallery}
 	if len(buttons) > 0 {
 		children = append(children,
-			discordComponent{Type: discordComponentSeparator, Spacing: 1},
+			separator,
 			discordComponent{Type: discordComponentActionRow, Components: buttons},
 		)
 	}
