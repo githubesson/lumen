@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -158,12 +161,14 @@ func TestRenderSharePageIncludesDiscordComponentEmbed(t *testing.T) {
 	landing := "https://lumen.test/shared/track/abc?t=12&d=30&sig=share"
 	video := "https://lumen.test/api/public/preview-videos/abc.mp4?t=12&d=30&sig=share"
 	audio := "https://lumen.test/api/public/preview-audio/abc.m4a?t=12&d=30&sig=share"
+	icon := "https://lumen.test/api/public/brand/lumen-icon.png"
 	html := renderSharePage(shareMeta{
 		Title:            `Song [Live] </script>`,
 		Artist:           "*NSYNC",
 		Album:            "No_Strings",
 		Canonical:        "https://lumen.test/share/track/abc?t=12&d=30&sig=share",
 		CoverURL:         "https://lumen.test/api/public/covers/album/cover?exp=1&sig=cover",
+		IconURL:          icon,
 		VideoURL:         video,
 		Landing:          landing,
 		ThemeColor:       "#1abc9c",
@@ -205,16 +210,21 @@ func TestRenderSharePageIncludesDiscordComponentEmbed(t *testing.T) {
 	if section.Type != discordComponentSection || section.Accessory == nil || section.Accessory.Type != discordComponentThumbnail {
 		t.Fatalf("first child should be a section with a thumbnail accessory: %+v", section)
 	}
+	// The thumbnail is the app icon, not the album cover.
+	if section.Accessory.Media == nil || section.Accessory.Media.URL != icon {
+		t.Fatalf("thumbnail should be the Lumen icon %q, got %+v", icon, section.Accessory.Media)
+	}
 	text := section.Components[0].Content
 	// The script element must not be closable from inside the JSON, and the
-	// title text must render literally.
+	// title text must render literally: Discord shows a backslash before a
+	// bracket as-is, so brackets stay unescaped. The heading is plain text,
+	// not a masked link, which Discord sometimes refuses to render.
 	if strings.Contains(raw, "</script>") {
 		t.Fatalf("payload contains an unescaped </script>: %s", raw)
 	}
-	for _, want := range []string{`## [Song \[Live\] \</script\>](` + landing + `)`, `\*NSYNC · No\_Strings`} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("heading text %q missing %q", text, want)
-		}
+	wantText := "## Song [Live] </script>\n-# \\*NSYNC · No\\_Strings"
+	if text != wantText {
+		t.Fatalf("heading text = %q, want %q", text, wantText)
 	}
 	gallery := c.Components[1]
 	if gallery.Type != discordComponentMediaGallery || len(gallery.Items) != 1 || gallery.Items[0].Media.URL != video {
@@ -248,7 +258,36 @@ func TestRenderSharePageIncludesDiscordComponentEmbed(t *testing.T) {
 	}
 }
 
-func TestDiscordComponentEmbedWithoutCoverUsesOpenAccessory(t *testing.T) {
+func TestPublicLumenIconServesEmbeddedPNG(t *testing.T) {
+	h := &Share{}
+	rec := httptest.NewRecorder()
+	h.PublicLumenIcon(rec, httptest.NewRequest(http.MethodGet, lumenIconPath, nil))
+	res := rec.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if ct := res.Header.Get("Content-Type"); ct != "image/png" {
+		t.Fatalf("content-type = %q", ct)
+	}
+	body := rec.Body.Bytes()
+	if !bytes.HasPrefix(body, []byte("\x89PNG\r\n\x1a\n")) {
+		t.Fatalf("body is not a PNG (%d bytes)", len(body))
+	}
+	if etag := res.Header.Get("ETag"); etag == "" {
+		t.Fatal("expected an ETag")
+	}
+
+	// Conditional requests short-circuit on the ETag.
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, lumenIconPath, nil)
+	req.Header.Set("If-None-Match", lumenIconETag)
+	h.PublicLumenIcon(rec, req)
+	if rec.Code != http.StatusNotModified {
+		t.Fatalf("status with matching ETag = %d, want 304", rec.Code)
+	}
+}
+
+func TestDiscordComponentEmbedWithoutIconUsesOpenAccessory(t *testing.T) {
 	payload, ok := buildDiscordComponentEmbed(shareMeta{
 		Title:    "Untagged",
 		VideoURL: "https://lumen.test/v.mp4?t=0&sig=s",
@@ -263,7 +302,7 @@ func TestDiscordComponentEmbedWithoutCoverUsesOpenAccessory(t *testing.T) {
 	}
 	section := embed.Component.Components[0]
 	if section.Accessory == nil || section.Accessory.Type != discordComponentButton || section.Accessory.Label != "Open" {
-		t.Fatalf("a section without art needs the Open button as its accessory: %+v", section.Accessory)
+		t.Fatalf("a section without an icon needs the Open button as its accessory: %+v", section.Accessory)
 	}
 	if embed.Component.AccentColor != nil {
 		t.Fatalf("no theme color should mean no accent_color, got %d", *embed.Component.AccentColor)
@@ -279,7 +318,7 @@ func TestDiscordComponentEmbedShrinksToFitTheCap(t *testing.T) {
 		Title:            long,
 		Artist:           long,
 		Album:            long,
-		CoverURL:         "https://lumen.test/cover?exp=1&sig=cover",
+		IconURL:          "https://lumen.test/api/public/brand/lumen-icon.png",
 		VideoURL:         "https://lumen.test/v.mp4?t=0&sig=s",
 		Landing:          "https://lumen.test/shared/track/abc?t=0&sig=s",
 		VideoDownloadURL: "https://lumen.test/v.mp4?t=0&sig=s&download=1",
@@ -316,7 +355,20 @@ func TestDiscordComponentEmbedShrinksToFitTheCap(t *testing.T) {
 
 func TestEscapeDiscordMarkdown(t *testing.T) {
 	got := escapeDiscordMarkdown("a*b_c~d`e|f>g#h[i]j<k\\l\nm")
-	want := `a\*b\_c\~d\` + "`" + `e\|f\>g\#h\[i\]j\<k\\l m`
+	want := `a\*b\_c\~d\` + "`" + `e\|f>g#h[i]j<k\\l m`
+	if got != want {
+		t.Fatalf("escape = %q, want %q", got, want)
+	}
+	// A title shaped like a masked link must not become one: the "](" is
+	// split by a zero-width space, which Discord renders as nothing.
+	got = escapeDiscordMarkdown("[download](https://attacker.example) [x] (y)")
+	want = "[download]\u200b(https:\u200b//attacker.example) [x] (y)"
+	if got != want {
+		t.Fatalf("escape = %q, want %q", got, want)
+	}
+	// Likewise a bare or <bracketed> URL must not autolink.
+	got = escapeDiscordMarkdown("<https://attacker.example> http://x.y")
+	want = "<https:\u200b//attacker.example> http:\u200b//x.y"
 	if got != want {
 		t.Fatalf("escape = %q, want %q", got, want)
 	}

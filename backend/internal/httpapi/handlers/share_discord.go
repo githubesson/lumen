@@ -11,9 +11,10 @@ import (
 // Discord renders a share link as a "component embed" when the page carries a
 // <script id="discord:component-embed" type="application/json"> payload
 // (https://docs.discord.com/developers/link-previews/component-embeds). It
-// replaces the plain Open Graph card with a layout we control: cover
-// thumbnail, title, the preview video, and link buttons that open the clip
-// downloads in the browser. The Open Graph tags stay on the page as the
+// replaces the plain Open Graph card with a layout we control: the app icon
+// as thumbnail, title, the preview video, and link buttons that open the
+// clip downloads in the browser. (Discord renders a Section's accessory on
+// the right; the format has no slot for an image on the left.) The Open Graph tags stay on the page as the
 // fallback for every other scraper, and for Discord when the payload fails
 // validation.
 //
@@ -116,14 +117,8 @@ func discordComponentEmbedFor(m shareMeta, level discordEmbedLevel) discordCompo
 		album = truncateRunes(album, 40)
 	}
 
-	// "## [Title](landing)" is the card's heading; the markdown link makes the
-	// whole title clickable the way Open Graph titles are.
 	var text strings.Builder
-	text.WriteString("## [")
-	text.WriteString(escapeDiscordMarkdown(title))
-	text.WriteString("](")
-	text.WriteString(m.Landing)
-	text.WriteString(")")
+	text.WriteString(discordHeading(title))
 	if level < discordEmbedNoSubtitle {
 		subtitle := artist
 		if album != "" {
@@ -134,7 +129,10 @@ func discordComponentEmbedFor(m shareMeta, level discordEmbedLevel) discordCompo
 			}
 		}
 		if subtitle != "" {
-			text.WriteString("\n")
+			// Subtext ("-# ") is Discord's small secondary line. Starting the
+			// line with it also keeps an artist called "# 1" or "> Yes" from
+			// turning into a heading or a quote.
+			text.WriteString("\n-# ")
 			text.WriteString(escapeDiscordMarkdown(subtitle))
 		}
 	}
@@ -146,12 +144,13 @@ func discordComponentEmbedFor(m shareMeta, level discordEmbedLevel) discordCompo
 			Content: text.String(),
 		}},
 	}
-	// A Section needs an accessory. The cover is the natural one; without
-	// art, the Open button takes its place so the layout still validates.
-	if m.CoverURL != "" {
+	// A Section needs an accessory: the app icon as a thumbnail. Without one
+	// (the page was rendered with no icon URL) the Open button takes its
+	// place so the layout still validates.
+	if m.IconURL != "" {
 		heading.Accessory = &discordComponent{
 			Type:  discordComponentThumbnail,
-			Media: &discordMedia{URL: m.CoverURL},
+			Media: &discordMedia{URL: m.IconURL},
 		}
 	} else {
 		heading.Accessory = &discordComponent{
@@ -171,7 +170,7 @@ func discordComponentEmbedFor(m shareMeta, level discordEmbedLevel) discordCompo
 	}
 
 	buttons := make([]discordComponent, 0, 3)
-	if m.CoverURL != "" && level < discordEmbedNoOpenButton {
+	if m.IconURL != "" && level < discordEmbedNoOpenButton {
 		buttons = append(buttons, discordComponent{
 			Type:  discordComponentButton,
 			Style: discordButtonStyleLink,
@@ -235,16 +234,31 @@ func discordAccentColor(hex string) (int, bool) {
 	return int(v), true
 }
 
-// escapeDiscordMarkdown backslash-escapes the characters Discord's markdown
-// treats specially, so a title like "*NSYNC" or "Song [Live]" renders
-// literally instead of as emphasis or a masked link. Line breaks collapse to
-// spaces: a newline inside the heading would end it.
+// discordHeading renders the card's "## Title" line as plain text. It used
+// to be a markdown link to the landing page, but Discord sometimes refuses
+// to render a masked link and then shows the raw "[Title](https://...)"
+// instead; the "Open in Lumen" button is the click target.
+func discordHeading(title string) string {
+	return "## " + escapeDiscordMarkdown(title)
+}
+
+// escapeDiscordMarkdown backslash-escapes the inline characters Discord's
+// markdown lets a backslash neutralise (emphasis, strikethrough, code,
+// spoilers), so a title like "*NSYNC" renders literally. Discord shows the
+// backslash itself for anything else, brackets included, so they are left
+// alone; "Song [Live]" is plain text in a heading anyway. A title shaped
+// like a masked link, "[click](https://…)", would still become one, so the
+// "](" joining label and target gets a zero-width space between the two
+// characters: invisible, but no longer link syntax. A bare URL in a title
+// would autolink to a title-supplied destination the same way, so "://"
+// gets the same treatment, which Discord's URL rule does not match. Line
+// breaks collapse to spaces: a newline inside the heading would end it.
 func escapeDiscordMarkdown(s string) string {
 	var b strings.Builder
 	b.Grow(len(s) + 8)
 	for _, r := range s {
 		switch r {
-		case '\\', '*', '_', '~', '`', '|', '>', '#', '[', ']', '<':
+		case '\\', '*', '_', '~', '`', '|':
 			b.WriteByte('\\')
 			b.WriteRune(r)
 		case '\n', '\r', '\t':
@@ -253,7 +267,8 @@ func escapeDiscordMarkdown(s string) string {
 			b.WriteRune(r)
 		}
 	}
-	return b.String()
+	out := strings.ReplaceAll(b.String(), "](", "]\u200b(")
+	return strings.ReplaceAll(out, "://", ":\u200b//")
 }
 
 func truncateRunes(s string, max int) string {

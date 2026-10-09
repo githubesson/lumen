@@ -227,6 +227,8 @@ func NewRouter(d Deps) http.Handler {
 		// Signed public share metadata for the browser-facing React preview.
 		ordinary.With(appmw.RateLimitByIP(120, time.Minute)).
 			Get("/public/share/track/{id}", shareH.PublicInfo)
+		// Embedded app icon, the thumbnail on Discord's component embed.
+		ordinary.Get("/public/brand/lumen-icon.png", shareH.PublicLumenIcon)
 
 		// Authenticated
 		r.Group(func(r chi.Router) {
