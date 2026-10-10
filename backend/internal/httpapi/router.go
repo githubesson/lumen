@@ -204,8 +204,8 @@ func NewRouter(d Deps) http.Handler {
 		})
 
 		// Public
-		ordinary.With(appmw.RateLimitByIP(10, time.Minute)).Post("/auth/login", authH.Login)
-		ordinary.With(appmw.RateLimitByIP(5, 10*time.Minute)).Post("/auth/register", authH.Register)
+		ordinary.With(appmw.RateLimitByNetwork(10, time.Minute)).Post("/auth/login", authH.Login)
+		ordinary.With(appmw.RateLimitByNetwork(5, 10*time.Minute)).Post("/auth/register", authH.Register)
 		ordinary.With(appmw.RateLimitByIP(30, time.Minute)).Get("/auth/invite", authH.CheckInvite)
 		// Signed, cookie-less cover URLs so Discord's media proxy can fetch
 		// album artwork. The HMAC signature + expiry *is* the auth. Timed and

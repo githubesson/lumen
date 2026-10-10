@@ -19,6 +19,7 @@ type ipRateLimiter struct {
 	window      time.Duration
 	buckets     map[string]rateLimitBucket
 	nextCleanup time.Time
+	key         func(*http.Request) string // clientKey when nil
 }
 
 // RateLimitByIP returns a small in-process fixed-window limiter for endpoints
@@ -33,12 +34,30 @@ func RateLimitByIP(limit int, window time.Duration) func(http.Handler) http.Hand
 	return rl.middleware
 }
 
+// RateLimitByNetwork is RateLimitByIP keyed by ClientNetwork, for routes
+// where an IPv6 client must not multiply its budget by rotating through the
+// /64s of its allocation. The login route uses it: each address it admits
+// can add keys to the login lockout tables, which refuse new keys when full.
+func RateLimitByNetwork(limit int, window time.Duration) func(http.Handler) http.Handler {
+	rl := &ipRateLimiter{
+		limit:   limit,
+		window:  window,
+		buckets: map[string]rateLimitBucket{},
+		key:     ClientNetwork,
+	}
+	return rl.middleware
+}
+
 func (rl *ipRateLimiter) middleware(next http.Handler) http.Handler {
 	if rl.limit <= 0 || rl.window <= 0 {
 		return next
 	}
+	key := rl.key
+	if key == nil {
+		key = clientKey
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ok, retryAfter := rl.allow(clientKey(r))
+		ok, retryAfter := rl.allow(key(r))
 		if !ok {
 			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)

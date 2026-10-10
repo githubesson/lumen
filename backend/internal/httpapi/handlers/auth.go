@@ -86,9 +86,12 @@ func toResp(u *models.User) userResp {
 // per (username, client network), so a guesser from one network locks out
 // only that network, and a larger one per username, so spreading guesses
 // over many networks (a botnet, rotating IPv6) still hits a ceiling. Locking
-// an account out for every new browser therefore takes guesses from several
-// networks, not one curl loop. Unknown usernames are counted the same way so
-// the lockout doesn't reveal which accounts exist.
+// an account out for every new browser therefore takes guesses from five
+// networks, not one curl loop. The price is a higher ceiling than the old
+// flat 10 per username: 4,800 guesses a day instead of 960, which finds a
+// password from a common-passwords list either way and a strong one neither
+// way. Unknown usernames are counted the same way so the lockout doesn't
+// reveal which accounts exist.
 //
 // A browser that has signed in as the username before (valid known-device
 // cookie) is counted in deviceLoginFailures instead, on its own failures
