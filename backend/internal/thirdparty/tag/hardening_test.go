@@ -222,6 +222,26 @@ func TestSizeUnderflows(t *testing.T) {
 	}
 }
 
+// A custom ---- atom the reader doesn't recognise (here: no data atom) is
+// skipped once. Upstream skipped it twice, losing the atom after it.
+func TestMP4CustomAtomWithoutData(t *testing.T) {
+	ilst := atom("ilst",
+		atom("----",
+			atom("mean", make([]byte, 4), []byte("com.apple.iTunes")),
+			atom("name", make([]byte, 4), []byte("iTunNORM"))),
+		ilstItem("\xa9nam", 1, []byte("Title")),
+	)
+	file := append(atom("ftyp", []byte("M4A "), make([]byte, 4)),
+		atom("moov", atom("udta", atom("meta", make([]byte, 4), ilst)))...)
+	m, err := ReadFrom(bytes.NewReader(file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Title(); got != "Title" {
+		t.Fatalf("title = %q, want %q", got, "Title")
+	}
+}
+
 // A skipped atom too small for its own header ends the walk with the tags
 // found so far, as upstream's underflowed seek did. Size 0 (the atom runs to
 // the end of the file) and 1 (a 64-bit size follows) are legal for media data.

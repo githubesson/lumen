@@ -35,6 +35,9 @@ shows only the changes below.
   encrypted frames, MP4 data atoms and `----` sub-atoms. A skipped MP4 atom
   that small ends the walk instead, as upstream's underflowed seek effectively
   did (sizes 0 and 1, to end of file and 64-bit, are legal there).
+- An unrecognised MP4 `----` atom (unknown mean, or no name or data) is
+  skipped once. Upstream read it, then skipped its length again, losing the
+  atom after it.
 - The ID3v2 unsynchroniser reads through a `bufio.Reader`. It took a byte at a
   time from the source, a syscall and an allocation per byte on an `*os.File`.
 - Two quadratic loops made linear: naming repeated ID3v2 frames (`TXXX_0`,

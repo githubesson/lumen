@@ -125,8 +125,7 @@ func (m metadataMP4) readAtoms(r io.ReadSeeker, depth int) error {
 			// One we skip ends the walk with the tags found so far, which is
 			// where the seek left upstream once it hit EOF: 0 (the atom runs
 			// to the end of the file) and 1 (a 64-bit size follows) are legal
-			// for media data, and upstream skips an unrecognised ---- atom
-			// twice, landing mid-data where small numbers are common.
+			// for media data.
 			if ok || name == "----" {
 				return fmt.Errorf("invalid size %d for atom %q", size, name)
 			}
@@ -139,10 +138,14 @@ func (m metadataMP4) readAtoms(r io.ReadSeeker, depth int) error {
 				return err
 			}
 
-			if name != "----" {
-				ok = true
-				size = 0 // already read data
+			if name == "----" {
+				// Unrecognised (an unknown mean, or no name or data), and
+				// readCustomAtom consumed it whole. Upstream then skipped
+				// size-8 bytes more, losing the atom after it.
+				continue
 			}
+			ok = true
+			size = 0 // already read data
 		}
 
 		if !ok {
