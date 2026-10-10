@@ -373,7 +373,12 @@ func parseHLSPlaylist(body string) (parsedPlaylist, error) {
 		if strings.HasPrefix(line, "#") {
 			switch {
 			case strings.HasPrefix(line, "#EXT-X-MEDIA-SEQUENCE:"):
-				n, _ := strconv.ParseUint(strings.TrimPrefix(line, "#EXT-X-MEDIA-SEQUENCE:"), 10, 64)
+				// The media sequence is the default AES-128 IV, so reading a
+				// bad value as 0 would decrypt every segment to garbage.
+				n, err := strconv.ParseUint(strings.TrimPrefix(line, "#EXT-X-MEDIA-SEQUENCE:"), 10, 64)
+				if err != nil {
+					return p, errors.New("hls media sequence is not an unsigned 64-bit integer")
+				}
 				p.mediaSequence = n
 			case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
 				bw := bandwidthFromAttrs(line)
@@ -509,7 +514,7 @@ func pkcs7Unpad(in []byte) []byte {
 var (
 	hlsKeyMethodRe = regexp.MustCompile(`METHOD=([A-Z0-9_-]+)`)
 	hlsKeyURIRe    = regexp.MustCompile(`URI="([^"]+)"`)
-	hlsKeyIVRe     = regexp.MustCompile(`IV=0x([0-9a-fA-F]+)`)
+	hlsKeyIVRe     = regexp.MustCompile(`[:,]\s*IV=([^,]*)`)
 	hlsBandwidthRe = regexp.MustCompile(`BANDWIDTH=(\d+)`)
 	hlsMapURIRe    = regexp.MustCompile(`URI="([^"]+)"`)
 )
@@ -539,14 +544,18 @@ func parseKeyAttrs(line string) (hlsKeyRef, error) {
 		return k, errors.New("hls aes-128 key missing URI")
 	}
 	if m := hlsKeyIVRe.FindStringSubmatch(line); len(m) == 2 {
-		hexStr := m[1]
-		if len(hexStr) == 32 {
-			b, err := hex.DecodeString(hexStr)
-			if err != nil {
-				return k, fmt.Errorf("hls key iv decode: %w", err)
-			}
-			k.iv = b
+		// Ignoring a malformed IV would fall back to the media-sequence IV
+		// and decrypt to garbage, so anything but the 128-bit hex value the
+		// spec requires is an error.
+		v := m[1]
+		if len(v) != 34 || !strings.EqualFold(v[:2], "0x") {
+			return k, errors.New("hls key iv is not 0x followed by 32 hex digits")
 		}
+		b, err := hex.DecodeString(v[2:])
+		if err != nil {
+			return k, fmt.Errorf("hls key iv decode: %w", err)
+		}
+		k.iv = b
 	}
 	return k, nil
 }

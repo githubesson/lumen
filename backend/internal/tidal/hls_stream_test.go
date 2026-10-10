@@ -282,3 +282,62 @@ func TestFileResponseHLSFetchLimits(t *testing.T) {
 		})
 	}
 }
+
+func TestParseHLSPlaylistIVSources(t *testing.T) {
+	const ivHex = "000102030405060708090a0b0c0d0e0f"
+	wantIV, _ := hex.DecodeString(ivHex)
+	sequence := func(value string) string {
+		return hlsMediaPlaylist([]string{"#EXT-X-MEDIA-SEQUENCE:" + value}, 1)
+	}
+	key := func(attrs string) string {
+		return hlsMediaPlaylist([]string{"#EXT-X-KEY:" + attrs}, 1)
+	}
+	tests := []struct {
+		name    string
+		body    string
+		wantSeq uint64
+		wantIV  []byte
+		wantErr string
+	}{
+		{name: "media sequence", body: sequence("7"), wantSeq: 7},
+		{name: "no media sequence", body: hlsMediaPlaylist(nil, 1)},
+		{name: "media sequence not a number", body: sequence("abc"), wantErr: "hls media sequence"},
+		{name: "media sequence empty", body: sequence(""), wantErr: "hls media sequence"},
+		{name: "media sequence negative", body: sequence("-1"), wantErr: "hls media sequence"},
+		{name: "media sequence past 64 bits", body: sequence("18446744073709551616"), wantErr: "hls media sequence"},
+
+		{name: "iv", body: key(`METHOD=AES-128,URI="k.key",IV=0x` + ivHex), wantIV: wantIV},
+		{name: "iv with upper-case prefix", body: key(`METHOD=AES-128,URI="k.key",IV=0X` + strings.ToUpper(ivHex)), wantIV: wantIV},
+		{name: "iv as first attribute", body: key(`IV=0x` + ivHex + `,METHOD=AES-128,URI="k.key"`), wantIV: wantIV},
+		{name: "no iv", body: key(`METHOD=AES-128,URI="k.key"`)},
+		{name: "iv too short", body: key(`METHOD=AES-128,URI="k.key",IV=0x0001`), wantErr: "hls key iv"},
+		{name: "iv too long", body: key(`METHOD=AES-128,URI="k.key",IV=0x` + ivHex + "00"), wantErr: "hls key iv"},
+		{name: "iv not hex", body: key(`METHOD=AES-128,URI="k.key",IV=0x` + strings.Repeat("zz", 16)), wantErr: "hls key iv"},
+		{name: "iv without prefix", body: key(`METHOD=AES-128,URI="k.key",IV=` + ivHex + "00"), wantErr: "hls key iv"},
+		{name: "iv empty", body: key(`METHOD=AES-128,URI="k.key",IV=`), wantErr: "hls key iv"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := parseHLSPlaylist(tt.body)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseHLSPlaylist returned error: %v", err)
+			}
+			if p.mediaSequence != tt.wantSeq {
+				t.Fatalf("media sequence = %d, want %d", p.mediaSequence, tt.wantSeq)
+			}
+			var gotIV []byte
+			if len(p.keys) > 0 {
+				gotIV = p.keys[0].iv
+			}
+			if !bytes.Equal(gotIV, tt.wantIV) {
+				t.Fatalf("iv = %x, want %x", gotIV, tt.wantIV)
+			}
+		})
+	}
+}
