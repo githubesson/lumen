@@ -37,3 +37,9 @@ shows only the changes below.
   did (sizes 0 and 1, to end of file and 64-bit, are legal there).
 - The ID3v2 unsynchroniser reads through a `bufio.Reader`. It took a byte at a
   time from the source, a syscall and an allocation per byte on an `*os.File`.
+- Two quadratic loops made linear: naming repeated ID3v2 frames (`TXXX_0`,
+  `TXXX_1`, ...) probed every earlier name, and numeric genre expansion ran a
+  regexp over the whole genre once per reference. Genres over 256 bytes are no
+  longer expanded; frame names come out the same.
+- A tag holding more than 65,536 ID3v2 frames or Vorbis comments is refused;
+  each costs a map entry several times its size in the file.

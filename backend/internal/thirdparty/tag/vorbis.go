@@ -42,6 +42,9 @@ func (m *metadataVorbis) readVorbisComment(r io.Reader) error {
 	if err != nil {
 		return err
 	}
+	if commentsLen > maxTagEntries {
+		return fmt.Errorf("%d comments is over the %d limit", commentsLen, maxTagEntries)
+	}
 
 	for i := uint32(0); i < commentsLen; i++ {
 		l, err := readUint32LittleEndian(r)

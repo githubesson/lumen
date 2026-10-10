@@ -238,6 +238,7 @@ func readID3v2_4FrameHeader(r io.Reader) (name string, size uint, headerSize uin
 // readID3v2Frames reads ID3v2 frames from the given reader using the ID3v2Header.
 func readID3v2Frames(r io.Reader, offset uint, h *id3v2Header) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
+	repeats := make(map[string]int)
 
 	for offset < h.Size {
 		var err error
@@ -338,15 +339,21 @@ func readID3v2Frames(r io.Reader, offset uint, h *id3v2Header) (map[string]inter
 		if err != nil {
 			return nil, err
 		}
+		if len(result) >= maxTagEntries {
+			return nil, fmt.Errorf("more than %d frames", maxTagEntries)
+		}
 
 		// There can be multiple tag with the same name. Append a number to the
 		// name if there is more than one.
+		// Upstream found the number by probing name_0, name_1, ... for every
+		// repeat, quadratic in the repeats: a 429 KB tag of one frame over and
+		// over took 52 s. Counting them gives the same names.
 		rawName := name
-		if _, ok := result[rawName]; ok {
-			for i := 0; ok; i++ {
-				rawName = name + "_" + strconv.Itoa(i)
-				_, ok = result[rawName]
-			}
+		if n, ok := repeats[name]; ok {
+			rawName = name + "_" + strconv.Itoa(n)
+			repeats[name] = n + 1
+		} else {
+			repeats[name] = 0
 		}
 
 		switch {
@@ -477,9 +484,15 @@ func ReadID3v2Tags(r io.ReadSeeker) (Metadata, error) {
 
 var id3v2genreRe = regexp.MustCompile(`(.*[^(]|.* |^)\(([0-9]+)\) *(.*)$`)
 
+// maxGenreLen bounds the genres id3v2genre expands. Each turn of its loop
+// expands one numeric reference with a regexp over the whole string, so the
+// cost grew with the square of the length: a 24 KB genre took 46 s. Real ones
+// are a few words; longer ones keep their references as written.
+const maxGenreLen = 256
+
 // id3v2genre parse a id3v2 genre tag and expand the numeric genres
 func id3v2genre(genre string) string {
-	c := true
+	c := len(genre) <= maxGenreLen
 	for c {
 		orig := genre
 		if match := id3v2genreRe.FindStringSubmatch(genre); len(match) > 0 {

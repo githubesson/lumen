@@ -52,6 +52,11 @@ const readBytesMaxUpfront = 10 << 20 // 10MB
 // while the buffer grew, before the read failed.
 const readBytesMax = 64 << 20 // 64MB
 
+// maxTagEntries caps the frames or comments in one tag. Real tags hold tens,
+// but each costs a map entry several times the few bytes it can take in the
+// file: 256 MB of 11-byte ID3 frames made millions of them, gigabytes of heap.
+const maxTagEntries = 1 << 16
+
 // readBytesCheckLen is the size from which readBytes first makes sure the
 // input holds n more bytes, when the reader can tell. Smaller reads just try.
 const readBytesCheckLen = 64 << 10 // 64KB

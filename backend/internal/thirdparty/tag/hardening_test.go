@@ -7,8 +7,10 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -322,5 +324,55 @@ func TestUnsynchronisedTag(t *testing.T) {
 	}
 	if r.reads > len(file)/1024 {
 		t.Errorf("%d reads for a %d-byte file", r.reads, len(file))
+	}
+}
+
+// Expanding numeric genre references was quadratic in the genre's length: a
+// 24 KB genre took 46 s. Long genres are now left as they are.
+func TestLongGenre(t *testing.T) {
+	long := strings.Repeat("(1)", 8000)
+	var got string
+	if n := allocated(func() { got = id3v2genre(long) }); n > 1<<20 {
+		t.Errorf("allocated %d bytes", n)
+	}
+	if got != long {
+		t.Error("a 24 KB genre was expanded")
+	}
+	short := strings.Repeat("(1)", maxGenreLen/3)
+	if got := id3v2genre(short); strings.Contains(got, "(1)") {
+		t.Errorf("a %d-byte genre wasn't expanded: %q", len(short), got)
+	}
+}
+
+// Naming repeated ID3 frames was quadratic in the repeats: 40,000 copies of
+// one frame took 52 s and allocated 12 GB. Past maxTagEntries frames (or
+// Vorbis comments) the tag is refused.
+func TestManyEntries(t *testing.T) {
+	const repeats = 40000
+	file := id3v2Tag(3, 0, bytes.Repeat(id3v2Frame(3, "PRIV", []byte("x")), repeats))
+	var m Metadata
+	var err error
+	if n := allocated(func() { m, err = ReadFrom(bytes.NewReader(file)) }); n > 64<<20 {
+		t.Errorf("%d repeated frames: allocated %d bytes", repeats, n)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := fmt.Sprintf("PRIV_%d", repeats-2)
+	if raw := m.Raw(); len(raw) != repeats || raw["PRIV"] == nil || raw["PRIV_0"] == nil || raw[last] == nil {
+		t.Errorf("%d frames named PRIV, PRIV_0, ... %s; want %d", len(raw), last, repeats)
+	}
+
+	file = id3v2Tag(3, 0, bytes.Repeat(id3v2Frame(3, "PRIV", []byte("x")), maxTagEntries+1))
+	if _, err := ReadFrom(bytes.NewReader(file)); err == nil {
+		t.Errorf("a tag of %d frames parsed without error", maxTagEntries+1)
+	}
+	comments := make([]string, maxTagEntries+1)
+	for i := range comments {
+		comments[i] = "a=b"
+	}
+	file = append([]byte("fLaC"), flacBlock(4, true, vorbisComment(comments...))...)
+	if _, err := ReadFrom(bytes.NewReader(file)); err == nil {
+		t.Errorf("%d Vorbis comments parsed without error", len(comments))
 	}
 }
