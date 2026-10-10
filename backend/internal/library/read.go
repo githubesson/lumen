@@ -142,8 +142,8 @@ func albumHasCoverFor(userExpr string) string {
 
 // trackDetailSelect is the shared single-track projection used by GetTrack and
 // GetTrackPublic. coverUser is the SQL expression whose personal album cover
-// may be used: the viewer for GetTrack, the track's owner for public reads
-// (so a global track never carries anyone's personal art to the public).
+// may be used: the viewer for GetTrack, NULL for public reads (so a global
+// track never carries anyone's personal art to the public).
 func trackDetailSelect(coverUser string) string {
 	return `
 	SELECT
@@ -171,11 +171,26 @@ func (s *Store) GetTrack(ctx context.Context, id, viewerID uuid.UUID) (*TrackDet
 	return s.getTrackDetail(ctx, trackDetailSelect("$2")+` AND `+trackVisibleP2, id, viewerID)
 }
 
-// GetTrackPublic returns the full metadata for a single track without the
-// per-viewer owner filter — callers gate access via some other mechanism
-// (today: the HMAC signature on a share URL). Skips the favorite join.
+// GetTrackPublic returns the full metadata for a single shared-library track,
+// for callers that gate access some other way (today: the HMAC signature on a
+// share URL). Personal uploads report ErrNotFound: they are their owner's
+// private files, and a share link must not turn them into a public download.
+// Skips the favorite join.
 func (s *Store) GetTrackPublic(ctx context.Context, id uuid.UUID) (*TrackDetail, error) {
-	return s.getTrackDetail(ctx, trackDetailSelect("t.owner_id"), id)
+	return s.getTrackDetail(ctx, trackDetailSelect("NULL")+` AND t.owner_id IS NULL`, id)
+}
+
+// TrackIsPublic reports whether GetTrackPublic would find id, without loading
+// it. Public media routes call it before serving an already rendered clip, so
+// a cached render doesn't outlive its track's deletion, and clips of personal
+// uploads rendered while those were still shareable stop being served.
+func (s *Store) TrackIsPublic(ctx context.Context, id uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tracks
+			WHERE id = $1 AND deleted_at IS NULL AND owner_id IS NULL)`, id).Scan(&ok)
+	return ok, err
 }
 
 // getTrackDetail runs a trackDetailSelect-shaped query (args[0] must be the

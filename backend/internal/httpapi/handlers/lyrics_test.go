@@ -493,3 +493,16 @@ func TestTIDALStreamErrorMessageHidesUpstreamDetail(t *testing.T) {
 		t.Fatalf("upstream detail leaked: %q", got)
 	}
 }
+
+func TestCopyLyricsHeadersKeepsOnlyContentType(t *testing.T) {
+	src := http.Header{}
+	src.Set("Content-Type", "application/json")
+	src.Set("Set-Cookie", "session=upstream")
+	src.Set("Content-Security-Policy", "default-src *")
+	src.Set("Access-Control-Allow-Origin", "*")
+	dst := http.Header{}
+	copyLyricsHeaders(dst, src)
+	if len(dst) != 1 || dst.Get("Content-Type") != "application/json" {
+		t.Fatalf("copied headers = %v, want only Content-Type", dst)
+	}
+}

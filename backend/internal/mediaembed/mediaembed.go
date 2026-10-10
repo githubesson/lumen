@@ -19,6 +19,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/githubesson/lumen/internal/downloadfile"
+	"github.com/githubesson/lumen/internal/ffsafe"
 )
 
 // Metadata is the tag set embedded into the output file.
@@ -159,7 +162,14 @@ func Embed(ctx context.Context, r io.ReadCloser, cover []byte, meta Metadata, hi
 		return nil, fmt.Errorf("create temp input: %w", err)
 	}
 	inPath := inFile.Name()
-	if _, err := io.Copy(inFile, r); err != nil {
+	// Bounded like every downloaded file (the auto-download worker caps this
+	// same TIDAL stream at downloadfile.MaxFileBytes): an upstream that
+	// streams without end would otherwise fill the temp volume.
+	n, err := io.Copy(inFile, io.LimitReader(r, downloadfile.MaxFileBytes+1))
+	if err == nil && n > downloadfile.MaxFileBytes {
+		err = downloadfile.ErrTooLarge
+	}
+	if err != nil {
 		r.Close()
 		inFile.Close()
 		os.Remove(inPath)
@@ -306,11 +316,15 @@ func buildArgs(inPath, outPath, coverPath string, meta Metadata, outFormat strin
 		"-v", "error",
 		// The output is a temp file of ours, created to reserve its name.
 		"-y",
-		// file: keeps a path from being read as another protocol.
-		"-i", "file:" + inPath,
 	}
+	// file: keeps a path from being read as another protocol, and the
+	// whitelists keep ffmpeg from sniffing the content as a playlist that
+	// fetches URLs or reads other files (inPath may be any user's upload).
+	args = append(args, ffsafe.InputArgs()...)
+	args = append(args, "-i", "file:"+inPath)
 
 	if coverPath != "" {
+		args = append(args, ffsafe.ImageInputArgs()...)
 		args = append(args, "-i", "file:"+coverPath)
 	}
 

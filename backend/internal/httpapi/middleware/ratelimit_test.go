@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"sync"
@@ -26,6 +27,46 @@ func TestClientKeyGroupsIPv6By64(t *testing.T) {
 	}
 	if got := key("[::ffff:203.0.113.7]:5000"); got != "203.0.113.7" {
 		t.Fatalf("IPv4-mapped key = %q", got)
+	}
+}
+
+func TestClientNetworkGroupsIPv6By48(t *testing.T) {
+	key := func(remote string) string {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = remote
+		return ClientNetwork(r)
+	}
+	if a, b := key("[2001:db8:1:2::1]:443"), key("[2001:db8:1:ff00::9]:443"); a != b {
+		t.Fatalf("/64s in one /48 got different keys: %q vs %q", a, b)
+	}
+	if a, b := key("[2001:db8:1::1]:443"), key("[2001:db8:2::1]:443"); a == b {
+		t.Fatalf("different /48s share key %q", a)
+	}
+	if got := key("[::ffff:203.0.113.7]:5000"); got != "203.0.113.7" {
+		t.Fatalf("IPv4-mapped key = %q", got)
+	}
+}
+
+// Rotating /64s inside one /48 must not buy a fresh login budget.
+func TestRateLimitByNetworkSharesBudgetAcrossA48(t *testing.T) {
+	h := RateLimitByNetwork(2, time.Minute)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	status := func(remote string) int {
+		r := httptest.NewRequest("POST", "/api/auth/login", nil)
+		r.RemoteAddr = remote
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	for i, remote := range []string{"[2001:db8:1:1::1]:1", "[2001:db8:1:2::1]:1"} {
+		if got := status(remote); got != http.StatusOK {
+			t.Fatalf("request %d = %d", i+1, got)
+		}
+	}
+	if got := status("[2001:db8:1:3::1]:1"); got != http.StatusTooManyRequests {
+		t.Fatalf("third /64 in the /48 = %d, want 429", got)
+	}
+	if got := status("[2001:db8:2::1]:1"); got != http.StatusOK {
+		t.Fatalf("another /48 = %d", got)
 	}
 }
 

@@ -74,6 +74,14 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(chimw.RequestID)
 	r.Use(chimw.Recoverer)
 	r.Use(appmw.NoSniff)
+	// Session cookies are SameSite=Lax, which keeps other sites' forms and
+	// fetches from carrying them, but SameSite treats every subdomain of the
+	// registrable domain as the same site. This also refuses any non-GET
+	// request a browser marks as coming from another origin. The web app,
+	// the desktop app's loopback proxy and the share pages all call the API
+	// same-origin, and the mobile app sends no browser headers, so none of
+	// them trip it.
+	r.Use(http.NewCrossOriginProtection().Handler)
 	r.Use(appmw.Authenticate(d.Sessions))
 
 	authH := &handlers.Auth{
@@ -196,8 +204,8 @@ func NewRouter(d Deps) http.Handler {
 		})
 
 		// Public
-		ordinary.With(appmw.RateLimitByIP(10, time.Minute)).Post("/auth/login", authH.Login)
-		ordinary.With(appmw.RateLimitByIP(5, 10*time.Minute)).Post("/auth/register", authH.Register)
+		ordinary.With(appmw.RateLimitByNetwork(10, time.Minute)).Post("/auth/login", authH.Login)
+		ordinary.With(appmw.RateLimitByNetwork(5, 10*time.Minute)).Post("/auth/register", authH.Register)
 		ordinary.With(appmw.RateLimitByIP(30, time.Minute)).Get("/auth/invite", authH.CheckInvite)
 		// Signed, cookie-less cover URLs so Discord's media proxy can fetch
 		// album artwork. The HMAC signature + expiry *is* the auth. Timed and
@@ -234,6 +242,13 @@ func NewRouter(d Deps) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(appmw.RequireUser)
 			ordinary := r.With(appmw.Timeout(ordinaryRequestTimeout))
+			// Cover art, the four routes sharing one budget per address as
+			// the pages that mix them do. The costly paths (an image decode
+			// to thumbnail, a CDN fetch) are bounded where they run, so the
+			// limit only caps what one address can ask for; see
+			// coverRequestsPerMinute. The timeout ends a wait for either.
+			covers := r.With(appmw.Timeout(imageRequestTimeout),
+				appmw.RateLimitByIP(coverRequestsPerMinute, time.Minute))
 			ordinary.Get("/auth/me", authH.Me)
 			ordinary.Post("/auth/logout", authH.Logout)
 			ordinary.Get("/integrations/lastfm", lastFMH.Status)
@@ -259,7 +274,7 @@ func NewRouter(d Deps) http.Handler {
 			ordinary.Delete("/tracks/{id}", tracksH.Delete)
 			r.Get("/tracks/{id}/stream", tracksH.Stream)
 			r.Get("/tracks/{id}/hls", tracksH.TIDALHLS)
-			r.Get("/tracks/{id}/cover", tracksH.TrackCover)
+			covers.Get("/tracks/{id}/cover", tracksH.TrackCover)
 			ordinary.Post("/tracks/{id}/play", tracksH.RecordPlay)
 			ordinary.Post("/tracks/{id}/scrobble", tracksH.Scrobble)
 			ordinary.Post("/tracks/{id}/now-playing", tracksH.NowPlaying)
@@ -285,8 +300,8 @@ func NewRouter(d Deps) http.Handler {
 			ordinary.Get("/albums", browseH.ListAlbums)
 			ordinary.Get("/albums/{id}", browseH.GetAlbum)
 			ordinary.Get("/albums/{id}/tracks", browseH.ListAlbumTracks)
-			r.Get("/albums/{id}/cover", tracksH.AlbumCover)
-			r.Get("/covers/remote", tracksH.RemoteCoverProxy)
+			covers.Get("/albums/{id}/cover", tracksH.AlbumCover)
+			covers.Get("/covers/remote", tracksH.RemoteCoverProxy)
 			ordinary.Get("/covers/sign", tracksH.SignCover)
 			ordinary.Get("/artists", browseH.ListArtists)
 			ordinary.Get("/artists/{id}", browseH.GetArtist)
@@ -303,7 +318,7 @@ func NewRouter(d Deps) http.Handler {
 			ordinary.Get("/playlists/{id}", plH.Get)
 			ordinary.Patch("/playlists/{id}", plH.Update)
 			ordinary.Delete("/playlists/{id}", plH.Delete)
-			r.Get("/playlists/{id}/cover", plH.Cover)
+			covers.Get("/playlists/{id}/cover", plH.Cover)
 			// Any playlist owner may upload, so unlike album covers this is
 			// open to non-admins: rate-limit the image decode.
 			r.With(appmw.Timeout(imageRequestTimeout), appmw.RateLimitByIP(30, time.Minute)).
@@ -383,6 +398,14 @@ func NewRouter(d Deps) http.Handler {
 
 	return r
 }
+
+// coverRequestsPerMinute caps cover requests from one address. Clients load
+// covers in bursts: opening the web app's add-tracks dialog requests up to 200
+// at once, and fast scrolling through a long list sorted by title (a new album
+// on nearly every row) runs to about 1,500 in a minute. A refused cover stays a
+// placeholder until its row remounts, so the cap sits well above that, with
+// room for a household behind one NAT address.
+const coverRequestsPerMinute = 3000
 
 const (
 	ordinaryRequestTimeout = 30 * time.Second

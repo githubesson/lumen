@@ -16,9 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dhowden/tag"
-
 	"github.com/githubesson/lumen/internal/ffsafe"
+	"github.com/githubesson/lumen/internal/thirdparty/tag"
 )
 
 const (
@@ -37,7 +36,7 @@ const (
 //     compute the audio-byte range, SHA-256 the range. No forks, no decode.
 //  2. ffmpeg `-c copy -f hash sha256` on the audio stream — works for M4A/
 //     MP4/OGG/OPUS/WAV/AAC and anything else ffmpeg can demux.
-//  3. dhowden/tag.Sum — pure-Go fallback if ffmpeg isn't on $PATH.
+//  3. tag.Sum (our fork of dhowden/tag) — pure-Go fallback if ffmpeg isn't on $PATH.
 //  4. Full-file SHA-256 — last resort. Retagging such a file registers as new.
 func AudioSHA256(ctx context.Context, path string) (string, error) {
 	if ctx == nil {
@@ -68,7 +67,7 @@ func AudioSHA256(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	if sum, err := tag.Sum(&hashReadSeeker{ctx: ctx, ReadSeeker: f}); err == nil {
+	if sum, err := tagSum(&hashReadSeeker{ctx: ctx, ReadSeeker: newBufferedReadSeeker(f)}); err == nil {
 		return sum, nil
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
@@ -79,6 +78,13 @@ func AudioSHA256(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// tagSum is tag.Sum with a panic turned into an error, which sends
+// AudioSHA256 on to the full-file hash.
+func tagSum(rs io.ReadSeeker) (sum string, err error) {
+	defer recoverTagPanic(&err)
+	return tag.Sum(rs)
 }
 
 var errFormatUnsupportedNative = errors.New("no native audio-hash for this extension")

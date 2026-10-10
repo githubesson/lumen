@@ -13,10 +13,11 @@ import (
 // type map for an encode plan and runs it, which is where the failure actually
 // happens.
 //
-// This exists because []*uuid.UUID does NOT work: uuid.UUID has a
-// value-receiver Value() method, so pgx picks the driver.Valuer path and
-// panics dereferencing the nil element. Nullable UUID columns must be bound as
-// []pgtype.UUID.
+// Nullable UUID columns are bound as []pgtype.UUID. pgx v5.7 could
+// not encode []*uuid.UUID: uuid.UUID has a value-receiver Value() method, so
+// pgx picked the driver.Valuer path and panicked dereferencing the nil
+// element. Newer pgx encodes the nil as NULL, but pgtype.UUID stays the
+// binding that works on every version.
 //
 // Call sites: playlists.Store.AddTracks / ReplaceOrder,
 // library.ReplaceTrackArtists / LinkTrackArtists.
@@ -53,26 +54,4 @@ func TestArrayParamEncoding(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestNullableUUIDSliceIsRejected documents the trap the test above guards
-// against, so a future change back to []*uuid.UUID fails here with an
-// explanation rather than in production.
-func TestNullableUUIDSliceIsRejected(t *testing.T) {
-	m := pgtype.NewMap()
-	a := uuid.New()
-	val := []*uuid.UUID{&a, nil}
-
-	plan := m.PlanEncode(pgtype.UUIDArrayOID, pgtype.BinaryFormatCode, val)
-	if plan == nil {
-		return // no plan at all is also a rejection
-	}
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected []*uuid.UUID with a nil element to fail to encode; " +
-				"if pgx has fixed this, the pgtype.UUID workaround in " +
-				"playlists.Store.ReplaceOrder can be simplified")
-		}
-	}()
-	_, _ = plan.Encode(val, nil)
 }

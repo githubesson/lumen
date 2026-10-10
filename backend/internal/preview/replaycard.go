@@ -5,6 +5,7 @@ package preview
 // runner-up tracks on a translucent panel. Served by /api/stats/replay/image.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"image"
@@ -41,8 +42,9 @@ const (
 )
 
 // BuildReplayCard renders the share card. It fails only on font loading —
-// missing covers degrade to placeholders, never to an error.
-func BuildReplayCard(in ReplayCardInput) (*image.RGBA, error) {
+// missing covers degrade to placeholders, never to an error. ctx bounds the
+// wait for the shared image decode budget.
+func BuildReplayCard(ctx context.Context, in ReplayCardInput) (*image.RGBA, error) {
 	if len(in.Tracks) == 0 {
 		return nil, errors.New("replay card: no tracks")
 	}
@@ -73,11 +75,15 @@ func BuildReplayCard(in ReplayCardInput) (*image.RGBA, error) {
 	hero := in.Tracks[0]
 	heroTitle := defaultString(stripReplayEmoji(hero.Title), "Untitled track")
 	heroArtist := defaultString(stripReplayEmoji(hero.Artist), "Unknown artist")
-	heroCover, heroErr := decodeImageFile(hero.CoverPath)
+	heroCover, releaseHero, heroErr := decodeImageFile(ctx, hero.CoverPath)
+	// Released once the hero tile is drawn, before the row covers decode, so
+	// this render never holds one share of the decode budget while waiting
+	// for another.
+	defer releaseHero()
 	if heroErr == nil {
 		drawReplayBlurredBackdrop(img, heroCover)
 	} else {
-		drawStoryGradientBackground(img, Input{TrackID: "replay:" + hero.Title})
+		drawStoryGradientBackground(ctx, img, Input{TrackID: "replay:" + hero.Title})
 	}
 	applyReplayScrim(img)
 
@@ -99,6 +105,7 @@ func BuildReplayCard(in ReplayCardInput) (*image.RGBA, error) {
 	heroX := (replayCardW - heroSize) / 2
 	if heroErr == nil {
 		drawRoundedImage(img, heroCover, heroX, y, heroSize, heroSize, 24)
+		releaseHero()
 	} else {
 		drawRoundedRect(img, heroX, y, heroSize, heroSize, 24, color.RGBA{44, 44, 46, 255})
 	}
@@ -147,9 +154,9 @@ func BuildReplayCard(in ReplayCardInput) (*image.RGBA, error) {
 			drawTextTop(img, smallFace, rank, rankX, rowY+(rowH-faceHeight(smallFace))/2, white60)
 
 			thumbX := panelX + panelPad + rankW + itemGap
-			if cover, err := decodeImageFile(rt.CoverPath); err == nil {
+			if !withImageFile(ctx, rt.CoverPath, func(cover image.Image) {
 				drawRoundedImage(img, cover, thumbX, rowY, thumb, thumb, 8)
-			} else {
+			}) {
 				drawRoundedRect(img, thumbX, rowY, thumb, thumb, 8, color.RGBA{58, 58, 60, 255})
 			}
 

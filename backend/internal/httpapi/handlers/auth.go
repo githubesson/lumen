@@ -29,7 +29,7 @@ type Auth struct {
 	Sessions *auth.SessionStore
 	Invites  *invites.Store
 	// DeviceKey signs known-device cookies (see auth.SignKnownDevice). Empty
-	// disables them, leaving every client on the per-username lockout.
+	// disables them, leaving every client on the shared lockouts.
 	DeviceKey []byte
 }
 
@@ -79,38 +79,80 @@ func toResp(u *models.User) userResp {
 	}
 }
 
-// loginFailures caps password guesses per username, independent of source
-// address, so rotating IPs (an IPv6 /64, a botnet) can't sidestep the per-IP
-// limit on /auth/login. Unknown usernames are counted the same way so the
-// lockout doesn't reveal which accounts exist.
+// Password guesses are capped per browser class so the lockout can't be
+// turned against the account it protects.
+//
+// A browser without a known-device cookie spends two budgets at once: one
+// per (username, client network), so a guesser from one network locks out
+// only that network, and a larger one per username, so spreading guesses
+// over many networks (a botnet, rotating IPv6) still hits a ceiling. Locking
+// an account out for every new browser therefore takes guesses from five
+// networks, not one curl loop. The price is a higher ceiling than the old
+// flat 10 per username: 4,800 guesses a day instead of 960, which finds a
+// password from a common-passwords list either way and a strong one neither
+// way. Unknown usernames are counted the same way so the lockout doesn't
+// reveal which accounts exist.
 //
 // A browser that has signed in as the username before (valid known-device
 // cookie) is counted in deviceLoginFailures instead, on its own failures
-// only. That keeps the lockout from being a denial of service: an attacker
-// hammering "admin" locks out new browsers, never the admin's own, and
-// filling loginFailures (which fails closed when full) can't touch
-// deviceLoginFailures because only a signed-in browser can add to it.
+// only. An attacker hammering "admin" can therefore lock out new browsers at
+// worst, never the admin's own, and filling the other tables (which fail
+// closed when full) can't touch deviceLoginFailures because only a
+// signed-in browser can add to it.
 var (
-	loginFailures       = middleware.NewFailureLimiter(10, 15*time.Minute)
-	deviceLoginFailures = middleware.NewFailureLimiter(10, 15*time.Minute)
+	networkLoginFailures = middleware.NewFailureLimiter(10, 15*time.Minute)
+	accountLoginFailures = middleware.NewFailureLimiter(50, 15*time.Minute)
+	deviceLoginFailures  = middleware.NewFailureLimiter(10, 15*time.Minute)
 )
 
-// loginFailureCounter picks the failure counter and key for this attempt.
-// Keys are hashes so an arbitrarily long submitted username costs the table
-// a fixed amount of memory.
-func (h *Auth) loginFailureCounter(r *http.Request, username string) (*middleware.FailureLimiter, string) {
+// loginBudget is one failure counter and the key an attempt is charged to.
+type loginBudget struct {
+	limiter *middleware.FailureLimiter
+	key     string
+}
+
+// loginBudgets picks the counters this attempt is charged to. Keys are
+// hashes so an arbitrarily long submitted username costs the tables a fixed
+// amount of memory.
+func (h *Auth) loginBudgets(r *http.Request, username string) []loginBudget {
 	name := strings.ToLower(username)
 	if c, err := r.Cookie(auth.KnownDeviceCookie); err == nil &&
 		auth.VerifyKnownDevice(h.DeviceKey, c.Value, username, time.Now()) {
-		sum := sha256.Sum256([]byte(name + "|" + c.Value))
-		return deviceLoginFailures, hex.EncodeToString(sum[:])
+		return []loginBudget{{deviceLoginFailures, failureKey(name + "|" + c.Value)}}
 	}
-	sum := sha256.Sum256([]byte(name))
-	return loginFailures, hex.EncodeToString(sum[:])
+	return []loginBudget{
+		{networkLoginFailures, failureKey(name + "|" + middleware.ClientNetwork(r))},
+		{accountLoginFailures, failureKey(name)},
+	}
+}
+
+func failureKey(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+// reserveLogin claims one attempt from every budget, or from none: when one
+// refuses, the claims already made are handed back so a refused attempt
+// costs nothing. It returns the refusing budget's Retry-After seconds.
+func reserveLogin(budgets []loginBudget) (bool, int) {
+	for i, b := range budgets {
+		if ok, retryAfter := b.limiter.Reserve(b.key); !ok {
+			refundLogin(budgets[:i])
+			return false, retryAfter
+		}
+	}
+	return true, 0
+}
+
+// refundLogin returns the attempt reserveLogin claimed.
+func refundLogin(budgets []loginBudget) {
+	for _, b := range budgets {
+		b.limiter.Refund(b.key)
+	}
 }
 
 // markKnownDevice gives the browser that just authenticated as username a
-// known-device cookie, so the per-username lockout never applies to it.
+// known-device cookie, so the shared lockouts never apply to it.
 func (h *Auth) markKnownDevice(w http.ResponseWriter, username string) {
 	if len(h.DeviceKey) > 0 {
 		h.Sessions.SetKnownDeviceCookie(w, auth.SignKnownDevice(h.DeviceKey, username, time.Now()))
@@ -125,8 +167,8 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 	req.Username = strings.TrimSpace(req.Username)
 	// Every attempt, malformed ones included, claims a failure slot before
 	// any Argon2 work; only a correct password gives it back.
-	failures, failKey := h.loginFailureCounter(r, req.Username)
-	if ok, retryAfter := failures.Reserve(failKey); !ok {
+	budgets := h.loginBudgets(r, req.Username)
+	if ok, retryAfter := reserveLogin(budgets); !ok {
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		http.Error(w, "too many failed attempts; try again later", http.StatusTooManyRequests)
 		return
@@ -142,7 +184,7 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 	if err != nil && !errors.Is(err, users.ErrNotFound) {
 		// An outage isn't a wrong guess: don't let retries during it lock
 		// the username out once the database is back.
-		failures.Refund(failKey)
+		refundLogin(budgets)
 		slog.Error("login: user lookup failed", "err", err)
 		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 		return
@@ -160,7 +202,7 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
-	failures.Refund(failKey)
+	refundLogin(budgets)
 	// Disabled check happens *after* the password verify so we don't leak
 	// "account exists and is disabled" to anyone who guesses a username.
 	if u.Disabled {

@@ -38,10 +38,11 @@ func (h *Share) accentColorForTrack(ctx context.Context, t *library.TrackDetail)
 	if err != nil {
 		return ""
 	}
-	src, _, err := imagesafe.Decode(bytes.NewReader(data))
+	src, release, err := imagesafe.Decode(ctx, bytes.NewReader(data))
 	if err != nil {
 		return ""
 	}
+	defer release()
 	raw, ok := extractAccentFromImage(src)
 	if !ok {
 		return ""
@@ -59,10 +60,11 @@ func (h *Share) accentColorForCover(ctx context.Context, coverKey string) string
 	}
 	defer body.Close()
 
-	src, _, err := imagesafe.Decode(body)
+	src, release, err := imagesafe.Decode(ctx, body)
 	if err != nil {
 		return ""
 	}
+	defer release()
 	raw, ok := extractAccentFromImage(src)
 	if !ok {
 		return ""

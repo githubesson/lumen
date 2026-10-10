@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/githubesson/lumen/internal/safego"
 )
 
 func TestTIDALProxyContentType(t *testing.T) {
@@ -94,6 +96,28 @@ func TestBuildPublicMediaCoalescesAndRemembersFailures(t *testing.T) {
 	writePublicBuildError(rec, err, "failed")
 	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
 		t.Fatalf("recent failure response = %d, Retry-After %q", rec.Code, rec.Header().Get("Retry-After"))
+	}
+}
+
+// A build runs inside singleflight's DoChan, which re-raises a panic on a
+// goroutine of its own: unguarded, this test would crash the test binary.
+func TestBuildPublicMediaSurvivesPanickingBuild(t *testing.T) {
+	key := publicBuildKey("test", t.Name(), 0, 30)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	_, err := buildPublicMedia(req, key, func(context.Context) (string, error) {
+		var m map[string]int
+		m["boom"]++ // assignment to entry in nil map
+		return "", nil
+	})
+	if !errors.Is(err, safego.ErrPanicked) {
+		t.Fatalf("err = %v, want safego.ErrPanicked", err)
+	}
+	// Remembered like any failure, so a crashing track isn't rebuilt per request.
+	if _, err := buildPublicMedia(req, key, func(context.Context) (string, error) {
+		t.Fatal("build retried during failure TTL")
+		return "", nil
+	}); !errors.Is(err, errRecentBuildFailure) {
+		t.Fatalf("retry err = %v, want errRecentBuildFailure", err)
 	}
 }
 

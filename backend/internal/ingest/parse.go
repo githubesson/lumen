@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 
-	"github.com/dhowden/tag"
+	"github.com/githubesson/lumen/internal/thirdparty/tag"
 )
 
 // Metadata is the normalized subset of tags we care about.
@@ -75,11 +77,11 @@ func ParseFile(path string) (*Metadata, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return parse(f, path)
+	return parse(newBufferedReadSeeker(f), path)
 }
 
 func parse(rs io.ReadSeeker, path string) (*Metadata, error) {
-	m, err := tag.ReadFrom(rs)
+	m, err := readTags(rs)
 	if err != nil {
 		// tag.ErrNoTagsFound is fine for WAV and similar — fall back to filename.
 		if errors.Is(err, tag.ErrNoTagsFound) || strings.Contains(err.Error(), "no tags") || fallbackOnlyContainer(path) {
@@ -87,6 +89,31 @@ func parse(rs io.ReadSeeker, path string) (*Metadata, error) {
 		}
 		return nil, fmt.Errorf("read tags: %w", err)
 	}
+	return fromTags(m, path)
+}
+
+// readTags is tag.ReadFrom with a panic turned into an error. The parser
+// reads untrusted files: uploads on the request goroutine, and files dropped
+// into watched folders off it. Our fork is hardened against the crafted
+// files we know of, but a bug left in it must fail that one file, not the
+// whole upload batch or the server.
+func readTags(rs io.ReadSeeker) (m tag.Metadata, err error) {
+	defer recoverTagPanic(&err)
+	return tag.ReadFrom(rs)
+}
+
+// recoverTagPanic, deferred, turns a panic in the tag library into *err.
+func recoverTagPanic(err *error) {
+	if p := recover(); p != nil {
+		slog.Error("tag parser panicked", "panic", p, "stack", string(debug.Stack()))
+		*err = fmt.Errorf("tag parser panic: %v", p)
+	}
+}
+
+// fromTags normalizes what the tag library read. Its accessors parse too
+// (genre references, track "3/12"), so a panic in them is caught as well.
+func fromTags(m tag.Metadata, path string) (_ *Metadata, err error) {
+	defer recoverTagPanic(&err)
 	tr, trTotal := m.Track()
 	dsc, dscTotal := m.Disc()
 

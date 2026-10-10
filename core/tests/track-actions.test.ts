@@ -67,6 +67,7 @@ describe("trackActions", () => {
     expect(trackActions(track({ owned: true }), { isAdmin: true })).toMatchObject({
       deleteOwnUpload: true,
       adminRemove: false,
+      share: false,
     });
     expect(trackActions(track({ owned: true }), { isAdmin: false }).deleteOwnUpload).toBe(true);
   });

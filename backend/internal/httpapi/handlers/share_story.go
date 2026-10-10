@@ -176,7 +176,7 @@ func (h *Share) CustomStoryBackground(w http.ResponseWriter, r *http.Request) {
 
 func (h *Share) servePublicStory(w http.ResponseWriter, r *http.Request, backgroundOnly bool) {
 	req, ok := h.parseSignedMediaRequest(w, r, true)
-	if !ok {
+	if !ok || !h.requirePublicTrack(w, r, req.id, "story serve") {
 		return
 	}
 	cached := h.Preview.CachedStory

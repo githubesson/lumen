@@ -1,6 +1,9 @@
 package preview
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestBuildReplayCardSmoke(t *testing.T) {
 	if _, err := storyFontFile(replayRegularFonts); err != nil {
@@ -19,7 +22,7 @@ func TestBuildReplayCardSmoke(t *testing.T) {
 			{Title: "Lucid Dreams", Artist: "Juice WRLD", Plays: 79},
 		},
 	}
-	img, err := BuildReplayCard(in)
+	img, err := BuildReplayCard(context.Background(), in)
 	if err != nil {
 		t.Fatalf("BuildReplayCard: %v", err)
 	}
@@ -29,7 +32,7 @@ func TestBuildReplayCardSmoke(t *testing.T) {
 }
 
 func TestBuildReplayCardNoTracks(t *testing.T) {
-	if _, err := BuildReplayCard(ReplayCardInput{}); err == nil {
+	if _, err := BuildReplayCard(context.Background(), ReplayCardInput{}); err == nil {
 		t.Fatal("expected an error for empty input")
 	}
 }

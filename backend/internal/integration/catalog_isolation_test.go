@@ -234,4 +234,46 @@ func TestPersonalUploadsCannotAlterSharedCatalog(t *testing.T) {
 			t.Fatalf("usage grew by %d, want 4096", after-before)
 		}
 	})
+
+	t.Run("public reads see only live shared-library tracks", func(t *testing.T) {
+		title := "public-read-" + uuid.NewString()
+		personalSHA := sha256.Sum256([]byte(title + "personal"))
+		personal, _, _ := insertTrack(t, library.TrackInsert{
+			OwnerID: &victim, Title: "Mine", DurationMS: 1000,
+			FilePath: "/music/.users/" + victim.String() + "/" + title + ".mp3", FileSize: 1, Format: "mp3", AudioSHA256: personalSHA[:],
+		})
+		defer pool.Exec(ctx, `DELETE FROM tracks WHERE id=$1`, personal)
+		globalSHA := sha256.Sum256([]byte(title + "global"))
+		global, _, _ := insertTrack(t, library.TrackInsert{
+			Title: "Shared", DurationMS: 1000,
+			FilePath: "/music/" + title + ".mp3", FileSize: 1, Format: "mp3", AudioSHA256: globalSHA[:],
+		})
+		defer pool.Exec(ctx, `DELETE FROM tracks WHERE id=$1`, global)
+
+		// The owner still sees their upload; a share link must not.
+		if _, err := lib.GetTrack(ctx, personal, victim); err != nil {
+			t.Fatalf("owner GetTrack: %v", err)
+		}
+		if _, err := lib.GetTrackPublic(ctx, personal); !errors.Is(err, library.ErrNotFound) {
+			t.Fatalf("GetTrackPublic(personal) err = %v, want ErrNotFound", err)
+		}
+		if _, err := lib.GetTrackPublic(ctx, global); err != nil {
+			t.Fatalf("GetTrackPublic(global): %v", err)
+		}
+		isPublic := func(id uuid.UUID) bool {
+			t.Helper()
+			ok, err := lib.TrackIsPublic(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return ok
+		}
+		if isPublic(personal) || !isPublic(global) || isPublic(uuid.New()) {
+			t.Fatalf("TrackIsPublic: personal=%v global=%v", isPublic(personal), isPublic(global))
+		}
+		exec(t, `UPDATE tracks SET deleted_at = NOW() WHERE id=$1`, global)
+		if isPublic(global) {
+			t.Fatal("TrackIsPublic true for a deleted track")
+		}
+	})
 }
