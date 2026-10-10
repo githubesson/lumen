@@ -759,16 +759,11 @@ func cleanLyricsText(value string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
+// copyLyricsHeaders passes on the upstream headers that describe the body,
+// and nothing else: the reply goes out under our origin, so an upstream
+// Set-Cookie, CSP or CORS header must not ride along with it.
 func copyLyricsHeaders(dst, src http.Header) {
-	for key, values := range src {
-		if strings.EqualFold(key, "content-encoding") ||
-			strings.EqualFold(key, "transfer-encoding") ||
-			strings.EqualFold(key, "connection") ||
-			strings.EqualFold(key, "content-length") {
-			continue
-		}
-		for _, value := range values {
-			dst.Add(key, value)
-		}
+	if v := src.Get("Content-Type"); v != "" {
+		dst.Set("Content-Type", v)
 	}
 }
