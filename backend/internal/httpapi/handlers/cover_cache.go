@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/githubesson/lumen/internal/safego"
@@ -20,11 +21,22 @@ import (
 // so a small in-RAM LRU keeps recently served covers hot.
 const (
 	coverCacheMaxEntries = 150
-	coverCacheTTL        = 5 * time.Minute
+	// coverCacheMaxBytes bounds the RAM the cache pins. Entries run from a
+	// few KB (row thumbnails) to a few hundred KB (1280px art), so a full
+	// cache of real covers stays well under it; without it, 150 entries at
+	// the entry cap could pin 600 MB.
+	coverCacheMaxBytes = 64 << 20
+	coverCacheTTL      = 5 * time.Minute
 	// A 640x640 JPEG runs ~100 KB; anything above this cap is an outlier not
 	// worth pinning in RAM. Oversized covers are still proxied, just not cached.
 	coverCacheMaxEntryBytes = 4 << 20
 	coverWarmConcurrency    = 4
+	// coverFetchConcurrency bounds upstream fetches in flight, warms and
+	// on-demand serves together. Each buffers up to maxRemoteCoverBytes, and
+	// a signed-in client can name any path on the CDN host, every distinct
+	// one a cache miss. A fetch takes a fraction of a second, so this many
+	// still fill a cold page of covers quickly.
+	coverFetchConcurrency = 8
 	// Warms queued beyond this are dropped; queuing more than the cache can
 	// hold would only fetch covers that immediately evict each other.
 	coverWarmQueueDepth = coverCacheMaxEntries
@@ -42,22 +54,25 @@ type coverCacheStore struct {
 	mu      sync.Mutex
 	entries map[string]*list.Element
 	order   *list.List // front = most recently used
+	bytes   int        // cached image bytes, bounded by coverCacheMaxBytes
 
 	// fetches coalesces concurrent upstream requests for the same URL — an
 	// on-demand serve landing while a warm is in flight joins that flight
 	// instead of fetching again.
-	fetches   singleflight.Group
-	warmOnce  sync.Once
-	warmQueue chan string
+	fetches    singleflight.Group
+	fetchSlots *semaphore.Weighted
+	warmOnce   sync.Once
+	warmQueue  chan string
 }
 
 var coverCache = newCoverCacheStore()
 
 func newCoverCacheStore() *coverCacheStore {
 	return &coverCacheStore{
-		entries:   make(map[string]*list.Element),
-		order:     list.New(),
-		warmQueue: make(chan string, coverWarmQueueDepth),
+		entries:    make(map[string]*list.Element),
+		order:      list.New(),
+		fetchSlots: semaphore.NewWeighted(coverFetchConcurrency),
+		warmQueue:  make(chan string, coverWarmQueueDepth),
 	}
 }
 
@@ -70,8 +85,7 @@ func (c *coverCacheStore) get(url string) ([]byte, string, bool) {
 	}
 	ent := el.Value.(*coverCacheEntry)
 	if time.Since(ent.fetchedAt) > coverCacheTTL {
-		c.order.Remove(el)
-		delete(c.entries, url)
+		c.removeLocked(el)
 		return nil, "", false
 	}
 	c.order.MoveToFront(el)
@@ -86,16 +100,24 @@ func (c *coverCacheStore) put(url string, data []byte, contentType string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if el, ok := c.entries[url]; ok {
+		c.bytes += len(data) - len(el.Value.(*coverCacheEntry).data)
 		el.Value = ent
 		c.order.MoveToFront(el)
-		return
+	} else {
+		c.entries[url] = c.order.PushFront(ent)
+		c.bytes += len(data)
 	}
-	c.entries[url] = c.order.PushFront(ent)
-	for c.order.Len() > coverCacheMaxEntries {
-		oldest := c.order.Back()
-		c.order.Remove(oldest)
-		delete(c.entries, oldest.Value.(*coverCacheEntry).url)
+	// The newest entry is never evicted: it is at most
+	// coverCacheMaxEntryBytes, well under coverCacheMaxBytes.
+	for c.order.Len() > coverCacheMaxEntries || c.bytes > coverCacheMaxBytes {
+		c.removeLocked(c.order.Back())
 	}
+}
+
+func (c *coverCacheStore) removeLocked(el *list.Element) {
+	ent := c.order.Remove(el).(*coverCacheEntry)
+	delete(c.entries, ent.url)
+	c.bytes -= len(ent.data)
 }
 
 // fetchCached returns the cover from cache, or fetches and caches it.
@@ -118,6 +140,11 @@ func (c *coverCacheStore) fetchCached(u *url.URL) ([]byte, string, error) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), coverFetchTimeout)
 			defer cancel()
+			// Waiting for a slot counts against the fetch timeout.
+			if err := c.fetchSlots.Acquire(ctx, 1); err != nil {
+				return nil, err
+			}
+			defer c.fetchSlots.Release(1)
 			data, ct, err := fetchRemoteCover(ctx, u)
 			if err != nil {
 				return nil, err

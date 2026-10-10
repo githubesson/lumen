@@ -297,6 +297,78 @@ func TestCoverCacheEvictsLeastRecentlyUsedBeyondCap(t *testing.T) {
 	}
 }
 
+func TestCoverCacheBoundsTotalBytes(t *testing.T) {
+	c := newCoverCacheStore()
+	big := make([]byte, coverCacheMaxEntryBytes) // shared: the cache keeps references
+	n := 2 * coverCacheMaxBytes / coverCacheMaxEntryBytes
+	for i := range n {
+		c.put("https://resources.tidal.com/images/"+strconv.Itoa(i), big, "image/jpeg")
+	}
+	if c.bytes > coverCacheMaxBytes {
+		t.Fatalf("cache holds %d bytes, over the %d cap", c.bytes, coverCacheMaxBytes)
+	}
+	if _, _, ok := c.get("https://resources.tidal.com/images/" + strconv.Itoa(n-1)); !ok {
+		t.Fatal("newest entry evicted")
+	}
+	if _, _, ok := c.get("https://resources.tidal.com/images/0"); ok {
+		t.Fatal("oldest entry survived past the byte cap")
+	}
+	// The count tracks what is actually held, through replacement and expiry.
+	c.put("https://resources.tidal.com/images/"+strconv.Itoa(n-1), []byte("x"), "image/jpeg")
+	sum := 0
+	for el := c.order.Front(); el != nil; el = el.Next() {
+		sum += len(el.Value.(*coverCacheEntry).data)
+	}
+	if c.bytes != sum {
+		t.Fatalf("byte count = %d, entries hold %d", c.bytes, sum)
+	}
+}
+
+func TestCoverFetchesInFlightAreBounded(t *testing.T) {
+	resetCoverCache(t)
+	oldClient := remoteCoverHTTPClient
+	defer func() { remoteCoverHTTPClient = oldClient }()
+
+	var inFlight, peak atomic.Int32
+	remoteCoverHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			n := inFlight.Add(1)
+			defer inFlight.Add(-1)
+			for {
+				p := peak.Load()
+				if n <= p || peak.CompareAndSwap(p, n) {
+					break
+				}
+			}
+			time.Sleep(20 * time.Millisecond)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"image/jpeg"}},
+				Body:       io.NopCloser(strings.NewReader("jpg")),
+				Request:    req,
+			}, nil
+		}),
+	}
+
+	// Distinct URLs: each is a cache miss with a flight of its own.
+	var wg sync.WaitGroup
+	for i := range 3 * coverFetchConcurrency {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			u, _ := url.Parse("https://resources.tidal.com/images/" + strconv.Itoa(i) + "/640x640.jpg")
+			if _, _, err := coverCache.fetchCached(u); err != nil {
+				t.Errorf("fetch %d: %v", i, err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := peak.Load(); got > coverFetchConcurrency {
+		t.Fatalf("%d fetches in flight at once, want at most %d", got, coverFetchConcurrency)
+	}
+}
+
 func TestCoverCacheExpiresEntriesAfterTTL(t *testing.T) {
 	c := newCoverCacheStore()
 	c.put("k", []byte("x"), "image/jpeg")
