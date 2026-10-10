@@ -55,11 +55,14 @@ func (c *Client) assembleHLSFile(ctx context.Context, rawURL string, onRefused f
 		return nil, errors.New("tidal media playlist had no segments")
 	}
 
-	// Fetch keys up front so resolution errors surface before streaming.
-	keys := make([][]byte, len(parsed.keys))
+	// Fetch keys up front so resolution errors surface before streaming. A
+	// playlist may repeat one #EXT-X-KEY line before every segment, so each
+	// distinct key URL is fetched once, and only after the number of
+	// distinct keys has been checked.
+	keyURLs := make([]string, len(parsed.keys))
+	keyByURL := make(map[string][]byte)
 	for i, k := range parsed.keys {
 		if strings.EqualFold(k.method, "NONE") || k.method == "" {
-			keys[i] = nil
 			continue
 		}
 		if !strings.EqualFold(k.method, "AES-128") {
@@ -70,11 +73,25 @@ func (c *Client) assembleHLSFile(ctx context.Context, rawURL string, onRefused f
 			slog.Warn("tidal hls key url rejected", "url", logSafeURL(keyURL), "err", err)
 			return nil, err
 		}
-		keyBytes, kerr := c.fetchKey(ctx, keyURL)
-		if kerr != nil {
-			return nil, fmt.Errorf("tidal hls key fetch failed: %w", kerr)
+		keyURLs[i] = keyURL
+		keyByURL[keyURL] = nil
+	}
+	if len(keyByURL) > maxHLSKeys {
+		return nil, fmt.Errorf("tidal hls playlist has more than %d keys", maxHLSKeys)
+	}
+	keys := make([][]byte, len(parsed.keys))
+	for i, keyURL := range keyURLs {
+		if keyURL == "" {
+			continue
 		}
-		keys[i] = keyBytes
+		if keyByURL[keyURL] == nil {
+			keyBytes, kerr := c.fetchKey(ctx, keyURL)
+			if kerr != nil {
+				return nil, fmt.Errorf("tidal hls key fetch failed: %w", kerr)
+			}
+			keyByURL[keyURL] = keyBytes
+		}
+		keys[i] = keyByURL[keyURL]
 	}
 
 	contentType := hlsContentType(parsed, base)
@@ -322,6 +339,12 @@ type hlsSegment struct {
 // 4 s, so even a 24-hour recording needs ~21,600; 30,000 leaves room for
 // shorter segments without letting a hostile playlist run unbounded.
 const maxHLSSegments = 30000
+
+// maxHLSKeys bounds the distinct AES-128 keys fetched before a download
+// starts, which a hostile playlist could otherwise list by the hundred
+// thousand. Rotating the key on every segment is the most a valid playlist
+// does, so the cap matches the segment cap.
+const maxHLSKeys = maxHLSSegments
 
 type parsedPlaylist struct {
 	isMaster      bool
