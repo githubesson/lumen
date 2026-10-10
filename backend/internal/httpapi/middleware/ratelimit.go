@@ -137,6 +137,21 @@ func retryAfterSeconds(now, reset time.Time) int {
 	return seconds
 }
 
+// ClientNetwork keys r's client by network: the IPv4 address, or the IPv6
+// /48 one site is routinely allocated. clientKey's /64 suits request-rate
+// limits, but a home connection often holds 256 /64s (a /56), so a budget
+// meant to confine one guesser to its own network needs the wider prefix.
+func ClientNetwork(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil || host == "" {
+		host = r.RemoteAddr
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		return ip.Mask(net.CIDRMask(48, 128)).String() + "/48"
+	}
+	return clientKey(r)
+}
+
 func clientKey(r *http.Request) string {
 	if r == nil {
 		return "unknown"
