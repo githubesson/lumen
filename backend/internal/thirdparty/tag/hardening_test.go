@@ -376,3 +376,19 @@ func TestManyEntries(t *testing.T) {
 		t.Errorf("%d Vorbis comments parsed without error", len(comments))
 	}
 }
+
+// FuzzReadFrom runs mutated samples through every reader and accessor,
+// looking for panics. Plain go test runs only the seeds; fuzz with
+// go test -run '^$' -fuzz FuzzReadFrom.
+func FuzzReadFrom(f *testing.F) {
+	for _, b := range fixtures {
+		f.Add(b)
+	}
+	f.Fuzz(func(t *testing.T, b []byte) {
+		if m, err := ReadFrom(bytes.NewReader(b)); err == nil {
+			readAll(m)
+		}
+		Identify(bytes.NewReader(b))
+		Sum(bytes.NewReader(b))
+	})
+}
