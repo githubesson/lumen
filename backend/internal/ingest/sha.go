@@ -16,9 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dhowden/tag"
-
 	"github.com/githubesson/lumen/internal/ffsafe"
+	"github.com/githubesson/lumen/internal/thirdparty/tag"
 )
 
 const (
@@ -37,7 +36,7 @@ const (
 //     compute the audio-byte range, SHA-256 the range. No forks, no decode.
 //  2. ffmpeg `-c copy -f hash sha256` on the audio stream — works for M4A/
 //     MP4/OGG/OPUS/WAV/AAC and anything else ffmpeg can demux.
-//  3. dhowden/tag.Sum — pure-Go fallback if ffmpeg isn't on $PATH.
+//  3. tag.Sum (our fork of dhowden/tag) — pure-Go fallback if ffmpeg isn't on $PATH.
 //  4. Full-file SHA-256 — last resort. Retagging such a file registers as new.
 func AudioSHA256(ctx context.Context, path string) (string, error) {
 	if ctx == nil {

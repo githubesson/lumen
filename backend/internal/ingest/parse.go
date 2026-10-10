@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dhowden/tag"
+	"github.com/githubesson/lumen/internal/thirdparty/tag"
 )
 
 // Metadata is the normalized subset of tags we care about.
