@@ -125,12 +125,13 @@ func (m *metadataVorbis) readPictureBlock(r io.Reader) error {
 		return err
 	}
 
-	dataLen, err := readInt(r, 4)
+	dataLen, err := readUint(r, 4)
 	if err != nil {
 		return err
 	}
-	data := make([]byte, dataLen)
-	_, err = io.ReadFull(r, data)
+	// Through readBytes, which bounds the size: upstream made a buffer of
+	// whatever the file claimed, so a 49-byte FLAC allocated 4 GiB.
+	data, err := readBytes(r, dataLen)
 	if err != nil {
 		return err
 	}

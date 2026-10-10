@@ -120,7 +120,11 @@ func readID3v2Header(r io.Reader) (h *id3v2Header, offset uint, err error) {
 				return nil, 0, fmt.Errorf("expected to read 4 bytes (ID3v24 extended header len): %v", err)
 			}
 			// skip header, size is synchsafe int including len bytes
-			extendedHeaderSize := uint(get7BitChunkedInt(b)) - 4
+			extendedHeaderSize := uint(get7BitChunkedInt(b))
+			if extendedHeaderSize < 4 {
+				return nil, 0, fmt.Errorf("invalid ID3v24 extended header size: %d", extendedHeaderSize)
+			}
+			extendedHeaderSize -= 4
 			_, err = readBytes(r, extendedHeaderSize)
 			if err != nil {
 				return nil, 0, fmt.Errorf("expected to read %d bytes (ID3v24 skip extended header): %v", extendedHeaderSize, err)
@@ -279,11 +283,17 @@ func readID3v2Frames(r io.Reader, offset uint, h *id3v2Header) (map[string]inter
 			break
 		}
 
+		// The size checks below are Lumen's: sizes are uint, and taking 4 or
+		// 1 from one too small wrapped round to a huge read that, upstream,
+		// quietly returned nothing and left the reader inside the frame.
 		if flags != nil {
 			if flags.Compression {
 				switch h.Version {
 				case ID3v2_3:
 					// No data length indicator defined.
+					if size < 4 {
+						return nil, fmt.Errorf("compressed frame %q too short: %d bytes", name, size)
+					}
 					if _, err := read7BitChunkedUint(r, 4); err != nil { // read 4
 						return nil, err
 					}
@@ -312,6 +322,9 @@ func readID3v2Frames(r io.Reader, offset uint, h *id3v2Header) (map[string]inter
 			}
 
 			if flags.Encryption {
+				if size < 1 {
+					return nil, fmt.Errorf("encrypted frame %q has no encryption method", name)
+				}
 				_, err = readBytes(r, 1) // read 1 byte of encryption method
 				if err != nil {
 					return nil, err

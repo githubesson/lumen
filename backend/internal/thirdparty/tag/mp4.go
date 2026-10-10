@@ -118,6 +118,20 @@ func (m metadataMP4) readAtoms(r io.ReadSeeker, depth int) error {
 		}
 
 		_, ok := atoms[name]
+		if size < 8 {
+			// Too small to cover the atom's own header. Upstream took size-8
+			// regardless, and the uint32 underflow asked readBytes for ~4 GiB
+			// or seeked that far ahead. For an atom we read, that's an error.
+			// One we skip ends the walk with the tags found so far, which is
+			// where the seek left upstream once it hit EOF: 0 (the atom runs
+			// to the end of the file) and 1 (a 64-bit size follows) are legal
+			// for media data, and upstream skips an unrecognised ---- atom
+			// twice, landing mid-data where small numbers are common.
+			if ok || name == "----" {
+				return fmt.Errorf("invalid size %d for atom %q", size, name)
+			}
+			return nil
+		}
 		var data []string
 		if name == "----" {
 			name, data, err = readCustomAtom(r, size)
@@ -254,6 +268,9 @@ func readCustomAtom(r io.ReadSeeker, size uint32) (_ string, data []string, _ er
 		subName, subSize, err := readAtomHeader(r)
 		if err != nil {
 			return "", nil, err
+		}
+		if subSize < 8 {
+			return "", nil, fmt.Errorf("invalid size %d for atom %q", subSize, subName)
 		}
 
 		// Remove the size of the atom from the size counter

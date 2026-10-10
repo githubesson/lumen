@@ -121,6 +121,11 @@ func (o *oggDemuxer) Read(r io.Reader) ([][]byte, error) {
 	var p int
 	for _, s := range segmentTable {
 		packetBuf.Write(segmentsData[p : p+int(s)])
+		// A packet continued from page to page used to grow without end, so a
+		// file of nothing but continuation pages buffered all of itself.
+		if packetBuf.Len() > readBytesMax {
+			return nil, fmt.Errorf("packet is over the %d byte limit", readBytesMax)
+		}
 		if s < 255 {
 			packets = append(packets, packetBuf.Bytes())
 			packetBuf = &bytes.Buffer{}

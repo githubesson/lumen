@@ -205,18 +205,23 @@ func oggPages(packets ...[]byte) []byte {
 		if continued {
 			flags = 1
 		}
-		page := append([]byte("OggS"), 0, flags)
-		page = binary.LittleEndian.AppendUint64(page, 0) // granule position
-		page = binary.LittleEndian.AppendUint32(page, 1) // serial
-		page = binary.LittleEndian.AppendUint32(page, seq)
-		page = append(page, 0, 0, 0, 0, byte(len(segs)))
-		page = append(append(page, segs...), data[:size]...)
-		binary.LittleEndian.PutUint32(page[22:], oggCRCUpdate(0, oggCRC32Poly04c11db7, page))
-		out = append(out, page...)
+		out = append(out, oggPage(flags, seq, segs, data[:size])...)
 		continued = segs[len(segs)-1] == 255
 		lacing, data = lacing[len(segs):], data[size:]
 	}
 	return out
+}
+
+// oggPage builds one page of stream 1 from its lacing values and their data.
+func oggPage(flags byte, seq uint32, lacing, data []byte) []byte {
+	page := append([]byte("OggS"), 0, flags)
+	page = binary.LittleEndian.AppendUint64(page, 0) // granule position
+	page = binary.LittleEndian.AppendUint32(page, 1) // serial
+	page = binary.LittleEndian.AppendUint32(page, seq)
+	page = append(page, 0, 0, 0, 0, byte(len(lacing)))
+	page = append(append(page, lacing...), data...)
+	binary.LittleEndian.PutUint32(page[22:], oggCRCUpdate(0, oggCRC32Poly04c11db7, page))
+	return page
 }
 
 func oggVorbisSample(tagged bool) []byte {

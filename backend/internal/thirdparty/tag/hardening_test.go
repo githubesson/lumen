@@ -5,6 +5,10 @@ package tag
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/binary"
+	"io"
+	"runtime"
 	"testing"
 )
 
@@ -89,4 +93,186 @@ func TestID3AccessorsIgnoreWrongTypes(t *testing.T) {
 			t.Errorf("%T: got %+v, picture %v; want every field empty", m, got, p)
 		}
 	}
+}
+
+// allocated returns how many bytes f allocates.
+func allocated(f func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+func TestReadBytesBounds(t *testing.T) {
+	data := make([]byte, 1<<20)
+	for _, tc := range []struct {
+		name     string
+		r        io.Reader
+		n        uint
+		maxAlloc uint64
+	}{
+		{"over the cap", bytes.NewReader(data), readBytesMax + 1, 4 << 10},
+		{"past the end of a bytes.Reader", bytes.NewReader(data), 2 << 20, 4 << 10},
+		{"past the end of a seeker", struct{ io.ReadSeeker }{bytes.NewReader(data)}, 2 << 20, 4 << 10},
+		// Nothing tells how much is left, so the read buffers what there is,
+		// but no more: not the 50 MiB asked for.
+		{"past the end of a plain reader", struct{ io.Reader }{bytes.NewReader(data)}, 50 << 20, 8 << 20},
+	} {
+		var err error
+		if n := allocated(func() { _, err = readBytes(tc.r, tc.n) }); n > tc.maxAlloc {
+			t.Errorf("%s: allocated %d bytes, want at most %d", tc.name, n, tc.maxAlloc)
+		}
+		if err == nil {
+			t.Errorf("%s: no error", tc.name)
+		}
+	}
+
+	// Checking a seeker's length leaves it where it was.
+	r := struct{ io.ReadSeeker }{bytes.NewReader([]byte("0123456789"))}
+	if _, err := readBytes(r, 3); err != nil {
+		t.Fatal(err)
+	}
+	if left, ok := remaining(r); !ok || left != 7 {
+		t.Fatalf("remaining = %d, %v; want 7, true", left, ok)
+	}
+	if b, err := readBytes(r, 7); err != nil || string(b) != "3456789" {
+		t.Fatalf("read %q, %v after the length check; want 3456789", b, err)
+	}
+}
+
+// Each file here is tiny but claims a field of up to 4 GiB. It must fail
+// without that being allocated or read.
+func TestLyingSizes(t *testing.T) {
+	be32 := binary.BigEndian.AppendUint32
+	le32 := binary.LittleEndian.AppendUint32
+	flacPictureClaiming := func(n uint32) []byte {
+		pic := be32(make([]byte, 28), n) // type, MIME, description, dimensions, then the data length
+		return append(append([]byte("fLaC"), flacBlock(6, true, pic)...), "audio"...)
+	}
+	m4aItem := func(item []byte) []byte {
+		file := atom("ftyp", []byte("M4A "), make([]byte, 4))
+		file = append(file, 0, 0, 0, 8, 'm', 'o', 'o', 'v', 0, 0, 0, 8, 'i', 'l', 's', 't')
+		return append(append(file, item...), make([]byte, 64)...)
+	}
+	vorbisPacket := func(vendorLen uint32) []byte {
+		return oggPages(le32([]byte("\x03vorbis"), vendorLen))
+	}
+	for _, tc := range []struct {
+		name string
+		file []byte
+	}{
+		{"FLAC picture of 4 GiB", flacPictureClaiming(0xffffffff)},
+		{"FLAC picture of 50 MiB", flacPictureClaiming(50 << 20)},
+		{"FLAC vendor string of 4 GiB", append([]byte("fLaC"), flacBlock(4, true, le32(nil, 0xffffffff))...)},
+		{"Ogg vendor string of 4 GiB", vorbisPacket(0xffffffff)},
+		{"Ogg vendor string of 50 MiB", vorbisPacket(50 << 20)},
+		{"ID3v2.3 frame of 4 GiB", id3v2Tag(3, 0, be32([]byte("TIT2"), 0xffffffff), make([]byte, 64))},
+		{"ID3v2.3 extended header of 4 GiB", id3v2Tag(3, 0x40, be32(nil, 0xffffffff), make([]byte, 64))},
+		{"MP4 data atom of 4 GiB", m4aItem(append(be32(nil, 0xffffffff), "\xa9nam"...))},
+		{"MP4 custom atom of 4 GiB", m4aItem(append(append(be32(nil, 0xfffffff0), "----"...), append(be32(nil, 0xffffff00), "mean"...)...))},
+	} {
+		var err error
+		if n := allocated(func() { _, err = ReadFrom(bytes.NewReader(tc.file)) }); n > 1<<20 {
+			t.Errorf("%s: allocated %d bytes", tc.name, n)
+		}
+		if err == nil {
+			t.Errorf("%s: parsed without error", tc.name)
+		}
+	}
+
+	// A bad METADATA_BLOCK_PICTURE comment is skipped, as upstream does; it
+	// just mustn't be allocated either.
+	picture := base64.StdEncoding.EncodeToString(be32(make([]byte, 28), 0xffffffff))
+	file := oggPages(append([]byte("\x03vorbis"), vorbisComment("TITLE=Song", "METADATA_BLOCK_PICTURE="+picture)...))
+	var m Metadata
+	var err error
+	if n := allocated(func() { m, err = ReadFrom(bytes.NewReader(file)) }); n > 1<<20 {
+		t.Errorf("Ogg picture of 4 GiB: allocated %d bytes", n)
+	}
+	if err != nil || m.Title() != "Song" || m.Picture() != nil {
+		t.Errorf("Ogg picture of 4 GiB: got %v; want the title and no picture", err)
+	}
+}
+
+// Sizes too small for what has to follow them are errors. They're unsigned,
+// so they used to wrap round into huge reads; for ID3v2 frames that read
+// quietly returned nothing and parsing carried on from inside the frame.
+func TestSizeUnderflows(t *testing.T) {
+	be32 := binary.BigEndian.AppendUint32
+	m4a := func(item []byte) []byte {
+		file := append(atom("ftyp", []byte("M4A "), make([]byte, 4)), 0, 0, 0, 8, 'i', 'l', 's', 't')
+		return append(append(file, item...), make([]byte, 64)...)
+	}
+	for name, file := range map[string][]byte{
+		"ID3v2.4 extended header under 4 bytes": id3v2Tag(4, 0x40, syncsafe(2), make([]byte, 64)),
+		// Compression flag, 2 bytes: too short for the 4-byte decompressed size.
+		"ID3v2.3 compressed frame under 4 bytes": id3v2Tag(3, 0, []byte("TIT2\x00\x00\x00\x02\x00\x80"), make([]byte, 64)),
+		// Encryption and data length flags, with a data length of 0: no room
+		// for the encryption method byte.
+		"ID3v2.4 encrypted frame of 0 bytes": id3v2Tag(4, 0, []byte("TIT2\x00\x00\x00\x05\x00\x05"), make([]byte, 64)),
+		"MP4 data atom under 8 bytes":        m4a(append(be32(nil, 4), "\xa9nam"...)),
+		"MP4 custom sub-atom under 8 bytes":  m4a(atom("----", append(be32(nil, 0), "mean"...), make([]byte, 16))),
+	} {
+		if _, err := ReadFrom(bytes.NewReader(file)); err == nil {
+			t.Errorf("%s: parsed without error", name)
+		}
+	}
+}
+
+// A skipped atom too small for its own header ends the walk with the tags
+// found so far, as upstream's underflowed seek did. Size 0 (the atom runs to
+// the end of the file) and 1 (a 64-bit size follows) are legal for media data.
+func TestMP4SkippedAtomSizes(t *testing.T) {
+	for _, header := range [][]byte{
+		[]byte("\x00\x00\x00\x00mdat"),
+		[]byte("\x00\x00\x00\x01mdat\x00\x00\x00\x01\x00\x00\x00\x00"),
+		[]byte("\x00\x00\x00\x05free"),
+	} {
+		file := bytes.Join([][]byte{fixture(t, "with_tags/sample.m4a"), header, []byte("audio")}, nil)
+		m, err := ReadFrom(bytes.NewReader(file))
+		if err != nil {
+			t.Fatalf("%q: %v", header, err)
+		}
+		compareMetadata(t, m, fullMetadata)
+	}
+}
+
+// repeatReader yields b over and over.
+type repeatReader struct {
+	b   []byte
+	off int
+}
+
+func (r *repeatReader) Read(p []byte) (int, error) {
+	n := copy(p, r.b[r.off:])
+	r.off = (r.off + n) % len(r.b)
+	return n, nil
+}
+
+// An Ogg packet continued from page to page stops at the field cap instead of
+// buffering the whole stream.
+func TestOGGPacketLimit(t *testing.T) {
+	lacing := bytes.Repeat([]byte{255}, 255)
+	data := make([]byte, 255*255)
+	first, more := oggPage(0, 0, lacing, data), oggPage(1, 1, lacing, data)
+	stream := io.LimitReader(&repeatReader{b: more}, 2*readBytesMax)
+	counted := &countingReader{r: io.MultiReader(bytes.NewReader(first), stream)}
+	if _, err := ReadOGGTags(counted); err == nil {
+		t.Fatal("no error")
+	}
+	if limit := (readBytesMax/len(data) + 2) * len(more); counted.n > limit {
+		t.Fatalf("read %d bytes, want the reader to stop within %d", counted.n, limit)
+	}
+}
+
+type countingReader struct {
+	r io.Reader
+	n int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += n
+	return n, err
 }

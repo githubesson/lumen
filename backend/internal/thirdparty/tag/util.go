@@ -7,6 +7,7 @@ package tag
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 )
 
@@ -44,8 +45,31 @@ func readUint64LittleEndian(r io.Reader) (uint64, error) {
 // readBytesMaxUpfront is the max up-front allocation allowed
 const readBytesMaxUpfront = 10 << 20 // 10MB
 
+// readBytesMax caps a single field. Sizes come straight from the file, and
+// the biggest real fields, embedded cover art, run to a few MiB (a FLAC block
+// can't pass 16 MiB at all). Without a cap a lying size was honoured up to the
+// end of the input, so a 512 MB upload buffered all of itself, twice over
+// while the buffer grew, before the read failed.
+const readBytesMax = 64 << 20 // 64MB
+
+// readBytesCheckLen is the size from which readBytes first makes sure the
+// input holds n more bytes, when the reader can tell. Smaller reads just try.
+const readBytesCheckLen = 64 << 10 // 64KB
+
 func readBytes(r io.Reader, n uint) ([]byte, error) {
-	if n > readBytesMaxUpfront {
+	if n > readBytesMax {
+		return nil, fmt.Errorf("field of %d bytes is over the %d byte limit", n, readBytesMax)
+	}
+	fits := false
+	if n > readBytesCheckLen {
+		if left, ok := remaining(r); ok {
+			if int64(n) > left {
+				return nil, fmt.Errorf("field of %d bytes with %d left: %w", n, left, io.ErrUnexpectedEOF)
+			}
+			fits = true
+		}
+	}
+	if n > readBytesMaxUpfront && !fits {
 		b := &bytes.Buffer{}
 		if _, err := io.CopyN(b, r, int64(n)); err != nil {
 			return nil, err
@@ -59,6 +83,30 @@ func readBytes(r io.Reader, n uint) ([]byte, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+// remaining reports how many bytes are left in r, when r can tell without
+// consuming any.
+func remaining(r io.Reader) (int64, bool) {
+	switch r := r.(type) {
+	case interface{ Len() int }: // bytes.Reader and the like
+		return int64(r.Len()), true
+	case io.Seeker:
+		cur, err := r.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return 0, false
+		}
+		end, err := r.Seek(0, io.SeekEnd)
+		if err != nil {
+			return 0, false
+		}
+		if _, err := r.Seek(cur, io.SeekStart); err != nil {
+			// Lost our place: report nothing left so the read fails.
+			return 0, true
+		}
+		return end - cur, true
+	}
+	return 0, false
 }
 
 func readString(r io.Reader, n uint) (string, error) {
