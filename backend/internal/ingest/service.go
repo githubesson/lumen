@@ -538,7 +538,7 @@ func (s *Service) StoreCoverImage(ctx context.Context, data []byte, _ string) (s
 	if len(data) == 0 {
 		return "", nil
 	}
-	coverBytes, coverType, err := normalizeCoverBytes(data)
+	coverBytes, coverType, err := normalizeCoverBytes(ctx, data)
 	if err != nil {
 		return "", fmt.Errorf("cover image: %w", err)
 	}
@@ -656,26 +656,36 @@ func (s *Service) SweepOrphanCovers(ctx context.Context, grace time.Duration) (i
 	return removed, err
 }
 
-func normalizeCoverBytes(data []byte) ([]byte, string, error) {
-	src, _, err := imagesafe.Decode(bytes.NewReader(data))
+func normalizeCoverBytes(ctx context.Context, data []byte) ([]byte, string, error) {
+	dst, err := scaleCover(ctx, data)
 	if err != nil {
 		return nil, "", err
 	}
-	bounds := src.Bounds()
-	dstW, dstH, resized := coverDimensions(bounds.Dx(), bounds.Dy(), maxStoredCoverDimension)
-	if !resized {
-		dstW = bounds.Dx()
-		dstH = bounds.Dy()
-	}
-
-	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
-	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, bounds, xdraw.Over, nil)
 
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: storedCoverJPEGQuality}); err != nil {
 		return nil, "", err
 	}
 	return buf.Bytes(), "image/jpeg", nil
+}
+
+// scaleCover decodes a cover and scales it to fit maxStoredCoverDimension,
+// holding the source raster's share of the decode budget only that long.
+func scaleCover(ctx context.Context, data []byte) (*image.RGBA, error) {
+	src, release, err := imagesafe.Decode(ctx, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	bounds := src.Bounds()
+	dstW, dstH, resized := coverDimensions(bounds.Dx(), bounds.Dy(), maxStoredCoverDimension)
+	if !resized {
+		dstW = bounds.Dx()
+		dstH = bounds.Dy()
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, bounds, xdraw.Over, nil)
+	return dst, nil
 }
 
 func coverDimensions(width int, height int, maxSize int) (int, int, bool) {

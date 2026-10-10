@@ -87,7 +87,7 @@ func (h *Stats) ReplayImage(w http.ResponseWriter, r *http.Request) {
 		in.Tracks = append(in.Tracks, card)
 	}
 
-	img, err := preview.BuildReplayCard(in)
+	img, err := preview.BuildReplayCard(r.Context(), in)
 	if err != nil {
 		slog.Error("replay image: render failed", "user", u.ID, "err", err)
 		http.Error(w, "image generation failed", http.StatusInternalServerError)

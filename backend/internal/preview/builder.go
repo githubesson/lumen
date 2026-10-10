@@ -358,7 +358,7 @@ func (b *Builder) runAudio(parent context.Context, in Input, outPath string) err
 
 func (b *Builder) runStory(parent context.Context, in Input, outPath string) error {
 	framePath := outPath + ".frame.png"
-	if err := writeStoryFrame(framePath, in); err != nil {
+	if err := writeStoryFrame(parent, framePath, in); err != nil {
 		return err
 	}
 	defer os.Remove(framePath)
@@ -368,7 +368,7 @@ func (b *Builder) runStory(parent context.Context, in Input, outPath string) err
 
 func (b *Builder) runStoryBackground(parent context.Context, in Input, outPath string) error {
 	framePath := outPath + ".frame.png"
-	if err := writeStoryBackgroundFrame(framePath, in); err != nil {
+	if err := writeStoryBackgroundFrame(parent, framePath, in); err != nil {
 		return err
 	}
 	defer os.Remove(framePath)
@@ -378,7 +378,7 @@ func (b *Builder) runStoryBackground(parent context.Context, in Input, outPath s
 
 func (b *Builder) runCustomStoryBackground(parent context.Context, in Input, bg CustomBackground, outPath string) error {
 	framePath := outPath + ".frame.png"
-	if err := writeCustomStoryBackgroundFrame(framePath, bg); err != nil {
+	if err := writeCustomStoryBackgroundFrame(parent, framePath, bg); err != nil {
 		return err
 	}
 	defer os.Remove(framePath)
@@ -570,8 +570,8 @@ func buildStoryArgs(in Input, framePath string, outPath string) []string {
 	return args
 }
 
-func writeStoryFrame(outPath string, in Input) error {
-	img, err := buildStoryFrame(in)
+func writeStoryFrame(ctx context.Context, outPath string, in Input) error {
+	img, err := buildStoryFrame(ctx, in)
 	if err != nil {
 		return err
 	}
@@ -586,8 +586,8 @@ func writeStoryFrame(outPath string, in Input) error {
 	return nil
 }
 
-func writeStoryBackgroundFrame(outPath string, in Input) error {
-	img, err := buildStoryBackgroundFrame(in)
+func writeStoryBackgroundFrame(ctx context.Context, outPath string, in Input) error {
+	img, err := buildStoryBackgroundFrame(ctx, in)
 	if err != nil {
 		return err
 	}
@@ -602,8 +602,8 @@ func writeStoryBackgroundFrame(outPath string, in Input) error {
 	return nil
 }
 
-func writeCustomStoryBackgroundFrame(outPath string, bg CustomBackground) error {
-	img, err := buildCustomStoryBackgroundFrame(bg)
+func writeCustomStoryBackgroundFrame(ctx context.Context, outPath string, bg CustomBackground) error {
+	img, err := buildCustomStoryBackgroundFrame(ctx, bg)
 	if err != nil {
 		return err
 	}
@@ -618,40 +618,41 @@ func writeCustomStoryBackgroundFrame(outPath string, bg CustomBackground) error 
 	return nil
 }
 
-func buildStoryFrame(in Input) (*image.RGBA, error) {
-	img, err := buildStoryBackgroundFrame(in)
+func buildStoryFrame(ctx context.Context, in Input) (*image.RGBA, error) {
+	img, err := buildStoryBackgroundFrame(ctx, in)
 	if err != nil {
 		return nil, err
 	}
-	drawStoryCard(img, in)
+	drawStoryCard(ctx, img, in)
 	return img, nil
 }
 
-func buildStoryBackgroundFrame(in Input) (*image.RGBA, error) {
+func buildStoryBackgroundFrame(ctx context.Context, in Input) (*image.RGBA, error) {
 	const (
 		w = 1080
 		h = 1920
 	)
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 
-	if cover, err := decodeImageFile(in.CoverPath); err == nil {
-		drawSampledStoryBackground(img, cover, in.TrackID)
-	} else {
-		drawStoryGradientBackground(img, in)
+	if !withImageFile(ctx, in.CoverPath, func(cover image.Image) {
+		drawSampledStoryBackground(ctx, img, cover, in.TrackID)
+	}) {
+		drawStoryGradientBackground(ctx, img, in)
 	}
 
 	return img, nil
 }
 
-func buildCustomStoryBackgroundFrame(bg CustomBackground) (*image.RGBA, error) {
+func buildCustomStoryBackgroundFrame(ctx context.Context, bg CustomBackground) (*image.RGBA, error) {
 	const (
 		w = 1080
 		h = 1920
 	)
-	src, err := decodeImageFile(bg.ImagePath)
+	src, release, err := decodeImageFile(ctx, bg.ImagePath)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	srcRect := normalizedCropRect(src.Bounds(), bg.Crop)
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, srcRect, xdraw.Over, nil)
@@ -716,15 +717,15 @@ func centerAspectCrop(bounds image.Rectangle, aspect float64) image.Rectangle {
 	return image.Rect(bounds.Min.X, y0, bounds.Max.X, y0+nextH)
 }
 
-func drawSampledStoryBackground(dst *image.RGBA, cover image.Image, seed string) {
-	drawBGGenBackground(dst, cover, 7)
+func drawSampledStoryBackground(ctx context.Context, dst *image.RGBA, cover image.Image, seed string) {
+	drawBGGenBackground(ctx, dst, cover, 7)
 }
 
-func drawStoryGradientBackground(dst *image.RGBA, in Input) {
+func drawStoryGradientBackground(ctx context.Context, dst *image.RGBA, in Input) {
 	bounds := dst.Bounds()
 	w := bounds.Dx()
 	h := bounds.Dy()
-	palette := storyPaletteFromCover(in.CoverPath, in.TrackID)
+	palette := storyPaletteFromCover(ctx, in.CoverPath, in.TrackID)
 	rng := seededFloat(in.TrackID)
 	noiseSeed := hashSeed(in.TrackID)
 	for y := 0; y < h; y++ {
@@ -745,7 +746,7 @@ func drawStoryGradientBackground(dst *image.RGBA, in Input) {
 	}
 }
 
-func drawStoryCard(dst *image.RGBA, in Input) {
+func drawStoryCard(ctx context.Context, dst *image.RGBA, in Input) {
 	scale := max(1, dst.Bounds().Dx()/1080)
 	sc := func(v int) int { return v * scale }
 
@@ -767,9 +768,9 @@ func drawStoryCard(dst *image.RGBA, in Input) {
 
 	drawRoundedRect(dst, cardX, cardY, cardW, cardH, cardR, color.RGBA{255, 255, 255, 255})
 
-	if cover, err := decodeImageFile(in.CoverPath); err == nil {
+	if !withImageFile(ctx, in.CoverPath, func(cover image.Image) {
 		drawRoundedImage(dst, cover, coverX, coverY, coverSize, coverSize, coverR)
-	} else {
+	}) {
 		drawRoundedRect(dst, coverX, coverY, coverSize, coverSize, coverR, color.RGBA{232, 233, 238, 255})
 	}
 
@@ -1012,16 +1013,16 @@ type storyPalette struct {
 	b2   rgbf
 }
 
-func storyPaletteFromCover(coverPath string, seed string) storyPalette {
+func storyPaletteFromCover(ctx context.Context, coverPath string, seed string) storyPalette {
 	a := rgbf{44, 70, 170}
 	b := rgbf{170, 30, 145}
 	if coverPath != "" {
-		if img, err := decodeImageFile(coverPath); err == nil {
+		withImageFile(ctx, coverPath, func(img image.Image) {
 			if p, ok := extractStoryParents(img); ok {
 				a = oklchToRGBF(storyOKLCH{l: 0.46, c: math.Max(0.08, math.Min(0.22, p[0].c)), h: p[0].h})
 				b = oklchToRGBF(storyOKLCH{l: 0.48, c: math.Max(0.08, math.Min(0.22, p[1].c)), h: p[1].h})
 			}
-		}
+		})
 	}
 	return storyPalette{
 		base: rgbf{28, 28, 45},
@@ -1032,14 +1033,28 @@ func storyPaletteFromCover(coverPath string, seed string) storyPalette {
 	}
 }
 
-func decodeImageFile(path string) (image.Image, error) {
+// decodeImageFile decodes the image at path within the shared decode budget
+// (see imagesafe.Decode); call release once done with the image.
+func decodeImageFile(ctx context.Context, path string) (img image.Image, release func(), err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, func() {}, err
 	}
 	defer f.Close()
-	img, _, err := imagesafe.Decode(f)
-	return img, err
+	return imagesafe.Decode(ctx, f)
+}
+
+// withImageFile passes the image at path to draw, and reports whether it
+// decoded. Its share of the decode budget is returned when draw does, so a
+// caller drawing several images holds one share at a time.
+func withImageFile(ctx context.Context, path string, draw func(image.Image)) bool {
+	img, release, err := decodeImageFile(ctx, path)
+	if err != nil {
+		return false
+	}
+	defer release()
+	draw(img)
+	return true
 }
 
 type storyOKLCH struct{ l, c, h float64 }

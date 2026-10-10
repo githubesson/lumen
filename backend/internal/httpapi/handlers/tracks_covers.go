@@ -176,7 +176,9 @@ func readCoverUpload(w http.ResponseWriter, r *http.Request) (data []byte, conte
 		http.Error(w, "could not read upload", http.StatusBadRequest)
 		return nil, "", false
 	}
-	if _, _, err := imagesafe.Decode(bytes.NewReader(data)); err != nil {
+	_, release, err := imagesafe.Decode(r.Context(), bytes.NewReader(data))
+	release()
+	if err != nil {
 		http.Error(w, "file is not a supported image (jpeg, png, webp)", http.StatusBadRequest)
 		return nil, "", false
 	}
@@ -654,14 +656,10 @@ func (h *Tracks) serveResizedImage(
 	if _, err := body.Seek(0, io.SeekStart); err != nil {
 		return false
 	}
-	src, _, err := imagesafe.Decode(body)
+	dst, err := scaleImage(r.Context(), body, dstW, dstH)
 	if err != nil {
 		return false
 	}
-	bounds := src.Bounds()
-
-	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
-	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, bounds, xdraw.Over, nil)
 
 	var buf bytes.Buffer
 	outType := thumbType
@@ -686,6 +684,20 @@ func (h *Tracks) serveResizedImage(
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	http.ServeContent(w, r, path.Base(thumbKey), zeroTime(), bytes.NewReader(buf.Bytes()))
 	return true
+}
+
+// scaleImage decodes r and scales it to w x h. The source raster's share of
+// the decode budget is returned as soon as it is scaled, before the caller
+// encodes and writes the thumbnail to a client of any speed.
+func scaleImage(ctx context.Context, r io.Reader, w, h int) (*image.RGBA, error) {
+	src, release, err := imagesafe.Decode(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), xdraw.Over, nil)
+	return dst, nil
 }
 
 func thumbnailDimensions(width int, height int, maxSize int) (int, int, bool) {
