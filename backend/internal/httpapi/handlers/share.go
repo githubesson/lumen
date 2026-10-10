@@ -251,6 +251,13 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	// Share links are public, so they only cover the shared library. A
+	// personal upload is its owner's private file; the public routes refuse
+	// it (GetTrackPublic), so say so now instead of minting a dead link.
+	if t.OwnerID != nil {
+		http.Error(w, "personal uploads can't be shared; only tracks in the shared library can", http.StatusForbidden)
+		return
+	}
 	durationSec, hasDurationSec, err := requestedPreviewDuration(r.URL.Query().Get("d"), t.DurationMS)
 	if err != nil {
 		http.Error(w, "bad d", http.StatusBadRequest)
@@ -414,10 +421,8 @@ func (h *Share) Page(w http.ResponseWriter, r *http.Request) {
 
 	t, err := h.Library.GetTrackPublic(r.Context(), id)
 	if err != nil {
-		// Public preview: only global (non-owner) tracks can be shared. A
-		// personally-owned track's share URL will 404 to everyone but the
-		// owner, which is fine — they'll just pick a track that's in the
-		// library for everyone.
+		// Public preview: only global (non-owner) tracks can be shared, so
+		// a personal upload's share URL 404s, to its owner too.
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -667,6 +672,25 @@ func (h *Share) loadPublicTrack(w http.ResponseWriter, r *http.Request, id uuid.
 	return t, true
 }
 
+// requirePublicTrack 404s unless id is a live shared-library track. The
+// signed media routes call it before anything else because they serve
+// already rendered clips straight from disk: a render can outlive its
+// track's deletion, and clips of personal uploads predate the rule that
+// those aren't shareable. It is one indexed lookup.
+func (h *Share) requirePublicTrack(w http.ResponseWriter, r *http.Request, id uuid.UUID, logLabel string) bool {
+	ok, err := h.Library.TrackIsPublic(r.Context(), id)
+	if err != nil {
+		slog.Error(logLabel+": track lookup failed", "track_id", id.String(), "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
+	}
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return false
+	}
+	return true
+}
+
 // audioPathForBuild resolves a local audio path for a preview build. Local
 // tracks point straight at their file on disk; TIDAL tracks are assembled
 // (segment fetch + decrypt + concat) to a temp file first. That assembly is
@@ -781,10 +805,10 @@ func immutableCacheControl(exp int64) string {
 
 func (h *Share) PublicPreviewVideo(w http.ResponseWriter, r *http.Request) {
 	req, ok := h.parseSignedMediaRequest(w, r, false)
-	if !ok {
+	if !ok || !h.requirePublicTrack(w, r, req.id, "preview video serve") {
 		return
 	}
-	// Already built → serve straight from disk without touching the DB or
+	// Already built → serve straight from disk without loading the track or
 	// (for TIDAL tracks) re-downloading the audio.
 	outPath, cached := h.Preview.CachedPreview(req.id.String(), req.startSec, req.durationSec)
 	if !cached {
@@ -893,7 +917,7 @@ func (h *Share) Embed(w http.ResponseWriter, r *http.Request) {
 // per (track, start_sec, duration_sec) per cache-rotation window.
 func (h *Share) PublicPreview(w http.ResponseWriter, r *http.Request) {
 	req, ok := h.parseSignedMediaRequest(w, r, true)
-	if !ok {
+	if !ok || !h.requirePublicTrack(w, r, req.id, "preview serve") {
 		return
 	}
 	if outPath, ok := h.Preview.CachedPreview(req.id.String(), req.startSec, req.durationSec); ok {

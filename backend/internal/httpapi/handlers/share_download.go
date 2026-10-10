@@ -21,7 +21,7 @@ import (
 func (h *Share) PublicPreviewAudio(w http.ResponseWriter, r *http.Request) {
 	withExpiry := r.URL.Query().Has("exp")
 	req, ok := h.parseSignedMediaRequest(w, r, withExpiry)
-	if !ok {
+	if !ok || !h.requirePublicTrack(w, r, req.id, "preview audio serve") {
 		return
 	}
 	id := req.id.String()

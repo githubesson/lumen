@@ -83,11 +83,14 @@ export function isLocalTrack(track: Pick<TrackListItem, "source">): boolean {
 }
 
 /**
- * Snippet share links work for local tracks and TIDAL tracks. For TIDAL the
- * backend materializes a hidden track row on share, so the signed public
- * preview endpoints have a stable id from which to build the selected MP4.
+ * Snippet share links work for shared-library tracks and TIDAL tracks. For
+ * TIDAL the backend materializes a hidden track row on share, so the signed
+ * public preview endpoints have a stable id from which to build the selected
+ * MP4. A personal upload is its owner's private file, and the server refuses
+ * to make a public link for it.
  */
-export function canShareTrack(track: Pick<TrackListItem, "source">): boolean {
+export function canShareTrack(track: Pick<TrackListItem, "source" | "owned">): boolean {
+  if (track.owned) return false;
   return isLocalTrack(track) || track.source === "tidal";
 }
 

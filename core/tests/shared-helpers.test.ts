@@ -210,6 +210,12 @@ describe("track source predicates", () => {
     expect(canShareTrack({ source: "soundcloud" as never })).toBe(false);
   });
 
+  it("refuses the viewer's own personal upload", () => {
+    expect(canShareTrack({ source: "local", owned: true })).toBe(false);
+    expect(canShareTrack({ source: undefined, owned: true })).toBe(false);
+    expect(canShareTrack({ source: "local", owned: false })).toBe(true);
+  });
+
   it("identifies tidal tracks", () => {
     expect(isTidalTrack({ source: "tidal" })).toBe(true);
     expect(isTidalTrack({ source: undefined })).toBe(false);
