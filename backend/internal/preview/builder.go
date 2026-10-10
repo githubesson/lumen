@@ -458,8 +458,9 @@ func buildArgs(in Input, outPath string) []string {
 		args = append(args,
 			"-loop", "1",
 			"-framerate", "1",
-			"-i", in.CoverPath,
 		)
+		args = append(args, ffsafe.ImageInputArgs()...)
+		args = append(args, "-i", in.CoverPath)
 	}
 	// Fast seek on the audio input via pre-input -ss. Accurate enough for
 	// a short preview and much faster than post-input seeking on long files.

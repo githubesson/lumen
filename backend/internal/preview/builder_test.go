@@ -1,9 +1,17 @@
 package preview
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
+	"io"
+	"math/rand/v2"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -142,6 +150,84 @@ func TestBuildArgsRestrictAudioInput(t *testing.T) {
 			if !slices.Contains(opts, want) {
 				t.Fatalf("%s: %s missing before the audio input: %#v", name, want, args)
 			}
+		}
+	}
+}
+
+// The cover comes from storage or TIDAL's CDN as bytes a temp file's
+// extension only guesses at: ffmpeg must not be free to read it as a
+// playlist either.
+func TestBuildArgsRestrictCoverInput(t *testing.T) {
+	args := buildArgs(Input{AudioPath: "/music/x.mp3", CoverPath: "/c.jpg"}, "/out.mp4")
+	cover := slices.Index(args, "/c.jpg")
+	if cover < 1 || args[cover-1] != "-i" || slices.Index(args, "-i") != cover-1 {
+		t.Fatalf("cover is not the first input: %#v", args)
+	}
+	opts := args[:cover-1]
+	for _, want := range []string{"-protocol_whitelist", "-format_whitelist", "-loop"} {
+		if !slices.Contains(opts, want) {
+			t.Fatalf("%s missing before the cover input: %#v", want, args)
+		}
+	}
+}
+
+// Every format a cover is stored or fetched in must still pass the cover
+// input's demuxer whitelist and render.
+func TestPreviewRendersEachCoverFormat(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	dir := t.TempDir()
+	ffmpeg := func(args ...string) error {
+		out, err := exec.Command("ffmpeg", append([]string{"-nostdin", "-v", "error"}, args...)...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%w (%s)", err, out)
+		}
+		return nil
+	}
+	audio := filepath.Join(dir, "tone.flac")
+	if err := ffmpeg("-f", "lavfi", "-i", "sine=duration=6", "-c:a", "flac", audio); err != nil {
+		t.Fatal(err)
+	}
+	// Noise, so the JPEG is cover-sized: ffmpeg only sniffs a JPEG whose
+	// end it sees in its first probe read, and goes by extension otherwise.
+	src := image.NewRGBA(image.Rect(0, 0, 256, 256))
+	_, _ = rand.NewChaCha8([32]byte{}).Read(src.Pix)
+	covers := map[string]func(io.Writer) error{
+		// JPEG as ingest stores covers (image2, by extension, and jpeg_pipe
+		// without one); PNG as older covers were kept, also under a .jpg
+		// name, since temp files take the key's or URL's extension.
+		"cover.jpg":     func(w io.Writer) error { return jpeg.Encode(w, src, nil) },
+		"cover":         func(w io.Writer) error { return jpeg.Encode(w, src, nil) },
+		"cover.png":     func(w io.Writer) error { return png.Encode(w, src) },
+		"png-cover.jpg": func(w io.Writer) error { return png.Encode(w, src) },
+	}
+	paths := map[string]string{}
+	for name, encode := range covers {
+		var buf bytes.Buffer
+		if err := encode(&buf); err != nil {
+			t.Fatal(err)
+		}
+		paths[name] = filepath.Join(dir, name)
+		if err := os.WriteFile(paths[name], buf.Bytes(), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	webp := filepath.Join(dir, "cover.webp")
+	if err := ffmpeg("-f", "lavfi", "-i", "color=c=red:s=64x64", "-frames:v", "1", "-c:v", "libwebp", webp); err != nil {
+		t.Logf("skipping WebP: ffmpeg can't write it here: %v", err)
+	} else {
+		paths["cover.webp"] = webp
+	}
+	for name, path := range paths {
+		b := &Builder{CacheDir: filepath.Join(dir, "cache-"+name)}
+		out, err := b.EnsureBuilt(context.Background(), Input{TrackID: "t", AudioPath: audio, CoverPath: path, DurationSec: 5})
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if st, err := os.Stat(out); err != nil || st.Size() == 0 {
+			t.Errorf("%s: no preview written: %v", name, err)
 		}
 	}
 }
