@@ -3,6 +3,7 @@ package tidal
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -93,5 +94,55 @@ func TestHLSSegmentClosesBodyWhenOutputFails(t *testing.T) {
 	}), -1, nil, nil, 0)
 	if !errors.Is(err, outputErr) || !body.closed {
 		t.Fatalf("error = %v, body closed = %v", err, body.closed)
+	}
+}
+
+// hlsMediaPlaylist builds a media playlist with the given header lines
+// followed by n segments.
+func hlsMediaPlaylist(header []string, n int) string {
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n")
+	for _, line := range header {
+		b.WriteString(line + "\n")
+	}
+	for i := range n {
+		fmt.Fprintf(&b, "#EXTINF:4.0,\nseg%d.m4s\n", i+1)
+	}
+	b.WriteString("#EXT-X-ENDLIST\n")
+	return b.String()
+}
+
+func TestParseHLSPlaylistLimits(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{name: "segments at the cap", body: hlsMediaPlaylist(nil, maxHLSSegments)},
+		{
+			name:    "segments over the cap",
+			body:    hlsMediaPlaylist(nil, maxHLSSegments+1),
+			wantErr: fmt.Sprintf("more than %d segments", maxHLSSegments),
+		},
+		{
+			// The cheapest hostile playlist: no tags, one byte per URI.
+			name:    "bare one-byte uris",
+			body:    strings.Repeat("s\n", 2<<20),
+			wantErr: fmt.Sprintf("more than %d segments", maxHLSSegments),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseHLSPlaylist(tt.body)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("parseHLSPlaylist returned error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want one containing %q", err, tt.wantErr)
+			}
+		})
 	}
 }

@@ -315,6 +315,14 @@ type hlsSegment struct {
 	keyIndex int
 }
 
+// maxHLSSegments bounds the segments one download fetches. Every non-comment
+// line of a media playlist is a segment, so the 4 MiB playlist cap alone
+// still admits a couple of million tiny URIs, each a sequential GET on a
+// route with no request timeout. TIDAL cuts tracks into segments of about
+// 4 s, so even a 24-hour recording needs ~21,600; 30,000 leaves room for
+// shorter segments without letting a hostile playlist run unbounded.
+const maxHLSSegments = 30000
+
 type parsedPlaylist struct {
 	isMaster      bool
 	variants      []hlsVariant
@@ -374,6 +382,9 @@ func parseHLSPlaylist(body string) (parsedPlaylist, error) {
 			p.variants = append(p.variants, *pendingVariant)
 			pendingVariant = nil
 			continue
+		}
+		if len(p.segments) == maxHLSSegments {
+			return p, fmt.Errorf("hls playlist has more than %d segments", maxHLSSegments)
 		}
 		p.segments = append(p.segments, hlsSegment{uri: line, keyIndex: curKeyIndex})
 	}
