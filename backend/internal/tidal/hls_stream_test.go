@@ -315,6 +315,10 @@ func TestParseHLSPlaylistIVSources(t *testing.T) {
 		{name: "iv not hex", body: key(`METHOD=AES-128,URI="k.key",IV=0x` + strings.Repeat("zz", 16)), wantErr: "hls key iv"},
 		{name: "iv without prefix", body: key(`METHOD=AES-128,URI="k.key",IV=` + ivHex + "00"), wantErr: "hls key iv"},
 		{name: "iv empty", body: key(`METHOD=AES-128,URI="k.key",IV=`), wantErr: "hls key iv"},
+		// Attributes inside a quoted URI are part of the URI.
+		{name: "iv-like text inside the uri", body: key(`METHOD=AES-128,URI="k.key?x=1,IV=abc",IV=0x` + ivHex), wantIV: wantIV},
+		{name: "iv-like text inside the uri, no iv", body: key(`METHOD=AES-128,URI="k.key?x=1,IV=abc"`)},
+		{name: "method-like text inside the uri", body: key(`URI="k.key?METHOD=NONE",METHOD=AES-128,IV=0x` + ivHex), wantIV: wantIV},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -339,5 +343,27 @@ func TestParseHLSPlaylistIVSources(t *testing.T) {
 				t.Fatalf("iv = %x, want %x", gotIV, tt.wantIV)
 			}
 		})
+	}
+}
+
+func TestHLSAttributes(t *testing.T) {
+	got := hlsAttributes(`#EXT-X-KEY:METHOD=AES-128,URI="https://k/key?a=1,IV=x",IV=0x00,KEYFORMAT="identity"`)
+	want := map[string]string{
+		"METHOD":    "AES-128",
+		"URI":       "https://k/key?a=1,IV=x",
+		"IV":        "0x00",
+		"KEYFORMAT": "identity",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("attributes = %q, want %q", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("%s = %q, want %q (all: %q)", k, got[k], v, got)
+		}
+	}
+	// An unterminated quote runs to the end of the line.
+	if got := hlsAttributes(`#EXT-X-KEY:URI="k.key,IV=0x00`); got["URI"] != "k.key,IV=0x00" || len(got) != 1 {
+		t.Fatalf("unterminated quote parsed as %q", got)
 	}
 }

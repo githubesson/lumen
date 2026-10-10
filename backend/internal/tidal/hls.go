@@ -512,9 +512,6 @@ func pkcs7Unpad(in []byte) []byte {
 }
 
 var (
-	hlsKeyMethodRe = regexp.MustCompile(`METHOD=([A-Z0-9_-]+)`)
-	hlsKeyURIRe    = regexp.MustCompile(`URI="([^"]+)"`)
-	hlsKeyIVRe     = regexp.MustCompile(`[:,]\s*IV=([^,]*)`)
 	hlsBandwidthRe = regexp.MustCompile(`BANDWIDTH=(\d+)`)
 	hlsMapURIRe    = regexp.MustCompile(`URI="([^"]+)"`)
 )
@@ -529,25 +526,23 @@ func mapURI(line string) string {
 
 func parseKeyAttrs(line string) (hlsKeyRef, error) {
 	var k hlsKeyRef
-	if m := hlsKeyMethodRe.FindStringSubmatch(line); len(m) == 2 {
-		k.method = strings.TrimSpace(m[1])
-	} else {
+	attrs := hlsAttributes(line)
+	k.method = strings.TrimSpace(attrs["METHOD"])
+	if k.method == "" {
 		return k, errors.New("hls key missing METHOD")
 	}
 	if strings.EqualFold(k.method, "NONE") {
 		return k, nil
 	}
-	if m := hlsKeyURIRe.FindStringSubmatch(line); len(m) == 2 {
-		k.uri = strings.TrimSpace(m[1])
-	}
+	k.uri = strings.TrimSpace(attrs["URI"])
 	if k.uri == "" {
 		return k, errors.New("hls aes-128 key missing URI")
 	}
-	if m := hlsKeyIVRe.FindStringSubmatch(line); len(m) == 2 {
+	if v, ok := attrs["IV"]; ok {
 		// Ignoring a malformed IV would fall back to the media-sequence IV
 		// and decrypt to garbage, so anything but the 128-bit hex value the
 		// spec requires is an error.
-		v := m[1]
+		v = strings.TrimSpace(v)
 		if len(v) != 34 || !strings.EqualFold(v[:2], "0x") {
 			return k, errors.New("hls key iv is not 0x followed by 32 hex digits")
 		}
@@ -558,6 +553,39 @@ func parseKeyAttrs(line string) (hlsKeyRef, error) {
 		k.iv = b
 	}
 	return k, nil
+}
+
+// hlsAttributes splits a tag's attribute list (everything after the first
+// ':') into name=value pairs. Quoted values keep their commas and lose their
+// quotes, so a URI containing ",IV=" or "METHOD=" can't be read as another
+// attribute, which a regexp over the whole line would do. The first of a
+// repeated name wins.
+func hlsAttributes(line string) map[string]string {
+	attrs := map[string]string{}
+	_, rest, ok := strings.Cut(line, ":")
+	if !ok {
+		return attrs
+	}
+	for rest != "" {
+		name, after, ok := strings.Cut(rest, "=")
+		if !ok {
+			break
+		}
+		name = strings.TrimSpace(name)
+		var value string
+		if strings.HasPrefix(after, `"`) {
+			// HLS quoted strings have no escapes: the value ends at the next
+			// quote, and an unterminated one runs to the end of the line.
+			value, rest, _ = strings.Cut(after[1:], `"`)
+			_, rest, _ = strings.Cut(rest, ",")
+		} else {
+			value, rest, _ = strings.Cut(after, ",")
+		}
+		if _, seen := attrs[name]; !seen {
+			attrs[name] = value
+		}
+	}
+	return attrs
 }
 
 func bandwidthFromAttrs(line string) int64 {
