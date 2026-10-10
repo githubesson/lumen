@@ -157,6 +157,9 @@ func main() {
 	if cfg.CoverSignKeyEphemeral {
 		logger.Warn("COVER_SIGN_KEY not set; using an ephemeral key — signed cover URLs will rotate on each restart")
 	}
+	if len(cfg.PublicHosts) == 0 {
+		logger.Warn("PUBLIC_HOSTS not set; share links take their host from the request's Host header")
+	}
 
 	startWorker(func() { runOrphanCoverSweep(ctx, logger, ingestSvc) })
 

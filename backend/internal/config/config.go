@@ -48,11 +48,12 @@ type Config struct {
 	LastFMAPIKey              string
 	LastFMSharedSecret        string
 	TrustedProxies            []string
-	// PublicHosts optionally allowlists the hostnames that may appear in
-	// generated share/embed/og:url absolute URLs. Set via PUBLIC_HOSTS
-	// (comma-separated). Empty means "trust whatever the reverse proxy
-	// forwarded", which is safe as long as TRUSTED_PROXIES is correct — this is
-	// the belt to that suspenders.
+	// PublicHosts allowlists the hostnames that may appear in generated
+	// share/embed/og:url absolute URLs. Set via PUBLIC_HOSTS
+	// (comma-separated); docker-compose requires it. Empty trusts the
+	// request's Host (and whatever a trusted proxy forwarded), which is only
+	// safe while every request arrives through a proxy that pins Host, so
+	// startup warns about it.
 	PublicHosts []string
 	// CoverSignKey is the HMAC secret used to mint/verify public signed
 	// cover-art URLs (for Discord Rich Presence, which fetches large_image

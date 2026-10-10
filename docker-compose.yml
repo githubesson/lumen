@@ -110,7 +110,7 @@ services:
       LASTFM_API_KEY: ${LASTFM_API_KEY:-}
       LASTFM_SHARED_SECRET: ${LASTFM_SHARED_SECRET:-}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
-      PUBLIC_HOSTS: ${PUBLIC_HOSTS:-}
+      PUBLIC_HOSTS: ${PUBLIC_HOSTS:?PUBLIC_HOSTS must be set to the hostname users reach Lumen at}
       GENIUS_PROXY_URL: ${GENIUS_PROXY_URL:-}
       # Per-user cap on personal uploads, in MiB (0 disables).
       PERSONAL_UPLOAD_QUOTA_MB: ${PERSONAL_UPLOAD_QUOTA_MB:-20480}

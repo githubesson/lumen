@@ -291,7 +291,9 @@ Both app ports bind to loopback only — put a reverse proxy in front. Copy
 edit the hostname + TLS setup. It routes `/api/*`, `/share/*`, and `/embed/*`
 to the backend port and everything else to the frontend port, with buffering
 and timeouts tuned for audio streaming. Keep `TRUSTED_PROXIES=172.16.0.0/12`
-in `.env` (default Docker bridge range) so the backend sees real client IPs.
+in `.env` (default Docker bridge range) so the backend sees real client IPs,
+and set `PUBLIC_HOSTS` to the hostname users reach Lumen at, which share
+links are built from.
 
 Serving over HTTPS? Keep `COOKIE_SECURE=true`. Plain HTTP (local only)? Set
 `COOKIE_SECURE=false`, or the browser drops the session cookie.
