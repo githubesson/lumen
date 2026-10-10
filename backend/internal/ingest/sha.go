@@ -67,7 +67,7 @@ func AudioSHA256(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	if sum, err := tagSum(&hashReadSeeker{ctx: ctx, ReadSeeker: f}); err == nil {
+	if sum, err := tagSum(&hashReadSeeker{ctx: ctx, ReadSeeker: newBufferedReadSeeker(f)}); err == nil {
 		return sum, nil
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {

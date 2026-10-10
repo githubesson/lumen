@@ -77,7 +77,7 @@ func ParseFile(path string) (*Metadata, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return parse(f, path)
+	return parse(newBufferedReadSeeker(f), path)
 }
 
 func parse(rs io.ReadSeeker, path string) (*Metadata, error) {
