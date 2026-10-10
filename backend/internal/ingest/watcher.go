@@ -292,6 +292,9 @@ func (w *Watcher) schedule(ctx context.Context, path string) {
 	}
 	var timer *time.Timer
 	timer = time.AfterFunc(w.debounce, func() {
+		// The timer runs this on a goroutine of its own, outside any
+		// recover, so a panic while ingesting the file ended the process.
+		defer safego.Recover("watched file ingest")
 		w.mu.Lock()
 		// Identity check, not a bare delete: when the previous timer had already
 		// fired and its callback was blocked on w.mu, Stop() returned false and
