@@ -79,11 +79,19 @@ func ReadAtoms(r io.ReadSeeker) (Metadata, error) {
 		data:     make(map[string]interface{}),
 		fileType: UnknownFileType,
 	}
-	err := m.readAtoms(r)
+	err := m.readAtoms(r, 0)
 	return m, err
 }
 
-func (m metadataMP4) readAtoms(r io.ReadSeeker) error {
+// maxAtomDepth bounds the container atoms readAtoms descends into, each one a
+// recursive call. Tags sit four levels down (moov/udta/meta/ilst), and since
+// the reader never steps back out of a container the count also takes in any
+// containers after the tags, but real files stay well under this. Unbounded,
+// a file of nothing but nested moov headers recursed until the stack
+// overflowed, which no recover can catch: it killed the whole process.
+const maxAtomDepth = 32
+
+func (m metadataMP4) readAtoms(r io.ReadSeeker, depth int) error {
 	for {
 		name, size, err := readAtomHeader(r)
 		if err != nil {
@@ -103,7 +111,10 @@ func (m metadataMP4) readAtoms(r io.ReadSeeker) error {
 			fallthrough
 
 		case "moov", "udta", "ilst":
-			return m.readAtoms(r)
+			if depth >= maxAtomDepth {
+				return fmt.Errorf("atoms nested more than %d deep", maxAtomDepth)
+			}
+			return m.readAtoms(r, depth+1)
 		}
 
 		_, ok := atoms[name]

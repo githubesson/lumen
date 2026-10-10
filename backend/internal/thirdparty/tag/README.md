@@ -17,3 +17,6 @@ shows only the changes below.
 ## Changes from upstream
 
 - gofmt, and the import path of `internal/id3v1_test`.
+- MP4: `readAtoms` stops after descending into 32 container atoms. Each level
+  recursed, so a file of nested `moov` headers overflowed the goroutine stack,
+  a fatal error no `recover` catches.
