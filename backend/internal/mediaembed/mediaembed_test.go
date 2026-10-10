@@ -6,12 +6,20 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"io"
+	"math/rand/v2"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/githubesson/lumen/internal/downloadfile"
 )
 
 // generateSilentMP4 creates a tiny 1-second silent MP4 file using ffmpeg.
@@ -420,5 +428,94 @@ func TestEmbedFileKeepsOggArtByFailing(t *testing.T) {
 	if res, err := EmbedFile(context.Background(), path, nil, Metadata{Title: "X"}, FormatOgg); err == nil {
 		res.Cleanup()
 		t.Fatal("retagged an Ogg file with art, dropping the art")
+	}
+}
+
+// A library file is retagged wherever it came from, and ffmpeg picks a
+// demuxer by content: an "x.flac" upload whose body is a playlist must not
+// make ffmpeg read another upload (or fetch a URL) into the download.
+func TestEmbedRefusesPlaylistBodies(t *testing.T) {
+	if !Available() {
+		t.Skip("ffmpeg not available")
+	}
+	// Embed spools its input to the temp dir: put it beside the neighbor
+	// too, as an upload sits beside others.
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	neighbor := filepath.Join(dir, "neighbor.flac")
+	if out, err := exec.Command("ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi",
+		"-i", "sine=duration=1", "-c:a", "flac", neighbor).CombinedOutput(); err != nil {
+		t.Fatalf("neighbor: %v (%s)", err, out)
+	}
+	for name, body := range map[string]string{
+		// The concat demuxer's default safe mode still admits a sibling file.
+		"ffconcat": "ffconcat version 1.0\nfile 'neighbor.flac'\n",
+		"hls file": "#EXTM3U\n#EXT-X-TARGETDURATION:5\n#EXTINF:1.0,\n" + neighbor + "\n#EXT-X-ENDLIST\n",
+		"hls url":  "#EXTM3U\n#EXT-X-TARGETDURATION:5\n#EXTINF:1.0,\nhttp://127.0.0.1:9/x.ts\n#EXT-X-ENDLIST\n",
+	} {
+		path := filepath.Join(dir, "upload.flac")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if res, err := EmbedFile(context.Background(), path, nil, Metadata{Title: "X"}, FormatFLAC); err == nil {
+			res.Cleanup()
+			t.Errorf("%s: a playlist upload was remuxed into a download", name)
+		}
+		if res, err := Embed(context.Background(), io.NopCloser(strings.NewReader(body)), nil, Metadata{Title: "X"}, FormatFLAC); err == nil {
+			res.Cleanup()
+			t.Errorf("%s: a playlist stream was remuxed", name)
+		}
+	}
+}
+
+// Embed spools its input to the temp dir before ffmpeg runs; an upstream
+// that never stops sending must not fill it.
+func TestEmbedCapsInputSize(t *testing.T) {
+	if !Available() {
+		t.Skip("ffmpeg not available")
+	}
+	prev := downloadfile.MaxFileBytes
+	downloadfile.MaxFileBytes = 1 << 10
+	t.Cleanup(func() { downloadfile.MaxFileBytes = prev })
+	body := io.NopCloser(io.LimitReader(zeroReader{}, 4<<10))
+	if res, err := Embed(context.Background(), body, nil, Metadata{}, FormatFLAC); !errors.Is(err, downloadfile.ErrTooLarge) {
+		if res != nil {
+			res.Cleanup()
+		}
+		t.Fatalf("err = %v, want downloadfile.ErrTooLarge", err)
+	}
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+// The cover input is restricted to image demuxers; covers as they are stored
+// or fetched must still get through. ffmpeg sniffs PNG (and small JPEGs),
+// but takes a cover-sized JPEG by its extension.
+func TestEmbedFileTakesStoredCoverFormats(t *testing.T) {
+	path := libraryFile(t, ".flac")
+	noise := image.NewRGBA(image.Rect(0, 0, 256, 256))
+	_, _ = rand.NewChaCha8([32]byte{}).Read(noise.Pix)
+	for codec, encode := range map[string]func(io.Writer) error{
+		"mjpeg": func(w io.Writer) error { return jpeg.Encode(w, noise, nil) },
+		"png":   func(w io.Writer) error { return png.Encode(w, noise) },
+	} {
+		var cover bytes.Buffer
+		if err := encode(&cover); err != nil {
+			t.Fatal(err)
+		}
+		res, err := EmbedFile(context.Background(), path, cover.Bytes(), Metadata{Title: "X"}, FormatFLAC)
+		if err != nil {
+			t.Fatalf("EmbedFile with a %s cover: %v", codec, err)
+		}
+		_, pics := probe(t, res.File.Name())
+		res.Cleanup()
+		if len(pics) != 1 || pics[0] != codec {
+			t.Fatalf("pictures %v, want the given %s", pics, codec)
+		}
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"unicode"
 
 	"github.com/githubesson/lumen/internal/httpx"
+	"github.com/githubesson/lumen/internal/safego"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -594,27 +595,31 @@ func (c *Client) streamURL(ctx context.Context, id string) (string, bool, error)
 	}
 	slog.Debug("tidal hifi stream cache miss", "track", id, "quality", defaultQuality(c.cfg.Quality))
 	result := c.streamGroup.DoChan(key, func() (any, error) {
-		// A request may have filled the cache while this caller was joining the
-		// singleflight operation.
-		if cached, ok := c.cachedStreamURL(key, time.Now()); ok {
-			return cached.URL, cached.Err
-		}
-		// Shared resolution must not be owned by the first request's lifetime:
-		// later waiters can still use the result if that client disconnects.
-		resolveCtx, cancel := context.WithTimeout(c.ctx, streamResolveTimeout)
-		defer cancel()
-		stream, err := c.resolveHifiStream(resolveCtx, id)
-		if err != nil {
-			slog.Warn("tidal hifi stream manifest resolve failed", "track", id, "quality", defaultQuality(c.cfg.Quality), "err", err)
-			err = fmt.Errorf("hifi-api playback failed: %w", err)
-			if errors.Is(err, ErrRefused) {
-				c.storeCachedStream(key, cachedStream{Err: err}, streamRefusalTTL, time.Now())
+		// DoChan re-raises a panic on a goroutine nothing can recover, which
+		// would take the whole process down with this one resolution.
+		return safego.Call("tidal stream resolve", func() (any, error) {
+			// A request may have filled the cache while this caller was joining the
+			// singleflight operation.
+			if cached, ok := c.cachedStreamURL(key, time.Now()); ok {
+				return cached.URL, cached.Err
 			}
-			return "", err
-		}
-		c.storeCachedStream(key, cachedStream{URL: stream.URL, Quality: stream.Quality}, streamCacheTTL, time.Now())
-		slog.Debug("tidal hifi stream cached", "track", id, "quality", defaultQuality(c.cfg.Quality), "served", stream.Quality, "url", logSafeURL(stream.URL))
-		return stream.URL, nil
+			// Shared resolution must not be owned by the first request's lifetime:
+			// later waiters can still use the result if that client disconnects.
+			resolveCtx, cancel := context.WithTimeout(c.ctx, streamResolveTimeout)
+			defer cancel()
+			stream, err := c.resolveHifiStream(resolveCtx, id)
+			if err != nil {
+				slog.Warn("tidal hifi stream manifest resolve failed", "track", id, "quality", defaultQuality(c.cfg.Quality), "err", err)
+				err = fmt.Errorf("hifi-api playback failed: %w", err)
+				if errors.Is(err, ErrRefused) {
+					c.storeCachedStream(key, cachedStream{Err: err}, streamRefusalTTL, time.Now())
+				}
+				return "", err
+			}
+			c.storeCachedStream(key, cachedStream{URL: stream.URL, Quality: stream.Quality}, streamCacheTTL, time.Now())
+			slog.Debug("tidal hifi stream cached", "track", id, "quality", defaultQuality(c.cfg.Quality), "served", stream.Quality, "url", logSafeURL(stream.URL))
+			return stream.URL, nil
+		})
 	})
 	select {
 	case <-ctx.Done():

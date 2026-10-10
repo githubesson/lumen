@@ -5,6 +5,7 @@ package preview
 // that paint the story-card background. Split out of builder.go.
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"math"
@@ -26,13 +27,13 @@ type bgGenCluster struct {
 	score float64
 }
 
-func drawBGGenBackground(dst *image.RGBA, cover image.Image, seed uint32) {
+func drawBGGenBackground(ctx context.Context, dst *image.RGBA, cover image.Image, seed uint32) {
 	bounds := dst.Bounds()
 	w := bounds.Dx()
 	h := bounds.Dy()
 	colors, neutrals, darks := bgGenExtractPalette(cover, 12)
 	if len(colors) == 0 {
-		drawStoryGradientBackground(dst, Input{TrackID: strconv.FormatUint(uint64(seed), 10)})
+		drawStoryGradientBackground(ctx, dst, Input{TrackID: strconv.FormatUint(uint64(seed), 10)})
 		return
 	}
 
