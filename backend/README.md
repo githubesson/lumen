@@ -53,7 +53,7 @@ filen-downloader/     Node 20 helper the Docker image bundles for Filen links
 
 ## Run (local)
 
-Requires Go 1.24.1+ and a Postgres 16 instance:
+Requires Go 1.26+ and a Postgres 16 instance:
 
 ```sh
 docker run --rm -e POSTGRES_PASSWORD=mlib -e POSTGRES_USER=mlib -e POSTGRES_DB=mlib -p 5432:5432 postgres:16
