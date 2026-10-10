@@ -67,7 +67,7 @@ func AudioSHA256(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	if sum, err := tag.Sum(&hashReadSeeker{ctx: ctx, ReadSeeker: f}); err == nil {
+	if sum, err := tagSum(&hashReadSeeker{ctx: ctx, ReadSeeker: f}); err == nil {
 		return sum, nil
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
@@ -78,6 +78,13 @@ func AudioSHA256(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// tagSum is tag.Sum with a panic turned into an error, which sends
+// AudioSHA256 on to the full-file hash.
+func tagSum(rs io.ReadSeeker) (sum string, err error) {
+	defer recoverTagPanic(&err)
+	return tag.Sum(rs)
 }
 
 var errFormatUnsupportedNative = errors.New("no native audio-hash for this extension")
