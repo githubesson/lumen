@@ -276,3 +276,51 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	c.n += n
 	return n, err
 }
+
+// unsync applies ID3 unsynchronisation: a zero after every 0xFF.
+func unsync(b []byte) []byte {
+	var out []byte
+	for _, c := range b {
+		out = append(out, c)
+		if c == 0xff {
+			out = append(out, 0)
+		}
+	}
+	return out
+}
+
+// readCounter counts the reads that reach the underlying file.
+type readCounter struct {
+	io.ReadSeeker
+	reads int
+}
+
+func (r *readCounter) Read(p []byte) (int, error) {
+	r.reads++
+	return r.ReadSeeker.Read(p)
+}
+
+// An unsynchronised tag reads the same as a plain one, and through a buffer:
+// upstream issued a read on the file for every byte.
+func TestUnsynchronisedTag(t *testing.T) {
+	private := append([]byte("lumen\x00"), bytes.Repeat([]byte{0xff, 0xe0}, 1<<20)...)
+	body := unsync(append(id3v2Frame(3, "PRIV", private), id3v2Sample(3)[10:]...))
+	file := append(append([]byte{'I', 'D', '3', 3, 0, 0x80}, syncsafe(len(body))...), body...)
+	file = append(file, mp3Audio()...)
+
+	r := &readCounter{ReadSeeker: bytes.NewReader(file)}
+	m, err := ReadFrom(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compareMetadata(t, m, fullMetadata)
+	if p := m.Picture(); p == nil || !bytes.Equal(p.Data, samplePicture) {
+		t.Errorf("picture = %v, want the sample's", p)
+	}
+	if got, _ := m.Raw()["PRIV"].([]byte); !bytes.Equal(got, private) {
+		t.Errorf("PRIV frame of %d bytes, want %d", len(got), len(private))
+	}
+	if r.reads > len(file)/1024 {
+		t.Errorf("%d reads for a %d-byte file", r.reads, len(file))
+	}
+}

@@ -89,6 +89,8 @@ func readBytes(r io.Reader, n uint) ([]byte, error) {
 // consuming any.
 func remaining(r io.Reader) (int64, bool) {
 	switch r := r.(type) {
+	case interface{ remaining() (int64, bool) }: // unsynchroniser
+		return r.remaining()
 	case interface{ Len() int }: // bytes.Reader and the like
 		return int64(r.Len()), true
 	case io.Seeker:

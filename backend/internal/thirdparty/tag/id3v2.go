@@ -5,6 +5,7 @@
 package tag
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -415,25 +416,43 @@ func readID3v2Frames(r io.Reader, offset uint, h *id3v2Header) (map[string]inter
 type unsynchroniser struct {
 	io.Reader
 	ff bool
+
+	// buf is what Read takes bytes from. Upstream read the source itself a
+	// byte at a time, an allocation plus (on an *os.File) a syscall per byte,
+	// so a 256 MB unsynchronised tag kept a core busy for nearly two minutes.
+	buf *bufio.Reader
 }
 
 // filter io.Reader which skip the Unsynchronisation bytes
 func (r *unsynchroniser) Read(p []byte) (int, error) {
-	b := make([]byte, 1)
+	if r.buf == nil {
+		r.buf = bufio.NewReader(r.Reader)
+	}
 	i := 0
 	for i < len(p) {
-		if n, err := r.Reader.Read(b); err != nil || n == 0 {
+		b, err := r.buf.ReadByte()
+		if err != nil {
 			return i, err
 		}
-		if r.ff && b[0] == 0x00 {
+		if r.ff && b == 0x00 {
 			r.ff = false
 			continue
 		}
-		p[i] = b[0]
+		p[i] = b
 		i++
-		r.ff = (b[0] == 0xFF)
+		r.ff = (b == 0xFF)
 	}
 	return i, nil
+}
+
+// remaining bounds what Read can still return for readBytes: the source's
+// unread bytes, buffered or not, which removing stuffing only shrinks.
+func (r *unsynchroniser) remaining() (int64, bool) {
+	n, ok := remaining(r.Reader)
+	if r.buf != nil {
+		n += int64(r.buf.Buffered())
+	}
+	return n, ok
 }
 
 // ReadID3v2Tags parses ID3v2.{2,3,4} tags from the io.ReadSeeker into a Metadata, returning
