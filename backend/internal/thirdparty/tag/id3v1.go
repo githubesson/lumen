@@ -120,13 +120,20 @@ func (metadataID3v1) Format() Format                { return ID3v1 }
 func (metadataID3v1) FileType() FileType            { return MP3 }
 func (m metadataID3v1) Raw() map[string]interface{} { return m }
 
-func (m metadataID3v1) Title() string  { return m["title"].(string) }
-func (m metadataID3v1) Album() string  { return m["album"].(string) }
-func (m metadataID3v1) Artist() string { return m["artist"].(string) }
-func (m metadataID3v1) Genre() string  { return m["genre"].(string) }
+// ReadID3v1Tags fills every field with its own type, but the accessors check
+// anyway so a later change there can't turn into a panic here.
+func (m metadataID3v1) getString(k string) string {
+	v, _ := m[k].(string)
+	return v
+}
+
+func (m metadataID3v1) Title() string  { return m.getString("title") }
+func (m metadataID3v1) Album() string  { return m.getString("album") }
+func (m metadataID3v1) Artist() string { return m.getString("artist") }
+func (m metadataID3v1) Genre() string  { return m.getString("genre") }
 
 func (m metadataID3v1) Year() int {
-	y := m["year"].(string)
+	y := m.getString("year")
 	n, err := strconv.Atoi(y)
 	if err != nil {
 		return 0
@@ -134,11 +141,14 @@ func (m metadataID3v1) Year() int {
 	return n
 }
 
-func (m metadataID3v1) Track() (int, int) { return m["track"].(int), 0 }
+func (m metadataID3v1) Track() (int, int) {
+	n, _ := m["track"].(int)
+	return n, 0
+}
 
 func (m metadataID3v1) AlbumArtist() string { return "" }
 func (m metadataID3v1) Composer() string    { return "" }
 func (metadataID3v1) Disc() (int, int)      { return 0, 0 }
 func (m metadataID3v1) Picture() *Picture   { return nil }
 func (m metadataID3v1) Lyrics() string      { return "" }
-func (m metadataID3v1) Comment() string     { return m["comment"].(string) }
+func (m metadataID3v1) Comment() string     { return m.getString("comment") }

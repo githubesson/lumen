@@ -297,10 +297,14 @@ func (m metadataMP4) FileType() FileType { return m.fileType }
 
 func (m metadataMP4) Raw() map[string]interface{} { return m.data }
 
+// The file picks each value's type (a data atom's class, or a custom ----
+// atom named after a standard one), so the accessors below check it: a value
+// of the wrong type reads as absent instead of panicking.
+
 func (m metadataMP4) getString(n []string) string {
 	for _, k := range n {
-		if x, ok := m.data[k]; ok {
-			return x.(string)
+		if x, ok := m.data[k].(string); ok {
+			return x
 		}
 	}
 	return ""
@@ -308,8 +312,8 @@ func (m metadataMP4) getString(n []string) string {
 
 func (m metadataMP4) getInt(n []string) int {
 	for _, k := range n {
-		if x, ok := m.data[k]; ok {
-			return x.(int)
+		if x, ok := m.data[k].(int); ok {
+			return x
 		}
 	}
 	return 0
@@ -350,34 +354,20 @@ func (m metadataMP4) Year() int {
 
 func (m metadataMP4) Track() (int, int) {
 	x := m.getInt([]string{"trkn"})
-	if n, ok := m.data["trkn_count"]; ok {
-		return x, n.(int)
-	}
-	return x, 0
+	return x, m.getInt([]string{"trkn_count"})
 }
 
 func (m metadataMP4) Disc() (int, int) {
 	x := m.getInt([]string{"disk"})
-	if n, ok := m.data["disk_count"]; ok {
-		return x, n.(int)
-	}
-	return x, 0
+	return x, m.getInt([]string{"disk_count"})
 }
 
 func (m metadataMP4) Lyrics() string {
-	t, ok := m.data["\xa9lyr"]
-	if !ok {
-		return ""
-	}
-	return t.(string)
+	return m.getString([]string{"\xa9lyr"})
 }
 
 func (m metadataMP4) Comment() string {
-	t, ok := m.data["\xa9cmt"]
-	if !ok {
-		return ""
-	}
-	return t.(string)
+	return m.getString([]string{"\xa9cmt"})
 }
 
 func (m metadataMP4) Picture() *Picture {

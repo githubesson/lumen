@@ -20,3 +20,6 @@ shows only the changes below.
 - MP4: `readAtoms` stops after descending into 32 container atoms. Each level
   recursed, so a file of nested `moov` headers overflowed the goroutine stack,
   a fatal error no `recover` catches.
+- Accessors use checked type assertions, so a value of the wrong type reads as
+  absent. In MP4 the file picks the type (a data atom's class, or a custom
+  `----` atom named like a standard one), and `Title()` and friends panicked.

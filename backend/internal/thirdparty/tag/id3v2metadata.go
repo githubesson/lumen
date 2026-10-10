@@ -53,12 +53,11 @@ type metadataID3v2 struct {
 	frames map[string]interface{}
 }
 
+// Frames are typed by their ID, but the accessors still check: a value of the
+// wrong type reads as absent rather than panicking.
 func (m metadataID3v2) getString(k string) string {
-	v, ok := m.frames[k]
-	if !ok {
-		return ""
-	}
-	return v.(string)
+	v, _ := m.frames[k].(string)
+	return v
 }
 
 func (m metadataID3v2) Format() Format              { return m.header.Version }
@@ -124,29 +123,26 @@ func (m metadataID3v2) Disc() (int, int) {
 }
 
 func (m metadataID3v2) Lyrics() string {
-	t, ok := m.frames[frames.Name("lyrics", m.Format())]
+	t, ok := m.frames[frames.Name("lyrics", m.Format())].(*Comm)
 	if !ok {
 		return ""
 	}
-	return t.(*Comm).Text
+	return t.Text
 }
 
 func (m metadataID3v2) Comment() string {
-	t, ok := m.frames[frames.Name("comment", m.Format())]
+	t, ok := m.frames[frames.Name("comment", m.Format())].(*Comm)
 	if !ok {
 		return ""
 	}
 	// id3v23 has Text, id3v24 has Description
-	if t.(*Comm).Description == "" {
-		return trimString(t.(*Comm).Text)
+	if t.Description == "" {
+		return trimString(t.Text)
 	}
-	return trimString(t.(*Comm).Description)
+	return trimString(t.Description)
 }
 
 func (m metadataID3v2) Picture() *Picture {
-	v, ok := m.frames[frames.Name("picture", m.Format())]
-	if !ok {
-		return nil
-	}
-	return v.(*Picture)
+	v, _ := m.frames[frames.Name("picture", m.Format())].(*Picture)
+	return v
 }
