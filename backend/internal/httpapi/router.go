@@ -74,6 +74,14 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(chimw.RequestID)
 	r.Use(chimw.Recoverer)
 	r.Use(appmw.NoSniff)
+	// Session cookies are SameSite=Lax, which keeps other sites' forms and
+	// fetches from carrying them, but SameSite treats every subdomain of the
+	// registrable domain as the same site. This also refuses any non-GET
+	// request a browser marks as coming from another origin. The web app,
+	// the desktop app's loopback proxy and the share pages all call the API
+	// same-origin, and the mobile app sends no browser headers, so none of
+	// them trip it.
+	r.Use(http.NewCrossOriginProtection().Handler)
 	r.Use(appmw.Authenticate(d.Sessions))
 
 	authH := &handlers.Auth{
