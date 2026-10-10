@@ -2,10 +2,15 @@ package tidal
 
 import (
 	"bytes"
+	"context"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -93,5 +98,246 @@ func TestHLSSegmentClosesBodyWhenOutputFails(t *testing.T) {
 	}), -1, nil, nil, 0)
 	if !errors.Is(err, outputErr) || !body.closed {
 		t.Fatalf("error = %v, body closed = %v", err, body.closed)
+	}
+}
+
+// hlsMediaPlaylist builds a media playlist with the given header lines
+// followed by n segments.
+func hlsMediaPlaylist(header []string, n int) string {
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n")
+	for _, line := range header {
+		b.WriteString(line + "\n")
+	}
+	for i := range n {
+		fmt.Fprintf(&b, "#EXTINF:4.0,\nseg%d.m4s\n", i+1)
+	}
+	b.WriteString("#EXT-X-ENDLIST\n")
+	return b.String()
+}
+
+func TestParseHLSPlaylistLimits(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{name: "segments at the cap", body: hlsMediaPlaylist(nil, maxHLSSegments)},
+		{
+			name:    "segments over the cap",
+			body:    hlsMediaPlaylist(nil, maxHLSSegments+1),
+			wantErr: fmt.Sprintf("more than %d segments", maxHLSSegments),
+		},
+		{
+			// The cheapest hostile playlist: no tags, one byte per URI.
+			name:    "bare one-byte uris",
+			body:    strings.Repeat("s\n", 2<<20),
+			wantErr: fmt.Sprintf("more than %d segments", maxHLSSegments),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseHLSPlaylist(tt.body)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("parseHLSPlaylist returned error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want one containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestFileResponseHLSFetchLimits checks that a download fetches each AES-128
+// key once however often the playlist names it, and that playlists over the
+// segment or key caps fail before anything is fetched from the media host.
+func TestFileResponseHLSFetchLimits(t *testing.T) {
+	streamClient, restore := allowLoopbackMedia()
+	defer restore()
+
+	iv := bytes.Repeat([]byte{7}, 16)
+	keyLine := func(uri string) string {
+		return `#EXT-X-KEY:METHOD=AES-128,URI="` + uri + `",IV=0x` + hex.EncodeToString(iv)
+	}
+	playlist := func(lines ...string) string {
+		return "#EXTM3U\n" + strings.Join(lines, "\n") + "\n#EXT-X-ENDLIST\n"
+	}
+	var repeatedKey, tooManyKeys []string
+	for i := range 50 {
+		repeatedKey = append(repeatedKey, keyLine("keys/1.key"), "#EXTINF:4.0,", fmt.Sprintf("seg%d.m4s", i+1))
+	}
+	for i := range maxHLSKeys + 1 {
+		tooManyKeys = append(tooManyKeys, keyLine(fmt.Sprintf("keys/%d.key", i+1)))
+	}
+	tooManyKeys = append(tooManyKeys, "#EXTINF:4.0,", "seg1.m4s")
+
+	tests := []struct {
+		name     string
+		playlist string
+		// wantSegments is how many segments, seg1.m4s onwards, the body holds.
+		wantSegments int
+		wantKeys     map[string]int
+		wantErr      string
+	}{
+		{
+			name:         "one key repeated before every segment",
+			playlist:     playlist(repeatedKey...),
+			wantSegments: 50,
+			wantKeys:     map[string]int{"/media/keys/1.key": 1},
+		},
+		{
+			name: "rotated keys named again in other spellings",
+			playlist: playlist(
+				keyLine("keys/1.key"), "#EXTINF:4.0,", "seg1.m4s",
+				keyLine("keys/2.key"), "#EXTINF:4.0,", "seg2.m4s",
+				keyLine("./keys/1.key"), "#EXTINF:4.0,", "seg3.m4s",
+				keyLine("/media/keys/2.key"), "#EXTINF:4.0,", "seg4.m4s",
+			),
+			wantSegments: 4,
+			wantKeys:     map[string]int{"/media/keys/1.key": 1, "/media/keys/2.key": 1},
+		},
+		{
+			name:     "more distinct keys than the cap",
+			playlist: playlist(tooManyKeys...),
+			wantErr:  fmt.Sprintf("more than %d keys", maxHLSKeys),
+		},
+		{
+			name:     "more segments than the cap",
+			playlist: hlsMediaPlaylist(nil, maxHLSSegments+1),
+			wantErr:  fmt.Sprintf("more than %d segments", maxHLSSegments),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var mu sync.Mutex
+			keyFetches := map[string]int{}
+			segmentFetches := 0
+			var srv *httptest.Server
+			srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/trackManifests/":
+					mediaURL := srv.URL + "/media/playlist.m3u8"
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"version":"2.10","data":{"data":{"attributes":{"trackPresentation":"FULL","uri":"` + mediaURL + `"}}}}`))
+				case r.URL.Path == "/media/playlist.m3u8":
+					w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+					_, _ = w.Write([]byte(tt.playlist))
+				case strings.HasPrefix(r.URL.Path, "/media/keys/"):
+					mu.Lock()
+					keyFetches[r.URL.Path]++
+					mu.Unlock()
+					_, _ = w.Write(aesKeyFixture)
+				case strings.HasPrefix(r.URL.Path, "/media/seg"):
+					mu.Lock()
+					segmentFetches++
+					mu.Unlock()
+					_, _ = w.Write(encryptAES128CBC([]byte(r.URL.Path[len("/media/"):]), aesKeyFixture, iv))
+				case r.URL.Path == "/track/":
+					http.Error(w, "no fallback", http.StatusInternalServerError)
+				default:
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			c := NewClient(Config{HifiAPIURL: srv.URL, Quality: "LOSSLESS"})
+			c.stream = streamClient
+			resp, err := c.FileResponse(context.Background(), "123", nil)
+			if tt.wantErr != "" {
+				if err == nil {
+					resp.Body.Close()
+					t.Fatalf("FileResponse succeeded, want error containing %q", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want one containing %q", err, tt.wantErr)
+				}
+				if len(keyFetches) != 0 || segmentFetches != 0 {
+					t.Fatalf("fetched keys %v and %d segments before failing", keyFetches, segmentFetches)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("FileResponse returned error: %v", err)
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				t.Fatalf("read body: %v", err)
+			}
+			var want strings.Builder
+			for i := range tt.wantSegments {
+				fmt.Fprintf(&want, "seg%d.m4s", i+1)
+			}
+			if string(body) != want.String() {
+				t.Fatalf("body = %q, want %q", body, want.String())
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if fmt.Sprint(keyFetches) != fmt.Sprint(tt.wantKeys) {
+				t.Fatalf("key fetches = %v, want %v", keyFetches, tt.wantKeys)
+			}
+		})
+	}
+}
+
+func TestParseHLSPlaylistIVSources(t *testing.T) {
+	const ivHex = "000102030405060708090a0b0c0d0e0f"
+	wantIV, _ := hex.DecodeString(ivHex)
+	sequence := func(value string) string {
+		return hlsMediaPlaylist([]string{"#EXT-X-MEDIA-SEQUENCE:" + value}, 1)
+	}
+	key := func(attrs string) string {
+		return hlsMediaPlaylist([]string{"#EXT-X-KEY:" + attrs}, 1)
+	}
+	tests := []struct {
+		name    string
+		body    string
+		wantSeq uint64
+		wantIV  []byte
+		wantErr string
+	}{
+		{name: "media sequence", body: sequence("7"), wantSeq: 7},
+		{name: "no media sequence", body: hlsMediaPlaylist(nil, 1)},
+		{name: "media sequence not a number", body: sequence("abc"), wantErr: "hls media sequence"},
+		{name: "media sequence empty", body: sequence(""), wantErr: "hls media sequence"},
+		{name: "media sequence negative", body: sequence("-1"), wantErr: "hls media sequence"},
+		{name: "media sequence past 64 bits", body: sequence("18446744073709551616"), wantErr: "hls media sequence"},
+
+		{name: "iv", body: key(`METHOD=AES-128,URI="k.key",IV=0x` + ivHex), wantIV: wantIV},
+		{name: "iv with upper-case prefix", body: key(`METHOD=AES-128,URI="k.key",IV=0X` + strings.ToUpper(ivHex)), wantIV: wantIV},
+		{name: "iv as first attribute", body: key(`IV=0x` + ivHex + `,METHOD=AES-128,URI="k.key"`), wantIV: wantIV},
+		{name: "no iv", body: key(`METHOD=AES-128,URI="k.key"`)},
+		{name: "iv too short", body: key(`METHOD=AES-128,URI="k.key",IV=0x0001`), wantErr: "hls key iv"},
+		{name: "iv too long", body: key(`METHOD=AES-128,URI="k.key",IV=0x` + ivHex + "00"), wantErr: "hls key iv"},
+		{name: "iv not hex", body: key(`METHOD=AES-128,URI="k.key",IV=0x` + strings.Repeat("zz", 16)), wantErr: "hls key iv"},
+		{name: "iv without prefix", body: key(`METHOD=AES-128,URI="k.key",IV=` + ivHex + "00"), wantErr: "hls key iv"},
+		{name: "iv empty", body: key(`METHOD=AES-128,URI="k.key",IV=`), wantErr: "hls key iv"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := parseHLSPlaylist(tt.body)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseHLSPlaylist returned error: %v", err)
+			}
+			if p.mediaSequence != tt.wantSeq {
+				t.Fatalf("media sequence = %d, want %d", p.mediaSequence, tt.wantSeq)
+			}
+			var gotIV []byte
+			if len(p.keys) > 0 {
+				gotIV = p.keys[0].iv
+			}
+			if !bytes.Equal(gotIV, tt.wantIV) {
+				t.Fatalf("iv = %x, want %x", gotIV, tt.wantIV)
+			}
+		})
 	}
 }

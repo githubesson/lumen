@@ -55,11 +55,14 @@ func (c *Client) assembleHLSFile(ctx context.Context, rawURL string, onRefused f
 		return nil, errors.New("tidal media playlist had no segments")
 	}
 
-	// Fetch keys up front so resolution errors surface before streaming.
-	keys := make([][]byte, len(parsed.keys))
+	// Fetch keys up front so resolution errors surface before streaming. A
+	// playlist may repeat one #EXT-X-KEY line before every segment, so each
+	// distinct key URL is fetched once, and only after the number of
+	// distinct keys has been checked.
+	keyURLs := make([]string, len(parsed.keys))
+	keyByURL := make(map[string][]byte)
 	for i, k := range parsed.keys {
 		if strings.EqualFold(k.method, "NONE") || k.method == "" {
-			keys[i] = nil
 			continue
 		}
 		if !strings.EqualFold(k.method, "AES-128") {
@@ -70,11 +73,25 @@ func (c *Client) assembleHLSFile(ctx context.Context, rawURL string, onRefused f
 			slog.Warn("tidal hls key url rejected", "url", logSafeURL(keyURL), "err", err)
 			return nil, err
 		}
-		keyBytes, kerr := c.fetchKey(ctx, keyURL)
-		if kerr != nil {
-			return nil, fmt.Errorf("tidal hls key fetch failed: %w", kerr)
+		keyURLs[i] = keyURL
+		keyByURL[keyURL] = nil
+	}
+	if len(keyByURL) > maxHLSKeys {
+		return nil, fmt.Errorf("tidal hls playlist has more than %d keys", maxHLSKeys)
+	}
+	keys := make([][]byte, len(parsed.keys))
+	for i, keyURL := range keyURLs {
+		if keyURL == "" {
+			continue
 		}
-		keys[i] = keyBytes
+		if keyByURL[keyURL] == nil {
+			keyBytes, kerr := c.fetchKey(ctx, keyURL)
+			if kerr != nil {
+				return nil, fmt.Errorf("tidal hls key fetch failed: %w", kerr)
+			}
+			keyByURL[keyURL] = keyBytes
+		}
+		keys[i] = keyByURL[keyURL]
 	}
 
 	contentType := hlsContentType(parsed, base)
@@ -315,6 +332,20 @@ type hlsSegment struct {
 	keyIndex int
 }
 
+// maxHLSSegments bounds the segments one download fetches. Every non-comment
+// line of a media playlist is a segment, so the 4 MiB playlist cap alone
+// still admits a couple of million tiny URIs, each a sequential GET on a
+// route with no request timeout. TIDAL cuts tracks into segments of about
+// 4 s, so even a 24-hour recording needs ~21,600; 30,000 leaves room for
+// shorter segments without letting a hostile playlist run unbounded.
+const maxHLSSegments = 30000
+
+// maxHLSKeys bounds the distinct AES-128 keys fetched before a download
+// starts, which a hostile playlist could otherwise list by the hundred
+// thousand. Rotating the key on every segment is the most a valid playlist
+// does, so the cap matches the segment cap.
+const maxHLSKeys = maxHLSSegments
+
 type parsedPlaylist struct {
 	isMaster      bool
 	variants      []hlsVariant
@@ -342,7 +373,12 @@ func parseHLSPlaylist(body string) (parsedPlaylist, error) {
 		if strings.HasPrefix(line, "#") {
 			switch {
 			case strings.HasPrefix(line, "#EXT-X-MEDIA-SEQUENCE:"):
-				n, _ := strconv.ParseUint(strings.TrimPrefix(line, "#EXT-X-MEDIA-SEQUENCE:"), 10, 64)
+				// The media sequence is the default AES-128 IV, so reading a
+				// bad value as 0 would decrypt every segment to garbage.
+				n, err := strconv.ParseUint(strings.TrimPrefix(line, "#EXT-X-MEDIA-SEQUENCE:"), 10, 64)
+				if err != nil {
+					return p, errors.New("hls media sequence is not an unsigned 64-bit integer")
+				}
 				p.mediaSequence = n
 			case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
 				bw := bandwidthFromAttrs(line)
@@ -374,6 +410,9 @@ func parseHLSPlaylist(body string) (parsedPlaylist, error) {
 			p.variants = append(p.variants, *pendingVariant)
 			pendingVariant = nil
 			continue
+		}
+		if len(p.segments) == maxHLSSegments {
+			return p, fmt.Errorf("hls playlist has more than %d segments", maxHLSSegments)
 		}
 		p.segments = append(p.segments, hlsSegment{uri: line, keyIndex: curKeyIndex})
 	}
@@ -475,7 +514,7 @@ func pkcs7Unpad(in []byte) []byte {
 var (
 	hlsKeyMethodRe = regexp.MustCompile(`METHOD=([A-Z0-9_-]+)`)
 	hlsKeyURIRe    = regexp.MustCompile(`URI="([^"]+)"`)
-	hlsKeyIVRe     = regexp.MustCompile(`IV=0x([0-9a-fA-F]+)`)
+	hlsKeyIVRe     = regexp.MustCompile(`[:,]\s*IV=([^,]*)`)
 	hlsBandwidthRe = regexp.MustCompile(`BANDWIDTH=(\d+)`)
 	hlsMapURIRe    = regexp.MustCompile(`URI="([^"]+)"`)
 )
@@ -505,14 +544,18 @@ func parseKeyAttrs(line string) (hlsKeyRef, error) {
 		return k, errors.New("hls aes-128 key missing URI")
 	}
 	if m := hlsKeyIVRe.FindStringSubmatch(line); len(m) == 2 {
-		hexStr := m[1]
-		if len(hexStr) == 32 {
-			b, err := hex.DecodeString(hexStr)
-			if err != nil {
-				return k, fmt.Errorf("hls key iv decode: %w", err)
-			}
-			k.iv = b
+		// Ignoring a malformed IV would fall back to the media-sequence IV
+		// and decrypt to garbage, so anything but the 128-bit hex value the
+		// spec requires is an error.
+		v := m[1]
+		if len(v) != 34 || !strings.EqualFold(v[:2], "0x") {
+			return k, errors.New("hls key iv is not 0x followed by 32 hex digits")
 		}
+		b, err := hex.DecodeString(v[2:])
+		if err != nil {
+			return k, fmt.Errorf("hls key iv decode: %w", err)
+		}
+		k.iv = b
 	}
 	return k, nil
 }
