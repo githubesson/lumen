@@ -108,19 +108,23 @@ func (c *coverCacheStore) fetchCached(u *url.URL) ([]byte, string, error) {
 		return data, ct, nil
 	}
 	v, err, _ := c.fetches.Do(key, func() (any, error) {
-		// Re-check under the flight: a just-completed flight may have
-		// populated the cache between our miss and Do() running.
-		if data, ct, ok := c.get(key); ok {
+		// Do re-raises a panic in every caller sharing the flight, and some
+		// run inside other singleflight builds or background workers.
+		return safego.Call("remote cover fetch", func() (any, error) {
+			// Re-check under the flight: a just-completed flight may have
+			// populated the cache between our miss and Do() running.
+			if data, ct, ok := c.get(key); ok {
+				return &coverCacheEntry{data: data, contentType: ct}, nil
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), coverFetchTimeout)
+			defer cancel()
+			data, ct, err := fetchRemoteCover(ctx, u)
+			if err != nil {
+				return nil, err
+			}
+			c.put(key, data, ct)
 			return &coverCacheEntry{data: data, contentType: ct}, nil
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), coverFetchTimeout)
-		defer cancel()
-		data, ct, err := fetchRemoteCover(ctx, u)
-		if err != nil {
-			return nil, err
-		}
-		c.put(key, data, ct)
-		return &coverCacheEntry{data: data, contentType: ct}, nil
+		})
 	})
 	if err != nil {
 		return nil, "", err

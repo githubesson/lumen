@@ -11,6 +11,8 @@ import (
 
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
+
+	"github.com/githubesson/lumen/internal/safego"
 )
 
 const (
@@ -60,7 +62,12 @@ func buildPublicMedia(r *http.Request, key string, build func(context.Context) (
 		// others waiting on it.
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), publicBuildTimeout)
 		defer cancel()
-		out, err := build(ctx)
+		// DoChan re-raises a panic on a goroutine nothing can recover, which
+		// would kill the process. A build that panics fails like any other,
+		// so it is also remembered below.
+		out, err := safego.Call("public media build", func() (string, error) {
+			return build(ctx)
+		})
 		if err != nil {
 			publicBuildFails.add(key)
 			return "", err

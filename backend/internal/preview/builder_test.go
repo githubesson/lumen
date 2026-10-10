@@ -1,11 +1,15 @@
 package preview
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/githubesson/lumen/internal/safego"
 )
 
 func TestBuildArgsUseSelectedDuration(t *testing.T) {
@@ -94,6 +98,22 @@ func TestPruneCacheRemovesOnlyStaleFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(fresh); err != nil {
 		t.Fatalf("fresh file removed: %v", err)
+	}
+}
+
+// A render runs inside singleflight's DoChan, which re-raises a panic on a
+// goroutine of its own: unguarded, this test would crash the test binary.
+func TestEnsureBuiltSurvivesPanickingRender(t *testing.T) {
+	b := &Builder{CacheDir: t.TempDir()}
+	in := Input{TrackID: "track", AudioPath: "/music/x.mp3", DurationSec: 30}
+	_, err := b.ensureBuilt(context.Background(), in, "test", b.cachePath("track", 0, 30),
+		func(context.Context, Input, string) error {
+			var m map[string]int
+			m["boom"]++ // assignment to entry in nil map
+			return nil
+		})
+	if !errors.Is(err, safego.ErrPanicked) {
+		t.Fatalf("err = %v, want safego.ErrPanicked", err)
 	}
 }
 

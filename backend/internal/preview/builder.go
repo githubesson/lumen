@@ -34,6 +34,7 @@ import (
 
 	"github.com/githubesson/lumen/internal/ffsafe"
 	"github.com/githubesson/lumen/internal/imagesafe"
+	"github.com/githubesson/lumen/internal/safego"
 )
 
 const (
@@ -232,17 +233,21 @@ func (b *Builder) ensureBuilt(
 
 	key := kind + "|" + in.TrackID + "@" + strconv.Itoa(in.StartSec) + "+" + strconv.Itoa(in.DurationSec)
 	ch := b.group.DoChan(key, func() (any, error) {
-		// Re-check inside the singleflight in case another goroutine
-		// finished the work between our stat and the singleflight entry.
-		if st, err := os.Stat(outPath); err == nil && st.Size() > 0 {
+		// DoChan re-raises a panic on a goroutine nothing can recover, which
+		// would take the whole process down with this one render.
+		return safego.Call("preview build", func() (any, error) {
+			// Re-check inside the singleflight in case another goroutine
+			// finished the work between our stat and the singleflight entry.
+			if st, err := os.Stat(outPath); err == nil && st.Size() > 0 {
+				return outPath, nil
+			}
+			if err := run(ctx, in, outPath); err != nil {
+				// Best-effort cleanup of partial output so the next call retries.
+				_ = os.Remove(outPath)
+				return "", err
+			}
 			return outPath, nil
-		}
-		if err := run(ctx, in, outPath); err != nil {
-			// Best-effort cleanup of partial output so the next call retries.
-			_ = os.Remove(outPath)
-			return "", err
-		}
-		return outPath, nil
+		})
 	})
 	select {
 	case <-ctx.Done():
