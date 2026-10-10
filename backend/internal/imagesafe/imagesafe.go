@@ -76,11 +76,20 @@ func Decode(ctx context.Context, r io.Reader) (img image.Image, release func(), 
 		return nil, release, err
 	}
 	held := sync.OnceFunc(func() { decodeSem.Release(n) })
+	// Return the share on any way out but success, a decoder panic included:
+	// callers recover those, and a share leaked per crafted image would
+	// drain the budget for good.
+	decoded := false
+	defer func() {
+		if !decoded {
+			held()
+		}
+	}()
 	img, _, err = image.Decode(io.MultiReader(&header, r))
 	if err != nil {
-		held()
 		return nil, release, err
 	}
+	decoded = true
 	return img, held, nil
 }
 

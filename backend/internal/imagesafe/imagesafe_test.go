@@ -10,6 +10,8 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"io"
+	"strings"
 	"testing"
 	"time"
 )
@@ -147,6 +149,28 @@ func TestDecodeWaitsForBudgetAndHonoursContext(t *testing.T) {
 	release() // a second call must not release someone else's share
 	if !decodeSem.TryAcquire(decodeBudget) {
 		t.Fatal("release did not return the share")
+	}
+	decodeSem.Release(decodeBudget)
+}
+
+func init() {
+	// A format whose decoder panics, as x/image's WebP decoder did on some
+	// crafted files.
+	image.RegisterFormat("panics", "PANICS", func(io.Reader) (image.Image, error) {
+		panic("decoder bug")
+	}, func(io.Reader) (image.Config, error) {
+		return image.Config{ColorModel: color.RGBAModel, Width: 8, Height: 8}, nil
+	})
+}
+
+func TestDecodeReturnsShareWhenDecoderPanics(t *testing.T) {
+	func() {
+		defer func() { _ = recover() }()
+		_, _, _ = Decode(context.Background(), strings.NewReader("PANICS"))
+		t.Fatal("decoder did not panic")
+	}()
+	if !decodeSem.TryAcquire(decodeBudget) {
+		t.Fatal("a panicking decode kept its share of the budget")
 	}
 	decodeSem.Release(decodeBudget)
 }
