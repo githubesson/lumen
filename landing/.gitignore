@@ -1,2 +1,4 @@
 src/assets/screens/
 .wrangler/
+test-results/
+playwright-report/

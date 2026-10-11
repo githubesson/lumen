@@ -60,7 +60,7 @@ function Formats() {
       {FORMATS.map((f, i) => (
         <span
           key={f}
-          className="flex h-9 flex-col items-center justify-center rounded-md border border-border bg-background/70 font-mono text-[10px] font-medium transition-[translate,border-color] duration-200 ease-[var(--ease-out)] play:-translate-y-0.5 play:border-foreground/20 motion-reduce:play:translate-y-0"
+          className="flex h-9 flex-col items-center justify-center rounded-md border border-border bg-background/70 font-mono text-[11px] font-medium transition-[translate,border-color] duration-200 ease-[var(--ease-out)] play:-translate-y-0.5 play:border-foreground/20 motion-reduce:play:translate-y-0"
           style={{ transitionDelay: `${i * 25}ms` }}
         >
           <FileAudio className="mb-0.5 size-3 text-muted-foreground" />
@@ -86,7 +86,7 @@ function Lyrics() {
       <div className={clsx("absolute inset-x-0 top-7 h-7 rounded-md bg-brand-soft play:translate-y-7", MOVE)} />
       {LYRIC_LINES.map((l, i) => (
         <div key={l.t} className="relative flex h-7 items-center gap-3 px-2">
-          <span className="w-10 font-mono text-[10px] text-muted-foreground">{l.t}</span>
+          <span className="w-10 font-mono text-[11px] text-muted-foreground">{l.t}</span>
           <span
             className={clsx(
               "h-2 rounded-full transition-colors duration-300",
@@ -112,7 +112,7 @@ function Scrobble() {
         </div>
         {/* Both labels share one grid cell, so the clip box is as wide as the
             wider of the two and neither gets cut off. */}
-        <span className="grid h-5 items-center justify-items-end overflow-hidden text-[10px] font-medium">
+        <span className="grid h-5 items-center justify-items-end overflow-hidden text-[11px] font-medium">
           <span
             className={clsx(
               "col-start-1 row-start-1 text-muted-foreground play:-translate-y-5 play:opacity-0",
@@ -131,8 +131,8 @@ function Scrobble() {
           </span>
         </span>
       </div>
-      <div className="mt-2 flex justify-between px-1 font-mono text-[10px] text-muted-foreground">
-        <span>last.fm/user/example</span>
+      <div className="mt-2 flex justify-between gap-2 whitespace-nowrap px-1 font-mono text-[11px] text-muted-foreground">
+        <span>last.fm/user/you</span>
         <span className="tabular-nums">
           12,84<span className="inline-grid overflow-hidden align-bottom">
             <span className={clsx("col-start-1 row-start-1 play:-translate-y-full play:opacity-0", MOVE)}>7</span>
@@ -149,7 +149,7 @@ function Presence() {
   const t = byId("everywhere");
   return (
     <div className="w-full max-w-64 rounded-lg bg-muted/60 p-3 dark:bg-black/25">
-      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         <DiscordIcon className="size-3" /> Listening to Lumen
       </div>
       <div className="mt-2 flex items-center gap-3">
@@ -157,10 +157,12 @@ function Presence() {
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-semibold">{t.title}</div>
           <div className="truncate text-[11px] text-muted-foreground">by {t.artist}</div>
-          <div className="mt-1.5 flex items-center gap-1.5 font-mono text-[9px] text-muted-foreground">
+          <div className="mt-1.5 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
             <span>1:12</span>
             <span className="h-1 flex-1 overflow-hidden rounded-full bg-foreground/15">
-              <span className="block h-full w-full -translate-x-[62%] rounded-full bg-foreground transition-transform duration-[1200ms] ease-linear play:-translate-x-[48%] motion-reduce:transition-none" />
+              {/* Width, not a translated full-width fill: the fill's box stays inside
+                  the track, so it doesn't overlap the time labels. */}
+              <span className="block h-full w-[38%] rounded-full bg-foreground transition-[width] duration-[1200ms] ease-linear play:w-[52%] motion-reduce:transition-none" />
             </span>
             <span>3:08</span>
           </div>
@@ -182,7 +184,7 @@ function Palette() {
         <span>
           vamp<span className="ml-px inline-block h-3 w-px translate-y-0.5 animate-blink bg-foreground" />
         </span>
-        <kbd className="ml-auto rounded border border-border px-1 font-mono text-[9px] text-muted-foreground">⌘K</kbd>
+        <kbd className="ml-auto rounded border border-border px-1 font-mono text-[11px] text-muted-foreground">⌘K</kbd>
       </div>
       <div className="relative p-1">
         {/* Selection moves to the next result on hover, like pressing ↓. */}
@@ -191,7 +193,7 @@ function Palette() {
           <div key={kind} className="relative flex h-9 items-center gap-2.5 px-2">
             <CoverImg src={t.cover} className={clsx("size-6", kind === "Artist" ? "rounded-full" : "rounded")} />
             <span className="min-w-0 flex-1 truncate text-xs font-medium">{t.title}</span>
-            <span className="text-[10px] text-muted-foreground">{kind}</span>
+            <span className="text-[11px] text-muted-foreground">{kind}</span>
           </div>
         ))}
       </div>
@@ -208,7 +210,7 @@ function Upload() {
         <div className="flex items-center gap-2 text-xs">
           <UploadCloud className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{t.title}.flac</span>
-          <span className="relative grid h-4 w-9 place-items-end overflow-hidden font-mono text-[10px] text-muted-foreground">
+          <span className="relative grid h-4 w-9 place-items-end overflow-hidden font-mono text-[11px] text-muted-foreground">
             <span className={clsx("play:-translate-y-4 play:opacity-0", MOVE)}>64%</span>
             <span className={clsx("absolute right-0 top-4 opacity-0 play:-translate-y-4 play:opacity-100", MOVE)}>
               <Check className="size-3 text-success" />

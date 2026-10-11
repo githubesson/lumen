@@ -6,7 +6,9 @@
   background: var(--background);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
-  display: flex;
+  /* Out of the layout while closed, so its slid-out position can't widen the
+     page. allow-discrete keeps it displayed until the exit transition ends. */
+  display: none;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
@@ -16,13 +18,57 @@
   opacity: 0;
   pointer-events: none;
   transform: translateX(12px);
-  transition: opacity 240ms ease, transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    opacity 240ms ease,
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    display 280ms allow-discrete;
 }
 
 .app[data-lyrics-open="true"] .lyrics-sidebar {
+  display: flex;
   opacity: 1;
   pointer-events: auto;
   transform: translateX(0);
+}
+
+@starting-style {
+  .app[data-lyrics-open="true"] .lyrics-sidebar {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+.lyrics-backdrop {
+  display: none;
+}
+
+/* Phones have no lyrics column: the open panel floats over the page from the
+   right, like the navigation drawer from the left, over the same scrim. */
+@media (max-width: 760px) {
+  .lyrics-sidebar {
+    grid-area: auto;
+    position: fixed;
+    inset: 4px 4px 4px auto;
+    z-index: 72;
+    width: min(320px, calc(100vw - 48px));
+    box-shadow: var(--shadow-md);
+  }
+
+  .lyrics-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 71;
+    display: block;
+    background: var(--scrim);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+  }
+
+  .lyrics-backdrop.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .lyrics-sidebar-head {

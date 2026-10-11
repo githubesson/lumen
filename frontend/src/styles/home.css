@@ -177,7 +177,7 @@
   height: 28px;
   padding: 0 10px;
   gap: 4px;
-  font-size: 0.8rem;
+  font-size: 13px;
   border-radius: min(var(--radius-md), 12px);
 }
 

@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Outlet } from "react-router-dom";
 import { api, type Playlist } from "../api";
 import { useAuth } from "../context/Auth";
@@ -55,6 +55,18 @@ export default function Shell() {
   const [tweaksOpen, setTweaksOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SectionId>();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Radix returns focus only to a Dialog.Trigger, and the palette opens from
+  // several places without one. Note the opener while it still has focus
+  // (before the app goes inert) and give focus back on close, unless
+  // something else, such as Settings, has taken it.
+  useLayoutEffect(() => {
+    if (!paletteOpen) return;
+    const opener = document.activeElement;
+    return () => {
+      const lost = !document.activeElement || document.activeElement === document.body;
+      if (lost && opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
+  }, [paletteOpen]);
   const fh6RadioEnabled = useDesktopConfig()?.fh6RadioEnabled === true;
   const { mobileNavOpen, setMobileNavOpen } = useMobileNav();
 
@@ -164,7 +176,13 @@ export default function Shell() {
   );
 
   return (
-    <div className="app" data-lyrics-open={lyricsOpen ? "true" : undefined}>
+    <div
+      className="app"
+      data-lyrics-open={lyricsOpen ? "true" : undefined}
+      // The palette is portaled outside the app. Radix only aria-hides the
+      // rest; inert also takes it out of the tab order and pointer reach.
+      inert={paletteOpen ? "" : undefined}
+    >
       {/* Sidebar */}
       <Sidebar
         mobileOpen={mobileNavOpen}

@@ -137,7 +137,7 @@
 .transport-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
 }
 .t-btn {
   width: 28px;
@@ -285,7 +285,7 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
+  gap: 8px;
 }
 .mini-divider { display: none; }
 .volume {

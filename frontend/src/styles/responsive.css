@@ -236,7 +236,7 @@
   .topbar {
     height: 48px;
     padding: 0 8px;
-    gap: 4px;
+    gap: 8px;
   }
 
   .crumbs {
@@ -300,7 +300,7 @@
   .hero-title,
   .detail-title {
     max-width: 100%;
-    font-size: clamp(28px, 9vw, 36px);
+    font-size: 30px;
     overflow-wrap: anywhere;
     text-wrap: wrap;
   }
@@ -380,7 +380,7 @@
 
   html:not([data-mini-player]) .player-bar .utility {
     display: flex;
-    gap: 2px;
+    gap: 8px;
   }
 
   html:not([data-mini-player]) .player-bar .utility > .volume,

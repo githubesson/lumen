@@ -108,6 +108,21 @@ contracts, and suppression comments as design decisions. See the
 [configuration examples](https://github.com/shadcn-ui/lint/blob/main/docs/design-systems.md)
 when updating the policy.
 
+#### Rendered UI checks
+
+`npm run lint:ui` renders the app in Chromium and checks every main screen,
+dialog and menu with [lintapple](https://github.com/gholtzap/lintapple)
+against `ui-policy.json`: the type scale and fonts, control sizes and gaps,
+text clipping and viewport bounds, contrast, and accessible names. It runs at
+390px and 1440px in light and dark. The specs live in `tests/ui/`; the Vite
+dev server serves the app and `tests/ui/mock-api.ts` answers the API from
+fixtures, so no backend is needed. Run `npx playwright install --only-shell
+chromium` once first.
+
+Fix findings in the interface. Each exception in `ui-policy.json` names its
+reason; add one only for a deliberate design (such as ellipsis truncation)
+or for something the checker can't measure.
+
 ## Electron (desktop)
 
 ```sh

@@ -58,7 +58,7 @@ export default function PlaylistDemo() {
         <div className="flex items-center gap-2">
           <div className="flex -space-x-1.5">
             {PEOPLE.map((p, i) => (
-              <Avatar key={p.name} person={i} className="size-7 text-[10px]" />
+              <Avatar key={p.name} person={i} className="size-7 text-[11px]" />
             ))}
           </div>
           <span className="hidden h-7 items-center gap-1 rounded-md border border-border px-2 text-xs sm:flex">
@@ -84,7 +84,7 @@ export default function PlaylistDemo() {
                   </span>
                   <span className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
                     <span className="tabular-nums">{i === 0 ? "just now" : `${i * 3}m ago`}</span>
-                    <Avatar person={row.person} className="size-6 text-[9px]" />
+                    <Avatar person={row.person} className="size-6 text-[11px]" />
                   </span>
                 </div>
               </div>

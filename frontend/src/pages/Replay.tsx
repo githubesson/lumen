@@ -370,7 +370,7 @@ export default function Replay() {
           <div
             key={periodKey(period)}
             className="replay-enter"
-            style={{ display: "grid", gap: 18, minWidth: 0 }}
+            style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 18, minWidth: 0 }}
           >
             <section className="stat-grid">
               <StatCard

@@ -132,7 +132,8 @@
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
+  /* Darker than shadcn's 0.556, which is under 4.5:1 on muted surfaces. */
+  --muted-foreground: oklch(0.52 0 0);
   --accent: oklch(0.97 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
@@ -176,6 +177,7 @@
 
 /* ---------- Base ---------- */
 html {
+  background: var(--background);
   scroll-behavior: smooth;
   scroll-padding-top: 80px;
 }
@@ -248,13 +250,20 @@ body {
   border-radius: inherit;
   background: radial-gradient(360px circle at var(--mx, 50%) var(--my, -40%), var(--brand-soft), transparent 60%);
   opacity: 0;
-  transition: opacity 200ms ease;
+  /* Hidden, not just transparent, while idle, so contrast checkers can see
+     the card behind the text. visibility flips at the right end of the fade
+     in both directions. */
+  visibility: hidden;
+  transition:
+    opacity 200ms ease,
+    visibility 200ms;
   pointer-events: none;
   z-index: -1;
 }
 @media (hover: hover) and (pointer: fine) {
   .spotlight:hover::before {
     opacity: 1;
+    visibility: visible;
   }
 }
 
@@ -308,7 +317,7 @@ body {
   *,
   *::before,
   *::after {
-    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow !important;
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, visibility, box-shadow !important;
   }
   .reveal {
     transform: none;

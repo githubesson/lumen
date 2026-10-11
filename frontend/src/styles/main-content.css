@@ -140,6 +140,10 @@
   padding: var(--pad);
   min-width: 0;
   overflow-x: hidden;
+  /* Most views are single-column grids. Without an explicit column, a wide
+     child (a 720px table inside its own scroller) widens the column, and
+     every sibling with it, past the screen on phones. */
+  grid-template-columns: minmax(0, 1fr);
 }
 
 /* Admin sections contain wide tables/forms that must scroll horizontally
@@ -155,7 +159,7 @@
 /* Row actions in admin tables: icon buttons that stay muted until hovered. */
 .admin-actions {
   display: inline-flex;
-  gap: 2px;
+  gap: 8px;
 }
 .admin-actions .iconbtn {
   color: var(--muted-foreground);
@@ -199,7 +203,10 @@
   color: inherit;
   background: none;
   border: 0;
-  padding: 0;
+  /* Widens the target to 24px without moving the number. */
+  min-width: 24px;
+  padding: 0 6px;
+  margin: 0 -6px;
   cursor: pointer;
   text-decoration: underline dotted;
   text-underline-offset: 4px;

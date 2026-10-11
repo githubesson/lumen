@@ -55,7 +55,7 @@ function Item({ q, a, open, onToggle }: { q: string; a: ReactNode; open: boolean
         onClick={onToggle}
         aria-expanded={open}
         aria-controls={id}
-        className="flex w-full items-center gap-4 py-5 text-left text-[15px] font-medium transition-colors hover:text-foreground/80"
+        className="flex w-full items-center gap-4 py-5 text-left text-base font-medium transition-colors hover:text-foreground/80"
       >
         <span className="flex-1">{q}</span>
         <Plus

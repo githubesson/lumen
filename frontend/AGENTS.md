@@ -11,6 +11,12 @@ contracts. Follow the policy in [README.md](./README.md#design-system-rules).
 Use component variants and sizes, theme variables, and scale values. Keep
 new contracts or suppressions narrow and explain why they are needed.
 
+After UI changes, also run `npm run lint:ui` (rendered checks with
+lintapple, see [README.md](./README.md#rendered-ui-checks)). Add a spec in
+`tests/ui/` for a new screen or overlay, and fixtures to
+`tests/ui/mock-api.ts` for new endpoints. Fix the interface rather than
+widening `ui-policy.json`.
+
 ## Unsigned CI releases
 
 The GitHub Actions release workflow intentionally builds unsigned Windows and

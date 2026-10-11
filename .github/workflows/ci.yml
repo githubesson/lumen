@@ -104,6 +104,30 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  # lintapple checks the app's screens in Chromium against ui-policy.json,
+  # with tests/ui/mock-api.ts standing in for the backend. It needs Node 22.
+  frontend-ui:
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            core/package-lock.json
+      - run: npm ci
+        working-directory: core
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run lint:ui
+
   landing:
     runs-on: ubuntu-latest
     defaults:
@@ -120,6 +144,9 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run build
+      # lintapple checks the built page in Chromium against ui-policy.json.
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run lint:ui
 
   mobile:
     runs-on: ubuntu-latest

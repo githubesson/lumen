@@ -53,7 +53,8 @@ export default function InviteDemo() {
         type="button"
         onClick={() => copy(link)}
         className="mt-3 flex w-full items-center gap-2 rounded-md border border-dashed border-border bg-muted/50 px-2.5 py-2 text-left font-mono text-[12px] press hover:border-ring/60"
-        aria-label="Copy example invite link"
+        // The name keeps the visible link text, so voice control can target it.
+        aria-label={`Copy example invite link /invite/${token}`}
       >
         <span className="truncate text-muted-foreground">
           /invite/<span className="text-foreground">{token}</span>

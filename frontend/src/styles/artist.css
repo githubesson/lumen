@@ -62,12 +62,22 @@
 
 .artist-hero-name {
   margin: 8px 0 12px;
-  font-size: clamp(32px, 7cqi, 56px);
+  /* Steps on the type scale, roughly following the old clamp(32px, 7cqi, 56px). */
+  font-size: 30px;
   font-weight: 600;
   letter-spacing: -0.025em;
   line-height: 1.05;
   text-wrap: balance;
   overflow-wrap: anywhere;
+}
+@container (min-width: 520px) {
+  .artist-hero-name { font-size: 36px; }
+}
+@container (min-width: 690px) {
+  .artist-hero-name { font-size: 48px; }
+}
+@container (min-width: 860px) {
+  .artist-hero-name { font-size: 60px; }
 }
 .artist-hero-meta {
   display: flex;
