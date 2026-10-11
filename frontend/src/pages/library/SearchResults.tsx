@@ -77,7 +77,7 @@ export default function SearchResults({
     <div
       className="refreshable"
       aria-busy={(stale && !searching) || undefined}
-      style={{ display: "grid", gap: 18, marginTop: 18 }}
+      style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 18, marginTop: 18 }}
     >
       {error && <ErrorBanner message={error} />}
       {warning && <ErrorBanner message={warning} />}

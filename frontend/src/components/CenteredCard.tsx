@@ -26,7 +26,7 @@ export default function CenteredCard({ title, intro, children }: Props) {
           <div>
             <h1
               style={{
-                fontSize: 22,
+                fontSize: 24,
                 fontWeight: 600,
                 letterSpacing: "-0.02em",
                 margin: 0,

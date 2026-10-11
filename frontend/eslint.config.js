@@ -5,7 +5,7 @@ import reactHooks from "eslint-plugin-react-hooks";
 import { plugin as shadcn } from "@shadcn/lint";
 
 export default tseslint.config(
-  { ignores: ["node_modules", "dist", "electron/build", "release"] },
+  { ignores: ["node_modules", "dist", "electron/build", "release", "test-results", "playwright-report"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   reactHooks.configs.flat["recommended-latest"],

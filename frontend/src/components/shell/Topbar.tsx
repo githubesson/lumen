@@ -79,7 +79,9 @@ export default function Topbar({
         type="button"
         className="search topbar-search"
         onClick={onOpenPalette}
-        aria-label="Open command palette"
+        // The visible label and shortcut, kept as the name on phones, which
+        // hide both.
+        aria-label={`Search library, albums, tracks… ${modShortcut("K")}`}
         style={{
           cursor: "pointer",
           textAlign: "left",

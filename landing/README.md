@@ -9,6 +9,7 @@ npm install
 npm run dev        # http://localhost:5173
 npm run build      # static output in dist/
 npm run lint && npm run typecheck
+npm run lint:ui    # lintapple on the built page (run build first)
 npm run deploy     # build + wrangler deploy to Cloudflare Workers
 ```
 

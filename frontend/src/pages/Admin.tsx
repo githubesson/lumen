@@ -41,7 +41,7 @@ export default function Admin() {
       <header>
         <h1
           style={{
-            fontSize: 28,
+            fontSize: 30,
             fontWeight: 600,
             letterSpacing: "-0.02em",
             margin: 0,

@@ -107,5 +107,13 @@
 }
 .ctx-scroll {
   max-height: 220px;
+  overflow-x: hidden;
   overflow-y: auto;
+}
+/* Long playlist names end in an ellipsis instead of scrolling sideways. */
+.ctx-item > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -1,0 +1,56 @@
+{
+  "fonts": ["Geist", "Geist Mono"],
+  "fontSizes": [12, 13, 14, 16, 18, 20, 24, 30, 36, 48, 60, 72],
+  "typeRules": [],
+  "minControlSize": 15,
+  "controlSizeRules": [],
+  "minControlGap": 8,
+  "minControlInset": 8,
+  "controlContainers": ["[data-ui-container]"],
+  "minLayoutGap": 8,
+  "bannedCopy": ["unlock your potential", "seamlessly", "game-changing"],
+  "viewports": [{ "width": 390, "height": 844 }, { "width": 1440, "height": 900 }],
+  "colorSchemes": ["light", "dark"],
+  "exceptions": [
+    {
+      "selector": "[title], button[aria-label], a[aria-label]",
+      "rules": ["icon-button-tooltip"],
+      "reason": "TitleTooltips (src/components/TitleTooltips.tsx) shows these elements' title or aria-label as a role=tooltip bubble on hover and keyboard focus, and mounts it only while shown. tests/ui/tooltips.ui.ts checks that it appears."
+    },
+    {
+      "selector": "[role=menuitem], [role=option], [role=tab], .queue-pop-row",
+      "rules": ["control-gap"],
+      "reason": "Rows in menus and lists and segments of a segmented control sit edge to edge as one composite control. Each target is at least 24px, which WCAG 2.5.8 accepts without spacing."
+    },
+    {
+      "selector": ":is(.card-title, .card-sub, .cmdk-item-title, .cmdk-item-sub, .ctx-item > span, .crumb > :is(a, b, span), .device-pop-name, .device-pop-meta, .fh6-queue-row span, .fh6-queue-row small, .genre-label, .lyrics-sidebar-track-title, .lyrics-sidebar-track-artist, .mini-panel-title, .multi-select-detail, .np-title, .np-artist, .player-lyric-status, .queue-pop-title, .queue-pop-artist, .sidebar-playlist-name, .stat-card-label, .stat-card-sub, .table-tracks .track-title, .table-tracks .track-sub, .table-tracks td.col-album, .table-tracks td.col-added, .topbar-search-label, .track-selectbar-status span, .user-name, .user-plan), :is(.card-title, .card-sub, .cmdk-item-title, .cmdk-item-sub, .ctx-item > span, .crumb > :is(a, b, span), .device-pop-name, .device-pop-meta, .fh6-queue-row span, .fh6-queue-row small, .genre-label, .lyrics-sidebar-track-title, .lyrics-sidebar-track-artist, .mini-panel-title, .multi-select-detail, .np-title, .np-artist, .player-lyric-status, .queue-pop-title, .queue-pop-artist, .sidebar-playlist-name, .stat-card-label, .stat-card-sub, .table-tracks .track-title, .table-tracks .track-sub, .table-tracks td.col-album, .table-tracks td.col-added, .topbar-search-label, .track-selectbar-status span, .user-name, .user-plan) *",
+      "rules": ["content-clipping"],
+      "reason": "Titles, names and secondary lines that truncate to one line with an ellipsis by design (text-overflow: ellipsis in their CSS)."
+    },
+    {
+      "selector": ".sr-only, [cmdk-label]",
+      "rules": ["content-clipping"],
+      "reason": "Visually hidden text for screen readers is clipped on purpose."
+    },
+    {
+      "selector": ".cmdk-kbd",
+      "rules": ["text-contrast"],
+      "reason": "The command palette's ↵ ↑ ↓ key glyphs, which axe skips as non-text. --muted-foreground on --muted measures 5.0:1 in light and 5.9:1 in dark."
+    },
+    {
+      "selector": ".admin-section-wrap .input, .admin-section-wrap > p",
+      "rules": ["text-contrast"],
+      "reason": "Admin fields and text outside the visible part of the app's scrolling content area (below the fold, or scrolled sideways on phones), where axe can't find a background. lintapple measures the same styles where they are in view."
+    },
+    {
+      "selector": ".table-scroll thead th",
+      "rules": ["text-contrast"],
+      "reason": "Sticky headers of columns scrolled out of view in a phone-width table, which axe errors on. They share the style of the headers it measures in view."
+    },
+    {
+      "selector": ".card",
+      "rules": ["icon-button-tooltip"],
+      "reason": "Cards show their title as text. At phone width a card whose title is below the fold looks text-free to the check."
+    }
+  ]
+}

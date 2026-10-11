@@ -40,11 +40,13 @@ export default defineConfig({
         ws: true,
         rewriteWsOrigin: true,
       },
-      "/share": {
+      // Trailing slashes as in nginx.conf: "/share" alone would also send the
+      // app's own /shared/... pages to the backend.
+      "/share/": {
         target: "http://localhost:8080",
         changeOrigin: true,
       },
-      "/embed": {
+      "/embed/": {
         target: "http://localhost:8080",
         changeOrigin: true,
       },

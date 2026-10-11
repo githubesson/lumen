@@ -5,3 +5,5 @@ dist/
 .vite/
 electron/build/
 release/
+test-results/
+playwright-report/

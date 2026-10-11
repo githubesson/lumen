@@ -404,11 +404,11 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
       // Fading out: no focus, clicks or Tab stops, so nothing lands in it.
       inert={open ? undefined : ""}
     >
-      <button
-        type="button"
+      {/* Click-outside to close. Not a button, as in DialogShell: the close
+          button covers keyboards and screen readers. */}
+      <div
         aria-hidden="true"
-        tabIndex={-1}
-        // Don't let a click focus the scrim; focus should go back to the opener.
+        // Don't let a click move focus; it should go back to the opener.
         onMouseDown={(e) => e.preventDefault()}
         onClick={onClose}
         className="absolute inset-0 transition-opacity duration-200 ease-out group-data-closed:opacity-0"
