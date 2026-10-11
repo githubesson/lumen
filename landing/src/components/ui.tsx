@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { Check, Copy } from "lucide-react";
-import type { AnchorHTMLAttributes, CSSProperties, ReactNode } from "react";
+import { useId, type AnchorHTMLAttributes, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from "react";
 import IconSwap from "./IconSwap";
 import { useCopy } from "../lib/hooks";
 
@@ -18,7 +18,7 @@ const variants: Record<Variant, string> = {
 const sizes: Record<Size, string> = {
   sm: "h-8 gap-1.5 px-3 text-[13px]",
   md: "h-9 gap-2 px-4 text-sm",
-  lg: "h-11 gap-2 px-5 text-[15px]",
+  lg: "h-11 gap-2 px-5 text-base",
 };
 
 export function ButtonLink({
@@ -39,6 +39,34 @@ export function ButtonLink({
         className,
       )}
     />
+  );
+}
+
+/** Icon-only button. `label` names it and shows as a tooltip on hover and
+ *  keyboard focus. `align="end"` keeps the tooltip inside the right edge;
+ *  `wrapperClassName` places the button and its tooltip together. */
+export function IconButton({
+  label,
+  align = "center",
+  className,
+  wrapperClassName,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; align?: "center" | "end"; wrapperClassName?: string }) {
+  const id = useId();
+  return (
+    <span className={clsx("group/tip relative inline-flex", wrapperClassName)}>
+      <button type="button" {...props} aria-labelledby={id} data-ui-tooltip={id} className={className} />
+      <span
+        id={id}
+        role="tooltip"
+        className={clsx(
+          "pointer-events-none absolute top-full z-10 mt-2 whitespace-nowrap rounded-md bg-foreground px-2 py-1 text-xs font-medium text-background opacity-0 shadow transition-opacity duration-150 group-hover/tip:opacity-100 group-has-focus-visible/tip:opacity-100",
+          align === "center" ? "left-1/2 -translate-x-1/2" : "right-0",
+        )}
+      >
+        {label}
+      </span>
+    </span>
   );
 }
 

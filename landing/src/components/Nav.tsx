@@ -7,7 +7,7 @@ import { REPO_URL } from "../lib/site";
 import { GitHubIcon } from "./icons";
 import IconSwap from "./IconSwap";
 import Logo from "./Logo";
-import { ButtonLink } from "./ui";
+import { ButtonLink, IconButton } from "./ui";
 
 const LINKS = [
   { href: "#features", label: "Features" },
@@ -43,7 +43,7 @@ export default function Nav({
         className={clsx(
           "mx-auto max-w-6xl rounded-xl border transition-[background-color,border-color,box-shadow] duration-300",
           open
-            ? "border-border bg-background/90 shadow-[var(--shadow-float)] backdrop-blur-xl"
+            ? "border-border bg-background shadow-[var(--shadow-float)]"
             : scrolled
               ? "border-border bg-background/75 shadow-[var(--shadow-float)] backdrop-blur-xl"
               : "border-transparent bg-transparent",
@@ -66,7 +66,7 @@ export default function Nav({
             ))}
           </div>
 
-          <div className="ml-auto flex items-center gap-1.5">
+          <div className="ml-auto flex items-center gap-2">
             <a
               href={REPO_URL}
               target="_blank"
@@ -82,26 +82,27 @@ export default function Nav({
                 </span>
               )}
             </a>
-            <button
-              type="button"
+            <IconButton
               onClick={onToggleTheme}
               className="press grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
-              aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+              label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+              align="end"
             >
               <IconSwap show={theme === "dark" ? "a" : "b"} a={<Sun className="size-4" />} b={<Moon className="size-4" />} className="size-4" />
-            </button>
+            </IconButton>
             <ButtonLink href="#self-host" size="sm" className="max-sm:hidden">
               Get started
             </ButtonLink>
-            <button
-              type="button"
+            <IconButton
               onClick={() => setOpen((o) => !o)}
-              className="press grid size-8 place-items-center rounded-lg hover:bg-accent md:hidden"
-              aria-label={open ? "Close menu" : "Open menu"}
+              className="press grid size-8 place-items-center rounded-lg hover:bg-accent"
+              label={open ? "Close menu" : "Open menu"}
               aria-expanded={open}
+              align="end"
+              wrapperClassName="md:hidden"
             >
               <IconSwap show={open ? "b" : "a"} a={<Menu className="size-4" />} b={<X className="size-4" />} className="size-4" />
-            </button>
+            </IconButton>
           </div>
         </nav>
 

@@ -79,7 +79,7 @@ export default function ScrubDemo() {
           }}
         >
           <span className="absolute inset-y-0 left-0 w-px bg-foreground">
-            <span className="absolute -top-6 left-1/2 -translate-x-1/2 rounded bg-foreground px-1.5 py-0.5 font-mono text-[10px] text-background">
+            <span className="absolute -top-6 left-1/2 -translate-x-1/2 rounded bg-foreground px-1.5 py-0.5 font-mono text-[11px] text-background">
               {formatTime(shown * DURATION)}
             </span>
           </span>

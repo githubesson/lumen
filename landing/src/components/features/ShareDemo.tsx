@@ -5,6 +5,7 @@ import { formatTime, sliderKey, useAutoplay, useInView, useInterval, usePrefersR
 import { byId } from "../../lib/music";
 import CoverImg from "../CoverImg";
 import IconSwap from "../IconSwap";
+import { IconButton } from "../ui";
 
 const URL = "https://music.example.com/s/k3f9Qa";
 const PREVIEW_SECONDS = 30;
@@ -106,15 +107,15 @@ export default function ShareDemo() {
           </div>
 
           <div className="mt-3 flex items-center gap-2.5 rounded-md bg-background/70 p-1.5 pr-3">
-            <button
-              type="button"
+            <IconButton
               onClick={() => {
                 if (pos >= PREVIEW_SECONDS) setPos(0);
                 setUserPlayed(true);
                 setWantsPlay(!playing);
               }}
-              className="press grid size-7 shrink-0 place-items-center rounded-full bg-foreground text-background"
-              aria-label={playing ? "Pause preview" : "Play preview"}
+              className="press grid size-7 place-items-center rounded-full bg-foreground text-background"
+              wrapperClassName="shrink-0"
+              label={playing ? "Pause preview" : "Play preview"}
             >
               <IconSwap
                 show={playing ? "a" : "b"}
@@ -122,7 +123,7 @@ export default function ShareDemo() {
                 b={<Play className="size-3 translate-x-px fill-current" />}
                 className="size-3"
               />
-            </button>
+            </IconButton>
             <div
               role="slider"
               tabIndex={0}
@@ -145,7 +146,7 @@ export default function ShareDemo() {
                 style={{ transform: `translateX(${(pos / PREVIEW_SECONDS) * 100 - 100}%)` }}
               />
             </div>
-            <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+            <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
               {formatTime(pos)} / {formatTime(PREVIEW_SECONDS)}
             </span>
           </div>

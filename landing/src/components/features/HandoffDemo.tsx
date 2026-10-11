@@ -22,7 +22,8 @@ export default function HandoffDemo() {
   return (
     <div
       ref={ref}
-      className="flex w-full max-w-xs flex-col gap-2"
+      // The active card scales up 2%; gap-2.5 keeps 8px between cards anyway.
+      className="flex w-full max-w-xs flex-col gap-2.5"
       onPointerEnter={() => setPaused(true)}
       onPointerLeave={() => setPaused(false)}
     >

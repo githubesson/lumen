@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useInView, usePrefersReducedMotion } from "../../lib/hooks";
 import { byId } from "../../lib/music";
 import CoverImg from "../CoverImg";
@@ -23,6 +23,7 @@ export default function ReplayDemo() {
   const [active, setActive] = useState<number | null>(null);
   const started = useRef(false);
   const reduced = usePrefersReducedMotion();
+  const tipId = useId();
 
   useEffect(() => {
     if (!inView || started.current) return;
@@ -55,7 +56,7 @@ export default function ReplayDemo() {
     <div ref={ref} className="flex w-full max-w-xs flex-col gap-4">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+          <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
             {active === null ? "Replay 2026" : `${MONTH_NAMES[active]} 2026`}
           </div>
           <div className="mt-1 text-3xl font-semibold tabular-nums tracking-tight">
@@ -69,7 +70,7 @@ export default function ReplayDemo() {
         </div>
       </div>
 
-      <div className="flex h-28 items-end gap-1.5" onPointerLeave={() => setActive(null)}>
+      <div className="flex h-28 items-end gap-2" onPointerLeave={() => setActive(null)}>
         {MONTHS.map((m, i) => {
           const on = active === null ? i === MONTHS.length - 1 : i === active;
           return (
@@ -77,6 +78,7 @@ export default function ReplayDemo() {
               key={i}
               type="button"
               aria-label={`${MONTH_NAMES[i]}: ${m.toLocaleString("en-US")} minutes`}
+              data-ui-tooltip={`${tipId}-${i}`}
               onPointerEnter={() => setActive(i)}
               onFocus={() => setActive(i)}
               onBlur={() => setActive(null)}
@@ -97,19 +99,23 @@ export default function ReplayDemo() {
                     : `transform 700ms var(--ease-out) ${i * 45}ms, background-color 150ms ease`,
                 }}
               />
-              {active === i && (
-                <span
-                  className="pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-1.5 py-0.5 font-mono text-[10px] text-background shadow"
-                  style={{ bottom: `calc(${(m / PEAK) * 100}% + 6px)` }}
-                >
-                  {MONTH_NAMES[i].slice(0, 3)} · {m.toLocaleString("en-US")}
-                </span>
-              )}
+              {/* Always mounted so the bar stays linked to its tooltip. */}
+              <span
+                id={`${tipId}-${i}`}
+                role="tooltip"
+                className={clsx(
+                  "pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-1.5 py-0.5 font-mono text-[11px] text-background shadow",
+                  active !== i && "invisible",
+                )}
+                style={{ bottom: `calc(${(m / PEAK) * 100}% + 6px)` }}
+              >
+                {MONTH_NAMES[i].slice(0, 3)} · {m.toLocaleString("en-US")}
+              </span>
             </button>
           );
         })}
       </div>
-      <div className="flex justify-between font-mono text-[10px] text-muted-foreground">
+      <div className="flex justify-between font-mono text-[11px] text-muted-foreground">
         <span>JAN</span>
         <span>DEC</span>
       </div>

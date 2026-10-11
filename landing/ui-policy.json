@@ -1,0 +1,36 @@
+{
+  "fonts": ["Geist", "Geist Mono"],
+  "fontSizes": [11, 12, 13, 14, 16, 18, 20, 24, 30, 36, 48, 60, 72],
+  "typeRules": [],
+  "minControlSize": 15,
+  "controlSizeRules": [],
+  "minControlGap": 8,
+  "minControlInset": 8,
+  "controlContainers": ["[data-ui-container]"],
+  "minLayoutGap": 8,
+  "bannedCopy": ["unlock your potential", "seamlessly", "game-changing"],
+  "viewports": [{ "width": 390, "height": 844 }, { "width": 1440, "height": 900 }],
+  "colorSchemes": ["light", "dark"],
+  "exceptions": [
+    {
+      "selector": "svg[role=img] text",
+      "rules": ["font-family", "font-size", "text-contrast"],
+      "reason": "Text drawn inside an SVG illustration: the self-host diagram and the MacBook's macOS menu bar. It is sized in viewBox units and axe cannot measure its background. Pixel sampling measured the diagram labels at 5.1:1 or more."
+    },
+    {
+      "selector": ".text-gradient, .text-gradient *, .text-brand-gradient, .text-brand-gradient *",
+      "rules": ["text-contrast"],
+      "reason": "Gradient-filled headings (background-clip: text), which axe cannot measure. Pixel sampling measured the lightest end of the gradient at 4.1:1 or more; these are large text, which needs 3:1."
+    },
+    {
+      "selector": ".card-surface > .bg-grid ~ * *",
+      "rules": ["text-contrast"],
+      "reason": "Buttons in the closing call to action sit on translucent surfaces over the decorative grid and glow layers, which axe cannot see through. Pixel sampling measured 5.4:1 or more."
+    },
+    {
+      "selector": ".truncate, .truncate *",
+      "rules": ["content-clipping"],
+      "reason": "Titles, artists and paths in the demos truncate to one line with an ellipsis on purpose, as in the app's track lists."
+    }
+  ]
+}
