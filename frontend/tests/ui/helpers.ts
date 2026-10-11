@@ -1,8 +1,8 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, type Locator, type Page, type TestInfo } from "playwright/test";
 import { expectUI } from "lintapple/playwright";
-import { mockApi, reportUnmocked } from "./mock-api";
+import { expectAllMocked, mockApi } from "./mock-api";
 import { tracks } from "./fixtures";
 
 /** The track the signed-in screens show in the player bar. */
@@ -77,14 +77,37 @@ export async function settle(page: Page): Promise<void> {
   });
 }
 
+/** A lintapple policy exception, with the reason it is safe. */
+export interface PolicyException {
+  selector: string;
+  rules: string[];
+  reason: string;
+}
+
+const policy = JSON.parse(readFileSync(new URL("../../ui-policy.json", import.meta.url), "utf8")) as {
+  exceptions: PolicyException[];
+};
+
+/**
+ * On phones the track tables scroll sideways, and axe errors on the sticky
+ * headers of columns scrolled out of view. Applied only at phone widths, so
+ * the headers it can see stay checked.
+ */
+const offscreenTableHeaders: PolicyException = {
+  selector: ".table-scroll thead th",
+  rules: ["text-contrast"],
+  reason: "Sticky headers of columns scrolled out of view, which axe errors on. They share the style of the headers it measures in view.",
+};
+
 /**
  * Settles the page, saves a screenshot when LINT_UI_SHOTS names a directory
- * (1440px projects only), then runs lintapple. Unmocked API calls are
- * reported first so they show up even when findings fail the test.
+ * (1440px projects only), then runs lintapple against ui-policy.json plus
+ * any `exceptions` this one check needs. API calls without a fixture fail
+ * the test too.
  */
-export async function checkUI(page: Page, testInfo: TestInfo): Promise<void> {
+export async function checkUI(page: Page, testInfo: TestInfo, { exceptions = [] }: { exceptions?: PolicyException[] } = {}): Promise<void> {
   await settle(page);
-  await reportUnmocked(page, testInfo);
+  expectAllMocked(page, testInfo);
   const shots = process.env.LINT_UI_SHOTS;
   if (shots && page.viewportSize()?.width === 1440) {
     mkdirSync(shots, { recursive: true });
@@ -92,7 +115,11 @@ export async function checkUI(page: Page, testInfo: TestInfo): Promise<void> {
     const name = `${testInfo.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${scheme}.png`;
     await page.screenshot({ path: join(shots, name) });
   }
-  await expectUI(page, testInfo);
+  const phone = (page.viewportSize()?.width ?? Infinity) <= 760;
+  await expectUI(page, testInfo, {
+    ...policy,
+    exceptions: [...policy.exceptions, ...exceptions, ...(phone ? [offscreenTableHeaders] : [])],
+  });
 }
 
 function formatDuration(ms: number): string {

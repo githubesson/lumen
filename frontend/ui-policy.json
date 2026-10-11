@@ -1,7 +1,12 @@
 {
   "fonts": ["Geist", "Geist Mono"],
   "fontSizes": [12, 13, 14, 16, 18, 20, 24, 30, 36, 48, 60, 72],
-  "typeRules": [],
+  "typeRules": [
+    { "selector": "h1", "sizes": [20, 24, 30, 36, 48, 60] },
+    { "selector": "h2", "sizes": [12, 14, 16] },
+    { "selector": "h3", "sizes": [12, 14, 16] },
+    { "selector": "button, [role=button]", "sizes": [12, 13, 14, 16, 18] }
+  ],
   "minControlSize": 15,
   "controlSizeRules": [],
   "minControlGap": 8,
@@ -33,19 +38,14 @@
       "reason": "Visually hidden text for screen readers is clipped on purpose."
     },
     {
+      "selector": ".player-lyrics-scroll-line:not(.active), .player-lyrics-scroll-line:not(.active) *, .player-lyric-word-past, .player-lyric-word-upcoming",
+      "rules": ["text-contrast"],
+      "reason": "Synced lyrics fade the lines and words that aren't being sung, so the current one stands out; it is drawn in full --foreground. A design choice, not a measurement gap."
+    },
+    {
       "selector": ".cmdk-kbd",
       "rules": ["text-contrast"],
       "reason": "The command palette's ↵ ↑ ↓ key glyphs, which axe skips as non-text. --muted-foreground on --muted measures 5.0:1 in light and 5.9:1 in dark."
-    },
-    {
-      "selector": ".admin-section-wrap .input, .admin-section-wrap > p",
-      "rules": ["text-contrast"],
-      "reason": "Admin fields and text outside the visible part of the app's scrolling content area (below the fold, or scrolled sideways on phones), where axe can't find a background. lintapple measures the same styles where they are in view."
-    },
-    {
-      "selector": ".table-scroll thead th",
-      "rules": ["text-contrast"],
-      "reason": "Sticky headers of columns scrolled out of view in a phone-width table, which axe errors on. They share the style of the headers it measures in view."
     },
     {
       "selector": ".card",

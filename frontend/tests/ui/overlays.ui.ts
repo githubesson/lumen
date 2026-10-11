@@ -67,3 +67,24 @@ test("command palette returns focus", async ({ page }) => {
   await expect(page.locator(".app")).not.toHaveAttribute("inert");
   await expect(search).toBeFocused();
 });
+
+test("lyrics panel", async ({ page }, testInfo) => {
+  await page.locator(".topbar").getByRole("button", { name: "Toggle lyrics panel" }).click();
+  await ready(page, page.locator(".lyrics-sidebar").getByText("the kettle's still warm", { exact: false }));
+  await checkUI(page, testInfo);
+});
+
+test("phone lyrics drawer closes on Escape and outside taps", async ({ page }) => {
+  test.skip(page.viewportSize()!.width > 760, "The panel is a drawer only on phones.");
+  const toggle = page.locator(".topbar").getByRole("button", { name: "Toggle lyrics panel" });
+  const panel = page.locator(".lyrics-sidebar");
+  await toggle.click();
+  await expect(panel).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  await toggle.click();
+  await expect(panel).toBeVisible();
+  // The backdrop, left of the drawer.
+  await page.mouse.click(16, page.viewportSize()!.height / 2);
+  await expect(panel).toBeHidden();
+});

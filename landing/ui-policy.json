@@ -1,7 +1,12 @@
 {
   "fonts": ["Geist", "Geist Mono"],
   "fontSizes": [11, 12, 13, 14, 16, 18, 20, 24, 30, 36, 48, 60, 72],
-  "typeRules": [],
+  "typeRules": [
+    { "selector": "h1", "sizes": [48, 60, 72] },
+    { "selector": "h2", "sizes": [30, 36, 48] },
+    { "selector": "h3", "sizes": [14, 16, 18] },
+    { "selector": "button, [role=button]", "sizes": [12, 13, 14, 16] }
+  ],
   "minControlSize": 15,
   "controlSizeRules": [],
   "minControlGap": 8,

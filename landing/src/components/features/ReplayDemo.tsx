@@ -104,7 +104,7 @@ export default function ReplayDemo() {
                 id={`${tipId}-${i}`}
                 role="tooltip"
                 className={clsx(
-                  "pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-1.5 py-0.5 font-mono text-[11px] text-background shadow",
+                  "pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-1.5 py-0.5 font-mono text-xs text-background shadow",
                   active !== i && "invisible",
                 )}
                 style={{ bottom: `calc(${(m / PEAK) * 100}% + 6px)` }}

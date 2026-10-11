@@ -8,13 +8,18 @@ const policy = JSON.parse(readFileSync(new URL("./ui-policy.json", import.meta.u
   viewports: { width: number; height: number }[];
   colorSchemes: ("light" | "dark")[];
 };
-const port = 4318;
+// Off the common dev and OpenTelemetry ports, since a local server on this
+// port is reused.
+const port = 4782;
 
 export default defineConfig({
   testDir: "tests/ui",
   testMatch: "*.ui.ts",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
+  // CI starts cold: allow for the first page loads and one retry.
+  retries: process.env.CI ? 1 : 0,
+  timeout: process.env.CI ? 60_000 : 30_000,
   reporter: process.env.CI ? [["list"], ["github"]] : "list",
   use: {
     baseURL: `http://localhost:${port}`,

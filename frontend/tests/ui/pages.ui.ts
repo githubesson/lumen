@@ -128,7 +128,18 @@ test("pending invites", async ({ page }, testInfo) => {
 test("admin library", async ({ page }, testInfo) => {
   await go(page, "/admin/library");
   await ready(page, page.getByText("/mnt/nas/uploads/lossless").first());
-  await checkUI(page, testInfo);
+  await checkUI(page, testInfo, {
+    exceptions: [
+      {
+        // The admin forms sit below the fold of the scrolling content area
+        // (and, on phones, partly scrolled sideways), where lintapple's
+        // placeholder check finds no background.
+        selector: ".admin-section-wrap .input, .admin-section-wrap > p",
+        rules: ["text-contrast"],
+        reason: "Fields and text outside the visible part of the scrolling content area. lintapple measures the same styles in view.",
+      },
+    ],
+  });
 });
 
 test("admin users", async ({ page }, testInfo) => {

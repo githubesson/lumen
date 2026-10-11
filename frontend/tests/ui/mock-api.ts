@@ -1,7 +1,7 @@
 // Serves the Go backend's API from fixtures, so the UI lint run needs no
 // server, database or music. Requests nothing here answers are logged (see
 // `unmocked`) and get an empty response.
-import type { Page, Route, TestInfo } from "playwright/test";
+import { expect, type Page, type Route, type TestInfo } from "playwright/test";
 import type { PlaybackActivity, Playlist, ReplayBucket } from "@music-library/core/api";
 import * as data from "./fixtures";
 
@@ -16,7 +16,7 @@ export interface MockOptions {
   signedIn: boolean;
 }
 
-/** Calls the mock had no fixture for, per test. Printed and attached by `reportUnmocked`. */
+/** Calls the mock had no fixture for, per test. Checked by `expectAllMocked`. */
 const unmockedByPage = new WeakMap<Page, string[]>();
 
 export async function mockApi(page: Page, { signedIn }: MockOptions): Promise<void> {
@@ -102,11 +102,15 @@ export async function mockApi(page: Page, { signedIn }: MockOptions): Promise<vo
 }
 
 /** Prints and attaches the calls this test made that the mock didn't know. */
-export async function reportUnmocked(page: Page, testInfo: TestInfo): Promise<void> {
+/**
+ * Fails the test, softly so lintapple still runs, for API calls no fixture
+ * answered: the screen would show an empty or error state instead of the UI
+ * under test.
+ */
+export function expectAllMocked(page: Page, testInfo: TestInfo): void {
   const calls = [...new Set(unmockedByPage.get(page) ?? [])];
-  if (!calls.length) return;
   for (const call of calls) testInfo.annotations.push({ type: "unmocked", description: call });
-  console.warn(`[unmocked] ${testInfo.title}: ${calls.join(", ")}`);
+  expect.soft(calls, "API calls without a fixture in tests/ui/mock-api.ts").toEqual([]);
 }
 
 function fulfill(route: Route, reply: Reply) {

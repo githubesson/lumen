@@ -38,8 +38,12 @@
   }
 }
 
+.lyrics-backdrop {
+  display: none;
+}
+
 /* Phones have no lyrics column: the open panel floats over the page from the
-   right, like the navigation drawer from the left. */
+   right, like the navigation drawer from the left, over the same scrim. */
 @media (max-width: 760px) {
   .lyrics-sidebar {
     grid-area: auto;
@@ -48,6 +52,22 @@
     z-index: 72;
     width: min(320px, calc(100vw - 48px));
     box-shadow: var(--shadow-md);
+  }
+
+  .lyrics-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 71;
+    display: block;
+    background: var(--scrim);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+  }
+
+  .lyrics-backdrop.visible {
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 

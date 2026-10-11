@@ -28,7 +28,11 @@ async function revealAll(page: Page) {
     scrollTo(0, 0);
     await frame();
   });
-  await page.waitForFunction(() => [...document.querySelectorAll(".reveal")].every((el) => el.hasAttribute("data-shown")));
+  // Only rendered sections can scroll into view; one hidden at this width
+  // never would.
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll(".reveal")].every((el) => el.hasAttribute("data-shown") || !el.checkVisibility()),
+  );
   await settle(page);
 }
 
