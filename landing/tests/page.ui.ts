@@ -12,7 +12,8 @@ test.beforeEach(async ({ page }) => {
         : { stargazers_count: 128 },
     });
   });
-  await page.goto("/");
+  // Relative, so a LANDING_BASE sub-path is kept.
+  await page.goto("./");
   await page.locator("#faq").waitFor();
 });
 

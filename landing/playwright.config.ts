@@ -10,6 +10,8 @@ const policy = JSON.parse(readFileSync(new URL("./ui-policy.json", import.meta.u
 // Off the common dev and OpenTelemetry ports, since a local server on this
 // port is reused.
 const port = 4781;
+// The build's sub-path, which vite.config.ts also reads (see README).
+const url = `http://localhost:${port}${process.env.LANDING_BASE ?? "/"}`;
 
 export default defineConfig({
   testDir: "tests",
@@ -21,7 +23,7 @@ export default defineConfig({
   timeout: process.env.CI ? 60_000 : 30_000,
   reporter: process.env.CI ? [["list"], ["github"]] : "list",
   use: {
-    baseURL: `http://localhost:${port}`,
+    baseURL: url,
     reducedMotion: "reduce",
     locale: "en-US",
     timezoneId: "UTC",
@@ -34,7 +36,7 @@ export default defineConfig({
   ),
   webServer: {
     command: `npx vite preview --port ${port} --strictPort`,
-    url: `http://localhost:${port}`,
+    url,
     reuseExistingServer: !process.env.CI,
   },
 });
