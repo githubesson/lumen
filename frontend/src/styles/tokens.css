@@ -67,8 +67,9 @@
      mode. */
   --input-bg: var(--background);
   --input-bg-hover: var(--muted);
-  /* Half of --muted, as in dark, so a hovered row isn't the selected one. */
-  --ghost-hover: color-mix(in oklch, var(--muted) 50%, transparent);
+  /* Translucent, so hover shows as much on the frame and cards as on the
+     page (#f2 there), and stays lighter than a selected row's --muted. */
+  --ghost-hover: oklch(0 0 0 / 5%);
   --shadow-md: 0 4px 6px -1px oklch(0 0 0 / 0.1), 0 2px 4px -2px oklch(0 0 0 / 0.1);
 
   color-scheme: light;
