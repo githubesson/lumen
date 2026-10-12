@@ -45,7 +45,7 @@
     {
       "selector": ".cmdk-kbd",
       "rules": ["text-contrast"],
-      "reason": "The command palette's ↵ ↑ ↓ key glyphs, which axe skips as non-text. --muted-foreground on --muted measures 5.0:1 in light and 5.9:1 in dark."
+      "reason": "The command palette's ↵ ↑ ↓ key glyphs, which axe skips as non-text. --muted-foreground on --muted measures 5.9:1 in both themes."
     },
     {
       "selector": ".card",

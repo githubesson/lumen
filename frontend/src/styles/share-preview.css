@@ -2,7 +2,6 @@
    Public share preview — a single Nova card: cover, header,
    player, and a footer of actions.
    ============================================================ */
-[data-theme="dark"] .share-preview-page { background: var(--background); }
 .share-preview-page {
   height: 100dvh;
   overflow-y: auto;
@@ -10,7 +9,7 @@
   box-sizing: border-box;
   display: grid;
   place-items: center;
-  background: var(--muted);
+  background: var(--background);
 }
 .share-preview-shell {
   width: min(100%, 380px);
