@@ -20,33 +20,38 @@
    ============================================================ */
 
 /* ---------- Theme tokens (shadcn neutral) ---------- */
+/* Light mirrors dark's layering: --background is the base, the frame and
+   cards sit one step toward the foreground, fills and selection one more.
+   shadcn's light steps (1 → 0.985 → 0.97) are a third of dark's or less,
+   so cards, the frame and selected rows barely showed; these steps are
+   close to dark's. */
 [data-theme="light"] {
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
+  --card: oklch(0.97 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.205 0 0);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
+  --secondary: oklch(0.935 0 0);
   --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  /* Darker than shadcn's 0.556, which is under 4.5:1 on muted surfaces. */
-  --muted-foreground: oklch(0.52 0 0);
-  --accent: oklch(0.97 0 0);
+  --muted: oklch(0.935 0 0);
+  /* About 7:1 on the page, like dark's 7.6:1 (shadcn's 0.556 is 4.7:1). */
+  --muted-foreground: oklch(0.46 0 0);
+  --accent: oklch(0.935 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
   /* Solid keyboard-focus indicator. Nova's ring at 50% alpha falls below the
-     3:1 non-text contrast minimum; neutral-500 clears 4.3:1 on every light
-     surface (background, muted, sidebar). */
+     3:1 non-text contrast minimum; neutral-500 clears 3.6:1 on every light
+     surface (background, muted, sidebar and its selected row). */
   --focus-ring: oklch(0.556 0 0);
-  --sidebar: oklch(0.985 0 0);
+  --sidebar: oklch(0.96 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent: oklch(0.91 0 0);
   --sidebar-border: oklch(0.922 0 0);
 
   /* Lumen additions, kept neutral except where a status needs a hue. */
@@ -55,9 +60,10 @@
   --warning: oklch(0.55 0.13 70);
   --success: oklch(0.6 0.13 155);
   --scrim: oklch(0 0 0 / 0.1);
-  /* Nova's light/dark control fills: outline controls sit on the page in
-     light mode and on a faint input tint in dark mode. */
-  --input-bg: transparent;
+  /* Nova's light/dark control fills: outline controls are page-coloured in
+     light mode, so they lift off grey cards, and a faint input tint in dark
+     mode. */
+  --input-bg: var(--background);
   --input-bg-hover: var(--muted);
   --ghost-hover: var(--muted);
   --shadow-md: 0 4px 6px -1px oklch(0 0 0 / 0.1), 0 2px 4px -2px oklch(0 0 0 / 0.1);

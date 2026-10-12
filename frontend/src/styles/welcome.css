@@ -7,11 +7,8 @@
   height: 100dvh;
   display: flex;
   padding: 48px 24px 24px;
-  background: var(--muted);
-  overflow-y: auto;
-}
-[data-theme="dark"] .welcome {
   background: var(--background);
+  overflow-y: auto;
 }
 /* The window has no title bar; let the empty top edge move it. */
 .welcome-drag {

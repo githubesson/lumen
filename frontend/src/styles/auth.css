@@ -1,14 +1,13 @@
 /* ============================================================
    Auth / centered pages (Login, Register, etc.)
    ============================================================ */
-[data-theme="dark"] .auth-wrap { background: var(--background); }
 /* Fixed-height scroller with an auto-margin card: body doesn't scroll, so a
    short window must scroll here rather than clip the form. */
 .auth-wrap {
   height: 100dvh;
   display: flex;
   padding: 24px;
-  background: var(--muted);
+  background: var(--background);
   overflow-y: auto;
 }
 .auth-card {
