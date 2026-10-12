@@ -89,7 +89,7 @@
   border-radius: var(--radius-sm);
 }
 .detail-title-edit:focus-visible {
-  outline: 2px solid var(--ring);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -106,7 +106,7 @@
   cursor: progress;
 }
 .detail-art-edit:focus-visible {
-  outline: 2px solid var(--ring);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .detail-art-edit-hint {
