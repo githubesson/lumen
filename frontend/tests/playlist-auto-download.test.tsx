@@ -16,8 +16,8 @@ vi.mock("../../core/src/api", async (original) => ({
 }));
 const auth = vi.hoisted(() => ({ me: { id: "u1", role: "admin" } }));
 vi.mock("../src/context/Auth", () => ({ useAuth: () => auth }));
-const controls = vi.hoisted(() => ({ play: () => {} }));
-vi.mock("../src/context/Player", () => ({ usePlayerControls: () => controls }));
+const controls = vi.hoisted(() => ({ play: () => {}, shuffle: false }));
+vi.mock("../src/context/Player", () => ({ usePlayer: () => controls, usePlayerControls: () => controls }));
 const favorites = vi.hoisted(() => ({ isFavorite: () => false, toggle: () => Promise.resolve() }));
 vi.mock("../src/context/Favorites", () => ({ useFavorites: () => favorites }));
 const playlists = vi.hoisted(() => ({ data: null, reload: () => Promise.resolve(), update: () => {} }));

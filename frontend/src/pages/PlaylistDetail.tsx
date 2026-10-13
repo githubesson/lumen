@@ -7,7 +7,6 @@ import {
   ImageUp as ImageUpIcon,
   Lock as LockClosedIcon,
   Music as MusicalNoteIcon,
-  Play as PlayIcon,
   Plus as PlusIcon,
   Users as UsersIcon,
 } from "lucide-react";
@@ -27,6 +26,7 @@ import {
 import { useAuth } from "../context/Auth";
 import { usePlayerControls } from "../context/Player";
 import { Button } from "../components/Button";
+import PlayListButton from "../components/PlayListButton";
 import { Select } from "../components/Select";
 import SegmentedControl, {
   type SegmentedOption,
@@ -389,10 +389,6 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       (t) => t.added_by_id != null && t.added_by_id !== playlist.owner_id,
     );
 
-  const onPlayAll = () => {
-    if (queue.length > 0) play(queue[0], queue);
-  };
-
   // After a failed action, reload anyway (the action may have superseded a
   // pending load), then report the action's error, which a successful reload
   // would otherwise clear.
@@ -676,14 +672,9 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         }
         actions={
           <>
-            <Button
-              variant="primary"
-              onClick={onPlayAll}
-              disabled={!tracks || tracks.length === 0}
-              leadingIcon={<PlayIcon className="size-4" />}
-            >
+            <PlayListButton tracks={queue} disabled={!tracks || tracks.length === 0}>
               Play all
-            </Button>
+            </PlayListButton>
             {canEdit && (
               <Button
                 // The dialog marks tracks already in the playlist; until they
