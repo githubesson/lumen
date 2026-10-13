@@ -55,6 +55,12 @@ export interface FillMetrics {
 
 const usualFor = (usual: FillUsual, columns: number) => (typeof usual === "number" ? usual : usual(columns));
 
+// How many changes one fill makes before paint, at most. Measuring settles
+// in two or three; the cap keeps a layout that never settles from looping
+// until React gives up on the whole page. The resize observer picks up from
+// there a frame later.
+const MAX_CHANGES_PER_FRAME = 8;
+
 /**
  * How many items fill the room, in whole rows, and the height the usual
  * ones need: fewer than usual when that's all there is.
@@ -80,9 +86,30 @@ export function useBoardFill(usual: FillUsual, emptyRow?: number): BoardFill {
   const [area, setArea] = useState<HTMLDivElement | null>(null);
   const [fit, setFit] = useState<Fit | null>(null);
   const latest = useRef({ usual, emptyRow });
+  // The fit last set, and how many changes it's had since the last frame.
+  const current = useRef<Fit | null>(null);
+  const changes = useRef(0);
 
   const measure = useCallback(() => {
     if (!area) return;
+    // Only a change is set: this runs after every render, and even a
+    // setState to the same value renders the component again first.
+    const set = (next: Fit | null) => {
+      const prev = current.current;
+      if (prev === next || (prev && next && prev.count === next.count && Math.abs(prev.minHeight - next.minHeight) < 0.5)) {
+        return;
+      }
+      if (changes.current >= MAX_CHANGES_PER_FRAME) return;
+      if (changes.current++ === 0) {
+        const reset = () => {
+          changes.current = 0;
+        };
+        if (typeof requestAnimationFrame === "function") requestAnimationFrame(reset);
+        else setTimeout(reset);
+      }
+      current.current = next;
+      setFit(next);
+    };
     const { usual, emptyRow } = latest.current;
     const grid = area.firstElementChild;
     const style = grid ? getComputedStyle(grid) : null;
@@ -93,14 +120,12 @@ export function useBoardFill(usual: FillUsual, emptyRow?: number): BoardFill {
     const first = grid?.firstElementChild;
     const row = first ? first.getBoundingClientRect().height : (emptyRow ?? 0);
     if (!row) {
-      setFit((prev) => (prev === null ? prev : null));
+      set(null);
       return;
     }
-    const metrics = { height: area.clientHeight, columns, row, gap, margins, items: grid?.childElementCount ?? 0 };
-    setFit((prev) => {
-      const next = fitItems(usual, { ...metrics, heldAt: prev?.minHeight });
-      return prev && prev.count === next.count && Math.abs(prev.minHeight - next.minHeight) < 0.5 ? prev : next;
-    });
+    const height = area.clientHeight;
+    const items = grid?.childElementCount ?? 0;
+    set(fitItems(usual, { height, columns, row, gap, margins, items, heldAt: current.current?.minHeight }));
   }, [area]);
 
   // After every render: the items, or the board around them, may have
