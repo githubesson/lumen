@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, type TrackDetail, type TrackListItem } from "../src/api";
-import { prepareTrackDownload } from "../src/audio-format";
+import { api, setUnauthorizedHandler, type TrackDetail, type TrackListItem } from "../src/api";
+import { extensionFromStream, prepareTrackDownload } from "../src/audio-format";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  setUnauthorizedHandler(null);
 });
 
 const track: TrackListItem = { id: "t1", title: "Row Title", artist: "Row Artist", duration_ms: 1 };
@@ -59,5 +61,34 @@ describe("prepareTrackDownload", () => {
       ext: undefined,
       filename: "Row Artist - Row Title",
     });
+  });
+});
+
+describe("extensionFromStream", () => {
+  it("gives up on a stalled HEAD at the request deadline and tries a range", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url: string, init: RequestInit) =>
+      init.method === "HEAD"
+        ? new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          })
+        : Promise.resolve(new Response("x", { status: 206, headers: { "content-type": "audio/flac" } })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const ext = extensionFromStream("t1");
+    await vi.advanceTimersByTimeAsync(30_000);
+    await expect(ext).resolves.toBe("flac");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/tracks/t1/stream",
+      expect.objectContaining({ credentials: "include", headers: expect.objectContaining({ Range: "bytes=0-0" }) }),
+    );
+  });
+
+  it("does not sign the user out when the probe is refused", async () => {
+    const unauthorized = vi.fn();
+    setUnauthorizedHandler(unauthorized);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 401 })));
+    await expect(extensionFromStream("t1")).resolves.toBeUndefined();
+    expect(unauthorized).not.toHaveBeenCalled();
   });
 });

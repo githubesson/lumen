@@ -141,8 +141,9 @@ export default function ReplayScreen() {
     void Haptics.selectionAsync();
     setSharingImage(true);
     try {
-      const res = await api.getReplayImage(replayImageRequest(period, range));
-      const bytes = new Uint8Array(await res.arrayBuffer());
+      const bytes = new Uint8Array(
+        await api.getReplayImage(replayImageRequest(period, range)),
+      );
 
       const dir = new Directory(Paths.cache, "replay-share");
       dir.create({ idempotent: true, intermediates: true });

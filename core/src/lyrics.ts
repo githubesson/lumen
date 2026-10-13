@@ -135,7 +135,7 @@ export function lyricsContent(result: LyricsResult | null | undefined): LyricsCo
 }
 
 export const LYRICS_NOT_FOUND_MESSAGE = "No lyrics found";
-export const LYRICS_LOAD_ERROR_MESSAGE = "Couldn't load lyrics";
+const LYRICS_LOAD_ERROR_MESSAGE = "Couldn't load lyrics";
 
 /**
  * Message for a failed lyrics request. The server answers 404 when no

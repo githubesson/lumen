@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { formatBitrate, formatCalendarDate, formatDurationMs, formatSampleRate } from "../src/format";
 import { trackCredits } from "../src/api-media";
-import { ApiError, type TidalTrackInfo } from "../src/api";
-import { tidalAudioRows, tidalRefusalMessage, tidalTrackCredits } from "../src/tidal/track-info";
+import { ApiError, type TidalTrackInfo, type TrackDetail } from "../src/api";
+import {
+  tidalAudioRows,
+  tidalRefusalMessage,
+  tidalTrackCredits,
+  tidalTrackInfoResult,
+  trackInfoRows,
+  trackInfoTidalId,
+} from "../src/tidal/track-info";
 
 describe("track info formatters", () => {
   it("formats sample rates in kHz with at most one decimal", () => {
@@ -170,5 +177,160 @@ describe("tidalRefusalMessage", () => {
     expect(tidalRefusalMessage(new ApiError(502, "tidal track unavailable"))).toBeNull();
     expect(tidalRefusalMessage(new ApiError(500, refusal))).toBeNull();
     expect(tidalRefusalMessage(new Error(refusal))).toBeNull();
+  });
+});
+
+describe("tidalTrackInfoResult", () => {
+  const info: TidalTrackInfo = { id: "77", artists: [], credits: [] };
+
+  it("asks TIDAL only about TIDAL tracks", () => {
+    expect(trackInfoTidalId({ source: "tidal", source_id: "77" })).toBe("77");
+    expect(trackInfoTidalId({ source: "tidal" })).toBeNull();
+    expect(trackInfoTidalId({ source: "local", source_id: "77" })).toBeNull();
+    expect(trackInfoTidalId(null)).toBeNull();
+  });
+
+  it("keeps details only for the track asked about", () => {
+    expect(tidalTrackInfoResult("77", info)).toEqual({ info, failed: false, refusal: null });
+    expect(tidalTrackInfoResult("78", info)).toEqual({ info: null, failed: true, refusal: null });
+    expect(tidalTrackInfoResult("77", undefined)).toEqual({ info: null, failed: true, refusal: null });
+    expect(tidalTrackInfoResult(null, info)).toEqual({ info: null, failed: false, refusal: null });
+  });
+
+  it("passes on TIDAL's refusal", () => {
+    const refusal = "TIDAL refused this track: Not available in your region";
+    expect(tidalTrackInfoResult("77", info, new ApiError(502, refusal))).toEqual({ info: null, failed: true, refusal });
+    expect(tidalTrackInfoResult("77", null, new Error("timeout")).refusal).toBeNull();
+  });
+});
+
+describe("trackInfoRows", () => {
+  const file = (over: Partial<TrackDetail> = {}): TrackDetail => ({
+    id: "t1",
+    source: "local",
+    title: "Song",
+    duration_ms: 185_000,
+    format: "FLAC",
+    file_size: 30 * 1024 * 1024,
+    artists: [{ id: "a", name: "Main", role: "primary" }],
+    has_cover: true,
+    favorited: false,
+    ...over,
+  });
+  const labels = (view: ReturnType<typeof trackInfoRows>, key: string) =>
+    view.sections.find((section) => section.key === key)?.rows.map((r) => r.label);
+  const rowsOf = (view: ReturnType<typeof trackInfoRows>, key: string) =>
+    view.sections.find((section) => section.key === key)?.rows;
+
+  it("lists a file's credits, release and audio, leaving out what it doesn't have", () => {
+    const view = trackInfoRows(
+      file({
+        year: 2001,
+        genre: "Jazz",
+        track_no: 3,
+        comments: "Live take",
+        bitrate: 900_000,
+        sample_rate: 44_100,
+        channels: 2,
+        file_name: "song.flac",
+      }),
+      null,
+    );
+    expect(view.note).toBeNull();
+    expect(view.sections.map((s) => s.label)).toEqual(["Credits", "Release", "Audio"]);
+    expect(rowsOf(view, "credits")).toEqual([
+      { label: "Primary artist", value: "Main" },
+      { label: "Featured", value: "—", empty: true },
+      { label: "Producers", value: "—", empty: true },
+    ]);
+    expect(rowsOf(view, "release")).toEqual([
+      { label: "Year", value: "2001" },
+      { label: "Genre", value: "Jazz" },
+      { label: "Track", value: "3" },
+      { label: "Comments", value: "Live take", wide: true },
+    ]);
+    expect(rowsOf(view, "audio")).toEqual([
+      { label: "Format", value: "FLAC" },
+      { label: "Bitrate", value: "900 kbps" },
+      { label: "Sample rate", value: "44.1 kHz" },
+      { label: "Channels", value: "2" },
+      { label: "Duration", value: "3:05" },
+      { label: "File size", value: "30.0 MB" },
+      { label: "File", value: "song.flac", wide: true },
+    ]);
+  });
+
+  it("hides an empty genre and leaves out a section with nothing in it", () => {
+    const view = trackInfoRows(file({ genre: "  ", format: "", file_size: 0, duration_ms: 0 }), null);
+    expect(view.sections.map((s) => s.key)).toEqual(["credits"]);
+  });
+
+  it("cleans tag text for display", () => {
+    const view = trackInfoRows(
+      file({ genre: "Rock Â· Pop", artists: [{ id: "a", name: "A Â· B", role: "primary" }] }),
+      null,
+    );
+    expect(rowsOf(view, "credits")?.[0].value).toBe("A · B");
+    expect(rowsOf(view, "release")?.[0]).toEqual({ label: "Genre", value: "Rock · Pop" });
+  });
+
+  const tidalTrack = file({ source: "tidal", source_id: "77", format: "", file_size: 0, year: 1999 });
+  const info = (over: Partial<TidalTrackInfo> = {}): TidalTrackInfo => ({
+    id: "77",
+    artists: [{ name: "Main", role: "main" }],
+    credits: [{ role: "Producer", names: ["Maker"] }],
+    release_date: "2020-03-17",
+    bpm: 120,
+    key: "F♯ minor",
+    isrc: "USXXX",
+    copyright: "℗ 2020 Label",
+    streamed_quality: "LOSSLESS",
+    channels: 2,
+    ...over,
+  });
+
+  it("fills a TIDAL track from TIDAL", () => {
+    const view = trackInfoRows(tidalTrack, tidalTrackInfoResult("77", info()));
+    expect(view.note).toBeNull();
+    expect(rowsOf(view, "credits")).toEqual([
+      { label: "Primary artist", value: "Main" },
+      { label: "Featured", value: "—", empty: true },
+      { label: "Producers", value: "Maker" },
+    ]);
+    expect(rowsOf(view, "release")).toEqual([
+      { label: "Released", value: formatCalendarDate("2020-03-17") },
+      { label: "BPM", value: "120" },
+      { label: "Key", value: "F♯ minor" },
+      { label: "ISRC", value: "USXXX" },
+      { label: "Copyright", value: "℗ 2020 Label", wide: true },
+    ]);
+    expect(labels(view, "audio")).toEqual([
+      "Source", "Format", "Quality", "Bit depth", "Sample rate", "Channels", "Duration",
+    ]);
+  });
+
+  it("falls back to the row's year, and passes on what TIDAL couldn't load", () => {
+    const view = trackInfoRows(
+      tidalTrack,
+      tidalTrackInfoResult(
+        "77",
+        info({ release_date: undefined, credits_failed: true, release_failure: "Only the stream start date is known." }),
+      ),
+    );
+    expect(rowsOf(view, "release")?.[0]).toEqual({ label: "Year", value: "1999" });
+    expect(view.sections.find((s) => s.key === "credits")?.note).toBe("Couldn't load credits from TIDAL.");
+    expect(view.sections.find((s) => s.key === "release")?.note).toBe("Only the stream start date is known.");
+  });
+
+  it("shows what the row has when TIDAL didn't answer, and why", () => {
+    const view = trackInfoRows(tidalTrack, tidalTrackInfoResult("77", null, new Error("timeout")));
+    expect(view.note).toBe("Couldn't load more from TIDAL, so some fields are missing.");
+    expect(rowsOf(view, "audio")).toEqual([
+      { label: "Source", value: "TIDAL" },
+      { label: "Quality", value: "—", empty: true },
+      { label: "Duration", value: "3:05" },
+    ]);
+    const refusal = "TIDAL refused this track: Not available in your region";
+    expect(trackInfoRows(tidalTrack, tidalTrackInfoResult("77", null, new ApiError(502, refusal))).note).toBe(refusal);
   });
 });

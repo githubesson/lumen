@@ -45,7 +45,7 @@ const rows = (titles: string[]) =>
 
 beforeEach(() => {
   mock.getPlaylist.mockResolvedValue({ id: "p1", name: "Mix", visibility: "private", effective_role: "owner", owner_id: "u1" });
-  mock.listPlaylistTracksIfChanged.mockResolvedValue({ etag: "v1", tracks: rows(["A", "B", "C"]) });
+  mock.listPlaylistTracksIfChanged.mockResolvedValue({ etag: "v1", data: { tracks: rows(["A", "B", "C"]) } });
   mock.listCollaborators.mockResolvedValue([]);
 });
 afterEach(() => { cleanup(); vi.clearAllMocks(); clearResourceCache(); });
@@ -72,7 +72,7 @@ it("queues a second remove behind one still in flight instead of dropping it", a
   await act(async () => {});
   expect(mock.removePlaylistTrack).toHaveBeenCalledTimes(1);
 
-  mock.listPlaylistTracksIfChanged.mockResolvedValue({ etag: "v3", tracks: rows(["C"]) });
+  mock.listPlaylistTracksIfChanged.mockResolvedValue({ etag: "v3", data: { tracks: rows(["C"]) } });
   await act(async () => { finishFirst(); });
   expect(mock.removePlaylistTrack.mock.calls).toEqual([["p1", 0], ["p1", 0]]);
   expect(screen.queryByRole("button", { name: "Remove B" })).toBeNull();
@@ -85,11 +85,13 @@ it("addresses a queued remove by the position the server will have given the row
   // queued remove of B has to target 1, not B's index 0 (the hidden row).
   mock.listPlaylistTracksIfChanged.mockResolvedValue({
     etag: "v1",
-    tracks: [
-      { position: 0, track_id: "t-A", title: "A", duration_ms: 1000, source: "local" },
-      { position: 2, track_id: "t-B", title: "B", duration_ms: 1000, source: "local" },
-      { position: 3, track_id: "t-C", title: "C", duration_ms: 1000, source: "local" },
-    ] as PlaylistTrackEntry[],
+    data: {
+      tracks: [
+        { position: 0, track_id: "t-A", title: "A", duration_ms: 1000, source: "local" },
+        { position: 2, track_id: "t-B", title: "B", duration_ms: 1000, source: "local" },
+        { position: 3, track_id: "t-C", title: "C", duration_ms: 1000, source: "local" },
+      ] as PlaylistTrackEntry[],
+    },
   });
   let finishFirst!: () => void;
   mock.removePlaylistTrack

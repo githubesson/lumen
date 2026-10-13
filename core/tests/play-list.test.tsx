@@ -5,6 +5,7 @@ import type { TrackListItem } from "../src/api";
 import {
   listPlaybackState,
   startListPlayback,
+  startShuffledListPlayback,
   usePlayFromList,
 } from "../src/player/play-list";
 
@@ -95,5 +96,27 @@ describe("startListPlayback", () => {
     expect(startListPlayback(play, [t("a", true)], false)).toBe(false);
     expect(play).not.toHaveBeenCalled();
     expect(startListPlayback(() => false, [t("a")], false)).toBe(false);
+  });
+});
+
+describe("startShuffledListPlayback", () => {
+  it("starts a random playable track with shuffle on, queueing only playable ones", () => {
+    const play = vi.fn();
+    const tracks = [t("a"), t("b", true), t("c"), t("d")];
+    expect(startShuffledListPlayback(play, tracks, () => 0.5)).toBe(true);
+    expect(play).toHaveBeenCalledExactlyOnceWith(
+      tracks[2],
+      [tracks[0], tracks[2], tracks[3]],
+      { shuffle: true },
+    );
+    startShuffledListPlayback(play, tracks, () => 1);
+    expect(play).toHaveBeenLastCalledWith(tracks[3], expect.any(Array), { shuffle: true });
+  });
+
+  it("does nothing for a list with nothing playable, and reports a refused start", () => {
+    const play = vi.fn();
+    expect(startShuffledListPlayback(play, [t("a", true)])).toBe(false);
+    expect(play).not.toHaveBeenCalled();
+    expect(startShuffledListPlayback(() => false, [t("a")])).toBe(false);
   });
 });

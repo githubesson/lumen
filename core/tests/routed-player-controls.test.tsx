@@ -62,9 +62,7 @@ function setup(targetDevice: PlaybackDevice | null = null) {
     targetDevice,
     controlled: { volume: 0.4, muted: false, shuffle: false, repeat: "off" },
     sendCommand: vi.fn().mockResolvedValue(applied),
-    remoteQueue: [track, second],
     canPlayLocally: vi.fn().mockReturnValue(true),
-    onRemoteQueueApplied: vi.fn(),
   };
   const hook = renderHook(
     (props: RoutedPlayerControlsOptions) => useRoutedPlayerControls(props),
@@ -80,7 +78,7 @@ describe("routed player controls", () => {
     rerender({ ...options, controls: { ...controls, pause: vi.fn() } });
     expect(result.current.play).toBe(play);
     act(() => result.current.play(track, [track]));
-    expect(controls.play).toHaveBeenCalledWith(track, [track]);
+    expect(controls.play).toHaveBeenCalledWith(track, [track], undefined);
   });
   it("delegates every local control and enforces the local play gate", () => {
     const { result, options, controls } = setup();
@@ -98,7 +96,7 @@ describe("routed player controls", () => {
       expect(controls[name]).toHaveBeenCalledOnce();
     }
     result.current.play(track, [track]);
-    expect(controls.play).toHaveBeenCalledWith(track, [track]);
+    expect(controls.play).toHaveBeenCalledWith(track, [track], undefined);
     result.current.jumpTo(1);
     result.current.seek(12);
     result.current.setVolume(0.7);
@@ -148,30 +146,20 @@ describe("routed player controls", () => {
       ["set_repeat", { repeat: "all" }],
     ]);
     await act(async () => result.current.play(track, [second]));
-    expect(options.onRemoteQueueApplied).toHaveBeenCalledWith([track]);
+    expect(options.sendCommand).toHaveBeenLastCalledWith("play_track", {
+      track: expect.objectContaining({ id: "t1" }),
+      queue: [expect.objectContaining({ id: "t1" })],
+    });
     expect(options.canPlayLocally).not.toHaveBeenCalled();
     for (const control of Object.values(controls))
       expect(control).not.toHaveBeenCalled();
   });
 
-  it("only adopts accepted queues and uses the remote queue for jumping", async () => {
-    const { result, options } = setup(device);
-    vi.mocked(options.sendCommand).mockResolvedValue({
-      ...applied,
-      status: "rejected",
-    });
-    await act(async () => result.current.play(track));
-    expect(options.onRemoteQueueApplied).not.toHaveBeenCalled();
-    vi.mocked(options.sendCommand).mockResolvedValue(applied);
-    await act(async () => result.current.jumpTo(1));
-    expect(options.sendCommand).toHaveBeenLastCalledWith(
-      "play_track",
-      expect.objectContaining({ track: expect.objectContaining({ id: "t2" }) }),
-    );
-    expect(options.onRemoteQueueApplied).toHaveBeenCalledWith([track, second]);
-    vi.mocked(options.sendCommand).mockClear();
-    result.current.jumpTo(99);
+  it("ignores jumps on a device that reports no queue", () => {
+    const { result, options, controls } = setup(device);
+    result.current.jumpTo(1);
     expect(options.sendCommand).not.toHaveBeenCalled();
+    expect(controls.jumpTo).not.toHaveBeenCalled();
   });
 
   it("jumps to the absolute queue position without replacing or reshuffling it", () => {
@@ -187,7 +175,6 @@ describe("routed player controls", () => {
       index: 61, track_id: "t2", queue_revision: "queue-v2",
     });
     expect(controls.play).not.toHaveBeenCalled();
-    expect(options.onRemoteQueueApplied).not.toHaveBeenCalled();
     result.current.jumpTo(-1);
     result.current.jumpTo(2);
     expect(options.sendCommand).toHaveBeenCalledOnce();
@@ -219,6 +206,38 @@ describe("routed player controls", () => {
     rerender({ ...options, targetDevice: null });
     result.current.toggle();
     expect(controls.toggle).toHaveBeenCalledOnce();
+  });
+});
+
+describe("routed player controls: shuffle play", () => {
+  const third: TrackListItem = { ...track, id: "t3", title: "Three" };
+
+  it("hands the shuffle mode to local play, and refuses before it when offline", () => {
+    const { result, options, controls } = setup();
+    result.current.play(second, [track, second], { shuffle: true });
+    expect(controls.play).toHaveBeenCalledWith(second, [track, second], { shuffle: true });
+    vi.mocked(options.canPlayLocally!).mockReturnValue(false);
+    expect(result.current.play(track, [track, second], { shuffle: true })).toBe(false);
+    expect(controls.play).toHaveBeenCalledOnce();
+    expect(controls.setShuffle).not.toHaveBeenCalled();
+  });
+
+  it("sends a device a shuffled queue starting at the track, then the mode once it accepts", async () => {
+    const { result, options } = setup(device);
+    await act(async () => result.current.play(second, [track, second, third], { shuffle: true }));
+    const calls = vi.mocked(options.sendCommand).mock.calls;
+    expect(calls.map(([action]) => action)).toEqual(["play_track", "set_shuffle"]);
+    const queue = (calls[0][1] as { queue: { id: string }[] }).queue.map((item) => item.id);
+    expect(queue[0]).toBe("t2");
+    expect([...queue].sort()).toEqual(["t1", "t2", "t3"]);
+    expect(calls[1][1]).toEqual({ shuffle: true });
+  });
+
+  it("leaves a device's mode alone when it refuses the start", async () => {
+    const { result, options } = setup(device);
+    vi.mocked(options.sendCommand).mockResolvedValue({ ...applied, status: "rejected" });
+    await act(async () => result.current.play(track, [track, second], { shuffle: true }));
+    expect(vi.mocked(options.sendCommand).mock.calls.map(([action]) => action)).toEqual(["play_track"]);
   });
 });
 

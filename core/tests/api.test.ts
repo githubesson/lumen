@@ -75,10 +75,15 @@ describe("complete favorites", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>", { status: 200, headers: { "Content-Type": "text/html" } })));
     await expect(api.listPlaylistTracksIfChanged("playlist")).rejects.toMatchObject({ status: 200, message: "Unexpected non-JSON response from the server." });
   });
+  it("returns the whole playlist-tracks snapshot with its ETag", async () => {
+    const body = { tracks: [{ position: 0, track_id: "t1", title: "A", duration_ms: 1, source: "tidal" }], tidal_queued: 0, tidal_retry_at: "2026-10-14T00:00:00Z" };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(body, { headers: { ETag: '"v2"' } })));
+    expect(await api.listPlaylistTracksIfChanged("playlist", '"v1"')).toEqual({ etag: '"v2"', data: body });
+  });
   it("handles an unchanged playlist without parsing an empty response", async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 304, headers: { ETag: '"rows"' } }));
     vi.stubGlobal("fetch", fetchMock);
-    expect(await api.listPlaylistTracksIfChanged("playlist", '"rows"')).toEqual({ tracks: null, etag: '"rows"' });
+    expect(await api.listPlaylistTracksIfChanged("playlist", '"rows"')).toEqual({ data: null, etag: '"rows"' });
     expect(fetchMock).toHaveBeenCalledWith("/api/playlists/playlist/tracks", expect.objectContaining({ headers: expect.objectContaining({ "If-None-Match": '"rows"' }) }));
   });
 });
@@ -245,12 +250,12 @@ describe("TIDAL account management", () => {
           { status: 201 },
         ),
       )
-      .mockResolvedValueOnce(Response.json({ state: "pending" }));
+      .mockResolvedValueOnce(Response.json({ state: "expired" }));
     vi.stubGlobal("fetch", fetchMock);
 
     const flow = await api.startTidalAuth();
-    await expect(api.pollTidalAuth(flow.flow_id)).resolves.toEqual({
-      state: "pending",
+    await expect(api.waitForTidalAuthorization(flow.flow_id)).resolves.toEqual({
+      state: "expired",
     });
 
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -340,6 +345,51 @@ describe("request deadlines", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     expect(aborted).toHaveBeenCalled();
   });
+
+  // Headers arrive at once; the body never does, and a manually built
+  // Response ignores the request's signal.
+  const stalledBody = (headers: Record<string, string> = { "Content-Type": "application/json" }) =>
+    vi.fn(async () => new Response(new ReadableStream({ start() {} }), { headers }));
+
+  it("keeps the deadline while a JSON body is read", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", stalledBody());
+    const rejected = vi.fn();
+    api.listMusicRoots().catch(rejected);
+
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(rejected).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(rejected).toHaveBeenCalledWith(expect.objectContaining({ name: "AbortError" }));
+  });
+
+  it("aborts a stalled body when the caller cancels", async () => {
+    vi.stubGlobal("fetch", stalledBody({ "Content-Type": "application/json", ETag: '"v1"' }));
+    const page = new AbortController();
+    const pending = api.listAlbumsPage({ signal: page.signal });
+    const playlist = new AbortController();
+    const tracks = api.listPlaylistTracksIfChanged("p1", undefined, { signal: playlist.signal });
+    await Promise.resolve();
+    page.abort();
+    playlist.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await expect(tracks).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("reads the Replay image under the deadline", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", stalledBody({ "Content-Type": "image/png" }));
+    const rejected = vi.fn();
+    api.getReplayImage().catch(rejected);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(rejected).toHaveBeenCalledWith(expect.objectContaining({ name: "AbortError" }));
+  });
+
+  it("returns the Replay image bytes", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "image/png" } })));
+    expect(new Uint8Array(await api.getReplayImage())).toEqual(new Uint8Array([1, 2, 3]));
+  });
 });
 
 describe("search continuation and library sort", () => {
@@ -349,14 +399,13 @@ describe("search continuation and library sort", () => {
       .mockResolvedValueOnce(Response.json({ tracks: [{ id: "local-1" }, { id: "tidal:1" }], next_offsets: { tidal: 50 } }))
       .mockResolvedValueOnce(Response.json({ tracks: [{ id: "tidal:2" }], next_offsets: {} }));
     vi.stubGlobal("fetch", fetchMock);
-    const first = await api.searchTracksPage({ q: "song", limit: 50 });
-    const second = await api.searchTracksPage({ q: "song", limit: 50, offset: first.items.length, searchOffsets: first.nextOffsets });
+    const first = await api.searchTracks({ q: "song", limit: 50 });
+    const second = await api.searchTracks({ q: "song", limit: 50, offset: first.tracks?.length, searchOffsets: first.next_offsets });
     const url = new URL(fetchMock.mock.calls[1][0], "https://test.invalid");
     expect(url.searchParams.get("sources")).toBe("tidal");
     expect(url.searchParams.get("tidal_offset")).toBe("50");
     expect(url.searchParams.has("local_offset")).toBe(false);
-    expect(second.nextOffsets).toEqual({});
-    expect(second.total).toBe(3);
+    expect(second.next_offsets).toEqual({});
   });
   it("sends the sort choice with every page request", async () => {
     const fetchMock = vi.fn(async () => Response.json([], { headers: { "X-Total-Count": "101" } }));

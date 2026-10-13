@@ -52,11 +52,14 @@ export function useLastFMConnection({
         }));
       },
       (err) => {
-        if (
-          controller.signal.aborted ||
-          (err instanceof Error && err.name === "AbortError")
-        )
-          return;
+        // Only this effect's own abort is a cancellation. A poll request
+        // that hit the transport deadline also rejects with an AbortError,
+        // and swallowing that would leave the screen waiting forever.
+        if (controller.signal.aborted) return;
+        // Leave the waiting state, so connecting again starts a fresh poll.
+        setStatus((current) =>
+          current ? { ...current, pending: false } : current,
+        );
         setError(
           errorMessage(err, "Could not complete Last.fm authorization."),
         );

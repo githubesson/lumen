@@ -3,7 +3,7 @@ import {
   buildInviteRegistrationUrl,
   buildInviteShareMessage,
   extractInviteToken,
-} from "../lib/invite-registration";
+} from "../src/admin/invite-links";
 
 const TOKEN = "abcdefghijklmnopqrstuvwxyz_ABCDEFGH-1234567";
 

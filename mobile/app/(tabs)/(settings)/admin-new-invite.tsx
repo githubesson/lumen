@@ -12,6 +12,8 @@ import * as Haptics from "expo-haptics";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   api,
+  buildInviteRegistrationUrl,
+  buildInviteShareMessage,
   errorMessage,
   inviteSummary,
   validateInviteCreationInput,
@@ -27,10 +29,6 @@ import {
 import { FormScreen } from "../../../components/form-screen";
 import { HeaderTextButton } from "../../../components/header-buttons";
 import { SegmentedControl } from "../../../components/segmented-control";
-import {
-  buildInviteRegistrationUrl,
-  buildInviteShareMessage,
-} from "../../../lib/invite-registration";
 import { qk } from "../../../lib/query-keys";
 import { useTheme } from "../../../theme/theme";
 import { isShareDismissal } from "../../../lib/share-dismissal";
