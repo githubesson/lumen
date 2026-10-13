@@ -62,9 +62,7 @@ function setup(targetDevice: PlaybackDevice | null = null) {
     targetDevice,
     controlled: { volume: 0.4, muted: false, shuffle: false, repeat: "off" },
     sendCommand: vi.fn().mockResolvedValue(applied),
-    remoteQueue: [track, second],
     canPlayLocally: vi.fn().mockReturnValue(true),
-    onRemoteQueueApplied: vi.fn(),
   };
   const hook = renderHook(
     (props: RoutedPlayerControlsOptions) => useRoutedPlayerControls(props),
@@ -148,30 +146,20 @@ describe("routed player controls", () => {
       ["set_repeat", { repeat: "all" }],
     ]);
     await act(async () => result.current.play(track, [second]));
-    expect(options.onRemoteQueueApplied).toHaveBeenCalledWith([track]);
+    expect(options.sendCommand).toHaveBeenLastCalledWith("play_track", {
+      track: expect.objectContaining({ id: "t1" }),
+      queue: [expect.objectContaining({ id: "t1" })],
+    });
     expect(options.canPlayLocally).not.toHaveBeenCalled();
     for (const control of Object.values(controls))
       expect(control).not.toHaveBeenCalled();
   });
 
-  it("only adopts accepted queues and uses the remote queue for jumping", async () => {
-    const { result, options } = setup(device);
-    vi.mocked(options.sendCommand).mockResolvedValue({
-      ...applied,
-      status: "rejected",
-    });
-    await act(async () => result.current.play(track));
-    expect(options.onRemoteQueueApplied).not.toHaveBeenCalled();
-    vi.mocked(options.sendCommand).mockResolvedValue(applied);
-    await act(async () => result.current.jumpTo(1));
-    expect(options.sendCommand).toHaveBeenLastCalledWith(
-      "play_track",
-      expect.objectContaining({ track: expect.objectContaining({ id: "t2" }) }),
-    );
-    expect(options.onRemoteQueueApplied).toHaveBeenCalledWith([track, second]);
-    vi.mocked(options.sendCommand).mockClear();
-    result.current.jumpTo(99);
+  it("ignores jumps on a device that reports no queue", () => {
+    const { result, options, controls } = setup(device);
+    result.current.jumpTo(1);
     expect(options.sendCommand).not.toHaveBeenCalled();
+    expect(controls.jumpTo).not.toHaveBeenCalled();
   });
 
   it("jumps to the absolute queue position without replacing or reshuffling it", () => {
@@ -187,7 +175,6 @@ describe("routed player controls", () => {
       index: 61, track_id: "t2", queue_revision: "queue-v2",
     });
     expect(controls.play).not.toHaveBeenCalled();
-    expect(options.onRemoteQueueApplied).not.toHaveBeenCalled();
     result.current.jumpTo(-1);
     result.current.jumpTo(2);
     expect(options.sendCommand).toHaveBeenCalledOnce();

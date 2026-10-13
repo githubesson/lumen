@@ -27,18 +27,8 @@ export interface RoutedPlayerControlsOptions {
   targetDevice: PlaybackDevice | null;
   controlled: ControlledPlaybackState;
   sendCommand: SendRemoteCommand;
-  /**
-   * Queue to replay from when `jumpTo` targets a device that reports no queue
-   * snapshot, for a platform that keeps its own copy of what it sent (see
-   * `onRemoteQueueApplied`). Leave unset otherwise: a device without a
-   * snapshot then ignores jumps instead of having its queue replaced by
-   * whatever is on screen.
-   */
-  remoteQueue?: TrackListItem[];
   /** Platform policy and feedback, only applied when starting local playback. */
   canPlayLocally?: (track: TrackListItem) => boolean;
-  /** Keep a platform's queue snapshot only after the target accepts play. */
-  onRemoteQueueApplied?: (queue: TrackListItem[]) => void;
 }
 
 /**
@@ -47,8 +37,6 @@ export interface RoutedPlayerControlsOptions {
  * socket round trip and a pending-command tick on the controller.
  */
 export const REMOTE_VOLUME_INTERVAL_MS = 80;
-
-const NO_TRACKS: TrackListItem[] = [];
 
 /**
  * `set_volume` for the selected device, at most once per
@@ -106,9 +94,7 @@ export function useRoutedPlayerControls({
   targetDevice,
   controlled,
   sendCommand,
-  remoteQueue = NO_TRACKS,
   canPlayLocally,
-  onRemoteQueueApplied,
 }: RoutedPlayerControlsOptions): PlayerControls {
   const localPlay = controls.play;
   const play = useCallback<PlayerControls["play"]>(
@@ -129,12 +115,12 @@ export function useRoutedPlayerControls({
         track: compactRemoteTrack(track),
         queue: nextQueue.map(compactRemoteTrack),
       }).then((result) => {
-        if (result.status !== "applied") return;
-        onRemoteQueueApplied?.(nextQueue);
-        if (shuffle !== undefined) void sendCommand("set_shuffle", { shuffle });
+        if (result.status === "applied" && shuffle !== undefined) {
+          void sendCommand("set_shuffle", { shuffle });
+        }
       });
     },
-    [canPlayLocally, localPlay, onRemoteQueueApplied, sendCommand, targetDevice],
+    [canPlayLocally, localPlay, sendCommand, targetDevice],
   );
   const sendVolume = useThrottledRemoteVolume(sendCommand);
 
@@ -166,14 +152,14 @@ export function useRoutedPlayerControls({
       },
       jumpTo: (index) => {
         if (!targetDevice) controls.jumpTo(index);
+        // Jumps index the device's own queue snapshot. One without a snapshot
+        // ignores them rather than have its queue replaced by what's shown.
         else if (targetDevice.queue?.tracks[index]) {
           void sendCommand("jump_to", {
             index: targetDevice.queue.offset + index,
             track_id: targetDevice.queue.tracks[index].id,
             queue_revision: targetDevice.queue.revision,
           });
-        } else if (!targetDevice.queue && remoteQueue[index]) {
-          play(remoteQueue[index], remoteQueue);
         }
       },
       seek: (seconds) => {
@@ -220,7 +206,6 @@ export function useRoutedPlayerControls({
       controlled.shuffle,
       controlled.repeat,
       play,
-      remoteQueue,
       sendCommand,
       sendVolume,
       targetDevice,

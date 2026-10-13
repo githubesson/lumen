@@ -125,9 +125,6 @@ export function useRemotePlaybackController({
     () => (targetDevice ? remotePlayerState(targetDevice, controlled) : state),
     [targetDevice, controlled, state],
   );
-  // No `remoteQueue`: jumps index the target's own queue snapshot, and a
-  // target without one ignores them rather than having its queue replaced
-  // by the single track shown for it.
   const routedControls = useRoutedPlayerControls({
     controls,
     targetDevice,
