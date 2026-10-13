@@ -5,11 +5,13 @@
 
 import type {
   ReplayActivityBucket,
+  ReplayAlbum,
   ReplayBucket,
   ReplayGenreSlice,
   ReplayTrackArtist,
   TrackListItem,
 } from "../api";
+import { displayText, pluralize } from "../format";
 import { playableTracks } from "../track";
 import { periodKey, periodRange, periodTitle, type Period } from "./period";
 
@@ -197,6 +199,13 @@ export function replayTrackArtists(track: {
     );
   }
   return track.artist ? [{ name: track.artist }] : [];
+}
+
+/** A top album's line under its title: "Artist · 1,234 plays", cleaned for display. */
+export function replayAlbumSubtitle(album: Pick<ReplayAlbum, "artist" | "plays">): string {
+  const artist = displayText(album.artist);
+  const plays = pluralize(album.plays, "play", undefined, { locale: true });
+  return artist ? `${artist} · ${plays}` : plays;
 }
 
 /**
