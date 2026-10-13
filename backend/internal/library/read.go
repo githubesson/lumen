@@ -443,6 +443,10 @@ type AlbumDetail struct {
 	CoverArtPath string
 	// TIDALAlbumID is the TIDAL release this album is a copy of, or "".
 	TIDALAlbumID string
+	// ArtistHasPage says whether the album artist (ArtistID) has an artist
+	// page for the viewer, by the test GetArtist uses (artistHasPage). Only
+	// GetAlbum fills it.
+	ArtistHasPage bool
 }
 
 type ArtistListItem struct {
@@ -522,7 +526,8 @@ func (s *Store) GetAlbum(ctx context.Context, albumID, viewerID uuid.UUID) (*Alb
 		       COUNT(t.id)::int, COALESCE(SUM(t.duration_ms), 0)::bigint,
 		       `+albumHasCoverFor("$2")+` AS has_cover,
 		       `+albumCoverFor("$2")+`,
-		       COALESCE(a.tidal_album_id, '')
+		       COALESCE(a.tidal_album_id, ''),
+		       `+artistHasPage("a.album_artist_id", artistPageTrackP2)+`
 		FROM albums a
 		LEFT JOIN artists aa ON aa.id = a.album_artist_id
 		INNER JOIN tracks t ON t.album_id = a.id
@@ -533,7 +538,7 @@ func (s *Store) GetAlbum(ctx context.Context, albumID, viewerID uuid.UUID) (*Alb
 		GROUP BY a.id, aa.name`, albumID, viewerID).
 		Scan(&a.ID, &a.Title, &a.ArtistID, &a.ArtistName,
 			&a.IsCompilation, &a.ReleaseYear, &a.TrackCount, &a.DurationMS, &a.HasCover, &cover,
-			&a.TIDALAlbumID)
+			&a.TIDALAlbumID, &a.ArtistHasPage)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -600,6 +605,28 @@ const (
 	trackVisibleP1 = "(t.owner_id IS NULL OR t.owner_id = $1)"
 	trackVisibleP2 = "(t.owner_id IS NULL OR t.owner_id = $2)"
 )
+
+// artistPageTrackP1 and artistPageTrackP2 are what a track `t` needs to give
+// the artists it credits, in any role, a page: it is in the library (not a
+// hidden copy of a TIDAL play), not deleted, and visible to the viewer.
+// GetArtist, the page itself, finds the artist through these tracks, and
+// artistHasPage asks whether there are any, so a link the server says has a
+// page can't open "not found". The suffix is the viewer's placeholder.
+const (
+	artistPageTrackP1 = "t.deleted_at IS NULL AND t.library_visible = TRUE AND " + trackVisibleP1
+	artistPageTrackP2 = "t.deleted_at IS NULL AND t.library_visible = TRUE AND " + trackVisibleP2
+)
+
+// artistHasPage is a boolean SQL expression: whether GetArtist would find the
+// artist whose id is in the column `artistID` (false for NULL). `pageTrack`
+// is artistPageTrackP1 or artistPageTrackP2. Its own `ta` and `t` hide any
+// outer aliases of the same names, which lets it use the shared predicate.
+func artistHasPage(artistID, pageTrack string) string {
+	return `EXISTS (
+		SELECT 1 FROM track_artists ta
+		INNER JOIN tracks t ON t.id = ta.track_id AND ` + pageTrack + `
+		WHERE ta.artist_id = ` + artistID + `)`
+}
 
 // clampListPage applies the standard list-pagination bounds shared by the
 // paginated list endpoints: a non-positive limit falls back to def, the limit
@@ -728,7 +755,8 @@ func (s *Store) CountArtists(ctx context.Context, viewerID uuid.UUID, query stri
 	return total, err
 }
 
-// GetArtist returns a single artist if they have at least one visible track.
+// GetArtist returns a single artist if they have at least one visible
+// library track (see artistPageTrackP2; artistHasPage is the same test).
 func (s *Store) GetArtist(ctx context.Context, artistID, viewerID uuid.UUID) (*ArtistListItem, error) {
 	var a ArtistListItem
 	err := s.db.QueryRow(ctx, `
@@ -737,10 +765,7 @@ func (s *Store) GetArtist(ctx context.Context, artistID, viewerID uuid.UUID) (*A
 		       COUNT(DISTINCT t.album_id) FILTER (WHERE t.album_id IS NOT NULL)::int
 		FROM artists ar
 		INNER JOIN track_artists ta ON ta.artist_id = ar.id
-		INNER JOIN tracks t ON t.id = ta.track_id
-		    AND t.deleted_at IS NULL
-		    AND t.library_visible = TRUE
-		    AND `+trackVisibleP2+`
+		INNER JOIN tracks t ON t.id = ta.track_id AND `+artistPageTrackP2+`
 		WHERE ar.id = $1
 		GROUP BY ar.id`, artistID, viewerID).
 		Scan(&a.ID, &a.Name, &a.TrackCount, &a.AlbumCount)

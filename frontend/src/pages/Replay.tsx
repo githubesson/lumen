@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Download as ArrowDownTrayIcon,
   Play as PlayIcon,
@@ -7,53 +7,42 @@ import {
   Sparkles as SparklesIcon,
 } from "lucide-react";
 import {
-  albumCoverUrl,
   api,
   errorMessage,
-  trackCoverUrl,
   type ReplayData,
   type TrackListItem,
 } from "../api";
-import TrackList from "../components/TrackList";
-import StatCard from "../components/StatCard";
-import AnimatedNumber from "../components/AnimatedNumber";
-import { readCache, writeCache } from "../lib/resourceCache";
-import ActivityChart from "../components/ActivityChart";
+import { dropCache, readCache, writeCache } from "../lib/resourceCache";
 import ErrorBanner from "../components/ErrorBanner";
-import LoadingState from "../components/LoadingState";
 import EmptyState from "../components/EmptyState";
-import MediaCard from "../components/MediaCard";
-import ListPageHeader from "../components/ListPageHeader";
-import Section from "../components/Section";
+import ReplayBento, { ReplayBentoPlaceholder } from "../components/replay/ReplayBento";
 import { Button } from "../components/Button";
 import {
   buildPeriodOptions,
-  formatListeningTime as formatListeningTimeCore,
+  canonicalPeriodKey,
+  parsePeriodKey,
   periodKey,
   periodLabel,
   periodTitle,
   type Period,
 } from "@music-library/core/replay/period";
 import {
-  genreShares,
-  playsById as playsByIdFor,
+  replayCalendar,
+  replayDaySpan,
   replayImageFilename,
   replayImageRequest,
   replayPlaylistRequest,
-  replayRequest,
+  replayQueries,
+  replaySeriesComplete,
+  type ReplayQueries,
+  type ReplayQuery,
 } from "@music-library/core/replay/replay";
 import {
   useLocalDay,
   type ResumeSubscriber,
 } from "@music-library/core/replay/use-local-day";
-import { displayText, pluralize } from "../lib/format";
 import { usePlayerControls } from "../context/Player";
 import { usePlaylists } from "../context/Playlists";
-
-/** The web has room for the fuller wording ("45 min", not the phone's "45m"). */
-function formatListeningTime(ms: number): string {
-  return formatListeningTimeCore(ms, "verbose");
-}
 
 // The period model (type, cache key, labels, date ranges, picker options) and
 // the listening-time formatter live in `core/src/replay/period.ts`; the mobile
@@ -73,6 +62,54 @@ const subscribeTabShown: ResumeSubscriber = (onResume) => {
   return () => document.removeEventListener("visibilitychange", onResume);
 };
 
+// The days a period covers, in the API's UTC days: "Sep 14 – Oct 13, 2026",
+// or its months when only months are known: "Mar 2013 – Oct 2026".
+const daySpanFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
+const monthSpanFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+/**
+ * The period's plays, asked for by day whatever its chart shows: days with
+ * plays and the daily average need them, and the chart adds them up into
+ * months itself (see `activitySeries`). The server caps how many buckets it
+ * sends, so an all-time history longer than that comes back without its
+ * newest days; then it is asked for again by month, and the figures count
+ * months instead (see `replayCalendar`). Only all time has that fallback
+ * (`monthly`): a bounded period can't reach the cap. Once all time has come
+ * back by month, it is asked for by month straight away, rather than
+ * fetching every day again only to throw them away. Says which query
+ * answered, since the two are cached apart.
+ */
+async function fetchReplay(
+  request: ReplayQueries,
+  signal: AbortSignal,
+): Promise<{ query: ReplayQuery; data: ReplayData }> {
+  const { daily, monthly } = request;
+  const byMonth = async (query: ReplayQuery) => ({ query, data: await api.getReplay(query.params, { signal }) });
+  if (monthly && readCache(monthly.cacheKey) !== undefined) return byMonth(monthly);
+  const data = await api.getReplay(daily.params, { signal });
+  if (!monthly || replaySeriesComplete(data)) return { query: daily, data };
+  return byMonth(monthly);
+}
+
+/**
+ * The period's last answer: by day under the key Home shares, or by month
+ * under its own when the days were cut short. Only one is kept (see the
+ * fetch below), so this is the latest either way.
+ */
+function readReplayCache(request: ReplayQueries): ReplayData | null {
+  const byDay = readCache<ReplayData>(request.daily.cacheKey);
+  return byDay ?? (request.monthly ? readCache<ReplayData>(request.monthly.cacheKey) : undefined) ?? null;
+}
+
 function buildOptions(availableYears: number[]): PeriodOption[] {
   return buildPeriodOptions(availableYears).map((period) => ({
     key: periodKey(period),
@@ -86,17 +123,47 @@ export default function Replay() {
   const { play } = usePlayerControls();
   const { reload: reloadPlaylists } = usePlaylists();
 
-  const [period, setPeriod] = useState<Period>({ kind: "this-year" });
+  // Sticky: the year pills are navigation, not results, and must survive the
+  // gap where `data` is null or the selector would collapse mid-load.
+  // Remembered across visits so the pills are all there on arrival. Null
+  // until a response (now or on an earlier visit) has said which years exist.
+  const [years, setYears] = useState<number[] | null>(() => readCache<number[]>("replay:years") ?? null);
+
+  // The period lives in the URL (`?period=last-30`), so a link can open a
+  // given window; without one it's this year. Only its one spelling is acted
+  // on, and the URL is rewritten to it: a value that isn't a period, or a
+  // year with no plays (and so no pill), opens this year.
+  const [params, setParams] = useSearchParams();
+  const periodParam = params.get("period");
+  const periodParamKey = canonicalPeriodKey(periodParam, years);
+  const period = useMemo<Period>(
+    () => parsePeriodKey(periodParamKey) ?? { kind: "this-year" },
+    [periodParamKey],
+  );
+  const writePeriod = useCallback(
+    (key: string | null) =>
+      setParams(
+        (prev) => {
+          const out = new URLSearchParams(prev);
+          if (key) out.set("period", key);
+          else out.delete("period");
+          return out;
+        },
+        { replace: true },
+      ),
+    [setParams],
+  );
+  useEffect(() => {
+    if (periodParam !== periodParamKey) writePeriod(periodParamKey);
+  }, [periodParam, periodParamKey, writePeriod]);
+  const setPeriod = (next: Period) =>
+    writePeriod(next.kind === "this-year" ? null : periodKey(next));
   // The response is stored with the period it answers, and read back only when
   // the two still match. A period switch therefore drops to `data === null` on
   // the very first render -- before the fetch effect has even run -- so the
   // previous window's results can never be rendered, animated, or acted on
   // under the new period's title.
   const [loaded, setLoaded] = useState<{ key: string; data: ReplayData } | null>(null);
-  // Sticky: the year pills are navigation, not results, and must survive the
-  // gap where `data` is null or the selector would collapse mid-load.
-  // Remembered across visits so the pills are all there on arrival.
-  const [years, setYears] = useState<number[]>(() => readCache<number[]>("replay:years") ?? []);
   const [error, setError] = useState<string | null>(null);
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -104,34 +171,38 @@ export default function Replay() {
   const [imageError, setImageError] = useState<string | null>(null);
 
   // Memoize the request range on the selected period so the fetch effect can
-  // depend on a stable value. `period` only changes identity when the user
-  // picks a new pill, so depending on it directly is both correct and
-  // exhaustive-deps clean (the old code keyed on a fresh periodKey string).
+  // depend on a stable value. `period` only changes identity when the URL's
+  // period does (a pill, or a link in), so depending on it directly is both
+  // correct and exhaustive-deps clean (the old code keyed on a fresh
+  // periodKey string).
   //
-  // The cache key carries the concrete days a rolling period covers (see
-  // `replayRequest`). A page left open past midnight recomputes the range
+  // The cache keys carry the concrete days a rolling period covers (see
+  // `replayQueries`). A page left open past midnight recomputes the range
   // (and refetches), so rolling periods don't keep acting on old dates.
+  //
+  // The daily key is the one Home's board uses for the last 30 days, so
+  // either page warms the other; a monthly fallback has a key of its own.
   const today = useLocalDay(subscribeTabShown);
-  const request = useMemo(() => {
-    const { range, cacheKey } = replayRequest(period);
-    return { range, asOf: today, cacheKey: `replay:${cacheKey}` };
-  }, [period, today]);
+  const request = useMemo(() => ({ ...replayQueries(period), asOf: today }), [period, today]);
   const range = request.range;
-  // A period seen before this session answers from the cache while it
+  const chartBucket = range.bucket ?? "month";
+  // What the loading bento's days tile counts. A bounded period always
+  // comes back by day. All time may come back by month, and nothing says
+  // which before its first answer: any earlier one would be on screen
+  // instead of the placeholder.
+  const placeholderUnit = request.monthly ? null : "day";
+  // A period seen before (here or on Home) answers from the cache while it
   // refreshes -- still that period's own numbers, never another's.
   const data =
-    loaded?.key === request.cacheKey
-      ? loaded.data
-      : (readCache<ReplayData>(request.cacheKey) ?? null);
+    loaded?.key === request.daily.cacheKey ? loaded.data : readReplayCache(request);
 
   useEffect(() => {
     const ac = new AbortController();
     // Changing the replay period starts a new API request lifecycle.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setError(null);
-    api
-      .getReplay(request.range, { signal: ac.signal })
-      .then((d) => {
+    fetchReplay(request, ac.signal)
+      .then(({ query, data: d }) => {
         // Aborting after the response headers arrive does not reject this
         // promise: the transport drops the caller's abort listener as soon as
         // `fetch` resolves, before it parses the body. A superseded request
@@ -139,9 +210,14 @@ export default function Replay() {
         // with the previous period's, which the keyed derivation rejects --
         // leaving the loading state up for good.
         if (ac.signal.aborted) return;
-        setLoaded({ key: request.cacheKey, data: d });
+        setLoaded({ key: request.daily.cacheKey, data: d });
         setYears(d.available_years ?? []);
-        writeCache(request.cacheKey, d);
+        // One answer per period, under the key of the query that gave it:
+        // the daily key never holds months, and an older answer under the
+        // other key can't come back in front of this one.
+        const other = query === request.daily ? request.monthly : request.daily;
+        if (other) dropCache(other.cacheKey);
+        writeCache(query.cacheKey, d);
         writeCache("replay:years", d.available_years ?? []);
       })
       .catch((err) => {
@@ -151,16 +227,27 @@ export default function Replay() {
     return () => ac.abort();
   }, [request]);
 
-  const options = useMemo(() => buildOptions(years), [years]);
+  const options = useMemo(() => buildOptions(years ?? []), [years]);
 
   const queue = useMemo<TrackListItem[]>(
     () => (data?.top_tracks ?? []) as TrackListItem[],
     [data?.top_tracks],
   );
 
-  const playsById = useMemo(() => playsByIdFor(data?.top_tracks), [data?.top_tracks]);
-
-  const collageTracks = useMemo(() => queue.slice(0, 4), [queue]);
+  // Recomputed with the request, which moves at midnight, so "today" in
+  // here stays current.
+  const calendar = useMemo(
+    () => (data ? replayCalendar(data, request.range) : null),
+    [data, request],
+  );
+  // Known before the data for every period but all time, which starts on its
+  // first day with plays.
+  const spanLabel = useMemo(() => {
+    const span = calendar ?? replayDaySpan(request.range);
+    if (!span) return null;
+    const format = calendar?.unit === "month" ? monthSpanFormat : daySpanFormat;
+    return format.formatRange(span.first, span.last);
+  }, [calendar, request]);
 
   async function onGeneratePlaylist() {
     if (!data || data.summary.total_plays === 0) return;
@@ -204,10 +291,12 @@ export default function Replay() {
   // No data for this period and no error means its request is in flight,
   // including the render between picking a period and the effect starting it.
   const showLoading = !data && !error;
-  // Meanwhile, hold the results area at the height it last had, so the page
-  // doesn't collapse to a loading line (dragging the scroll position with it)
-  // and grow back. Layout effects, so the observer is gone before the
-  // browser lays out the emptied area and can't record it as the new height.
+  // Meanwhile the placeholder bento holds the panel's shape, and the results
+  // area keeps at least the height it last had, so a period whose panel ran
+  // taller (a two-line title on a phone, say) doesn't shrink under the
+  // placeholder (dragging the scroll position with it) and grow back. Layout effects, so
+  // the observer is gone before the browser lays out the placeholder and
+  // can't record it as the new height.
   // The height lives in a ref: resizing the window mustn't re-render the page.
   const hasData = data !== null;
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -231,113 +320,58 @@ export default function Replay() {
       el.style.minHeight = "";
     };
   }, [showLoading]);
-  const genres = useMemo(() => genreShares(data?.top_genres ?? []), [data?.top_genres]);
-
-  const extraColumn = useMemo(
-    () => ({
-      header: "Plays",
-      className: "col-plays",
-      render: (t: TrackListItem) => (playsById.get(t.id) ?? 0).toLocaleString(),
-    }),
-    [playsById],
-  );
-
   return (
-    <div className="view" style={{ display: "grid", gap: 18 }}>
-      <ListPageHeader
-        className="replay-hero"
-        kind="Replay"
-        title={periodTitle(period)}
-        art={
-          <div className="detail-art replay-hero-art">
-            {collageTracks.length >= 4 ? (
-              <div className="replay-collage">
-                {collageTracks.map((t) => (
-                  <div
-                    key={t.id}
-                    className="replay-collage-cell"
-                    style={{ backgroundImage: `url(${trackCoverUrl(t)})` }}
-                    aria-hidden="true"
-                  />
-                ))}
-              </div>
-            ) : collageTracks.length > 0 ? (
-              <div
-                className="replay-collage-cell"
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  backgroundImage: `url(${trackCoverUrl(collageTracks[0])})`,
-                  backgroundSize: "cover",
-                  backgroundPosition: "center",
-                }}
-                aria-hidden="true"
-              />
-            ) : (
-              <SparklesIcon
-                className="size-12"
-                style={{ color: "var(--muted-foreground)" }}
-              />
-            )}
-          </div>
-        }
-        meta={
-          <>
-            <span style={{ fontVariantNumeric: "tabular-nums" }}>
-              {summary
-                ? pluralize(summary.total_plays, "play", undefined, { locale: true })
-                : "—"}
-            </span>
-            <span className="dot" />
-            <span style={{ fontVariantNumeric: "tabular-nums" }}>
-              {summary ? formatListeningTime(summary.total_ms) : "—"}
-            </span>
-          </>
-        }
-        actions={
-          <>
-            <Button
-              variant="primary"
-              disabled={!data || queue.length === 0}
-              onClick={() => queue.length > 0 && play(queue[0], queue)}
-              leadingIcon={<PlayIcon className="size-4" />}
-            >
-              Play top tracks
-            </Button>
-            <Button
-              disabled={!data || queue.length === 0 || creatingPlaylist}
-              onClick={onGeneratePlaylist}
-              leadingIcon={<QueueListIcon className="size-4" />}
-            >
-              {creatingPlaylist ? "Creating…" : "Generate playlist"}
-            </Button>
-            <Button
-              disabled={!data || queue.length === 0 || downloadingImage}
-              onClick={onDownloadImage}
-              leadingIcon={<ArrowDownTrayIcon className="size-4" />}
-            >
-              {downloadingImage ? "Rendering…" : "Share image"}
-            </Button>
-          </>
-        }
-      />
+    <div className="view replay">
+      <header className="replay-head">
+        <div>
+          <div className="detail-kind">Replay</div>
+          <h1 className="replay-title">{periodTitle(period)}</h1>
+        </div>
+        <div className="replay-actions">
+          <Button
+            variant="primary"
+            disabled={!data || queue.length === 0}
+            onClick={() => queue.length > 0 && play(queue[0], queue)}
+            leadingIcon={<PlayIcon className="size-4" />}
+          >
+            Play top tracks
+          </Button>
+          <Button
+            disabled={!data || queue.length === 0 || creatingPlaylist}
+            onClick={onGeneratePlaylist}
+            leadingIcon={<QueueListIcon className="size-4" />}
+          >
+            {creatingPlaylist ? "Creating…" : "Generate playlist"}
+          </Button>
+          <Button
+            disabled={!data || queue.length === 0 || downloadingImage}
+            onClick={onDownloadImage}
+            leadingIcon={<ArrowDownTrayIcon className="size-4" />}
+          >
+            {downloadingImage ? "Rendering…" : "Share image"}
+          </Button>
+        </div>
+      </header>
 
-      <div className="period-pills" role="tablist" aria-label="Replay period">
-        {options.map((opt) => {
-          const active = periodKey(opt.period) === periodKey(period);
-          return (
-            <button
-              key={opt.key}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              className={"period-pill" + (active ? " active" : "")}
-              onClick={() => setPeriod(opt.period)}
-            >
-              {opt.label}
-            </button>
-          );
-        })}
+      <div className="replay-under">
+        <div className="period-pills" role="tablist" aria-label="Replay period">
+          {options.map((opt) => {
+            const active = periodKey(opt.period) === periodKey(period);
+            return (
+              <button
+                key={opt.key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={"period-pill" + (active ? " active" : "")}
+                onClick={() => setPeriod(opt.period)}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+        {spanLabel && <span className="replay-range">{spanLabel}</span>}
       </div>
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
@@ -345,14 +379,14 @@ export default function Replay() {
       {imageError && <ErrorBanner>{imageError}</ErrorBanner>}
 
       {/* Any in-flight request without this period's own (cached) data shows
-          the loading state, not just the first. Rendering retained data while
-          a new period loads put the previous window's numbers under the new
-          label -- and since the block below is keyed on the period, the key
-          change remounted that stale subtree and replayed its entrance,
-          presenting old results as freshly arrived. */}
-      <div ref={resultsRef}>
+          the placeholder bento, not just the first. Rendering retained data
+          while a new period loads put the previous window's numbers under
+          the new label -- and since the bento below is keyed on the period,
+          the key change remounted that stale subtree and replayed its
+          entrance, presenting old results as freshly arrived. */}
+      <div ref={resultsRef} className="replay-results">
         {showLoading ? (
-          <LoadingState />
+          <ReplayBentoPlaceholder chartBucket={chartBucket} unit={placeholderUnit} />
         ) : summary && summary.total_plays === 0 ? (
           <EmptyState
             icon={<SparklesIcon className="size-10" />}
@@ -366,119 +400,14 @@ export default function Replay() {
               </>
             }
           />
-        ) : data && summary ? (
-          <div
+        ) : data ? (
+          <ReplayBento
             key={periodKey(period)}
-            className="replay-enter"
-            style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 18, minWidth: 0 }}
-          >
-            <section className="stat-grid">
-              <StatCard
-                label="Total plays"
-                value={
-                  <AnimatedNumber value={summary.total_plays} />
-                }
-              />
-              <StatCard
-                label="Listening time"
-                value={
-                  <AnimatedNumber
-                    format={formatListeningTime}
-                    value={summary.total_ms}
-                  />
-                }
-                title={
-                  summary.total_ms >= 60_000
-                    ? `${Math.round(summary.total_ms / 60_000).toLocaleString()} minutes total`
-                    : undefined
-                }
-              />
-              <StatCard
-                label="Unique tracks"
-                value={<AnimatedNumber value={summary.unique_tracks} />}
-              />
-              <StatCard
-                label="Unique artists"
-                value={<AnimatedNumber value={summary.unique_artists} />}
-              />
-            </section>
-
-            {data.top_tracks.length > 0 && (
-              <Section sub="On repeat" title="Top tracks">
-                <TrackList
-                  tracks={queue}
-                  queueSource={queue}
-                  extraColumn={extraColumn}
-                />
-              </Section>
-            )}
-
-            {data.top_artists.length > 0 && (
-              <Section sub="On the marquee" title="Top artists">
-                <div className="shelf replay-shelf">
-                  {data.top_artists.map((a, i) => (
-                    <MediaCard
-                      key={a.id}
-                      title={displayText(a.name)}
-                      subtitle={pluralize(a.plays, "play")}
-                      rankBadge={<span className="replay-rank">{i + 1}</span>}
-                    />
-                  ))}
-                </div>
-              </Section>
-            )}
-
-            {data.top_albums.length > 0 && (
-              <Section sub="Played front to back" title="Top albums">
-                <div className="shelf replay-shelf">
-                  {data.top_albums.map((a, i) => (
-                    <MediaCard
-                      key={a.id}
-                      coverUrl={albumCoverUrl(a.id)}
-                      title={displayText(a.title)}
-                      subtitle={
-                        <>
-                          {a.artist ? `${displayText(a.artist)} · ` : ""}
-                          {pluralize(a.plays, "play")}
-                        </>
-                      }
-                      rankBadge={<span className="replay-rank">{i + 1}</span>}
-                    />
-                  ))}
-                </div>
-              </Section>
-            )}
-
-            {data.activity.length > 0 && (
-              <Section sub="When you listened" title="Listening activity">
-                <ActivityChart
-                  buckets={data.activity}
-                  bucket={data.bucket}
-                />
-              </Section>
-            )}
-
-            {data.top_genres.length > 0 && (
-              <Section sub="What filled the room" title="Top genres">
-                <div className="genre-list">
-                  {genres.map((g) => (
-                    <div key={g.genre} className="genre-row">
-                      <div className="genre-label">{displayText(g.genre)}</div>
-                      <div className="genre-bar-track">
-                        <div
-                          className="genre-bar-fill"
-                          style={{ width: `${g.share}%` }}
-                        />
-                      </div>
-                      <div className="genre-count mono">
-                        {g.plays} · {g.share.toFixed(0)}%
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Section>
-            )}
-          </div>
+            data={data}
+            calendar={calendar}
+            chartBucket={chartBucket}
+            queue={queue}
+          />
         ) : null}
       </div>
     </div>

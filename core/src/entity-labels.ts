@@ -1,5 +1,5 @@
-import type { Album, TidalAlbum, TrackSource } from "./api";
-import { displayText, pluralize } from "./format";
+import type { Album, TidalAlbum, TrackListItem, TrackSource } from "./api";
+import { displayText, formatTotalMs, pluralize } from "./format";
 
 /**
  * Subtitle and meta lines for albums and artists, built the same way on both
@@ -88,6 +88,152 @@ export function tidalAlbumMetaParts(
   album: Pick<TidalAlbum, "track_count" | "saved_count" | "release_year">,
 ): AlbumMetaPart[] {
   return albumMetaParts(album.track_count, album.saved_count || undefined, album.release_year);
+}
+
+/** One artist an album page credits under its title. */
+export interface AlbumCredit {
+  name: string;
+  /** The library artist page the name opens; unset when there is none to open. */
+  artistId?: string;
+}
+
+/**
+ * The artists an album page credits, in order: every main artist of a TIDAL
+ * release when known, else the album artist. Only the album artist has a
+ * library id, and it links only when the server says that artist has a page
+ * (`artist_has_page`): an album artist nothing in the library credits
+ * ("Various Artists", or one known only from TIDAL plays) would open "Not
+ * found". A server too old to say gets no link.
+ */
+export function albumCredits(album: {
+  artist_id?: string;
+  artist_has_page?: boolean;
+  artist_name?: string;
+  artist_names?: string[];
+  artists?: string[];
+  artist?: string;
+}): AlbumCredit[] {
+  const listed = album.artist_names?.length
+    ? album.artist_names
+    : album.artists?.length
+      ? album.artists
+      : [album.artist_name || album.artist];
+  const names: string[] = [];
+  for (const raw of listed) {
+    const name = displayText(raw);
+    if (name && !names.some((other) => sameName(other, name))) names.push(name);
+  }
+  const own = displayText(album.artist_name);
+  const linked = !!album.artist_id && album.artist_has_page === true && !!own;
+  return names.map((name) =>
+    linked && sameName(name, own) ? { name, artistId: album.artist_id } : { name },
+  );
+}
+
+function sameName(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+/**
+ * Whether a track credits only artists from `names` (an album's, from
+ * `albumCredits`), so the album's page can leave out its artist line. The
+ * track's `artist` is its artists joined with ", ", as the server sends it;
+ * names compare without case, as whole entries, the way `tracksByArtist`
+ * matches them. A name holding the separator is still one entry, so the
+ * credit has to split exactly into names from the list: on an album by
+ * "Earth, Wind & Fire" and "Kestrel Bay", "Kestrel Bay, Earth, Wind & Fire"
+ * credits only them, but "Earth" or "Kestrel Bay, Hana Okoro" credits
+ * someone else. False for a track crediting no one.
+ */
+export function creditsOnly(artist: string | null | undefined, names: readonly string[]): boolean {
+  const credit = displayText(artist).toLowerCase();
+  const entries = [...new Set(names.map((name) => displayText(name).toLowerCase()))].filter(Boolean);
+  if (!credit) return false;
+  // Where an entry can start: the beginning, and after the separator that
+  // follows an entry already matched. Each is after the one it came from,
+  // so one pass in order visits them all.
+  const starts = new Set([0]);
+  for (let at = 0; at < credit.length; at++) {
+    if (!starts.has(at)) continue;
+    for (const entry of entries) {
+      if (!credit.startsWith(entry, at)) continue;
+      const end = at + entry.length;
+      if (end === credit.length) return true;
+      if (credit.startsWith(", ", end)) starts.add(end + 2);
+    }
+  }
+  return false;
+}
+
+/**
+ * "12 tracks · 48 min": how long an album page's list is. The time is left
+ * out when no track has one, and a list under a minute reads "1 min".
+ */
+export function albumLength(tracks: readonly Pick<TrackListItem, "duration_ms">[]): string {
+  const total = tracks.reduce(
+    (sum, track) =>
+      sum + (Number.isFinite(track.duration_ms) && track.duration_ms > 0 ? track.duration_ms : 0),
+    0,
+  );
+  return joinParts([
+    pluralize(tracks.length, "track"),
+    total > 0 && formatTotalMs(Math.max(total, 60_000)),
+  ]);
+}
+
+/** One fact in an album page's Details. */
+export interface AlbumFact {
+  key: "released" | "length" | "saved";
+  label: string;
+  value: string;
+}
+
+function albumFacts(
+  tracks: readonly Pick<TrackListItem, "duration_ms">[],
+  savedCount: number | undefined,
+  releaseYear: number | undefined,
+): AlbumFact[] {
+  const facts: AlbumFact[] = [];
+  if (releaseYear) facts.push({ key: "released", label: "Released", value: String(releaseYear) });
+  facts.push({ key: "length", label: "Length", value: albumLength(tracks) });
+  if (savedCount !== undefined) {
+    facts.push({
+      key: "saved",
+      label: "Saved",
+      value: `${savedCount} of ${pluralize(tracks.length, "track")}`,
+    });
+  }
+  return facts;
+}
+
+/**
+ * A library album page's Details: the year when known, the length of its
+ * list, and for an album copying a TIDAL release, how much of it is saved.
+ * Unknown facts are left out rather than shown as a dash.
+ */
+export function libraryAlbumFacts(
+  album: Pick<Album, "tidal_album_id" | "saved_count" | "release_year">,
+  tracks: readonly Pick<TrackListItem, "duration_ms">[],
+): AlbumFact[] {
+  // Only an album copying a TIDAL release has a part to save.
+  const saved = album.tidal_album_id ? album.saved_count : undefined;
+  return albumFacts(tracks, saved, album.release_year);
+}
+
+/**
+ * The same for a TIDAL album page, where Saved reads "None" rather than
+ * going missing when nothing is.
+ */
+export function tidalAlbumFacts(
+  album: Pick<TidalAlbum, "saved_count" | "release_year">,
+  tracks: readonly Pick<TrackListItem, "duration_ms">[],
+): AlbumFact[] {
+  const facts = albumFacts(tracks, album.saved_count || undefined, album.release_year);
+  // Listed even when nothing is: how much of a release the library holds is
+  // known on every TIDAL page, and a fact that only some pages have would
+  // move the list below it when it lands on a phone.
+  if (!album.saved_count) facts.push({ key: "saved", label: "Saved", value: "None" });
+  return facts;
 }
 
 /** "12 tracks · 3 albums", or "TIDAL artist" for one from search. */

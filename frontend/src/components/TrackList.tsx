@@ -11,11 +11,17 @@ import { trackCoverUrl, type TrackListItem } from "../api";
 import { displayText, fmtDurationMs } from "../lib/format";
 import { isLocalTrack } from "../lib/track";
 import { trackActions } from "@music-library/core/track";
+import { creditsOnly } from "@music-library/core/entity-labels";
 import CoverArt from "./CoverArt";
 import { EditTrackDialog } from "./edit/EditTrackDialog";
 import { MoveToAlbumDialog } from "./edit/MoveToAlbumDialog";
 import Tooltip from "./Tooltip";
-import { useTrackContextMenu } from "../lib/useTrackContextMenu";
+import {
+  useContextMenuClickGuard,
+  useMenuSelection,
+  useTrackContextMenu,
+  type ContextMenuEvent,
+} from "../lib/useTrackContextMenu";
 import { useAuth } from "../context/Auth";
 import { useTrackInfo } from "../context/TrackInfo";
 import { useFavorites } from "../context/Favorites";
@@ -43,6 +49,12 @@ interface Props {
   selectable?: boolean;
   /** Per-row source badge; redundant when the whole page is one source. */
   showSourceBadge?: boolean;
+  /**
+   * The page's own artists (an album's, each a whole name): rows crediting
+   * only them leave out the artist line, so the ones with someone else on
+   * them stand out.
+   */
+  omitArtists?: readonly string[];
   /** Optional column inserted between Album and Time. Used by /replay to show plays. */
   extraColumn?: {
     header: string;
@@ -54,6 +66,7 @@ interface Props {
 
 const trackId = (track: TrackListItem) => track.id;
 const exportTracks = (tracks: TrackListItem[]) => tracks;
+const EXPORT_DISABLED_REASON = "Selected streaming tracks cannot be exported as files.";
 
 export default function TrackList({
   tracks,
@@ -64,6 +77,7 @@ export default function TrackList({
   showHeader = true,
   selectable = true,
   showSourceBadge = true,
+  omitArtists,
   extraColumn,
   selectionControlsHostId,
 }: Props) {
@@ -116,10 +130,18 @@ export default function TrackList({
   const handleExportSelected = useCallback(() => {
     void exportSelected();
   }, [exportSelected]);
+  const exportDisabled = selectedLocalTracks.length === 0;
+  const menuSelection = useMenuSelection({
+    selectionMode,
+    selectedIds,
+    tracks: selectedTracks,
+    onExport: handleExportSelected,
+    exportDisabledReason: exportDisabled ? EXPORT_DISABLED_REASON : undefined,
+  });
   const handleContextMenu = useCallback(
     (
       t: TrackListItem,
-      e: { preventDefault: () => void; clientX: number; clientY: number },
+      e: ContextMenuEvent,
     ) => {
       const actions = trackActions(t, { isAdmin });
       // onInfo is wired by default via TrackInfoProvider; the bind() helper
@@ -128,10 +150,14 @@ export default function TrackList({
         queue: getQueue(),
         onEdit: actions.editMetadata ? () => setEditId(t.id) : undefined,
         onMoveToAlbum: actions.moveToAlbum ? () => setMoveTrack(t) : undefined,
+        selection: menuSelection(t.id),
       })(e);
     },
-    [bind, getQueue, isAdmin],
+    [bind, getQueue, isAdmin, menuSelection],
   );
+  // The click that dismisses the menu only dismisses it: it doesn't also
+  // play a row or change the selection.
+  const clickGuard = useContextMenuClickGuard();
 
   const tableRef = useRef<HTMLTableElement>(null);
   const { start, end, topSpacerPx, bottomSpacerPx } = useWindowedSlice(
@@ -164,8 +190,8 @@ export default function TrackList({
           allSelected={allSelected}
           someSelected={someSelected}
           exporting={exporting}
-          exportDisabled={selectedLocalTracks.length === 0}
-          exportDisabledReason="Selected streaming tracks cannot be exported as files."
+          exportDisabled={exportDisabled}
+          exportDisabledReason={EXPORT_DISABLED_REASON}
           onToggleMode={() => {
             setSelectionMode(!selectionMode);
           }}
@@ -178,7 +204,12 @@ export default function TrackList({
           hostId={selectionControlsHostId}
         />
       )}
-      <div className="table-scroll" data-horizontal-scroll="">
+      <div
+        className="table-scroll"
+        data-horizontal-scroll=""
+        onMouseDownCapture={clickGuard.onMouseDownCapture}
+        onClickCapture={clickGuard.onClickCapture}
+      >
         <div className="table-scroll-inner">
           <table
             className={`table table-tracks${selectionMode ? " table-selecting" : ""}${showHeader ? "" : " table-headless"}`}
@@ -221,6 +252,7 @@ export default function TrackList({
                   showCover={showCover}
                   showAlbum={showAlbum}
                   showSourceBadge={showSourceBadge}
+                  showArtist={!omitArtists?.length || !creditsOnly(t.artist, omitArtists)}
                   renderExtra={extraColumn?.render}
                   extraClassName={extraColumn?.className}
                   isNow={current?.id === t.id}
@@ -269,6 +301,7 @@ interface TrackRowProps {
   showCover: boolean;
   showAlbum: boolean;
   showSourceBadge: boolean;
+  showArtist: boolean;
   renderExtra?: (track: TrackListItem) => ReactNode;
   extraClassName?: string;
   isNow: boolean;
@@ -281,10 +314,7 @@ interface TrackRowProps {
   onToggleSelect: (t: TrackListItem, index: number, range: boolean) => void;
   onToggleFav: (id: string) => void;
   onEdit?: (id: string) => void;
-  onContextMenu: (
-    t: TrackListItem,
-    e: { preventDefault: () => void; clientX: number; clientY: number },
-  ) => void;
+  onContextMenu: (t: TrackListItem, e: ContextMenuEvent) => void;
 }
 
 // React.memo so a parent re-render (pagination, play/pause flip, favorite
@@ -297,6 +327,7 @@ export const TrackRow = memo(function TrackRow({
   showCover,
   showAlbum,
   showSourceBadge,
+  showArtist,
   renderExtra,
   extraClassName,
   isNow,
@@ -401,9 +432,11 @@ export const TrackRow = memo(function TrackRow({
             </Tooltip>
           )}
         </div>
-        <div className="track-sub" title={displayText(track.artist, "Unknown artist")}>
-          {displayText(track.artist, "Unknown artist")}
-        </div>
+        {showArtist && (
+          <div className="track-sub" title={displayText(track.artist, "Unknown artist")}>
+            {displayText(track.artist, "Unknown artist")}
+          </div>
+        )}
       </td>
       {showAlbum && (
         <td

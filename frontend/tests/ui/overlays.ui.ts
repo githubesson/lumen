@@ -24,6 +24,18 @@ test("track context menu", async ({ page }, testInfo) => {
   await checkUI(page, testInfo);
 });
 
+// Right-clicking a row inside a selection opens the menu for all of it.
+test("track selection menu", async ({ page }, testInfo) => {
+  await page.getByRole("button", { name: "Select", exact: true }).click();
+  const rows = page.locator("tbody tr");
+  for (const index of [1, 3, 5]) await rows.nth(index).locator(".track-title").click();
+  await rows.nth(3).locator(".track-title").click({ button: "right" });
+  const menu = page.getByRole("menu", { name: "3 tracks" });
+  await menu.waitFor();
+  await expect(menu.getByRole("menuitem", { name: "Export" })).toBeVisible();
+  await checkUI(page, testInfo);
+});
+
 test("track info dialog", async ({ page }, testInfo) => {
   const menu = await openContextMenu(page);
   await menu.getByRole("menuitem", { name: "Song info" }).click();

@@ -125,13 +125,11 @@ export default function QueuePopover({
         </button>
       </div>
 
-      <div className="queue-pop-body">
-        <QueueList
-          externalQueue={externalQueue}
-          bindCtx={canContext ? bindCtx : undefined}
-          onJumped={onClose}
-        />
-      </div>
+      <QueueList
+        externalQueue={externalQueue}
+        bindCtx={canContext ? bindCtx : undefined}
+        onJumped={onClose}
+      />
       {ctxMenu}
     </div>,
     document.body,
@@ -161,6 +159,10 @@ export function useQueuePosition(externalQueue?: ExternalQueue): string | null {
 /**
  * The now-playing row and everything after it. Click a row to jump playback
  * there. Shared by the queue popover and the mini player's queue panel.
+ *
+ * Renders two items for its container's flex column: the playing track's
+ * band, and under it the scrolling "Up next" list. The band stays put while
+ * the list scrolls, and spans the container whatever its scrollbar takes.
  */
 export function QueueList({
   externalQueue,
@@ -212,76 +214,75 @@ const QueueContents = memo(function QueueContents({ queue, index, current, jumpT
 
   if (isEmpty) {
     return (
-      <div className="queue-pop-empty">
-        <MusicalNoteIcon className="size-5" aria-hidden="true" />
-        <span>
-          {usingExternal ? "No bridge queue loaded." : "Play something to start a queue."}
-        </span>
+      <div className="queue-pop-list">
+        <div className="queue-pop-empty">
+          <MusicalNoteIcon className="size-5" aria-hidden="true" />
+          <span>
+            {usingExternal ? "No bridge queue loaded." : "Play something to start a queue."}
+          </span>
+        </div>
       </div>
     );
   }
 
   return (
     <>
-      {(usingExternal ? externalCurrent : current) && (
-        <>
-          <div className="queue-pop-heading">Now playing</div>
-          {usingExternal && externalCurrent ? (
-            <QueueRow
-              title={externalCurrent.title}
-              artist={externalCurrent.artist ?? externalCurrent.album}
-              active
-            />
-          ) : current ? (
-            <QueueRow
-              title={current.title}
-              artist={current.artist}
-              coverUrl={trackCoverUrl(current, 64)}
-              active
-              onContextMenu={bindCtx?.(current, { queue, onPlay: () => jumpTo(index) })}
-            />
-          ) : null}
-        </>
-      )}
+      {usingExternal && externalCurrent ? (
+        <QueueRow
+          title={externalCurrent.title}
+          artist={externalCurrent.artist ?? externalCurrent.album}
+          active
+        />
+      ) : !usingExternal && current ? (
+        <QueueRow
+          title={current.title}
+          artist={current.artist}
+          coverUrl={trackCoverUrl(current, 96)}
+          active
+          onContextMenu={bindCtx?.(current, { queue, onPlay: () => jumpTo(index) })}
+        />
+      ) : null}
 
-      {upcoming.length > 0 ? (
-        <>
-          <div className="queue-pop-heading">
-            Up next · {usingExternal ? upcoming.length : upcomingTotal}
-          </div>
-          {usingExternal
-            ? externalUpcoming.map((t, i) => (
-              <QueueRow
-                key={`${t.id}-${externalIndex + 1 + i}`}
-                title={t.title}
-                artist={t.artist ?? t.album}
-                onClick={
-                  externalQueue?.onJump
-                    ? () => {
-                        externalQueue.onJump?.(externalIndex + 1 + i);
-                        onJumped?.();
-                      }
-                    : undefined
-                }
-              />
-            ))
-            : localUpcoming.map((t, i) => (
-              <QueueRow
-                key={`${t.id}-${index + 1 + i}`}
-                title={t.title}
-                artist={t.artist}
-                coverUrl={trackCoverUrl(t, 64)}
-                onClick={() => {
-                  jumpTo(index + 1 + i);
-                  onJumped?.();
-                }}
-                onContextMenu={bindCtx?.(t, { queue, onPlay: () => jumpTo(index + 1 + i) })}
-              />
-            ))}
-        </>
-      ) : (
-        <div className="queue-pop-hint">Nothing queued after this.</div>
-      )}
+      <div className="queue-pop-list">
+        {upcoming.length > 0 ? (
+          <>
+            <div className="queue-pop-heading">
+              Up next · {usingExternal ? upcoming.length : upcomingTotal}
+            </div>
+            {usingExternal
+              ? externalUpcoming.map((t, i) => (
+                <QueueRow
+                  key={`${t.id}-${externalIndex + 1 + i}`}
+                  title={t.title}
+                  artist={t.artist ?? t.album}
+                  onClick={
+                    externalQueue?.onJump
+                      ? () => {
+                          externalQueue.onJump?.(externalIndex + 1 + i);
+                          onJumped?.();
+                        }
+                      : undefined
+                  }
+                />
+              ))
+              : localUpcoming.map((t, i) => (
+                <QueueRow
+                  key={`${t.id}-${index + 1 + i}`}
+                  title={t.title}
+                  artist={t.artist}
+                  coverUrl={trackCoverUrl(t, 64)}
+                  onClick={() => {
+                    jumpTo(index + 1 + i);
+                    onJumped?.();
+                  }}
+                  onContextMenu={bindCtx?.(t, { queue, onPlay: () => jumpTo(index + 1 + i) })}
+                />
+              ))}
+          </>
+        ) : (
+          <div className="queue-pop-hint">Nothing queued after this.</div>
+        )}
+      </div>
     </>
   );
 });
@@ -305,6 +306,9 @@ function QueueRow({
     <>
       <CoverArt className="queue-pop-art" src={coverUrl} label={title} />
       <div className="queue-pop-text">
+        {/* The playing track is a band of its own, captioned like the share
+            page's header, rather than a section heading over a row. */}
+        {active && <div className="queue-pop-eyebrow">Now playing</div>}
         <div className="queue-pop-title">{displayText(title)}</div>
         <div className="queue-pop-artist">{displayText(artist, "Unknown artist")}</div>
       </div>

@@ -86,6 +86,7 @@ function MiniQueue({ externalQueue }: { externalQueue?: ExternalQueue }) {
   const clickGuard = useContextMenuClickGuard();
   return (
     <div
+      className="mini-queue"
       onMouseDownCapture={clickGuard.onMouseDownCapture}
       onClickCapture={clickGuard.onClickCapture}
     >

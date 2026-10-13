@@ -129,8 +129,18 @@ html[data-mini-player] .player-bar[data-mini-panel] .transport-row {
   overflow-y: auto;
 }
 
+/* The queue scrolls only its "Up next" list (.queue-pop-list, shared with
+   the queue popover): the playing track's band stays flush under the card's
+   top edge, as it does under the popover's header. */
 .mini-panel-queue {
-  padding: 4px;
+  overflow: hidden;
+}
+
+.mini-queue {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .mini-panel-lyrics {

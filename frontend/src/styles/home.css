@@ -257,6 +257,18 @@
     transparent
   );
 }
+/* While it scrolls, the row takes focus and the arrow keys scroll it. The
+   ring goes on the wrapper, since the row's edge fade would fade it out,
+   and outside it: the first and last cards sit flush with its edges, so an
+   inset ring would draw over them. */
+.shelf:focus-visible {
+  outline: none;
+}
+.shelf-scroller:has(> .shelf:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-lg);
+}
 .shelf-arrow {
   position: absolute;
   /* Centred on the cover art: the card's 8px padding cancels out. */

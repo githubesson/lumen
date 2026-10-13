@@ -183,6 +183,11 @@ function apiRoutes(signedIn: boolean): [string, RegExp, Handler][] {
     ["GET", new RegExp(`^/api/albums/${id}/tracks$`), (m) => ({ json: data.tracks.filter((t) => t.album_id === m[1]).map(data.listItem) })],
     ["GET", new RegExp(`^/api/albums/${id}$`), (m) => {
       const album = data.albums.find((a) => a.id === m[1]);
+      // Every fixture album artist has library tracks, so a page.
+      return album ? { json: { ...album, artist_has_page: true } } : notFound;
+    }],
+    ["GET", new RegExp(`^/api/tidal/albums/${id}$`), (m) => {
+      const album = data.tidalAlbums.find((a) => a.id === m[1]);
       return album ? { json: album } : notFound;
     }],
     ["GET", /^\/api\/artists$/, (_m, url) => paged(data.artists, url)],
@@ -204,7 +209,13 @@ function apiRoutes(signedIn: boolean): [string, RegExp, Handler][] {
     // Listening
     ["GET", /^\/api\/favorites$/, (_m, url) => ({ json: Number(url.searchParams.get("offset") ?? 0) > 0 ? [] : data.favorites })],
     ["GET", /^\/api\/recent$/, (_m, url) => ({ json: data.recent.slice(0, Number(url.searchParams.get("limit") ?? 100)) })],
-    ["GET", /^\/api\/stats\/replay$/, (_m, url) => ({ json: data.replay((url.searchParams.get("bucket") ?? "day") as ReplayBucket) })],
+    ["GET", /^\/api\/stats\/replay$/, (_m, url) => ({
+      json: data.replay(
+        (url.searchParams.get("bucket") ?? "day") as ReplayBucket,
+        url.searchParams.get("from"),
+        url.searchParams.get("to"),
+      ),
+    })],
     ["GET", /^\/api\/activity\/current$/, () => ({ json: { activity: null } })],
     ["PUT", /^\/api\/activity$/, (_m, _url, route) => ({
       json: { ...(route.request().postDataJSON() as PlaybackActivity), updated_at: new Date().toISOString() },

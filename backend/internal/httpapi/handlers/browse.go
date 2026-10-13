@@ -30,6 +30,11 @@ type albumListResp struct {
 	DurationMS    int64  `json:"duration_ms"`
 	HasCover      bool   `json:"has_cover"`
 
+	// Single-album responses only: true when GET /api/artists/{artist_id}
+	// finds the album artist for this viewer, so the page can link it.
+	// Omitted otherwise (no album artist, or one with no library track).
+	ArtistHasPage bool `json:"artist_has_page,omitempty"`
+
 	// Set on a single album that copies a TIDAL release: its page lists the
 	// whole release, with SavedCount of the tracks served from the library.
 	TIDALAlbumID string   `json:"tidal_album_id,omitempty"`
@@ -92,6 +97,7 @@ func makeAlbumResp(a *library.AlbumDetail) albumListResp {
 		ID:            a.ID.String(),
 		Title:         a.Title,
 		ArtistName:    a.ArtistName,
+		ArtistHasPage: a.ArtistHasPage,
 		IsCompilation: a.IsCompilation,
 		ReleaseYear:   a.ReleaseYear,
 		TrackCount:    a.TrackCount,

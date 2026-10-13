@@ -1,5 +1,13 @@
 import { test, type Page } from "playwright/test";
-import { albums, artists, pendingInvites, playlists } from "./fixtures";
+import {
+  albums,
+  artists,
+  pendingInvites,
+  playlists,
+  tidalAlbum,
+  tidalAlbumPartlySaved,
+  tidalAlbumSaved,
+} from "./fixtures";
 import { checkUI, go, ready, signedIn } from "./helpers";
 
 // Every signed-in screen, reached in-app so the player bar keeps its track.
@@ -16,6 +24,8 @@ const rows = (page: Page) => page.locator("tbody tr");
 test("home", async ({ page }, testInfo) => {
   await go(page, "/");
   await ready(page, page.locator(".hero-title"));
+  // The whole board, down to Top artists (from the Replay fixture).
+  await ready(page, page.locator('[data-panel="artists"] .board-artist'));
   await checkUI(page, testInfo);
 });
 
@@ -50,6 +60,31 @@ test("album detail", async ({ page }, testInfo) => {
   await checkUI(page, testInfo);
 });
 
+test("TIDAL album detail", async ({ page }, testInfo) => {
+  await go(page, `/library?tidalAlbum=${tidalAlbum.id}`);
+  await ready(page, page.getByRole("heading", { name: tidalAlbum.title }));
+  await ready(page, rows(page));
+  await checkUI(page, testInfo);
+});
+
+// The library copy: a quiet link in Details while there's more to download,
+// then the actions row's one control once all of it is saved.
+test("TIDAL album detail, partly saved", async ({ page }, testInfo) => {
+  await go(page, `/library?tidalAlbum=${tidalAlbumPartlySaved.id}`);
+  await ready(page, page.getByRole("heading", { name: tidalAlbumPartlySaved.title }));
+  await ready(page, rows(page));
+  await ready(page, page.locator(".album-sleeve-details").getByRole("button", { name: "Open in library" }));
+  await checkUI(page, testInfo);
+});
+
+test("TIDAL album detail, saved", async ({ page }, testInfo) => {
+  await go(page, `/library?tidalAlbum=${tidalAlbumSaved.id}`);
+  await ready(page, page.getByRole("heading", { name: tidalAlbumSaved.title }));
+  await ready(page, rows(page));
+  await ready(page, page.locator(".album-sleeve-more").getByRole("button", { name: "Open in library" }));
+  await checkUI(page, testInfo);
+});
+
 test("artist detail", async ({ page }, testInfo) => {
   const artist = artists.find((a) => a.id === "ar-lucien")!;
   await go(page, `/library?artist=${artist.id}`);
@@ -78,7 +113,26 @@ test("recent", async ({ page }, testInfo) => {
 
 test("replay", async ({ page }, testInfo) => {
   await go(page, "/replay");
-  await ready(page, page.getByText("Top genres", { exact: true }));
+  await ready(page, page.getByText("Also on repeat", { exact: true }));
+  await checkUI(page, testInfo);
+});
+
+// "Show all" brings back the full table of top tracks across the panel.
+test("replay all top tracks", async ({ page }, testInfo) => {
+  await go(page, "/replay");
+  await ready(page, page.getByText("Also on repeat", { exact: true }));
+  await press(page, "button", /^Show all \d+$/);
+  await ready(page, page.getByRole("button", { name: "Show fewer" }));
+  await ready(page, rows(page));
+  await checkUI(page, testInfo);
+});
+
+// A month: one bar and one strip cell per day, rather than months and a bar.
+test("replay this month", async ({ page }, testInfo) => {
+  await go(page, "/replay");
+  await ready(page, page.getByText("Also on repeat", { exact: true }));
+  await press(page, "tab", "This month");
+  await ready(page, page.getByText("Every day", { exact: true }));
   await checkUI(page, testInfo);
 });
 

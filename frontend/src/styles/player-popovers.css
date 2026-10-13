@@ -269,17 +269,23 @@
     transform: none;
   }
 }
+/* Laid out like the public share card: tight rows, small type, and hairline
+   dividers between the header, the playing track and the list rather than
+   padded sections. Shared with the mini player's queue panel. In both, the
+   playing track's band and the list under it are items of a flex column:
+   the band holds its height and only the list scrolls. */
 .queue-pop-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 6px 6px 12px;
+  gap: 6px;
+  min-height: 36px;
+  padding: 3px 4px 3px 12px;
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
 }
 .queue-pop-title-h {
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--foreground);
 }
 .queue-pop-pos {
@@ -287,33 +293,45 @@
   font-weight: 500;
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
-  height: 20px;
+  height: 18px;
   display: inline-grid;
   place-items: center;
-  padding: 0 6px;
+  padding: 0 5px;
   border-radius: var(--radius-sm);
   background: var(--muted);
 }
-.queue-pop-close { width: 28px; height: 28px; flex: 0 0 28px; }
-.queue-pop-body {
+.queue-pop-close {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  color: var(--muted-foreground);
+}
+.queue-pop-close:hover {
+  color: var(--foreground);
+}
+/* The "Up next" list: the part of the queue that scrolls, inset from the
+   container's sides. */
+.queue-pop-list {
+  --queue-inset: 4px;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 4px;
+  padding: 0 var(--queue-inset) var(--queue-inset);
 }
 .queue-pop-heading {
   font-size: 12px;
+  line-height: 16px;
   font-weight: 500;
   color: var(--muted-foreground);
-  padding: 6px 8px;
+  padding: 8px 8px 4px;
 }
 .queue-pop-row {
   position: relative;
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 10px;
+  padding: 4px 8px;
   border-radius: var(--radius-md);
   background: transparent;
   border: 0;
@@ -331,54 +349,77 @@
   background: var(--accent);
   box-shadow: inset 0 0 0 2px var(--focus-ring);
 }
+/* The playing track: a full-width band tinted like the share card's footer,
+   with a larger cover, between the header's hairline and its own. It sits
+   above the list, outside its scroll and inset, so it runs edge to edge and
+   stays in place. */
 .queue-pop-row.active {
-  background: var(--accent);
+  flex: none;
+  padding: 8px 12px;
+  gap: 12px;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--muted) 50%, transparent);
   cursor: default;
 }
-
-.queue-pop-row.active .queue-pop-title {
-  color: var(--accent-foreground);
-}
 .queue-pop-hint {
-  padding: 8px 12px 12px;
+  padding: 8px 8px 4px;
   font-size: 12px;
   color: var(--muted-foreground);
 }
 .queue-pop-art {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-md);
-  flex: 0 0 36px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  flex: 0 0 32px;
   overflow: hidden;
+}
+.queue-pop-row.active .queue-pop-art {
+  width: 48px;
+  height: 48px;
+  flex-basis: 48px;
+  border-radius: var(--radius-md);
 }
 .queue-pop-text {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+}
+.queue-pop-eyebrow {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--muted-foreground);
 }
 .queue-pop-title {
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 16px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.queue-pop-row.active .queue-pop-title {
+  font-size: 14px;
+  line-height: 18px;
+  color: var(--foreground);
+}
 .queue-pop-artist {
   font-size: 12px;
+  line-height: 16px;
   color: var(--muted-foreground);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .queue-pop-empty {
-  padding: 24px 16px;
+  padding: 20px 12px;
   text-align: center;
   color: var(--muted-foreground);
-  font-size: 14px;
+  font-size: 13px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }

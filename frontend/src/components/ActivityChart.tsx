@@ -12,20 +12,24 @@ interface Props {
 }
 
 // Built once: `toLocaleDateString` sets up a new formatter on every call, and
-// every bar needs a tooltip.
-const monthDay = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+// every bar needs a tooltip. Buckets start at UTC midnight, so their dates
+// are read in UTC (in local time, a viewer west of Greenwich would see each
+// bar dated the day before).
+const monthDay = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 const monthDayYear = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
   year: "numeric",
+  timeZone: "UTC",
 });
 const weekdayDate = new Intl.DateTimeFormat(undefined, {
   weekday: "short",
   month: "short",
   day: "numeric",
   year: "numeric",
+  timeZone: "UTC",
 });
-const longMonthYear = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" });
+const longMonthYear = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
 
 function tooltipFor(date: Date, bucket: ReplayBucket): string {
   switch (bucket) {
@@ -33,7 +37,7 @@ function tooltipFor(date: Date, bucket: ReplayBucket): string {
       return weekdayDate.format(date);
     case "week": {
       const end = new Date(date);
-      end.setDate(end.getDate() + 6);
+      end.setUTCDate(end.getUTCDate() + 6);
       return `Week of ${monthDay.format(date)} – ${monthDayYear.format(end)}`;
     }
     case "month":

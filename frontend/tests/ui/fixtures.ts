@@ -26,6 +26,7 @@ import type {
   SearchArtist,
   SearchResponse,
   TidalAutoDownloadStatus,
+  TidalAlbum,
   TidalStatus,
   TrackDetail,
   TrackListItem,
@@ -187,6 +188,103 @@ export const tidalTrack: TrackListItem = {
   cover_url: "/api/covers/remote?url=https%3A%2F%2Fresources.tidal.com%2Fimages%2Fd7a1%2F640x640.jpg",
 };
 
+/**
+ * A TIDAL track by an artist the library has nothing of. In Replay's top
+ * tracks, its artist is a top artist without a page: their tile plays.
+ */
+export const streamedTrack: TrackListItem = {
+  id: "tidal:402177310",
+  source: "tidal",
+  source_id: "402177310",
+  source_album_id: "402177301",
+  title: "Tidewater",
+  album_title: "Low Tide Radio",
+  duration_ms: 241_000,
+  artist: "Marisol Vey",
+  cover_url: "/api/covers/remote?url=https%3A%2F%2Fresources.tidal.com%2Fimages%2Fb3c9%2F640x640.jpg",
+};
+
+/** The TIDAL release `tidalTrack` is from. Nothing of it is in the library, so its page offers the download. */
+export const tidalAlbum: TidalAlbum = (() => {
+  const rows: [title: string, seconds: number][] = [
+    ["Harbour Lights (Live From the Union Chapel, Islington)", 231],
+    ["Night Ferry (Live From the Union Chapel, Islington)", 276],
+    ["A Coat Too Thin for November (Live From the Union Chapel, Islington)", 284],
+    ["The Cartographer's Lament (Live From the Union Chapel, Islington)", 318],
+  ];
+  const albumTracks = rows.map(([title, seconds], index): TrackListItem =>
+    title === tidalTrack.title
+      ? tidalTrack
+      : {
+          ...tidalTrack,
+          id: `tidal:3812455${71 + index}`,
+          source_id: `3812455${71 + index}`,
+          title,
+          duration_ms: seconds * 1000,
+        },
+  );
+  return {
+    id: tidalTrack.source_album_id!,
+    title: tidalTrack.album_title!,
+    artist: tidalTrack.artist,
+    artists: [tidalTrack.artist!],
+    release_year: 2023,
+    track_count: albumTracks.length,
+    duration_ms: albumTracks.reduce((sum, t) => sum + t.duration_ms, 0),
+    cover_url: tidalTrack.cover_url,
+    tracks: albumTracks,
+  };
+})();
+
+/**
+ * A TIDAL release the library holds part or all of: the server lists the
+ * library's copies in place of its tracks, and links the library album.
+ */
+function savedTidalAlbum(
+  id: string,
+  albumId: string,
+  more: [title: string, seconds: number][],
+): TidalAlbum {
+  const album = albumRows.find((a) => a.id === albumId)!;
+  const saved = tracks.filter((t) => t.album_id === albumId).map(listItem);
+  const remote = more.map(([title, seconds], index): TrackListItem => ({
+    id: `tidal:${id}${index + 1}`,
+    source: "tidal",
+    source_id: `${id}${index + 1}`,
+    source_album_id: id,
+    title,
+    album_title: album.title,
+    duration_ms: seconds * 1000,
+    artist: artistName(album.artist),
+    cover_url: `/api/covers/remote?url=https%3A%2F%2Fresources.tidal.com%2Fimages%2F${id}%2F640x640.jpg`,
+  }));
+  const albumTracks = [...saved, ...remote];
+  return {
+    id,
+    title: album.title,
+    artist: artistName(album.artist),
+    artists: [artistName(album.artist)],
+    release_year: album.year,
+    saved_count: saved.length,
+    library_album_id: albumId,
+    track_count: albumTracks.length,
+    duration_ms: albumTracks.reduce((sum, t) => sum + t.duration_ms, 0),
+    cover_url: remote[0]?.cover_url ?? `/api/covers/remote?url=https%3A%2F%2Fresources.tidal.com%2Fimages%2F${id}%2F640x640.jpg`,
+    tracks: albumTracks,
+  };
+}
+
+/** Partly saved: an admin gets the download, and the library copy as a link in Details. */
+export const tidalAlbumPartlySaved = savedTidalAlbum("310077120", "al-lanterns", [
+  ["Lantern Song (Demo)", 214],
+  ["Harbour Lights (Strings Version)", 247],
+]);
+
+/** All saved: an admin's actions row opens the library copy instead. */
+export const tidalAlbumSaved = savedTidalAlbum("298114503", "al-nordlys", []);
+
+export const tidalAlbums: TidalAlbum[] = [tidalAlbum, tidalAlbumPartlySaved, tidalAlbumSaved];
+
 export const albums: Album[] = albumRows.map((album) => ({
   id: album.id,
   title: album.title,
@@ -277,6 +375,7 @@ export const playlists: Playlist[] = [
     created_at: created,
     updated_at: updated,
     cover: { track_id: "t-al-postcard-1", album_id: "al-postcard" },
+    owner_name: me.username,
   },
   {
     id: "pl-sunday-coffee",
@@ -289,6 +388,7 @@ export const playlists: Playlist[] = [
     created_at: "2025-11-30T10:12:00Z",
     updated_at: "2026-10-05T08:41:27Z",
     cover: { track_id: "t-al-small-hours-1", album_id: "al-small-hours" },
+    owner_name: me.username,
   },
   {
     id: "pl-road-trip",
@@ -300,6 +400,7 @@ export const playlists: Playlist[] = [
     created_at: "2026-06-02T17:30:00Z",
     updated_at: "2026-08-19T12:05:44Z",
     cover: { track_id: "t-al-signal-1", album_id: "al-signal" },
+    owner_name: "jonas",
   },
 ];
 
@@ -525,41 +626,74 @@ export function search(q: string, type: string): SearchResponse {
   return { albums: albumHits, artists: artistHits, tracks: trackHits, sources: ["local", "tidal"], next_offsets: {} };
 }
 
-export function replay(bucket: ReplayBucket = "day"): ReplayData {
-  const top = ["t-al-postcard-3", "t-al-small-hours-3", "t-al-weather-1", "t-al-signal-2", "t-al-lanterns-1", "t-al-nordlys-2", "t-al-weather-4", "t-al-postcard-1"];
-  const days = bucket === "day" ? 30 : 12;
-  const now = new Date();
-  const activity = Array.from({ length: days }, (_, i) => {
-    const start = bucket === "day"
-      ? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (days - 1 - i)))
-      : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (days - 1 - i), 1));
-    return { bucket_start: start.toISOString(), plays: [4, 9, 0, 13, 7, 21, 16, 5, 11, 2, 18, 8][i % 12] };
-  });
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Plays per day: a three-week rhythm with a quiet day most weeks.
+const dailyRhythm = [4, 9, 0, 13, 7, 21, 16, 5, 11, 2, 18, 8, 0, 6, 12, 3, 15, 9, 0, 14, 10];
+
+/**
+ * The Replay answer for a window, like the server's: plays per bucket for
+ * the days with plays from `from` (or 420 days back, for all time) to `to`
+ * or now, and every count scaled to the window's plays.
+ */
+export function replay(bucket: ReplayBucket = "day", from?: string | null, to?: string | null): ReplayData {
+  // More than the eight the panel lists, so "Show all" has more to show.
+  const top = ["t-al-postcard-3", "t-al-small-hours-3", "t-al-weather-1", streamedTrack.id, "t-al-signal-2", "t-al-lanterns-1", "t-al-nordlys-2", "t-al-weather-4", "t-al-postcard-1", "t-al-signal-4", "t-al-small-hours-1", "t-al-lanterns-3"];
+  // As the server sends them: each track's primary artists by id, and
+  // whether each has a page (every library artist does; Marisol Vey, only
+  // ever streamed, doesn't).
+  const topTrack = (id: string) => {
+    if (id === streamedTrack.id) {
+      return { ...streamedTrack, primary_artists: [{ id: "ar-marisol", name: "Marisol Vey", has_page: false }] };
+    }
+    const row = byId(id);
+    const credited = [row.artist_id, row.featured_id].filter((a): a is ArtistId => !!a);
+    return { ...listItem(row), primary_artists: credited.map((a) => ({ id: a, name: artistName(a), has_page: true })) };
+  };
+  const now = Date.now();
+  const first = Math.floor((from ? Date.parse(from) : now - 420 * DAY_MS) / DAY_MS) * DAY_MS;
+  const end = Math.min(to ? Date.parse(to) : now, now);
+  const activity: ReplayData["activity"] = [];
+  for (let day = first; day < end; day += DAY_MS) {
+    const plays = dailyRhythm[Math.round(day / DAY_MS) % dailyRhythm.length];
+    if (plays === 0) continue;
+    const date = new Date(day);
+    const start = bucket === "day" ? day : Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+    const iso = new Date(start).toISOString();
+    const last = activity[activity.length - 1];
+    if (last?.bucket_start === iso) last.plays += plays;
+    else activity.push({ bucket_start: iso, plays });
+  }
+  const total = activity.reduce((sum, b) => sum + b.plays, 0);
+  const share = (weights: number[]) => weights.map((w) => Math.max(1, Math.round(total * w)));
+  const trackPlays = share([0.06, 0.052, 0.045, 0.04, 0.034, 0.03, 0.026, 0.022, 0.019, 0.017, 0.015, 0.013]);
+  const artistPlays = share([0.23, 0.21, 0.18, 0.15, 0.13, 0.1]);
+  const albumPlays = share([0.22, 0.19, 0.16, 0.13, 0.1]);
+  const genrePlays = share([0.23, 0.21, 0.18, 0.15, 0.13, 0.09]);
   return {
     summary: {
-      total_plays: 412,
-      total_ms: 412 * 262_000,
+      total_plays: total,
+      total_ms: total * 262_000,
       unique_tracks: 27,
-      unique_artists: 6,
-      headline_artist: { id: "ar-velvet", name: "The Velvet Meridian", plays: 96 },
+      unique_artists: 7,
+      headline_artist: { id: "ar-velvet", name: "The Velvet Meridian", plays: artistPlays[0] },
     },
-    top_tracks: top.map((id, i) => ({ ...listItem(byId(id)), plays: 41 - i * 4 })),
-    top_artists: [
-      { id: "ar-velvet", name: "The Velvet Meridian", plays: 96 },
-      { id: "ar-okoro", name: "Hana Okoro", plays: 88 },
-      { id: "ar-halden", name: "Halden Marsh", plays: 74 },
-      { id: "ar-lucien", name: "Saint Lucien & The Harbour Lights", plays: 61 },
-      { id: "ar-kestrel", name: "Kestrel Bay", plays: 55 },
-    ],
-    top_albums: albums.slice(0, 5).map((a, i) => ({ id: a.id, title: a.title, artist: a.artist_name, source: "local", plays: 90 - i * 12 })),
-    top_genres: [
-      { genre: "Dream Pop", plays: 96 },
-      { genre: "Neo-Soul", plays: 88 },
-      { genre: "Indie Folk", plays: 74 },
-      { genre: "Chamber Pop", plays: 61 },
-      { genre: "Electronic", plays: 55 },
-      { genre: "Jazz", plays: 38 },
-    ],
+    top_tracks: total > 0 ? top.map((id, i) => ({ ...topTrack(id), plays: trackPlays[i] })) : [],
+    top_artists: total > 0
+      ? [
+          { id: "ar-velvet", name: "The Velvet Meridian", has_page: true },
+          { id: "ar-marisol", name: "Marisol Vey", has_page: false },
+          { id: "ar-okoro", name: "Hana Okoro", has_page: true },
+          { id: "ar-halden", name: "Halden Marsh", has_page: true },
+          { id: "ar-lucien", name: "Saint Lucien & The Harbour Lights", has_page: true },
+          { id: "ar-kestrel", name: "Kestrel Bay", has_page: true },
+        ].map((a, i) => ({ ...a, plays: artistPlays[i] }))
+      : [],
+    top_albums: total > 0
+      ? albums.slice(0, 5).map((a, i) => ({ id: a.id, title: a.title, artist: a.artist_name, source: "local", plays: albumPlays[i] }))
+      : [],
+    top_genres: total > 0
+      ? ["Dream Pop", "Neo-Soul", "Indie Folk", "Chamber Pop", "Electronic", "Jazz"].map((genre, i) => ({ genre, plays: genrePlays[i] }))
+      : [],
     activity,
     bucket,
     available_years: [2025, 2026],

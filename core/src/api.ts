@@ -801,6 +801,8 @@ export interface Playlist {
    *  cover. Only on `listPlaylists`, and absent when the playlist has no
    *  tracks you can see. */
   cover?: PlaylistCover;
+  /** The owner's username. Only on `listPlaylists`. */
+  owner_name?: string;
 }
 
 /** Pass to `trackCoverUrl` as `{ id: track_id, album_id, cover_url }`. */
@@ -1061,6 +1063,11 @@ export interface Album {
   title: string;
   artist_id?: string;
   artist_name?: string;
+  /**
+   * Set (true) by single-album responses when the album artist has a library
+   * page to open; absent otherwise, and from list and search rows.
+   */
+  artist_has_page?: boolean;
   is_compilation: boolean;
   release_year?: number;
   track_count: number;

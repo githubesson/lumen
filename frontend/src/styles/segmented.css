@@ -202,6 +202,11 @@
 .toolbar-group .track-selectbar-attached {
   display: contents;
 }
+/* Its actions are separate commands (Select all, Export files, clear), so
+   they keep the 8px a separator gives the controls outside selection mode. */
+.toolbar-group .track-selectbar-attached > :is(.btn, .iconbtn) + :is(.btn, .iconbtn) {
+  margin-left: 6px;
+}
 .toolbar-group .track-selectbar-status {
   flex: 0 0 auto;
   max-width: none;

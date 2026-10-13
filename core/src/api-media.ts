@@ -297,14 +297,33 @@ export interface ReplaySummary {
   headline_artist?: ReplayHeadlineArtist;
 }
 
+/** One of a top track's primary artists. */
+export interface ReplayTrackArtist {
+  id: string;
+  name: string;
+  /** Whether the artist has a library page (see `ReplayArtist.has_page`). */
+  has_page: boolean;
+}
+
 export interface ReplayTrack extends TrackListItem {
   plays: number;
+  /**
+   * The artists that `artist` names, in its order, with their ids: a name
+   * can hold the ", " that joins them. Unset from servers before it was added.
+   */
+  primary_artists?: ReplayTrackArtist[];
 }
 
 export interface ReplayArtist {
   id: string;
   name: string;
   plays: number;
+  /**
+   * Whether the artist has a library page to open. Plays count every track,
+   * but an artist known only from TIDAL plays has none. Unset from servers
+   * before it was added, which can't promise a page either.
+   */
+  has_page?: boolean;
 }
 
 export interface ReplayAlbum {
