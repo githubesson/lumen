@@ -71,10 +71,9 @@ import {
   downloadStore,
   useDownloadedPlaylistTracks,
 } from "../../../lib/downloads";
-import {
-  useIsOffline,
-  useTrackUnavailableOffline,
-} from "../../../lib/offline-mode";
+import { formatDurationMs } from "../../../lib/format";
+import { useIsOffline } from "../../../lib/offline-mode";
+import { useTrackRowPresentation } from "../../../lib/use-track-row-presentation";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
 
 const TRACK_ART_SIZE = 40;
@@ -772,8 +771,16 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
   onRemove: (position: number) => void;
 }) {
   const canReorder = canEdit && !!drag;
-  const unavailable = useTrackUnavailableOffline(track.id);
-  const handlePress = useCallback(() => onPress(track), [onPress, track]);
+  // Reordering rows go without the track menu (see the end).
+  const presentation = useTrackRowPresentation(track, { menu: !canReorder });
+  const { removed } = presentation;
+  // A removed track stays pressable, like ListRow's disabled rows, so the
+  // menu and the remove and drag buttons still work; the tap does nothing.
+  const handlePress = useCallback(() => {
+    if (removed) return;
+    void Haptics.selectionAsync();
+    onPress(track);
+  }, [onPress, removed, track]);
   const handleRemove = useCallback(
     () => onRemove(entry.position),
     [entry.position, onRemove],
@@ -783,20 +790,21 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
     <Pressable
       onPress={handlePress}
       accessibilityRole="button"
-      accessibilityLabel={
-        track.artist ? `${track.title} by ${track.artist}` : track.title
-      }
+      accessibilityLabel={presentation.accessibilityLabel}
+      accessibilityHint={presentation.accessibilityHint}
+      accessibilityState={removed ? { disabled: true } : undefined}
       style={({ pressed }) => [
         styles.row,
         {
           height: theme.row.height,
           paddingLeft: theme.space.lg,
-          paddingRight: theme.space.sm,
+          // The edit buttons bring their own padding.
+          paddingRight: canEdit ? theme.space.sm : theme.space.lg,
           gap: theme.space.md,
           backgroundColor:
             pressed || isActive ? theme.color.bgElev1 : "transparent",
         },
-        unavailable ? { opacity: 0.4 } : null,
+        presentation.dimmed ? { opacity: 0.4 } : null,
       ]}
     >
       <CoverArt
@@ -814,14 +822,14 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
             color: theme.color.fg,
           }}
         >
-          {track.title}
+          {presentation.title}
         </Text>
-        {track.artist ? (
+        {presentation.subtitle ? (
           <Text
             numberOfLines={1}
             style={{ fontSize: 13, color: theme.color.fgMuted }}
           >
-            {track.artist}
+            {presentation.subtitle}
           </Text>
         ) : null}
       </View>
@@ -833,7 +841,7 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
             hitSlop={8}
             style={{ padding: 8, opacity: canRemove ? 1 : 0.4 }}
             accessibilityRole="button"
-            accessibilityLabel={`Remove ${track.title}`}
+            accessibilityLabel={`Remove ${presentation.title}`}
             accessibilityState={{ disabled: !canRemove }}
           >
             <SymbolView
@@ -848,7 +856,7 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
               hitSlop={8}
               style={{ padding: 8 }}
               accessibilityRole="button"
-              accessibilityLabel={`Drag to reorder ${track.title}`}
+              accessibilityLabel={`Drag to reorder ${presentation.title}`}
             >
               <SymbolView
                 name="line.3.horizontal"
@@ -858,7 +866,11 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
             </Pressable>
           ) : null}
         </>
-      ) : null}
+      ) : (
+        <Text style={{ fontSize: 13, color: theme.color.fgMuted }}>
+          {formatDurationMs(track.duration_ms)}
+        </Text>
+      )}
     </Pressable>
   );
 

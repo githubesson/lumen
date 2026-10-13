@@ -15,7 +15,7 @@ function PopularTrackRowImpl({
 }) {
   return (
     <TrackActionsContextMenu track={track}>
-      <RankedTrackRow rank={rank} track={track} onPress={onPress} />
+      <RankedTrackRow rank={rank} track={track} onPress={onPress} menu />
     </TrackActionsContextMenu>
   );
 }
