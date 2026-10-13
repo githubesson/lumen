@@ -80,7 +80,7 @@ func (h *Tracks) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	roots := h.Ingest.AllRoots(r.Context())
-	if !pathWithinAnyRoot(roots, t.FilePath) {
+	if !pathsafe.WithinAnyRoot(roots, t.FilePath) {
 		// The file_path in the DB sits outside every configured music root.
 		// Almost always a stale path: the track was ingested under an old
 		// MUSIC_PATH (or a now-removed root) that no longer matches.
@@ -451,13 +451,6 @@ func refusalText(lead, reason string) string {
 		return lead + ": " + reason
 	}
 	return lead + "."
-}
-
-// pathWithinAnyRoot returns true when p lives inside any of the configured
-// roots. Prevents a stale DB row with a path outside every root from being
-// served.
-func pathWithinAnyRoot(roots []string, p string) bool {
-	return pathsafe.WithinAnyRoot(roots, p)
 }
 
 func audioContentType(format, path string) string {

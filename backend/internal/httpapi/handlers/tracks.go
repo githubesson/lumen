@@ -118,7 +118,7 @@ func makeTrackListItemResp(it library.TrackListItem, favorited, canonical bool) 
 	source := sourceOrLocal(it.Source)
 	id := it.ID.String()
 	if canonical {
-		id = canonicalTrackRef(source, it.ID, it.ExternalID)
+		id = trackref.Canonical(source, it.ID, it.ExternalID)
 	}
 	r := trackListItemResp{
 		ID:         id,
@@ -357,7 +357,7 @@ func makeTrackDetailResp(t *library.TrackDetail, isFav bool) trackDetailResp {
 	id := t.ID.String()
 	sourceID := t.ExternalID
 	if source != trackref.SourceLocal {
-		id = canonicalTrackRef(source, t.ID, t.ExternalID)
+		id = trackref.Canonical(source, t.ID, t.ExternalID)
 	} else {
 		sourceID = t.ID.String()
 	}
@@ -550,12 +550,12 @@ func (h *Tracks) AdminDelete(w http.ResponseWriter, r *http.Request) {
 	usersDir := filepath.Join(h.Ingest.MusicRoot, ".users")
 	removed := 0
 	for _, p := range paths {
-		if !pathWithinAnyRoot(roots, p) {
+		if !pathsafe.WithinAnyRoot(roots, p) {
 			h.log().Warn("admin delete: track file is outside every configured music root; left in place",
 				"path", p, "track", id, "user", u.ID)
 			continue
 		}
-		if pathWithin(usersDir, p) {
+		if inUsersDir, _ := pathsafe.WithinRoot(usersDir, p); inUsersDir {
 			// A global row adopted from a personal upload can still point at a
 			// file under .users/. That tree is excluded from the watcher and
 			// rescan, so leaving the file is harmless — and removing it would
@@ -679,12 +679,4 @@ func (h *Tracks) runLastFM(call func(context.Context) error) {
 		return
 	}
 	safego.Go("lastfm submission", run)
-}
-
-// pathWithin reports whether p lies inside dir (or equals it). Used to keep
-// file removals scoped — e.g. so admin track deletion never unlinks anything
-// under MUSIC_ROOT/.users/.
-func pathWithin(dir, p string) bool {
-	ok, err := pathsafe.WithinRoot(dir, p)
-	return err == nil && ok
 }

@@ -160,10 +160,6 @@ func resolveTrackRef(ctx context.Context, lib *library.Store, tidalClient *tidal
 	}
 }
 
-func canonicalTrackRef(source string, localID uuid.UUID, externalID string) string {
-	return trackref.Canonical(source, localID, externalID)
-}
-
 func sourceOrLocal(source string) string {
 	if source == "" {
 		return trackref.SourceLocal

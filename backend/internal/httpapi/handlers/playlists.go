@@ -386,7 +386,7 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 		}
 		ti := trackItem{
 			Position:      t.Position,
-			TrackID:       canonicalTrackRef(source, t.TrackID, t.ExternalID),
+			TrackID:       trackref.Canonical(source, t.TrackID, t.ExternalID),
 			DBTrackID:     t.TrackID.String(),
 			Source:        source,
 			SourceID:      sourceID,

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
@@ -25,6 +24,7 @@ import (
 	"github.com/githubesson/lumen/internal/auth"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/preview"
 	"github.com/githubesson/lumen/internal/safego"
 	"github.com/githubesson/lumen/internal/storage"
@@ -285,7 +285,7 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 	case h.Preview == nil:
 		slog.Warn("preview prewarm skipped: builder not configured",
 			"track_id", id.String())
-	case !isTIDALTrack(t) && !pathWithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath):
+	case !isTIDALTrack(t) && !pathsafe.WithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath):
 		slog.Warn("preview prewarm skipped: file outside configured roots",
 			"track_id", id.String(), "file_path", t.FilePath)
 	default:
@@ -328,16 +328,6 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 // by the time ffmpeg finishes, so binding to r.Context() would kill the
 // build as soon as we respond.
 func (h *Share) prewarmPreview(t *library.TrackDetail, in preview.Input) {
-	// Panics in a fire-and-forget goroutine would silently die without
-	// Chi's Recoverer (it only wraps request handlers). Catch any panic
-	// here so the next share attempt doesn't hit a dead builder.
-	defer func() {
-		if p := recover(); p != nil {
-			slog.Error("preview prewarm panicked",
-				"track_id", in.TrackID, "panic", fmt.Sprint(p))
-		}
-	}()
-
 	// A 120-second story render can take several times longer than the original
 	// 30-second job. TIDAL tracks also download the full file before ffmpeg can
 	// slice it.
@@ -657,7 +647,7 @@ func (h *Share) loadPublicTrack(w http.ResponseWriter, r *http.Request, id uuid.
 		http.Error(w, "not found", http.StatusNotFound)
 		return nil, false
 	}
-	if !isTIDALTrack(t) && !pathWithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath) {
+	if !isTIDALTrack(t) && !pathsafe.WithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath) {
 		slog.Warn(logLabel+": file path outside configured roots",
 			"track_id", id.String(), "file_path", t.FilePath)
 		http.Error(w, "forbidden", http.StatusForbidden)

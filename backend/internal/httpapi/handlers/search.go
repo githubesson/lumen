@@ -280,12 +280,3 @@ func parseSources(raw string) []string {
 	}
 	return out
 }
-
-func hasSource(sources []string, source string) bool {
-	for _, s := range sources {
-		if s == source {
-			return true
-		}
-	}
-	return false
-}

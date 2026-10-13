@@ -384,7 +384,7 @@ func (h *Tracks) servePublicStorageObject(w http.ResponseWriter, r *http.Request
 	remaining := max(exp-time.Now().Unix(), 60)
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Cache-Control", "public, max-age="+strconv.FormatInt(remaining, 10)+", immutable")
-	http.ServeContent(w, r, filepath.Base(key), zeroTime(), body)
+	http.ServeContent(w, r, filepath.Base(key), time.Time{}, body)
 }
 
 func (h *Tracks) serveStorageObject(w http.ResponseWriter, r *http.Request, key string, maxSize int) {
@@ -410,7 +410,7 @@ func (h *Tracks) serveStorageObject(w http.ResponseWriter, r *http.Request, key 
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	// No modtime from the Storage interface; use zero (disables 304 handling).
-	http.ServeContent(w, r, filepath.Base(key), zeroTime(), body)
+	http.ServeContent(w, r, filepath.Base(key), time.Time{}, body)
 }
 
 func remoteCoverURLForSize(cover library.RemoteCover, maxSize int) string {
@@ -635,7 +635,7 @@ func (h *Tracks) serveResizedImage(
 		defer cached.Close()
 		w.Header().Set("Content-Type", thumbType)
 		w.Header().Set("Cache-Control", "private, max-age=86400")
-		http.ServeContent(w, r, path.Base(thumbKey), zeroTime(), cached)
+		http.ServeContent(w, r, path.Base(thumbKey), time.Time{}, cached)
 		return true
 	}
 	// Most stored covers already fit the requested size. Read their header
@@ -678,13 +678,13 @@ func (h *Tracks) serveResizedImage(
 	); err != nil {
 		w.Header().Set("Content-Type", outType)
 		w.Header().Set("Cache-Control", "private, max-age=86400")
-		http.ServeContent(w, r, path.Base(thumbKey), zeroTime(), bytes.NewReader(buf.Bytes()))
+		http.ServeContent(w, r, path.Base(thumbKey), time.Time{}, bytes.NewReader(buf.Bytes()))
 		return true
 	}
 
 	w.Header().Set("Content-Type", outType)
 	w.Header().Set("Cache-Control", "private, max-age=86400")
-	http.ServeContent(w, r, path.Base(thumbKey), zeroTime(), bytes.NewReader(buf.Bytes()))
+	http.ServeContent(w, r, path.Base(thumbKey), time.Time{}, bytes.NewReader(buf.Bytes()))
 	return true
 }
 
