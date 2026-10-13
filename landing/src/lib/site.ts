@@ -8,6 +8,6 @@ export const NGINX_EXAMPLE_URL = `${REPO_URL}/blob/main/docs/nginx.conf.example`
 
 export const INSTALL_STEPS = [
   { cmd: `git clone ${REPO_URL}.git && cd lumen`, note: null },
-  { cmd: "cp .env.example .env", note: "then set POSTGRES_PASSWORD and COVER_SIGN_KEY" },
+  { cmd: "cp .env.example .env", note: "then set POSTGRES_PASSWORD, COVER_SIGN_KEY and PUBLIC_HOSTS" },
   { cmd: "docker compose up -d --build", note: null },
 ] as const;
