@@ -38,6 +38,22 @@ test("home, customizing", async ({ page }, testInfo) => {
   await checkUI(page, testInfo);
 });
 
+test("home, panels in roomier slots", async ({ page }, testInfo) => {
+  // Jump back in swapped into On repeat's tall slot, where the album's
+  // tracks fill the room under its cover; On repeat takes the wide one.
+  await go(page, "/?customize");
+  await ready(page, page.locator('[data-panel="artists"] .board-artist'));
+  await press(page, "button", "Move Jump back in");
+  await press(page, "button", "Swap here with On repeat");
+  await press(page, "button", "Done");
+  await ready(page, page.locator('[data-panel="repeat"][data-slot="resume"] .board-row'));
+  // Phones stack the board, so every panel is as tall as it needs.
+  if ((page.viewportSize()?.width ?? 0) > 760) {
+    await ready(page, page.locator('[data-panel="resume"] .board-row:not(.board-placeholder)'));
+  }
+  await checkUI(page, testInfo);
+});
+
 test("library tracks", async ({ page }, testInfo) => {
   await ready(page, rows(page));
   await checkUI(page, testInfo);

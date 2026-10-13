@@ -6,6 +6,7 @@ import Home from "../src/pages/Home";
 import { ThemeProvider } from "../src/context/Theme";
 import { clearResourceCache, readCache } from "../src/lib/resourceCache";
 import { replayQueries } from "@music-library/core/replay/replay";
+import { stubBoardLayout } from "./board-fill-layout";
 
 const mock = vi.hoisted(() => ({
   recent: vi.fn(), tracks: vi.fn(), replay: vi.fn(), getAlbum: vi.fn(),
@@ -411,4 +412,26 @@ it("offers a way back when every panel is hidden", async () => {
   expect(screen.getByText("Every panel on Home is hidden.")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Customize Home" }));
   expect(screen.getByRole("region", { name: "Customize Home" })).toBeTruthy();
+});
+
+it("fills a roomier slot with more recently played, asking for more to do it", async () => {
+  const played = Array.from({ length: 60 }, (_, i) => track(`r${i}`, "Halden Marsh"));
+  mock.recent.mockImplementation((limit: number) => Promise.resolve(played.slice(0, limit)));
+  // Room for 23 rows: more than the usual 20 recently played.
+  const restore = stubBoardLayout({ recent: 23 * 52 });
+  try {
+    await renderHome();
+    await act(async () => {});
+    expect(mock.recent.mock.calls.map(([limit]) => limit)).toEqual([20, 40]);
+    expect(within(panel("recent")!).getAllByRole("listitem")).toHaveLength(23);
+  } finally {
+    restore();
+  }
+});
+
+it("shows the usual rows without room to spare", async () => {
+  mock.recent.mockResolvedValue(Array.from({ length: 20 }, (_, i) => track(`r${i}`, "Halden Marsh")));
+  await renderHome();
+  expect(within(panel("recent")!).getAllByRole("listitem")).toHaveLength(5);
+  expect(mock.recent.mock.calls.map(([limit]) => limit)).toEqual([20]);
 });

@@ -1,9 +1,10 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import type { Album } from "../src/api";
 import Home from "../src/pages/Home";
 import { clearResourceCache } from "../src/lib/resourceCache";
+import { stubBoardLayout } from "./board-fill-layout";
 
 const mock = vi.hoisted(() => ({
   recent: vi.fn(), tracks: vi.fn(), getAlbum: vi.fn(), replay: vi.fn(), albumTracks: vi.fn(), play: vi.fn(),
@@ -88,4 +89,54 @@ it("plays the album from its first playable track when the listing lacks the her
   await act(async () => {});
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Play" })); });
   expect(mock.play).toHaveBeenCalledWith(second, [second]);
+});
+
+const albumTrack = (n: number) => ({
+  id: `t${n}`, title: `Song ${n}`, artist: "Halden Marsh", track_no: n, duration_ms: 60_000, source: "local",
+});
+const resume = () => document.querySelector<HTMLElement>('[data-panel="resume"]')!;
+
+it("lists the album's tracks under the hero when its slot has room, from the one you were on", async () => {
+  mock.recent.mockResolvedValue([{ ...albumTrack(3), album_title: "Library LP", album_id: "a1" }]);
+  const tracks = [1, 2, 3, 4, 5].map(albumTrack);
+  mock.albumTracks.mockResolvedValue(tracks);
+  // Two rows, under the list's 12px margin.
+  const restore = stubBoardLayout({ resume: 12 + 2 * 52 });
+  try {
+    render(<MemoryRouter><Home /></MemoryRouter>);
+    await act(async () => {});
+    await act(async () => {});
+    const rows = within(resume()).getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "3Play Song 3Halden Marsh1:00",
+      "4Play Song 4Halden Marsh1:00",
+    ]);
+    expect(rows[0].getAttribute("aria-current")).toBe("true");
+    fireEvent.click(within(rows[1]).getByRole("button", { name: "Play Song 4" }));
+    expect(mock.play).toHaveBeenCalledWith(tracks[3], tracks);
+  } finally {
+    restore();
+  }
+});
+
+it("ends the list at the album's last track", async () => {
+  mock.recent.mockResolvedValue([{ ...albumTrack(5), album_title: "Library LP", album_id: "a1" }]);
+  mock.albumTracks.mockResolvedValue([1, 2, 3, 4, 5].map(albumTrack));
+  const restore = stubBoardLayout({ resume: 12 + 3 * 52 });
+  try {
+    render(<MemoryRouter><Home /></MemoryRouter>);
+    await act(async () => {});
+    await act(async () => {});
+    expect(within(resume()).getAllByRole("listitem").map((row) => row.textContent?.slice(0, 1))).toEqual(["3", "4", "5"]);
+  } finally {
+    restore();
+  }
+});
+
+it("doesn't load the album's tracks without room for them", async () => {
+  mock.recent.mockResolvedValue([{ ...albumTrack(3), album_title: "Library LP", album_id: "a1" }]);
+  render(<MemoryRouter><Home /></MemoryRouter>);
+  await act(async () => {});
+  expect(within(resume()).queryAllByRole("listitem")).toEqual([]);
+  expect(mock.albumTracks).not.toHaveBeenCalled();
 });
