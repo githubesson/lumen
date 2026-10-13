@@ -561,41 +561,62 @@ export function search(q: string, type: string): SearchResponse {
   return { albums: albumHits, artists: artistHits, tracks: trackHits, sources: ["local", "tidal"], next_offsets: {} };
 }
 
-export function replay(bucket: ReplayBucket = "day"): ReplayData {
-  const top = ["t-al-postcard-3", "t-al-small-hours-3", "t-al-weather-1", "t-al-signal-2", "t-al-lanterns-1", "t-al-nordlys-2", "t-al-weather-4", "t-al-postcard-1"];
-  const days = bucket === "day" ? 30 : 12;
-  const now = new Date();
-  const activity = Array.from({ length: days }, (_, i) => {
-    const start = bucket === "day"
-      ? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (days - 1 - i)))
-      : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (days - 1 - i), 1));
-    return { bucket_start: start.toISOString(), plays: [4, 9, 0, 13, 7, 21, 16, 5, 11, 2, 18, 8][i % 12] };
-  });
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Plays per day: a three-week rhythm with a quiet day most weeks.
+const dailyRhythm = [4, 9, 0, 13, 7, 21, 16, 5, 11, 2, 18, 8, 0, 6, 12, 3, 15, 9, 0, 14, 10];
+
+/**
+ * The Replay answer for a window, like the server's: plays per bucket for
+ * the days with plays from `from` (or 420 days back, for all time) to `to`
+ * or now, and every count scaled to the window's plays.
+ */
+export function replay(bucket: ReplayBucket = "day", from?: string | null, to?: string | null): ReplayData {
+  // More than the eight the panel lists, so "Show all" has more to show.
+  const top = ["t-al-postcard-3", "t-al-small-hours-3", "t-al-weather-1", "t-al-signal-2", "t-al-lanterns-1", "t-al-nordlys-2", "t-al-weather-4", "t-al-postcard-1", "t-al-signal-4", "t-al-small-hours-1", "t-al-lanterns-3", "t-al-nordlys-4"];
+  const now = Date.now();
+  const first = Math.floor((from ? Date.parse(from) : now - 420 * DAY_MS) / DAY_MS) * DAY_MS;
+  const end = Math.min(to ? Date.parse(to) : now, now);
+  const activity: ReplayData["activity"] = [];
+  for (let day = first; day < end; day += DAY_MS) {
+    const plays = dailyRhythm[Math.round(day / DAY_MS) % dailyRhythm.length];
+    if (plays === 0) continue;
+    const date = new Date(day);
+    const start = bucket === "day" ? day : Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+    const iso = new Date(start).toISOString();
+    const last = activity[activity.length - 1];
+    if (last?.bucket_start === iso) last.plays += plays;
+    else activity.push({ bucket_start: iso, plays });
+  }
+  const total = activity.reduce((sum, b) => sum + b.plays, 0);
+  const share = (weights: number[]) => weights.map((w) => Math.max(1, Math.round(total * w)));
+  const trackPlays = share([0.06, 0.052, 0.045, 0.04, 0.034, 0.03, 0.026, 0.022, 0.019, 0.017, 0.015, 0.013]);
+  const artistPlays = share([0.23, 0.21, 0.18, 0.15, 0.13]);
+  const albumPlays = share([0.22, 0.19, 0.16, 0.13, 0.1]);
+  const genrePlays = share([0.23, 0.21, 0.18, 0.15, 0.13, 0.09]);
   return {
     summary: {
-      total_plays: 412,
-      total_ms: 412 * 262_000,
+      total_plays: total,
+      total_ms: total * 262_000,
       unique_tracks: 27,
       unique_artists: 6,
-      headline_artist: { id: "ar-velvet", name: "The Velvet Meridian", plays: 96 },
+      headline_artist: { id: "ar-velvet", name: "The Velvet Meridian", plays: artistPlays[0] },
     },
-    top_tracks: top.map((id, i) => ({ ...listItem(byId(id)), plays: 41 - i * 4 })),
-    top_artists: [
-      { id: "ar-velvet", name: "The Velvet Meridian", plays: 96 },
-      { id: "ar-okoro", name: "Hana Okoro", plays: 88 },
-      { id: "ar-halden", name: "Halden Marsh", plays: 74 },
-      { id: "ar-lucien", name: "Saint Lucien & The Harbour Lights", plays: 61 },
-      { id: "ar-kestrel", name: "Kestrel Bay", plays: 55 },
-    ],
-    top_albums: albums.slice(0, 5).map((a, i) => ({ id: a.id, title: a.title, artist: a.artist_name, source: "local", plays: 90 - i * 12 })),
-    top_genres: [
-      { genre: "Dream Pop", plays: 96 },
-      { genre: "Neo-Soul", plays: 88 },
-      { genre: "Indie Folk", plays: 74 },
-      { genre: "Chamber Pop", plays: 61 },
-      { genre: "Electronic", plays: 55 },
-      { genre: "Jazz", plays: 38 },
-    ],
+    top_tracks: total > 0 ? top.map((id, i) => ({ ...listItem(byId(id)), plays: trackPlays[i] })) : [],
+    top_artists: total > 0
+      ? [
+          { id: "ar-velvet", name: "The Velvet Meridian" },
+          { id: "ar-okoro", name: "Hana Okoro" },
+          { id: "ar-halden", name: "Halden Marsh" },
+          { id: "ar-lucien", name: "Saint Lucien & The Harbour Lights" },
+          { id: "ar-kestrel", name: "Kestrel Bay" },
+        ].map((a, i) => ({ ...a, plays: artistPlays[i] }))
+      : [],
+    top_albums: total > 0
+      ? albums.slice(0, 5).map((a, i) => ({ id: a.id, title: a.title, artist: a.artist_name, source: "local", plays: albumPlays[i] }))
+      : [],
+    top_genres: total > 0
+      ? ["Dream Pop", "Neo-Soul", "Indie Folk", "Chamber Pop", "Electronic", "Jazz"].map((genre, i) => ({ genre, plays: genrePlays[i] }))
+      : [],
     activity,
     bucket,
     available_years: [2025, 2026],

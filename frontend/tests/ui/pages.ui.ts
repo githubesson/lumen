@@ -85,7 +85,26 @@ test("recent", async ({ page }, testInfo) => {
 
 test("replay", async ({ page }, testInfo) => {
   await go(page, "/replay");
-  await ready(page, page.getByText("Top genres", { exact: true }));
+  await ready(page, page.getByText("Also on repeat", { exact: true }));
+  await checkUI(page, testInfo);
+});
+
+// "Show all" brings back the full table of top tracks across the panel.
+test("replay all top tracks", async ({ page }, testInfo) => {
+  await go(page, "/replay");
+  await ready(page, page.getByText("Also on repeat", { exact: true }));
+  await press(page, "button", /^Show all \d+$/);
+  await ready(page, page.getByRole("button", { name: "Show fewer" }));
+  await ready(page, rows(page));
+  await checkUI(page, testInfo);
+});
+
+// A month: one bar and one strip cell per day, rather than months and a bar.
+test("replay this month", async ({ page }, testInfo) => {
+  await go(page, "/replay");
+  await ready(page, page.getByText("Also on repeat", { exact: true }));
+  await press(page, "tab", "This month");
+  await ready(page, page.getByText("Every day", { exact: true }));
   await checkUI(page, testInfo);
 });
 
