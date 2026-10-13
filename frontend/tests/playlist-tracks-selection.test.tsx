@@ -80,14 +80,11 @@ it("lets the click that closes a menu only close it", () => {
   expect(screen.getByText("1 selected")).toBeTruthy();
 });
 
-it("plays a row on Enter only when the row itself has focus, not a button inside it", () => {
+it("leaves Enter on a row's buttons to the buttons", () => {
   const onPlay = vi.fn();
   renderPanel(onPlay);
   const remove = within(row("b")).getByRole("button", { name: "Remove from playlist" });
   // Not prevented, so the button still does its own thing.
   expect(fireEvent.keyDown(remove, { key: "Enter" })).toBe(true);
   expect(onPlay).not.toHaveBeenCalled();
-
-  fireEvent.keyDown(row("b"), { key: "Enter" });
-  expect(onPlay).toHaveBeenCalledWith(entries[1]);
 });

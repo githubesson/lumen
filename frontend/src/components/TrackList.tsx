@@ -365,12 +365,6 @@ export const TrackRow = memo(function TrackRow({
       onDoubleClick={() => {
         if (!selectionMode) onPlay(track);
       }}
-      onKeyDown={(e) => {
-        if (e.target === e.currentTarget && e.key === "Enter" && !selectionMode) {
-          e.preventDefault();
-          onPlay(track);
-        }
-      }}
       onContextMenu={(e) => onContextMenu(track, e)}
     >
       <TrackSelectCell
