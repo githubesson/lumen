@@ -81,8 +81,6 @@ type Store struct{ db *pgxpool.Pool }
 
 func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
 
-func (s *Store) DB() *pgxpool.Pool { return s.db }
-
 func (s *Store) Create(ctx context.Context, ownerID uuid.UUID, name, description string, visibility Visibility) (*Playlist, error) {
 	if visibility == "" {
 		visibility = VisibilityPrivate
@@ -259,27 +257,6 @@ const (
 	maxPlaylistRows      = 10000
 )
 
-// Tracks returns all tracks in a playlist in order.
-func (s *Store) Tracks(ctx context.Context, id uuid.UUID) ([]TrackEntry, error) {
-	rows, err := s.db.Query(ctx, `
-		SELECT position, track_id, added_by, added_at FROM playlist_tracks
-		WHERE playlist_id = $1 ORDER BY position ASC
-		LIMIT $2`, id, maxPlaylistTrackRows)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []TrackEntry
-	for rows.Next() {
-		var te TrackEntry
-		if err := rows.Scan(&te.Position, &te.TrackID, &te.AddedBy, &te.AddedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, te)
-	}
-	return out, rows.Err()
-}
-
 // TrackDetail is a playlist entry joined with track + artist + album data so
 // the UI can render a full row in one query.
 type TrackDetail struct {
@@ -319,7 +296,7 @@ type queryer interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// TracksWithQueue reads a playlist's tracks (as TracksDetailed) and its TIDAL
+// TracksWithQueue reads a playlist's tracks (as tracksDetailed) and its TIDAL
 // queue from one snapshot. Read separately, a row added, restored or adopted
 // between the reads could be paired with a count that doesn't account for it,
 // such as a TIDAL row with nothing queued, and a client would stop polling
@@ -360,13 +337,9 @@ func tidalQueue(ctx context.Context, db queryer, playlistID uuid.UUID) (TIDALQue
 	return q, err
 }
 
-// TracksDetailed returns all tracks in a playlist visible to viewerID (global
+// tracksDetailed returns all tracks in a playlist visible to viewerID (global
 // tracks + viewer's own personal tracks). Other users' personal tracks are
 // silently omitted.
-func (s *Store) TracksDetailed(ctx context.Context, id, viewerID uuid.UUID) ([]TrackDetail, error) {
-	return tracksDetailed(ctx, s.db, id, viewerID)
-}
-
 func tracksDetailed(ctx context.Context, db queryer, id, viewerID uuid.UUID) ([]TrackDetail, error) {
 	rows, err := db.Query(ctx, `
 		SELECT
@@ -756,21 +729,6 @@ func (s *Store) ListCollaborators(ctx context.Context, playlistID uuid.UUID) ([]
 	return scanCollaborators(rows)
 }
 
-// PendingInvites lists invites awaiting accept/decline for a given user.
-func (s *Store) PendingInvites(ctx context.Context, userID uuid.UUID) ([]Collaborator, error) {
-	rows, err := s.db.Query(ctx, `
-		SELECT pc.playlist_id, pc.user_id, u.username, pc.role, pc.status, pc.invited_at, pc.accepted_at
-		FROM playlist_collaborators pc
-		JOIN users u ON u.id = pc.user_id
-		JOIN playlists p ON p.id = pc.playlist_id
-		WHERE pc.user_id = $1 AND pc.status = 'pending' AND p.visibility = 'collaborative'
-		ORDER BY pc.invited_at DESC`, userID)
-	if err != nil {
-		return nil, err
-	}
-	return scanCollaborators(rows)
-}
-
 type PendingInvite struct {
 	PlaylistID   uuid.UUID
 	PlaylistName string
@@ -886,16 +844,9 @@ func (s *Store) SuggestedHeir(ctx context.Context, playlistID uuid.UUID) (uuid.U
 	return uid, true, nil
 }
 
-// TransferOwnership sets a new owner. If the new owner is currently a
-// collaborator, their collaborator row is removed.
-func (s *Store) TransferOwnership(ctx context.Context, playlistID, newOwner uuid.UUID) error {
-	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
-		return TransferOwnershipTx(ctx, tx, playlistID, newOwner)
-	})
-}
-
-// TransferOwnershipTx is TransferOwnership inside the caller's transaction,
-// for when the handover is one step of something larger (deleting a user).
+// TransferOwnershipTx sets a new owner inside the caller's transaction, for
+// when the handover is one step of something larger (deleting a user). If the
+// new owner is currently a collaborator, their collaborator row is removed.
 func TransferOwnershipTx(ctx context.Context, tx pgx.Tx, playlistID, newOwner uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `UPDATE playlists SET owner_id = $2, updated_at = NOW() WHERE id = $1`, playlistID, newOwner); err != nil {
 		return err

@@ -167,7 +167,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	var coverPath string
 	var coverErr error
 	if md.Album != "" {
-		saved, cerr := s.saveCover(ctx, md, path)
+		saved, cerr := s.saveCover(ctx, md)
 		if cerr != nil {
 			coverErr = cerr
 			s.log().Warn("cover save failed", "path", path, "err", cerr)
@@ -518,17 +518,16 @@ func sameCleanPath(a, b string) bool {
 }
 
 // saveCover writes embedded cover art to the storage backend under
-// covers/<sha>.<ext>. Returns a storage key suitable for streaming back.
-func (s *Service) saveCover(ctx context.Context, md *Metadata, sourcePath string) (string, error) {
+// covers/<sha>.jpg. Returns a storage key suitable for streaming back.
+func (s *Service) saveCover(ctx context.Context, md *Metadata) (string, error) {
 	if md.Picture == nil || len(md.Picture.Data) == 0 {
 		return "", nil
 	}
-	_ = sourcePath
 	return s.StoreCoverImage(ctx, md.Picture.Data, md.Picture.MIMEType)
 }
 
 // StoreCoverImage normalizes raw image bytes (decode → resize → re-encode as
-// JPEG) and writes them to the storage backend under covers/<sha>.<ext>,
+// JPEG) and writes them to the storage backend under covers/<sha>.jpg,
 // returning the storage key. Bytes that don't decode as an image are rejected:
 // storing them verbatim let a personal upload park an arbitrarily large blob
 // in covers/ that the upload quota never counts. Exported so HTTP handlers can
@@ -538,17 +537,17 @@ func (s *Service) StoreCoverImage(ctx context.Context, data []byte, _ string) (s
 	if len(data) == 0 {
 		return "", nil
 	}
-	coverBytes, coverType, err := normalizeCoverBytes(ctx, data)
+	coverBytes, err := normalizeCoverBytes(ctx, data)
 	if err != nil {
 		return "", fmt.Errorf("cover image: %w", err)
 	}
 	// Key by SHA of the cover bytes so identical art across an album is shared.
-	key := "covers/" + coverKey(coverBytes) + mimeExt(coverType)
+	key := "covers/" + coverKey(coverBytes) + ".jpg"
 	// Always rewrite, even when the key exists: the write refreshes the
 	// object's mtime, which is what keeps SweepOrphanCovers from deleting a
 	// cover an in-flight ingest is about to reference.
 	s.coverMu.RLock()
-	_, err = s.Storage.Put(ctx, key, byteReader(coverBytes), int64(len(coverBytes)), coverType)
+	_, err = s.Storage.Put(ctx, key, byteReader(coverBytes), int64(len(coverBytes)), "image/jpeg")
 	s.coverMu.RUnlock()
 	if err != nil {
 		return "", err
@@ -656,17 +655,19 @@ func (s *Service) SweepOrphanCovers(ctx context.Context, grace time.Duration) (i
 	return removed, err
 }
 
-func normalizeCoverBytes(ctx context.Context, data []byte) ([]byte, string, error) {
+// normalizeCoverBytes re-encodes a cover as a JPEG scaled to fit
+// maxStoredCoverDimension.
+func normalizeCoverBytes(ctx context.Context, data []byte) ([]byte, error) {
 	dst, err := scaleCover(ctx, data)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: storedCoverJPEGQuality}); err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return buf.Bytes(), "image/jpeg", nil
+	return buf.Bytes(), nil
 }
 
 // scaleCover decodes a cover and scales it to fit maxStoredCoverDimension,
@@ -699,18 +700,6 @@ func coverDimensions(width int, height int, maxSize int) (int, int, bool) {
 		return maxSize, max(1, int(float64(height)*float64(maxSize)/float64(width))), true
 	}
 	return max(1, int(float64(width)*float64(maxSize)/float64(height))), maxSize, true
-}
-
-func mimeExt(m string) string {
-	switch strings.ToLower(m) {
-	case "image/jpeg", "image/jpg":
-		return ".jpg"
-	case "image/png":
-		return ".png"
-	case "image/webp":
-		return ".webp"
-	}
-	return ".bin"
 }
 
 func (s *Service) recordErr(ctx context.Context, path string, err error) {

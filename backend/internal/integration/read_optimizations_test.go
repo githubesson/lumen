@@ -190,11 +190,13 @@ func TestReadOptimizations(t *testing.T) {
 			t.Fatal(err)
 		}
 		counter.queries.Store(0)
-		rows, err := pl.TracksDetailed(ctx, p.ID, viewer)
+		rows, _, err := pl.TracksWithQueue(ctx, p.ID, viewer)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if counter.queries.Load() != 1 || len(rows) != 4 {
+		// BEGIN, the rows with their play counts, the TIDAL queue, COMMIT:
+		// nothing per row.
+		if counter.queries.Load() != 4 || len(rows) != 4 {
 			t.Fatalf("playlist rows=%d queries=%d", len(rows), counter.queries.Load())
 		}
 		for i, want := range []int{4, 0, 1, 4} {

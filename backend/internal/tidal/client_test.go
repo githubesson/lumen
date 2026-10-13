@@ -114,12 +114,12 @@ func TestHifiTrackManifestReturnsHLSURI(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{HifiAPIURL: srv.URL, Quality: "LOSSLESS"})
-	got, err := c.StreamURL(context.Background(), "123")
+	got, _, err := c.streamURL(context.Background(), "123")
 	if err != nil {
-		t.Fatalf("StreamURL returned error: %v", err)
+		t.Fatalf("streamURL returned error: %v", err)
 	}
 	if got != wantURL {
-		t.Fatalf("StreamURL = %q, want %q", got, wantURL)
+		t.Fatalf("streamURL = %q, want %q", got, wantURL)
 	}
 	if gotManifestType != "HLS" {
 		t.Fatalf("manifestType = %q, want HLS", gotManifestType)
@@ -149,9 +149,9 @@ func TestStreamURLCollapsesConcurrentCacheMisses(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			got, err := c.StreamURL(context.Background(), "123")
+			got, _, err := c.streamURL(context.Background(), "123")
 			if err == nil && got != "https://audio.tidal.com/test.m3u8" {
-				err = fmt.Errorf("StreamURL = %q", got)
+				err = fmt.Errorf("streamURL = %q", got)
 			}
 			errs <- err
 		}()
@@ -208,12 +208,12 @@ func TestHifiResolverExtractsStreamURL(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{HifiAPIURL: srv.URL, Quality: "LOSSLESS"})
-	got, err := c.StreamURL(context.Background(), "123")
+	got, _, err := c.streamURL(context.Background(), "123")
 	if err != nil {
-		t.Fatalf("StreamURL returned error: %v", err)
+		t.Fatalf("streamURL returned error: %v", err)
 	}
 	if got != wantURL {
-		t.Fatalf("StreamURL = %q, want %q", got, wantURL)
+		t.Fatalf("streamURL = %q, want %q", got, wantURL)
 	}
 	if gotQuality != "LOSSLESS" {
 		t.Fatalf("quality = %q, want LOSSLESS", gotQuality)

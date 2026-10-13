@@ -393,9 +393,3 @@ func buildArgs(inPath, outPath, coverPath string, meta Metadata, outFormat strin
 	args = append(args, "-f", outFormat, "file:"+outPath)
 	return args
 }
-
-// ExtFromFormat returns a file extension for the format hint.
-func ExtFromFormat(hint FormatHint) string {
-	ext, _ := outputFormat(hint)
-	return filepath.Ext(ext)
-}
