@@ -28,7 +28,9 @@ import {
   musicRootName,
   musicRootRemoval,
   rescanChangedLibrary,
+  rescanProgress,
   rootRemovalChangedLibrary,
+  watchRescan,
   type MusicRoot,
   type RescanStatus,
 } from "@music-library/core";
@@ -37,9 +39,6 @@ import { HeaderIconButton } from "../../../components/header-buttons";
 import { Card } from "../../../components/primitives";
 import { qk } from "../../../lib/query-keys";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
-
-const RESCAN_POLL_MS = 2000;
-const MAX_RESCAN_POLL_FAILURES = 5;
 
 const rescanStatusQuery = {
   queryKey: qk.adminRescanStatus,
@@ -50,37 +49,25 @@ const rescanStatusQuery = {
 let rescanWatch: Promise<void> | null = null;
 
 /**
- * Polls the rescan status through the query cache until the scan is idle, then
- * fires one library-wide refresh if the scan changed anything, so other
- * screens pull updated lists. It runs outside the screen so leaving Admin →
- * Library mid-scan still refreshes, and it starts from a known scan rather
- * than reacting to idle statuses, since every mount and focus fetch reports
- * idle and would otherwise invalidate the whole library cache. One watcher at
- * a time.
+ * Polls the rescan status through the query cache (which keeps the progress
+ * on screen live) until the scan is idle, then fires one library-wide refresh
+ * if the scan changed anything, so other screens pull updated lists. It runs
+ * outside the screen so leaving Admin → Library mid-scan still refreshes, and
+ * it starts from a known scan rather than reacting to idle statuses, since
+ * every mount and focus fetch reports idle and would otherwise invalidate the
+ * whole library cache. One watcher at a time.
  */
-function watchRescan(queryClient: QueryClient): void {
+function followRescan(queryClient: QueryClient): void {
   if (rescanWatch) return;
-  rescanWatch = (async () => {
-    let failures = 0;
-    for (;;) {
-      try {
-        const status = await queryClient.fetchQuery(rescanStatusQuery);
-        failures = 0;
-        if (!status.running) {
-          if (rescanChangedLibrary(status)) libraryChanged.emit();
-          return;
-        }
-      } catch {
-        // Give up on a status endpoint that keeps failing (signed out, lost
-        // admin, server gone) rather than poll it forever.
-        failures += 1;
-        if (failures >= MAX_RESCAN_POLL_FAILURES) return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, RESCAN_POLL_MS));
-    }
-  })().finally(() => {
-    rescanWatch = null;
-  });
+  rescanWatch = watchRescan({
+    fetchStatus: () => queryClient.fetchQuery(rescanStatusQuery),
+  })
+    .then((status) => {
+      if (status && rescanChangedLibrary(status)) libraryChanged.emit();
+    })
+    .finally(() => {
+      rescanWatch = null;
+    });
 }
 
 export default function AdminLibraryScreen() {
@@ -100,12 +87,12 @@ export default function AdminLibraryScreen() {
   // also what keeps the progress below live.
   const rescanRunning = rescanQuery.data?.running === true;
   useEffect(() => {
-    if (rescanRunning) watchRescan(queryClient);
+    if (rescanRunning) followRescan(queryClient);
   }, [queryClient, rescanRunning]);
 
   const startRescan = useMutation({
     mutationFn: () => api.startRescan(),
-    onSuccess: () => watchRescan(queryClient),
+    onSuccess: () => followRescan(queryClient),
     onError: (error) =>
       Alert.alert("Couldn't start rescan", errorMessage(error, "Please try again.")),
   });
@@ -265,7 +252,7 @@ function RescanHeader({
   pending: boolean;
   onStart: () => void;
 }) {
-  const running = !!status?.running;
+  const progress = rescanProgress(status);
   return (
     <Card
       style={{
@@ -280,7 +267,7 @@ function RescanHeader({
         >
           Rescan
         </Text>
-        {running ? (
+        {progress ? (
           <ActivityIndicator color={theme.color.fgMuted} />
         ) : (
           <Pressable
@@ -303,14 +290,12 @@ function RescanHeader({
           </Pressable>
         )}
       </View>
-      {status && running ? (
+      {progress ? (
         <Text
           selectable
           style={{ color: theme.color.fgMuted, fontSize: 12, fontVariant: ["tabular-nums"] }}
         >
-          {status.processed ?? 0}/{status.total ?? "?"} processed ·{" "}
-          {status.inserted ?? 0} inserted · {status.dedup ?? 0} deduped ·{" "}
-          {status.errored ?? 0} errors
+          {progress.detail}
         </Text>
       ) : (
         <Text style={{ color: theme.color.fgMuted, fontSize: 12 }}>
