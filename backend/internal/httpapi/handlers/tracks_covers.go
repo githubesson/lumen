@@ -360,9 +360,8 @@ func (h *Tracks) PublicAlbumCover(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cover fetch failed", http.StatusBadGateway)
 		return
 	}
-	remaining := max(exp-time.Now().Unix(), 60)
 	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Cache-Control", "public, max-age="+strconv.FormatInt(remaining, 10)+", immutable")
+	w.Header().Set("Cache-Control", immutableCacheControl(exp))
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	_, _ = w.Write(data)
 }
@@ -381,9 +380,8 @@ func (h *Tracks) servePublicStorageObject(w http.ResponseWriter, r *http.Request
 	if ct == "" {
 		ct = contentTypeForExt(filepath.Ext(key))
 	}
-	remaining := max(exp-time.Now().Unix(), 60)
 	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Cache-Control", "public, max-age="+strconv.FormatInt(remaining, 10)+", immutable")
+	w.Header().Set("Cache-Control", immutableCacheControl(exp))
 	http.ServeContent(w, r, filepath.Base(key), time.Time{}, body)
 }
 
@@ -664,25 +662,13 @@ func (h *Tracks) serveResizedImage(
 	}
 
 	var buf bytes.Buffer
-	outType := thumbType
 	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 82}); err != nil {
 		return false
 	}
-
-	if _, err := h.Storage.Put(
-		r.Context(),
-		thumbKey,
-		bytes.NewReader(buf.Bytes()),
-		int64(buf.Len()),
-		outType,
-	); err != nil {
-		w.Header().Set("Content-Type", outType)
-		w.Header().Set("Cache-Control", "private, max-age=86400")
-		http.ServeContent(w, r, path.Base(thumbKey), time.Time{}, bytes.NewReader(buf.Bytes()))
-		return true
-	}
-
-	w.Header().Set("Content-Type", outType)
+	// Caching the thumbnail is best-effort: when the Put fails it is served
+	// all the same, and made again next time.
+	_, _ = h.Storage.Put(r.Context(), thumbKey, bytes.NewReader(buf.Bytes()), int64(buf.Len()), thumbType)
+	w.Header().Set("Content-Type", thumbType)
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	http.ServeContent(w, r, path.Base(thumbKey), time.Time{}, bytes.NewReader(buf.Bytes()))
 	return true
