@@ -17,8 +17,6 @@ export { useEditDraft, type EditDraft } from "./use-edit-draft";
 export { AuthProvider, useAuth, type AuthState } from "./auth/auth-core";
 export {
   FavoritesProvider,
-  useFavorite,
-  useFavoriteActions,
   useFavorites,
   type FavoritesState,
 } from "./favorites/favorites-core";
