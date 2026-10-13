@@ -1,0 +1,369 @@
+/* ============================================================
+   Home board: a bento of panels sized by what they hold, with no
+   sideways scrolling. Placement comes from boardLayout() as spans
+   (--board-span / --board-rows on the wide board, --board-span-md /
+   --board-rows-md on the medium one); narrow boards stack.
+   ============================================================ */
+.board-view {
+  container: board / inline-size;
+}
+.board {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--gap);
+  align-items: stretch;
+}
+.board > * {
+  grid-column: span var(--board-span, 6);
+  grid-row: span var(--board-rows, 1);
+  min-width: 0;
+  margin: 0;
+}
+@container board (max-width: 879px) {
+  .board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .board > * {
+    grid-column: span var(--board-span-md, 2);
+    grid-row: span var(--board-rows-md, 1);
+  }
+}
+@container board (max-width: 559px) {
+  .board {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .board > * {
+    grid-column: auto;
+    grid-row: auto;
+  }
+}
+
+/* ---- Panels ------------------------------------------------- */
+.board-panel {
+  container: board-panel / inline-size;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+}
+.board-panel > .section-head {
+  margin-bottom: 4px;
+}
+/* Why a Play from this panel failed (an album's tracks didn't load). */
+.board-alert {
+  margin-bottom: 8px;
+}
+/* Pinned to the bottom, so a panel stretched to its row keeps it there. */
+.board-panel-foot {
+  margin-top: auto;
+  padding-top: 12px;
+}
+.board-status {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 14px;
+  color: var(--muted-foreground);
+}
+
+/* Jump back in: today's hero, sized down to a panel. */
+.hero.board-resume {
+  min-height: 0;
+  padding: 16px;
+  gap: 24px;
+}
+.board-resume .hero-title {
+  font-size: 24px;
+}
+
+/* ---- Rows --------------------------------------------------- */
+.board-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0 -8px;
+  padding: 0;
+  list-style: none;
+}
+/* A panel as wide as two columns lays its rows out in two, top to bottom. */
+@container board-panel (min-width: 600px) {
+  .board-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(var(--board-list-rows, 3), auto);
+    grid-auto-flow: column;
+    column-gap: 16px;
+  }
+}
+.board-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  height: 52px;
+  padding: 0 8px;
+  border-radius: var(--radius-lg);
+  transition: background 100ms;
+}
+.board-row[data-ranked] {
+  grid-template-columns: 20px 40px minmax(0, 1fr) auto;
+}
+.board-row[data-unavailable] {
+  opacity: 0.45;
+}
+.board-art {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: var(--muted);
+}
+.board-art.card-art-icon {
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+}
+.board-row-text {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+/* The row's title is its button or link, and its ::after covers the whole
+   row (or tile), so a click anywhere on it plays or opens. */
+.board-hit {
+  display: block;
+  width: 100%;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.board-hit:disabled {
+  cursor: default;
+}
+.board-hit::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-lg);
+}
+.board-hit:focus-visible {
+  outline: none;
+}
+.board-hit:focus-visible::after {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* The rank turns into a play glyph on hover, as in the track tables. */
+.board-rank {
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.board-rank > * {
+  grid-area: 1 / 1;
+}
+.board-rank-play {
+  opacity: 0;
+  color: var(--foreground);
+}
+
+/* End column: a duration or count that a round play button replaces on
+   hover. */
+.board-row-end {
+  display: grid;
+  justify-items: end;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.board-row-end > * {
+  grid-area: 1 / 1;
+  align-self: center;
+}
+.board-play {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    transform var(--dur-press) var(--ease-out);
+}
+/* A real button (a playlist row's) sits above the row's link. Hidden, not
+   just transparent, until the row is hovered or focused, so a tap where it
+   would be opens the playlist like the rest of the row. Touch screens can't
+   hover to find it, so there it always shows. */
+button.board-play {
+  position: relative;
+  z-index: 1;
+  cursor: pointer;
+  visibility: hidden;
+  transition:
+    opacity 120ms ease,
+    visibility 120ms,
+    transform var(--dur-press) var(--ease-out);
+}
+.board-row:is(:hover, :focus-within) button.board-play {
+  visibility: visible;
+}
+@media (hover: none) {
+  .board-row button.board-play {
+    visibility: visible;
+    opacity: 1;
+  }
+}
+button.board-play:active {
+  transform: scale(0.95);
+}
+
+.board-row:not(.board-placeholder):is(:hover, :focus-within),
+.board-artist:not(.board-placeholder):is(:hover, :focus-within) {
+  background: var(--accent);
+}
+:is(.board-row, .board-artist):is(:hover, :focus-within) :is(.board-play, .board-rank-play) {
+  opacity: 1;
+}
+/* Ranked rows keep their play count; the rank gives way to the glyph. */
+.board-row:is(:hover, :focus-within) .board-rank > span,
+.board-row:not([data-ranked]):is(:hover, :focus-within) .board-row-meta {
+  opacity: 0;
+}
+.board-row[data-unavailable] :is(.board-play, .board-rank-play) {
+  display: none;
+}
+.board-row[data-unavailable] .board-rank > span {
+  opacity: 1;
+}
+
+/* ---- Albums: a row of covers, as many as fit ----------------- */
+.board-covers {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin: 4px -8px -8px;
+}
+/* As many covers as fit one row (two rows of two when narrow). Each width
+   hides the rest, rather than restoring a display value. */
+@container board-panel (max-width: 759px) {
+  .board-covers > :nth-child(n + 5) {
+    display: none;
+  }
+}
+@container board-panel (min-width: 760px) and (max-width: 919px) {
+  .board-covers > :nth-child(n + 6) {
+    display: none;
+  }
+}
+@container board-panel (min-width: 920px) {
+  .board-covers > :nth-child(n + 7) {
+    display: none;
+  }
+}
+.board-panel .card:hover,
+.board-panel .card:focus-within {
+  background: var(--accent);
+}
+.board-panel .card-placeholder:hover {
+  background: transparent;
+}
+@container board-panel (max-width: 419px) {
+  .board-covers {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container board-panel (min-width: 760px) {
+  .board-covers {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+@container board-panel (min-width: 920px) {
+  .board-covers {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+/* ---- Top artists: tiles in a row, a list when narrow --------- */
+.board-artists {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin: 4px -8px -8px;
+  padding: 0;
+  list-style: none;
+}
+@container board-panel (max-width: 1039px) {
+  .board-artists > :nth-child(n + 5) {
+    display: none;
+  }
+}
+@container board-panel (min-width: 1040px) and (max-width: 1299px) {
+  .board-artists > :nth-child(n + 6) {
+    display: none;
+  }
+}
+.board-artist {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border-radius: var(--radius-lg);
+  transition: background 100ms;
+}
+.board-avatar {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  border-radius: 999px;
+  background: var(--muted);
+}
+.board-artist .board-row-text {
+  flex: 1;
+}
+.board-avatar .board-play {
+  position: absolute;
+  inset: 10px;
+}
+@container board-panel (max-width: 479px) {
+  .board-artists {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@container board-panel (min-width: 480px) and (max-width: 699px) {
+  .board-artists {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container board-panel (min-width: 1040px) {
+  .board-artists {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+@container board-panel (min-width: 1300px) {
+  .board-artists {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-play {
+    transition: opacity 120ms ease;
+  }
+  button.board-play {
+    transition:
+      opacity 120ms ease,
+      visibility 120ms;
+  }
+}

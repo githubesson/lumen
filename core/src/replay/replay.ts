@@ -69,6 +69,24 @@ export function playsById(
 }
 
 /**
+ * The tracks credited to the artist named `name`, in their order. A track's
+ * `artist` is its primary artists joined with ", " (as the server sends it),
+ * so the name has to be one whole entry of that list: "Kestrel Bay" matches
+ * "Halden Marsh, Kestrel Bay" but "Bay" matches nothing. A name that itself
+ * contains ", " still matches, because the whole name is looked for between
+ * separators.
+ */
+export function tracksByArtist<T extends { artist?: string }>(
+  name: string,
+  tracks: readonly T[],
+): T[] {
+  const needle = name.trim();
+  if (!needle) return [];
+  const entry = `, ${needle}, `;
+  return tracks.filter((track) => !!track.artist && `, ${track.artist}, `.includes(entry));
+}
+
+/**
  * The activity chart's scale: the tallest bucket, which the bars are drawn
  * against, and how many buckets apart the axis labels go so that at most
  * `maxLabels` show and they don't overlap.

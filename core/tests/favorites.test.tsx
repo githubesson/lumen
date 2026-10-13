@@ -113,6 +113,33 @@ describe("FavoritesProvider", () => {
     expect(result.current.tracks.map((t) => t.id)).toEqual(["a"]);
   });
 
+  it("says the list has loaded, and keeps saying so while a refresh runs", async () => {
+    vi.spyOn(api, "listFavorites").mockResolvedValue([]);
+    const view = renderHook(() => useFavorites(), { wrapper });
+    expect(view.result.current.loaded).toBe(false);
+    await waitFor(() => expect(view.result.current.loading).toBe(false));
+    expect(view.result.current.loaded).toBe(true);
+    const next = deferred<TrackListItem[]>();
+    vi.mocked(api.listFavorites).mockReturnValue(next.promise);
+    let refresh!: Promise<void>;
+    act(() => {
+      refresh = view.result.current.refresh();
+    });
+    expect(view.result.current.loading).toBe(true);
+    expect(view.result.current.loaded).toBe(true);
+    next.resolve([]);
+    await act(() => refresh);
+  });
+
+  it("isn't loaded until a list arrives", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(api, "listFavorites").mockRejectedValue(new Error("offline"));
+    const view = renderHook(() => useFavorites(), { wrapper });
+    await waitFor(() => expect(view.result.current.loading).toBe(false));
+    expect(view.result.current.error).not.toBeNull();
+    expect(view.result.current.loaded).toBe(false);
+  });
+
   it("keeps a track unfavorited during the row refetch hidden", async () => {
     const { result } = await renderFavorites([row("a")]);
     const rows = deferred<TrackListItem[]>();

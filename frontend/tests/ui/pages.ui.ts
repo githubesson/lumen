@@ -16,6 +16,8 @@ const rows = (page: Page) => page.locator("tbody tr");
 test("home", async ({ page }, testInfo) => {
   await go(page, "/");
   await ready(page, page.locator(".hero-title"));
+  // The whole board, down to Top artists (from the Replay fixture).
+  await ready(page, page.locator('[data-panel="artists"] .board-artist'));
   await checkUI(page, testInfo);
 });
 

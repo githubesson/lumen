@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Download as ArrowDownTrayIcon,
   Play as PlayIcon,
@@ -28,7 +28,9 @@ import Section from "../components/Section";
 import { Button } from "../components/Button";
 import {
   buildPeriodOptions,
+  canonicalPeriodKey,
   formatListeningTime as formatListeningTimeCore,
+  parsePeriodKey,
   periodKey,
   periodLabel,
   periodTitle,
@@ -86,17 +88,47 @@ export default function Replay() {
   const { play } = usePlayerControls();
   const { reload: reloadPlaylists } = usePlaylists();
 
-  const [period, setPeriod] = useState<Period>({ kind: "this-year" });
+  // Sticky: the year pills are navigation, not results, and must survive the
+  // gap where `data` is null or the selector would collapse mid-load.
+  // Remembered across visits so the pills are all there on arrival. Null
+  // until a response (now or on an earlier visit) has said which years exist.
+  const [years, setYears] = useState<number[] | null>(() => readCache<number[]>("replay:years") ?? null);
+
+  // The period lives in the URL (`?period=last-30`), so a link can open a
+  // given window; without one it's this year. Only its one spelling is acted
+  // on, and the URL is rewritten to it: a value that isn't a period, or a
+  // year with no plays (and so no pill), opens this year.
+  const [params, setParams] = useSearchParams();
+  const periodParam = params.get("period");
+  const periodParamKey = canonicalPeriodKey(periodParam, years);
+  const period = useMemo<Period>(
+    () => parsePeriodKey(periodParamKey) ?? { kind: "this-year" },
+    [periodParamKey],
+  );
+  const writePeriod = useCallback(
+    (key: string | null) =>
+      setParams(
+        (prev) => {
+          const out = new URLSearchParams(prev);
+          if (key) out.set("period", key);
+          else out.delete("period");
+          return out;
+        },
+        { replace: true },
+      ),
+    [setParams],
+  );
+  useEffect(() => {
+    if (periodParam !== periodParamKey) writePeriod(periodParamKey);
+  }, [periodParam, periodParamKey, writePeriod]);
+  const setPeriod = (next: Period) =>
+    writePeriod(next.kind === "this-year" ? null : periodKey(next));
   // The response is stored with the period it answers, and read back only when
   // the two still match. A period switch therefore drops to `data === null` on
   // the very first render -- before the fetch effect has even run -- so the
   // previous window's results can never be rendered, animated, or acted on
   // under the new period's title.
   const [loaded, setLoaded] = useState<{ key: string; data: ReplayData } | null>(null);
-  // Sticky: the year pills are navigation, not results, and must survive the
-  // gap where `data` is null or the selector would collapse mid-load.
-  // Remembered across visits so the pills are all there on arrival.
-  const [years, setYears] = useState<number[]>(() => readCache<number[]>("replay:years") ?? []);
   const [error, setError] = useState<string | null>(null);
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -104,9 +136,10 @@ export default function Replay() {
   const [imageError, setImageError] = useState<string | null>(null);
 
   // Memoize the request range on the selected period so the fetch effect can
-  // depend on a stable value. `period` only changes identity when the user
-  // picks a new pill, so depending on it directly is both correct and
-  // exhaustive-deps clean (the old code keyed on a fresh periodKey string).
+  // depend on a stable value. `period` only changes identity when the URL's
+  // period does (a pill, or a link in), so depending on it directly is both
+  // correct and exhaustive-deps clean (the old code keyed on a fresh
+  // periodKey string).
   //
   // The cache key carries the concrete days a rolling period covers (see
   // `replayRequest`). A page left open past midnight recomputes the range
@@ -151,7 +184,7 @@ export default function Replay() {
     return () => ac.abort();
   }, [request]);
 
-  const options = useMemo(() => buildOptions(years), [years]);
+  const options = useMemo(() => buildOptions(years ?? []), [years]);
 
   const queue = useMemo<TrackListItem[]>(
     () => (data?.top_tracks ?? []) as TrackListItem[],

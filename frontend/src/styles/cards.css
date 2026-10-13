@@ -104,12 +104,27 @@
   box-shadow: var(--shadow-md);
   transform: translateY(4px);
   opacity: 0;
-  transition: opacity 140ms ease, transform var(--dur-press) var(--ease-out);
+  /* Hidden, not just transparent, until the card is hovered or focused: an
+     invisible button would still take a tap meant for the card. */
+  visibility: hidden;
+  transition:
+    opacity 140ms ease,
+    visibility 140ms,
+    transform var(--dur-press) var(--ease-out);
 }
 .card:hover .card-play,
 .card:focus-within .card-play {
   opacity: 1;
+  visibility: visible;
   transform: translateY(0);
+}
+/* Touch screens can't hover to find it, so there it always shows. */
+@media (hover: none) {
+  .card .card-play {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+  }
 }
 /* Composes with the hover reveal above rather than replacing it. The reveal
    selector is (0,3,0) and a press can only happen while the card is hovered or
@@ -117,6 +132,48 @@
 .card:hover .card-play:active,
 .card:focus-within .card-play:active {
   transform: translateY(0) scale(0.95);
+}
+/* A card that both opens and plays (MediaCard with `to` and `onPlay`): its
+   title link stretches over the whole card, and the play button sits above
+   that. */
+.card-link {
+  display: block;
+  text-decoration: none;
+}
+.card-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  /* The card's corners (the link itself has none to inherit). */
+  border-radius: var(--radius-xl);
+}
+.card-link:focus-visible {
+  outline: none;
+}
+.card-link:focus-visible::after {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+/* The play button follows the link in the markup, so Tab reaches it after
+   the card's link; the grid lays it back over the cover's corner. */
+.card-linked {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+/* Both placed explicitly: auto-placement would move the cover off the cell
+   the button takes. */
+.card-linked > .card-art {
+  grid-area: 1 / 1;
+}
+.card-linked > .card-play {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  z-index: 1;
+  grid-area: 1 / 1;
+  align-self: end;
+  justify-self: end;
+  margin: 0 8px 8px 0;
 }
 .card-title {
   font-size: 14px;

@@ -20,6 +20,13 @@ export interface FavoritesState {
    * unfavorited, and a newly favorited track's row arrives with a refetch.
    */
   tracks: TrackListItem[];
+  /**
+   * A list has arrived at least once, so an empty `tracks` means no
+   * favorites rather than "not fetched yet". Stays true through later
+   * refreshes, so a revalidation doesn't make a settled empty list look
+   * unknown again.
+   */
+  loaded: boolean;
   loading: boolean;
   error: string | null;
   isFavorite: (id: string) => boolean;
@@ -45,6 +52,7 @@ export function FavoritesProvider({ children }: { children: ReactNode }) {
   const [ids, setIds] = useState<Set<string>>(new Set());
   const [rows, setRows] = useState<TrackListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef<AbortController | null>(null);
   const rowsRequestRef = useRef<AbortController | null>(null);
@@ -70,6 +78,7 @@ export function FavoritesProvider({ children }: { children: ReactNode }) {
       if (controller.signal.aborted) return;
       setRows(fetched);
       setIds(new Set(fetched.map((t) => t.id)));
+      setLoaded(true);
     } catch (err) {
       if (controller.signal.aborted) return;
       setError("Could not load favorites.");
@@ -139,8 +148,8 @@ export function FavoritesProvider({ children }: { children: ReactNode }) {
   const tracks = useMemo(() => rows.filter((row) => ids.has(row.id)), [rows, ids]);
 
   const value = useMemo<FavoritesState>(
-    () => ({ ids, tracks, loading, error, isFavorite, toggle, refresh }),
-    [ids, tracks, loading, error, isFavorite, toggle, refresh],
+    () => ({ ids, tracks, loaded, loading, error, isFavorite, toggle, refresh }),
+    [ids, tracks, loaded, loading, error, isFavorite, toggle, refresh],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

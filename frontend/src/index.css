@@ -64,6 +64,7 @@
 @import "./styles/main-content.css";
 @import "./styles/home.css";
 @import "./styles/cards.css";
+@import "./styles/board.css";
 @import "./styles/library.css";
 @import "./styles/segmented.css";
 @import "./styles/detail.css";
