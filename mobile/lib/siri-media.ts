@@ -1,6 +1,7 @@
 import {
   api,
   displayArtists,
+  displayText,
   toQueueItem,
   type Album,
   type Artist,
@@ -183,9 +184,9 @@ function albumEntity(album: Album): LumenSiriEntity {
   return {
     identifier: siriMediaIdentifier("album", album.id),
     lumenId: album.id,
-    title: album.title,
+    title: displayText(album.title),
     type: "album",
-    artist: album.artist_name,
+    artist: displayText(album.artist_name) || undefined,
   };
 }
 
@@ -193,7 +194,7 @@ function artistEntity(artist: Artist): LumenSiriEntity {
   return {
     identifier: siriMediaIdentifier("artist", artist.id),
     lumenId: artist.id,
-    title: artist.name,
+    title: displayText(artist.name),
     type: "artist",
   };
 }
@@ -202,9 +203,9 @@ function songEntity(track: TrackListItem): LumenSiriEntity {
   return {
     identifier: siriMediaIdentifier("song", track.id),
     lumenId: track.id,
-    title: track.title,
+    title: displayText(track.title),
     type: "song",
-    artist: track.artist,
+    artist: displayText(track.artist) || undefined,
   };
 }
 

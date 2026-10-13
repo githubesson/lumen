@@ -1,5 +1,5 @@
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
-import { genreShares, type ReplayData } from "@music-library/core";
+import { displayText, genreShares, type ReplayData } from "@music-library/core";
 import { Card } from "../primitives";
 import { useTheme } from "../../theme/theme";
 import { HairlineSeparator } from "../hairline-separator";
@@ -41,7 +41,7 @@ export function GenreList({
                   minWidth: 0,
                 }}
               >
-                {g.genre}
+                {displayText(g.genre)}
               </Text>
               <View
                 style={{

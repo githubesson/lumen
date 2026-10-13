@@ -1,6 +1,7 @@
 import {
   albumArtUrl,
   canStartTrack,
+  displayText,
   playlistArtUrl,
   trackArtUrl,
   type Album,
@@ -138,7 +139,7 @@ export function pushedTemplateId(destination: CarPlayDestination): string {
 
 /** One line under the title: the artist, or the album when unattributed. */
 export function trackSubtitle(track: TrackListItem): string | undefined {
-  return track.artist || track.album_title || undefined;
+  return displayText(track.artist) || displayText(track.album_title) || undefined;
 }
 
 /** Cover URL for a track row, or nothing when the track has no artwork. */
@@ -241,7 +242,7 @@ function trackRow(
 ): CarPlayListItem {
   return {
     id: options.id ?? encodeDestination({ kind: "track", id: track.id }),
-    text: track.title,
+    text: displayText(track.title),
     detailText: trackSubtitle(track),
     isPlaying: track.id === options.currentTrackId,
     enabled: canStartTrack(track, options.isPlayable),
@@ -650,8 +651,8 @@ export function buildAlbumsTemplate({
             ? countLabel(shown.length, albums.length, "album")
             : undefined,
           items: shown.map((album) =>
-            browseRow({ kind: "album", id: album.id }, album.title, {
-              detailText: album.artist_name || undefined,
+            browseRow({ kind: "album", id: album.id }, displayText(album.title), {
+              detailText: displayText(album.artist_name) || undefined,
               imageUrl: albumArtwork(album),
               symbol: SYMBOL.album,
             }),

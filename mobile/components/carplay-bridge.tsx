@@ -15,6 +15,7 @@ import {
 } from "@tanstack/react-query";
 import {
   api,
+  displayText,
   startListPlayback,
   startShuffledListPlayback,
   toQueueItem,
@@ -709,10 +710,9 @@ function albumTitle(
   tracks: TrackListItem[] | undefined,
 ): string {
   const albums = queryClient.getQueryData<Album[]>(qk.carPlayAlbums(userId));
-  return (
+  const title =
     albums?.find((album) => album.id === id)?.title ??
-    tracks?.find((track) => track.album_title)?.album_title ??
-    "Album"
-  );
+    tracks?.find((track) => track.album_title)?.album_title;
+  return displayText(title) || "Album";
 }
 

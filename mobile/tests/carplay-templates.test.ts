@@ -434,6 +434,20 @@ describe("track list template", () => {
     });
   });
 
+  it("cleans mis-encoded tag text in a row", () => {
+    const template = buildTrackListTemplate({
+      id: "album:a1",
+      title: "Album",
+      limits: LIMITS,
+      tracks: [track("t1", { title: "Intro Â· Live", artist: "Ã\u0085Â\u0081ights" })],
+    });
+
+    expect(contentRows(template)[0]).toMatchObject({
+      text: "Intro · Live",
+      detailText: "Lights",
+    });
+  });
+
   it("sums up the list in the section header", () => {
     const template = buildTrackListTemplate({
       id: "album:a1",
