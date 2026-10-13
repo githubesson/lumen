@@ -347,6 +347,36 @@ describe("usePlayerCore", () => {
     expect(result.current.state.current?.id).toBe("a");
   });
 
+  it("play() with shuffle turns the mode on with the new queue shuffled once", async () => {
+    const { result } = await setup();
+    act(() => result.current.controls.play(t("a"), [t("a"), t("b")]));
+    act(() => result.current.controls.play(t("c"), queue4(), { shuffle: true }));
+
+    expect(result.current.state.shuffle).toBe(true);
+    expect(result.current.state.current?.id).toBe("c");
+    expect(result.current.state.index).toBe(0);
+    expect(result.current.state.queue[0]?.id).toBe("c");
+    expect(result.current.state.queue.map((x) => x.id).sort()).toEqual(["a", "b", "c", "d"]);
+
+    // The list's own order comes back when shuffle goes off.
+    act(() => result.current.controls.setShuffle(false));
+    expect(result.current.state.queue.map((x) => x.id)).toEqual(["a", "b", "c", "d"]);
+    expect(result.current.state.index).toBe(2);
+  });
+
+  it("a refused shuffle play leaves the mode and the playing queue alone", async () => {
+    let offline = false;
+    const { result } = await setup({ isTrackPlayable: (id) => !offline || id === "a" });
+    act(() => result.current.controls.play(t("a"), queue4()));
+    const before = result.current.state;
+    offline = true;
+    act(() => {
+      expect(result.current.controls.play(t("b"), queue4(), { shuffle: true })).toBe(false);
+    });
+    expect(result.current.state).toEqual(before);
+    expect(result.current.state.shuffle).toBe(false);
+  });
+
   it("toggling shuffle off restores the original order at the current track", async () => {
     const { result } = await setup();
     act(() => result.current.controls.play(t("b"), queue4()));

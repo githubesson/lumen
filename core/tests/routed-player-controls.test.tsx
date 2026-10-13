@@ -80,7 +80,7 @@ describe("routed player controls", () => {
     rerender({ ...options, controls: { ...controls, pause: vi.fn() } });
     expect(result.current.play).toBe(play);
     act(() => result.current.play(track, [track]));
-    expect(controls.play).toHaveBeenCalledWith(track, [track]);
+    expect(controls.play).toHaveBeenCalledWith(track, [track], undefined);
   });
   it("delegates every local control and enforces the local play gate", () => {
     const { result, options, controls } = setup();
@@ -98,7 +98,7 @@ describe("routed player controls", () => {
       expect(controls[name]).toHaveBeenCalledOnce();
     }
     result.current.play(track, [track]);
-    expect(controls.play).toHaveBeenCalledWith(track, [track]);
+    expect(controls.play).toHaveBeenCalledWith(track, [track], undefined);
     result.current.jumpTo(1);
     result.current.seek(12);
     result.current.setVolume(0.7);
@@ -219,6 +219,38 @@ describe("routed player controls", () => {
     rerender({ ...options, targetDevice: null });
     result.current.toggle();
     expect(controls.toggle).toHaveBeenCalledOnce();
+  });
+});
+
+describe("routed player controls: shuffle play", () => {
+  const third: TrackListItem = { ...track, id: "t3", title: "Three" };
+
+  it("hands the shuffle mode to local play, and refuses before it when offline", () => {
+    const { result, options, controls } = setup();
+    result.current.play(second, [track, second], { shuffle: true });
+    expect(controls.play).toHaveBeenCalledWith(second, [track, second], { shuffle: true });
+    vi.mocked(options.canPlayLocally!).mockReturnValue(false);
+    expect(result.current.play(track, [track, second], { shuffle: true })).toBe(false);
+    expect(controls.play).toHaveBeenCalledOnce();
+    expect(controls.setShuffle).not.toHaveBeenCalled();
+  });
+
+  it("sends a device a shuffled queue starting at the track, then the mode once it accepts", async () => {
+    const { result, options } = setup(device);
+    await act(async () => result.current.play(second, [track, second, third], { shuffle: true }));
+    const calls = vi.mocked(options.sendCommand).mock.calls;
+    expect(calls.map(([action]) => action)).toEqual(["play_track", "set_shuffle"]);
+    const queue = (calls[0][1] as { queue: { id: string }[] }).queue.map((item) => item.id);
+    expect(queue[0]).toBe("t2");
+    expect([...queue].sort()).toEqual(["t1", "t2", "t3"]);
+    expect(calls[1][1]).toEqual({ shuffle: true });
+  });
+
+  it("leaves a device's mode alone when it refuses the start", async () => {
+    const { result, options } = setup(device);
+    vi.mocked(options.sendCommand).mockResolvedValue({ ...applied, status: "rejected" });
+    await act(async () => result.current.play(track, [track, second], { shuffle: true }));
+    expect(vi.mocked(options.sendCommand).mock.calls.map(([action]) => action)).toEqual(["play_track"]);
   });
 });
 

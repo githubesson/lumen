@@ -70,6 +70,7 @@ export {
 export {
   listPlaybackState,
   startListPlayback,
+  startShuffledListPlayback,
   usePlayFromList,
   type ListPlaybackState,
   type PlayFromList,

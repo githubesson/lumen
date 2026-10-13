@@ -298,11 +298,15 @@ export function usePlayerCore({
   );
 
   const play = useCallback<PlayerControls["play"]>(
-    (track, q) => {
+    (track, q, options) => {
       if (!canStartTrack(track, isTrackPlayable)) return false;
       const base = q && q.length ? q : [track];
+      // Set here, with the queue, rather than through setShuffle: that
+      // reorders the queue this render has, not the one starting now.
+      const shuffled = options?.shuffle ?? shuffle;
+      if (shuffled !== shuffle) setShuffleState(shuffled);
       setSourceQueue(base);
-      if (shuffle) {
+      if (shuffled) {
         // Pin the clicked track at position 0, shuffle the rest. The user
         // will play through every track exactly once before any wrap.
         setQueue(fisherYatesWithAnchor(base, track.id));

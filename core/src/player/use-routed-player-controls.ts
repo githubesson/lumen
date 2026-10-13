@@ -7,6 +7,7 @@ import type {
 } from "./activity-sync";
 import {
   clampVolume,
+  fisherYatesWithAnchor,
   nextRepeatMode,
   type PlayerControls,
 } from "./player-core";
@@ -111,20 +112,26 @@ export function useRoutedPlayerControls({
 }: RoutedPlayerControlsOptions): PlayerControls {
   const localPlay = controls.play;
   const play = useCallback<PlayerControls["play"]>(
-    (track, queue) => {
+    (track, queue, options) => {
       // No device can play these, and checking first keeps a platform's
       // offline feedback from misreporting why.
       if (track.unavailable) return false;
       if (!targetDevice) {
         if (canPlayLocally && !canPlayLocally(track)) return false;
-        return localPlay(track, queue);
+        return localPlay(track, queue, options);
       }
-      const nextQueue = buildRemoteQueue(track, queue);
+      // The device gets a window of the queue, so shuffle the whole list
+      // first; the mode follows once the device has accepted the start.
+      const shuffle = options?.shuffle;
+      const source = shuffle && queue ? fisherYatesWithAnchor(queue, track.id) : queue;
+      const nextQueue = buildRemoteQueue(track, source);
       void sendCommand("play_track", {
         track: compactRemoteTrack(track),
         queue: nextQueue.map(compactRemoteTrack),
       }).then((result) => {
-        if (result.status === "applied") onRemoteQueueApplied?.(nextQueue);
+        if (result.status !== "applied") return;
+        onRemoteQueueApplied?.(nextQueue);
+        if (shuffle !== undefined) void sendCommand("set_shuffle", { shuffle });
       });
     },
     [canPlayLocally, localPlay, onRemoteQueueApplied, sendCommand, targetDevice],
