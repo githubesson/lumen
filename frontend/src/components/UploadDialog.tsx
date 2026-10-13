@@ -68,19 +68,29 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
     // reported with the rest rather than sent.
     const { batches, tooLarge } = planUploadBatches(files, (f) => f.size);
     const uploaded: UploadResult[] = [];
+    let sent = 0;
     try {
       for (const batch of batches) {
         // Only admins may upload to the shared library; the choice is hidden
         // from everyone else.
         uploaded.push(...(await api.uploadMusic(batch, uploadScope(isAdmin, scope))));
+        sent += batch.length;
       }
-      const r = [...uploaded, ...tooLarge.map((f) => tooLargeUploadResult(f.name))];
-      setResults(r);
+      setResults([...uploaded, ...tooLarge.map((f) => tooLargeUploadResult(f.name))]);
       onComplete?.();
     } catch (err) {
-      // The selection stays, so Upload tries again; what the batches before
-      // this one added comes back as already in the library.
-      setError(errorMessage(err, "Upload failed."));
+      const message = errorMessage(err, "Upload failed.");
+      setError(message);
+      // Nothing went in: the selection stays, so Upload tries again. Once a
+      // batch has, its results show, and the files after the failed request
+      // (never sent) fail with its error, as on mobile.
+      if (sent > 0) {
+        setResults([
+          ...uploaded,
+          ...batches.flat().slice(sent).map((f) => ({ file: f.name, inserted: false, error: message })),
+          ...tooLarge.map((f) => tooLargeUploadResult(f.name)),
+        ]);
+      }
     } finally {
       if (uploadAddedAny(uploaded)) libraryChanged.emit();
       setBusy(false);

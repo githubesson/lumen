@@ -52,3 +52,26 @@ it("sends a big selection in batches under the server's cap, and reports a file 
   expect(screen.getByText("huge.wav")).toBeTruthy();
   expect(screen.getByText("file too large")).toBeTruthy();
 });
+
+it("keeps what earlier batches added when a later one fails", async () => {
+  mock.uploadMusic
+    .mockImplementationOnce(async (files: File[]) => files.map((f) => ({ file: f.name, inserted: true })))
+    .mockRejectedValueOnce(new Error("offline"));
+  await pick([file("one.flac", 300 * MB), file("two.flac", 300 * MB)]);
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 2" }));
+  });
+  expect(screen.getAllByText("Added")).toHaveLength(1);
+  expect(screen.getByText("two.flac")).toBeTruthy();
+  expect(screen.getAllByText("Upload failed.").length).toBeGreaterThan(0);
+});
+
+it("keeps the selection to try again when the first batch fails", async () => {
+  mock.uploadMusic.mockRejectedValueOnce(new Error("offline"));
+  await pick([file("one.flac")]);
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+  });
+  expect(screen.getByText("Upload failed.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Upload 1" })).toBeTruthy();
+});
