@@ -17,6 +17,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
   canAddToPlaylist,
+  errorMessage,
   playlistSubtitle,
   useAuth,
   type Playlist,
@@ -109,7 +110,7 @@ export default function PlaylistPickerScreen() {
     onError: (error) => {
       Alert.alert(
         "Couldn't add track",
-        error instanceof Error ? error.message : "Please try again.",
+        errorMessage(error, "Please try again."),
       );
     },
   });

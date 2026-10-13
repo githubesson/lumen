@@ -25,10 +25,10 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import RNShare, { Social } from "react-native-share";
 import { captureRef } from "react-native-view-shot";
 import {
-  ApiError,
   DEFAULT_SHARE_SNIPPET_DURATION_SEC,
   api,
   createTrackStoryBackgroundVideo,
+  errorMessage,
   getPublicTrackShare,
   parseTrackShareUrl,
   streamUrl,
@@ -191,9 +191,7 @@ export default function ShareTrackScreen() {
     onError: (error) => {
       Alert.alert(
         "Couldn't create share link",
-        error instanceof ApiError || error instanceof Error
-          ? error.message
-          : "Please try again.",
+        errorMessage(error, "Please try again."),
       );
     },
   });

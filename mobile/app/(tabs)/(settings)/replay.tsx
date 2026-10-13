@@ -14,6 +14,7 @@ import {
   ApiError,
   api,
   displayText,
+  errorMessage,
   playsById as playsByIdFor,
   replayAlbumSubtitle,
   replayAlbumTarget,
@@ -131,7 +132,7 @@ export default function ReplayScreen() {
     } catch (err) {
       Alert.alert(
         "Couldn't create playlist",
-        err instanceof ApiError ? err.message : "Try again in a moment.",
+        errorMessage(err, "Try again in a moment."),
       );
     } finally {
       setGenerating(false);
@@ -158,7 +159,7 @@ export default function ReplayScreen() {
       if (!isShareDismissal(err)) {
         Alert.alert(
           "Couldn't create share image",
-          err instanceof ApiError ? err.message : "Try again in a moment.",
+          errorMessage(err, "Try again in a moment."),
         );
       }
     } finally {

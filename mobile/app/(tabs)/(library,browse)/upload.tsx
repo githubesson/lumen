@@ -11,9 +11,9 @@ import { Stack, useRouter } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
 import * as Haptics from "expo-haptics";
 import {
-  ApiError,
   api,
   defaultUploadScope,
+  errorMessage,
   isUploadableFile,
   libraryChanged,
   planUploadBatches,
@@ -121,13 +121,7 @@ export default function UploadScreen() {
         );
         sent += batch.length;
       } catch (err) {
-        if (err instanceof ApiError) {
-          failure = err.message || `Upload failed (${err.status}).`;
-        } else if (err instanceof Error) {
-          failure = err.message || "Couldn't reach the server.";
-        } else {
-          failure = "Couldn't reach the server.";
-        }
+        failure = errorMessage(err, "Couldn't reach the server.") || "Upload failed.";
         break;
       }
     }

@@ -235,7 +235,7 @@ export default function PlaylistDetailScreen() {
     onError: (error) =>
       Alert.alert(
         "Couldn't update server saving",
-        error instanceof Error ? error.message : "Please try again.",
+        errorMessage(error, "Please try again."),
       ),
   });
   const serverSaveEnabled = !!playlistQuery.data?.tidal_auto_download;
@@ -367,7 +367,7 @@ export default function PlaylistDetailScreen() {
             setOverride(activeOverride);
             Alert.alert(
               "Couldn't reorder tracks",
-              error instanceof Error ? error.message : "Please try again.",
+              errorMessage(error, "Please try again."),
             );
           },
         },
@@ -391,7 +391,7 @@ export default function PlaylistDetailScreen() {
           setOverride(activeOverride);
           Alert.alert(
             "Couldn't remove track",
-            error instanceof Error ? error.message : "Please try again.",
+            errorMessage(error, "Please try again."),
           );
         },
       });

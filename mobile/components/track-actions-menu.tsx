@@ -7,6 +7,7 @@ import { SymbolView } from "expo-symbols";
 import {
   api,
   deleteOwnUploadMessage,
+  errorMessage,
   libraryChanged,
   downloadStreamUrl,
   prepareTrackDownload,
@@ -328,7 +329,7 @@ export function useTrackActionModel(track: TrackListItem) {
       } catch (error) {
         Alert.alert(
           "Album unavailable",
-          error instanceof Error ? error.message : "Please try again.",
+          errorMessage(error, "Please try again."),
         );
       }
     })();
@@ -432,7 +433,7 @@ export function useTrackActionModel(track: TrackListItem) {
                 );
                 Alert.alert(
                   "Delete failed",
-                  error instanceof Error ? error.message : "Please try again.",
+                  errorMessage(error, "Please try again."),
                 );
               } finally {
                 setDeleting(false);
