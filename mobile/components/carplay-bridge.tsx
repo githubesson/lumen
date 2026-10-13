@@ -15,8 +15,8 @@ import {
 } from "@tanstack/react-query";
 import {
   api,
-  fisherYatesWithAnchor,
   startListPlayback,
+  startShuffledListPlayback,
   toQueueItem,
   useAuth,
   type Album,
@@ -546,15 +546,11 @@ export function CarPlayBridge() {
             return;
           }
 
-          // Shuffle turns the mode on and hands the player an already-shuffled
-          // queue: `setShuffle` would otherwise reorder the queue this render
-          // still thinks is playing, not the one we're about to start.
+          // Shuffle starts from a random track with shuffle mode on; a refused
+          // start leaves the mode and the queue playing now alone.
           case "shuffle-list": {
             const startable = startableListTracks(listFor(templateId)?.tracks);
-            if (!startable.length) return;
-            const shuffled = fisherYatesWithAnchor(startable, null);
-            if (!shuffle) controls.setShuffle(true);
-            if (controls.play(shuffled[0], shuffled) === false) return;
+            if (!startShuffledListPlayback(controls.play, startable)) return;
             await pushCarPlayNowPlaying();
             return;
           }

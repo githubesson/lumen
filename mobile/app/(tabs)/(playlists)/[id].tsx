@@ -22,7 +22,6 @@ import {
   api,
   compareSortableTracks,
   errorMessage,
-  fisherYatesWithAnchor,
   movePlaylistEntry,
   playlistEntryToTrack as entryToTrack,
   playlistAutoDownloadRefetchMs,
@@ -52,11 +51,13 @@ import {
   TRACK_LIST_PERFORMANCE_PROPS,
 } from "../../../components/list-performance";
 import {
-  usePlayerControls,
   usePlayerPlayback,
   usePlayTrack,
 } from "../../../context/player";
-import { startListPlayback } from "@music-library/core/player/play-list";
+import {
+  startListPlayback,
+  startShuffledListPlayback,
+} from "@music-library/core/player/play-list";
 import {
   useBottomDockInset,
   useDockControls,
@@ -104,7 +105,6 @@ export default function PlaylistDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const play = usePlayTrack();
-  const { setShuffle } = usePlayerControls();
   const { shuffle } = usePlayerPlayback();
   const headerHeight = useHeaderHeight();
   const dockInset = useBottomDockInset();
@@ -325,18 +325,15 @@ export default function PlaylistDetailScreen() {
     setSortAsc((asc) => !asc);
   }, []);
 
-  // Shuffle is queue-level: reorder a copy of the visible tracks and start
-  // from the new head, leaving the saved playlist order untouched. Shuffle
-  // mode goes on as well, like CarPlay's and Siri's shuffle play; the queue is
-  // shuffled here because `setShuffle` reorders the queue playing now.
+  // Shuffle is queue-level: start the visible tracks from a random one with
+  // shuffle mode on, like CarPlay's and Siri's shuffle play, leaving the saved
+  // playlist order untouched. A refused start (offline, say) changes nothing.
   const onShuffle = useCallback(() => {
-    const playable = listPlaybackQueue(tracks);
-    if (playable.length === 0) return;
+    const queue = listPlaybackQueue(tracks);
+    if (queue.length === 0) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const shuffled = fisherYatesWithAnchor(playable, null);
-    if (!shuffle) setShuffle(true);
-    play(shuffled[0], shuffled);
-  }, [tracks, play, setShuffle, shuffle]);
+    startShuffledListPlayback(play, queue);
+  }, [tracks, play]);
 
   const onToggleReorder = useCallback(() => {
     void Haptics.selectionAsync();

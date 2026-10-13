@@ -5,10 +5,10 @@ import { Stack, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import {
   api,
-  playableTracks,
   playsById,
   replayAlbumTarget,
   replayRequest,
+  startShuffledListPlayback,
   useAuth,
   useLocalDay,
   type Period,
@@ -33,7 +33,7 @@ import { usePlayTrack } from "../../../context/player";
 import { subscribeAppActive } from "../../../lib/app-resume";
 import { qk } from "../../../lib/query-keys";
 import { QUERY_STALE_TIME } from "../../../lib/query-policy";
-import { usePlayQueue } from "../../../lib/use-play-queue";
+import { listPlaybackQueue, usePlayQueue } from "../../../lib/use-play-queue";
 import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme } from "../../../theme/theme";
 
@@ -192,12 +192,13 @@ export default function HomeScreen() {
   const onTopTrackPress = usePlayQueue(topTracks);
   const onFavoriteTilePress = usePlayQueue(favoritesShelf);
 
+  // Offline it starts from a downloaded favorite; a refused start (nothing
+  // downloaded) leaves shuffle mode and the queue playing now alone.
   const onShuffleFavorites = useCallback(() => {
-    const playable = playableTracks(favorites);
-    if (playable.length === 0) return;
+    const queue = listPlaybackQueue(favorites);
+    if (queue.length === 0) return;
     void Haptics.selectionAsync();
-    const shuffled = seededShuffle(playable, `${Date.now()}`);
-    play(shuffled[0], shuffled);
+    startShuffledListPlayback(play, queue);
   }, [favorites, play]);
 
   const onAlbumPress = useCallback(
