@@ -5,7 +5,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import type { ReplayData } from "@music-library/core";
+import { displayText, type ReplayData } from "@music-library/core";
 import { Card } from "../primitives";
 import { useTheme } from "../../theme/theme";
 import { formatListeningTime } from "./format";
@@ -37,7 +37,7 @@ export function SummaryGrid({
     },
     {
       label: "Top artist",
-      value: summary.headline_artist?.name ?? "—",
+      value: displayText(summary.headline_artist?.name) || "—",
     },
   ];
   return (

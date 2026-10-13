@@ -13,7 +13,10 @@ import * as Haptics from "expo-haptics";
 import {
   ApiError,
   api,
+  displayText,
+  errorMessage,
   playsById as playsByIdFor,
+  replayAlbumSubtitle,
   replayAlbumTarget,
   replayImageFilename,
   replayImageRequest,
@@ -129,7 +132,7 @@ export default function ReplayScreen() {
     } catch (err) {
       Alert.alert(
         "Couldn't create playlist",
-        err instanceof ApiError ? err.message : "Try again in a moment.",
+        errorMessage(err, "Try again in a moment."),
       );
     } finally {
       setGenerating(false);
@@ -156,7 +159,7 @@ export default function ReplayScreen() {
       if (!isShareDismissal(err)) {
         Alert.alert(
           "Couldn't create share image",
-          err instanceof ApiError ? err.message : "Try again in a moment.",
+          errorMessage(err, "Try again in a moment."),
         );
       }
     } finally {
@@ -225,10 +228,10 @@ export default function ReplayScreen() {
                   <RankedShelfTile
                     key={a.id}
                     rank={i + 1}
-                    title={a.name}
+                    title={displayText(a.name)}
                     subtitle={pluralize(a.plays, "play")}
                     subtitleTabular
-                    accessibilityLabel={`View artist ${a.name}`}
+                    accessibilityLabel={`View artist ${displayText(a.name)}`}
                     art={{ kind: "gradient", seed: a.id }}
                     onPress={() =>
                       router.push({
@@ -252,9 +255,9 @@ export default function ReplayScreen() {
                   <RankedShelfTile
                     key={a.id}
                     rank={i + 1}
-                    title={a.title}
-                    subtitle={`${a.artist ? `${a.artist} · ` : ""}${pluralize(a.plays, "play")}`}
-                    accessibilityLabel={`View album ${a.title}`}
+                    title={displayText(a.title)}
+                    subtitle={replayAlbumSubtitle(a)}
+                    accessibilityLabel={`View album ${displayText(a.title)}`}
                     art={{ kind: "album", albumId: a.id }}
                     onPress={() => onAlbumPress(a)}
                   />

@@ -11,13 +11,18 @@ import { Stack, useRouter } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
 import * as Haptics from "expo-haptics";
 import {
-  ApiError,
   api,
   defaultUploadScope,
+  errorMessage,
+  isUploadableFile,
   libraryChanged,
+  planUploadBatches,
+  pluralize,
   summarizeUploadResults,
+  tooLargeUploadResult,
   uploadAddedAny,
   uploadResultStatus,
+  uploadScope,
   uploadStatusLabel,
   uploadSummaryLabel,
   useAuth,
@@ -54,8 +59,7 @@ export default function UploadScreen() {
   const isAdmin = me?.role === "admin";
   const [files, setFiles] = useState<PickedFile[]>([]);
   const [chosenScope, setScope] = useState<UploadScope>(() => defaultUploadScope(isAdmin));
-  // The choice is admin-only; anyone else always uploads to their own library.
-  const scope: UploadScope = isAdmin ? chosenScope : "personal";
+  const scope = uploadScope(isAdmin, chosenScope);
   const [uploading, setUploading] = useState(false);
   const [results, setResults] = useState<UploadResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,16 +72,23 @@ export default function UploadScreen() {
         copyToCacheDirectory: true,
       });
       if (res.canceled) return;
-      const picked: PickedFile[] = res.assets.map((a) => ({
-        uri: a.uri,
-        name: a.name,
-        type: a.mimeType ?? "audio/mpeg",
-        size: a.size,
-      }));
+      // The picker offers any audio, but the server only imports some
+      // formats; leave the rest out here rather than send them to be skipped.
+      const picked: PickedFile[] = res.assets
+        .filter((a) => isUploadableFile(a.name))
+        .map((a) => ({
+          uri: a.uri,
+          name: a.name,
+          type: a.mimeType ?? "audio/mpeg",
+          size: a.size,
+        }));
+      const unsupported = res.assets
+        .filter((a) => !isUploadableFile(a.name))
+        .map((a) => a.name);
       void Haptics.selectionAsync();
       setFiles((prev) => dedupeByUri([...prev, ...picked]));
       setResults(null);
-      setError(null);
+      setError(unsupported.length ? unsupportedFilesMessage(unsupported) : null);
     } catch {
       setError("Couldn't open the file picker.");
     }
@@ -93,29 +104,53 @@ export default function UploadScreen() {
     if (files.length === 0 || uploading) return;
     setUploading(true);
     setError(null);
-    try {
-      const json = await api.uploadMusic(
-        files.map(({ uri, name, type }) => ({ uri, name, type })),
-        scope,
-      );
-      setResults(json);
-      // The root layout's libraryChanged subscriber invalidates the browse
-      // lists and user-scoped queries, so emitting is the whole refresh.
-      // Duplicates, skips and failures leave the library as it was.
-      if (uploadAddedAny(json)) libraryChanged.emit();
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (err) {
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      if (err instanceof ApiError) {
-        setError(err.message || `Upload failed (${err.status}).`);
-      } else if (err instanceof Error) {
-        setError(err.message || "Couldn't reach the server.");
-      } else {
-        setError("Couldn't reach the server.");
+    // The server refuses a request over its size cap whole, so the files go
+    // in as many requests as it takes, one after another. A file too large
+    // to go even alone isn't sent, and shows as failed.
+    const { batches, tooLarge } = planUploadBatches(files, (file) => file.size);
+    const uploaded: UploadResult[] = [];
+    let sent = 0;
+    let failure: string | null = null;
+    for (const batch of batches) {
+      try {
+        uploaded.push(
+          ...(await api.uploadMusic(
+            batch.map(({ uri, name, type }) => ({ uri, name, type })),
+            scope,
+          )),
+        );
+        sent += batch.length;
+      } catch (err) {
+        failure = errorMessage(err, "Couldn't reach the server.") || "Upload failed.";
+        break;
       }
-    } finally {
-      setUploading(false);
     }
+    setUploading(false);
+    if (failure && sent === 0) {
+      // Nothing went in: keep the selection to try again.
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setError(failure);
+      return;
+    }
+    const combined = [...uploaded];
+    if (failure) {
+      // Files after the failed request were never sent; they fail with its error.
+      for (const file of batches.flat().slice(sent)) {
+        combined.push({ file: file.name, inserted: false, error: failure });
+      }
+    }
+    combined.push(...tooLarge.map((file) => tooLargeUploadResult(file.name)));
+    setResults(combined);
+    setError(failure);
+    // The root layout's libraryChanged subscriber invalidates the browse
+    // lists and user-scoped queries, so emitting is the whole refresh.
+    // Duplicates, skips and failures leave the library as it was.
+    if (uploadAddedAny(combined)) libraryChanged.emit();
+    void Haptics.notificationAsync(
+      failure
+        ? Haptics.NotificationFeedbackType.Error
+        : Haptics.NotificationFeedbackType.Success,
+    );
   };
 
   const confirmAndUpload = () => {
@@ -225,10 +260,9 @@ export default function UploadScreen() {
 
             {files.length > 0 && !results ? (
               <PrimaryButton
-                label={`Upload ${files.length} ${files.length === 1 ? "file" : "files"}`}
+                label={`Upload ${pluralize(files.length, "file")}`}
                 onPress={confirmAndUpload}
                 loading={uploading}
-                accessibilityLabel={`Upload ${files.length} file${files.length === 1 ? "" : "s"}`}
               />
             ) : null}
 
@@ -424,6 +458,13 @@ function ResultRow({
       </Text>
     </View>
   );
+}
+
+/** "Skipped a.txt, b.pdf and 3 more (unsupported format)." */
+function unsupportedFilesMessage(names: string[]): string {
+  const shown = names.slice(0, 3).join(", ");
+  const more = names.length > 3 ? ` and ${names.length - 3} more` : "";
+  return `Skipped ${shown}${more} (unsupported format).`;
 }
 
 function dedupeByUri(list: PickedFile[]): PickedFile[] {

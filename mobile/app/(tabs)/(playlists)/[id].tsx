@@ -22,7 +22,6 @@ import {
   api,
   compareSortableTracks,
   errorMessage,
-  fisherYatesWithAnchor,
   movePlaylistEntry,
   playlistEntryToTrack as entryToTrack,
   playlistAutoDownloadRefetchMs,
@@ -52,11 +51,13 @@ import {
   TRACK_LIST_PERFORMANCE_PROPS,
 } from "../../../components/list-performance";
 import {
-  usePlayerControls,
   usePlayerPlayback,
   usePlayTrack,
 } from "../../../context/player";
-import { startListPlayback } from "@music-library/core/player/play-list";
+import {
+  startListPlayback,
+  startShuffledListPlayback,
+} from "@music-library/core/player/play-list";
 import {
   useBottomDockInset,
   useDockControls,
@@ -70,10 +71,9 @@ import {
   downloadStore,
   useDownloadedPlaylistTracks,
 } from "../../../lib/downloads";
-import {
-  useIsOffline,
-  useTrackUnavailableOffline,
-} from "../../../lib/offline-mode";
+import { formatDurationMs } from "../../../lib/format";
+import { useIsOffline } from "../../../lib/offline-mode";
+import { useTrackRowPresentation } from "../../../lib/use-track-row-presentation";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
 
 const TRACK_ART_SIZE = 40;
@@ -104,7 +104,6 @@ export default function PlaylistDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const play = usePlayTrack();
-  const { setShuffle } = usePlayerControls();
   const { shuffle } = usePlayerPlayback();
   const headerHeight = useHeaderHeight();
   const dockInset = useBottomDockInset();
@@ -235,7 +234,7 @@ export default function PlaylistDetailScreen() {
     onError: (error) =>
       Alert.alert(
         "Couldn't update server saving",
-        error instanceof Error ? error.message : "Please try again.",
+        errorMessage(error, "Please try again."),
       ),
   });
   const serverSaveEnabled = !!playlistQuery.data?.tidal_auto_download;
@@ -325,18 +324,15 @@ export default function PlaylistDetailScreen() {
     setSortAsc((asc) => !asc);
   }, []);
 
-  // Shuffle is queue-level: reorder a copy of the visible tracks and start
-  // from the new head, leaving the saved playlist order untouched. Shuffle
-  // mode goes on as well, like CarPlay's and Siri's shuffle play; the queue is
-  // shuffled here because `setShuffle` reorders the queue playing now.
+  // Shuffle is queue-level: start the visible tracks from a random one with
+  // shuffle mode on, like CarPlay's and Siri's shuffle play, leaving the saved
+  // playlist order untouched. A refused start (offline, say) changes nothing.
   const onShuffle = useCallback(() => {
-    const playable = listPlaybackQueue(tracks);
-    if (playable.length === 0) return;
+    const queue = listPlaybackQueue(tracks);
+    if (queue.length === 0) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const shuffled = fisherYatesWithAnchor(playable, null);
-    if (!shuffle) setShuffle(true);
-    play(shuffled[0], shuffled);
-  }, [tracks, play, setShuffle, shuffle]);
+    startShuffledListPlayback(play, queue);
+  }, [tracks, play]);
 
   const onToggleReorder = useCallback(() => {
     void Haptics.selectionAsync();
@@ -370,7 +366,7 @@ export default function PlaylistDetailScreen() {
             setOverride(activeOverride);
             Alert.alert(
               "Couldn't reorder tracks",
-              error instanceof Error ? error.message : "Please try again.",
+              errorMessage(error, "Please try again."),
             );
           },
         },
@@ -394,7 +390,7 @@ export default function PlaylistDetailScreen() {
           setOverride(activeOverride);
           Alert.alert(
             "Couldn't remove track",
-            error instanceof Error ? error.message : "Please try again.",
+            errorMessage(error, "Please try again."),
           );
         },
       });
@@ -775,8 +771,16 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
   onRemove: (position: number) => void;
 }) {
   const canReorder = canEdit && !!drag;
-  const unavailable = useTrackUnavailableOffline(track.id);
-  const handlePress = useCallback(() => onPress(track), [onPress, track]);
+  // Reordering rows go without the track menu (see the end).
+  const presentation = useTrackRowPresentation(track, { menu: !canReorder });
+  const { removed } = presentation;
+  // A removed track stays pressable, like ListRow's disabled rows, so the
+  // menu and the remove and drag buttons still work; the tap does nothing.
+  const handlePress = useCallback(() => {
+    if (removed) return;
+    void Haptics.selectionAsync();
+    onPress(track);
+  }, [onPress, removed, track]);
   const handleRemove = useCallback(
     () => onRemove(entry.position),
     [entry.position, onRemove],
@@ -786,20 +790,21 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
     <Pressable
       onPress={handlePress}
       accessibilityRole="button"
-      accessibilityLabel={
-        track.artist ? `${track.title} by ${track.artist}` : track.title
-      }
+      accessibilityLabel={presentation.accessibilityLabel}
+      accessibilityHint={presentation.accessibilityHint}
+      accessibilityState={removed ? { disabled: true } : undefined}
       style={({ pressed }) => [
         styles.row,
         {
           height: theme.row.height,
           paddingLeft: theme.space.lg,
-          paddingRight: theme.space.sm,
+          // The edit buttons bring their own padding.
+          paddingRight: canEdit ? theme.space.sm : theme.space.lg,
           gap: theme.space.md,
           backgroundColor:
             pressed || isActive ? theme.color.bgElev1 : "transparent",
         },
-        unavailable ? { opacity: 0.4 } : null,
+        presentation.dimmed ? { opacity: 0.4 } : null,
       ]}
     >
       <CoverArt
@@ -817,14 +822,14 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
             color: theme.color.fg,
           }}
         >
-          {track.title}
+          {presentation.title}
         </Text>
-        {track.artist ? (
+        {presentation.subtitle ? (
           <Text
             numberOfLines={1}
             style={{ fontSize: 13, color: theme.color.fgMuted }}
           >
-            {track.artist}
+            {presentation.subtitle}
           </Text>
         ) : null}
       </View>
@@ -836,7 +841,7 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
             hitSlop={8}
             style={{ padding: 8, opacity: canRemove ? 1 : 0.4 }}
             accessibilityRole="button"
-            accessibilityLabel={`Remove ${track.title}`}
+            accessibilityLabel={`Remove ${presentation.title}`}
             accessibilityState={{ disabled: !canRemove }}
           >
             <SymbolView
@@ -851,7 +856,7 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
               hitSlop={8}
               style={{ padding: 8 }}
               accessibilityRole="button"
-              accessibilityLabel={`Drag to reorder ${track.title}`}
+              accessibilityLabel={`Drag to reorder ${presentation.title}`}
             >
               <SymbolView
                 name="line.3.horizontal"
@@ -861,7 +866,11 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
             </Pressable>
           ) : null}
         </>
-      ) : null}
+      ) : (
+        <Text style={{ fontSize: 13, color: theme.color.fgMuted }}>
+          {formatDurationMs(track.duration_ms)}
+        </Text>
+      )}
     </Pressable>
   );
 

@@ -9,7 +9,6 @@ import {
 import Constants from "expo-constants";
 import * as Haptics from "expo-haptics";
 import * as Updates from "expo-updates";
-import { errorMessage } from "@music-library/core";
 import { useTheme, type ThemeTokens } from "../theme/theme";
 
 /**
@@ -55,7 +54,7 @@ export function OtaUpdateRows() {
       const result = await Updates.checkForUpdateAsync();
       if (result.isAvailable) await Updates.fetchUpdateAsync();
     } catch (error) {
-      setActionError(errorMessage(error, "Could not check for updates."));
+      setActionError(updateErrorMessage(error, "Could not check for updates."));
     }
   };
 
@@ -65,7 +64,7 @@ export function OtaUpdateRows() {
     try {
       await Updates.reloadAsync();
     } catch (error) {
-      setActionError(errorMessage(error, "Could not restart into the update."));
+      setActionError(updateErrorMessage(error, "Could not restart into the update."));
     }
   };
 
@@ -164,6 +163,11 @@ export function OtaUpdateRows() {
 }
 
 /** First 12 characters of a UUID / fingerprint hash — enough to compare two installs. */
+/** expo-updates' own reason (its errors are never an ApiError), else `fallback`. */
+function updateErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 function shortId(value?: string | null) {
   if (!value) return "—";
   return value.length > 12 ? `${value.slice(0, 12)}…` : value;

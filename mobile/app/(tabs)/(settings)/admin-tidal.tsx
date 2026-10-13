@@ -14,13 +14,19 @@ import * as WebBrowser from "expo-web-browser";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
+  canLinkTidalAccount,
   errorMessage,
+  tidalAccountLabel,
+  tidalAccountSource,
   tidalAutoDownloadProblems,
+  tidalManagementUnsupported,
+  tidalProxyState,
   tidalStatusDetails,
   tidalStatusErrors,
   useTidalDeviceLogin,
   type TidalAccount,
   type TidalAutoDownloadStatus,
+  type TidalProxyState,
 } from "@music-library/core";
 import { HeaderIconButton } from "../../../components/header-buttons";
 import { Card, SectionLabel } from "../../../components/primitives";
@@ -133,8 +139,7 @@ export default function AdminTidalScreen() {
         }}
       >
         <StatusCard
-          connected={!!status?.connected}
-          loading={statusQuery.isLoading}
+          state={tidalProxyState(status, statusQuery.isLoading)}
           country={details.country}
           quality={details.quality}
           version={details.version}
@@ -183,7 +188,7 @@ export default function AdminTidalScreen() {
               theme={theme}
             />
           ))}
-          {!statusQuery.isLoading && accounts.length === 0 ? (
+          {status && accounts.length === 0 ? (
             <Card style={{ padding: theme.space.lg, gap: theme.space.sm }}>
               <Text style={{ color: theme.color.fg, fontSize: 16, fontWeight: "600" }}>
                 No account linked
@@ -234,7 +239,7 @@ export default function AdminTidalScreen() {
           </Card>
         ) : null}
 
-        {!status?.management_supported && !statusQuery.isLoading ? (
+        {tidalManagementUnsupported(status) ? (
           <Text selectable style={{ color: theme.color.fgMuted, fontSize: 12, lineHeight: 17 }}>
             Account controls require the Lumen hifi-api extension. Recreate the
             hifi-api container after updating the server.
@@ -245,13 +250,7 @@ export default function AdminTidalScreen() {
           label={starting ? "Starting sign-in…" : "Link TIDAL account"}
           icon="person.badge.plus"
           loading={starting}
-          disabled={
-            starting ||
-            unlinkingId !== null ||
-            !!flow ||
-            !status?.connected ||
-            !status?.management_supported
-          }
+          disabled={!canLinkTidalAccount(status, { starting, unlinkingId, flow })}
           onPress={onStartAuth}
           theme={theme}
           primary
@@ -273,16 +272,20 @@ export default function AdminTidalScreen() {
   );
 }
 
+const PROXY_STATE_LABELS: Record<TidalProxyState, string> = {
+  checking: "Checking proxy…",
+  online: "Proxy online",
+  offline: "Proxy offline",
+};
+
 function StatusCard({
-  connected,
-  loading,
+  state,
   country,
   quality,
   version,
   theme,
 }: {
-  connected: boolean;
-  loading: boolean;
+  state: TidalProxyState;
   country: string;
   quality: string;
   version: string;
@@ -301,19 +304,19 @@ function StatusCard({
             backgroundColor: theme.color.bgElev2,
           }}
         >
-          {loading ? (
+          {state === "checking" ? (
             <ActivityIndicator color={theme.color.fgMuted} />
           ) : (
             <SymbolView
-              name={connected ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"}
+              name={state === "online" ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"}
               size={22}
-              tintColor={connected ? theme.color.success : theme.color.danger}
+              tintColor={state === "online" ? theme.color.success : theme.color.danger}
             />
           )}
         </View>
         <View style={{ flex: 1, gap: 3 }}>
           <Text style={{ color: theme.color.fg, fontSize: 17, fontWeight: "600" }}>
-            {loading ? "Checking proxy…" : connected ? "Proxy online" : "Proxy offline"}
+            {PROXY_STATE_LABELS[state]}
           </Text>
           <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>
             TIDAL credentials stay on the server.
@@ -436,10 +439,10 @@ function AccountCard({
       <SymbolView name="person.crop.circle.fill" size={30} tintColor={theme.color.fgMuted} />
       <View style={{ flex: 1, gap: 3 }}>
         <Text selectable style={{ color: theme.color.fg, fontSize: 15, fontWeight: "600" }}>
-          Account {account.user_id || "unknown"}
+          {tidalAccountLabel(account)}
         </Text>
         <Text style={{ color: theme.color.fgMuted, fontSize: 12 }}>
-          {account.removable ? "Managed by Lumen" : "Configured by environment"}
+          {tidalAccountSource(account)}
         </Text>
       </View>
       {account.removable ? (

@@ -28,7 +28,7 @@ import {
   useDockScrollHandler,
 } from "../../../../components/dock/dock-context";
 import { TrackRow } from "../../../../components/track-row";
-import { usePlayTrack } from "../../../../context/player";
+import { usePlayerPlayback, usePlayTrack } from "../../../../context/player";
 import { qk } from "../../../../lib/query-keys";
 import { listPlaybackQueue, usePlayQueue } from "../../../../lib/use-play-queue";
 import { useAlbumDownloadAction } from "../../../../lib/album-download";
@@ -43,6 +43,7 @@ export default function AlbumDetailScreen() {
   const dockScroll = useDockScrollHandler();
   const { id } = useLocalSearchParams<{ id: string }>();
   const play = usePlayTrack();
+  const { shuffle } = usePlayerPlayback();
   const { me } = useAuth();
   const userId = me?.id;
   const isAdmin = me?.role === "admin";
@@ -128,13 +129,13 @@ export default function AlbumDetailScreen() {
         metadata={metaLine(libraryAlbumMetaParts(album))}
         onPlay={
           playableTracks(tracks).length > 0
-            ? () => startListPlayback(play, listPlaybackQueue(tracks), false)
+            ? () => startListPlayback(play, listPlaybackQueue(tracks), shuffle)
             : undefined
         }
         secondaryAction={downloadAction}
       />
     );
-  }, [albumQuery.data, coverBust, tracks, play, downloadAction]);
+  }, [albumQuery.data, coverBust, tracks, play, shuffle, downloadAction]);
 
   const openEdit = useCallback(() => {
     if (!id) return;

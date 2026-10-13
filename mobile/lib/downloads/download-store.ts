@@ -14,8 +14,8 @@ import {
   isApiOrigin,
   type TrackListItem,
 } from "@music-library/core";
+import { extensionForContentType } from "@music-library/core/audio-format";
 import {
-  extensionForContentType,
   extensionForMediaBytes,
   isRejectedStreamContentType,
   looksLikeMediaBytes,

@@ -2,9 +2,12 @@ import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
-  fisherYatesWithAnchor,
+  pluralize,
+  startShuffledListPlayback,
   useAuth,
+  type PlayerControls,
   type Playlist,
+  type TrackListItem,
 } from "@music-library/core";
 
 import {
@@ -195,13 +198,28 @@ export function SiriMediaBridge() {
           return;
         }
 
-        // Match the established CarPlay shuffle handoff: pre-shuffle before
-        // enabling the mode because both state updates happen in one render.
-        const queue = request.playShuffled
-          ? fisherYatesWithAnchor(playableQueue, null)
-          : playableQueue;
-        if (request.playShuffled && !shuffle) controls.setShuffle(true);
-        controls.play(queue[0], queue);
+        // A shuffled start picks its own track (and turns shuffle mode on only
+        // if the player accepts it), so note whichever track did start, for
+        // the log and the donation.
+        let started = null as TrackListItem | null;
+        const play: PlayerControls["play"] = (track, queue, options) => {
+          const result = controls.play(track, queue, options);
+          if (result !== false) started = track;
+          return result;
+        };
+        if (request.playShuffled) startShuffledListPlayback(play, playableQueue);
+        else play(playableQueue[0], playableQueue);
+        if (!started) {
+          diagnosticsLog.append({
+            scope: "siri",
+            level: "warn",
+            event: "siri-play-refused",
+            message: "The player refused to start the Siri request.",
+            title: entity?.title ?? requestedTitle,
+          });
+          await completeSiriMediaPlayback(request.requestId, "failure");
+          return;
+        }
         // Let React commit the queue and activate the native audio session
         // before reporting `.success` to SiriKit.
         await waitForPlayerHandoff();
@@ -210,15 +228,15 @@ export function SiriMediaBridge() {
           scope: "siri",
           level: "info",
           event: "siri-playback-started",
-          message: `Siri handed ${queue.length} track${queue.length === 1 ? "" : "s"} to the player.`,
-          trackId: queue[0].id,
-          title: queue[0].title,
+          message: `Siri handed ${pluralize(playableQueue.length, "track")} to the player.`,
+          trackId: started.id,
+          title: started.title,
           source: entity?.type,
         });
 
         const container = !entity || entity.type === "song" ? null : entity;
         void donateSiriPlayback(
-          trackSiriMediaItem(queue[0]),
+          trackSiriMediaItem(started),
           container,
           request.playShuffled === true,
         );
@@ -239,7 +257,7 @@ export function SiriMediaBridge() {
         clearTimeout(timeout);
       }
     },
-    [controls, current, queryClient, rememberRequest, shuffle, status, userId],
+    [controls, current, queryClient, rememberRequest, status, userId],
   );
 
   // Reads the latest player state when a request arrives, so the listener

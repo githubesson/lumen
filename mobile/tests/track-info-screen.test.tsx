@@ -117,7 +117,7 @@ it("fetches afresh on each visit, with nothing kept to show in its place", () =>
 
 it("doesn't show an earlier answer when this visit's fetch failed", () => {
   // React Query keeps the last data alongside a failed refetch.
-  mock.tidal = { data: info, isError: true };
+  mock.tidal = { data: info, isError: true, error: new Error("timeout") };
   const out = html();
   expect(out).toContain("Couldn&#x27;t load more from TIDAL");
   expect(out).not.toContain("Released");
@@ -185,4 +185,31 @@ it("never asks TIDAL about a local track", () => {
   expect(out).toContain(pair("Format", "FLAC"));
   expect(out).toContain("File size");
   expect(out).not.toContain("Source");
+});
+
+it("splits a file's rows into Credits, Release and Audio, leaving out what it lacks", () => {
+  mock.track = {
+    data: {
+      ...row,
+      id: "t1",
+      source: "local",
+      source_id: undefined,
+      format: "FLAC",
+      file_size: 2048,
+      genre: "",
+      comments: "Recorded live Â· 2019",
+      file_name: "01 Forever.flac",
+    },
+  };
+  const out = html();
+  expect(out).toContain("<h2>Credits</h2>");
+  expect(out).toContain("<h2>Release</h2>");
+  expect(out).toContain("<h2>Audio</h2>");
+  expect(out).not.toContain("Details");
+  expect(out).toContain(pair("Comments", "Recorded live · 2019"));
+  expect(out).toContain(pair("File", "01 Forever.flac"));
+  expect(out).not.toContain("Genre");
+  expect(out).not.toContain("Bitrate");
+  // Credit rows stay, with a dash for nobody credited.
+  expect(out).toContain(pair("Featured", "—"));
 });

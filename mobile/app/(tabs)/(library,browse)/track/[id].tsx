@@ -1,22 +1,18 @@
+import { Fragment } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams } from "expo-router";
 import {
   api,
   displayText,
-  formatBitrate,
-  formatCalendarDate,
-  formatSampleRate,
-  tidalAudioRows,
-  tidalRefusalMessage,
-  tidalTrackCredits,
-  trackCredits,
+  tidalTrackInfoResult,
+  trackInfoRows,
+  trackInfoTidalId,
   useAuth,
 } from "@music-library/core";
 import { CoverArt } from "../../../../components/cover-art";
 import { EmptyState } from "../../../../components/empty-state";
 import { Card, SectionLabel } from "../../../../components/primitives";
-import { formatBytes, formatDurationMs } from "../../../../lib/format";
 import { qk } from "../../../../lib/query-keys";
 import { useTheme, type ThemeTokens } from "../../../../theme/theme";
 
@@ -33,10 +29,9 @@ export default function TrackInfoScreen() {
   });
   // A TIDAL track's row stores little, so the rest comes live from TIDAL on
   // each visit. Without it the screen shows what the row has.
-  const tidalId =
-    trackQuery.data?.source === "tidal" ? trackQuery.data.source_id : undefined;
+  const tidalId = trackInfoTidalId(trackQuery.data);
   const tidalQuery = useQuery({
-    queryKey: qk.tidalTrack(userId, tidalId),
+    queryKey: qk.tidalTrack(userId, tidalId ?? undefined),
     queryFn: ({ signal }) => api.getTidalTrack(tidalId!, { signal }),
     enabled: !!userId && !!tidalId,
     // One fresh fetch per visit: nothing kept from the last visit to show
@@ -57,13 +52,17 @@ export default function TrackInfoScreen() {
   }
 
   const t = trackQuery.data;
-  const isTidal = t.source === "tidal";
-  const tidal =
-    tidalId && !tidalQuery.isError && tidalQuery.data?.id === tidalId ? tidalQuery.data : null;
-  // An error, or no answer at all (a paused query while offline).
-  const tidalFailed = !!tidalId && !tidal;
-  const tidalRefusal = tidalQuery.isError ? tidalRefusalMessage(tidalQuery.error) : null;
-  const credits = tidal ? tidalTrackCredits(t, tidal) : trackCredits(t);
+  // TIDAL's answer counts only when this visit's fetch got one: a failed
+  // fetch keeps the last answer beside its error, and a paused one (offline)
+  // has none.
+  const view = trackInfoRows(
+    t,
+    tidalTrackInfoResult(
+      tidalId,
+      tidalQuery.data,
+      tidalQuery.isError ? tidalQuery.error : null,
+    ),
+  );
 
   return (
     <>
@@ -104,84 +103,32 @@ export default function TrackInfoScreen() {
           ) : null}
         </View>
 
-        {tidalFailed ? (
-          <Note theme={theme}>
-            {tidalRefusal ?? "Couldn't load more from TIDAL, so some fields are missing."}
-          </Note>
-        ) : null}
+        {view.note ? <Note theme={theme}>{view.note}</Note> : null}
 
-        <InfoBlock title="Credits">
-          {credits.map((credit) => (
-            <InfoRow key={credit.label} label={credit.label} value={credit.value} theme={theme} lines={4} />
-          ))}
-        </InfoBlock>
-        {tidal?.credits_failed ? (
-          <Note theme={theme} under>
-            {tidal.credits_failure ?? "Couldn't load credits from TIDAL."}
-          </Note>
-        ) : null}
-
-        <InfoBlock title="Details">
-          <InfoRow label="Duration" value={formatDurationMs(t.duration_ms)} theme={theme} />
-          {typeof t.track_no === "number" ? (
-            <InfoRow label="Track" value={String(t.track_no)} theme={theme} />
-          ) : null}
-          {typeof t.disc_no === "number" ? (
-            <InfoRow label="Disc" value={String(t.disc_no)} theme={theme} />
-          ) : null}
-          {tidal?.release_date ? (
-            <InfoRow label="Released" value={formatCalendarDate(tidal.release_date)} theme={theme} />
-          ) : t.year ? (
-            <InfoRow label="Year" value={String(t.year)} theme={theme} />
-          ) : null}
-          {t.genre ? (
-            <InfoRow label="Genre" value={t.genre} theme={theme} />
-          ) : null}
-          {tidal?.bpm ? (
-            <InfoRow label="BPM" value={String(tidal.bpm)} theme={theme} />
-          ) : null}
-          {tidal?.key ? <InfoRow label="Key" value={tidal.key} theme={theme} /> : null}
-          {tidal?.isrc ? <InfoRow label="ISRC" value={tidal.isrc} theme={theme} /> : null}
-          {tidal?.copyright ? (
-            <InfoRow label="Copyright" value={tidal.copyright} theme={theme} lines={4} />
-          ) : null}
-          {isTidal ? (
-            // A stream, not a file: what this server streams it at, and no
-            // file size.
-            <>
-              <InfoRow label="Source" value="TIDAL" theme={theme} />
-              {tidalAudioRows(tidal).map((row) => (
-                <InfoRow key={row.label} label={row.label} value={row.value} theme={theme} />
-              ))}
-              {tidal?.channels ? (
-                <InfoRow label="Channels" value={String(tidal.channels)} theme={theme} />
-              ) : null}
-            </>
-          ) : (
-            <>
-              <InfoRow label="Format" value={t.format} theme={theme} />
-              {t.bitrate ? (
-                <InfoRow label="Bitrate" value={formatBitrate(t.bitrate)} theme={theme} />
-              ) : null}
-              {t.sample_rate ? (
-                <InfoRow label="Sample rate" value={formatSampleRate(t.sample_rate)} theme={theme} />
-              ) : null}
-              {t.channels ? (
-                <InfoRow
-                  label="Channels"
-                  value={String(t.channels)}
-                  theme={theme}
-                />
-              ) : null}
-              <InfoRow label="File size" value={formatBytes(t.file_size)} theme={theme} />
-            </>
-          )}
-        </InfoBlock>
-        {tidal?.release_failure ? (
-          <Note theme={theme} under>
-            {tidal.release_failure}
-          </Note>
-        ) : null}
+        {view.sections.map((section) => (
+          <Fragment key={section.key}>
+            {section.rows.length > 0 ? (
+              <InfoBlock title={section.label}>
+                {section.rows.map((row) => (
+                  <InfoRow
+                    key={row.label}
+                    label={row.label}
+                    value={row.value}
+                    empty={row.empty}
+                    // Credit lists, comments and copyright lines run long.
+                    lines={section.key === "credits" || row.wide ? 4 : 2}
+                    theme={theme}
+                  />
+                ))}
+              </InfoBlock>
+            ) : null}
+            {section.note ? (
+              <Note theme={theme} under={section.rows.length > 0}>
+                {section.note}
+              </Note>
+            ) : null}
+          </Fragment>
+        ))}
       </ScrollView>
     </>
   );
@@ -230,13 +177,15 @@ function Note({
 function InfoRow({
   label,
   value,
+  empty,
   theme,
   lines = 2,
 }: {
   label: string;
   value: string;
+  /** The value is a "—" for nothing to show; it's faded. */
+  empty?: boolean;
   theme: ThemeTokens;
-  /** Long credit lists and copyright lines get more room. */
   lines?: number;
 }) {
   return (
@@ -255,7 +204,7 @@ function InfoRow({
       <Text style={{ color: theme.color.fgMuted, fontSize: 14 }}>{label}</Text>
       <Text
         style={{
-          color: theme.color.fg,
+          color: empty ? theme.color.fgMuted : theme.color.fg,
           fontSize: 14,
           flexShrink: 1,
           textAlign: "right",

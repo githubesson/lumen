@@ -6,7 +6,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import type { TrackListItem } from "@music-library/core";
+import { displayText, type TrackListItem } from "@music-library/core";
 import { Card } from "../primitives";
 import { CoverArt } from "../cover-art";
 import { useTheme } from "../../theme/theme";
@@ -57,6 +57,8 @@ function TopTrackRow({
   onPress: (t: TrackListItem) => void;
 }) {
   const theme = useTheme();
+  const title = displayText(track.title);
+  const artist = displayText(track.artist);
   const handlePress = () => {
     void Haptics.selectionAsync();
     onPress(track);
@@ -65,9 +67,7 @@ function TopTrackRow({
     <Pressable
       onPress={handlePress}
       accessibilityRole="button"
-      accessibilityLabel={
-        track.artist ? `${track.title} by ${track.artist}` : track.title
-      }
+      accessibilityLabel={artist ? `${title} by ${artist}` : title}
       style={({ pressed }) => ({
         flexDirection: "row",
         alignItems: "center",
@@ -94,14 +94,14 @@ function TopTrackRow({
           numberOfLines={1}
           style={{ color: theme.color.fg, fontSize: 16, fontWeight: "500" }}
         >
-          {track.title}
+          {title}
         </Text>
-        {track.artist ? (
+        {artist ? (
           <Text
             numberOfLines={1}
             style={{ color: theme.color.fgMuted, fontSize: 13 }}
           >
-            {track.artist}
+            {artist}
           </Text>
         ) : null}
       </View>
