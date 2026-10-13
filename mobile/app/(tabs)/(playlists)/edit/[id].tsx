@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -6,10 +5,13 @@ import {
   api,
   errorMessage,
   isValidPlaylistName,
+  playlistDetailsForm,
   playlistDetailsPayload,
   playlistPermissions,
+  samePlaylistDetails,
   useAuth,
-  type Visibility,
+  useEditDraft,
+  type Playlist,
 } from "@music-library/core";
 import { EmptyState } from "../../../../components/empty-state";
 import {
@@ -24,15 +26,12 @@ import { useTheme } from "../../../../theme/theme";
 
 /**
  * Edit an existing playlist's metadata and cover, which only its owner may
- * change. Pushed from the detail screen and hydrated once from the cached
- * playlist query. `Save` / `Cancel` live in the sheet's nav bar via
- * `HeaderButton` so hit targets stay aligned when the button swaps between
- * label and spinner.
+ * change. Pushed from the detail screen and filled from the cached playlist
+ * query. `Save` / `Cancel` live in the sheet's nav bar via `HeaderButton` so
+ * hit targets stay aligned when the button swaps between label and spinner.
  */
 export default function EditPlaylistScreen() {
   const theme = useTheme();
-  const router = useRouter();
-  const queryClient = useQueryClient();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { me } = useAuth();
   const userId = me?.id;
@@ -45,25 +44,61 @@ export default function EditPlaylistScreen() {
     enabled: !!userId && !!id,
   });
 
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [visibility, setVisibility] = useState<Visibility>("private");
-  const [hydrated, setHydrated] = useState(false);
+  const playlist = playlistQuery.data;
+  if (!playlist || !id) {
+    return (
+      <>
+        <EditPlaylistHeader canSubmit={false} onSave={() => {}} />
+        <FormScreen>
+          <View style={{ paddingVertical: 48, alignItems: "center" }}>
+            <ActivityIndicator color={theme.color.fgMuted} />
+          </View>
+        </FormScreen>
+      </>
+    );
+  }
+  return <PlaylistEditor key={playlist.id} id={id} playlist={playlist} />;
+}
 
-  useEffect(() => {
-    if (!hydrated && playlistQuery.data) {
-      // Hydrate the edit draft exactly once from the queried playlist.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setName(playlistQuery.data.name);
-      setDescription(playlistQuery.data.description ?? "");
-      setVisibility(playlistQuery.data.visibility);
-      setHydrated(true);
-    }
-  }, [playlistQuery.data, hydrated]);
+function EditPlaylistHeader({
+  canSubmit,
+  onSave,
+}: {
+  canSubmit: boolean;
+  onSave: () => void;
+}) {
+  const theme = useTheme();
+  const router = useRouter();
+  return (
+    <Stack.Screen
+      options={{
+        headerTransparent: false,
+        headerStyle: { backgroundColor: theme.color.bg },
+        contentStyle: { backgroundColor: theme.color.bg },
+        headerLeft: () => (
+          <HeaderTextButton label="Cancel" onPress={() => router.back()} />
+        ),
+        headerRight: () => (
+          <HeaderTextButton label="Save" disabled={!canSubmit} onPress={onSave} />
+        ),
+      }}
+    />
+  );
+}
+
+function PlaylistEditor({ id, playlist }: { id: string; playlist: Playlist }) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const { me } = useAuth();
+  const userId = me?.id;
+
+  // The playlist query is persisted to disk, so the form can open on details
+  // older than the server's. Until the first edit a refetch refills it; after
+  // that the save compares with what the form was filled from.
+  const { base, draft, setField } = useEditDraft(playlist, playlistDetailsForm);
 
   const saveMutation = useMutation({
-    mutationFn: () =>
-      api.updatePlaylist(id!, playlistDetailsPayload({ name, description, visibility })),
+    mutationFn: () => api.updatePlaylist(id, playlistDetailsPayload(draft)),
     onSuccess: () => {
       // User-scoped keys so the list and the detail screen both pick up the
       // edited name / description / visibility instead of staying stale.
@@ -73,56 +108,44 @@ export default function EditPlaylistScreen() {
     },
   });
 
-  const playlist = playlistQuery.data;
+  const onSave = () => {
+    // The request sends every field, so an unchanged form sends nothing
+    // rather than write the details it opened with over newer ones.
+    if (samePlaylistDetails(playlistDetailsForm(base), draft)) {
+      router.back();
+      return;
+    }
+    saveMutation.mutate();
+  };
+
   const permissions = playlistPermissions(playlist, me);
   // The detail screen only offers Edit to the owner, but the playlist may
   // have changed hands (or this screen been reached some other way) since.
-  const forbidden = hydrated && !permissions.canEditDetails;
+  const forbidden = !permissions.canEditDetails;
 
   const canSubmit =
-    hydrated &&
     permissions.canEditDetails &&
-    isValidPlaylistName(name) &&
+    isValidPlaylistName(draft.name) &&
     !saveMutation.isPending;
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          headerTransparent: false,
-          headerStyle: { backgroundColor: theme.color.bg },
-          contentStyle: { backgroundColor: theme.color.bg },
-          headerLeft: () => (
-            <HeaderTextButton label="Cancel" onPress={() => router.back()} />
-          ),
-          headerRight: () => (
-            <HeaderTextButton
-              label="Save"
-              disabled={!canSubmit}
-              onPress={() => saveMutation.mutate()}
-            />
-          ),
-        }}
-      />
+      <EditPlaylistHeader canSubmit={canSubmit} onSave={onSave} />
       <FormScreen>
-        {!hydrated ? (
-          <View style={{ paddingVertical: 48, alignItems: "center" }}>
-            <ActivityIndicator color={theme.color.fgMuted} />
-          </View>
-        ) : forbidden ? (
+        {forbidden ? (
           <EmptyState message="Only the playlist's owner can edit its details." />
         ) : (
           <>
-            {playlist && permissions.canChangeCover ? (
+            {permissions.canChangeCover ? (
               <PlaylistCoverField playlist={playlist} userId={userId} />
             ) : null}
             <PlaylistFields
-              name={name}
-              description={description}
-              visibility={visibility}
-              setName={setName}
-              setDescription={setDescription}
-              setVisibility={setVisibility}
+              name={draft.name}
+              description={draft.description}
+              visibility={draft.visibility}
+              setName={(value) => setField("name", value)}
+              setDescription={(value) => setField("description", value)}
+              setVisibility={(value) => setField("visibility", value)}
             />
 
             <FormError
