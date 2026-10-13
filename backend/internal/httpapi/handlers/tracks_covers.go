@@ -312,8 +312,10 @@ func (h *Tracks) PublicAlbumCover(w http.ResponseWriter, r *http.Request) {
 	}
 	var key string
 	if rawUser := q.Get("u"); rawUser != "" {
-		userID, err := uuid.Parse(rawUser)
-		if err != nil {
+		// perr, not err: the lookup below must set the err checked after the
+		// if/else, not a new one scoped to this block.
+		userID, perr := uuid.Parse(rawUser)
+		if perr != nil {
 			http.Error(w, "bad u", http.StatusBadRequest)
 			return
 		}
