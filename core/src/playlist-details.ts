@@ -33,6 +33,21 @@ export function playlistDetailsPayload(
   };
 }
 
+/**
+ * An edit form's starting values for a saved playlist, untrimmed as they
+ * show. Pass it to `useEditDraft` as `toForm`, and compare a draft with it
+ * through `samePlaylistDetails`.
+ */
+export function playlistDetailsForm(
+  playlist: Pick<Playlist, "name" | "description" | "visibility">,
+): PlaylistDetailsPayload {
+  return {
+    name: playlist.name,
+    description: playlist.description ?? "",
+    visibility: playlist.visibility,
+  };
+}
+
 /** The server's rule: a name with something besides whitespace. */
 export function isValidPlaylistName(name: string): boolean {
   return name.trim().length > 0;
