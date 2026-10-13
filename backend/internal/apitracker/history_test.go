@@ -194,7 +194,9 @@ func TestRescanKeepsEditsUntilTrackerChanges(t *testing.T) {
 	}
 }
 
-func TestRecordedSkipsAreFinal(t *testing.T) {
+// A link recorded as skipped isn't resolved and requested again while the
+// reason is about the link and still holds; any other skip is retried.
+func TestRecordedSkipFinality(t *testing.T) {
 	url := os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("set LUMEN_REVIEW_TEST_DATABASE_URL to an isolated PostgreSQL database")
@@ -215,10 +217,14 @@ func TestRecordedSkipsAreFinal(t *testing.T) {
 	}
 	t.Cleanup(func() { store.DeletePin(context.Background(), pin.ID) })
 	reasons := map[string]bool{
+		"skipped host":                      true,
 		`unsupported file extension ".txt"`: true,
-		"download URL host is not allowed":  true,
-		"destination is read-only":          false,
-		"unsupported file extension":        false,
+		// Recorded when ingest couldn't read .flac yet.
+		`unsupported file extension ".flac"`: false,
+		"no file extension":                  false,
+		"download URL host is not allowed":   false,
+		"destination is read-only":           false,
+		"unsupported file extension":         false,
 	}
 	for reason := range reasons {
 		if err := store.RecordDownload(ctx, DownloadInput{PinID: pin.ID, SourceURL: "https://files.example/" + reason, Status: StatusSkipped, Error: reason}); err != nil {

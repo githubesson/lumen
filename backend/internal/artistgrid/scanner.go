@@ -203,7 +203,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 					PinID:     pin.ID,
 					SourceURL: sourceURL,
 					Status:    StatusSkipped,
-					Error:     "skipped host",
+					Error:     downloadfile.SkippedHost,
 					Metadata:  metadata,
 				})
 				continue
@@ -327,9 +327,10 @@ func (s *Scanner) record(ctx context.Context, history map[string]Download, in Do
 	history[key] = d
 }
 
-// previousStillPresent settles a link the pin has handled before: a recorded
-// skip stands, and a download whose file is still there counts as existing
-// rather than being fetched again. It reports whether the link is settled.
+// previousStillPresent settles a link the pin has handled before: a final
+// skip (downloadfile.SkipFinal) stands, and a download whose file is still
+// there counts as existing rather than being fetched again. It reports
+// whether the link is settled.
 func (s *Scanner) previousStillPresent(ctx context.Context, history map[string]Download, pinID uuid.UUID, sourceURL string, summary *ScanSummary) bool {
 	prev, ok := history[dbtext.Clean(sourceURL)]
 	if !ok {
@@ -337,7 +338,7 @@ func (s *Scanner) previousStillPresent(ctx context.Context, history map[string]D
 	}
 	switch prev.Status {
 	case StatusSkipped:
-		if downloadfile.SkipFinal(prev.Error) {
+		if downloadfile.SkipFinal(prev.Error, ingest.IsSupported) {
 			summary.Skipped++
 			return true
 		}

@@ -142,18 +142,28 @@ func TestSaveNewNeverReusesExistingFile(t *testing.T) {
 }
 
 func TestSkipFinal(t *testing.T) {
+	// Ingest reads .flac, say, but not .txt.
+	supported := func(name string) bool { return filepath.Ext(name) == ".flac" }
 	for reason, want := range map[string]bool{
+		SkippedHost:                              true,
 		UnsupportedExtension("notes.txt").Reason: true,
-		UnsupportedExtension("README").Reason:    true,
-		"skipped host":                           true,
-		"download URL host is not allowed":       true,
+		// Ingest has learned the format since.
+		UnsupportedExtension("song.flac").Reason: false,
+		// A page served without a file name, say: the next response may have one.
+		UnsupportedExtension("README").Reason: false,
+		// Our policy, which can be relaxed.
+		"download URL host is not allowed": false,
 		// Our disk, not the link.
 		destinationError(os.ErrPermission).Error(): false,
 		// Recorded before the reason named the extension, possibly for a name
 		// cut short.
-		"unsupported file extension": false,
+		"unsupported file extension":      false,
+		`unsupported file extension "`:    false,
+		`unsupported file extension ".x`:  false,
+		`unsupported file extension ""`:   false,
+		`unsupported file extension .txt`: false,
 	} {
-		if got := SkipFinal(reason); got != want {
+		if got := SkipFinal(reason, supported); got != want {
 			t.Errorf("SkipFinal(%q) = %v, want %v", reason, got, want)
 		}
 	}
