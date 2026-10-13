@@ -281,17 +281,27 @@ func (s *Store) MarkScanFinished(ctx context.Context, id uuid.UUID, scanErr erro
 	return err
 }
 
-func (s *Store) DownloadForSource(ctx context.Context, pinID uuid.UUID, sourceURL string) (Download, error) {
-	sourceURL = dbtext.Clean(sourceURL)
-	d, err := scanDownload(s.db.QueryRow(ctx, `
+// downloadsBySource loads a pin's download history keyed by source URL, so a
+// scan looks entries up instead of querying once per link.
+func (s *Store) downloadsBySource(ctx context.Context, pinID uuid.UUID) (map[string]Download, error) {
+	rows, err := s.db.Query(ctx, `
 		SELECT id, pin_id, source_url, resolved_url, file_path, status, error,
 		       track_id, metadata, first_seen_at, downloaded_at, updated_at
 		FROM artistgrid_downloads
-		WHERE pin_id = $1 AND source_url = $2`, pinID, sourceURL))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Download{}, ErrNotFound
+		WHERE pin_id = $1`, pinID)
+	if err != nil {
+		return nil, err
 	}
-	return d, err
+	defer rows.Close()
+	out := make(map[string]Download)
+	for rows.Next() {
+		d, err := scanDownload(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[d.SourceURL] = d
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) RecordDownload(ctx context.Context, in DownloadInput) error {

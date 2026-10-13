@@ -92,7 +92,11 @@ func TestPreviousStillPresentAfterDedup(t *testing.T) {
 			// must use its canonical link without recreating or retagging either file.
 			for i := 0; i < 2; i++ {
 				summary := ScanSummary{}
-				if got := scanner.previousStillPresent(ctx, pin.ID, sourceURL, &summary); got != tc.want {
+				history, err := store.downloadsBySource(ctx, pin.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := scanner.previousStillPresent(ctx, history, pin.ID, sourceURL, &summary); got != tc.want {
 					t.Fatalf("present = %v, want %v", got, tc.want)
 				}
 				wantExisting := 0
@@ -255,5 +259,46 @@ func TestScanPinRefusesUnavailableRoot(t *testing.T) {
 	}
 	if _, err := os.Stat(missing); !os.IsNotExist(err) {
 		t.Fatalf("scan created the missing root: %v", err)
+	}
+}
+
+// A link recorded as skipped isn't resolved and requested again, unless the
+// skip was about our disk rather than the link.
+func TestRecordedSkipsAreFinal(t *testing.T) {
+	url := os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("set LUMEN_REVIEW_TEST_DATABASE_URL to an isolated PostgreSQL database")
+	}
+	if err := db.Migrate(url); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	pool, err := db.Open(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	store := NewStore(pool)
+	pin, err := store.AddPin(ctx, AddPinInput{TrackerID: "skips", RootPath: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.DeletePin(context.Background(), pin.ID) })
+	reasons := map[string]bool{`unsupported file extension ".zip"`: true, "destination is read-only": false}
+	for reason := range reasons {
+		if err := store.RecordDownload(ctx, DownloadInput{PinID: pin.ID, SourceURL: "https://files.example/" + reason, Status: StatusSkipped, Error: reason}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	history, err := store.downloadsBySource(ctx, pin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := Scanner{Store: store}
+	for reason, final := range reasons {
+		var summary ScanSummary
+		if got := scanner.previousStillPresent(ctx, history, pin.ID, "https://files.example/"+reason, &summary); got != final || (summary.Skipped == 1) != final {
+			t.Errorf("%q: settled=%v skipped=%d, want final=%v", reason, got, summary.Skipped, final)
+		}
 	}
 }

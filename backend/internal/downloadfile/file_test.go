@@ -140,3 +140,24 @@ func TestSaveNewNeverReusesExistingFile(t *testing.T) {
 		}
 	}
 }
+
+func TestSkipFinal(t *testing.T) {
+	for reason, want := range map[string]bool{
+		UnsupportedExtension("notes.txt").Reason: true,
+		UnsupportedExtension("README").Reason:    true,
+		"skipped host":                           true,
+		"download URL host is not allowed":       true,
+		// Our disk, not the link.
+		destinationError(os.ErrPermission).Error(): false,
+		// Recorded before the reason named the extension, possibly for a name
+		// cut short.
+		"unsupported file extension": false,
+	} {
+		if got := SkipFinal(reason); got != want {
+			t.Errorf("SkipFinal(%q) = %v, want %v", reason, got, want)
+		}
+	}
+	if got := UnsupportedExtension("notes.txt").Reason; got != `unsupported file extension ".txt"` {
+		t.Errorf("reason = %q", got)
+	}
+}

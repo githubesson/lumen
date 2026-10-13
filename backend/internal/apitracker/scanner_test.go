@@ -71,7 +71,7 @@ func TestDownloadOneSkipsUnsupportedExtensionBeforeWriting(t *testing.T) {
 	if !errors.As(err, &skipErr) {
 		t.Fatalf("expected downloadfile.SkipError, got %T %v", err, err)
 	}
-	if skipErr.Error() != "unsupported file extension" {
+	if skipErr.Error() != `unsupported file extension ".txt"` {
 		t.Fatalf("unexpected skip reason: %q", skipErr.Error())
 	}
 	if !requested {

@@ -103,6 +103,32 @@ type SkipError struct{ Reason string }
 
 func (e SkipError) Error() string { return e.Reason }
 
+const (
+	readOnlyReason = "destination is read-only"
+	// legacyUnsupportedReason is how unsupported extensions were recorded
+	// before the reason named the extension.
+	legacyUnsupportedReason = "unsupported file extension"
+)
+
+// UnsupportedExtension skips a file ingest can't read, naming its extension.
+func UnsupportedExtension(name string) SkipError {
+	ext := filepath.Ext(name)
+	if ext == "" {
+		return SkipError{Reason: "no file extension"}
+	}
+	return SkipError{Reason: fmt.Sprintf("%s %q", legacyUnsupportedReason, ext)}
+}
+
+// SkipFinal reports whether a link recorded as skipped for reason should stay
+// skipped on later scans rather than be resolved and requested again. Skips
+// are about the link, so they stand, except a read-only destination, which is
+// about our disk, and an unsupported extension recorded before the reason
+// named it: names cut at a byte limit used to lose their extension, so those
+// get one more look.
+func SkipFinal(reason string) bool {
+	return reason != readOnlyReason && reason != legacyUnsupportedReason
+}
+
 // Save installs a downloaded body without overwriting another file. Existing
 // non-empty files are reused; empty targets are preserved under their name.
 // The returned path is also meaningful on failure for download history.
@@ -159,7 +185,7 @@ func save(body io.Reader, target string, reuse bool) (filePath string, existing 
 
 func destinationError(err error) error {
 	if isReadOnlyDestinationError(err) {
-		return SkipError{Reason: "destination is read-only"}
+		return SkipError{Reason: readOnlyReason}
 	}
 	return err
 }

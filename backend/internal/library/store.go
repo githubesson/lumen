@@ -909,6 +909,21 @@ func (s *Store) SetTrackAlbumCover(ctx context.Context, trackID uuid.UUID, cover
 	return err
 }
 
+// TrackAlbumNeedsCover reports whether SetTrackAlbumCover would set a cover:
+// the track is global and its album has none yet.
+func (s *Store) TrackAlbumNeedsCover(ctx context.Context, trackID uuid.UUID) (bool, error) {
+	var needs bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tracks t
+			JOIN albums a ON a.id = t.album_id
+			WHERE t.id = $1
+			  AND t.owner_id IS NULL
+			  AND NULLIF(a.cover_art_path, '') IS NULL
+		)`, trackID).Scan(&needs)
+	return needs, err
+}
+
 // ClearAlbumCover removes an album's cover-art reference, reverting it to the
 // placeholder. The underlying storage object is intentionally left in place:
 // covers are content-addressed and may be shared by other albums, so deleting
