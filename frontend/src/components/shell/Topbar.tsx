@@ -102,9 +102,11 @@ export default function Topbar({
         <kbd>{modShortcut("K")}</kbd>
       </button>
 
+      {/* Not a secondary button: on phones it's the way in, and where focus
+          goes back when customizing ends. */}
       {onHome && (
         <button
-          className={"iconbtn topbar-secondary" + (customizing ? " active" : "")}
+          className={"iconbtn" + (customizing ? " active" : "")}
           type="button"
           title={customizing ? "Done customizing" : "Customize Home"}
           aria-label="Customize Home"

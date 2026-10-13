@@ -33,7 +33,7 @@ test("home, customizing", async ({ page }, testInfo) => {
   await go(page, "/?customize");
   await ready(page, page.locator('[data-panel="artists"] .board-artist'));
   // One panel picked with Move, so both tile states are checked.
-  await press(page, "button", "Move");
+  await press(page, "button", "Move Albums");
   await ready(page, page.getByRole("button", { name: "Swap here" }));
   await checkUI(page, testInfo);
 });

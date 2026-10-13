@@ -37,7 +37,6 @@ import {
   arrangementTweak,
   panelIn,
   readArrangement,
-  type HomeArrangement,
   type HomePanelId,
 } from "../components/home/homeArrangement";
 import { homeAlbums } from "../components/home/homeAlbums";
@@ -189,7 +188,7 @@ export default function Home() {
   // The board's slots keep their shapes; the arrangement says which panel
   // fills each, and which are hidden. While customizing, every panel that
   // isn't hidden is on the board, empty or not, so it can be moved.
-  const { homeBoard, setHomeBoard } = useTheme();
+  const { homeBoard, setHomeBoard, tweaksLoaded } = useTheme();
   const arrangement = useMemo(() => readArrangement(homeBoard), [homeBoard]);
   const [params, setParams] = useSearchParams();
   const editing = params.has(CUSTOMIZE_PARAM);
@@ -208,7 +207,7 @@ export default function Home() {
   const editor = useBoardEditor({
     editing,
     arrangement,
-    onChange: (next: HomeArrangement) => setHomeBoard(arrangementTweak(next)),
+    onChange: (next) => setHomeBoard(arrangementTweak(next)),
     onDone: () => setEditing(false),
   });
 
@@ -375,6 +374,10 @@ export default function Home() {
         );
     }
   };
+
+  // The desktop app reads the arrangement from its config file; until then
+  // the board would take the default shape and then jump.
+  if (!tweaksLoaded) return <div className="view board-view" />;
 
   return (
     <div className="view board-view">

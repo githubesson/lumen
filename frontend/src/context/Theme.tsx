@@ -63,12 +63,18 @@ interface ThemeState extends Tweaks {
   setLayout: (l: Layout) => void;
   /** Saves Home's arrangement; undefined goes back to the default. */
   setHomeBoard: (board: HomeBoardTweak | undefined) => void;
+  /**
+   * The saved tweaks are in. Always on the web; in Electron once config.json
+   * has been read, so Home doesn't lay out a default board and then jump.
+   */
+  tweaksLoaded: boolean;
 }
 
 const Ctx = createContext<ThemeState | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [tweaks, setTweaks] = useState<Tweaks>(() => readInitial());
+  const [tweaksLoaded, setTweaksLoaded] = useState(() => !isElectron());
   const electronLoadedRef = useRef(false);
 
   useEffect(() => {
@@ -94,9 +100,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         electronLoadedRef.current = true;
         setTweaks((prev) => ({ ...prev, ...knownTweaks(electronTweaks) }));
+        setTweaksLoaded(true);
       })
       .catch(() => {
         electronLoadedRef.current = true;
+        if (!cancelled) setTweaksLoaded(true);
       });
     return () => {
       cancelled = true;
@@ -150,6 +158,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setDensity,
       setLayout,
       setHomeBoard,
+      tweaksLoaded,
     }),
     [
       tweaks,
@@ -159,6 +168,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setDensity,
       setLayout,
       setHomeBoard,
+      tweaksLoaded,
     ],
   );
 

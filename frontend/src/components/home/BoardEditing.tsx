@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type DragEvent, type ReactNode, type RefObject } from "react";
+import { useRef, useState, type DragEvent, type DragEventHandler, type ReactNode, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import {
   ArrowLeftRight as SwapIcon,
@@ -30,7 +30,8 @@ import {
  * panel, does the same as a drag, from the keyboard or a touch screen.
  */
 
-let activeMorph: object | null = null;
+/** The morph running now, and the slots it lifted. */
+let activeMorph: { lifted: HTMLElement[] } | null = null;
 
 /**
  * Runs a change to the board as a view transition, so panels glide to their
@@ -47,8 +48,12 @@ function morphBoard(update: () => void, lift: HomePanelId[] = []) {
   }
   const root = document.documentElement;
   const lifted = lift.flatMap((id) => [...document.querySelectorAll<HTMLElement>(`.board-slot[data-panel="${id}"]`)]);
-  const token = {};
-  activeMorph = token;
+  // A morph still running is skipped by this one; its panels settle back
+  // down unless this one lifts them too. Its own cleanup runs too late:
+  // after this morph has captured its starting frame.
+  for (const el of activeMorph?.lifted ?? []) if (!lifted.includes(el)) delete el.dataset.lift;
+  const morph = { lifted };
+  activeMorph = morph;
   root.dataset.boardMorph = "";
   for (const el of lifted) el.dataset.lift = "";
   const transition = document.startViewTransition(update);
@@ -57,11 +62,27 @@ function morphBoard(update: () => void, lift: HomePanelId[] = []) {
   void transition.finished
     .catch(() => {})
     .finally(() => {
-      for (const el of lifted) delete el.dataset.lift;
-      if (activeMorph !== token) return;
+      if (activeMorph !== morph) return;
       activeMorph = null;
+      for (const el of lifted) delete el.dataset.lift;
       delete root.dataset.boardMorph;
     });
+}
+
+/** What a slot needs while customizing: its state, drag handlers and tile. */
+export interface SlotEditing {
+  dragging: boolean;
+  /** A drag is over it. */
+  target: boolean;
+  /** Picked with Move. */
+  moving: boolean;
+  onDragStart: DragEventHandler<HTMLElement>;
+  onDragEnter: DragEventHandler<HTMLElement>;
+  onDragOver: DragEventHandler<HTMLElement>;
+  onDragLeave: DragEventHandler<HTMLElement>;
+  onDrop: DragEventHandler<HTMLElement>;
+  onDragEnd: DragEventHandler<HTMLElement>;
+  editor: ReactNode;
 }
 
 export function useBoardEditor({
@@ -82,6 +103,9 @@ export function useBoardEditor({
   const [announcement, setAnnouncement] = useState("");
   // The drag source, for dragover before the deferred state lands.
   const dragSource = useRef<HomePanelId | null>(null);
+  // Drag enters minus leaves per slot, counting its children. A leave
+  // can't be told apart by relatedTarget: Safari leaves it null.
+  const dragDepth = useRef(new Map<HomePanelId, number>());
   const moveButtons = useRef(new Map<HomePanelId, HTMLButtonElement>());
   const doneButton = useRef<HTMLButtonElement>(null);
   if (!editing && (moving || dragging || target || announcement)) {
@@ -92,20 +116,24 @@ export function useBoardEditor({
   }
 
   /** Applies a change, then focuses what `focus` names once it's on the board. */
-  const change = useCallback(
-    (next: HomeArrangement, message: string, focus?: HomePanelId | "done", lift?: HomePanelId[]) => {
-      morphBoard(() => {
-        flushSync(() => onChange(next));
-        if (focus === "done") doneButton.current?.focus();
-        else if (focus) moveButtons.current.get(focus)?.focus({ preventScroll: true });
-      }, lift);
-      setAnnouncement(message);
-    },
-    [onChange],
-  );
+  const change = (next: HomeArrangement, message: string, focus?: HomePanelId | "done", lift?: HomePanelId[]) => {
+    setMoving(null);
+    morphBoard(() => {
+      flushSync(() => onChange(next));
+      if (focus === "done") doneButton.current?.focus();
+      else if (focus) moveButtons.current.get(focus)?.focus({ preventScroll: true });
+    }, lift);
+    setAnnouncement(message);
+  };
+
+  const endDrag = () => {
+    dragSource.current = null;
+    dragDepth.current.clear();
+    setDragging(null);
+    setTarget(null);
+  };
 
   const swap = (from: HomePanelId, to: HomePanelId, focus?: HomePanelId) => {
-    setMoving(null);
     if (from === to) return;
     change(
       swapPanels(arrangement, from, to),
@@ -115,11 +143,11 @@ export function useBoardEditor({
     );
   };
 
-  const hide = (id: HomePanelId, focusNext: HomePanelId | undefined) => {
-    setMoving(null);
+  const hide = (id: HomePanelId, focusNext: HomePanelId | undefined) =>
     change(setPanelHidden(arrangement, id, true), `${HOME_PANEL_TITLES[id]} hidden.`, focusNext ?? "done");
-  };
 
+  // Show, hide, swap and reset all end a pending Move (in `change`), so the
+  // panel they focus has its Move button, not Swap here.
   const show = (id: HomePanelId) =>
     change(setPanelHidden(arrangement, id, false), `${HOME_PANEL_TITLES[id]} shown.`, id);
 
@@ -152,7 +180,7 @@ export function useBoardEditor({
   );
 
   /** What a slot needs while editing: its drag handlers and its tile. */
-  const slot = (id: HomePanelId, next: HomePanelId | undefined, empty: boolean) => ({
+  const slot = (id: HomePanelId, next: HomePanelId | undefined, empty: boolean): SlotEditing => ({
     dragging: dragging === id,
     target: target === id,
     moving: moving === id,
@@ -165,30 +193,34 @@ export function useBoardEditor({
       // Restyling the source in dragstart can cancel the drag in Chrome.
       requestAnimationFrame(() => setDragging(dragSource.current));
     },
+    onDragEnter: () => {
+      const from = dragSource.current;
+      if (!from || from === id) return;
+      dragDepth.current.set(id, (dragDepth.current.get(id) ?? 0) + 1);
+      setTarget(id);
+    },
     onDragOver: (e: DragEvent<HTMLElement>) => {
       const from = dragSource.current;
       if (!from || from === id) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
-      if (target !== id) setTarget(id);
     },
-    onDragLeave: (e: DragEvent<HTMLElement>) => {
-      if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    onDragLeave: () => {
+      const depth = (dragDepth.current.get(id) ?? 0) - 1;
+      if (depth > 0) {
+        dragDepth.current.set(id, depth);
+        return;
+      }
+      dragDepth.current.delete(id);
       setTarget((t) => (t === id ? null : t));
     },
     onDrop: (e: DragEvent<HTMLElement>) => {
       e.preventDefault();
       const from = dragSource.current;
-      dragSource.current = null;
-      setDragging(null);
-      setTarget(null);
+      endDrag();
       if (from) swap(from, id);
     },
-    onDragEnd: () => {
-      dragSource.current = null;
-      setDragging(null);
-      setTarget(null);
-    },
+    onDragEnd: endDrag,
     editor: (
       <SlotEditor
         id={id}
@@ -238,7 +270,7 @@ export function BoardSlot({
 }: {
   cell: BoardCell;
   panel: HomePanelId;
-  editing: ReturnType<ReturnType<typeof useBoardEditor>["slot"]> | null;
+  editing: SlotEditing | null;
   children: ReactNode;
 }) {
   return (
@@ -258,6 +290,7 @@ export function BoardSlot({
       data-moving={editing?.moving || undefined}
       draggable={editing ? true : undefined}
       onDragStart={editing?.onDragStart}
+      onDragEnter={editing?.onDragEnter}
       onDragOver={editing?.onDragOver}
       onDragLeave={editing?.onDragLeave}
       onDrop={editing?.onDrop}
@@ -305,7 +338,7 @@ function SlotEditor({
         <div className="board-slot-actions">
           {state === "target" ? (
             <Button size="sm" variant="primary" onClick={onSwapHere} leadingIcon={<SwapIcon className="size-3.5" />}>
-              Swap here
+              Swap here<span className="sr-only"> with {title}</span>
             </Button>
           ) : (
             <Button
@@ -316,11 +349,12 @@ function SlotEditor({
               leadingIcon={<SwapIcon className="size-3.5" />}
             >
               {state === "moving" ? "Cancel move" : "Move"}
+              <span className="sr-only"> {title}</span>
             </Button>
           )}
           {state !== "moving" && (
             <Button size="sm" variant="ghost" onClick={onHide} leadingIcon={<EyeOffIcon className="size-3.5" />}>
-              Hide
+              Hide<span className="sr-only"> {title}</span>
             </Button>
           )}
         </div>

@@ -325,9 +325,9 @@ it("swaps and hides panels while customizing, and saves the arrangement", async 
   // Empty lists are on the board too, so they can be moved or hidden.
   expect(tile("Your favorites").getByText("Shows up once it has something")).toBeTruthy();
 
-  fireEvent.click(tile("Albums").getByRole("button", { name: "Move" }));
+  fireEvent.click(tile("Albums").getByRole("button", { name: /^Move\s*Albums$/ }));
   expect(bar.getByText("Choose where Albums goes.")).toBeTruthy();
-  fireEvent.click(tile("Recently played").getByRole("button", { name: "Swap here" }));
+  fireEvent.click(tile("Recently played").getByRole("button", { name: /^Swap here\s*with Recently played$/ }));
   expect(slotOf("albums")).toBe("recent");
   expect(slotOf("recent")).toBe("albums");
   expect(savedBoard()).toEqual({
@@ -336,13 +336,18 @@ it("swaps and hides panels while customizing, and saves the arrangement", async 
   });
   expect(bar.getByRole("status").textContent).toBe("Swapped Albums and Recently played.");
   // Focus stays with the panel that moved.
-  expect(document.activeElement).toBe(tile("Albums").getByRole("button", { name: "Move" }));
+  expect(document.activeElement).toBe(tile("Albums").getByRole("button", { name: /^Move\s*Albums$/ }));
 
-  fireEvent.click(tile("Albums").getByRole("button", { name: "Hide" }));
+  fireEvent.click(tile("Albums").getByRole("button", { name: /^Hide\s*Albums$/ }));
   expect(panel("albums")).toBeNull();
   expect(savedBoard().hidden).toEqual(["albums"]);
+  // Showing it again while another panel is picked ends that Move, and
+  // focus lands on the shown panel's Move button.
+  fireEvent.click(tile("Playlists").getByRole("button", { name: /^Move\s*Playlists$/ }));
   fireEvent.click(within(bar.getByRole("group", { name: "Hidden panels" })).getByRole("button", { name: "Show Albums" }));
   expect(slotOf("albums")).toBe("recent");
+  expect(document.activeElement).toBe(tile("Albums").getByRole("button", { name: /^Move\s*Albums$/ }));
+  expect(screen.queryByRole("button", { name: /^Swap here/ })).toBeNull();
 
   fireEvent.click(bar.getByRole("button", { name: "Reset" }));
   expect(slotOf("albums")).toBe("albums");
@@ -358,8 +363,16 @@ it("swaps two panels dropped one on the other", async () => {
   await renderHome("/?customize");
   const dataTransfer = { setData: vi.fn(), effectAllowed: "", dropEffect: "" };
   fireEvent.dragStart(panel("albums")!, { dataTransfer });
-  fireEvent.dragOver(panel("resume")!, { dataTransfer });
-  fireEvent.drop(panel("resume")!, { dataTransfer });
+  fireEvent.dragEnter(panel("resume")!, { dataTransfer });
+  expect(panel("resume")!.hasAttribute("data-target")).toBe(true);
+  // Crossing into the tile's children doesn't drop the highlight, even
+  // with no relatedTarget (as Safari reports it).
+  const label = panel("resume")!.querySelector(".board-slot-name")!;
+  fireEvent.dragEnter(label, { dataTransfer });
+  fireEvent.dragLeave(panel("resume")!, { dataTransfer });
+  expect(panel("resume")!.hasAttribute("data-target")).toBe(true);
+  fireEvent.dragOver(label, { dataTransfer });
+  fireEvent.drop(label, { dataTransfer });
   expect(slotOf("albums")).toBe("resume");
   expect(slotOf("resume")).toBe("albums");
   expect(savedBoard().slots.slice(0, 5)).toEqual(["albums", "repeat", "recent", "favorites", "resume"]);
