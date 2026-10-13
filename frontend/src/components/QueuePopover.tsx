@@ -223,26 +223,21 @@ const QueueContents = memo(function QueueContents({ queue, index, current, jumpT
 
   return (
     <>
-      {(usingExternal ? externalCurrent : current) && (
-        <>
-          <div className="queue-pop-heading">Now playing</div>
-          {usingExternal && externalCurrent ? (
-            <QueueRow
-              title={externalCurrent.title}
-              artist={externalCurrent.artist ?? externalCurrent.album}
-              active
-            />
-          ) : current ? (
-            <QueueRow
-              title={current.title}
-              artist={current.artist}
-              coverUrl={trackCoverUrl(current, 64)}
-              active
-              onContextMenu={bindCtx?.(current, { queue, onPlay: () => jumpTo(index) })}
-            />
-          ) : null}
-        </>
-      )}
+      {usingExternal && externalCurrent ? (
+        <QueueRow
+          title={externalCurrent.title}
+          artist={externalCurrent.artist ?? externalCurrent.album}
+          active
+        />
+      ) : !usingExternal && current ? (
+        <QueueRow
+          title={current.title}
+          artist={current.artist}
+          coverUrl={trackCoverUrl(current, 96)}
+          active
+          onContextMenu={bindCtx?.(current, { queue, onPlay: () => jumpTo(index) })}
+        />
+      ) : null}
 
       {upcoming.length > 0 ? (
         <>
@@ -305,6 +300,9 @@ function QueueRow({
     <>
       <CoverArt className="queue-pop-art" src={coverUrl} label={title} />
       <div className="queue-pop-text">
+        {/* The playing track is a band of its own, captioned like the share
+            page's header, rather than a section heading over a row. */}
+        {active && <div className="queue-pop-eyebrow">Now playing</div>}
         <div className="queue-pop-title">{displayText(title)}</div>
         <div className="queue-pop-artist">{displayText(artist, "Unknown artist")}</div>
       </div>
