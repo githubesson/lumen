@@ -515,6 +515,19 @@ describe("batched download mutations", () => {
     expect(h.files.has(coverUri)).toBe(false);
   });
 
+  it("removes every track a playlist owns when no ids are given", async () => {
+    // "b" stands for a track removed from the playlist after it was saved.
+    seedDownloads(["a", "b", "c"]);
+    const store = await freshStore();
+    await store.hydrate();
+    await store.downloadTrack(t("c"), "playlist:p2");
+    await store.removePlaylist("p1");
+    expect(store.hasOwner("playlist:p1")).toBe(false);
+    expect(store.isDownloaded("a")).toBe(false);
+    expect(store.isDownloaded("b")).toBe(false);
+    expect(store.tracksForOwner("playlist:p2").map((track) => track.id)).toEqual(["c"]);
+  });
+
   it("attaches a playlist to stored tracks with one write and no transfers", async () => {
     const ids = ["a", "b", "c"];
     seedDownloads(ids);
