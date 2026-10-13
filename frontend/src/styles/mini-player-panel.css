@@ -129,8 +129,11 @@ html[data-mini-player] .player-bar[data-mini-panel] .transport-row {
   overflow-y: auto;
 }
 
+/* No top padding: the playing track's band runs flush under the card's
+   top edge, as it does under the queue popover's header. --queue-inset is
+   set in player-popovers.css, shared with the popover's body. */
 .mini-panel-queue {
-  padding: 4px;
+  padding: 0 var(--queue-inset) var(--queue-inset);
 }
 
 .mini-panel-lyrics {
