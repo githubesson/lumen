@@ -269,6 +269,26 @@ func TestRescanRetriesFailedTagChange(t *testing.T) {
 	}
 }
 
+// A link listed under two entries with different tags keeps the first
+// entry's: the second used to re-apply its own, and the next scan the
+// first's again, every scan stamping the track as edited.
+func TestLinkListedTwiceKeepsFirstEntrysTags(t *testing.T) {
+	f := newRescanFixture(t, 5)
+	scanner := &Scanner{Store: f.store, Library: f.lib}
+	other := f.entry
+	other.ID, other.RowNumber, other.Name = 6, 9, "Song (Alt)"
+
+	f.settle(t, scanner, f.run(t), f.entry, other)
+	if got := f.title(t); got != "Song" {
+		t.Fatalf("title after the first scan = %q", got)
+	}
+	f.edit(t, "My title")
+	f.settle(t, scanner, f.run(t), f.entry, other)
+	if got := f.title(t); got != "My title" {
+		t.Fatalf("second scan re-applied tags: title %q", got)
+	}
+}
+
 // A link recorded as skipped isn't resolved and requested again while the
 // reason is about the link and still holds; any other skip is retried.
 func TestRecordedSkipFinality(t *testing.T) {

@@ -119,5 +119,5 @@ func loadRun(t *testing.T, store *Store, pin Pin, summary *ScanSummary) *scanRun
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &scanRun{pin: pin, history: history, covers: eraCovers{keys: map[int64]string{}}, summary: summary}
+	return &scanRun{pin: pin, history: history, settled: map[string]bool{}, covers: eraCovers{keys: map[int64]string{}}, summary: summary}
 }

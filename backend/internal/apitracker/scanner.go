@@ -141,6 +141,10 @@ type scanRun struct {
 	// history is the pin's downloads by source URL, loaded once per scan and
 	// kept current by record.
 	history map[string]Download
+	// settled holds the source URLs this scan has handled. A link listed
+	// under several entries keeps the first entry's tags: comparing the next
+	// entry's against them would re-apply tags back and forth every scan.
+	settled map[string]bool
 	covers  eraCovers
 	summary *ScanSummary
 }
@@ -176,6 +180,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 	run := &scanRun{
 		pin:     pin,
 		history: history,
+		settled: map[string]bool{},
 		covers: eraCovers{
 			client: client,
 			images: s.fetchEraImageIDs(ctx, client, pin.TrackerID),
@@ -300,10 +305,11 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 // record stores a download outcome and mirrors it into the scan's history, so
 // a link listed twice in one scan sees how the first went.
 func (s *Scanner) record(ctx context.Context, run *scanRun, in DownloadInput) {
+	key := dbtext.Clean(in.SourceURL)
+	run.settled[key] = true
 	if err := s.Store.RecordDownload(ctx, in); err != nil {
 		return
 	}
-	key := dbtext.Clean(in.SourceURL)
 	d := run.history[key]
 	d.PinID, d.SourceURL, d.ResolvedURL = in.PinID, key, in.ResolvedURL
 	d.Status, d.Error, d.Metadata = in.Status, in.Error, in.Metadata
@@ -504,8 +510,13 @@ func (s *Scanner) previousStillPresent(ctx context.Context, run *scanRun, source
 // refreshTrackerMetadata re-applies the tracker's tags to a track it
 // downloaded earlier only when they changed since, so edits made in Lumen
 // survive later scans. A track whose album still has no cover gets the era
-// image either way.
+// image either way. Only the first entry listing a link in a scan counts
+// (scanRun.settled).
 func (s *Scanner) refreshTrackerMetadata(ctx context.Context, run *scanRun, prev Download, metadata json.RawMessage, trackCtx TrackContext) {
+	if run.settled[prev.SourceURL] {
+		return
+	}
+	run.settled[prev.SourceURL] = true
 	tagsChanged, differs := compareEntryMetadata(prev.Metadata, metadata)
 	switch {
 	case tagsChanged:
