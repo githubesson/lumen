@@ -140,14 +140,23 @@
 .board-resume > .board-fill:not([data-tracks]) {
   order: -1;
 }
+/* One line, so it fits the one row of room the tracks had. */
 .board-resume-status {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding-top: 8px;
   font-size: 14px;
   color: var(--muted-foreground);
+}
+.board-resume-status > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-resume-status > .btn {
+  flex: none;
 }
 
 /* ---- Rows --------------------------------------------------- */

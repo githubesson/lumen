@@ -153,7 +153,7 @@ it("keeps the hero in place and offers a retry when the album's tracks don't loa
     // Still where the tracks go, so the cover doesn't drop to the bottom.
     expect(resume().querySelector(".board-fill")!.hasAttribute("data-tracks")).toBe(true);
     expect(within(resume()).queryAllByRole("listitem")).toEqual([]);
-    await act(async () => fireEvent.click(within(resume()).getByRole("button", { name: "Retry" })));
+    await act(async () => fireEvent.click(within(resume()).getByRole("button", { name: "Retry the album's tracks" })));
     expect(within(resume()).getAllByRole("listitem").map((row) => row.textContent?.slice(0, 1))).toEqual(["3", "4"]);
   } finally {
     restore();

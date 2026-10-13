@@ -767,8 +767,8 @@ function HeroTracks({
         <div className="board-list" />
         {album.error && (
           <div role="status" className="board-resume-status">
-            <span>{album.error}</span>
-            <Button size="sm" onClick={() => void album.reload()}>
+            <span title={album.error}>{album.error}</span>
+            <Button size="sm" onClick={() => void album.reload()} aria-label="Retry the album's tracks">
               Retry
             </Button>
           </div>
