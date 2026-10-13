@@ -120,6 +120,9 @@ func (s *Store) Get(ctx context.Context, id uuid.UUID) (*Playlist, error) {
 type PlaylistForUser struct {
 	Playlist
 	EffectiveRole string
+	// OwnerName is the owner's username, so a shared playlist can say whose
+	// it is.
+	OwnerName string
 	// Cover is the track whose art stands for the playlist, nil when it has
 	// no tracks the user can see.
 	Cover *PlaylistCover
@@ -140,8 +143,10 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]PlaylistFo
 	rows, err := s.db.Query(ctx, `
 		SELECT p.id, p.owner_id, p.name, COALESCE(p.description, ''), p.visibility, p.is_smart, p.tidal_auto_download, COALESCE(p.cover_art_path, ''), p.created_at, p.updated_at,
 		       CASE WHEN p.owner_id = $1 THEN 'owner' ELSE pc.role END,
+		       COALESCE(owner.username, ''),
 		       cover.id, cover.album_id, cover.cover_url
 		FROM playlists p
+		LEFT JOIN users owner ON owner.id = p.owner_id
 		LEFT JOIN playlist_collaborators pc
 		  ON pc.playlist_id = p.id
 		 AND pc.user_id = $1
@@ -169,7 +174,7 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]PlaylistFo
 		var coverID *uuid.UUID
 		var coverAlbumID *uuid.UUID
 		var coverURL *string
-		if err := rows.Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.TIDALAutoDownload, &p.CoverArtPath, &p.CreatedAt, &p.UpdatedAt, &p.EffectiveRole, &coverID, &coverAlbumID, &coverURL); err != nil {
+		if err := rows.Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.TIDALAutoDownload, &p.CoverArtPath, &p.CreatedAt, &p.UpdatedAt, &p.EffectiveRole, &p.OwnerName, &coverID, &coverAlbumID, &coverURL); err != nil {
 			return nil, err
 		}
 		if coverID != nil {

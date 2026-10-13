@@ -801,6 +801,8 @@ export interface Playlist {
    *  cover. Only on `listPlaylists`, and absent when the playlist has no
    *  tracks you can see. */
   cover?: PlaylistCover;
+  /** The owner's username. Only on `listPlaylists`. */
+  owner_name?: string;
 }
 
 /** Pass to `trackCoverUrl` as `{ id: track_id, album_id, cover_url }`. */

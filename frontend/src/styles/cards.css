@@ -62,7 +62,8 @@
   fill: currentColor;
 }
 .active > .lucide-heart,
-[aria-pressed="true"] > .lucide-heart {
+[aria-pressed="true"] > .lucide-heart,
+[aria-checked="true"] > .lucide-heart {
   fill: currentColor;
 }
 .cover-art-img {

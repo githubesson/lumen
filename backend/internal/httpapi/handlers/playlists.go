@@ -53,6 +53,9 @@ type playlistResp struct {
 	UpdatedAt   string `json:"updated_at"`
 	// Cover is only filled in on the list, for the sidebar and cards.
 	Cover *playlistCoverResp `json:"cover,omitempty"`
+	// OwnerName is the owner's username, also only on the list: the track
+	// menu names the owner of a playlist someone else shared.
+	OwnerName string `json:"owner_name,omitempty"`
 }
 
 type playlistCoverResp struct {
@@ -135,6 +138,7 @@ func (h *Playlists) List(w http.ResponseWriter, r *http.Request) {
 	for _, p := range ps {
 		resp := toPlaylistResp(&p.Playlist, p.EffectiveRole)
 		resp.Cover = toPlaylistCoverResp(p.Cover)
+		resp.OwnerName = p.OwnerName
 		out = append(out, resp)
 	}
 	writeJSON(w, http.StatusOK, out)
