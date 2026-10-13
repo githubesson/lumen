@@ -31,7 +31,7 @@ export const STACK_BELOW_PX = 720;
 const NO_TRACKS: TrackListItem[] = [];
 
 /** Facts the page shows as placeholders while the album loads. */
-const LOADING_FACTS = ["Released", "Length"];
+const LOADING_FACTS: readonly string[] = ["Released", "Length"];
 
 export interface AlbumSleeveAlbum {
   title: string;
@@ -70,6 +70,7 @@ export function AlbumSleeve({
   loadingLabel,
   actions,
   reserveActions = false,
+  loadingFacts = LOADING_FACTS,
   detailsLink,
   onEdit,
   search,
@@ -92,7 +93,17 @@ export function AlbumSleeve({
    * surely have them, so the details below don't move when it lands.
    */
   reserveActions?: boolean;
-  /** A quiet link under the details (a TIDAL release's library copy). */
+  /**
+   * The facts the loading frame holds places for: the ones this kind of
+   * album page always lists, so on a phone, where they wrap into rows, the
+   * list below doesn't move when they land.
+   */
+  loadingFacts?: readonly string[];
+  /**
+   * A quiet link in the Details heading (a TIDAL release's library copy).
+   * The heading row is there from the first frame, so the link landing
+   * moves nothing, in the column or stacked above the list.
+   */
   detailsLink?: ReactNode;
   /** Admin: opens the album editor from the Details heading. */
   onEdit?: () => void;
@@ -162,6 +173,7 @@ export function AlbumSleeve({
         <section className="album-sleeve-details">
           <div className="album-sleeve-details-head">
             <h2 className="eyebrow">Details</h2>
+            {album && detailsLink}
             {onEdit && (
               <button
                 type="button"
@@ -182,7 +194,7 @@ export function AlbumSleeve({
                     <dd title={album.factHints?.[fact.key]}>{fact.value}</dd>
                   </div>
                 ))
-              : LOADING_FACTS.map((label) => (
+              : loadingFacts.map((label) => (
                   <div key={label}>
                     <dt>{label}</dt>
                     <dd>
@@ -191,7 +203,6 @@ export function AlbumSleeve({
                   </div>
                 ))}
           </dl>
-          {album && detailsLink && <div className="album-sleeve-details-foot">{detailsLink}</div>}
         </section>
       </header>
       <div className="album-sleeve-rule" aria-hidden="true" />

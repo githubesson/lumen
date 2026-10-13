@@ -186,8 +186,10 @@ function apiRoutes(signedIn: boolean): [string, RegExp, Handler][] {
       // Every fixture album artist has library tracks, so a page.
       return album ? { json: { ...album, artist_has_page: true } } : notFound;
     }],
-    ["GET", new RegExp(`^/api/tidal/albums/${id}$`), (m) =>
-      m[1] === data.tidalAlbum.id ? { json: data.tidalAlbum } : notFound],
+    ["GET", new RegExp(`^/api/tidal/albums/${id}$`), (m) => {
+      const album = data.tidalAlbums.find((a) => a.id === m[1]);
+      return album ? { json: album } : notFound;
+    }],
     ["GET", /^\/api\/artists$/, (_m, url) => paged(data.artists, url)],
     ["GET", new RegExp(`^/api/artists/${id}/tracks$`), (m) => ({ json: data.artistTracks(m[1]).map(data.listItem) })],
     ["GET", new RegExp(`^/api/artists/${id}$`), (m) => {

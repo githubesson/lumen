@@ -146,8 +146,8 @@ function sameName(a: string, b: string): boolean {
  * someone else. False for a track crediting no one.
  */
 export function creditsOnly(artist: string | null | undefined, names: readonly string[]): boolean {
-  const credit = displayText(artist).toLocaleLowerCase();
-  const entries = [...new Set(names.map((name) => displayText(name).toLocaleLowerCase()))].filter(Boolean);
+  const credit = displayText(artist).toLowerCase();
+  const entries = [...new Set(names.map((name) => displayText(name).toLowerCase()))].filter(Boolean);
   if (!credit) return false;
   // Where an entry can start: the beginning, and after the separator that
   // follows an entry already matched. Each is after the one it came from,
@@ -220,12 +220,20 @@ export function libraryAlbumFacts(
   return albumFacts(tracks, saved, album.release_year);
 }
 
-/** The same for a TIDAL album page, where nothing saved is the usual case. */
+/**
+ * The same for a TIDAL album page, where Saved reads "None" rather than
+ * going missing when nothing is.
+ */
 export function tidalAlbumFacts(
   album: Pick<TidalAlbum, "saved_count" | "release_year">,
   tracks: readonly Pick<TrackListItem, "duration_ms">[],
 ): AlbumFact[] {
-  return albumFacts(tracks, album.saved_count || undefined, album.release_year);
+  const facts = albumFacts(tracks, album.saved_count || undefined, album.release_year);
+  // Listed even when nothing is: how much of a release the library holds is
+  // known on every TIDAL page, and a fact that only some pages have would
+  // move the list below it when it lands on a phone.
+  if (!album.saved_count) facts.push({ key: "saved", label: "Saved", value: "None" });
+  return facts;
 }
 
 /** "12 tracks · 3 albums", or "TIDAL artist" for one from search. */

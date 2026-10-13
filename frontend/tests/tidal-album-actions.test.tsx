@@ -89,6 +89,14 @@ it("puts the library copy in the actions row once the whole release is saved", a
   expect(onOpenAlbum).toHaveBeenCalledWith({ kind: "local", id: "al-low-tide" });
 });
 
+it("keeps an admin's row, disabled, when there's nothing to download and no library copy", async () => {
+  const gone = (n: number): TrackListItem => ({ ...tidal(n), unavailable: true });
+  const view = await show(album([gone(1), gone(2)]));
+  expect(view.rowButtons).toEqual(["Nothing to download"]);
+  expect(within(view.row!).getByRole("button").hasAttribute("disabled")).toBe(true);
+  expect(view.details.queryByRole("button", { name: "Open in library" })).toBeNull();
+});
+
 it("gives a listener no actions row, which their loading frame doesn't hold, and the library copy as a link", async () => {
   mock.role = "user";
   for (const tracks of [[saved(1), tidal(2)], [saved(1), saved(2)]]) {

@@ -578,16 +578,16 @@ function CardsTile({
 /**
  * The bento's shape while a period loads: the same tiles and labels with
  * bars in place of the figures, so nothing moves when the data lands.
- * `unit` is what the days tile will count, when that's known before the
- * data: all time counts months once its history outgrows the server's cap,
- * so until it answers, its label is a bar too rather than one that changes.
+ * `unit` is "day" when the days tile is known to count days: all time may
+ * count months instead, which only its answer says, so until then (null)
+ * its label is a bar too rather than one that changes.
  */
 export function ReplayBentoPlaceholder({
   chartBucket,
   unit,
 }: {
   chartBucket: ReplayBucket;
-  unit: "day" | "month" | null;
+  unit: "day" | null;
 }) {
   const { wide, narrow } = bentoAreas({ feat: true, list: true, genre: true, art: true, alb: true });
   const bar = (width: string) => <span className="skeleton-text" style={{ width }} />;
@@ -616,7 +616,7 @@ export function ReplayBentoPlaceholder({
         ["plays", "Plays"],
         ["time", "Listening time"],
         ["tracks", "Tracks"],
-        ["days", unit === "month" ? "Months with plays" : unit === "day" ? "Days with plays" : null],
+        ["days", unit === "day" ? "Days with plays" : null],
       ] as const).map(([area, label]) => (
         <div key={area} className="bento-tile stat-card" style={{ gridArea: area }}>
           <div className="stat-card-label">{label ?? bar("60%")}</div>

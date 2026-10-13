@@ -1,5 +1,13 @@
 import { test, type Page } from "playwright/test";
-import { albums, artists, pendingInvites, playlists, tidalAlbum } from "./fixtures";
+import {
+  albums,
+  artists,
+  pendingInvites,
+  playlists,
+  tidalAlbum,
+  tidalAlbumPartlySaved,
+  tidalAlbumSaved,
+} from "./fixtures";
 import { checkUI, go, ready, signedIn } from "./helpers";
 
 // Every signed-in screen, reached in-app so the player bar keeps its track.
@@ -56,6 +64,24 @@ test("TIDAL album detail", async ({ page }, testInfo) => {
   await go(page, `/library?tidalAlbum=${tidalAlbum.id}`);
   await ready(page, page.getByRole("heading", { name: tidalAlbum.title }));
   await ready(page, rows(page));
+  await checkUI(page, testInfo);
+});
+
+// The library copy: a quiet link in Details while there's more to download,
+// then the actions row's one control once all of it is saved.
+test("TIDAL album detail, partly saved", async ({ page }, testInfo) => {
+  await go(page, `/library?tidalAlbum=${tidalAlbumPartlySaved.id}`);
+  await ready(page, page.getByRole("heading", { name: tidalAlbumPartlySaved.title }));
+  await ready(page, rows(page));
+  await ready(page, page.locator(".album-sleeve-details").getByRole("button", { name: "Open in library" }));
+  await checkUI(page, testInfo);
+});
+
+test("TIDAL album detail, saved", async ({ page }, testInfo) => {
+  await go(page, `/library?tidalAlbum=${tidalAlbumSaved.id}`);
+  await ready(page, page.getByRole("heading", { name: tidalAlbumSaved.title }));
+  await ready(page, rows(page));
+  await ready(page, page.locator(".album-sleeve-more").getByRole("button", { name: "Open in library" }));
   await checkUI(page, testInfo);
 });
 

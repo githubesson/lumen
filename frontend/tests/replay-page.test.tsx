@@ -177,7 +177,8 @@ it("opens a top artist's page when they have one, plays them when they don't, an
   renderPage();
   await screen.findByText("Also on repeat");
 
-  const artists = within(screen.getByRole("region", { name: "Top artists" }));
+  // The placeholder has the same headings, so wait for the loaded tile itself.
+  const artists = within(await screen.findByRole("region", { name: "Top artists" }));
   const open = artists.getByRole("link", { name: "Open Kestrel Bay" });
   expect(open.getAttribute("href")).toBe("/library?view=artists&artist=ar-kestrel");
   expect(open.closest(".card")!.querySelector('[data-action="open"]')).not.toBeNull();
@@ -207,9 +208,7 @@ it("leaves the most played track's artists unlinked when the server doesn't list
   data.top_artists = [{ id: "ar-ewf", name: "Earth, Wind & Fire", plays: 6 }];
   mock.getReplay.mockResolvedValue(data);
   renderPage();
-  await screen.findByText("Most played track");
-
-  const featured = within(screen.getByRole("article", { name: "Most played track" }));
+  const featured = within(await screen.findByRole("article", { name: "Most played track" }));
   expect(featured.queryByRole("link", { name: /Earth/ })).toBeNull();
   // Without has_page the tile plays, as it would on Home.
   expect(screen.getByRole("button", { name: "Play Earth, Wind & Fire" })).toBeTruthy();

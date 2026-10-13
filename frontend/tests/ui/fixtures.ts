@@ -236,6 +236,55 @@ export const tidalAlbum: TidalAlbum = (() => {
   };
 })();
 
+/**
+ * A TIDAL release the library holds part or all of: the server lists the
+ * library's copies in place of its tracks, and links the library album.
+ */
+function savedTidalAlbum(
+  id: string,
+  albumId: string,
+  more: [title: string, seconds: number][],
+): TidalAlbum {
+  const album = albumRows.find((a) => a.id === albumId)!;
+  const saved = tracks.filter((t) => t.album_id === albumId).map(listItem);
+  const remote = more.map(([title, seconds], index): TrackListItem => ({
+    id: `tidal:${id}${index + 1}`,
+    source: "tidal",
+    source_id: `${id}${index + 1}`,
+    source_album_id: id,
+    title,
+    album_title: album.title,
+    duration_ms: seconds * 1000,
+    artist: artistName(album.artist),
+    cover_url: `/api/covers/remote?url=https%3A%2F%2Fresources.tidal.com%2Fimages%2F${id}%2F640x640.jpg`,
+  }));
+  const albumTracks = [...saved, ...remote];
+  return {
+    id,
+    title: album.title,
+    artist: artistName(album.artist),
+    artists: [artistName(album.artist)],
+    release_year: album.year,
+    saved_count: saved.length,
+    library_album_id: albumId,
+    track_count: albumTracks.length,
+    duration_ms: albumTracks.reduce((sum, t) => sum + t.duration_ms, 0),
+    cover_url: remote[0]?.cover_url ?? `/api/covers/remote?url=https%3A%2F%2Fresources.tidal.com%2Fimages%2F${id}%2F640x640.jpg`,
+    tracks: albumTracks,
+  };
+}
+
+/** Partly saved: an admin gets the download, and the library copy as a link in Details. */
+export const tidalAlbumPartlySaved = savedTidalAlbum("310077120", "al-lanterns", [
+  ["Lantern Song (Demo)", 214],
+  ["Harbour Lights (Strings Version)", 247],
+]);
+
+/** All saved: an admin's actions row opens the library copy instead. */
+export const tidalAlbumSaved = savedTidalAlbum("298114503", "al-nordlys", []);
+
+export const tidalAlbums: TidalAlbum[] = [tidalAlbum, tidalAlbumPartlySaved, tidalAlbumSaved];
+
 export const albums: Album[] = albumRows.map((album) => ({
   id: album.id,
   title: album.title,

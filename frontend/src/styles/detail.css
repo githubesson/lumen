@@ -305,13 +305,17 @@
   border-top: 1px solid var(--border);
   font-size: 14px;
 }
+/* The heading row is as tall as its pencil from the first frame, so what
+   lands in it (the pencil, a link) never moves the facts or the list. */
 .album-sleeve-details-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   min-height: 28px;
   margin-bottom: 6px;
+}
+.album-sleeve-details-head > .eyebrow {
+  margin-right: auto;
 }
 .album-sleeve-details-head .iconbtn {
   width: 28px;
@@ -322,11 +326,9 @@
 .album-sleeve-details-head .iconbtn:hover {
   color: var(--foreground);
 }
-/* Under the facts: a quiet link (a TIDAL release's library copy), kept out
-   of the actions row so that row holds one button and never wraps. */
-.album-sleeve-details-foot {
-  margin-top: 12px;
-}
+/* In the Details heading: a quiet link (a TIDAL release's library copy),
+   kept out of the actions row so that row holds one button and never
+   wraps. */
 .album-sleeve-link {
   display: inline-flex;
   align-items: center;
@@ -337,7 +339,7 @@
   background: none;
   color: var(--muted-foreground);
   font: inherit;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
 }

@@ -117,12 +117,13 @@ it("holds the page's frame while the album loads", () => {
   expect(reserved.container.querySelector(".album-sleeve-more .skeleton-text")).toBeTruthy();
 });
 
-it("puts a quiet link under the details once the album is there", () => {
+it("puts a quiet link in the Details heading once the album is there", () => {
   const link = <button type="button">Open in library</button>;
   const { container } = renderSleeve({ detailsLink: link });
-  const foot = container.querySelector(".album-sleeve-details .album-sleeve-details-foot");
-  expect(foot?.textContent).toBe("Open in library");
-  // Below the facts, not in the actions row.
+  // In the heading row, which the loading frame has too, so it moves nothing;
+  // not in the actions row.
+  const head = container.querySelector(".album-sleeve-details .album-sleeve-details-head");
+  expect(head?.textContent).toBe("DetailsOpen in library");
   expect(container.querySelector(".album-sleeve-more")).toBeNull();
   cleanup();
   renderSleeve({ album: null, detailsLink: link });

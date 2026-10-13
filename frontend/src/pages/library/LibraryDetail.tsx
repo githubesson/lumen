@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ArrowLeft as ArrowLeftIcon,
+  Download as DownloadIcon,
   Library as LibraryIcon,
 } from "lucide-react";
 import {
@@ -41,6 +42,8 @@ import { AlbumDownloadControl } from "./AlbumDownloadControl";
 /** What "Saved" means on each kind of album page. */
 const LIBRARY_SAVED_HINT = "The rest of the release plays from TIDAL";
 const TIDAL_SAVED_HINT = "Played from the library instead of TIDAL";
+/** What a TIDAL album page always lists (see `tidalAlbumFacts`). */
+const TIDAL_LOADING_FACTS = ["Released", "Length", "Saved"];
 
 export function AlbumDetailView({
   id,
@@ -250,6 +253,7 @@ export function TidalAlbumDetailView({
         // copy once all of it is saved. (A library album only has a row when
         // it copies a TIDAL release, which nothing says before it loads.)
         reserveActions={isAdmin}
+        loadingFacts={TIDAL_LOADING_FACTS}
         search={sleeveSearch(search, 0)}
         searchRef={search.inputRef}
       />
@@ -281,6 +285,16 @@ export function TidalAlbumDetailView({
         ) : isAdmin && openInLibrary ? (
           <Button onClick={openInLibrary} leadingIcon={<LibraryIcon className="size-4" />}>
             Open in library
+          </Button>
+        ) : isAdmin ? (
+          // Nothing left to save and no library copy to open (every track
+          // gone from TIDAL, say): the row the loading frame held stays.
+          <Button
+            disabled
+            title="Every track here is saved or no longer on TIDAL"
+            leadingIcon={<DownloadIcon className="size-4" />}
+          >
+            Nothing to download
           </Button>
         ) : undefined
       }

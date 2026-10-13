@@ -148,11 +148,13 @@ describe("album page", () => {
     expect(libraryAlbumFacts({ saved_count: 1 }, minutes(3)).map((fact) => fact.key)).toEqual(["length"]);
   });
 
-  it("lists a TIDAL album's saved count only when something is saved", () => {
-    expect(tidalAlbumFacts({ saved_count: 0, release_year: 2020 }, minutes(3)).map((f) => f.key)).toEqual([
-      "released",
-      "length",
+  it("always lists how much of a TIDAL album is saved", () => {
+    expect(tidalAlbumFacts({ saved_count: 0, release_year: 2020 }, minutes(3))).toEqual([
+      { key: "released", label: "Released", value: "2020" },
+      { key: "length", label: "Length", value: "1 track · 3 min" },
+      { key: "saved", label: "Saved", value: "None" },
     ]);
+    expect(tidalAlbumFacts({}, minutes(3)).map((f) => f.value)).toEqual(["1 track · 3 min", "None"]);
     expect(tidalAlbumFacts({ saved_count: 2 }, minutes(3, 3, 3))).toEqual([
       { key: "length", label: "Length", value: "3 tracks · 9 min" },
       { key: "saved", label: "Saved", value: "2 of 3 tracks" },
