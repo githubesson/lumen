@@ -7,7 +7,6 @@
 package mediaembed
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -17,7 +16,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/githubesson/lumen/internal/downloadfile"
@@ -44,19 +42,11 @@ type Metadata struct {
 // decode/encode), so this is generous even for long tracks.
 const embedTimeout = 120 * time.Second
 
-var (
-	ffmpegOnce    sync.Once
-	ffmpegPresent bool
-)
+// stderrTail is how much of ffmpeg's stderr an error quotes.
+const stderrTail = 4 * 1024
 
 // Available reports whether ffmpeg is on $PATH. Checked once.
-func Available() bool {
-	ffmpegOnce.Do(func() {
-		_, err := exec.LookPath("ffmpeg")
-		ffmpegPresent = err == nil
-	})
-	return ffmpegPresent
-}
+func Available() bool { return ffsafe.HasFFmpeg() }
 
 // FormatHint tells Embed which container/codec family the input uses so it
 // can pick the right output format and temp-file extension.
@@ -232,8 +222,8 @@ func embedPath(ctx context.Context, inPath string, cover []byte, meta Metadata, 
 	defer cancel()
 
 	cmd := exec.CommandContext(embedCtx, "ffmpeg", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stderr := ffsafe.NewTail(stderrTail)
+	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
 		os.Remove(outPath)

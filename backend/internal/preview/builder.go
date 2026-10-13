@@ -408,7 +408,7 @@ func (b *Builder) runFFmpeg(parent context.Context, args []string, outPath strin
 	cmd := exec.CommandContext(ctx, bin, args...)
 	// Suppress ffmpeg's huge stderr output; we only care about exit code.
 	// Capture a small tail for error reporting if it fails.
-	stderr := &lastBytes{max: 2048}
+	stderr := ffsafe.NewTail(2048)
 	cmd.Stderr = stderr
 	cmd.Stdout = io.Discard
 
@@ -1177,21 +1177,3 @@ func storyFontFile(names []string) (string, error) {
 	}
 	return "", fmt.Errorf("none of the story fonts were found: %s", strings.Join(names, ", "))
 }
-
-// lastBytes is an io.Writer that retains only the tail of what was written,
-// so we can surface the bottom of ffmpeg's error output without buffering
-// an unbounded pile of progress lines.
-type lastBytes struct {
-	max int
-	buf []byte
-}
-
-func (l *lastBytes) Write(p []byte) (int, error) {
-	l.buf = append(l.buf, p...)
-	if len(l.buf) > l.max {
-		l.buf = l.buf[len(l.buf)-l.max:]
-	}
-	return len(p), nil
-}
-
-func (l *lastBytes) String() string { return string(l.buf) }
