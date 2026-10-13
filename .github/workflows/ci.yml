@@ -22,6 +22,18 @@ jobs:
       - run: python3 -m venv /tmp/lumen-hifi-tests
       - run: /tmp/lumen-hifi-tests/bin/pip install -r hifi-api/requirements-test.txt
       - run: /tmp/lumen-hifi-tests/bin/python -m unittest discover -s hifi-api -p 'test_*.py'
+      # The unit tests stub upstream; this imports the extension into the
+      # commit pinned in docker-compose.yml, so a pin bump that renames an
+      # internal the extension patches fails here instead of in production.
+      - name: Check against the pinned upstream
+        run: |
+          ref=$(sed -n 's|.*binimum/hifi-api\.git#\([0-9a-f]\{40\}\).*|\1|p' docker-compose.yml)
+          test -n "$ref"
+          git clone --quiet https://github.com/binimum/hifi-api.git /tmp/hifi-upstream
+          git -C /tmp/hifi-upstream checkout --quiet "$ref"
+          python3 -m venv /tmp/hifi-upstream-venv
+          /tmp/hifi-upstream-venv/bin/pip install --quiet -r /tmp/hifi-upstream/requirements.txt
+          /tmp/hifi-upstream-venv/bin/python hifi-api/check_upstream.py /tmp/hifi-upstream
 
   backend:
     runs-on: ubuntu-latest
@@ -62,6 +74,17 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+      # The Filen helper ships in the backend image (Alpine's Node 20).
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: backend/filen-downloader/package-lock.json
+      - name: Filen helper tests
+        working-directory: backend/filen-downloader
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
 
   core:
     runs-on: ubuntu-latest
@@ -108,8 +131,6 @@ jobs:
   # with tests/ui/mock-api.ts standing in for the backend. It needs Node 22.
   frontend-ui:
     runs-on: ubuntu-latest
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     defaults:
       run:
         working-directory: frontend
