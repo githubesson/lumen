@@ -4,10 +4,10 @@
  * These previously existed as two copies — `frontend/src/lib/download.ts` and
  * `mobile/lib/track-download.ts` — whose overlapping halves were identical
  * character-for-character. Nothing here touches the DOM or a native module:
- * the only I/O goes through the API transport's `fetch`, which both runtimes
- * provide. The platform modules
- * keep the parts that genuinely differ (an `<a download>` click on web, an
- * `expo-file-system` write on mobile) and re-export these.
+ * the only I/O is `fetch` through the API transport, which both runtimes
+ * provide. The platform modules keep the parts that genuinely differ (an
+ * `<a download>` click on web, an `expo-file-system` write on mobile) and
+ * re-export these.
  */
 
 import { api, probeStreamUrl } from "./api";
