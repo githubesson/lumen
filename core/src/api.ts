@@ -324,11 +324,6 @@ export const api = {
     );
     return api.search({ ...params, type: "track", searchOffsets, sources });
   },
-  searchTracksPage: async (params: Omit<SearchParams, "type"> = {}): Promise<Page<TrackListItem> & { warnings?: string[] }> => {
-    const result = await api.searchTracks({ ...params, limit: Math.min(params.limit ?? 50, 50) });
-    const items = result.tracks ?? [];
-    return { items, total: (params.offset ?? 0) + items.length, nextOffsets: result.next_offsets ?? {}, warnings: result.warnings };
-  },
   getTidalArtist: (id: string, options: RequestOptions = {}) =>
     request<TidalArtist>(`/api/tidal/artists/${pathID(id)}`, options),
   /** TIDAL can be slow; past 10 s the info view shows what the server stores. */

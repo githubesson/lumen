@@ -399,14 +399,13 @@ describe("search continuation and library sort", () => {
       .mockResolvedValueOnce(Response.json({ tracks: [{ id: "local-1" }, { id: "tidal:1" }], next_offsets: { tidal: 50 } }))
       .mockResolvedValueOnce(Response.json({ tracks: [{ id: "tidal:2" }], next_offsets: {} }));
     vi.stubGlobal("fetch", fetchMock);
-    const first = await api.searchTracksPage({ q: "song", limit: 50 });
-    const second = await api.searchTracksPage({ q: "song", limit: 50, offset: first.items.length, searchOffsets: first.nextOffsets });
+    const first = await api.searchTracks({ q: "song", limit: 50 });
+    const second = await api.searchTracks({ q: "song", limit: 50, offset: first.tracks?.length, searchOffsets: first.next_offsets });
     const url = new URL(fetchMock.mock.calls[1][0], "https://test.invalid");
     expect(url.searchParams.get("sources")).toBe("tidal");
     expect(url.searchParams.get("tidal_offset")).toBe("50");
     expect(url.searchParams.has("local_offset")).toBe(false);
-    expect(second.nextOffsets).toEqual({});
-    expect(second.total).toBe(3);
+    expect(second.next_offsets).toEqual({});
   });
   it("sends the sort choice with every page request", async () => {
     const fetchMock = vi.fn(async () => Response.json([], { headers: { "X-Total-Count": "101" } }));

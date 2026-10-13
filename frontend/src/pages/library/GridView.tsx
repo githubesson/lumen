@@ -15,11 +15,11 @@ const POLL_INTERVAL_MS = 15 * 60 * 1000;
  * Generic grid + pagination view backed by usePaginatedList. Collapses the
  * near-identical AlbumsView / ArtistsView (paged fetch, loaded-of-total meta,
  * error banner, loading/empty placeholders, card grid, infinite-scroll
- * sentinel). Callers supply the page fetcher and a card renderer.
+ * sentinel). Callers supply the page fetcher and a card renderer. Browsing
+ * only: a search shows SearchResults instead.
  */
 export default function GridView<T>({
   fetcher,
-  query,
   pageSize,
   unit,
   emptyLabel,
@@ -29,7 +29,6 @@ export default function GridView<T>({
   fetcher: (params: PageRequest) => Promise<Page<T>>;
   /** Shows the last first page at once on a revisit (see usePaginatedList). */
   cacheKey?: string;
-  query: string;
   pageSize: number;
   unit: string;
   emptyLabel: string;
@@ -37,7 +36,7 @@ export default function GridView<T>({
 }) {
   const { items, total, loadingMore, error, sentinelRef } = usePaginatedList(
     fetcher,
-    query,
+    "",
     { pageSize, pollIntervalMs: POLL_INTERVAL_MS, cacheKey },
   );
 
