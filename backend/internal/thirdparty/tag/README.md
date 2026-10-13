@@ -16,7 +16,9 @@ shows only the changes below.
 
 ## Changes from upstream
 
-- gofmt, and the import path of `internal/id3v1_test`.
+- gofmt.
+- `id3v1_test.go` reads its samples in `internal/id3v1_test` with
+  `os.ReadFile`; the go-bindata file that wrapped them is left out.
 - MP4: `readAtoms` stops after descending into 32 container atoms. Each level
   recursed, so a file of nested `moov` headers overflowed the goroutine stack,
   a fatal error no `recover` catches.
