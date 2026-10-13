@@ -1,11 +1,16 @@
 package tidal
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"github.com/githubesson/lumen/internal/httpx"
 )
 
 func TestTIDALMediaClientRejectsOffHostRedirects(t *testing.T) {
@@ -69,5 +74,42 @@ func TestReadCappedRejectsInsteadOfTruncating(t *testing.T) {
 	}
 	if b, err := readCapped(strings.NewReader("123456"), 5); err != errCoverTooLarge || b != nil {
 		t.Fatalf("past the cap: %q, %v", b, err)
+	}
+}
+
+// Cover art, written into downloads, is fetched over HTTPS only, even from a
+// TIDAL host and even by a redirect.
+func TestCoverBytesRequiresHTTPS(t *testing.T) {
+	ctx := context.Background()
+	if _, err := NewClient(Config{}).CoverBytes(ctx, "http://resources.tidal.com/images/ab/cd/640x640.jpg"); !errors.Is(err, errCoverNotHTTPS) {
+		t.Fatalf("http cover: err = %v", err)
+	}
+
+	var plainHits atomic.Int32
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		plainHits.Add(1)
+		_, _ = w.Write([]byte("image"))
+	}))
+	defer plain.Close()
+	cdn := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/downgrade.jpg" {
+			http.Redirect(w, r, plain.URL+"/cover.jpg", http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte("image"))
+	}))
+	defer cdn.Close()
+	prevHost, prevPolicy := mediaHostAllowed, mediaDownloadPolicy
+	mediaHostAllowed = func(host string) bool { return host == "127.0.0.1" }
+	mediaDownloadPolicy = httpx.DownloadPolicy{AllowLoopback: true}
+	defer func() { mediaHostAllowed, mediaDownloadPolicy = prevHost, prevPolicy }()
+	c := NewClient(Config{})
+	c.stream = cdn.Client()
+
+	if b, err := c.CoverBytes(ctx, cdn.URL+"/cover.jpg"); err != nil || string(b) != "image" {
+		t.Fatalf("https cover: %q, %v", b, err)
+	}
+	if _, err := c.CoverBytes(ctx, cdn.URL+"/downgrade.jpg"); !errors.Is(err, errCoverNotHTTPS) || plainHits.Load() != 0 {
+		t.Fatalf("redirect to http: err = %v, plain hits %d", err, plainHits.Load())
 	}
 }
