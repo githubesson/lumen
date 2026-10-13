@@ -310,6 +310,7 @@ export const playlists: Playlist[] = [
     created_at: created,
     updated_at: updated,
     cover: { track_id: "t-al-postcard-1", album_id: "al-postcard" },
+    owner_name: me.username,
   },
   {
     id: "pl-sunday-coffee",
@@ -322,6 +323,7 @@ export const playlists: Playlist[] = [
     created_at: "2025-11-30T10:12:00Z",
     updated_at: "2026-10-05T08:41:27Z",
     cover: { track_id: "t-al-small-hours-1", album_id: "al-small-hours" },
+    owner_name: me.username,
   },
   {
     id: "pl-road-trip",
@@ -333,6 +335,7 @@ export const playlists: Playlist[] = [
     created_at: "2026-06-02T17:30:00Z",
     updated_at: "2026-08-19T12:05:44Z",
     cover: { track_id: "t-al-signal-1", album_id: "al-signal" },
+    owner_name: "jonas",
   },
 ];
 

@@ -12,7 +12,10 @@ const mock = vi.hoisted(() => ({
 vi.mock("../src/context/Player", () => ({ usePlayer: () => mock.player, usePlayerControls: () => mock.player }));
 vi.mock("../src/context/Favorites", () => ({ useFavorites: () => mock.favorites }));
 vi.mock("../src/context/Auth", () => ({ useAuth: () => ({ me: null }) }));
-vi.mock("../src/lib/useTrackContextMenu", () => ({ useTrackContextMenu: () => ({ bind: mock.bind, menu: null }) }));
+vi.mock("../src/lib/useTrackContextMenu", async (original) => ({
+  ...await original<typeof import("../src/lib/useTrackContextMenu")>(),
+  useTrackContextMenu: () => ({ bind: mock.bind, menu: null }),
+}));
 vi.mock("../src/components/edit/EditTrackDialog", () => ({ EditTrackDialog: () => null }));
 vi.mock("../src/components/edit/MoveToAlbumDialog", () => ({ MoveToAlbumDialog: () => null }));
 vi.mock("../src/lib/useWindowedSlice", () => ({ useWindowedSlice: () => ({ start: 0, end: 50, topSpacerPx: 0, bottomSpacerPx: 0 }) }));
@@ -59,4 +62,60 @@ it("leaves out the artist line on rows credited to the page's own artist", () =>
   // Without a page artist every row names its own.
   rerender(<TrackList tracks={tracks} selectable={false} />);
   expect(lines()).toEqual(["Band", "Band, Guest", "band"]);
+});
+
+it("opens the selection menu for a right-click inside a selection, and a row's own menu outside it", () => {
+  const open = vi.fn();
+  mock.bind.mockReturnValue(open);
+  const tracks: TrackListItem[] = ["a", "b", "c"].map((id) => ({ id, title: `Song ${id}`, duration_ms: 1000, source: "local" }));
+  render(<KeyBindingsProvider><TrackList tracks={tracks} /></KeyBindingsProvider>);
+  const row = (id: string) => screen.getByTitle(`Song ${id}`).closest("tr")!;
+
+  fireEvent.contextMenu(row("a"));
+  expect(mock.bind.mock.lastCall?.[1].selection).toBeUndefined();
+
+  fireEvent.click(screen.getByRole("button", { name: "Select" }));
+  fireEvent.click(row("a"));
+  fireEvent.click(row("c"));
+  fireEvent.contextMenu(row("c"));
+  expect(mock.bind.mock.lastCall?.[0]).toBe(tracks[2]);
+  expect(mock.bind.mock.lastCall?.[1].selection).toMatchObject({ tracks: [tracks[0], tracks[2]], exportDisabledReason: undefined });
+  expect(open).toHaveBeenCalledTimes(2);
+
+  fireEvent.contextMenu(row("b"));
+  expect(mock.bind.mock.lastCall?.[0]).toBe(tracks[1]);
+  expect(mock.bind.mock.lastCall?.[1].selection).toBeUndefined();
+
+  // A selection of one is just that track.
+  fireEvent.click(row("c"));
+  fireEvent.contextMenu(row("a"));
+  expect(mock.bind.mock.lastCall?.[1].selection).toBeUndefined();
+});
+
+it("lets the click that closes a menu only close it: no play, no selection change", () => {
+  const tracks: TrackListItem[] = ["a", "b"].map((id) => ({ id, title: `Song ${id}`, duration_ms: 1000, source: "local" }));
+  render(<KeyBindingsProvider><TrackList tracks={tracks} /></KeyBindingsProvider>);
+  const title = (id: string) => screen.getByTitle(`Song ${id}`);
+  const press = (element: Element) => {
+    fireEvent.mouseDown(element);
+    fireEvent.mouseUp(element);
+    fireEvent.click(element);
+  };
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu";
+
+  document.body.append(menu);
+  press(title("a"));
+  expect(mock.player.play).not.toHaveBeenCalled();
+  menu.remove();
+  press(title("a"));
+  expect(mock.player.play).toHaveBeenCalledTimes(1);
+
+  fireEvent.click(screen.getByRole("button", { name: "Select" }));
+  press(title("a"));
+  expect(screen.getByText("1 selected")).toBeTruthy();
+  document.body.append(menu);
+  press(title("b"));
+  expect(screen.getByText("1 selected")).toBeTruthy();
+  menu.remove();
 });

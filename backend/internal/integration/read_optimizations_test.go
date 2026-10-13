@@ -98,6 +98,13 @@ func TestReadOptimizations(t *testing.T) {
 		got := map[uuid.UUID]string{}
 		for _, row := range rows {
 			got[row.ID] = row.EffectiveRole
+			wantOwner := "read-" + owner.String()
+			if row.EffectiveRole == "owner" {
+				wantOwner = "read-" + viewer.String()
+			}
+			if row.OwnerName != wantOwner {
+				t.Fatalf("owner name = %q, want %q", row.OwnerName, wantOwner)
+			}
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("roles = %v, want %v", got, want)

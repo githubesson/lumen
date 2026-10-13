@@ -9,7 +9,11 @@ import {
   type TrackListItem,
 } from "../../api";
 import EmptyState from "../../components/EmptyState";
-import { useTrackContextMenu } from "../../lib/useTrackContextMenu";
+import {
+  useContextMenuClickGuard,
+  useMenuSelection,
+  useTrackContextMenu,
+} from "../../lib/useTrackContextMenu";
 import {
   FavoriteButton,
   SelectAllHeaderCell,
@@ -27,6 +31,7 @@ import { useDragReorder } from "./useDragReorder";
 const playlistEntryId = (entry: PlaylistTrackEntry) => entry.track_id;
 const playlistEntriesToQueue = (items: PlaylistTrackEntry[]) =>
   items.map(toQueueItem);
+const EXPORT_DISABLED_REASON = "Selected streaming tracks cannot be exported as files.";
 
 /**
  * The Tracks tab of the playlist page: search-result count, selection
@@ -173,6 +178,21 @@ function TracksTable({
   const handleExportSelected = useCallback(() => {
     void exportSelected();
   }, [exportSelected]);
+  const exportDisabled = selectedLocalTracks.length === 0;
+  const selectedQueueItems = useMemo(
+    () => selectedItems.map((entry) => queueById.get(entry.track_id) ?? toQueueItem(entry)),
+    [selectedItems, queueById],
+  );
+  const menuSelection = useMenuSelection({
+    selectionMode,
+    selectedIds,
+    tracks: selectedQueueItems,
+    onExport: handleExportSelected,
+    exportDisabledReason: exportDisabled ? EXPORT_DISABLED_REASON : undefined,
+  });
+  // The click that dismisses the menu only dismisses it: it doesn't also
+  // play a row or change the selection.
+  const clickGuard = useContextMenuClickGuard();
 
   // Parent actions and queue references change as playlist/player state moves.
   // Rows receive stable dispatchers and read the latest values through refs, so
@@ -222,9 +242,12 @@ function TracksTable({
     ) => {
       const queueItem = queueByIdRef.current.get(entry.track_id);
       if (!queueItem) return;
-      bindRef.current(queueItem, { queue: queueRef.current })(event);
+      bindRef.current(queueItem, {
+        queue: queueRef.current,
+        selection: menuSelection(entry.track_id),
+      })(event);
     },
-    [],
+    [menuSelection],
   );
 
   // Native HTML5 drag-reorder, disabled while selecting rows.
@@ -257,8 +280,8 @@ function TracksTable({
         allSelected={allSelected}
         someSelected={someSelected}
         exporting={exporting}
-        exportDisabled={selectedLocalTracks.length === 0}
-        exportDisabledReason="Selected streaming tracks cannot be exported as files."
+        exportDisabled={exportDisabled}
+        exportDisabledReason={EXPORT_DISABLED_REASON}
         onToggleMode={() => {
           setSelectionMode(!selectionMode);
         }}
@@ -270,7 +293,12 @@ function TracksTable({
         }}
         hostId={selectionControlsHostId}
       />
-      <div className="table-scroll" data-horizontal-scroll="">
+      <div
+        className="table-scroll"
+        data-horizontal-scroll=""
+        onMouseDownCapture={clickGuard.onMouseDownCapture}
+        onClickCapture={clickGuard.onClickCapture}
+      >
         <div className="table-scroll-inner">
           <table
             ref={tableRef}

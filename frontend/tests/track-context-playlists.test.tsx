@@ -60,9 +60,10 @@ it("keeps click targets in place across several adds and refreshes once on close
   await act(async () => {});
   fireEvent.click(screen.getByText("Toggle menu"));
   await act(async () => {});
+  // By accessible name: a row's text also holds its cover's placeholder letter.
   const order = () => screen.getAllByRole("menuitem")
-    .map((element) => element.textContent)
-    .filter((name) => rows.some((row) => row.name === name));
+    .map((element) => rows.find((row) => screen.queryByRole("menuitem", { name: row.name }) === element)?.name)
+    .filter(Boolean);
   await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Charlie" })); });
   expect(order()).toEqual(["Alpha", "Bravo", "Charlie"]);
   await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Bravo" })); });
