@@ -20,7 +20,7 @@ export default function Hero({ repo }: { repo: RepoInfo }) {
           className="enter press group inline-flex items-center gap-2 rounded-full border border-border bg-background/60 py-1 pl-1 pr-3 text-[13px] backdrop-blur hover:border-ring/60"
         >
           <span className="rounded-full bg-brand-soft px-2 py-0.5 text-xs font-medium text-brand">
-            {release?.prerelease ? "Pre-release" : "New"}
+            New
           </span>
           <span className="text-muted-foreground">
             {release ? (

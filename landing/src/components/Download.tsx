@@ -59,7 +59,7 @@ export default function Download({ repo }: { repo: RepoInfo }) {
             <PlatformRow icon={AppleIcon} name="macOS" formats="universal .dmg" href={href} />
             <PlatformRow icon={LinuxIcon} name="Linux" formats=".AppImage · .deb" href={href} />
             <p className="mt-auto pt-3 text-xs text-muted-foreground">
-              Unsigned pre-release builds. Discord Rich Presence and in-app updates on Windows and Linux.
+              Unsigned builds. Discord Rich Presence and in-app updates on Windows and Linux.
             </p>
           </Card>
 

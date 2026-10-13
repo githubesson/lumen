@@ -3,7 +3,7 @@ import { REPO } from "./site";
 
 export interface RepoInfo {
   stars: number | null;
-  release: { tag: string; url: string; prerelease: boolean } | null;
+  release: { tag: string; url: string } | null;
 }
 
 const CACHE_KEY = "lumen-landing-gh";
@@ -21,22 +21,19 @@ function readCache(): RepoInfo | null {
 }
 
 async function load(): Promise<RepoInfo> {
-  const [repo, releases] = await Promise.all([
+  const [repo, latest] = await Promise.all([
     fetch(`https://api.github.com/repos/${REPO}`).then((r) => (r.ok ? r.json() : null)),
-    fetch(`https://api.github.com/repos/${REPO}/releases?per_page=1`).then((r) => (r.ok ? r.json() : null)),
+    fetch(`https://api.github.com/repos/${REPO}/releases/latest`).then((r) => (r.ok ? r.json() : null)),
   ]);
-  const latest = Array.isArray(releases) ? releases[0] : null;
   return {
     stars: typeof repo?.stargazers_count === "number" ? repo.stargazers_count : null,
-    release: latest
-      ? { tag: latest.tag_name, url: latest.html_url, prerelease: Boolean(latest.prerelease) }
-      : null,
+    release: typeof latest?.tag_name === "string" ? { tag: latest.tag_name, url: latest.html_url } : null,
   };
 }
 
-/** Stars and newest release (prereleases included, since there's no stable
- *  tag yet). Unauthenticated API, so it's cached per tab and every consumer
- *  renders fine without it. */
+/** Stars and the newest stable release (dev and branch builds are published
+ *  as prereleases, which `releases/latest` skips). Unauthenticated API, so
+ *  it's cached per tab and every consumer renders fine without it. */
 export function useRepoInfo(): RepoInfo {
   const [info, setInfo] = useState<RepoInfo>(() => readCache() ?? { stars: null, release: null });
 
