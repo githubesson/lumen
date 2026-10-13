@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import type { MusicRoot } from "../src/api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { MusicRoot, RescanStatus } from "../src/api";
 import {
   addMusicRootInput,
   canManageMusicRoot,
@@ -7,7 +7,9 @@ import {
   musicRootName,
   musicRootRemoval,
   rescanChangedLibrary,
+  rescanProgress,
   rootRemovalChangedLibrary,
+  watchRescan,
 } from "../src/admin/music-roots";
 
 function root(overrides: Partial<MusicRoot> = {}): MusicRoot {
@@ -111,5 +113,103 @@ describe("adding a root", () => {
 
   it("has nothing to send without a path", () => {
     expect(addMusicRootInput("   ", "External")).toBeNull();
+  });
+});
+
+describe("rescanProgress", () => {
+  it("counts a running scan's files and what came of them", () => {
+    expect(
+      rescanProgress({ running: true, total: 40, processed: 12, inserted: 3, dedup: 1, errored: 2 }),
+    ).toEqual({
+      count: "12 / 40",
+      detail: "12 / 40 processed · 3 inserted · 1 deduped · 2 errors",
+    });
+    expect(rescanProgress({ running: true, errored: 1 })).toEqual({
+      count: "0 / ?",
+      detail: "0 / ? processed · 0 inserted · 0 deduped · 1 error",
+    });
+  });
+
+  it("has nothing to show for an idle scan", () => {
+    expect(rescanProgress({ running: false, processed: 4 })).toBeNull();
+    expect(rescanProgress(null)).toBeNull();
+    expect(rescanProgress(undefined)).toBeNull();
+  });
+});
+
+describe("watchRescan", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const statuses = (...list: (RescanStatus | Error)[]) => {
+    const fetchStatus = vi.fn<(signal?: AbortSignal) => Promise<RescanStatus>>();
+    for (const item of list) {
+      if (item instanceof Error) fetchStatus.mockRejectedValueOnce(item);
+      else fetchStatus.mockResolvedValueOnce(item);
+    }
+    return fetchStatus;
+  };
+
+  it("reads at once, then each interval, and resolves with the finished status", async () => {
+    vi.useFakeTimers();
+    const done = { running: false, processed: 5 };
+    const fetchStatus = statuses({ running: true, processed: 1 }, { running: true, processed: 3 }, done);
+    const onStatus = vi.fn();
+    const watch = watchRescan({ fetchStatus, onStatus, intervalMs: 1000 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1001);
+    await expect(watch).resolves.toBe(done);
+    expect(fetchStatus).toHaveBeenCalledTimes(3);
+    expect(onStatus.mock.calls.map(([status]) => status.processed)).toEqual([1, 3, 5]);
+  });
+
+  it("gives up after too many failed reads in a row", async () => {
+    vi.useFakeTimers();
+    const fail = new Error("offline");
+    const fetchStatus = statuses(fail, { running: true }, fail, fail, fail);
+    const watch = watchRescan({ fetchStatus, maxFailures: 3 });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(watch).resolves.toBeNull();
+    // The success in between reset the count.
+    expect(fetchStatus).toHaveBeenCalledTimes(5);
+  });
+
+  it("skips reads while paused, without counting them as failures", async () => {
+    vi.useFakeTimers();
+    let paused = true;
+    const fetchStatus = statuses({ running: false });
+    const watch = watchRescan({ fetchStatus, isPaused: () => paused, intervalMs: 1000 });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fetchStatus).not.toHaveBeenCalled();
+    paused = false;
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(watch).resolves.toEqual({ running: false });
+  });
+
+  it("stops when aborted, cancelling the read in flight", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const fetchStatus = vi.fn(
+      (signal?: AbortSignal) =>
+        new Promise<RescanStatus>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    );
+    const onStatus = vi.fn();
+    const watch = watchRescan({ fetchStatus, onStatus, signal: controller.signal });
+    controller.abort();
+    await expect(watch).resolves.toBeNull();
+    expect(fetchStatus.mock.calls[0][0]).toBe(controller.signal);
+    expect(onStatus).not.toHaveBeenCalled();
+
+    const idle = new AbortController();
+    const waiting = watchRescan({ fetchStatus: statuses({ running: true }), signal: idle.signal });
+    await vi.advanceTimersByTimeAsync(0);
+    idle.abort();
+    await expect(waiting).resolves.toBeNull();
   });
 });
