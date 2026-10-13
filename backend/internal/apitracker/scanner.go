@@ -141,6 +141,10 @@ type scanRun struct {
 	// history is the pin's downloads by source URL, loaded once per scan and
 	// kept current by record.
 	history map[string]Download
+	// settled holds the source URLs this scan has handled. A link listed
+	// under several entries keeps the first entry's tags: comparing the next
+	// entry's against them would re-apply tags back and forth every scan.
+	settled map[string]bool
 	covers  eraCovers
 	summary *ScanSummary
 }
@@ -176,6 +180,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 	run := &scanRun{
 		pin:     pin,
 		history: history,
+		settled: map[string]bool{},
 		covers: eraCovers{
 			client: client,
 			images: s.fetchEraImageIDs(ctx, client, pin.TrackerID),
@@ -215,7 +220,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 					EntryID:   entry.ID,
 					SourceURL: sourceURL,
 					Status:    StatusSkipped,
-					Error:     "skipped host",
+					Error:     downloadfile.SkippedHost,
 					Metadata:  metadata,
 				})
 				continue
@@ -268,7 +273,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 			if ingestInserted {
 				summary.Ingested++
 			}
-			if s.applyTrackerMetadataForFile(ctx, trackID, filePath, trackCtx) {
+			if applied, _ := s.applyTrackerMetadataForFile(ctx, trackID, filePath, trackCtx); applied {
 				s.applyEraCover(ctx, &run.covers, trackID, trackCtx.Album)
 			}
 			s.record(ctx, run, DownloadInput{
@@ -300,10 +305,11 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 // record stores a download outcome and mirrors it into the scan's history, so
 // a link listed twice in one scan sees how the first went.
 func (s *Scanner) record(ctx context.Context, run *scanRun, in DownloadInput) {
+	key := dbtext.Clean(in.SourceURL)
+	run.settled[key] = true
 	if err := s.Store.RecordDownload(ctx, in); err != nil {
 		return
 	}
-	key := dbtext.Clean(in.SourceURL)
 	d := run.history[key]
 	d.PinID, d.SourceURL, d.ResolvedURL = in.PinID, key, in.ResolvedURL
 	d.Status, d.Error, d.Metadata = in.Status, in.Error, in.Metadata
@@ -455,9 +461,10 @@ func (s *Scanner) expandRecordURLs(ctx context.Context, client *Client, urls []s
 	return out
 }
 
-// previousStillPresent settles a link the pin has handled before: a recorded
-// skip stands, and a download whose file is still there counts as existing
-// rather than being fetched again. It reports whether the link is settled.
+// previousStillPresent settles a link the pin has handled before: a final
+// skip (downloadfile.SkipFinal) stands, and a download whose file is still
+// there counts as existing rather than being fetched again. It reports
+// whether the link is settled.
 func (s *Scanner) previousStillPresent(ctx context.Context, run *scanRun, sourceURL string, metadata json.RawMessage, trackCtx TrackContext) bool {
 	prev, ok := run.history[dbtext.Clean(sourceURL)]
 	if !ok {
@@ -465,7 +472,7 @@ func (s *Scanner) previousStillPresent(ctx context.Context, run *scanRun, source
 	}
 	switch prev.Status {
 	case StatusSkipped:
-		if downloadfile.SkipFinal(prev.Error) {
+		if downloadfile.SkipFinal(prev.Error, ingest.IsSupported) {
 			run.summary.Skipped++
 			return true
 		}
@@ -475,7 +482,7 @@ func (s *Scanner) previousStillPresent(ctx context.Context, run *scanRun, source
 		}
 		if prev.TrackID == nil {
 			trackID, inserted := s.ingestPath(ctx, prev.FilePath)
-			if s.applyTrackerMetadataForFile(ctx, trackID, prev.FilePath, trackCtx) {
+			if applied, _ := s.applyTrackerMetadataForFile(ctx, trackID, prev.FilePath, trackCtx); applied {
 				s.applyEraCover(ctx, &run.covers, trackID, trackCtx.Album)
 			}
 			s.record(ctx, run, DownloadInput{
@@ -503,16 +510,27 @@ func (s *Scanner) previousStillPresent(ctx context.Context, run *scanRun, source
 // refreshTrackerMetadata re-applies the tracker's tags to a track it
 // downloaded earlier only when they changed since, so edits made in Lumen
 // survive later scans. A track whose album still has no cover gets the era
-// image either way.
+// image either way. Only the first entry listing a link in a scan counts
+// (scanRun.settled).
 func (s *Scanner) refreshTrackerMetadata(ctx context.Context, run *scanRun, prev Download, metadata json.RawMessage, trackCtx TrackContext) {
+	if run.settled[prev.SourceURL] {
+		return
+	}
+	run.settled[prev.SourceURL] = true
 	tagsChanged, differs := compareEntryMetadata(prev.Metadata, metadata)
 	switch {
 	case tagsChanged:
-		if s.applyTrackerMetadataForFile(ctx, prev.TrackID, prev.FilePath, trackCtx) {
+		applied, err := s.applyTrackerMetadataForFile(ctx, prev.TrackID, prev.FilePath, trackCtx)
+		if err != nil {
+			// Keep the old record, so the next scan sees the change and
+			// tries again.
+			return
+		}
+		if applied {
 			s.applyEraCover(ctx, &run.covers, prev.TrackID, trackCtx.Album)
 		}
 	case prev.albumNeedsCover && s.Ingest != nil && run.covers.imageID(trackCtx.Album) > 0:
-		if s.ownsFile(ctx, prev.TrackID, prev.FilePath) {
+		if owns, _ := s.ownsFile(ctx, prev.TrackID, prev.FilePath); owns {
 			s.applyEraCover(ctx, &run.covers, prev.TrackID, trackCtx.Album)
 		}
 	}
@@ -636,9 +654,9 @@ func (s *Scanner) ingestPath(ctx context.Context, p string) (*uuid.UUID, bool) {
 	return &out.TrackID, out.Inserted
 }
 
-func (s *Scanner) applyTrackerMetadata(ctx context.Context, trackID uuid.UUID, tc TrackContext) {
+func (s *Scanner) applyTrackerMetadata(ctx context.Context, trackID uuid.UUID, tc TrackContext) error {
 	if tc.Title == "" {
-		return
+		return nil
 	}
 	artists := []string{}
 	if tc.AlbumArtist != "" {
@@ -670,33 +688,41 @@ func (s *Scanner) applyTrackerMetadata(ctx context.Context, trackID uuid.UUID, t
 			patch.AlbumArtist = &tc.AlbumArtist
 		}
 	}
-	if err := s.Library.UpdateTrack(ctx, trackID, patch); err != nil && s.Logger != nil {
-		s.Logger.Warn("api tracker metadata patch failed", "track", trackID, "err", err)
-	}
+	return s.Library.UpdateTrack(ctx, trackID, patch)
 }
 
 // applyTrackerMetadataForFile applies the tracker's tags when filePath is
-// still the track's own file, not one ingest folded into another track.
-func (s *Scanner) applyTrackerMetadataForFile(ctx context.Context, trackID *uuid.UUID, filePath string, tc TrackContext) bool {
-	if !s.ownsFile(ctx, trackID, filePath) {
-		return false
+// still the track's own file, not one ingest folded into another track. It
+// reports whether it applied them; err, already logged, means it couldn't
+// tell or the update failed, rather than that the file isn't the track's.
+func (s *Scanner) applyTrackerMetadataForFile(ctx context.Context, trackID *uuid.UUID, filePath string, tc TrackContext) (bool, error) {
+	owns, err := s.ownsFile(ctx, trackID, filePath)
+	if !owns || err != nil {
+		return false, err
 	}
-	s.applyTrackerMetadata(ctx, *trackID, tc)
-	return true
+	if err := s.applyTrackerMetadata(ctx, *trackID, tc); err != nil {
+		if s.Logger != nil {
+			s.Logger.Warn("api tracker metadata patch failed", "track", *trackID, "err", err)
+		}
+		return false, err
+	}
+	return true, nil
 }
 
-func (s *Scanner) ownsFile(ctx context.Context, trackID *uuid.UUID, filePath string) bool {
+// ownsFile reports whether filePath is still trackID's own file. A failed
+// check is logged as well as returned.
+func (s *Scanner) ownsFile(ctx context.Context, trackID *uuid.UUID, filePath string) (bool, error) {
 	if s == nil || s.Library == nil || trackID == nil || *trackID == uuid.Nil || strings.TrimSpace(filePath) == "" {
-		return false
+		return false, nil
 	}
 	ok, err := s.Library.TrackHasFilePath(ctx, *trackID, filePath)
 	if err != nil {
 		if s.Logger != nil {
 			s.Logger.Warn("api tracker track path check failed", "track", *trackID, "path", filePath, "err", err)
 		}
-		return false
+		return false, err
 	}
-	return ok
+	return ok, nil
 }
 
 // applyEraCover gives the track's album its era image when it has no cover.

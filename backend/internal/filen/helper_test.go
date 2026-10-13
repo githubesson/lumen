@@ -112,3 +112,29 @@ setInterval(() => {}, 1000)
 		t.Fatal("scan still waiting on a helper that ignores SIGTERM")
 	}
 }
+
+// A helper writing more to stderr than the scan keeps still finishes, and a
+// failure reports the end of what it wrote.
+func TestScanDrainsChattyHelperStderr(t *testing.T) {
+	lowerHelperGraces(t, 0, time.Second)
+	const noise = `
+const line = "warning ".repeat(127) + "\n"
+for (let i = 0; i < 1024; i++) process.stderr.write(line)
+`
+	scanner, pin := helperScanner(t, noise+`
+console.log(JSON.stringify({event: "file", status: "skipped", relPath: "notes.txt", size: 1, error: "unsupported file extension"}))
+`)
+	var summary ScanSummary
+	if err := scanner.scanPin(context.Background(), pin, &summary); err != nil || summary.Skipped != 1 {
+		t.Fatalf("scan err = %v, summary %+v", err, summary)
+	}
+
+	scanner, pin = helperScanner(t, noise+`
+process.stderr.write("share link expired\n")
+process.exitCode = 1
+`)
+	err := scanner.scanPin(context.Background(), pin, &ScanSummary{})
+	if err == nil || !strings.HasSuffix(err.Error(), "share link expired") {
+		t.Fatalf("scan err = %v", err)
+	}
+}

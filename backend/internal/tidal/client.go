@@ -361,8 +361,8 @@ func (c *Client) FullAlbum(ctx context.Context, id string) (Album, error) {
 
 func (c *Client) Track(ctx context.Context, id string) (Track, error) {
 	id = strings.TrimSpace(id)
-	if id == "" {
-		return Track{}, errors.New("tidal track id is required")
+	if !validID(id) {
+		return Track{}, ErrInvalidID
 	}
 	if strings.TrimSpace(c.cfg.HifiAPIURL) == "" {
 		return Track{}, ErrNotConfigured
@@ -531,8 +531,14 @@ func (c *Client) FileResponse(ctx context.Context, id string, incoming *http.Req
 
 const maxCoverBytes = 10 << 20
 
-// CoverBytes downloads cover art from TIDAL's image CDN for embedding.
+// CoverBytes downloads cover art from TIDAL's image CDN for embedding. TIDAL
+// serves covers over HTTPS only, so unlike stream media, a cover URL that
+// isn't HTTPS, or a redirect off it, is refused rather than fetched in the
+// clear and written into a download.
 func (c *Client) CoverBytes(ctx context.Context, coverURL string) ([]byte, error) {
+	if u, err := url.Parse(strings.TrimSpace(coverURL)); err != nil || u.Scheme != "https" {
+		return nil, errCoverNotHTTPS
+	}
 	if err := validateTIDALMediaURL(coverURL); err != nil {
 		return nil, err
 	}
@@ -542,7 +548,15 @@ func (c *Client) CoverBytes(ctx context.Context, coverURL string) ([]byte, error
 	}
 	req.Header.Set("User-Agent", httpx.BrowserUserAgent)
 	req.Header.Set("Accept", "image/*")
-	resp, err := tidalMediaClient(c.stream).Do(req)
+	client := tidalMediaClient(c.stream)
+	checkHost := client.CheckRedirect
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if req.URL.Scheme != "https" {
+			return errCoverNotHTTPS
+		}
+		return checkHost(req, via)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -556,6 +570,8 @@ func (c *Client) CoverBytes(ctx context.Context, coverURL string) ([]byte, error
 // errCoverTooLarge rejects a cover past maxCoverBytes rather than returning a
 // truncated image, which ffmpeg could refuse and fail the whole download on.
 var errCoverTooLarge = errors.New("tidal cover exceeds size limit")
+
+var errCoverNotHTTPS = errors.New("tidal cover URL must be HTTPS")
 
 func readCapped(r io.Reader, max int64) ([]byte, error) {
 	b, err := io.ReadAll(io.LimitReader(r, max+1))

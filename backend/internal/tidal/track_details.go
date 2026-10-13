@@ -71,11 +71,17 @@ var digitsOnly = regexp.MustCompile(`^[0-9]+$`)
 // ErrInvalidID reports an id TIDAL could never have issued.
 var ErrInvalidID = errors.New("invalid tidal id")
 
+// validID reports whether id could be one TIDAL issued: a positive decimal
+// number.
+func validID(id string) bool {
+	return digitsOnly.MatchString(id) && strings.Trim(id, "0") != ""
+}
+
 // TrackDetails loads one track's details through the extension's
 // /lumen/track route, which adds its album's release date and its credits.
 func (c *Client) TrackDetails(ctx context.Context, id string) (TrackDetails, error) {
 	id = strings.TrimSpace(id)
-	if !digitsOnly.MatchString(id) || strings.Trim(id, "0") == "" {
+	if !validID(id) {
 		return TrackDetails{}, ErrInvalidID
 	}
 	if strings.TrimSpace(c.cfg.HifiAPIURL) == "" {

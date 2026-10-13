@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -105,9 +106,12 @@ func (e SkipError) Error() string { return e.Reason }
 
 const (
 	readOnlyReason = "destination is read-only"
-	// legacyUnsupportedReason is how unsupported extensions were recorded
-	// before the reason named the extension.
-	legacyUnsupportedReason = "unsupported file extension"
+	// SkippedHost is the reason recorded for a link on a host the scanners
+	// never download from (sourceurl.ShouldSkipURL).
+	SkippedHost = "skipped host"
+	// unsupportedReason leads the reason for a file ingest can't read. It was
+	// recorded alone before the reason named the extension.
+	unsupportedReason = "unsupported file extension"
 )
 
 // UnsupportedExtension skips a file ingest can't read, naming its extension.
@@ -116,17 +120,26 @@ func UnsupportedExtension(name string) SkipError {
 	if ext == "" {
 		return SkipError{Reason: "no file extension"}
 	}
-	return SkipError{Reason: fmt.Sprintf("%s %q", legacyUnsupportedReason, ext)}
+	return SkipError{Reason: fmt.Sprintf("%s %q", unsupportedReason, ext)}
 }
 
 // SkipFinal reports whether a link recorded as skipped for reason should stay
-// skipped on later scans rather than be resolved and requested again. Skips
-// are about the link, so they stand, except a read-only destination, which is
-// about our disk, and an unsupported extension recorded before the reason
-// named it: names cut at a byte limit used to lose their extension, so those
-// get one more look.
-func SkipFinal(reason string) bool {
-	return reason != readOnlyReason && reason != legacyUnsupportedReason
+// skipped on later scans rather than be resolved and requested again. Only a
+// reason about the link that still holds stands: a skipped host, and an
+// extension supported (ingest.IsSupported) still rejects. Anything else gets
+// another look: it may have been about our side, which changes (our disk, the
+// download policy, the formats ingest reads, how a name is picked), or about
+// one response, such as a page served without a file name.
+func SkipFinal(reason string, supported func(name string) bool) bool {
+	if reason == SkippedHost {
+		return true
+	}
+	quoted, ok := strings.CutPrefix(reason, unsupportedReason+" ")
+	if !ok {
+		return false
+	}
+	ext, err := strconv.Unquote(quoted)
+	return err == nil && ext != "" && !supported(ext)
 }
 
 // Save installs a downloaded body without overwriting another file. Existing
