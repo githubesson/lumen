@@ -150,19 +150,12 @@ export default function HomeScreen() {
     },
   });
 
-  // Recents come back as a raw play log; collapse repeats so the shelf is a
-  // run of distinct tracks rather than the same song five times.
-  const recents = useMemo<TrackListItem[]>(() => {
-    const seen = new Set<string>();
-    const out: TrackListItem[] = [];
-    for (const t of recentQuery.data ?? []) {
-      if (seen.has(t.id)) continue;
-      seen.add(t.id);
-      out.push(t);
-      if (out.length >= 13) break;
-    }
-    return out;
-  }, [recentQuery.data]);
+  // Recents come back one row per track, latest play first: the resume card
+  // takes the first and the shelf the next twelve.
+  const recents = useMemo<TrackListItem[]>(
+    () => (recentQuery.data ?? []).slice(0, 13),
+    [recentQuery.data],
+  );
 
   const lastPlayed = recents[0];
   const recentShelf = useMemo(() => recents.slice(1), [recents]);

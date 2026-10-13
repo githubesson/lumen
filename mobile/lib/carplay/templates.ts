@@ -32,7 +32,7 @@ import type {
  * with words attached, not a wall of text.
  */
 
-export const CARPLAY_ROOT_ID = "root";
+const CARPLAY_ROOT_ID = "root";
 
 /** Ids of the five root tabs. Stable, because `updateList` finds them again. */
 export const CARPLAY_TAB = {
@@ -139,7 +139,7 @@ export function pushedTemplateId(destination: CarPlayDestination): string {
 }
 
 /** One line under the title: the artist, or the album when unattributed. */
-export function trackSubtitle(track: TrackListItem): string | undefined {
+function trackSubtitle(track: TrackListItem): string | undefined {
   return displayText(track.artist) || displayText(track.album_title) || undefined;
 }
 

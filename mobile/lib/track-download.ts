@@ -1,27 +1,18 @@
 import { File } from "expo-file-system";
 
-// The filename and audio-format helpers this module used to define now live in
-// `core/src/audio-format.ts` — they were identical to
-// `frontend/src/lib/download.ts` character-for-character. They are re-exported
-// here because the download store and the "save to Files" export import them
-// from this module. What stays is the byte-level validation, which only the
-// mobile client does: it persists streams to disk, so it must never write an
-// error page out as a .mp3.
-export {
-  downloadFilename,
-  extensionForContentType,
-  extensionForFormat,
-  extensionFromStream,
-} from "@music-library/core/audio-format";
+// Byte-level validation of downloaded streams, which only the mobile client
+// does: it persists streams to disk, so it must never write an error page out
+// as a .mp3. The filename and audio-format helpers live in
+// `core/src/audio-format.ts`.
 
 /**
  * Fetch a track stream and return its validated bytes plus the server's
  * content type. Throws on a non-2xx response, a non-audio content type, or
- * bytes that do not look like a media file — so callers never persist an
- * error page as audio. Shared by the "save to Files" export and offline
- * downloads so both apply identical validation in a single request.
+ * bytes that do not look like a media file — so the "save to Files" export
+ * never writes an error page as audio. Offline downloads run the same checks
+ * on their background transfers with the helpers below.
  */
-export async function fetchStreamBytes(
+async function fetchStreamBytes(
   url: string,
 ): Promise<{ bytes: Uint8Array; contentType?: string }> {
   const response = await fetch(url, { credentials: "include" });
