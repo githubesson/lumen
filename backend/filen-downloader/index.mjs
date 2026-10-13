@@ -172,14 +172,29 @@ async function tempPathForTarget(outDir, target) {
   return resolveInside(outDir, path.join(path.dirname(target), `.${path.basename(target)}.${randomUUID()}.part`))
 }
 
-const PART_SUFFIX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.part$/
+// A temp file from tempPathForTarget; the group is the name it was for.
+const PART_NAME = /^\.(.+)\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.part$/
 
-// removeStaleParts deletes temp files for target that a helper killed before
-// it could clean up left behind. Only ones untouched for longer than a
-// download may take: anything newer can belong to a helper still running.
+// isNameFor reports whether name is target's file name, or a "-N" name
+// nextAvailablePath could have moved target to.
+function isNameFor(name, target) {
+  const base = path.basename(target)
+  if (name === base) return true
+  const ext = path.extname(base)
+  const stem = base.slice(0, base.length - ext.length)
+  return (
+    name.startsWith(`${stem}-`) &&
+    name.endsWith(ext) &&
+    /^\d+$/.test(name.slice(stem.length + 1, name.length - ext.length))
+  )
+}
+
+// removeStaleParts deletes temp files a helper killed before it could clean
+// up left behind for target, or for a "-N" name an earlier run downloaded it
+// under. Only ones untouched for longer than a download may take: anything
+// newer can belong to a helper still running.
 export async function removeStaleParts(target, olderThanMs = FILE_TIMEOUT_MS) {
   const dir = path.dirname(target)
-  const prefix = `.${path.basename(target)}.`
   let names
   try {
     names = await fs.readdir(dir)
@@ -189,7 +204,10 @@ export async function removeStaleParts(target, olderThanMs = FILE_TIMEOUT_MS) {
   const cutoff = Date.now() - olderThanMs
   await Promise.all(
     names
-      .filter(name => name.startsWith(prefix) && PART_SUFFIX.test(name.slice(prefix.length)))
+      .filter(name => {
+        const m = PART_NAME.exec(name)
+        return m !== null && isNameFor(m[1], target)
+      })
       .map(async name => {
         const p = path.join(dir, name)
         const st = await fs.lstat(p).catch(() => null)
@@ -244,11 +262,13 @@ export async function downloadWithTimeout(cloud, params, timeoutMs = FILE_TIMEOU
 }
 
 // fetchInto downloads one file to a temp name beside target, checks it, and
-// installs it without overwriting, returning the installed path. The temp
-// file goes on failure, on timeout, and when the helper is stopped.
-async function fetchInto(cloud, params, outDir, target, size) {
+// installs it without overwriting, returning the installed path. target is
+// initial or a "-N" name for it (prepareTarget); a run killed earlier may
+// have used any of those, so temp files it left go first. This one goes on
+// failure, on timeout, and when the helper is stopped.
+async function fetchInto(cloud, params, outDir, initial, target, size) {
   await fs.mkdir(path.dirname(target), { recursive: true })
-  await removeStaleParts(target)
+  await removeStaleParts(initial)
   const tmpPath = await tempPathForTarget(outDir, target)
   activeTempFiles.add(tmpPath)
   try {
@@ -376,7 +396,7 @@ export async function downloadSingleFile(cloud, linkUuid, linkKey, password, out
       key: linkKey,
       size: info.size
     }
-    target.path = await fetchInto(cloud, params, outDir, target.path, info.size)
+    target.path = await fetchInto(cloud, params, outDir, initial, target.path, info.size)
     emit({ event: "file", status: "downloaded", relPath, path: target.path, size: info.size })
   } catch (err) {
     if (readOnlyError(err)) {
@@ -492,7 +512,7 @@ export async function downloadFolderLink(cloud, linkUuid, linkKey, password, out
       continue
     }
     try {
-      target.path = await fetchInto(cloud, job.params, outDir, target.path, job.size)
+      target.path = await fetchInto(cloud, job.params, outDir, job.localPath, target.path, job.size)
       emit({ event: "file", status: "downloaded", relPath: job.relPath, path: target.path, size: job.size })
     } catch (err) {
       if (readOnlyError(err)) {

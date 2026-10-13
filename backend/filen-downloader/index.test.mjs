@@ -226,14 +226,41 @@ test("removeStaleParts deletes only old temp files of that target", async t => {
   const dir = await temporaryDirectory(t)
   const target = path.join(dir, "song.mp3")
   const old = path.join(dir, ".song.mp3.0b6e7c9a-3a63-4f1e-9a52-0d2f1d3b8c11.part")
+  // Downloaded as song-2.mp3 because song.mp3 was taken then.
+  const renamed = path.join(dir, ".song-2.mp3.3b6e7c9a-3a63-4f1e-9a52-0d2f1d3b8c11.part")
   const fresh = path.join(dir, ".song.mp3.1b6e7c9a-3a63-4f1e-9a52-0d2f1d3b8c11.part")
   const other = path.join(dir, ".other.mp3.2b6e7c9a-3a63-4f1e-9a52-0d2f1d3b8c11.part")
+  const similar = path.join(dir, ".song-live.mp3.4b6e7c9a-3a63-4f1e-9a52-0d2f1d3b8c11.part")
   const tracker = path.join(dir, ".song.mp3.123456789.part")
-  for (const p of [old, fresh, other, tracker]) await writeFile(p, "x")
+  for (const p of [old, renamed, fresh, other, similar, tracker]) await writeFile(p, "x")
   const hourAgo = new Date(Date.now() - 60 * 60 * 1000)
-  for (const p of [old, other, tracker]) await utimes(p, hourAgo, hourAgo)
+  for (const p of [old, renamed, other, similar, tracker]) await utimes(p, hourAgo, hourAgo)
   await removeStaleParts(target, 60 * 1000)
-  assert.deepEqual((await readdir(dir)).sort(), [path.basename(tracker), path.basename(other), path.basename(fresh)].sort())
+  assert.deepEqual(
+    (await readdir(dir)).sort(),
+    [tracker, other, similar, fresh].map(p => path.basename(p)).sort()
+  )
+})
+
+test("a download moved to a free name still clears temp files left under the name it was for", async t => {
+  const outDir = await temporaryDirectory(t)
+  // A run killed mid-download left this; another file took song.mp3 since.
+  const stale = path.join(outDir, ".song.mp3.0b6e7c9a-3a63-4f1e-9a52-0d2f1d3b8c11.part")
+  await writeFile(stale, "par")
+  const longAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
+  await utimes(stale, longAgo, longAgo)
+  await writeFile(path.join(outDir, "song.mp3"), "other release")
+  const cloud = {
+    async filePublicLinkInfo() {
+      return { name: "song.mp3", size: 5, uuid: "file-id", chunks: 1 }
+    },
+    async downloadFileToLocal({ to }) {
+      await writeFile(to, "audio")
+    }
+  }
+  await downloadSingleFile(cloud, "link", "key", "", outDir)
+  assert.deepEqual((await readdir(outDir)).sort(), ["song-1.mp3", "song.mp3"])
+  assert.equal(await readFile(path.join(outDir, "song-1.mp3"), "utf8"), "audio")
 })
 
 test("SIGTERM removes the partial download before the helper exits", async t => {
