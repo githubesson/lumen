@@ -17,10 +17,14 @@
  *
  * Without On repeat (no plays in the last 30 days), Jump back in takes the
  * full width and the row lists (Recently played, Favorites, Playlists) share
- * one row under it.
+ * one row under it. Without Jump back in (hidden), On repeat and the short
+ * lists share the top row.
+ *
+ * The ids name slots: a customized Home (see homeArrangement.ts) fills
+ * them with other panels, and they keep these shapes.
  */
 
-/** Panels that can be missing. Jump back in is always there. */
+/** Panels that hold lists and can be missing for want of one. */
 export type BoardPanelId = "repeat" | "recent" | "favorites" | "albums" | "playlists" | "artists";
 
 export interface BoardCell {
@@ -47,7 +51,7 @@ const cell = (id: BoardCell["id"], span: number, spanMd: number, rows = 1, rowsM
  * The panels to render, in order, with their spans. The order is also the
  * reading and focus order; the grid places them in it.
  */
-export function boardLayout(present: Iterable<BoardPanelId>): BoardCell[] {
+export function boardLayout(present: Iterable<BoardCell["id"]>): BoardCell[] {
   const has = new Set(present);
   const only = (ids: BoardPanelId[]) => ids.filter((id) => has.has(id));
   const out: BoardCell[] = [];
@@ -57,8 +61,12 @@ export function boardLayout(present: Iterable<BoardPanelId>): BoardCell[] {
     // On the medium board it takes the full width instead (its rows flow
     // into two columns there) and the short lists pair up under it.
     const middle = only(["recent", "favorites"]);
-    out.push(cell("resume", 4, 2));
-    out.push(cell("repeat", 2, 2, middle.length > 0 ? 2 : 1));
+    if (has.has("resume")) {
+      out.push(cell("resume", 4, 2));
+      out.push(cell("repeat", 2, 2, middle.length > 0 ? 2 : 1));
+    } else {
+      out.push(cell("repeat", middle.length > 0 ? 2 : 6, 2));
+    }
     for (const id of middle) out.push(cell(id, 4 / middle.length, 2 / middle.length));
     const albums = has.has("albums");
     const playlists = has.has("playlists");
@@ -70,7 +78,7 @@ export function boardLayout(present: Iterable<BoardPanelId>): BoardCell[] {
     return out;
   }
 
-  out.push(cell("resume", 6, 2));
+  if (has.has("resume")) out.push(cell("resume", 6, 2));
   const lists = only(["recent", "favorites", "playlists"]);
   lists.forEach((id, i) => {
     // Medium: in pairs, and an odd one out takes the full width.

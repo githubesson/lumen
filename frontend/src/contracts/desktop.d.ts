@@ -11,6 +11,17 @@ export interface Tweaks {
   radius: number;
   density: Density;
   layout: Layout;
+  /** Home's arrangement on this device; absent for the default. */
+  homeBoard?: HomeBoardTweak;
+}
+
+/**
+ * Which panel fills each of Home's slots, and which are hidden, by panel id
+ * (see the renderer's homeArrangement.ts, which validates it on read).
+ */
+export interface HomeBoardTweak {
+  slots: string[];
+  hidden: string[];
 }
 
 export interface DiscordActivityPayload {

@@ -38,6 +38,20 @@
   }
 }
 
+/* Each cell holds its panel, stretched to the cell. */
+.board-slot {
+  position: relative;
+  display: grid;
+}
+.board-slot-body {
+  display: grid;
+  min-width: 0;
+}
+.board-slot-body > * {
+  min-width: 0;
+  margin: 0;
+}
+
 /* ---- Panels ------------------------------------------------- */
 .board-panel {
   container: board-panel / inline-size;
@@ -70,11 +84,21 @@
   color: var(--muted-foreground);
 }
 
-/* Jump back in: today's hero, sized down to a panel. */
+/* Jump back in: today's hero, sized down to a panel. In a narrow slot
+   (moved there on a customized Home) its text goes under the cover. Phones
+   stack the hero already, and there the basis would be a height. */
 .hero.board-resume {
   min-height: 0;
   padding: 16px;
   gap: 24px;
+}
+@media (min-width: 761px) {
+  .hero.board-resume {
+    flex-wrap: wrap;
+  }
+  .board-resume .hero-body {
+    flex: 1 1 220px;
+  }
 }
 .board-resume .hero-title {
   font-size: 24px;
@@ -355,6 +379,160 @@ button.board-play:active {
   .board-artists {
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
+}
+
+/* ---- Customizing --------------------------------------------- */
+.board-editbar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+  margin-bottom: var(--gap);
+  padding: 12px 16px;
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+}
+.board-editbar-text {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.board-editbar-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.board-editbar-hint {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+.board-editbar-hidden,
+.board-editbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.board-editbar-label {
+  margin-right: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.board-editbar-actions {
+  margin-left: auto;
+}
+
+/* A panel being arranged: a tile over it, with what's underneath faded
+   back. Tall enough for the tile, however little the panel holds. */
+.board-slot[data-editing] {
+  min-height: 148px;
+  cursor: grab;
+  user-select: none;
+}
+.board-slot[data-editing]:active {
+  cursor: grabbing;
+}
+.board-slot-editor {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  text-align: center;
+  border: 1px dashed color-mix(in oklab, var(--foreground) 30%, transparent);
+  border-radius: var(--radius-xl);
+  /* Frosted: the panel's shape and colour show through, its text doesn't
+     compete with the tile's. */
+  background: color-mix(in oklab, var(--card) 72%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+/* On a card of its own, so its contrast doesn't depend on what the
+   frosted panel lets through (a cover, on a phone's stacked hero). */
+.board-slot-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+.board-slot-grip {
+  color: var(--muted-foreground);
+}
+.board-slot-name {
+  font-size: 16px;
+  font-weight: 600;
+}
+.board-slot-note {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.board-slot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+/* The panel picked with Move, and the one a drag is over. */
+.board-slot:is([data-moving], [data-target]) .board-slot-editor {
+  border: 2px solid var(--primary);
+  background: color-mix(in oklab, var(--card) 86%, transparent);
+}
+.board-slot[data-dragging] {
+  opacity: 0.4;
+}
+
+.board-empty {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 64px 16px;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+
+/* Panels glide to their new slots when they swap, hide or come back.
+   Tile labels are groups of their own, over the panels; the two panels
+   being swapped (data-lift) travel over the rest, labels included. */
+html[data-board-morph]::view-transition-group(*) {
+  animation-duration: 280ms;
+  animation-timing-function: var(--ease-out);
+}
+.board-slot-label {
+  view-transition-class: board-label;
+}
+.board-slot[data-lift] {
+  view-transition-class: board-lift;
+}
+.board-slot[data-lift] .board-slot-label {
+  view-transition-class: board-label board-lift;
+}
+html[data-board-morph]::view-transition-group(*.board-label) {
+  z-index: 1;
+}
+html[data-board-morph]::view-transition-group(*.board-lift) {
+  z-index: 2;
+}
+html[data-board-morph]::view-transition-group(*.board-label.board-lift) {
+  z-index: 3;
 }
 
 @media (prefers-reduced-motion: reduce) {

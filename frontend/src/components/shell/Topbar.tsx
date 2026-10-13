@@ -3,6 +3,7 @@ import {
   Upload as ArrowUpTrayIcon,
   Menu as Bars3Icon,
   MicVocal as BookOpenIcon,
+  LayoutDashboard as CustomizeIcon,
   PanelLeftClose as ChevronDoubleLeftIcon,
   PanelLeftOpen as ChevronDoubleRightIcon,
   Search as MagnifyingGlassIcon,
@@ -10,10 +11,12 @@ import {
   Sun as SunIcon,
   X as XMarkIcon,
 } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
 import type { Playlist } from "../../api";
 import { useLyricsPanel } from "../../context/LyricsPanel";
 import { useTheme } from "../../context/Theme";
 import { modShortcut } from "../../lib/platform";
+import { CUSTOMIZE_HOME_PATH, CUSTOMIZE_PARAM } from "../home/homeArrangement";
 import WindowControls from "../WindowControls";
 import Breadcrumbs from "./Breadcrumbs";
 
@@ -38,6 +41,10 @@ export default function Topbar({
 }) {
   const { theme, toggle: toggleTheme, layout } = useTheme();
   const { open: lyricsOpen, toggle: toggleLyrics } = useLyricsPanel();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const onHome = location.pathname === "/";
+  const customizing = onHome && new URLSearchParams(location.search).has(CUSTOMIZE_PARAM);
 
   return (
     <div className="topbar">
@@ -94,6 +101,22 @@ export default function Topbar({
         </span>
         <kbd>{modShortcut("K")}</kbd>
       </button>
+
+      {/* Not a secondary button: on phones it's the way in, and where focus
+          goes back when customizing ends. */}
+      {onHome && (
+        <button
+          className={"iconbtn" + (customizing ? " active" : "")}
+          type="button"
+          title={customizing ? "Done customizing" : "Customize Home"}
+          aria-label="Customize Home"
+          aria-pressed={customizing}
+          data-customize-trigger=""
+          onClick={() => navigate(customizing ? "/" : CUSTOMIZE_HOME_PATH, { replace: true })}
+        >
+          <CustomizeIcon className="size-4" aria-hidden="true" />
+        </button>
+      )}
 
       <button
         className={"iconbtn" + (lyricsOpen ? " active" : "")}
