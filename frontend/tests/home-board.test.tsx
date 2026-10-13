@@ -378,6 +378,33 @@ it("swaps two panels dropped one on the other", async () => {
   expect(savedBoard().slots.slice(0, 5)).toEqual(["albums", "repeat", "recent", "favorites", "resume"]);
 });
 
+it("keeps both of two changes made before the first one's transition runs", async () => {
+  // A view transition calls its update a frame later; hold them all.
+  const updates: (() => void)[] = [];
+  const settled = Promise.resolve();
+  Object.assign(document, {
+    startViewTransition: (update: () => void) => {
+      updates.push(update);
+      return { ready: settled, finished: settled, updateCallbackDone: settled };
+    },
+  });
+  vi.stubGlobal("matchMedia", () => ({ matches: false }));
+  try {
+    withAlbum();
+    await renderHome("/?customize");
+    const tile = (name: string) => within(screen.getByRole("group", { name }));
+    fireEvent.click(tile("Albums").getByRole("button", { name: /^Hide\s*Albums$/ }));
+    fireEvent.click(tile("Playlists").getByRole("button", { name: /^Hide\s*Playlists$/ }));
+    act(() => updates.splice(0).forEach((update) => update()));
+    expect(panel("albums")).toBeNull();
+    expect(panel("playlists")).toBeNull();
+    expect(savedBoard().hidden).toEqual(["albums", "playlists"]);
+  } finally {
+    delete (document as { startViewTransition?: unknown }).startViewTransition;
+    vi.unstubAllGlobals();
+  }
+});
+
 it("offers a way back when every panel is hidden", async () => {
   arrange({ slots: [], hidden: ["resume", "repeat", "recent", "favorites", "albums", "playlists", "artists"] });
   await renderHome();

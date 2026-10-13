@@ -1,4 +1,4 @@
-import { useRef, useState, type DragEvent, type DragEventHandler, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, useState, type DragEvent, type DragEventHandler, type ReactNode, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import {
   ArrowLeftRight as SwapIcon,
@@ -115,10 +115,25 @@ export function useBoardEditor({
     setAnnouncement("");
   }
 
+  // The arrangement the last change left. A view transition runs its update
+  // a frame later, so a change made in between (two quick Hides) builds on
+  // the one before it, not on this render's arrangement, or it would undo it.
+  const latest = useRef(arrangement);
+  useEffect(() => {
+    latest.current = arrangement;
+  }, [arrangement]);
+
   /** Applies a change, then focuses what `focus` names once it's on the board. */
-  const change = (next: HomeArrangement, message: string, focus?: HomePanelId | "done", lift?: HomePanelId[]) => {
+  const change = (
+    update: (current: HomeArrangement) => HomeArrangement,
+    message: string,
+    focus?: HomePanelId | "done",
+    lift?: HomePanelId[],
+  ) => {
     setMoving(null);
     morphBoard(() => {
+      const next = update(latest.current);
+      latest.current = next;
       flushSync(() => onChange(next));
       if (focus === "done") doneButton.current?.focus();
       else if (focus) moveButtons.current.get(focus)?.focus({ preventScroll: true });
@@ -136,7 +151,7 @@ export function useBoardEditor({
   const swap = (from: HomePanelId, to: HomePanelId, focus?: HomePanelId) => {
     if (from === to) return;
     change(
-      swapPanels(arrangement, from, to),
+      (current) => swapPanels(current, from, to),
       `Swapped ${HOME_PANEL_TITLES[from]} and ${HOME_PANEL_TITLES[to]}.`,
       focus,
       [from, to],
@@ -144,12 +159,12 @@ export function useBoardEditor({
   };
 
   const hide = (id: HomePanelId, focusNext: HomePanelId | undefined) =>
-    change(setPanelHidden(arrangement, id, true), `${HOME_PANEL_TITLES[id]} hidden.`, focusNext ?? "done");
+    change((current) => setPanelHidden(current, id, true), `${HOME_PANEL_TITLES[id]} hidden.`, focusNext ?? "done");
 
   // Show, hide, swap and reset all end a pending Move (in `change`), so the
   // panel they focus has its Move button, not Swap here.
   const show = (id: HomePanelId) =>
-    change(setPanelHidden(arrangement, id, false), `${HOME_PANEL_TITLES[id]} shown.`, id);
+    change((current) => setPanelHidden(current, id, false), `${HOME_PANEL_TITLES[id]} shown.`, id);
 
   // Leaving hands focus to the top bar's Customize button, where editing
   // started, rather than dropping it with the bar.
@@ -163,7 +178,7 @@ export function useBoardEditor({
   const reset = () => {
     setMoving(null);
     if (isDefaultArrangement(arrangement)) return;
-    change(DEFAULT_ARRANGEMENT, "Home is back to its default layout.", "done");
+    change(() => DEFAULT_ARRANGEMENT, "Home is back to its default layout.", "done");
   };
 
   useKey(
