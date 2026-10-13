@@ -21,6 +21,7 @@ import {
   type Collaborator,
   type Playlist,
   type PlaylistCover,
+  type PlaylistTracks,
   type TrackListItem,
 } from "../api";
 import { useAuth } from "../context/Auth";
@@ -45,9 +46,9 @@ import {
 } from "@music-library/core/playlist-details";
 import { playlistPermissions } from "@music-library/core/playlist-permissions";
 import {
-  PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS,
   movePlaylistEntry,
-  queuedTidalCount,
+  playlistAutoDownloadRefetchMs,
+  playlistTidalQueued,
   removePlaylistEntry,
 } from "@music-library/core/playlist-tracks";
 import { compareSortableTracks, sortForDisplay } from "@music-library/core/track-sort";
@@ -74,6 +75,12 @@ interface CachedPlaylist {
   collabs: Collaborator[];
 }
 const cacheKey = (id: string | undefined) => (id ? `playlist:${id}` : undefined);
+// What the last tracks read said about auto-download, beside its rows.
+type DownloadState = Omit<PlaylistTracks, "tracks">;
+const downloadState = ({ tidal_queued, tidal_retry_at }: PlaylistTracks): DownloadState => ({
+  tidal_queued,
+  tidal_retry_at,
+});
 // Whether the list exists doesn't depend on the viewer's account role.
 const showsCollaborators = (p: Playlist) =>
   playlistPermissions(p, null).canSeeCollaborators;
@@ -135,6 +142,8 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     listedRef.current = listed;
   }, [listed]);
   const [tracks, setTracks] = useState<PlaylistTrackEntry[] | null>(cached?.tracks ?? null);
+  // Null until the server has answered, so cached rows don't count as queued.
+  const [download, setDownload] = useState<DownloadState | null>(null);
   const [collabs, setCollabs] = useState<Collaborator[]>(cached?.collabs ?? []);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("tracks");
@@ -217,6 +226,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       if (pendingTrackMutationsRef.current === 0) {
         trackEtagRef.current = t.etag;
         setTracks((previous) => reconcileItems(previous ?? [], t.data?.tracks ?? []));
+        if (t.data) setDownload(downloadState(t.data));
       }
       if (c) setCollabs(c);
       setError(null);
@@ -265,12 +275,28 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   }, [id, loadedPlaylist, tracks, collabs]);
 
   const autoDownload = Boolean(playlist?.tidal_auto_download);
-  const queuedTidal = useMemo(() => queuedTidalCount(tracks ?? []), [tracks]);
+  const snapshot = useMemo(
+    () => (download && tracks ? { ...download, tracks } : undefined),
+    [download, tracks],
+  );
+  const queuedTidal = playlistTidalQueued(snapshot);
   useEffect(() => {
-    if (!id || !autoDownload || queuedTidal === 0) return;
+    if (!id || !autoDownload || playlistAutoDownloadRefetchMs(snapshot) === false) return;
     let controller: AbortController | null = null;
+    let timer: number | undefined;
+    // Queued entries are looked at every 20 s; after a failed download, again
+    // once its retry is due. A read that changes the snapshot restarts this.
+    const schedule = () => {
+      window.clearTimeout(timer);
+      const delay = playlistAutoDownloadRefetchMs(snapshot);
+      if (delay !== false) timer = window.setTimeout(refresh, delay);
+    };
     const refresh = () => {
-      if (document.hidden || controller || pendingTrackMutationsRef.current > 0) return;
+      if (controller) return;
+      if (document.hidden || pendingTrackMutationsRef.current > 0) {
+        schedule();
+        return;
+      }
       const gen = loadGenRef.current;
       const request = new AbortController();
       controller = request;
@@ -278,21 +304,28 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         .then((response) => {
           if (!request.signal.aborted && gen === loadGenRef.current) {
             trackEtagRef.current = response.etag;
-            const rows = response.data?.tracks;
-            if (rows) setTracks((previous) => reconcileItems(previous ?? [], rows));
+            const data = response.data;
+            if (data) {
+              setTracks((previous) => reconcileItems(previous ?? [], data.tracks));
+              setDownload(downloadState(data));
+            }
           }
         })
         .catch(() => {})
-        .finally(() => { if (controller === request) controller = null; });
+        .finally(() => {
+          if (controller !== request) return;
+          controller = null;
+          schedule();
+        });
     };
-    const timer = window.setInterval(refresh, PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS);
+    schedule();
     document.addEventListener("visibilitychange", refresh);
     return () => {
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", refresh);
       controller?.abort();
     };
-  }, [id, autoDownload, queuedTidal]);
+  }, [id, autoDownload, snapshot]);
 
   // All hooks must run unconditionally — keep them above every early return so
   // an error/loading state never changes the hook count between renders.
@@ -423,6 +456,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         trackEtagRef.current = fresh.etag;
         const rows = fresh.data?.tracks ?? next;
         setTracks((previous) => reconcileItems(previous ?? [], rows));
+        if (fresh.data) setDownload(downloadState(fresh.data));
         updatePlaylists((listed) => listed?.map((row) => row.id === id ? { ...row, cover: coverFor(rows) } : row) ?? listed);
         setError(null);
       } catch {

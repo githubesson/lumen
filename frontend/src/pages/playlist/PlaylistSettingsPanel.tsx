@@ -54,6 +54,7 @@ export default function PlaylistSettingsPanel({
   onRemoveCover: () => void;
   autoDownload: boolean;
   savingAutoDownload: boolean;
+  /** Entries auto-download is saving, as the server counts them. */
   queuedTidal: number;
   onToggleAutoDownload: () => void;
   onDelete: () => void;
