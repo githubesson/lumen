@@ -454,7 +454,7 @@ const PlaylistRow = memo(function PlaylistRow({
         if (!selectionMode) onPlay(entry);
       }}
       onKeyDown={(e) => {
-        if (e.key === "Enter" && !selectionMode) {
+        if (e.target === e.currentTarget && e.key === "Enter" && !selectionMode) {
           e.preventDefault();
           onPlay(entry);
         }
