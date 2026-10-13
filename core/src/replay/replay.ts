@@ -82,7 +82,7 @@ export function replayQueries(period: Period): ReplayQueries {
 }
 
 /** How many top tracks a generated Replay playlist holds. */
-export const REPLAY_PLAYLIST_LIMIT = 50;
+const REPLAY_PLAYLIST_LIMIT = 50;
 
 /** The `generateReplayPlaylist` body for the range on screen. */
 export function replayPlaylistRequest(period: Period, range: ReplayRange) {

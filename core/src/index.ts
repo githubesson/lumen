@@ -3,7 +3,17 @@
 // `exports` map in package.json.
 
 export * from "./api";
-export * from "./artist-releases";
+export {
+  ARTIST_POPULAR_PREVIEW_COUNT,
+  filterReleases,
+  hasReleaseFilters,
+  libraryArtistReleases,
+  RELEASE_FILTER_OPTIONS,
+  releaseSubtitle,
+  tidalArtistReleases,
+  type ArtistRelease,
+  type ReleaseFilter,
+} from "./artist-releases";
 export * from "./audio-format";
 export * from "./entity-labels";
 export * from "./entity-target";
@@ -20,12 +30,7 @@ export {
   useFavorites,
   type FavoritesState,
 } from "./favorites/favorites-core";
-export {
-  createToggleGuard,
-  withFavorite,
-  withFavoriteId,
-  type ToggleGuard,
-} from "./favorites/favorite-toggle";
+export { createToggleGuard, withFavorite } from "./favorites/favorite-toggle";
 export {
   buildPeriodOptions,
   formatListeningTime,
@@ -33,94 +38,31 @@ export {
   periodLabel,
   periodRange,
   periodTitle,
-  type ListeningTimeStyle,
   type Period,
 } from "./replay/period";
-export {
-  usePlayerCore,
-  useRoutedPlayerControls,
-  type RoutedPlayerControlsOptions,
-  activityTrack,
-  buildRemoteQueue,
-  compactRemoteTrack,
-  controlledStateForDevice,
-  filterRemoteDevices,
-  optimisticControlledState,
-  remoteActivityTime,
-  remotePlayerState,
-  useRemoteActivityClock,
-  useRemotePlaybackCommands,
-  useRemotePlaybackTarget,
-  type ControlledPlaybackState,
-  type UseRemotePlaybackCommandsOptions,
-  type UseRemotePlaybackCommandsReturn,
-  fisherYatesWithAnchor,
-  shouldReportPlay,
-  nextRepeatMode,
-  clampVolume,
-  VOLUME_STORAGE_KEY,
-  ACTIVITY_DEVICE_ID_STORAGE_KEY,
-  getLatestPlaybackActivity,
-  getOrCreateActivityDeviceId,
-  sendRemotePlaybackCommand,
-  subscribeRemotePlaybackControl,
-  subscribePlaybackRemoteSession,
-  subscribePlaybackActivity,
-  usePlaybackActivityPublisher,
-  usePlaybackRemoteSession,
-  type AudioAdapter,
-  type AudioAdapterEvent,
-  type PlaybackDevice,
-  type PlaybackQueueSnapshot,
-  type PlaybackActivityPublisherOptions,
-  type PlaybackCapability,
-  type PlaybackRemoteSessionSnapshot,
-  type RemotePlaybackCommandAction,
-  type RemotePlaybackCommandResult,
-  type RemotePlaybackCommandStatus,
-  type RemotePlaybackControlEvent,
-  type PlayerControls,
-  type PlayerState,
-  type PlayOptions,
-  type RepeatMode,
-  type TimeState,
-  type UsePlayerCoreOptions,
-  type UsePlayerCoreReturn,
-} from "./player";
-export {
-  canStartTrack,
-  listPlaybackState,
-  startListPlayback,
-  startShuffledListPlayback,
-  usePlayFromList,
-  playbackDeviceButtonLabel,
-  playbackDeviceKind,
-  playbackDeviceStatus,
-  remoteCommandError,
-  REMOTE_VOLUME_INTERVAL_MS,
-  useRemotePlaybackController,
-  buildNowPlayingMetadata,
-  shouldExposeNowPlayingSession,
-  REMOTE_CONTROL_INDICATOR_MS,
-  useRemoteControlIndicator,
-  createAudioAdapterEmitter,
-  extrapolatePosition,
-  queueProgress,
-  repeatModeLabel,
-  type ListPlaybackState,
-  type PlayFromList,
-  type PlaybackDeviceKind,
-  type RemotePlaybackContextValue,
-  type UseRemotePlaybackControllerOptions,
-  type UseRemotePlaybackControllerReturn,
-  type NowPlayingMetadata,
-  type AudioAdapterEmitter,
-  type QueueProgress,
-} from "./player";
+export * from "./player";
 
-export * from "./lyrics";
+export {
+  activeLineIndex,
+  activeWordIndexForLine,
+  LYRICS_NOT_FOUND_MESSAGE,
+  lyricsContent,
+  lyricsErrorMessage,
+  lyricsRequest,
+  lyricsTimingDuration,
+  type LyricsContent,
+  type SyncedLine,
+} from "./lyrics";
 export * from "./metadata-edit";
-export * from "./share-snippet";
+export {
+  adjustSnippetWindow,
+  normalizeSnippetSelection,
+  parseTrackShareParams,
+  shareClipName,
+  snippetDragTarget,
+  snippetHandleBounds,
+  snippetWindow,
+} from "./share-snippet";
 export * from "./auth/validation";
 
 export { useLastFMConnection } from "./lastfm/use-lastfm-connection";
@@ -130,17 +72,19 @@ export * from "./admin/invite-links";
 export * from "./admin/music-roots";
 export * from "./tidal/status";
 export * from "./tidal/track-info";
-export {
-  normalizeTidalVerificationURL,
-  tidalAuthorizationTimeoutMs,
-  tidalSignInMessage,
-  useTidalDeviceLogin,
-  type TidalVerificationOpenResult,
-} from "./tidal/use-tidal-device-login";
+export { useTidalDeviceLogin } from "./tidal/use-tidal-device-login";
 export * from "./auth/errors";
-export { lastFMConnectionState, type LastFMConnectionKind } from "./lastfm/use-lastfm-connection";
+export { lastFMConnectionState } from "./lastfm/use-lastfm-connection";
 export * from "./playlist-permissions";
-export * from "./playlist-details";
+export {
+  isValidPlaylistName,
+  playlistCoverSizeError,
+  playlistDetailsForm,
+  playlistDetailsPayload,
+  playlistSubtitle,
+  samePlaylistDetails,
+  type PlaylistDetailsPayload,
+} from "./playlist-details";
 export * from "./playlist-tracks";
 export * from "./upload";
 export * from "./replay/replay";
