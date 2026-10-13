@@ -18,6 +18,7 @@ import (
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/models"
 	"github.com/githubesson/lumen/internal/safego"
+	"github.com/githubesson/lumen/internal/storage"
 )
 
 type Library struct {
@@ -353,7 +354,7 @@ func createUniqueUpload(dir, name string) (string, *os.File, error) {
 	for i := 0; i < 10000; i++ {
 		candidateName := name
 		if i > 0 {
-			candidateName = base + "-" + itoa(i) + ext
+			candidateName = base + "-" + strconv.Itoa(i) + ext
 		}
 		candidate := filepath.Join(dir, candidateName)
 		f, err := os.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
@@ -378,7 +379,7 @@ func writeUniqueUpload(ctx context.Context, dir, name string, src io.Reader, max
 	if err != nil {
 		return "", 0, err
 	}
-	written, copyErr := copyFileLimited(out, &contextReader{ctx: ctx, r: src}, maxBytes)
+	written, copyErr := copyFileLimited(out, storage.ContextReader(ctx, src), maxBytes)
 	if copyErr == nil {
 		copyErr = ctx.Err()
 	}
@@ -393,30 +394,4 @@ func writeUniqueUpload(ctx context.Context, dir, name string, src io.Reader, max
 		return "", written, copyErr
 	}
 	return dst, written, nil
-}
-
-type contextReader struct {
-	ctx context.Context
-	r   io.Reader
-}
-
-func (r *contextReader) Read(p []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return r.r.Read(p)
-}
-
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	pos := len(buf)
-	for i > 0 {
-		pos--
-		buf[pos] = byte('0' + i%10)
-		i /= 10
-	}
-	return string(buf[pos:])
 }

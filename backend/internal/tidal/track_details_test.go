@@ -87,7 +87,11 @@ func TestTrackDetailsInvalidID(t *testing.T) {
 	c := NewClient(Config{HifiAPIURL: "http://127.0.0.1:1"})
 	for _, id := range []string{"", "0", "000", "-1", "12a", "1/2", "../x"} {
 		if _, err := c.TrackDetails(context.Background(), id); !errors.Is(err, ErrInvalidID) {
-			t.Errorf("%q: err = %v", id, err)
+			t.Errorf("TrackDetails(%q): err = %v", id, err)
+		}
+		// So a tidal:abc track ref is the caller's mistake, not TIDAL failing.
+		if _, err := c.Track(context.Background(), id); !errors.Is(err, ErrInvalidID) {
+			t.Errorf("Track(%q): err = %v", id, err)
 		}
 	}
 }
@@ -110,7 +114,7 @@ func TestTrackDetailsReportsTheStreamBeingServed(t *testing.T) {
 	if err != nil || d.StreamedQuality != "" || d.MaxQuality != "LOSSLESS" {
 		t.Fatalf("before streaming: %+v %v", d, err)
 	}
-	if _, err := c.StreamURL(context.Background(), "123"); err != nil {
+	if _, _, err := c.streamURL(context.Background(), "123"); err != nil {
 		t.Fatal(err)
 	}
 	d, err = c.TrackDetails(context.Background(), "123")

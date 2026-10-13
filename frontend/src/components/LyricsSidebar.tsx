@@ -104,7 +104,6 @@ function LyricsContent({ track }: { track: TrackListItem }) {
   const { lyrics, loading, error } = useTrackLyrics(track, true);
   return (
     <PlayerLyricsLine
-      variant="sidebar"
       lyrics={lyrics}
       loading={loading}
       error={error}

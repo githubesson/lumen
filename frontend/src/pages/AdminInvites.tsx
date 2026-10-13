@@ -21,9 +21,22 @@ import AdminPanel from "../components/admin/AdminPanel";
 import AdminSection from "../components/admin/AdminSection";
 import Disclosure from "../components/admin/Disclosure";
 import { copyText } from "../lib/clipboard";
+import { useDesktopConfig } from "../lib/desktopConfig";
 import { fmtDate, fmtDateTime } from "../lib/format";
+import { isElectron } from "../lib/platform";
 import { useApiResource } from "../lib/useApiResource";
 import { useCopiedFlag } from "../lib/useCopiedFlag";
+
+/**
+ * The web registration link for `token`, on the server's origin. The web app
+ * is served by the server itself; the desktop app's pages come from a
+ * loopback proxy, so there the link takes the server it's configured with.
+ */
+function inviteUrl(token: string, server: string): string {
+  const url = new URL("/register", server);
+  url.searchParams.set("token", token);
+  return url.toString();
+}
 
 /**
  * Section for the unified Admin page. Handles invite CRUD. The parent page
@@ -47,25 +60,38 @@ export function InvitesAdminSection() {
   const [expiresAt, setExpiresAt] = useState("");
   const validation = validateInviteCreationWithDate(maxUses, expiresAt);
   const [justCreated, setJustCreated] = useState<Invite | null>(null);
+  const [creating, setCreating] = useState(false);
   const { copied, flash: flashCopied, reset: resetCopied } = useCopiedFlag(2000);
+  const desktopServer = useDesktopConfig()?.backendUrl;
+  const server = (isElectron() ? desktopServer : null) || window.location.origin;
 
   const create = async (e: FormEvent) => {
     e.preventDefault();
+    // A second submit while one is out would make a second invite.
+    if (creating) return;
     // Checked against the clock now, not when the form last rendered.
     const input = validateInviteCreationWithDate(maxUses, expiresAt);
     if (!input.valid || input.maxUses === null) return;
     setActionError(null);
+    setCreating(true);
     try {
       const created = await api.createInvite({
         target_role: role,
         max_uses: input.maxUses,
         expires_at: input.expiresAt,
       });
-      setJustCreated(created);
+      setJustCreated(created.token ? created : null);
+      if (!created.token) {
+        setActionError(
+          "The invite was made, but the server didn't send its link. Revoke it and create another.",
+        );
+      }
       resetCopied();
       await reload();
     } catch (err) {
       setActionError(errorMessage(err, "Failed to create invite."));
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -78,9 +104,6 @@ export function InvitesAdminSection() {
       setActionError(errorMessage(err, "Failed to revoke."));
     }
   };
-
-  const inviteUrl = (token: string) =>
-    `${window.location.origin}/register?token=${encodeURIComponent(token)}`;
 
   const copy = async (text: string) => {
     if (await copyText(text)) flashCopied();
@@ -157,9 +180,9 @@ export function InvitesAdminSection() {
             type="submit"
             variant="primary"
             leadingIcon={<PlusIcon className="size-4" />}
-            disabled={!validation.valid}
+            disabled={!validation.valid || creating}
           >
-            Create
+            {creating ? "Creating…" : "Create"}
           </Button>
         </form>
       </AdminSection>
@@ -193,12 +216,12 @@ export function InvitesAdminSection() {
                   wordBreak: "break-all",
                 }}
               >
-                {inviteUrl(justCreated.token)}
+                {inviteUrl(justCreated.token, server)}
               </p>
             </div>
             <Button
               size="sm"
-              onClick={() => copy(inviteUrl(justCreated.token!))}
+              onClick={() => copy(inviteUrl(justCreated.token!, server))}
               leadingIcon={
                 copied ? (
                   <CheckIcon className="size-3.5" />

@@ -14,8 +14,8 @@ import type { PlaylistTracks } from "./api";
 /** While TIDAL tracks are queued for download, refetch so rows flip to their library copies. */
 export const PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS = 20_000;
 
-/** Rows still on TIDAL: with auto-download on, these are queued for the library. */
-export function queuedTidalCount(entries: readonly { source?: string }[]): number {
+/** Rows still on TIDAL: what servers without `tidal_queued` have queued. */
+function queuedTidalCount(entries: readonly { source?: string }[]): number {
   let count = 0;
   for (const entry of entries) if (entry.source === "tidal") count += 1;
   return count;

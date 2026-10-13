@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import PlaylistTracksPanel from "../src/pages/playlist/PlaylistTracksPanel";
 import type { PlaylistTrackEntry, TrackListItem } from "../src/api";
@@ -21,12 +21,12 @@ const entries: PlaylistTrackEntry[] = ["a", "b", "c"].map((id, position) => ({
 const queue: TrackListItem[] = entries.map((e) => ({ id: e.track_id, title: e.title, duration_ms: 1000, source: e.source, album_title: "From the queue" }));
 const queueById = new Map(queue.map((t) => [t.id, t]));
 
-function renderPanel() {
+function renderPanel(onPlay = vi.fn()) {
   render(
     <PlaylistTracksPanel
       tracks={entries} totalCount={entries.length} searchActive={false} searchQuery=""
       queue={queue} queueById={queueById} canEdit showAddedBy={false}
-      onRemove={vi.fn()} onPlay={vi.fn()} onToggleFav={vi.fn()} isFav={() => false}
+      onRemove={vi.fn()} onPlay={onPlay} onToggleFav={vi.fn()} isFav={() => false}
     />,
   );
 }
@@ -78,4 +78,13 @@ it("lets the click that closes a menu only close it", () => {
   fireEvent.click(row("b"));
   menu.remove();
   expect(screen.getByText("1 selected")).toBeTruthy();
+});
+
+it("leaves Enter on a row's buttons to the buttons", () => {
+  const onPlay = vi.fn();
+  renderPanel(onPlay);
+  const remove = within(row("b")).getByRole("button", { name: "Remove from playlist" });
+  // Not prevented, so the button still does its own thing.
+  expect(fireEvent.keyDown(remove, { key: "Enter" })).toBe(true);
+  expect(onPlay).not.toHaveBeenCalled();
 });

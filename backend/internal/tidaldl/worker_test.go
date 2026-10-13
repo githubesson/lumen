@@ -53,33 +53,6 @@ func TestTrackPath(t *testing.T) {
 	}
 }
 
-func TestResolveDestination(t *testing.T) {
-	root := t.TempDir()
-	for _, tc := range []struct {
-		subdir string
-		want   string
-		ok     bool
-	}{
-		{"", root, true},
-		{".", root, true},
-		{"TIDAL", filepath.Join(root, "TIDAL"), true},
-		{"a/../b", filepath.Join(root, "b"), true},
-		{"../escape", "", false},
-		{"/abs", "", false},
-	} {
-		got, err := ResolveDestination(root, tc.subdir)
-		if tc.ok != (err == nil) || got != tc.want {
-			t.Errorf("ResolveDestination(%q) = %q, %v; want %q, ok=%v", tc.subdir, got, err, tc.want, tc.ok)
-		}
-	}
-	if _, err := ResolveDestination(" ", "TIDAL"); err == nil {
-		t.Error("accepted a blank root")
-	}
-	if _, err := ResolveDestination(filepath.Join(root, "unmounted"), "TIDAL"); err == nil {
-		t.Error("accepted a root that does not exist")
-	}
-}
-
 func TestKickNeverBlocks(t *testing.T) {
 	var nilWorker *Worker
 	nilWorker.Kick()

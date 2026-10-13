@@ -4,18 +4,15 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 
-	"github.com/githubesson/lumen/internal/httpx"
+	"github.com/githubesson/lumen/internal/downloadfile"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/mediaembed"
 	"github.com/githubesson/lumen/internal/pathsafe"
@@ -84,7 +81,7 @@ func (h *Tracks) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	roots := h.Ingest.AllRoots(r.Context())
-	if !pathWithinAnyRoot(roots, t.FilePath) {
+	if !pathsafe.WithinAnyRoot(roots, t.FilePath) {
 		// The file_path in the DB sits outside every configured music root.
 		// Almost always a stale path: the track was ingested under an old
 		// MUSIC_PATH (or a now-removed root) that no longer matches.
@@ -154,50 +151,111 @@ func (h *Tracks) streamTIDAL(w http.ResponseWriter, r *http.Request, tidalID str
 // When ffmpeg is available, the assembled file is remuxed with embedded
 // metadata (title, artist, album, year, track no, ISRC) and cover art
 // fetched from TIDAL's CDN, producing a fully tagged MP4/FLAC with Range
-// support. Without ffmpeg, the raw assembled stream is served as-is.
+// support. Tagging is best-effort: without ffmpeg or the track's metadata
+// the assembled stream is served as is, and a failed remux serves the
+// assembled file untagged rather than fetching the track again.
 func (h *Tracks) streamTIDALDownload(w http.ResponseWriter, r *http.Request, tidalID string) {
 	if h.TIDAL == nil {
 		h.log().Warn("download: tidal client not configured", "tidal_track", tidalID)
 		http.Error(w, tidalStreamErrorMessage(tidal.ErrNotConfigured), http.StatusServiceUnavailable)
 		return
 	}
-	resp, err := h.TIDAL.FileResponse(r.Context(), tidalID, r)
+	ctx := r.Context()
+	var meta mediaembed.Metadata
+	var cover []byte
+	tag := mediaembed.Available()
+	if tag {
+		meta, cover, tag = h.tidalDownloadTags(ctx, tidalID)
+	}
+	resp, err := h.TIDAL.FileResponse(ctx, tidalID, r)
 	if err != nil {
 		h.writeTIDALStreamError(w, "download", tidalID, err)
 		return
 	}
-
-	// Try to embed metadata + cover art via ffmpeg. If anything fails, fall
-	// back to the raw assembled file — the download still works, just without
-	// tags. This is best-effort: a missing cover or a failed ffmpeg run should
-	// never block the download.
-	if mediaembed.Available() {
-		if tagged, ok := h.embedTIDALMetadata(r.Context(), resp, tidalID); ok {
-			defer tagged.Cleanup()
-			ct := "audio/mp4"
-			if tagged.Format == mediaembed.FormatFLAC {
-				ct = "audio/flac"
-			}
-			w.Header().Set("Content-Type", ct)
-			w.Header().Set("Accept-Ranges", "bytes")
-			w.Header().Set("Content-Length", strconv.FormatInt(tagged.Size, 10))
-			w.Header().Set("Cache-Control", "private, max-age=0")
-			h.log().Info("download: tidal track served with embedded metadata",
-				"tidal_track", tidalID,
-				"size", tagged.Size,
-				"format", tagged.Format)
-			http.ServeContent(w, r, "track"+tagged.Ext, time.Time{}, tagged.File)
-			return
-		}
-		// embedTIDALMetadata already closed resp.Body on failure; the
-		// raw fallback path below needs a fresh FileResponse.
-		resp, err = h.TIDAL.FileResponse(r.Context(), tidalID, r)
-		if err != nil {
-			h.writeTIDALStreamError(w, "download: raw fallback", tidalID, err)
-			return
-		}
+	if !tag {
+		h.serveTIDALRaw(w, tidalID, resp)
+		return
 	}
+	h.spoolTaggedTIDAL(w, r, tidalID, resp, meta, cover)
+}
 
+// spoolTaggedTIDAL spools the assembled TIDAL file in resp, which it closes,
+// and serves it through serveTaggedTIDAL: ffmpeg needs the whole file on
+// disk, which also keeps it for serving untagged if the remux fails.
+func (h *Tracks) spoolTaggedTIDAL(w http.ResponseWriter, r *http.Request, tidalID string, resp *http.Response, meta mediaembed.Metadata, cover []byte) {
+	ctx := r.Context()
+	contentType := resp.Header.Get("Content-Type")
+	hint := mediaembed.HintFromContentType(contentType)
+	body := &readErr{r: resp.Body}
+	spool, err := mediaembed.Spool(body, hint)
+	resp.Body.Close()
+	if err != nil {
+		switch {
+		case ctx.Err() != nil:
+			// The client left.
+		case body.err != nil:
+			h.writeTIDALStreamError(w, "download", tidalID, body.err)
+		case errors.Is(err, downloadfile.ErrTooLarge):
+			// TIDAL sent more than any track is. Streaming it again would
+			// only skip the cap.
+			h.log().Warn("download: tidal track exceeds the download size limit", "tidal_track", tidalID, "limit", downloadfile.MaxFileBytes)
+			http.Error(w, "track too large", http.StatusBadGateway)
+		default:
+			// Writing the temp file failed, not TIDAL: the track can still
+			// stream through untagged.
+			h.log().Warn("download: spooling the tidal track failed; serving raw", "tidal_track", tidalID, "err", err)
+			if resp, err = h.TIDAL.FileResponse(ctx, tidalID, r); err != nil {
+				h.writeTIDALStreamError(w, "download: raw fallback", tidalID, err)
+				return
+			}
+			h.serveTIDALRaw(w, tidalID, resp)
+		}
+		return
+	}
+	defer os.Remove(spool)
+	h.serveTaggedTIDAL(w, r, tidalID, spool, contentType, meta, cover)
+}
+
+// serveTaggedTIDAL serves the assembled TIDAL file at spool remuxed with
+// meta and cover, or as is when the remux fails. contentType is the
+// assembled stream's.
+func (h *Tracks) serveTaggedTIDAL(w http.ResponseWriter, r *http.Request, tidalID, spool, contentType string, meta mediaembed.Metadata, cover []byte) {
+	ctx := r.Context()
+	select {
+	case tagSlots <- struct{}{}:
+		defer func() { <-tagSlots }()
+	case <-ctx.Done():
+		return // the client left
+	}
+	hint := mediaembed.HintFromContentType(contentType)
+	tagged, err := mediaembed.EmbedFile(ctx, spool, cover, meta, hint)
+	if err == nil {
+		defer tagged.Cleanup()
+		h.log().Info("download: tidal track served with embedded metadata",
+			"tidal_track", tidalID,
+			"size", tagged.Size,
+			"format", tagged.Format)
+		serveDownloadFile(w, r, tagged.File, mediaembed.ContentType(tagged.Format), "track"+tagged.Ext)
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	h.log().Warn("download: ffmpeg metadata embed failed; serving the file untagged",
+		"tidal_track", tidalID, "err", err)
+	f, err := os.Open(spool)
+	if err != nil {
+		h.log().Error("download: reopening the assembled tidal file failed", "tidal_track", tidalID, "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	serveDownloadFile(w, r, f, tidalProxyContentType(contentType), "track")
+}
+
+// serveTIDALRaw passes the assembled stream through without tags.
+func (h *Tracks) serveTIDALRaw(w http.ResponseWriter, tidalID string, resp *http.Response) {
 	h.log().Info("download: tidal track file assembled (raw, no metadata)",
 		"tidal_track", tidalID,
 		"status", resp.StatusCode,
@@ -205,29 +263,22 @@ func (h *Tracks) streamTIDALDownload(w http.ResponseWriter, r *http.Request, tid
 	writeTIDALProxyResponse(w, resp)
 }
 
-// embedTIDALMetadata fetches track metadata + cover art from TIDAL, then
-// pipes the raw assembled audio through ffmpeg to produce a tagged file.
-// Returns (result, true) on success. On any failure, closes resp.Body and
-// returns (nil, false) so the caller can fall back to a raw download.
-func (h *Tracks) embedTIDALMetadata(ctx context.Context, raw *http.Response, tidalID string) (*mediaembed.Result, bool) {
+// tidalDownloadTags fetches what a TIDAL download is tagged with: the
+// track's metadata and its cover art. ok is false when the metadata can't be
+// fetched; a cover that can't be is only left out.
+func (h *Tracks) tidalDownloadTags(ctx context.Context, tidalID string) (meta mediaembed.Metadata, cover []byte, ok bool) {
 	track, err := h.TIDAL.Track(ctx, tidalID)
 	if err != nil {
 		h.log().Warn("download: tidal metadata fetch failed; serving raw", "tidal_track", tidalID, "err", err)
-		raw.Body.Close()
-		return nil, false
+		return mediaembed.Metadata{}, nil, false
 	}
-
-	var coverBytes []byte
 	if track.CoverURL != "" {
-		coverBytes, err = fetchTIDALCoverBytes(ctx, track.CoverURL)
-		if err != nil {
+		if cover, err = h.TIDAL.CoverBytes(ctx, track.CoverURL); err != nil {
 			h.log().Warn("download: tidal cover fetch failed; embedding without cover",
 				"tidal_track", tidalID, "cover_url", track.CoverURL, "err", err)
 		}
 	}
-
-	hint := mediaembed.HintFromContentType(raw.Header.Get("Content-Type"))
-	meta := mediaembed.Metadata{
+	return mediaembed.Metadata{
 		Title:       track.Title,
 		Artist:      strings.Join(track.Artists, "; "),
 		Album:       track.AlbumTitle,
@@ -236,39 +287,22 @@ func (h *Tracks) embedTIDALMetadata(ctx context.Context, raw *http.Response, tid
 		TrackNo:     track.TrackNo,
 		DiscNo:      track.DiscNo,
 		ISRC:        track.ISRC,
-	}
-
-	result, err := mediaembed.Embed(ctx, raw.Body, coverBytes, meta, hint)
-	if err != nil {
-		h.log().Warn("download: ffmpeg metadata embed failed; serving raw",
-			"tidal_track", tidalID, "err", err)
-		return nil, false
-	}
-	return result, true
+	}, cover, true
 }
 
-// fetchTIDALCoverBytes downloads cover art from the TIDAL CDN
-// (resources.tidal.com). Returns raw image bytes (JPEG/PNG) or an error.
-func fetchTIDALCoverBytes(ctx context.Context, coverURL string) ([]byte, error) {
-	u, err := allowedRemoteCoverURL(coverURL)
-	if err != nil {
-		return nil, err
+// readErr remembers the error reading r failed with, which tells a failed
+// TIDAL assembly from a failure writing it to disk.
+type readErr struct {
+	r   io.Reader
+	err error
+}
+
+func (e *readErr) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if err != nil && err != io.EOF {
+		e.err = err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", httpx.BrowserUserAgent)
-	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
-	resp, err := remoteCoverHTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("cover fetch status %s", resp.Status)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, maxRemoteCoverBytes))
+	return n, err
 }
 
 func (h *Tracks) TIDALHLS(w http.ResponseWriter, r *http.Request) {
@@ -428,13 +462,6 @@ func refusalText(lead, reason string) string {
 		return lead + ": " + reason
 	}
 	return lead + "."
-}
-
-// pathWithinAnyRoot returns true when p lives inside any of the configured
-// roots. Prevents a stale DB row with a path outside every root from being
-// served.
-func pathWithinAnyRoot(roots []string, p string) bool {
-	return pathsafe.WithinAnyRoot(roots, p)
 }
 
 func audioContentType(format, path string) string {

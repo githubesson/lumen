@@ -113,7 +113,6 @@ function MiniLyrics() {
   }
   return (
     <PlayerLyricsLine
-      variant="sidebar"
       lyrics={lyrics}
       loading={loading}
       error={error}

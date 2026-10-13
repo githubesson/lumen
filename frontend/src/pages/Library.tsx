@@ -207,7 +207,6 @@ function LibraryBrowse({
 }) {
   const [displayMode, setDisplayMode] = useState<"grid" | "list">("list");
   const [sort, setSort] = useState<SortKey>("recent");
-  const requestQuery = query;
 
   return (
     <div className="view">
@@ -228,16 +227,16 @@ function LibraryBrowse({
       />
 
       {query.trim() && (
-        <SearchResults query={requestQuery} type={searchType} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} />
+        <SearchResults query={query} type={searchType} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} />
       )}
       {!query.trim() && view === "tracks" && (
-        <TracksView query="" sort={sort} displayMode={displayMode} />
+        <TracksView sort={sort} displayMode={displayMode} />
       )}
       {!query.trim() && view === "albums" && (
-        <AlbumsView query="" onOpen={onOpenAlbum} />
+        <AlbumsView onOpen={onOpenAlbum} />
       )}
       {!query.trim() && view === "artists" && (
-        <ArtistsView query="" onOpen={onOpenArtist} />
+        <ArtistsView onOpen={onOpenArtist} />
       )}
     </div>
   );
@@ -254,34 +253,21 @@ function labelFor(view: View) {
   }
 }
 
+// Browsing only: a search shows SearchResults instead.
 function TracksView({
-  query,
   sort,
   displayMode,
 }: {
-  query: string;
   sort: SortKey;
   displayMode: "grid" | "list";
 }) {
-  const [searchWarning, setSearchWarning] = useState<string | null>(null);
   const fetcher = useCallback(
-    async (p: PageRequest): Promise<Page<TrackListItem>> => {
-      if (p.q?.trim()) {
-        const res = await api.searchTracksPage({
-          ...p,
-          limit: Math.min(p.limit, 50),
-        });
-        if (!p.signal.aborted) setSearchWarning(res.warnings?.join(" ") || null);
-        return res;
-      }
-      setSearchWarning(null);
-      return api.listTracksPage({ ...p, sort });
-    },
+    (p: PageRequest): Promise<Page<TrackListItem>> => api.listTracksPage({ ...p, sort }),
     [sort],
   );
   const { items, total, hasMore, loadingMore, error, stale, sentinelRef } = usePaginatedList(
     fetcher,
-    query,
+    "",
     { pageSize: 100, pollIntervalMs: POLL_INTERVAL_MS, resourceKey: sort, keepPrevious: true, cacheKey: "library:tracks" },
   );
 
@@ -295,10 +281,9 @@ function TracksView({
       )}
       <ListMeta loaded={items?.length ?? null} total={total} unit="track" />
       {error && <ErrorBanner message={error} />}
-      {!error && searchWarning && <ErrorBanner message={searchWarning} />}
       <div className="refreshable" aria-busy={stale || undefined} style={{ marginTop: 14 }}>
         {items === null && <LoadingState label="Loading library…" />}
-        {items && items.length === 0 && !error && (query.trim() ? <EmptyState title="No matching tracks." hint="Try a different search." /> : <LibraryEmptyState />)}
+        {items && items.length === 0 && !error && <LibraryEmptyState />}
         {showList && (
           <TrackList
             tracks={sorted}
@@ -322,17 +307,14 @@ function TracksView({
 }
 
 function AlbumsView({
-  query,
   onOpen,
 }: {
-  query: string;
   onOpen: (target: EntityTarget) => void;
 }) {
   return (
     <GridView<Album>
       fetcher={api.listAlbumsPage}
       cacheKey="library:albums"
-      query={query}
       pageSize={60}
       unit="album"
       emptyLabel="No albums found."
@@ -342,17 +324,14 @@ function AlbumsView({
 }
 
 function ArtistsView({
-  query,
   onOpen,
 }: {
-  query: string;
   onOpen: (target: EntityTarget, name?: string) => void;
 }) {
   return (
     <GridView<Artist>
       fetcher={api.listArtistsPage}
       cacheKey="library:artists"
-      query={query}
       pageSize={60}
       unit="artist"
       emptyLabel="No artists found."

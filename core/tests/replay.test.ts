@@ -15,6 +15,7 @@ import {
   replayQueries,
   replayRequest,
   replaySeriesComplete,
+  replayAlbumSubtitle,
   replayTrackArtists,
   topArtistAction,
   topArtistTracks,
@@ -257,6 +258,20 @@ describe("replayTrackArtists", () => {
   it("keeps the names whole and unlinked when the server doesn't list them", () => {
     expect(replayTrackArtists({ artist: "Earth, Wind & Fire" })).toEqual([{ name: "Earth, Wind & Fire" }]);
     expect(replayTrackArtists({})).toEqual([]);
+  });
+});
+
+describe("replayAlbumSubtitle", () => {
+  it("puts the cleaned artist before the play count", () => {
+    expect(replayAlbumSubtitle({ artist: " A Â· B ", plays: 1234 })).toBe(
+      `A · B · ${(1234).toLocaleString()} plays`,
+    );
+    expect(replayAlbumSubtitle({ artist: "Solo", plays: 1 })).toBe("Solo · 1 play");
+  });
+
+  it("leaves out an artist that is missing or cleans to nothing", () => {
+    expect(replayAlbumSubtitle({ plays: 2 })).toBe("2 plays");
+    expect(replayAlbumSubtitle({ artist: "Â", plays: 2 })).toBe("2 plays");
   });
 });
 

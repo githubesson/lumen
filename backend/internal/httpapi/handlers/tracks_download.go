@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,8 +16,8 @@ import (
 // Stored covers are normalized to at most 1024 px, far below this.
 const maxDownloadCoverBytes = 16 << 20
 
-// tagSlots bounds concurrent ffmpeg remuxes of local downloads: each holds
-// an ffmpeg process and a temp copy of the file.
+// tagSlots bounds concurrent ffmpeg remuxes of downloads, local and TIDAL:
+// each holds an ffmpeg process and a temp copy of the file.
 var tagSlots = make(chan struct{}, 4)
 
 // serveTaggedLocal answers a download of a local track with a copy of its
@@ -70,15 +69,19 @@ func (h *Tracks) serveTaggedLocal(w http.ResponseWriter, r *http.Request, trackI
 		return false
 	}
 	defer tagged.Cleanup()
-	w.Header().Set("Content-Type", mediaembed.ContentType(hint))
-	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Content-Length", strconv.FormatInt(tagged.Size, 10))
-	w.Header().Set("Cache-Control", "private, max-age=0")
 	h.log().Info("download: local track served with library metadata",
 		"track", trackID, "size", tagged.Size, "format", tagged.Format, "cover", cover != nil)
-	// No modification time: the tags follow the library, not the file's.
-	http.ServeContent(w, r, "track"+tagged.Ext, time.Time{}, tagged.File)
+	serveDownloadFile(w, r, tagged.File, mediaembed.ContentType(hint), "track"+tagged.Ext)
 	return true
+}
+
+// serveDownloadFile serves a download's file with Range support. It has no
+// modification time: its tags follow the library or TIDAL, not the file's.
+func serveDownloadFile(w http.ResponseWriter, r *http.Request, f io.ReadSeeker, contentType, name string) {
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Cache-Control", "private, max-age=0")
+	http.ServeContent(w, r, name, time.Time{}, f)
 }
 
 // downloadCover reads a stored album cover for embedding; nil when there is

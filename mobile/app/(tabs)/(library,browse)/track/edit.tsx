@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
 import {
   api,
-  ApiError,
+  errorMessage,
   isLocalTrack,
   libraryChanged,
   trackActions,
@@ -105,13 +105,7 @@ function TrackEditor({ id, track }: { id: string; track: TrackDetail }) {
       router.back();
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : "Save failed.",
-      );
+      setError(errorMessage(err, "Save failed."));
       setSaving(false);
     }
   };

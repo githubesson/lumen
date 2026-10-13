@@ -11,7 +11,7 @@ export const INVITE_STATUS_LABELS: Record<InviteStatus, string> = {
 };
 
 /** The server stores max_uses in a Postgres INTEGER. */
-export const MAX_INVITE_USES = 2_147_483_647;
+const MAX_INVITE_USES = 2_147_483_647;
 
 type InviteState = Pick<Invite, "revoked_at" | "expires_at" | "uses" | "max_uses">;
 

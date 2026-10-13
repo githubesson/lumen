@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -145,26 +146,13 @@ func (h *Playlists) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Playlists) Get(w http.ResponseWriter, r *http.Request) {
-	u, ok := requireUser(w, r)
-	if !ok {
-		return
-	}
-	pid, ok := pathUUID(w, r, "id")
+	_, pid, role, ok := h.requireRole(w, r)
 	if !ok {
 		return
 	}
 	p, err := h.Store.Get(r.Context(), pid)
 	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	role, err := h.Store.EffectiveRole(r.Context(), pid, u.ID)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	if role == "" {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeStoreError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toPlaylistResp(p, role))
@@ -177,21 +165,8 @@ type updatePlaylistReq struct {
 }
 
 func (h *Playlists) Update(w http.ResponseWriter, r *http.Request) {
-	u, ok := requireUser(w, r)
+	_, pid, ok := h.requireOwner(w, r)
 	if !ok {
-		return
-	}
-	pid, ok := pathUUID(w, r, "id")
-	if !ok {
-		return
-	}
-	role, err := h.Store.EffectiveRole(r.Context(), pid, u.ID)
-	if err != nil || role == "" {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	if role != "owner" {
-		http.Error(w, "owner-only", http.StatusForbidden)
 		return
 	}
 	var req updatePlaylistReq
@@ -216,21 +191,8 @@ func (h *Playlists) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Playlists) Delete(w http.ResponseWriter, r *http.Request) {
-	u, ok := requireUser(w, r)
+	_, pid, ok := h.requireOwner(w, r)
 	if !ok {
-		return
-	}
-	pid, ok := pathUUID(w, r, "id")
-	if !ok {
-		return
-	}
-	role, err := h.Store.EffectiveRole(r.Context(), pid, u.ID)
-	if err != nil || role == "" {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	if role != "owner" {
-		http.Error(w, "owner-only", http.StatusForbidden)
 		return
 	}
 	if err := h.Store.Delete(r.Context(), pid); err != nil {
@@ -259,26 +221,12 @@ func coverVersion(key string) string {
 // Cover serves the owner's uploaded cover to anyone who can see the
 // playlist. Playlists without one 404; clients use the first track's art.
 func (h *Playlists) Cover(w http.ResponseWriter, r *http.Request) {
-	u, ok := requireUser(w, r)
-	if !ok {
-		return
-	}
-	pid, ok := pathUUID(w, r, "id")
-	if !ok {
-		return
-	}
 	if h.Covers == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	// A missing playlist is ErrNotFound (404); anything else is a 500.
-	role, err := h.Store.EffectiveRole(r.Context(), pid, u.ID)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	if role == "" {
-		http.Error(w, "not found", http.StatusNotFound)
+	_, pid, _, ok := h.requireRole(w, r)
+	if !ok {
 		return
 	}
 	p, err := h.Store.Get(r.Context(), pid)
@@ -338,32 +286,43 @@ func (h *Playlists) DeleteCover(w http.ResponseWriter, r *http.Request) {
 	h.writePlaylist(w, r, pid)
 }
 
-// requireOwner resolves the {id} playlist and checks the caller owns it,
-// writing the error response when they don't (404 to anyone who can't see
-// it at all).
-func (h *Playlists) requireOwner(w http.ResponseWriter, r *http.Request) (*models.User, uuid.UUID, bool) {
+// requireRole resolves the {id} playlist and checks the caller's role on it
+// is one of allowed (any role when none are given), writing the error
+// response when it isn't: 404 to anyone who can't see the playlist at all,
+// 403 to someone who can but lacks the role, and 500 when the lookup fails.
+func (h *Playlists) requireRole(w http.ResponseWriter, r *http.Request, allowed ...string) (*models.User, uuid.UUID, string, bool) {
 	u, ok := requireUser(w, r)
 	if !ok {
-		return nil, uuid.Nil, false
+		return nil, uuid.Nil, "", false
 	}
 	pid, ok := pathUUID(w, r, "id")
 	if !ok {
-		return nil, uuid.Nil, false
+		return nil, uuid.Nil, "", false
 	}
 	role, err := h.Store.EffectiveRole(r.Context(), pid, u.ID)
 	if err != nil {
 		writeStoreError(w, err)
-		return nil, uuid.Nil, false
+		return nil, uuid.Nil, "", false
 	}
 	if role == "" {
 		http.Error(w, "not found", http.StatusNotFound)
-		return nil, uuid.Nil, false
+		return nil, uuid.Nil, "", false
 	}
-	if role != "owner" {
-		http.Error(w, "owner-only", http.StatusForbidden)
-		return nil, uuid.Nil, false
+	if len(allowed) > 0 && !slices.Contains(allowed, role) {
+		msg := "forbidden"
+		if len(allowed) == 1 && allowed[0] == "owner" {
+			msg = "owner-only"
+		}
+		http.Error(w, msg, http.StatusForbidden)
+		return nil, uuid.Nil, "", false
 	}
-	return u, pid, true
+	return u, pid, role, true
+}
+
+// requireOwner is requireRole for changes only the owner may make.
+func (h *Playlists) requireOwner(w http.ResponseWriter, r *http.Request) (*models.User, uuid.UUID, bool) {
+	u, pid, _, ok := h.requireRole(w, r, "owner")
+	return u, pid, ok
 }
 
 func (h *Playlists) writePlaylist(w http.ResponseWriter, r *http.Request, pid uuid.UUID) {
@@ -409,17 +368,8 @@ type trackItem struct {
 }
 
 func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
-	u, ok := requireUser(w, r)
+	u, pid, _, ok := h.requireRole(w, r)
 	if !ok {
-		return
-	}
-	pid, ok := pathUUID(w, r, "id")
-	if !ok {
-		return
-	}
-	role, err := h.Store.EffectiveRole(r.Context(), pid, u.ID)
-	if err != nil || role == "" {
-		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	tracks, queue, err := h.Store.TracksWithQueue(r.Context(), pid, u.ID)
@@ -436,7 +386,7 @@ func (h *Playlists) ListTracks(w http.ResponseWriter, r *http.Request) {
 		}
 		ti := trackItem{
 			Position:      t.Position,
-			TrackID:       canonicalTrackRef(source, t.TrackID, t.ExternalID),
+			TrackID:       trackref.Canonical(source, t.TrackID, t.ExternalID),
 			DBTrackID:     t.TrackID.String(),
 			Source:        source,
 			SourceID:      sourceID,
@@ -497,21 +447,8 @@ type addTracksReq struct {
 const maxPlaylistTrackAddBatch = 1000
 
 func (h *Playlists) AddTracks(w http.ResponseWriter, r *http.Request) {
-	u, ok := requireUser(w, r)
+	u, pid, _, ok := h.requireRole(w, r, "owner", "editor")
 	if !ok {
-		return
-	}
-	pid, ok := pathUUID(w, r, "id")
-	if !ok {
-		return
-	}
-	role, err := h.Store.EffectiveRole(r.Context(), pid, u.ID)
-	if err != nil || role == "" {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	if role != "owner" && role != "editor" {
-		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	var req addTracksReq
@@ -578,21 +515,8 @@ func (h *Playlists) SetTIDALAutoDownload(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Playlists) RemoveTrack(w http.ResponseWriter, r *http.Request) {
-	u, ok := requireUser(w, r)
+	_, pid, _, ok := h.requireRole(w, r, "owner", "editor")
 	if !ok {
-		return
-	}
-	pid, ok := pathUUID(w, r, "id")
-	if !ok {
-		return
-	}
-	role, err := h.Store.EffectiveRole(r.Context(), pid, u.ID)
-	if err != nil || role == "" {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	if role != "owner" && role != "editor" {
-		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	pos, err := strconv.Atoi(chi.URLParam(r, "pos"))
@@ -612,21 +536,8 @@ type reorderReq struct {
 }
 
 func (h *Playlists) Reorder(w http.ResponseWriter, r *http.Request) {
-	u, ok := requireUser(w, r)
+	u, pid, _, ok := h.requireRole(w, r, "owner", "editor")
 	if !ok {
-		return
-	}
-	pid, ok := pathUUID(w, r, "id")
-	if !ok {
-		return
-	}
-	role, err := h.Store.EffectiveRole(r.Context(), pid, u.ID)
-	if err != nil || role == "" {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	if role != "owner" && role != "editor" {
-		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	var req reorderReq
@@ -681,17 +592,8 @@ func toCollabResp(c playlists.Collaborator) collaboratorResp {
 }
 
 func (h *Playlists) ListCollaborators(w http.ResponseWriter, r *http.Request) {
-	u, ok := requireUser(w, r)
+	_, pid, _, ok := h.requireRole(w, r)
 	if !ok {
-		return
-	}
-	pid, ok := pathUUID(w, r, "id")
-	if !ok {
-		return
-	}
-	role, err := h.Store.EffectiveRole(r.Context(), pid, u.ID)
-	if err != nil || role == "" {
-		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	cs, err := h.Store.ListCollaborators(r.Context(), pid)
@@ -722,7 +624,7 @@ func (h *Playlists) InviteCollaborator(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := h.Store.Get(r.Context(), pid)
 	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeStoreError(w, err)
 		return
 	}
 	if p.OwnerID != actor.ID {
@@ -775,7 +677,7 @@ func (h *Playlists) RemoveCollaborator(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := h.Store.Get(r.Context(), pid)
 	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeStoreError(w, err)
 		return
 	}
 	if p.OwnerID != actor.ID && actor.ID != uid {
@@ -808,7 +710,7 @@ func (h *Playlists) SetCollaboratorRole(w http.ResponseWriter, r *http.Request) 
 	}
 	p, err := h.Store.Get(r.Context(), pid)
 	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeStoreError(w, err)
 		return
 	}
 	if p.OwnerID != actor.ID {

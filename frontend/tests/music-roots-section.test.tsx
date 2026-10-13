@@ -48,9 +48,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function renderSection(roots: MusicRoot[] = [primary, inner]) {
+function renderSection(roots: MusicRoot[] = [primary, inner], onError = vi.fn()) {
   return render(
-    <MusicRootsSection roots={roots} reloadRoots={vi.fn().mockResolvedValue(undefined)} error={null} onError={vi.fn()} />,
+    <MusicRootsSection roots={roots} reloadRoots={vi.fn().mockResolvedValue(undefined)} error={null} onError={onError} />,
   );
 }
 
@@ -108,4 +108,31 @@ it("offers no actions on the primary root and no purge for a covered one", async
   });
   expect(api.deleteMusicRoot).toHaveBeenCalledWith(inner.id, { purge: false });
   expect(changed).not.toHaveBeenCalled();
+});
+
+it("follows a scan already running, and stops saying it's scanning after reads keep failing", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(api.rescanStatus)
+      .mockResolvedValueOnce({ running: true, processed: 1, total: 4 })
+      .mockResolvedValueOnce({ running: true, processed: 2, total: 4 })
+      .mockRejectedValue(new Error("offline"));
+    const onError = vi.fn();
+    renderSection(undefined, onError);
+    await act(async () => {});
+    expect(screen.getByRole("button", { name: "Scanning 2 / 4" })).toBeTruthy();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
+    expect(screen.getByRole("button", { name: /^Scanning/ })).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(screen.getByRole("button", { name: "Rescan all folders" })).toBeTruthy();
+    expect(onError).toHaveBeenLastCalledWith(expect.stringMatching(/Lost track of the rescan/));
+    // Gave up: no more reads, and nothing counted as finished.
+    const reads = vi.mocked(api.rescanStatus).mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(api.rescanStatus).toHaveBeenCalledTimes(reads);
+    expect(changed).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
 });

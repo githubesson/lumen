@@ -8,15 +8,23 @@ import Fieldset from "./Fieldset";
 import RadioCardOption from "./RadioCardOption";
 import { DialogShell } from "./DialogShell";
 import { libraryChanged } from "../lib/events";
-import { AUDIO_EXTENSIONS, isAudioFile } from "../lib/download";
+import { pluralize } from "../lib/format";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import {
   defaultUploadScope,
+  isUploadableFile,
+  planUploadBatches,
+  tooLargeUploadResult,
+  UPLOAD_EXTENSIONS,
   uploadAddedAny,
   uploadResultDetail,
   uploadResultStatus,
+  uploadScope,
   type UploadScope,
 } from "@music-library/core/upload";
+
+// The file picker offers only what the server ingests.
+const ACCEPT = UPLOAD_EXTENSIONS.map((ext) => `.${ext}`).join(",");
 
 interface Props {
   open: boolean;
@@ -34,6 +42,8 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
   const { mounted } = useTransitionMount(open, 200);
   const [scope, setScope] = useState<UploadScope>(() => defaultUploadScope(isAdmin));
   const [files, setFiles] = useState<File[]>([]);
+  // Picked or dropped files the server wouldn't ingest, left out up front.
+  const [leftOut, setLeftOut] = useState<string[]>([]);
   const [results, setResults] = useState<UploadResult[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,10 +51,10 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
   const inputRef = useRef<HTMLInputElement>(null);
 
   const accept = (list: FileList | File[] | null) => {
-    if (!list) return;
-    const arr: File[] = Array.from(list).filter(isAudio);
-    if (arr.length === 0) return;
-    setFiles(arr);
+    if (!list || list.length === 0) return;
+    const all = Array.from(list);
+    setFiles(all.filter((f) => isUploadableFile(f.name)));
+    setLeftOut(all.filter((f) => !isUploadableFile(f.name)).map((f) => f.name));
     setResults(null);
     setError(null);
   };
@@ -53,16 +63,36 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
     if (files.length === 0) return;
     setBusy(true);
     setError(null);
+    // One request over the server's cap fails whole, so a big selection goes
+    // up in batches, one after another. A file too big to send at all is
+    // reported with the rest rather than sent.
+    const { batches, tooLarge } = planUploadBatches(files, (f) => f.size);
+    const uploaded: UploadResult[] = [];
+    let sent = 0;
     try {
-      // Only admins may upload to the shared library; the choice is hidden
-      // from everyone else.
-      const r = await api.uploadMusic(files, isAdmin ? scope : "personal");
-      setResults(r);
-      if (uploadAddedAny(r)) libraryChanged.emit();
+      for (const batch of batches) {
+        // Only admins may upload to the shared library; the choice is hidden
+        // from everyone else.
+        uploaded.push(...(await api.uploadMusic(batch, uploadScope(isAdmin, scope))));
+        sent += batch.length;
+      }
+      setResults([...uploaded, ...tooLarge.map((f) => tooLargeUploadResult(f.name))]);
       onComplete?.();
     } catch (err) {
-      setError(errorMessage(err, "Upload failed."));
+      const message = errorMessage(err, "Upload failed.");
+      setError(message);
+      // Nothing went in: the selection stays, so Upload tries again. Once a
+      // batch has, its results show, and the files after the failed request
+      // (never sent) fail with its error, as on mobile.
+      if (sent > 0) {
+        setResults([
+          ...uploaded,
+          ...batches.flat().slice(sent).map((f) => ({ file: f.name, inserted: false, error: message })),
+          ...tooLarge.map((f) => tooLargeUploadResult(f.name)),
+        ]);
+      }
     } finally {
+      if (uploadAddedAny(uploaded)) libraryChanged.emit();
       setBusy(false);
     }
   };
@@ -159,7 +189,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
               className="mono"
               style={{ marginTop: 4, fontSize: 12, color: "var(--muted-foreground)" }}
             >
-              MP3, FLAC, M4A, OGG, Opus, or WAV
+              MP3, FLAC, M4A, MP4, AAC, OGG, Opus, WAV, or WebM
             </p>
           </label>
           <input
@@ -168,7 +198,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
             name="files"
             type="file"
             multiple
-            accept={`audio/*,${AUDIO_EXTENSIONS.map((e) => `.${e}`).join(",")}`}
+            accept={ACCEPT}
             className="sr-only"
             onChange={(e) => accept(e.currentTarget.files)}
           />
@@ -198,6 +228,15 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
                 ))}
               </ul>
             </div>
+          )}
+
+          {leftOut.length > 0 && !results && (
+            <p
+              style={{ marginTop: 12, fontSize: 12, color: "var(--muted-foreground)" }}
+            >
+              {pluralize(leftOut.length, "file")} left out, not a format the
+              server can add: {leftOut.join(", ")}
+            </p>
           )}
 
           {results && (
@@ -248,10 +287,6 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
       </DialogShell>
     </div>
   );
-}
-
-function isAudio(f: File) {
-  return f.type.startsWith("audio/") || isAudioFile(f.name);
 }
 
 function StatusDot({ result }: { result: UploadResult }) {

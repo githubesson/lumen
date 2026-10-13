@@ -1,7 +1,9 @@
 import {
   albumArtUrl,
   canStartTrack,
+  displayText,
   playlistArtUrl,
+  trackAlbumTarget,
   trackArtUrl,
   type Album,
   type Playlist,
@@ -30,7 +32,7 @@ import type {
  * with words attached, not a wall of text.
  */
 
-export const CARPLAY_ROOT_ID = "root";
+const CARPLAY_ROOT_ID = "root";
 
 /** Ids of the five root tabs. Stable, because `updateList` finds them again. */
 export const CARPLAY_TAB = {
@@ -137,8 +139,8 @@ export function pushedTemplateId(destination: CarPlayDestination): string {
 }
 
 /** One line under the title: the artist, or the album when unattributed. */
-export function trackSubtitle(track: TrackListItem): string | undefined {
-  return track.artist || track.album_title || undefined;
+function trackSubtitle(track: TrackListItem): string | undefined {
+  return displayText(track.artist) || displayText(track.album_title) || undefined;
 }
 
 /** Cover URL for a track row, or nothing when the track has no artwork. */
@@ -241,7 +243,7 @@ function trackRow(
 ): CarPlayListItem {
   return {
     id: options.id ?? encodeDestination({ kind: "track", id: track.id }),
-    text: track.title,
+    text: displayText(track.title),
     detailText: trackSubtitle(track),
     isPlaying: track.id === options.currentTrackId,
     enabled: canStartTrack(track, options.isPlayable),
@@ -330,6 +332,16 @@ function albumTile(album: Album): CarPlayImage {
 }
 
 /**
+ * The library album a track leads to in the car, or null when there's none
+ * to open here. The car browses library albums only, and a TIDAL track's
+ * `album_id` is a hidden album the library routes don't serve.
+ */
+export function carPlayAlbumId(track: TrackListItem): string | null {
+  const target = trackAlbumTarget(track);
+  return target?.kind === "local" ? target.id : null;
+}
+
+/**
  * The albums behind a run of recently played tracks, newest first and each
  * counted once — a play history is mostly the same few records repeating.
  */
@@ -342,7 +354,7 @@ export function recentAlbumTiles(
   const tiles: CarPlayImage[] = [];
 
   for (const track of tracks) {
-    const albumId = track.album_id;
+    const albumId = carPlayAlbumId(track);
     if (!albumId || seen.has(albumId)) continue;
     seen.add(albumId);
     tiles.push({
@@ -650,8 +662,8 @@ export function buildAlbumsTemplate({
             ? countLabel(shown.length, albums.length, "album")
             : undefined,
           items: shown.map((album) =>
-            browseRow({ kind: "album", id: album.id }, album.title, {
-              detailText: album.artist_name || undefined,
+            browseRow({ kind: "album", id: album.id }, displayText(album.title), {
+              detailText: displayText(album.artist_name) || undefined,
               imageUrl: albumArtwork(album),
               symbol: SYMBOL.album,
             }),

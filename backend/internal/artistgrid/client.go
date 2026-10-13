@@ -33,14 +33,13 @@ type TrackerData struct {
 }
 
 type Record struct {
-	EraID       string
-	EraName     string
-	EraExtra    string
-	EraImageURL string
-	Category    string
-	Item        map[string]any
-	ItemName    string
-	URLs        []string
+	EraID    string
+	EraName  string
+	EraExtra string
+	Category string
+	Item     map[string]any
+	ItemName string
+	URLs     []string
 }
 
 func NewClient() *Client {
@@ -132,14 +131,13 @@ func (d TrackerData) Records() []Record {
 					}
 				}
 				out = append(out, Record{
-					EraID:       eraID,
-					EraName:     stringField(era, "name"),
-					EraExtra:    stringField(era, "extra"),
-					EraImageURL: stringField(era, "image"),
-					Category:    category,
-					Item:        item,
-					ItemName:    strings.TrimSpace(stringField(item, "name")),
-					URLs:        urls,
+					EraID:    eraID,
+					EraName:  stringField(era, "name"),
+					EraExtra: stringField(era, "extra"),
+					Category: category,
+					Item:     item,
+					ItemName: strings.TrimSpace(stringField(item, "name")),
+					URLs:     urls,
 				})
 			}
 		}
@@ -324,23 +322,6 @@ func BuildContext(data TrackerData, pin Pin, tab string, rec Record) TrackContex
 		Composer:    producer,
 		Comment:     strings.Join(commentParts, "\n\n"),
 		Featured:    featured,
-		CoverURL:    rec.EraImageURL,
-		Custom: map[string]string{
-			"TRACKER":                  data.Name,
-			"TRACKER_TAB":              tab,
-			"TRACKER_ERA":              rec.EraName,
-			"TRACKER_ERA_EXTRA":        rec.EraExtra,
-			"TRACKER_CATEGORY":         rec.Category,
-			"TRACKER_TYPE":             stringField(rec.Item, "type"),
-			"TRACKER_AVAILABLE_LENGTH": stringField(rec.Item, "available_length"),
-			"TRACKER_QUALITY":          stringField(rec.Item, "quality"),
-			"TRACKER_LEAK_DATE":        stringField(rec.Item, "leak_date"),
-			"TRACKER_FILE_DATE":        stringField(rec.Item, "file_date"),
-			"TRACKER_TRACK_LENGTH":     stringField(rec.Item, "track_length"),
-			"TRACKER_EXTRA":            extra,
-			"TRACKER_ALT_TITLE":        altTitle,
-			"TRACKER_ORIGINAL_NAME":    rawTitle,
-		},
 	}
 }
 
@@ -354,8 +335,6 @@ type TrackContext struct {
 	Composer    string
 	Comment     string
 	Featured    []string
-	Custom      map[string]string
-	CoverURL    string
 }
 
 func GuessPrimaryArtist(trackerName string) string {

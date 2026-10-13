@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/githubesson/lumen/internal/ffsafe"
@@ -54,7 +53,7 @@ func AudioSHA256(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 
-	if hasFFmpeg() {
+	if ffsafe.HasFFmpeg() {
 		if sum, err := ffmpegAudioSHA256(ctx, path); err == nil {
 			return sum, nil
 		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -291,19 +290,6 @@ func parseASCIIInt(b []byte) (int, bool) {
 	return n, true
 }
 
-var (
-	ffmpegOnce    sync.Once
-	ffmpegPresent bool
-)
-
-func hasFFmpeg() bool {
-	ffmpegOnce.Do(func() {
-		_, err := exec.LookPath("ffmpeg")
-		ffmpegPresent = err == nil
-	})
-	return ffmpegPresent
-}
-
 // ffmpegAudioSHA256 shells out to ffmpeg to stream-copy just the audio packets
 // (no decode) into ffmpeg's hash muxer. Output looks like "SHA256=<hex>\n".
 func ffmpegAudioSHA256(parent context.Context, path string) (string, error) {
@@ -323,7 +309,7 @@ func ffmpegAudioSHA256(parent context.Context, path string) (string, error) {
 	)
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	out := &boundedBytes{max: subprocessOutLimit}
-	stderr := &lastBytes{max: subprocessErrTail}
+	stderr := ffsafe.NewTail(subprocessErrTail)
 	cmd.Stdout = out
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
@@ -376,22 +362,6 @@ func (b *boundedBytes) Bytes() []byte { return b.buf }
 func (b *boundedBytes) String() string { return string(b.buf) }
 
 func (b *boundedBytes) Truncated() bool { return b.truncated }
-
-// lastBytes retains only the tail of subprocess output for compact errors.
-type lastBytes struct {
-	max int
-	buf []byte
-}
-
-func (l *lastBytes) Write(p []byte) (int, error) {
-	l.buf = append(l.buf, p...)
-	if len(l.buf) > l.max {
-		l.buf = l.buf[len(l.buf)-l.max:]
-	}
-	return len(p), nil
-}
-
-func (l *lastBytes) String() string { return string(l.buf) }
 
 // hashReadSeeker lets native and fallback hash readers stop between reads.
 type hashReadSeeker struct {

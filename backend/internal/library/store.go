@@ -56,8 +56,6 @@ func FilePlayable(roots []string, path string) bool {
 
 func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
 
-func (s *Store) DB() *pgxpool.Pool { return s.db }
-
 // UpsertArtist returns an existing artist id by name or creates one. Matching
 // is case-insensitive — "Juice Wrld", "juice wrld", and "JUICE WRLD" all
 // resolve to the same row. The stored name keeps whatever casing the first
@@ -161,7 +159,6 @@ type TrackInsert struct {
 	Genre       string
 	Year        int
 	Composer    string
-	BPM         int
 	ISRC        string
 	Comments    string
 	FilePath    string
@@ -356,17 +353,12 @@ func (s *Store) CheckTrackVisible(ctx context.Context, id, viewer uuid.UUID) err
 	return nil
 }
 
-// RedirectSavedTIDAL maps the row id of a TIDAL track that auto-download has
+// ResolveSavedTIDAL maps the row id of a TIDAL track that auto-download has
 // saved to its (playable) library copy, and returns any other id unchanged.
 // Clients holding a snapshot from before the swap still send the old row id;
-// without this their plays and favorites would land on the retired row.
-func (s *Store) RedirectSavedTIDAL(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
-	id, _, err := s.ResolveSavedTIDAL(ctx, id)
-	return id, err
-}
-
-// ResolveSavedTIDAL is RedirectSavedTIDAL that also reports the TIDAL id when
-// id is a TIDAL row ("" otherwise), whether or not it was redirected.
+// without this their plays and favorites would land on the retired row. It
+// also reports the TIDAL id when id is a TIDAL row ("" otherwise), whether or
+// not it was redirected.
 func (s *Store) ResolveSavedTIDAL(ctx context.Context, id uuid.UUID) (uuid.UUID, string, error) {
 	var tidalID string
 	err := s.db.QueryRow(ctx, `
@@ -454,13 +446,13 @@ func InsertTrack(ctx context.Context, q pgx.Tx, t TrackInsert) (id uuid.UUID, in
 					owner_id = NULL, album_id = $2, title = $3,
 					track_no = NULLIF($4,0), disc_no = NULLIF($5,0), duration_ms = $6,
 					genre = NULLIF($7,''), year = NULLIF($8,0), composer = NULLIF($9,''),
-					bpm = NULLIF($10,0), isrc = NULLIF($11,''), comments = NULLIF($12,''),
-					file_path = $13, file_size = $14, format = $15, bitrate = NULLIF($16,0),
-					sample_rate = NULLIF($17,0), channels = NULLIF($18,0)::smallint,
+					isrc = NULLIF($10,''), comments = NULLIF($11,''),
+					file_path = $12, file_size = $13, format = $14, bitrate = NULLIF($15,0),
+					sample_rate = NULLIF($16,0), channels = NULLIF($17,0)::smallint,
 					metadata_edited_at = NULL, updated_at = NOW()
 				WHERE id = $1`,
 				personalID, t.AlbumID, t.Title, t.TrackNo, t.DiscNo, t.DurationMS, t.Genre, t.Year, t.Composer,
-				t.BPM, t.ISRC, t.Comments, t.FilePath, t.FileSize, t.Format, t.Bitrate, t.SampleRate,
+				t.ISRC, t.Comments, t.FilePath, t.FileSize, t.Format, t.Bitrate, t.SampleRate,
 				t.Channels,
 			); err != nil {
 				return uuid.Nil, false, "", err
@@ -501,16 +493,16 @@ func InsertTrack(ctx context.Context, q pgx.Tx, t TrackInsert) (id uuid.UUID, in
 	err = q.QueryRow(ctx, `
 		INSERT INTO tracks (
 			owner_id, album_id, title, track_no, disc_no, duration_ms, genre, year, composer,
-			bpm, isrc, comments, file_path, file_size, format, bitrate, sample_rate,
+			isrc, comments, file_path, file_size, format, bitrate, sample_rate,
 			channels, audio_sha256
 		) VALUES (
 			$1,$2,$3,NULLIF($4,0),NULLIF($5,0),$6,NULLIF($7,''),NULLIF($8,0),NULLIF($9,''),
-			NULLIF($10,0),NULLIF($11,''),NULLIF($12,''),$13,$14,$15,NULLIF($16,0),NULLIF($17,0),
-			NULLIF($18,0)::smallint,$19
+			NULLIF($10,''),NULLIF($11,''),$12,$13,$14,NULLIF($15,0),NULLIF($16,0),
+			NULLIF($17,0)::smallint,$18
 		)
 		RETURNING id`,
 		t.OwnerID, t.AlbumID, t.Title, t.TrackNo, t.DiscNo, t.DurationMS, t.Genre, t.Year, t.Composer,
-		t.BPM, t.ISRC, t.Comments, t.FilePath, t.FileSize, t.Format, t.Bitrate, t.SampleRate,
+		t.ISRC, t.Comments, t.FilePath, t.FileSize, t.Format, t.Bitrate, t.SampleRate,
 		t.Channels, t.AudioSHA256,
 	).Scan(&id)
 	if err != nil {
@@ -915,6 +907,21 @@ func (s *Store) SetTrackAlbumCover(ctx context.Context, trackID uuid.UUID, cover
 		  AND NULLIF(a.cover_art_path, '') IS NULL`,
 		trackID, coverPath)
 	return err
+}
+
+// TrackAlbumNeedsCover reports whether SetTrackAlbumCover would set a cover:
+// the track is global and its album has none yet.
+func (s *Store) TrackAlbumNeedsCover(ctx context.Context, trackID uuid.UUID) (bool, error) {
+	var needs bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tracks t
+			JOIN albums a ON a.id = t.album_id
+			WHERE t.id = $1
+			  AND t.owner_id IS NULL
+			  AND NULLIF(a.cover_art_path, '') IS NULL
+		)`, trackID).Scan(&needs)
+	return needs, err
 }
 
 // ClearAlbumCover removes an album's cover-art reference, reverting it to the

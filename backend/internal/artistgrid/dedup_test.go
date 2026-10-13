@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/githubesson/lumen/internal/db"
@@ -91,7 +92,11 @@ func TestPreviousStillPresentAfterDedup(t *testing.T) {
 			// must use its canonical link without recreating or retagging either file.
 			for i := 0; i < 2; i++ {
 				summary := ScanSummary{}
-				if got := scanner.previousStillPresent(ctx, pin.ID, sourceURL, &summary); got != tc.want {
+				history, err := store.downloadsBySource(ctx, pin.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := scanner.previousStillPresent(ctx, history, pin.ID, sourceURL, &summary); got != tc.want {
 					t.Fatalf("present = %v, want %v", got, tc.want)
 				}
 				wantExisting := 0
@@ -215,5 +220,94 @@ func TestIngestPathAppliesTrackerMetadataToAdoptedDownload(t *testing.T) {
 	}
 	if got := title(); got != "Tracker title" {
 		t.Fatalf("title after an adopted download = %q", got)
+	}
+}
+
+// A pin whose root is missing (an unmounted volume, say) fails the scan with
+// the reason recorded, rather than recreating the root and writing into it.
+func TestScanPinRefusesUnavailableRoot(t *testing.T) {
+	url := os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("set LUMEN_REVIEW_TEST_DATABASE_URL to an isolated PostgreSQL database")
+	}
+	if err := db.Migrate(url); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	pool, err := db.Open(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	store := NewStore(pool)
+	missing := filepath.Join(t.TempDir(), "unmounted")
+	pin, err := store.AddPin(ctx, AddPinInput{TrackerID: "unmounted", RootPath: missing, DestinationSubdir: "Leaks"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.DeletePin(context.Background(), pin.ID) })
+	scanner := Scanner{Store: store}
+	if _, err := scanner.ScanPin(ctx, pin); err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Fatalf("scan err = %v", err)
+	}
+	got, err := store.GetPin(ctx, pin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got.LastError, "not available") || got.LastSuccessAt != nil {
+		t.Fatalf("pin after scan: last_error=%q last_success=%v", got.LastError, got.LastSuccessAt)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatalf("scan created the missing root: %v", err)
+	}
+}
+
+// A link recorded as skipped isn't resolved and requested again while the
+// reason is about the link and still holds; any other skip is retried.
+func TestRecordedSkipFinality(t *testing.T) {
+	url := os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("set LUMEN_REVIEW_TEST_DATABASE_URL to an isolated PostgreSQL database")
+	}
+	if err := db.Migrate(url); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	pool, err := db.Open(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	store := NewStore(pool)
+	pin, err := store.AddPin(ctx, AddPinInput{TrackerID: "skips", RootPath: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.DeletePin(context.Background(), pin.ID) })
+	reasons := map[string]bool{
+		"skipped host":                      true,
+		`unsupported file extension ".zip"`: true,
+		// Recorded when ingest couldn't read .flac yet.
+		`unsupported file extension ".flac"`: false,
+		"no file extension":                  false,
+		"download URL host is not allowed":   false,
+		"destination is read-only":           false,
+		"unsupported file extension":         false,
+	}
+	for reason := range reasons {
+		if err := store.RecordDownload(ctx, DownloadInput{PinID: pin.ID, SourceURL: "https://files.example/" + reason, Status: StatusSkipped, Error: reason}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	history, err := store.downloadsBySource(ctx, pin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := Scanner{Store: store}
+	for reason, final := range reasons {
+		var summary ScanSummary
+		if got := scanner.previousStillPresent(ctx, history, pin.ID, "https://files.example/"+reason, &summary); got != final || (summary.Skipped == 1) != final {
+			t.Errorf("%q: settled=%v skipped=%d, want final=%v", reason, got, summary.Skipped, final)
+		}
 	}
 }

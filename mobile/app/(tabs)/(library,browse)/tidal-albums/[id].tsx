@@ -23,7 +23,7 @@ import {
   useDockScrollHandler,
 } from "../../../../components/dock/dock-context";
 import { TrackRow } from "../../../../components/track-row";
-import { usePlayTrack } from "../../../../context/player";
+import { usePlayerPlayback, usePlayTrack } from "../../../../context/player";
 import { qk } from "../../../../lib/query-keys";
 import { listPlaybackQueue, usePlayQueue } from "../../../../lib/use-play-queue";
 import { useAlbumDownloadAction } from "../../../../lib/album-download";
@@ -54,6 +54,7 @@ export default function TidalAlbumDetailScreen() {
   );
   const onTrackPress = usePlayQueue(tracks);
   const play = usePlayTrack();
+  const { shuffle } = usePlayerPlayback();
   const queryClient = useQueryClient();
   const { refetch } = albumQuery;
   const onQueuedChanged = useCallback(
@@ -98,13 +99,13 @@ export default function TidalAlbumDetailScreen() {
         metadata={metaLine(tidalAlbumMetaParts(album))}
         onPlay={
           playableTracks(tracks).length > 0
-            ? () => startListPlayback(play, listPlaybackQueue(tracks), false)
+            ? () => startListPlayback(play, listPlaybackQueue(tracks), shuffle)
             : undefined
         }
         secondaryAction={downloadAction}
       />
     );
-  }, [albumQuery.data, play, tracks, downloadAction]);
+  }, [albumQuery.data, play, shuffle, tracks, downloadAction]);
 
   if (albumQuery.isLoading) return <EmptyState fill loading />;
   if (albumQuery.isError || !albumQuery.data) {

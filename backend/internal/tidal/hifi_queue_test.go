@@ -40,12 +40,12 @@ func TestStreamURLWaitsInPlaybackQueue(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{HifiAPIURL: srv.URL})
-	got, err := c.StreamURL(context.Background(), "123")
+	got, _, err := c.streamURL(context.Background(), "123")
 	if err != nil {
-		t.Fatalf("StreamURL returned error: %v", err)
+		t.Fatalf("streamURL returned error: %v", err)
 	}
 	if got != queuedManifestURL {
-		t.Fatalf("StreamURL = %q, want %q", got, queuedManifestURL)
+		t.Fatalf("streamURL = %q, want %q", got, queuedManifestURL)
 	}
 	if n := polls.Load(); n != 3 {
 		t.Fatalf("polls = %d, want 3", n)

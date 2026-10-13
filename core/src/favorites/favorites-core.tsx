@@ -160,13 +160,3 @@ export function useFavorites() {
   if (!ctx) throw new Error("useFavorites requires FavoritesProvider");
   return ctx;
 }
-
-export function useFavorite(id: string) {
-  const { isFavorite } = useFavorites();
-  return isFavorite(id);
-}
-
-export function useFavoriteActions() {
-  const { toggle, refresh } = useFavorites();
-  return { toggle, refresh };
-}

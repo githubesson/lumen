@@ -67,7 +67,7 @@ func (l *Local) Put(ctx context.Context, key string, r io.Reader, _ int64, conte
 	if err := f.Chmod(0o644); err != nil {
 		return ObjectInfo{}, err
 	}
-	n, err := io.Copy(f, &contextReader{ctx: ctx, r: r})
+	n, err := io.Copy(f, ContextReader(ctx, r))
 	if err != nil {
 		return ObjectInfo{}, err
 	}
@@ -88,6 +88,12 @@ func (l *Local) Put(ctx context.Context, key string, r io.Reader, _ int64, conte
 	}
 	committed = true
 	return ObjectInfo{Key: key, Size: n, ContentType: contentType}, nil
+}
+
+// ContextReader reads from r until ctx is done, so a copy from a slow or
+// stalled source stops with the request it serves.
+func ContextReader(ctx context.Context, r io.Reader) io.Reader {
+	return &contextReader{ctx: ctx, r: r}
 }
 
 type contextReader struct {
@@ -174,15 +180,4 @@ func (l *Local) Walk(ctx context.Context, prefix string, fn func(key string, mod
 		return nil
 	}
 	return err
-}
-
-func (l *Local) Exists(ctx context.Context, key string) (bool, error) {
-	_, err := l.Stat(ctx, key)
-	if err == nil {
-		return true, nil
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	return false, err
 }

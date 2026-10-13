@@ -33,6 +33,7 @@ import {
 import { canAddToPlaylist } from "@music-library/core/playlist-permissions";
 import { prepareTrackDownload } from "@music-library/core/audio-format";
 import { resolveTrackAlbumTarget } from "@music-library/core/entity-target";
+import { startListPlayback } from "@music-library/core/player/play-list";
 import { deleteOwnUploadMessage, trackActions } from "@music-library/core/track";
 import CoverArt from "./CoverArt";
 import { libraryChanged } from "../lib/events";
@@ -53,7 +54,7 @@ import {
 import { useDismiss } from "../lib/useDismiss";
 import { useAuth } from "../context/Auth";
 import { useFavorites } from "../context/Favorites";
-import { usePlayerControls } from "../context/Player";
+import { usePlayer } from "../context/Player";
 import { usePlaylists } from "../context/Playlists";
 
 /** The list's selection, for a right-click on one of its rows. */
@@ -125,7 +126,8 @@ export default function TrackContextMenu({
   selection,
   onClose,
 }: Props) {
-  const { play } = usePlayerControls();
+  // Displayed state: `shuffle` is the controlled device's while casting.
+  const { play, shuffle } = usePlayer();
   const navigate = useNavigate();
   const { isFavorite, toggle: toggleFav } = useFavorites();
   const { me } = useAuth();
@@ -274,10 +276,10 @@ export default function TrackContextMenu({
   };
 
   const runPlay = () => {
-    if (many) {
-      // Dropped from TIDAL with no library copy: nothing to stream.
-      if (playable.length > 0) play(playable[0], playable);
-    } else if (onPlay) onPlay();
+    // Dropped from TIDAL with no library copy: nothing to stream, so those
+    // are left out. With shuffle on it starts at a random one.
+    if (many) startListPlayback(play, many, shuffle);
+    else if (onPlay) onPlay();
     else if (actions.play) {
       play(track, queue && queue.length > 0 ? queue : [track]);
     }

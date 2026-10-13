@@ -7,7 +7,6 @@ import {
   ImageUp as ImageUpIcon,
   Lock as LockClosedIcon,
   Music as MusicalNoteIcon,
-  Play as PlayIcon,
   Plus as PlusIcon,
   Users as UsersIcon,
 } from "lucide-react";
@@ -21,11 +20,13 @@ import {
   type Collaborator,
   type Playlist,
   type PlaylistCover,
+  type PlaylistTracks,
   type TrackListItem,
 } from "../api";
 import { useAuth } from "../context/Auth";
 import { usePlayerControls } from "../context/Player";
 import { Button } from "../components/Button";
+import PlayListButton from "../components/PlayListButton";
 import { Select } from "../components/Select";
 import SegmentedControl, {
   type SegmentedOption,
@@ -45,9 +46,9 @@ import {
 } from "@music-library/core/playlist-details";
 import { playlistPermissions } from "@music-library/core/playlist-permissions";
 import {
-  PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS,
   movePlaylistEntry,
-  queuedTidalCount,
+  playlistAutoDownloadRefetchMs,
+  playlistTidalQueued,
   removePlaylistEntry,
 } from "@music-library/core/playlist-tracks";
 import { compareSortableTracks, sortForDisplay } from "@music-library/core/track-sort";
@@ -74,6 +75,12 @@ interface CachedPlaylist {
   collabs: Collaborator[];
 }
 const cacheKey = (id: string | undefined) => (id ? `playlist:${id}` : undefined);
+// What the last tracks read said about auto-download, beside its rows.
+type DownloadState = Omit<PlaylistTracks, "tracks">;
+const downloadState = ({ tidal_queued, tidal_retry_at }: PlaylistTracks): DownloadState => ({
+  tidal_queued,
+  tidal_retry_at,
+});
 // Whether the list exists doesn't depend on the viewer's account role.
 const showsCollaborators = (p: Playlist) =>
   playlistPermissions(p, null).canSeeCollaborators;
@@ -135,6 +142,8 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     listedRef.current = listed;
   }, [listed]);
   const [tracks, setTracks] = useState<PlaylistTrackEntry[] | null>(cached?.tracks ?? null);
+  // Null until the server has answered, so cached rows don't count as queued.
+  const [download, setDownload] = useState<DownloadState | null>(null);
   const [collabs, setCollabs] = useState<Collaborator[]>(cached?.collabs ?? []);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("tracks");
@@ -216,14 +225,15 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       setPlaylist(p);
       if (pendingTrackMutationsRef.current === 0) {
         trackEtagRef.current = t.etag;
-        setTracks((previous) => reconcileItems(previous ?? [], t.tracks ?? []));
+        setTracks((previous) => reconcileItems(previous ?? [], t.data?.tracks ?? []));
+        if (t.data) setDownload(downloadState(t.data));
       }
       if (c) setCollabs(c);
       setError(null);
       // Keep the sidebar's row (name, cover) in step without refetching the
       // list. Only when it's out of date: update() drops list reads in flight.
       const row = listedRef.current;
-      const cover = coverFor(t.tracks ?? []);
+      const cover = coverFor(t.data?.tracks ?? []);
       if (row && !sameListing(row, p, cover)) {
         // Optional fields are named outright: the response omits cleared
         // ones, and spreading it would keep the row's stale values.
@@ -265,12 +275,32 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   }, [id, loadedPlaylist, tracks, collabs]);
 
   const autoDownload = Boolean(playlist?.tidal_auto_download);
-  const queuedTidal = useMemo(() => queuedTidalCount(tracks ?? []), [tracks]);
+  const snapshot = useMemo(
+    () => (download && tracks ? { ...download, tracks } : undefined),
+    [download, tracks],
+  );
+  const queuedTidal = playlistTidalQueued(snapshot);
   useEffect(() => {
-    if (!id || !autoDownload || queuedTidal === 0) return;
+    if (!id || !autoDownload || playlistAutoDownloadRefetchMs(snapshot) === false) return;
     let controller: AbortController | null = null;
+    let timer: number | undefined;
+    // Set on cleanup: an aborted read still settles, and must not re-arm a
+    // loop for a snapshot this effect no longer owns.
+    let disposed = false;
+    // Queued entries are looked at every 20 s; after a failed download, again
+    // once its retry is due. A read that changes the snapshot restarts this.
+    const schedule = () => {
+      window.clearTimeout(timer);
+      if (disposed) return;
+      const delay = playlistAutoDownloadRefetchMs(snapshot);
+      if (delay !== false) timer = window.setTimeout(refresh, delay);
+    };
     const refresh = () => {
-      if (document.hidden || controller || pendingTrackMutationsRef.current > 0) return;
+      if (disposed || controller) return;
+      if (document.hidden || pendingTrackMutationsRef.current > 0) {
+        schedule();
+        return;
+      }
       const gen = loadGenRef.current;
       const request = new AbortController();
       controller = request;
@@ -278,20 +308,29 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         .then((response) => {
           if (!request.signal.aborted && gen === loadGenRef.current) {
             trackEtagRef.current = response.etag;
-            if (response.tracks) setTracks((previous) => reconcileItems(previous ?? [], response.tracks!));
+            const data = response.data;
+            if (data) {
+              setTracks((previous) => reconcileItems(previous ?? [], data.tracks));
+              setDownload(downloadState(data));
+            }
           }
         })
         .catch(() => {})
-        .finally(() => { if (controller === request) controller = null; });
+        .finally(() => {
+          if (controller !== request) return;
+          controller = null;
+          schedule();
+        });
     };
-    const timer = window.setInterval(refresh, PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS);
+    schedule();
     document.addEventListener("visibilitychange", refresh);
     return () => {
-      window.clearInterval(timer);
+      disposed = true;
+      window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", refresh);
       controller?.abort();
     };
-  }, [id, autoDownload, queuedTidal]);
+  }, [id, autoDownload, snapshot]);
 
   // All hooks must run unconditionally — keep them above every early return so
   // an error/loading state never changes the hook count between renders.
@@ -355,10 +394,6 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       (t) => t.added_by_id != null && t.added_by_id !== playlist.owner_id,
     );
 
-  const onPlayAll = () => {
-    if (queue.length > 0) play(queue[0], queue);
-  };
-
   // After a failed action, reload anyway (the action may have superseded a
   // pending load), then report the action's error, which a successful reload
   // would otherwise clear.
@@ -420,8 +455,9 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         const fresh = await api.listPlaylistTracksIfChanged(id);
         if (gen !== loadGenRef.current || pendingTrackMutationsRef.current > 0) return;
         trackEtagRef.current = fresh.etag;
-        const rows = fresh.tracks ?? next;
+        const rows = fresh.data?.tracks ?? next;
         setTracks((previous) => reconcileItems(previous ?? [], rows));
+        if (fresh.data) setDownload(downloadState(fresh.data));
         updatePlaylists((listed) => listed?.map((row) => row.id === id ? { ...row, cover: coverFor(rows) } : row) ?? listed);
         setError(null);
       } catch {
@@ -641,14 +677,9 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         }
         actions={
           <>
-            <Button
-              variant="primary"
-              onClick={onPlayAll}
-              disabled={!tracks || tracks.length === 0}
-              leadingIcon={<PlayIcon className="size-4" />}
-            >
+            <PlayListButton tracks={queue} disabled={!tracks || tracks.length === 0}>
               Play all
-            </Button>
+            </PlayListButton>
             {canEdit && (
               <Button
                 // The dialog marks tracks already in the playlist; until they

@@ -15,8 +15,9 @@ import {
 } from "@tanstack/react-query";
 import {
   api,
-  fisherYatesWithAnchor,
+  displayText,
   startListPlayback,
+  startShuffledListPlayback,
   toQueueItem,
   useAuth,
   type Album,
@@ -38,6 +39,7 @@ import {
   buildQueueTemplate,
   buildSignedOutTemplate,
   buildTrackListTemplate,
+  carPlayAlbumId,
   CARPLAY_TAB,
   decodeDestination,
   greetingFor,
@@ -405,7 +407,7 @@ export function CarPlayBridge() {
       ],
       upNextTitle: "Up Next",
       upNextEnabled: queueProgress.upcoming > 0,
-      albumArtistEnabled: !!currentTrack?.album_id,
+      albumArtistEnabled: !!currentTrack && carPlayAlbumId(currentTrack) !== null,
     });
   }, [connected, currentTrack, favorited, queueProgress.upcoming, repeat, shuffle]);
 
@@ -546,15 +548,11 @@ export function CarPlayBridge() {
             return;
           }
 
-          // Shuffle turns the mode on and hands the player an already-shuffled
-          // queue: `setShuffle` would otherwise reorder the queue this render
-          // still thinks is playing, not the one we're about to start.
+          // Shuffle starts from a random track with shuffle mode on; a refused
+          // start leaves the mode and the queue playing now alone.
           case "shuffle-list": {
             const startable = startableListTracks(listFor(templateId)?.tracks);
-            if (!startable.length) return;
-            const shuffled = fisherYatesWithAnchor(startable, null);
-            if (!shuffle) controls.setShuffle(true);
-            if (controls.play(shuffled[0], shuffled) === false) return;
+            if (!startShuffledListPlayback(controls.play, startable)) return;
             await pushCarPlayNowPlaying();
             return;
           }
@@ -602,7 +600,7 @@ export function CarPlayBridge() {
     );
   });
   const onAlbumArtist = useEffectEvent(() => {
-    const albumId = currentTrack?.album_id;
+    const albumId = currentTrack ? carPlayAlbumId(currentTrack) : null;
     if (!albumId) return;
     void templateFor({ kind: "album", id: albumId }).then((template) => {
       if (template) void pushCarPlayList(template);
@@ -713,10 +711,9 @@ function albumTitle(
   tracks: TrackListItem[] | undefined,
 ): string {
   const albums = queryClient.getQueryData<Album[]>(qk.carPlayAlbums(userId));
-  return (
+  const title =
     albums?.find((album) => album.id === id)?.title ??
-    tracks?.find((track) => track.album_title)?.album_title ??
-    "Album"
-  );
+    tracks?.find((track) => track.album_title)?.album_title;
+  return displayText(title) || "Album";
 }
 

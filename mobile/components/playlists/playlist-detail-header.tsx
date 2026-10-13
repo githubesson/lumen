@@ -413,11 +413,9 @@ export function PlaylistMoreMenu({
           {
             text: "Remove",
             style: "destructive",
-            onPress: () =>
-              void downloadStore.removePlaylist(
-                playlistId,
-                tracks.map((track) => track.id),
-              ),
+            // Every track the playlist owns, not just the ones it lists now:
+            // a track removed from it since keeps its download otherwise.
+            onPress: () => void downloadStore.removePlaylist(playlistId),
           },
         ],
       );

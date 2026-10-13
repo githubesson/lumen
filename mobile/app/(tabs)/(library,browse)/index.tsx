@@ -5,10 +5,10 @@ import { Stack, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import {
   api,
-  playableTracks,
   playsById,
   replayAlbumTarget,
   replayRequest,
+  startShuffledListPlayback,
   useAuth,
   useLocalDay,
   type Period,
@@ -33,7 +33,7 @@ import { usePlayTrack } from "../../../context/player";
 import { subscribeAppActive } from "../../../lib/app-resume";
 import { qk } from "../../../lib/query-keys";
 import { QUERY_STALE_TIME } from "../../../lib/query-policy";
-import { usePlayQueue } from "../../../lib/use-play-queue";
+import { listPlaybackQueue, usePlayQueue } from "../../../lib/use-play-queue";
 import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme } from "../../../theme/theme";
 
@@ -150,19 +150,12 @@ export default function HomeScreen() {
     },
   });
 
-  // Recents come back as a raw play log; collapse repeats so the shelf is a
-  // run of distinct tracks rather than the same song five times.
-  const recents = useMemo<TrackListItem[]>(() => {
-    const seen = new Set<string>();
-    const out: TrackListItem[] = [];
-    for (const t of recentQuery.data ?? []) {
-      if (seen.has(t.id)) continue;
-      seen.add(t.id);
-      out.push(t);
-      if (out.length >= 13) break;
-    }
-    return out;
-  }, [recentQuery.data]);
+  // Recents come back one row per track, latest play first: the resume card
+  // takes the first and the shelf the next twelve.
+  const recents = useMemo<TrackListItem[]>(
+    () => (recentQuery.data ?? []).slice(0, 13),
+    [recentQuery.data],
+  );
 
   const lastPlayed = recents[0];
   const recentShelf = useMemo(() => recents.slice(1), [recents]);
@@ -192,12 +185,13 @@ export default function HomeScreen() {
   const onTopTrackPress = usePlayQueue(topTracks);
   const onFavoriteTilePress = usePlayQueue(favoritesShelf);
 
+  // Offline it starts from a downloaded favorite; a refused start (nothing
+  // downloaded) leaves shuffle mode and the queue playing now alone.
   const onShuffleFavorites = useCallback(() => {
-    const playable = playableTracks(favorites);
-    if (playable.length === 0) return;
+    const queue = listPlaybackQueue(favorites);
+    if (queue.length === 0) return;
     void Haptics.selectionAsync();
-    const shuffled = seededShuffle(playable, `${Date.now()}`);
-    play(shuffled[0], shuffled);
+    startShuffledListPlayback(play, queue);
   }, [favorites, play]);
 
   const onAlbumPress = useCallback(

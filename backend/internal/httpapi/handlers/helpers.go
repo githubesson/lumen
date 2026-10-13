@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"reflect"
 	"strconv"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -17,6 +16,7 @@ import (
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/models"
 	"github.com/githubesson/lumen/internal/playlists"
+	"github.com/githubesson/lumen/internal/users"
 )
 
 var errFileTooLarge = errors.New("file too large")
@@ -41,8 +41,6 @@ func copyFileLimited(dst io.Writer, src io.Reader, maxBytes int64) (int64, error
 	}
 	return n, nil
 }
-
-func zeroTime() time.Time { return time.Time{} }
 
 // pageParams returns the limit/offset pagination query parameters. Missing or
 // malformed values come back as zero; each store applies its own default and
@@ -171,11 +169,11 @@ func pathUUID(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, b
 }
 
 // writeStoreError maps a store-layer error to an HTTP response: a not-found
-// sentinel (library or playlists) becomes 404, anything else 500. Call it only
-// once the caller has confirmed err != nil.
+// sentinel (library, playlists or users) becomes 404, anything else 500. Call
+// it only once the caller has confirmed err != nil.
 func writeStoreError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, library.ErrNotFound), errors.Is(err, playlists.ErrNotFound):
+	case errors.Is(err, library.ErrNotFound), errors.Is(err, playlists.ErrNotFound), errors.Is(err, users.ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, library.ErrInvalidInput):
 		// Only genuine caller mistakes get 400. A pgx reset or a context

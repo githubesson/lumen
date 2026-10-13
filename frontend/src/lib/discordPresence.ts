@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  activityTrack,
+  buildNowPlayingMetadata,
   getLatestPlaybackActivity,
   remoteActivityTime,
   type PlaybackDevice,
@@ -144,7 +146,7 @@ export function useDiscordPresence() {
         return;
       }
 
-      const track = activityToTrack(activity);
+      const track = activityTrack(activity)!;
       const coverUrl = await resolveSignedCoverUrl(
         track,
         coverUrlCacheRef.current,
@@ -161,11 +163,13 @@ export function useDiscordPresence() {
       }
       remoteActivityPendingRef.current = false;
       remoteActivityPushedRef.current = true;
+      // The text the OS now-playing surfaces show, cleaned up for display.
+      const text = buildNowPlayingMetadata(track)!;
       await presence.push({
         trackId: activity.track_id,
-        title: activity.title,
-        artist: activity.artist || undefined,
-        album: activity.album || undefined,
+        title: text.title,
+        artist: text.artist,
+        album: text.albumTitle,
         coverUrl,
         durationSec: activity.duration_sec,
         elapsedSec: Math.floor(remoteActivityTime(activity).currentTime),
@@ -205,11 +209,12 @@ export function useDiscordPresence() {
         ) {
           return;
         }
+        const text = buildNowPlayingMetadata(track)!;
         await presence.push({
           trackId,
-          title: track.title,
-          artist: track.artist ?? undefined,
-          album: track.album_title ?? undefined,
+          title: text.title,
+          artist: text.artist,
+          album: text.albumTitle,
           coverUrl,
           durationSec: duration > 0 ? duration : undefined,
           elapsedSec: Math.floor(elapsed),
@@ -302,18 +307,6 @@ export function useDiscordPresence() {
 export default function DiscordPresence() {
   useDiscordPresence();
   return null;
-}
-
-function activityToTrack(activity: PlaybackActivity): TrackListItem {
-  return {
-    id: activity.track_id,
-    title: activity.title,
-    artist: activity.artist,
-    album_id: activity.album_id,
-    album_title: activity.album,
-    cover_url: activity.cover_url,
-    duration_ms: (activity.duration_sec ?? 0) * 1000,
-  };
 }
 
 /**

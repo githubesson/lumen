@@ -54,13 +54,23 @@ func (h *AdminUsers) DeparturePreview(w http.ResponseWriter, r *http.Request) {
 	}
 	target, err := h.Users.ByID(r.Context(), uid)
 	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeStoreError(w, err)
 		return
 	}
-	owned, err := h.Playlists.OwnedPlaylists(r.Context(), uid)
+	preview, err := h.departurePreview(r.Context(), target)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+// departurePreview is DeparturePreview's response for target, which Delete
+// also answers with when a playlist has no disposition.
+func (h *AdminUsers) departurePreview(ctx context.Context, target *models.User) (departurePreviewResp, error) {
+	owned, err := h.Playlists.OwnedPlaylists(ctx, target.ID)
+	if err != nil {
+		return departurePreviewResp{}, err
 	}
 	out := departurePreviewResp{
 		UserID:   target.ID.String(),
@@ -68,10 +78,12 @@ func (h *AdminUsers) DeparturePreview(w http.ResponseWriter, r *http.Request) {
 		Owned:    make([]ownedPlaylistItem, 0, len(owned)),
 	}
 	for _, p := range owned {
-		heir, ok, err := h.Playlists.SuggestedHeir(r.Context(), p.ID)
+		// An error fails the preview. Leaving the playlist out would leave
+		// the admin no disposition to give it, and every delete would 409
+		// again.
+		heir, ok, err := h.Playlists.SuggestedHeir(ctx, p.ID)
 		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
+			return departurePreviewResp{}, err
 		}
 		item := ownedPlaylistItem{
 			PlaylistID:       p.ID.String(),
@@ -83,7 +95,7 @@ func (h *AdminUsers) DeparturePreview(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Owned = append(out.Owned, item)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 type disposition struct {
@@ -115,15 +127,13 @@ func (h *AdminUsers) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	target, err := h.Users.ByID(r.Context(), uid)
 	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeStoreError(w, err)
 		return
 	}
 
 	var req deleteUserReq
-	if r.ContentLength > 0 {
-		if !decodeJSON(w, r, &req) {
-			return
-		}
+	if !decodeOptionalJSON(w, r, &req) {
+		return
 	}
 	dispoByID := map[uuid.UUID]disposition{}
 	for _, d := range req.Dispositions {
@@ -207,12 +217,12 @@ func (h *AdminUsers) Delete(w http.ResponseWriter, r *http.Request) {
 	})
 	switch {
 	case errors.Is(err, errMissingDisposition):
-		owned, err := h.Playlists.OwnedPlaylists(r.Context(), uid)
+		preview, err := h.departurePreview(r.Context(), target)
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		h.writePreview(w, r, target, owned)
+		writeJSON(w, http.StatusConflict, preview)
 		return
 	case errors.Is(err, errNewOwnerNotFound):
 		http.Error(w, "new_owner_id not found", http.StatusBadRequest)
@@ -220,7 +230,7 @@ func (h *AdminUsers) Delete(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, errLastAdmin):
 		http.Error(w, "cannot delete the last enabled admin", http.StatusBadRequest)
 		return
-	case errors.Is(err, errUserNotFound):
+	case errors.Is(err, users.ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	case err != nil:
@@ -241,7 +251,6 @@ var (
 	errMissingDisposition = errors.New("an owned playlist has no disposition")
 	errNewOwnerNotFound   = errors.New("new owner not found")
 	errLastAdmin          = errors.New("no other enabled admin would remain")
-	errUserNotFound       = errors.New("user not found")
 )
 
 // removeUploads empties a deleted user's upload folder, MUSIC_ROOT/.users/<id>/,
@@ -302,18 +311,10 @@ func (h *AdminUsers) Disable(w http.ResponseWriter, r *http.Request) {
 		if err := keepAnAdmin(r.Context(), tx, uid); err != nil {
 			return err
 		}
-		tag, err := tx.Exec(r.Context(), `UPDATE users SET disabled = TRUE, updated_at = NOW() WHERE id = $1`, uid)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			return errUserNotFound
-		}
-		_, err = tx.Exec(r.Context(), `DELETE FROM sessions WHERE user_id = $1`, uid)
-		return err
+		return h.Users.DisableTx(r.Context(), tx, uid)
 	})
 	switch {
-	case errors.Is(err, errUserNotFound):
+	case errors.Is(err, users.ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, errLastAdmin):
 		http.Error(w, "cannot disable the last enabled admin", http.StatusBadRequest)
@@ -330,7 +331,8 @@ func (h *AdminUsers) Disable(w http.ResponseWriter, r *http.Request) {
 const adminGuardLock int64 = 0x6c756d656e61646d // "lumenadm"
 
 // keepAnAdmin locks the admin guard for the rest of tx, then fails with
-// errLastAdmin if uid is an admin and no other enabled admin would remain.
+// errLastAdmin if uid is an admin and no other enabled admin would remain,
+// or users.ErrNotFound if there is no such user.
 // Call it first in the transaction, so the lock order is the same everywhere.
 func keepAnAdmin(ctx context.Context, tx pgx.Tx, uid uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, adminGuardLock); err != nil {
@@ -339,7 +341,7 @@ func keepAnAdmin(ctx context.Context, tx pgx.Tx, uid uuid.UUID) error {
 	var role string
 	err := tx.QueryRow(ctx, `SELECT role FROM users WHERE id = $1`, uid).Scan(&role)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errUserNotFound
+		return users.ErrNotFound
 	}
 	if err != nil || role != string(models.RoleAdmin) {
 		return err
@@ -361,9 +363,8 @@ func (h *AdminUsers) Enable(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	_, err := h.DB.Exec(r.Context(), `UPDATE users SET disabled = FALSE, updated_at = NOW() WHERE id = $1`, uid)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	if err := h.Users.Enable(r.Context(), uid); err != nil {
+		writeStoreError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -380,59 +381,25 @@ type listUserResp struct {
 }
 
 func (h *AdminUsers) List(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.DB.Query(r.Context(), `
-		SELECT id, username, role, disabled, must_reset_password, created_at, last_login_at
-		FROM users ORDER BY created_at ASC`)
+	all, err := h.Users.List(r.Context())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
-	out := []listUserResp{}
-	for rows.Next() {
-		var u listUserResp
-		var created time.Time
-		var lastLogin *time.Time
-		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.Disabled, &u.MustResetPassword, &created, &lastLogin); err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
+	out := make([]listUserResp, 0, len(all))
+	for _, u := range all {
+		item := listUserResp{
+			ID:                u.ID.String(),
+			Username:          u.Username,
+			Role:              string(u.Role),
+			Disabled:          u.Disabled,
+			MustResetPassword: u.MustResetPassword,
+			CreatedAt:         u.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		}
-		u.CreatedAt = created.Format("2006-01-02T15:04:05Z07:00")
-		if lastLogin != nil {
-			u.LastLoginAt = lastLogin.Format("2006-01-02T15:04:05Z07:00")
+		if u.LastLoginAt != nil {
+			item.LastLoginAt = u.LastLoginAt.Format("2006-01-02T15:04:05Z07:00")
 		}
-		out = append(out, u)
-	}
-	// Without this a mid-iteration connection reset or statement timeout would
-	// serialize a truncated user list as 200 — a disabled account simply
-	// appears to have vanished.
-	if err := rows.Err(); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-func (h *AdminUsers) writePreview(w http.ResponseWriter, r *http.Request, target *models.User, owned []playlists.OwnedPlaylist) {
-	preview := departurePreviewResp{
-		UserID:   target.ID.String(),
-		Username: target.Username,
-		Owned:    make([]ownedPlaylistItem, 0, len(owned)),
-	}
-	for _, p := range owned {
-		heir, ok, err := h.Playlists.SuggestedHeir(r.Context(), p.ID)
-		if err != nil {
-			continue
-		}
-		item := ownedPlaylistItem{
-			PlaylistID:       p.ID.String(),
-			Name:             p.Name,
-			HasCollaborators: ok,
-		}
-		if ok {
-			item.SuggestedHeirID = heir.String()
-		}
-		preview.Owned = append(preview.Owned, item)
-	}
-	writeJSON(w, http.StatusConflict, preview)
 }

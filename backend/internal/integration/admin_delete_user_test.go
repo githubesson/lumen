@@ -113,6 +113,7 @@ func TestAdminDeleteUserRemovesUploads(t *testing.T) {
 	router.Delete("/admin/users/{id}", h.Delete)
 	del := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodDelete, "/admin/users/"+target.String(), strings.NewReader(body))
+		req.ContentLength = -1 // sent chunked, with no length up front
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(&http.Cookie{Name: "session", Value: token})
 		w := httptest.NewRecorder()
@@ -126,6 +127,13 @@ func TestAdminDeleteUserRemovesUploads(t *testing.T) {
 			t.Fatal(err)
 		}
 		return n
+	}
+
+	// Without dispositions the delete is refused with the preview, which asks
+	// about both playlists.
+	if w := del(""); w.Code != http.StatusConflict ||
+		!strings.Contains(w.Body.String(), keepPL.String()) || !strings.Contains(w.Body.String(), dropPL.String()) {
+		t.Fatalf("delete without dispositions = %d: %s", w.Code, w.Body.String())
 	}
 
 	// The second handover fails, so nothing happens: the first playlist isn't

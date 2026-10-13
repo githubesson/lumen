@@ -1,13 +1,4 @@
 /* Dialogs / overlays */
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--scrim);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
-  z-index: 40;
-}
-
 .dialog-layer {
   z-index: 120;
   pointer-events: auto;

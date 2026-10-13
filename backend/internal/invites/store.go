@@ -107,11 +107,6 @@ func (s *Store) Revoke(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-type ListRow struct {
-	Invite *models.Invite
-	URL    string // populated by caller if it has the public base URL
-}
-
 func (s *Store) List(ctx context.Context) ([]*models.Invite, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, token_hash, created_by, target_role, max_uses, uses, expires_at, revoked_at, created_at

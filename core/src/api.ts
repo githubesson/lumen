@@ -1,8 +1,9 @@
 import {
   ApiError,
   buildQuery,
+  fetchAndRead,
   fetchPage,
-  rawFetch,
+  readJson,
   request,
   requestVoid,
 } from "./api-transport";
@@ -323,11 +324,6 @@ export const api = {
     );
     return api.search({ ...params, type: "track", searchOffsets, sources });
   },
-  searchTracksPage: async (params: Omit<SearchParams, "type"> = {}): Promise<Page<TrackListItem> & { warnings?: string[] }> => {
-    const result = await api.searchTracks({ ...params, limit: Math.min(params.limit ?? 50, 50) });
-    const items = result.tracks ?? [];
-    return { items, total: (params.offset ?? 0) + items.length, nextOffsets: result.next_offsets ?? {}, warnings: result.warnings };
-  },
   getTidalArtist: (id: string, options: RequestOptions = {}) =>
     request<TidalArtist>(`/api/tidal/artists/${pathID(id)}`, options),
   /** TIDAL can be slow; past 10 s the info view shows what the server stores. */
@@ -406,11 +402,6 @@ export const api = {
     request<LastFMConnectResponse>("/api/integrations/lastfm/connect", {
       method: "POST",
     }),
-  completeLastFM: (options: RequestOptions = {}) =>
-    request<{ username: string }>("/api/integrations/lastfm/complete", {
-      method: "POST",
-      signal: options.signal,
-    }),
   waitForLastFMAuthorization,
   disconnectLastFM: () =>
     requestVoid("/api/integrations/lastfm", { method: "DELETE" }),
@@ -419,10 +410,6 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(input),
     }),
-  getCurrentPlaybackActivity: (excludeDeviceId?: string) =>
-    request<CurrentPlaybackActivityResponse>(
-      `/api/activity/current${buildQuery({ exclude_device_id: excludeDeviceId })}`,
-    ),
   clearPlaybackActivity: (deviceId: string) =>
     requestVoid(`/api/activity/${encodeURIComponent(deviceId)}`, {
       method: "DELETE",
@@ -476,17 +463,20 @@ export const api = {
       body: JSON.stringify(input),
     }),
   /**
-   * Fetches the Replay top-songs share card as a 1080×1920 PNG. Returns the
-   * raw Response; callers read the body as bytes and hand it to the platform
-   * share sheet.
+   * Fetches the Replay top-songs share card as a 1080×1920 PNG, read in full
+   * under the request deadline; callers hand the bytes to the platform share
+   * sheet or a download.
    */
   getReplayImage: (
     params: { from?: string; to?: string; title?: string } = {},
     options: RequestOptions = {},
-  ) =>
-    rawFetch(
+  ): Promise<ArrayBuffer> =>
+    fetchAndRead(
       `/api/stats/replay/image${buildQuery({ from: params.from, to: params.to, title: params.title })}`,
       { ...options, headers: { Accept: "image/png" } },
+      // Rendering and then downloading a large PNG gets a longer deadline.
+      { timeoutMs: 60_000 },
+      (response) => response.arrayBuffer(),
     ),
 
   listPlaylists: (options: RequestOptions = {}) =>
@@ -532,19 +522,25 @@ export const api = {
 
   listPlaylistTracks: (id: string, options: RequestOptions = {}) =>
     request<PlaylistTracks>(`/api/playlists/${pathID(id)}/tracks`, options),
-  listPlaylistTracksIfChanged: async (id: string, etag?: string, options: RequestOptions = {}) => {
-    const response = await rawFetch(`/api/playlists/${pathID(id)}/tracks`, {
-      ...options,
-      headers: etag ? { "If-None-Match": etag } : {},
-    }, { allowNotModified: true });
-    const nextEtag = response.headers.get("ETag") ?? undefined;
-    if (response.status === 304) return { etag: nextEtag, tracks: null };
-    // Same contract as `request`: anything but JSON is an ApiError.
-    if (response.status === 204 || !(response.headers.get("content-type") ?? "").includes("application/json")) {
-      throw new ApiError(response.status, "Unexpected non-JSON response from the server.");
-    }
-    return { etag: nextEtag, tracks: (await response.json() as PlaylistTracks).tracks };
-  },
+  /**
+   * `listPlaylistTracks`, sent with the ETag of the last read so an unchanged
+   * list costs a 304. `data` is null when nothing changed since `etag`.
+   */
+  listPlaylistTracksIfChanged: (
+    id: string,
+    etag?: string,
+    options: RequestOptions = {},
+  ): Promise<PlaylistTracksIfChanged> =>
+    fetchAndRead(
+      `/api/playlists/${pathID(id)}/tracks`,
+      { ...options, headers: etag ? { "If-None-Match": etag } : {} },
+      { allowNotModified: true },
+      async (response) => {
+        const nextEtag = response.headers.get("ETag") ?? undefined;
+        if (response.status === 304) return { etag: nextEtag, data: null };
+        return { etag: nextEtag, data: await readJson<PlaylistTracks>(response) };
+      },
+    ),
   addPlaylistTracks: (id: string, trackIds: string[]) =>
     requestVoid(`/api/playlists/${pathID(id)}/tracks`, {
       method: "POST",
@@ -592,11 +588,6 @@ export const api = {
       method: "POST",
       signal: options.signal,
     }),
-  pollTidalAuth: (flowId: string, options: RequestOptions = {}) =>
-    request<TidalAuthPoll>(
-      `/api/admin/tidal/auth/${pathID(flowId)}`,
-      options,
-    ),
   waitForTidalAuthorization,
   removeTidalAccount: (accountId: string, options: RequestOptions = {}) =>
     requestVoid(`/api/admin/tidal/accounts/${pathID(accountId)}`, {
@@ -627,11 +618,6 @@ export const api = {
     ),
 
   // Lyrics API (fastest valid result from the configured providers)
-  searchLyrics: (query: string, options: RequestOptions = {}) =>
-    request<LyricsResult[]>(
-      `/api/lyrics?q=${encodeURIComponent(query)}`,
-      options,
-    ),
   getLyrics: (params: {
     track_name: string;
     artist_name?: string;
@@ -691,10 +677,6 @@ export interface PlaybackActivityInput {
 
 export interface PlaybackActivity extends PlaybackActivityInput {
   updated_at: string;
-}
-
-export interface CurrentPlaybackActivityResponse {
-  activity: PlaybackActivity | null;
 }
 
 export interface SearchAlbum extends Album {
@@ -844,6 +826,13 @@ export interface PlaylistTracks {
   tidal_queued?: number;
   /** When the next failed download is retried (RFC 3339), if one waits. */
   tidal_retry_at?: string;
+}
+
+/** A conditional playlist-tracks read; see `api.listPlaylistTracksIfChanged`. */
+export interface PlaylistTracksIfChanged {
+  etag?: string;
+  /** The whole snapshot, or null when it hasn't changed since the ETag sent. */
+  data: PlaylistTracks | null;
 }
 
 export interface TidalStatus {
@@ -1015,9 +1004,6 @@ export function nextPageParam(
   }
   return loadedCount < lastPage.total ? { offset: loadedCount } : undefined;
 }
-
-/** @deprecated use Page<TrackListItem> */
-export type TracksPage = Page<TrackListItem>;
 
 export interface TrackPatch {
   title?: string;

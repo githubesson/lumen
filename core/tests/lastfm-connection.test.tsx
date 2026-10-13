@@ -124,6 +124,36 @@ describe("Last.fm connection lifecycle", () => {
     });
     expect(result.current.status?.connected).toBe(false);
   });
+
+  it("treats a poll that hit the request deadline as a failure, not a cancellation", async () => {
+    vi.mocked(api.getLastFMStatus).mockResolvedValue({
+      configured: true,
+      connected: false,
+      pending: true,
+    });
+    const timedOut = new Error("The operation was aborted.");
+    timedOut.name = "AbortError";
+    vi.mocked(api.waitForLastFMAuthorization).mockRejectedValue(timedOut);
+    const { result } = renderHook(() =>
+      useLastFMConnection({ openAuthorization: vi.fn() }),
+    );
+    await waitFor(() =>
+      expect(result.current.error).toBe(
+        "Could not complete Last.fm authorization.",
+      ),
+    );
+    expect(result.current.status?.pending).toBe(false);
+
+    // Connecting again starts a new poll.
+    vi.mocked(api.waitForLastFMAuthorization).mockResolvedValue({
+      username: "listener",
+    });
+    await act(async () => {
+      await result.current.connect();
+    });
+    await waitFor(() => expect(result.current.status?.connected).toBe(true));
+    expect(api.waitForLastFMAuthorization).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("Last.fm connection state", () => {

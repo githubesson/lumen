@@ -17,7 +17,7 @@ vi.mock("../../core/src/api", async (original) => ({
 vi.mock("../src/context/Auth", () => ({
   useAuth: () => ({ me: { id: "user", role: mock.role, must_reset_password: false } }),
 }));
-vi.mock("../src/context/Player", () => ({ usePlayerControls: () => ({ play: vi.fn() }) }));
+vi.mock("../src/context/Player", () => ({ usePlayer: () => ({ play: vi.fn(), shuffle: false }) }));
 vi.mock("../src/context/Favorites", () => ({ useFavorites: () => ({ isFavorite: () => false, toggle: vi.fn() }) }));
 vi.mock("../src/context/Playlists", () => ({
   usePlaylists: () => ({ data: [], error: null, loading: false, reload: mock.reload }),

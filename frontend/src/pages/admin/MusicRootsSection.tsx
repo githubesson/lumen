@@ -4,7 +4,9 @@ import {
   musicRootKey,
   musicRootName,
   rescanChangedLibrary,
+  rescanProgress,
   rootRemovalChangedLibrary,
+  watchRescan,
 } from "@music-library/core/admin/music-roots";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -98,7 +100,11 @@ export function MusicRootsSection({
   const [label, setLabel] = useState("");
   const [adding, setAdding] = useState(false);
   const [rescan, setRescan] = useState<RescanStatus | null>(null);
-  const pollRef = useRef<number | null>(null);
+  // Whether a running scan is being followed. Polling gives up after a few
+  // failed reads in a row, and the button stops saying "Scanning" with it.
+  const [watching, setWatching] = useState(false);
+  const watchRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(false);
 
   // Sizes come from a walk of the folders on disk, so they load on their own
   // and the table shows up without waiting for them. The server caches the
@@ -141,54 +147,58 @@ export function MusicRootsSection({
   const [removeTarget, setRemoveTarget] = useState<MusicRoot | null>(null);
   const [removeOpen, setRemoveOpen] = useState(false);
 
-  const loadStatus = useCallback(async () => {
-    try {
-      setRescan(await api.rescanStatus());
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  useEffect(() => {
-    // Initial load synchronizes this section with the rescan API.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadStatus();
-  }, [loadStatus]);
-
-  useEffect(() => {
-    if (!rescan?.running) {
-      if (pollRef.current) {
-        window.clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+  // Follows a scan known to be running until it finishes, reading every
+  // second while the page is visible. Then the library, the folder sizes and
+  // the import errors catch up with what it did.
+  const watch = useCallback(async () => {
+    // A rescan started just before leaving the page isn't followed.
+    if (!mountedRef.current) return;
+    watchRef.current?.abort();
+    const controller = new AbortController();
+    watchRef.current = controller;
+    setWatching(true);
+    const finished = await watchRescan({
+      fetchStatus: (signal) => api.rescanStatus({ signal }),
+      onStatus: setRescan,
+      intervalMs: 1000,
+      isPaused: () => document.hidden,
+      signal: controller.signal,
+    });
+    if (controller.signal.aborted) return;
+    watchRef.current = null;
+    setWatching(false);
+    if (!finished) {
+      onError("Lost track of the rescan: the server stopped answering. It may still be running.");
       return;
     }
-    if (pollRef.current) return;
-    pollRef.current = window.setInterval(() => {
-      if (!document.hidden) void loadStatus();
-    }, 1000);
-    return () => {
-      if (pollRef.current) {
-        window.clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    };
-  }, [rescan?.running, loadStatus]);
-
-  // Reacts to a scan seen running and then finishing, not to the idle status
-  // every load reports, which still carries the last scan's counts.
-  const wasRunningRef = useRef(false);
+    if (rescanChangedLibrary(finished)) libraryChanged.emit();
+    refreshUsageRef.current = true;
+    void reloadUsage();
+    void reloadErrors();
+  }, [reloadUsage, reloadErrors, onError]);
   useEffect(() => {
-    if (rescan?.running) {
-      wasRunningRef.current = true;
-    } else if (rescan && wasRunningRef.current) {
-      wasRunningRef.current = false;
-      if (rescanChangedLibrary(rescan)) libraryChanged.emit();
-      refreshUsageRef.current = true;
-      void reloadUsage();
-      void reloadErrors();
-    }
-  }, [rescan, reloadUsage, reloadErrors]);
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      watchRef.current?.abort();
+    };
+  }, []);
+
+  // An idle status still carries the last scan's counts, shown as such; only
+  // a scan running now (another admin's, say) is followed.
+  useEffect(() => {
+    const controller = new AbortController();
+    api.rescanStatus({ signal: controller.signal }).then(
+      (status) => {
+        // A rescan started meanwhile is followed already.
+        if (watchRef.current) return;
+        setRescan(status);
+        if (status.running) void watch();
+      },
+      () => {},
+    );
+    return () => controller.abort();
+  }, [watch]);
 
   const addInput = addMusicRootInput(path, label);
   const add = async (e: FormEvent) => {
@@ -240,19 +250,18 @@ export function MusicRootsSection({
     onError("");
     try {
       await api.startRescan();
-      // Running until a status read says otherwise. That starts the polling
-      // even if the first read fails, and counts a small scan that finishes
-      // before any read sees it, so the sizes and errors still refresh.
-      setRescan({ running: true });
-      await loadStatus();
     } catch (err) {
       onError(errorMessage(err, "Failed to start rescan."));
+      return;
     }
+    // Running until a status read says otherwise, which also counts a small
+    // scan that finishes before any read sees it, so the sizes and errors
+    // still refresh.
+    setRescan({ running: true });
+    await watch();
   };
 
-  const runningProgress = rescan?.running
-    ? `${rescan.processed ?? 0} / ${rescan.total ?? "?"}`
-    : null;
+  const progress = watching ? rescanProgress(rescan) : null;
 
   return (
     <>
@@ -333,12 +342,10 @@ export function MusicRootsSection({
           <Button
             size="sm"
             onClick={startRescan}
-            disabled={rescan?.running}
+            disabled={progress !== null}
             leadingIcon={<ArrowPathIcon className="size-3.5" />}
           >
-            {rescan?.running
-              ? `Scanning ${runningProgress}`
-              : "Rescan all folders"}
+            {progress ? `Scanning ${progress.count}` : "Rescan all folders"}
           </Button>
         </div>
         <table className="table table-static">

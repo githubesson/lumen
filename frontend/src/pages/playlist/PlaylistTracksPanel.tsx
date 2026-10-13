@@ -453,12 +453,6 @@ const PlaylistRow = memo(function PlaylistRow({
       onDoubleClick={() => {
         if (!selectionMode) onPlay(entry);
       }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" && !selectionMode) {
-          e.preventDefault();
-          onPlay(entry);
-        }
-      }}
       onContextMenu={(event) => onContextMenu(entry, event)}
     >
       {selectionMode && (

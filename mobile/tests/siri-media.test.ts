@@ -9,6 +9,7 @@ import {
   rankNamedSiriItems,
   resolveSiriMediaRequest,
   siriMediaIdentifier,
+  trackSiriMediaItem,
 } from "../lib/siri-media";
 import type { SiriPlayMediaRequest } from "../modules/siri-media";
 import { qk } from "../lib/query-keys";
@@ -264,5 +265,22 @@ describe("cachedSiriCatalog", () => {
     await expect(catalog.listPlaylistTracks("p-1")).rejects.toBe(deleted);
     // Dropped, so a later request without a network can't play it either.
     expect(queryClient.getQueryData(qk.playlistTracks("u-1", "p-1"))).toBeUndefined();
+  });
+});
+
+describe("Siri media items", () => {
+  it("cleans mis-encoded tag text in what Siri says and donates", () => {
+    expect(
+      trackSiriMediaItem({
+        id: "t-1",
+        title: "Intro Â· Live",
+        artist: "Ã\u0085Â\u0081ights",
+        duration_ms: 1,
+      }),
+    ).toMatchObject({ title: "Intro · Live", artist: "Lights" });
+  });
+
+  it("leaves out an artist the track doesn't have", () => {
+    expect(trackSiriMediaItem({ id: "t-1", title: "Song", duration_ms: 1 }).artist).toBeUndefined();
   });
 });

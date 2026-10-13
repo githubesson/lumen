@@ -12,15 +12,17 @@ it("preserves artist partial failure warnings and rejects a total upstream failu
   const fetch = vi
     .fn()
     .mockResolvedValueOnce(Response.json(partial))
+    .mockResolvedValueOnce(Response.json(partial))
     .mockResolvedValueOnce(
       new Response("tidal artist unavailable", { status: 502 }),
     );
   vi.stubGlobal("fetch", fetch);
   const controller = new AbortController();
-  const pending = api.getTidalArtist("123", { signal: controller.signal });
+  const cancelled = api.getTidalArtist("123", { signal: controller.signal });
   controller.abort();
   expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
-  expect(await pending).toEqual(partial);
+  await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+  expect(await api.getTidalArtist("123")).toEqual(partial);
   expect(new URL(fetch.mock.calls[0][0], "https://example.test").pathname).toBe(
     "/api/tidal/artists/123",
   );
@@ -132,5 +134,5 @@ it("keeps legacy song-only consumers on track search and forwards cancellation",
   ).toBe("track");
   controller.abort();
   expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
-  await pending;
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
 });

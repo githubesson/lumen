@@ -573,8 +573,9 @@ function HeroAlbum({
   const playRequest = useRef<AbortController | null>(null);
   useEffect(() => () => playRequest.current?.abort(), []);
 
-  // Plays the album in order from the featured track, falling back to the
-  // list the track came from if the album can't be loaded.
+  // Plays the album in order from the featured track (from its first playable
+  // track when the listing doesn't have that one), falling back to the list
+  // the track came from if the album can't be loaded or has nothing to play.
   const onPlay = async () => {
     if (!albumID) {
       play(track, fallbackQueue);
@@ -587,8 +588,10 @@ function HeroAlbum({
     try {
       const albumTracks = await api.listAlbumTracks(albumID, { signal: request.signal });
       if (request.signal.aborted) return;
-      const start = albumTracks.find((t) => t.id === track.id) ?? albumTracks[0];
-      if (start) play(start, albumTracks);
+      // Rows dropped from TIDAL with no library copy can't be streamed.
+      const queue = playableTracks(albumTracks);
+      const start = queue.find((t) => t.id === track.id) ?? queue[0];
+      if (start) play(start, queue);
       else play(track, fallbackQueue);
     } catch {
       if (!request.signal.aborted) play(track, fallbackQueue);

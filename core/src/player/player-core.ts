@@ -25,9 +25,24 @@ export interface PlayerState {
   playbackError: PlaybackError | null;
 }
 
+/** How `play` starts its queue. */
+export interface PlayOptions {
+  /**
+   * Set shuffle mode with this start. On shuffles the new queue with the
+   * started track first and keeps the list's order for when shuffle goes off.
+   * The mode only changes when the start is accepted, so a refused play
+   * leaves it and the queue playing now alone.
+   */
+  shuffle?: boolean;
+}
+
 export interface PlayerControls {
   /** Returns false when local playback policy rejects the track. */
-  play: (track: TrackListItem, queue?: TrackListItem[]) => false | void;
+  play: (
+    track: TrackListItem,
+    queue?: TrackListItem[],
+    options?: PlayOptions,
+  ) => false | void;
   resume: () => void;
   pause: () => void;
   toggle: () => void;

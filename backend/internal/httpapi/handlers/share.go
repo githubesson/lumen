@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
@@ -25,6 +24,7 @@ import (
 	"github.com/githubesson/lumen/internal/auth"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/preview"
 	"github.com/githubesson/lumen/internal/safego"
 	"github.com/githubesson/lumen/internal/storage"
@@ -221,17 +221,11 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 		// long-lived, so the row must outlive this request.
 		id, err = materializeTIDALTrack(r.Context(), h.Library, h.TIDAL, ref.ID)
 		if err != nil {
-			if errors.Is(err, tidal.ErrNotConfigured) {
-				http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-				return
+			if !errors.Is(err, tidal.ErrNotConfigured) {
+				slog.Warn("share create: tidal track materialize failed",
+					"tidal_track", ref.ID, "user", u.ID, "err", err)
 			}
-			slog.Warn("share create: tidal track materialize failed",
-				"tidal_track", ref.ID, "user", u.ID, "err", err)
-			if errors.Is(err, tidal.ErrRefused) {
-				http.Error(w, tidalRefusalText("TIDAL refused this track", err), http.StatusBadGateway)
-				return
-			}
-			http.Error(w, "tidal track lookup failed", http.StatusBadGateway)
+			writeTIDALError(w, err, "TIDAL refused this track", "tidal track lookup failed")
 			return
 		}
 	default:
@@ -291,7 +285,7 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 	case h.Preview == nil:
 		slog.Warn("preview prewarm skipped: builder not configured",
 			"track_id", id.String())
-	case !isTIDALTrack(t) && !pathWithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath):
+	case !isTIDALTrack(t) && !pathsafe.WithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath):
 		slog.Warn("preview prewarm skipped: file outside configured roots",
 			"track_id", id.String(), "file_path", t.FilePath)
 	default:
@@ -334,16 +328,6 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 // by the time ffmpeg finishes, so binding to r.Context() would kill the
 // build as soon as we respond.
 func (h *Share) prewarmPreview(t *library.TrackDetail, in preview.Input) {
-	// Panics in a fire-and-forget goroutine would silently die without
-	// Chi's Recoverer (it only wraps request handlers). Catch any panic
-	// here so the next share attempt doesn't hit a dead builder.
-	defer func() {
-		if p := recover(); p != nil {
-			slog.Error("preview prewarm panicked",
-				"track_id", in.TrackID, "panic", fmt.Sprint(p))
-		}
-	}()
-
 	// A 120-second story render can take several times longer than the original
 	// 30-second job. TIDAL tracks also download the full file before ffmpeg can
 	// slice it.
@@ -663,7 +647,7 @@ func (h *Share) loadPublicTrack(w http.ResponseWriter, r *http.Request, id uuid.
 		http.Error(w, "not found", http.StatusNotFound)
 		return nil, false
 	}
-	if !isTIDALTrack(t) && !pathWithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath) {
+	if !isTIDALTrack(t) && !pathsafe.WithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath) {
 		slog.Warn(logLabel+": file path outside configured roots",
 			"track_id", id.String(), "file_path", t.FilePath)
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -744,15 +728,9 @@ func (h *Share) audioPathForBuild(ctx context.Context, t *library.TrackDetail) (
 
 // writeAudioResolveError maps an audioPathForBuild failure to a response.
 func writeAudioResolveError(w http.ResponseWriter, err error) {
-	if errors.Is(err, tidal.ErrNotConfigured) {
-		http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-		return
+	if !writeTIDALUnavailable(w, err, "TIDAL refused this track") {
+		http.Error(w, "preview generation failed", http.StatusInternalServerError)
 	}
-	if errors.Is(err, tidal.ErrRefused) {
-		http.Error(w, tidalRefusalText("TIDAL refused this track", err), http.StatusBadGateway)
-		return
-	}
-	http.Error(w, "preview generation failed", http.StatusInternalServerError)
 }
 
 // coverPathWithFallback materializes the cover for ffmpeg, downgrading to a

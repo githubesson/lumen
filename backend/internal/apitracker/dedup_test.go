@@ -2,6 +2,7 @@ package apitracker
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -86,7 +87,8 @@ func TestPreviousStillPresentAfterDedup(t *testing.T) {
 			// must use its canonical link without recreating or retagging either file.
 			for i := 0; i < 2; i++ {
 				summary := ScanSummary{}
-				if got := scanner.previousStillPresent(ctx, pin.ID, sourceURL, TrackContext{Title: "Wrong title"}, "", &summary); got != tc.want {
+				run := loadRun(t, store, pin, &summary)
+				if got := scanner.previousStillPresent(ctx, run, sourceURL, json.RawMessage(`{"title":"Wrong title"}`), TrackContext{Title: "Wrong title"}); got != tc.want {
 					t.Fatalf("present = %v, want %v", got, tc.want)
 				}
 				wantExisting := 0
@@ -108,4 +110,14 @@ func TestPreviousStillPresentAfterDedup(t *testing.T) {
 			}
 		})
 	}
+}
+
+// loadRun starts a scan's state the way scanPin does.
+func loadRun(t *testing.T, store *Store, pin Pin, summary *ScanSummary) *scanRun {
+	t.Helper()
+	history, err := store.downloadsBySource(context.Background(), pin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &scanRun{pin: pin, history: history, settled: map[string]bool{}, covers: eraCovers{keys: map[int64]string{}}, summary: summary}
 }

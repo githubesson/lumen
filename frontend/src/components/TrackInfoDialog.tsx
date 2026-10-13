@@ -2,25 +2,19 @@ import {
   displayArtists,
   primaryArtistName,
   trackArtUrl,
-  trackCredits,
-  type TidalTrackInfo,
   type TrackDetail,
 } from "../api";
 import {
-  formatBitrate,
-  formatCalendarDate,
-  formatDurationMs,
-  formatSampleRate,
-} from "@music-library/core/format";
-import {
-  tidalAudioRows,
-  tidalTrackCredits,
+  trackInfoRows,
+  trackInfoTidalId,
+  type TidalTrackInfoResult,
+  type TrackInfoRow,
 } from "@music-library/core/tidal/track-info";
 import { useState } from "react";
 import CoverArt from "./CoverArt";
 import { DialogShell } from "./DialogShell";
 import { MultiSelect, type MultiSelectOption } from "./MultiSelect";
-import { fmtBytes } from "../lib/format";
+import { displayText } from "../lib/format";
 import { useTidalTrackInfo } from "../lib/useTidalTrackInfo";
 import { useTrackDetail } from "../lib/useTrackDetail";
 
@@ -52,11 +46,7 @@ export function TrackInfoDialog({
   onClose,
 }: Props) {
   const { track, error } = useTrackDetail(open, trackId, requestNonce);
-  const tidal = useTidalTrackInfo(
-    open,
-    track?.source === "tidal" ? (track.source_id ?? null) : null,
-    requestNonce,
-  );
+  const tidal = useTidalTrackInfo(open, trackInfoTidalId(track), requestNonce);
 
   return (
     <DialogShell open={open} title="Track info" onClose={onClose} maxWidth={880}>
@@ -68,12 +58,7 @@ export function TrackInfoDialog({
           ) : !track || tidal.loading ? (
             <div style={{ color: "var(--muted-foreground)" }}>Loading…</div>
           ) : (
-            <Details
-              track={track}
-              tidal={tidal.info}
-              tidalFailed={tidal.failed}
-              tidalRefusal={tidal.refusal}
-            />
+            <Details track={track} tidal={tidal} />
           )}
         </div>
       </div>
@@ -96,12 +81,12 @@ function Summary({ track }: { track: TrackDetail | null }) {
       )}
       {track && (
         <div className="track-info-heading">
-          <div className="track-info-title">{track.title}</div>
+          <div className="track-info-title">{displayText(track.title)}</div>
           <div className="track-info-artist">
             {displayArtists(track) || primaryArtistName(track)}
           </div>
           {track.album_title && (
-            <div className="track-info-album">{track.album_title}</div>
+            <div className="track-info-album">{displayText(track.album_title)}</div>
           )}
         </div>
       )}
@@ -109,108 +94,37 @@ function Summary({ track }: { track: TrackDetail | null }) {
   );
 }
 
+/**
+ * Credits, Release and Audio as core lays them out for both clients, with
+ * notes for what TIDAL couldn't supply, then the merged copies' tags.
+ */
 function Details({
   track,
   tidal,
-  tidalFailed,
-  tidalRefusal,
 }: {
   track: TrackDetail;
-  /** TIDAL's details, for a TIDAL track that has them. */
-  tidal: TidalTrackInfo | null;
-  tidalFailed: boolean;
-  /** Why, when TIDAL refused the track. */
-  tidalRefusal: string | null;
+  /** What came from TIDAL, for a TIDAL track. */
+  tidal: TidalTrackInfoResult;
 }) {
-  const isTidal = track.source === "tidal";
-  const credits = tidal ? tidalTrackCredits(track, tidal) : trackCredits(track);
+  const view = trackInfoRows(track, tidal);
   return (
     <>
-      {tidalFailed && (
-        <p className="track-info-note">
-          {tidalRefusal ?? "Couldn't load more from TIDAL, so some fields are missing."}
-        </p>
-      )}
+      {view.note && <p className="track-info-note">{view.note}</p>}
 
-      <Section label="Credits">
-        <Fields>
-          {credits.map((credit) => (
-            <Field key={credit.label} k={credit.label} v={credit.value} />
-          ))}
-        </Fields>
-        {tidal?.credits_failed && (
-          <p className="track-info-note">
-            {tidal.credits_failure ?? "Couldn't load credits from TIDAL."}
-          </p>
-        )}
-      </Section>
-
-      <Section label="Release">
-        <Fields>
-          {tidal?.release_date ? (
-            <Field k="Released" v={formatCalendarDate(tidal.release_date)} />
-          ) : (
-            <Field k="Year" v={track.year ? String(track.year) : ""} />
-          )}
-          {/* TIDAL has no genres, so its tracks would only ever show a dash. */}
-          {(!isTidal || track.genre) && <Field k="Genre" v={track.genre} />}
-          <Field k="Track" v={track.track_no ? String(track.track_no) : ""} />
-          <Field k="Disc" v={track.disc_no ? String(track.disc_no) : ""} />
-          {!!tidal?.bpm && <Field k="BPM" v={String(tidal.bpm)} />}
-          {tidal?.key && <Field k="Key" v={tidal.key} />}
-          {tidal?.isrc && <Field k="ISRC" v={tidal.isrc} />}
-          {track.comments && <Field k="Comments" v={track.comments} wide />}
-          {tidal?.copyright && <Field k="Copyright" v={tidal.copyright} wide />}
-        </Fields>
-        {tidal?.release_failure && <p className="track-info-note">{tidal.release_failure}</p>}
-      </Section>
-
-      <Section label="Audio">
-        <Fields>
-          {isTidal ? (
-            <TidalAudio track={track} tidal={tidal} />
-          ) : (
-            <>
-              <Field k="Format" v={track.format} />
-              <Field k="Bitrate" v={formatBitrate(track.bitrate)} />
-              <Field k="Sample rate" v={formatSampleRate(track.sample_rate)} />
-              <Field k="Channels" v={track.channels ? String(track.channels) : ""} />
-              <Field k="Duration" v={formatDurationMs(track.duration_ms, "")} />
-              <Field k="File size" v={fmtBytes(track.file_size)} />
-              {track.file_name && <Field k="File" v={track.file_name} wide />}
-            </>
-          )}
-        </Fields>
-      </Section>
+      {view.sections.map((section) => (
+        <Section key={section.key} label={section.label}>
+          <Fields>
+            {section.rows.map((row) => (
+              <Field key={row.label} row={row} />
+            ))}
+          </Fields>
+          {section.note && <p className="track-info-note">{section.note}</p>}
+        </Section>
+      ))}
 
       {track.aliases && track.aliases.length > 0 && (
         <Versions key={track.id} track={track} />
       )}
-    </>
-  );
-}
-
-/**
- * A TIDAL track's stream rather than a file: its source, and what this
- * server streams it at (or, before it has, the most it would). Fields a
- * stream doesn't have (file size) or its tier doesn't fix are left out
- * instead of showing a dash.
- */
-function TidalAudio({
-  track,
-  tidal,
-}: {
-  track: TrackDetail;
-  tidal: TidalTrackInfo | null;
-}) {
-  return (
-    <>
-      <Field k="Source" v="TIDAL" />
-      {tidalAudioRows(tidal).map((row) => (
-        <Field key={row.label} k={row.label} v={row.value} wide={row.wide} />
-      ))}
-      {!!tidal?.channels && <Field k="Channels" v={String(tidal.channels)} />}
-      <Field k="Duration" v={formatDurationMs(track.duration_ms, "")} />
     </>
   );
 }
@@ -370,13 +284,12 @@ function Fields({ children }: { children: React.ReactNode }) {
   return <dl className="track-info-fields">{children}</dl>;
 }
 
-/** One labelled value. Empty values (or core's "—") show a faded dash. */
-function Field({ k, v, wide }: { k: string; v?: string; wide?: boolean }) {
-  const empty = !v || v === "—";
+/** One labelled value. A row kept while empty shows a faded dash. */
+function Field({ row }: { row: TrackInfoRow }) {
   return (
-    <div data-wide={wide || undefined}>
-      <dt>{k}</dt>
-      <dd data-empty={empty || undefined}>{empty ? "—" : v}</dd>
+    <div data-wide={row.wide || undefined}>
+      <dt>{row.label}</dt>
+      <dd data-empty={row.empty || undefined}>{row.value}</dd>
     </div>
   );
 }

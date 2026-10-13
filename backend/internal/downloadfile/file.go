@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -103,6 +104,44 @@ type SkipError struct{ Reason string }
 
 func (e SkipError) Error() string { return e.Reason }
 
+const (
+	readOnlyReason = "destination is read-only"
+	// SkippedHost is the reason recorded for a link on a host the scanners
+	// never download from (sourceurl.ShouldSkipURL).
+	SkippedHost = "skipped host"
+	// unsupportedReason leads the reason for a file ingest can't read. It was
+	// recorded alone before the reason named the extension.
+	unsupportedReason = "unsupported file extension"
+)
+
+// UnsupportedExtension skips a file ingest can't read, naming its extension.
+func UnsupportedExtension(name string) SkipError {
+	ext := filepath.Ext(name)
+	if ext == "" {
+		return SkipError{Reason: "no file extension"}
+	}
+	return SkipError{Reason: fmt.Sprintf("%s %q", unsupportedReason, ext)}
+}
+
+// SkipFinal reports whether a link recorded as skipped for reason should stay
+// skipped on later scans rather than be resolved and requested again. Only a
+// reason about the link that still holds stands: a skipped host, and an
+// extension supported (ingest.IsSupported) still rejects. Anything else gets
+// another look: it may have been about our side, which changes (our disk, the
+// download policy, the formats ingest reads, how a name is picked), or about
+// one response, such as a page served without a file name.
+func SkipFinal(reason string, supported func(name string) bool) bool {
+	if reason == SkippedHost {
+		return true
+	}
+	quoted, ok := strings.CutPrefix(reason, unsupportedReason+" ")
+	if !ok {
+		return false
+	}
+	ext, err := strconv.Unquote(quoted)
+	return err == nil && ext != "" && !supported(ext)
+}
+
 // Save installs a downloaded body without overwriting another file. Existing
 // non-empty files are reused; empty targets are preserved under their name.
 // The returned path is also meaningful on failure for download history.
@@ -159,7 +198,7 @@ func save(body io.Reader, target string, reuse bool) (filePath string, existing 
 
 func destinationError(err error) error {
 	if isReadOnlyDestinationError(err) {
-		return SkipError{Reason: "destination is read-only"}
+		return SkipError{Reason: readOnlyReason}
 	}
 	return err
 }

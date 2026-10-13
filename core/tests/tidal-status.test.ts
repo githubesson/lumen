@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { TidalAutoDownloadStatus, TidalStatus } from "../src/api";
 import {
+  canLinkTidalAccount,
+  tidalAccountLabel,
+  tidalAccountSource,
   tidalAutoDownloadProblems,
+  tidalManagementUnsupported,
+  tidalProxyState,
   tidalStatusDetails,
   tidalStatusErrors,
 } from "../src/tidal/status";
@@ -138,5 +143,40 @@ describe("TIDAL device login helpers", () => {
     expect(tidalSignInMessage({ state: "expired", message: "Code expired." })).toBe(
       "Code expired.",
     );
+  });
+});
+
+describe("TIDAL admin display", () => {
+  it("reads the proxy state, checking while the status loads", () => {
+    expect(tidalProxyState(null, true)).toBe("checking");
+    expect(tidalProxyState(status(), true)).toBe("checking");
+    expect(tidalProxyState(status(), false)).toBe("online");
+    expect(tidalProxyState(status({ connected: false }), false)).toBe("offline");
+    expect(tidalProxyState(null, false)).toBe("offline");
+  });
+
+  it("explains missing account controls only for a status that loaded", () => {
+    expect(tidalManagementUnsupported(status({ management_supported: false }))).toBe(true);
+    expect(tidalManagementUnsupported(status())).toBe(false);
+    expect(tidalManagementUnsupported(null)).toBe(false);
+    expect(tidalManagementUnsupported(undefined)).toBe(false);
+  });
+
+  it("offers linking only with an online proxy and nothing under way", () => {
+    const idle = { starting: false, unlinkingId: null, flow: null };
+    expect(canLinkTidalAccount(status(), idle)).toBe(true);
+    expect(canLinkTidalAccount(null, idle)).toBe(false);
+    expect(canLinkTidalAccount(status({ connected: false }), idle)).toBe(false);
+    expect(canLinkTidalAccount(status({ management_supported: false }), idle)).toBe(false);
+    expect(canLinkTidalAccount(status(), { ...idle, starting: true })).toBe(false);
+    expect(canLinkTidalAccount(status(), { ...idle, unlinkingId: "acc-1" })).toBe(false);
+    expect(canLinkTidalAccount(status(), { ...idle, flow: { flow_id: "f" } })).toBe(false);
+  });
+
+  it("labels a linked account and where it comes from", () => {
+    expect(tidalAccountLabel({ user_id: "42" })).toBe("Account 42");
+    expect(tidalAccountLabel({ user_id: "" })).toBe("Account unknown");
+    expect(tidalAccountSource({ removable: true })).toBe("Managed by Lumen");
+    expect(tidalAccountSource({ removable: false })).toBe("Configured by environment");
   });
 });

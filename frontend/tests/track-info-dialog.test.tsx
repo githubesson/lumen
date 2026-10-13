@@ -323,3 +323,26 @@ it("never asks TIDAL about a local track", async () => {
   expect(field("Format")).toBe("FLAC");
   expect(screen.queryByText("Source")).toBeNull();
 });
+
+it("cleans the heading's text and leaves out fields the track has no value for", async () => {
+  mock.getTrack.mockResolvedValueOnce({
+    ...track("t4", undefined),
+    title: "Sanfran Â· Live",
+    album_title: " Pusto Â· Deluxe ",
+    artists: [{ id: "a1", name: "Oki", role: "primary" }],
+  });
+  render(<TrackInfoDialog open trackId="t4" onClose={() => {}} />);
+  await screen.findByText("Credits");
+  const summary = document.querySelector<HTMLElement>(".track-info-summary")!;
+  expect(within(summary).getByText("Sanfran · Live")).toBeTruthy();
+  expect(within(summary).getByText("Pusto · Deluxe")).toBeTruthy();
+  // Credits keep their rows, faded when nobody is credited.
+  expect(field("Featured")).toBe("—");
+  expect(screen.getByText("Featured", { selector: "dt" }).nextElementSibling?.hasAttribute("data-empty")).toBe(true);
+  // Anything else shows only with a value.
+  for (const label of ["Year", "Genre", "Track", "Disc", "Bitrate", "Channels"]) {
+    expect(screen.queryByText(label, { selector: "dt" })).toBeNull();
+  }
+  expect(field("File")).toBe("Sanfran.flac");
+  expect(screen.getByText("File", { selector: "dt" }).parentElement?.hasAttribute("data-wide")).toBe(true);
+});

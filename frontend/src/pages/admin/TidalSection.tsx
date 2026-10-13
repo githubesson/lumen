@@ -1,4 +1,13 @@
-import { tidalStatusDetails, tidalStatusErrors } from "@music-library/core/tidal/status";
+import {
+  canLinkTidalAccount,
+  tidalAccountLabel,
+  tidalAccountSource,
+  tidalManagementUnsupported,
+  tidalProxyState,
+  tidalStatusDetails,
+  tidalStatusErrors,
+  type TidalProxyState,
+} from "@music-library/core/tidal/status";
 import { useTidalDeviceLogin } from "@music-library/core/tidal/device-login";
 import {
   RefreshCw as ArrowPathIcon,
@@ -17,6 +26,12 @@ import {
 } from "../../lib/platform";
 import { useApiResource } from "../../lib/useApiResource";
 import { TidalAutoDownloadCard } from "./TidalAutoDownloadCard";
+
+const PROXY_BADGES: Record<TidalProxyState, string> = {
+  checking: "checking",
+  online: "proxy online",
+  offline: "proxy offline",
+};
 
 const cardStyle = {
   padding: "16px 18px",
@@ -65,6 +80,7 @@ export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
     onAccountsChanged: reload,
   });
   const busy = starting || unlinkingId !== null;
+  const canLink = canLinkTidalAccount(status, { starting, unlinkingId, flow });
   const errors = tidalStatusErrors(actionError ?? loadError, status);
   const { proxy, country, quality, version } = tidalStatusDetails(status);
 
@@ -130,7 +146,7 @@ export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
               Connection
             </h2>
             <span className={"badge" + (connected ? " badge-accent" : "")}>
-              {loading ? "checking" : connected ? "proxy online" : "proxy offline"}
+              {PROXY_BADGES[tidalProxyState(status, loading)]}
             </span>
           </div>
 
@@ -182,7 +198,7 @@ export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
               variant="primary"
               leadingIcon={<LinkIcon className="size-3.5" />}
               onClick={() => void startAuth()}
-              disabled={busy || !!flow || !connected || !status?.management_supported}
+              disabled={!canLink}
             >
               {starting ? "Starting..." : "Link account"}
             </Button>
@@ -193,12 +209,14 @@ export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
             Credentials stay inside the private hifi-api service.
           </p>
 
-          {!status?.management_supported && !loading ? (
+          {/* Neither note until a status has loaded: a failed load says
+              nothing about either, and its error is shown already. */}
+          {tidalManagementUnsupported(status) ? (
             <div style={{ color: "var(--muted-foreground)", fontSize: 14 }}>
               Account controls require the Lumen hifi-api extension. Recreate the
               hifi-api container after updating the server.
             </div>
-          ) : accounts.length === 0 ? (
+          ) : status && accounts.length === 0 ? (
             <div
               style={{
                 border: "1px dashed var(--input)",
@@ -227,10 +245,10 @@ export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
               >
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>
-                    Account {account.user_id || "unknown"}
+                    {tidalAccountLabel(account)}
                   </div>
                   <div className="mono" style={{ color: "var(--muted-foreground)", fontSize: 12 }}>
-                    {account.removable ? "Managed by Lumen" : "Configured by environment"}
+                    {tidalAccountSource(account)}
                   </div>
                 </div>
                 {account.removable && (

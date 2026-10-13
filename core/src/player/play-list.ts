@@ -84,3 +84,25 @@ export function startListPlayback(
     : queue[0];
   return play(start, queue) !== false;
 }
+
+/**
+ * Shuffle-play a list: shuffle mode goes on and the list starts from a random
+ * playable track in a fresh shuffled order (see `PlayOptions.shuffle`). Returns
+ * false, changing nothing, shuffle mode included, when nothing in the list can
+ * be played or the player refuses the start (offline, say).
+ *
+ * Pass the list as the screen shows it; unavailable rows are dropped here. On
+ * mobile that's `listPlaybackQueue(tracks)`, so offline it starts from a
+ * downloaded track; surfaces that report "nothing to play" themselves rather
+ * than let the player alert (CarPlay, Siri) pass `startableListTracks(tracks)`.
+ */
+export function startShuffledListPlayback(
+  play: PlayerControls["play"],
+  tracks: readonly TrackListItem[],
+  random: () => number = Math.random,
+): boolean {
+  const queue = playableTracks(tracks);
+  if (!queue.length) return false;
+  const start = queue[Math.min(queue.length - 1, Math.floor(random() * queue.length))];
+  return play(start, queue, { shuffle: true }) !== false;
+}

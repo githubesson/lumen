@@ -1,5 +1,6 @@
-// Package pinscan shares scheduling, scan reservations, and store policy across
-// the API tracker, ArtistGrid, and Filen download integrations.
+// Package pinscan shares scheduling, scan reservations, destination checks,
+// and store policy across the API tracker, ArtistGrid, and Filen download
+// integrations. TIDAL auto-download resolves its destination here too.
 package pinscan
 
 import "time"

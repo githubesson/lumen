@@ -88,6 +88,9 @@ type Download struct {
 	FirstSeenAt  time.Time       `json:"first_seen_at"`
 	DownloadedAt *time.Time      `json:"downloaded_at,omitempty"`
 	UpdatedAt    time.Time       `json:"updated_at"`
+
+	// albumNeedsCover is set by downloadsBySource only.
+	albumNeedsCover bool
 }
 
 type DownloadInput struct {
@@ -321,17 +324,42 @@ func (s *Store) MarkScanFinished(ctx context.Context, id uuid.UUID, scanErr erro
 	return err
 }
 
-func (s *Store) DownloadForSource(ctx context.Context, pinID uuid.UUID, sourceURL string) (Download, error) {
-	sourceURL = dbtext.Clean(sourceURL)
-	d, err := scanDownload(s.db.QueryRow(ctx, `
-		SELECT id, pin_id, entry_id, source_url, resolved_url, file_path, status, error,
-		       track_id, metadata, first_seen_at, downloaded_at, updated_at
-		FROM api_tracker_downloads
-		WHERE pin_id = $1 AND source_url = $2`, pinID, sourceURL))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Download{}, ErrNotFound
+// downloadsBySource loads a pin's download history keyed by source URL, so a
+// scan looks entries up instead of querying once per link. albumNeedsCover is
+// set where the downloaded track's album still has no cover.
+func (s *Store) downloadsBySource(ctx context.Context, pinID uuid.UUID) (map[string]Download, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT d.id, d.pin_id, d.entry_id, d.source_url, d.resolved_url, d.file_path, d.status, d.error,
+		       d.track_id, d.metadata, d.first_seen_at, d.downloaded_at, d.updated_at,
+		       a.id IS NOT NULL AND t.owner_id IS NULL AND NULLIF(a.cover_art_path, '') IS NULL
+		FROM api_tracker_downloads d
+		LEFT JOIN tracks t ON t.id = d.track_id
+		LEFT JOIN albums a ON a.id = t.album_id
+		WHERE d.pin_id = $1`, pinID)
+	if err != nil {
+		return nil, err
 	}
-	return d, err
+	defer rows.Close()
+	out := make(map[string]Download)
+	for rows.Next() {
+		var needsCover bool
+		d, err := scanDownload(rows, &needsCover)
+		if err != nil {
+			return nil, err
+		}
+		d.albumNeedsCover = needsCover
+		out[d.SourceURL] = d
+	}
+	return out, rows.Err()
+}
+
+// SetDownloadMetadata replaces the tracker metadata recorded for a download,
+// leaving its status and timestamps alone.
+func (s *Store) SetDownloadMetadata(ctx context.Context, pinID uuid.UUID, sourceURL string, metadata json.RawMessage) error {
+	_, err := s.db.Exec(ctx, `
+		UPDATE api_tracker_downloads SET metadata = $3, updated_at = NOW()
+		WHERE pin_id = $1 AND source_url = $2`, pinID, dbtext.Clean(sourceURL), metadata)
+	return err
 }
 
 func (s *Store) RecordDownload(ctx context.Context, in DownloadInput) error {
@@ -419,17 +447,18 @@ func scanPin(row scanner) (Pin, error) {
 	return p, nil
 }
 
-func scanDownload(row scanner) (Download, error) {
+// scanDownload reads a download row followed by any extra columns.
+func scanDownload(row scanner, extra ...any) (Download, error) {
 	var (
 		d            Download
 		entryID      pgtype.Int8
 		trackID      pgtype.UUID
 		downloadedAt pgtype.Timestamptz
 	)
-	err := row.Scan(
+	err := row.Scan(append([]any{
 		&d.ID, &d.PinID, &entryID, &d.SourceURL, &d.ResolvedURL, &d.FilePath, &d.Status, &d.Error,
 		&trackID, &d.Metadata, &d.FirstSeenAt, &downloadedAt, &d.UpdatedAt,
-	)
+	}, extra...)...)
 	if err != nil {
 		return Download{}, err
 	}

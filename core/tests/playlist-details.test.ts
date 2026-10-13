@@ -3,6 +3,7 @@ import {
   PLAYLIST_COVER_MAX_BYTES,
   isValidPlaylistName,
   playlistCoverSizeError,
+  playlistDetailsForm,
   playlistDetailsPayload,
   playlistSubtitle,
   samePlaylistDetails,
@@ -24,6 +25,17 @@ describe("playlistDetailsPayload", () => {
     expect(
       playlistDetailsPayload({ name: "Mix", description: null, visibility: "private" }).description,
     ).toBe("");
+  });
+});
+
+describe("playlistDetailsForm", () => {
+  it("fills the form from a saved playlist, with no description as empty", () => {
+    expect(
+      playlistDetailsForm({ name: "Mix ", description: "Late", visibility: "collaborative" }),
+    ).toEqual({ name: "Mix ", description: "Late", visibility: "collaborative" });
+    const saved = { name: "Mix", visibility: "private" as const };
+    expect(playlistDetailsForm(saved)).toEqual({ name: "Mix", description: "", visibility: "private" });
+    expect(samePlaylistDetails(playlistDetailsForm(saved), saved)).toBe(true);
   });
 });
 

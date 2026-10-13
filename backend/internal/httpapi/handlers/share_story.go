@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/githubesson/lumen/internal/imagesafe"
+	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/preview"
 )
 
@@ -85,7 +86,7 @@ func (h *Share) CustomStoryBackground(w http.ResponseWriter, r *http.Request) {
 	if startSec > maxStart {
 		startSec = maxStart
 	}
-	if !isTIDALTrack(t) && !pathWithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath) {
+	if !isTIDALTrack(t) && !pathsafe.WithinAnyRoot(h.Ingest.AllRoots(r.Context()), t.FilePath) {
 		slog.Warn("custom story background: file path outside configured roots",
 			"track_id", id.String(), "user", u.ID, "file_path", t.FilePath)
 		http.Error(w, "forbidden", http.StatusForbidden)

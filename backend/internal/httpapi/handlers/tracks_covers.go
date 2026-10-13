@@ -312,8 +312,10 @@ func (h *Tracks) PublicAlbumCover(w http.ResponseWriter, r *http.Request) {
 	}
 	var key string
 	if rawUser := q.Get("u"); rawUser != "" {
-		userID, err := uuid.Parse(rawUser)
-		if err != nil {
+		// perr, not err: the lookup below must set the err checked after the
+		// if/else, not a new one scoped to this block.
+		userID, perr := uuid.Parse(rawUser)
+		if perr != nil {
 			http.Error(w, "bad u", http.StatusBadRequest)
 			return
 		}
@@ -358,9 +360,8 @@ func (h *Tracks) PublicAlbumCover(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cover fetch failed", http.StatusBadGateway)
 		return
 	}
-	remaining := max(exp-time.Now().Unix(), 60)
 	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Cache-Control", "public, max-age="+strconv.FormatInt(remaining, 10)+", immutable")
+	w.Header().Set("Cache-Control", immutableCacheControl(exp))
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	_, _ = w.Write(data)
 }
@@ -379,10 +380,9 @@ func (h *Tracks) servePublicStorageObject(w http.ResponseWriter, r *http.Request
 	if ct == "" {
 		ct = contentTypeForExt(filepath.Ext(key))
 	}
-	remaining := max(exp-time.Now().Unix(), 60)
 	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Cache-Control", "public, max-age="+strconv.FormatInt(remaining, 10)+", immutable")
-	http.ServeContent(w, r, filepath.Base(key), zeroTime(), body)
+	w.Header().Set("Cache-Control", immutableCacheControl(exp))
+	http.ServeContent(w, r, filepath.Base(key), time.Time{}, body)
 }
 
 func (h *Tracks) serveStorageObject(w http.ResponseWriter, r *http.Request, key string, maxSize int) {
@@ -408,7 +408,7 @@ func (h *Tracks) serveStorageObject(w http.ResponseWriter, r *http.Request, key 
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	// No modtime from the Storage interface; use zero (disables 304 handling).
-	http.ServeContent(w, r, filepath.Base(key), zeroTime(), body)
+	http.ServeContent(w, r, filepath.Base(key), time.Time{}, body)
 }
 
 func remoteCoverURLForSize(cover library.RemoteCover, maxSize int) string {
@@ -633,7 +633,7 @@ func (h *Tracks) serveResizedImage(
 		defer cached.Close()
 		w.Header().Set("Content-Type", thumbType)
 		w.Header().Set("Cache-Control", "private, max-age=86400")
-		http.ServeContent(w, r, path.Base(thumbKey), zeroTime(), cached)
+		http.ServeContent(w, r, path.Base(thumbKey), time.Time{}, cached)
 		return true
 	}
 	// Most stored covers already fit the requested size. Read their header
@@ -662,27 +662,15 @@ func (h *Tracks) serveResizedImage(
 	}
 
 	var buf bytes.Buffer
-	outType := thumbType
 	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 82}); err != nil {
 		return false
 	}
-
-	if _, err := h.Storage.Put(
-		r.Context(),
-		thumbKey,
-		bytes.NewReader(buf.Bytes()),
-		int64(buf.Len()),
-		outType,
-	); err != nil {
-		w.Header().Set("Content-Type", outType)
-		w.Header().Set("Cache-Control", "private, max-age=86400")
-		http.ServeContent(w, r, path.Base(thumbKey), zeroTime(), bytes.NewReader(buf.Bytes()))
-		return true
-	}
-
-	w.Header().Set("Content-Type", outType)
+	// Caching the thumbnail is best-effort: when the Put fails it is served
+	// all the same, and made again next time.
+	_, _ = h.Storage.Put(r.Context(), thumbKey, bytes.NewReader(buf.Bytes()), int64(buf.Len()), thumbType)
+	w.Header().Set("Content-Type", thumbType)
 	w.Header().Set("Cache-Control", "private, max-age=86400")
-	http.ServeContent(w, r, path.Base(thumbKey), zeroTime(), bytes.NewReader(buf.Bytes()))
+	http.ServeContent(w, r, path.Base(thumbKey), time.Time{}, bytes.NewReader(buf.Bytes()))
 	return true
 }
 

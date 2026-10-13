@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Download as ArrowDownTrayIcon,
-  Play as PlayIcon,
   ListMusic as QueueListIcon,
   Sparkles as SparklesIcon,
 } from "lucide-react";
@@ -17,6 +16,7 @@ import ErrorBanner from "../components/ErrorBanner";
 import EmptyState from "../components/EmptyState";
 import ReplayBento, { ReplayBentoPlaceholder } from "../components/replay/ReplayBento";
 import { Button } from "../components/Button";
+import PlayListButton from "../components/PlayListButton";
 import {
   buildPeriodOptions,
   canonicalPeriodKey,
@@ -41,7 +41,6 @@ import {
   useLocalDay,
   type ResumeSubscriber,
 } from "@music-library/core/replay/use-local-day";
-import { usePlayerControls } from "../context/Player";
 import { usePlaylists } from "../context/Playlists";
 
 // The period model (type, cache key, labels, date ranges, picker options) and
@@ -120,7 +119,6 @@ function buildOptions(availableYears: number[]): PeriodOption[] {
 
 export default function Replay() {
   const navigate = useNavigate();
-  const { play } = usePlayerControls();
   const { reload: reloadPlaylists } = usePlaylists();
 
   // Sticky: the year pills are navigation, not results, and must survive the
@@ -271,8 +269,8 @@ export default function Replay() {
     setDownloadingImage(true);
     setImageError(null);
     try {
-      const res = await api.getReplayImage(replayImageRequest(period, range));
-      const blob = await res.blob();
+      const bytes = await api.getReplayImage(replayImageRequest(period, range));
+      const blob = new Blob([bytes], { type: "image/png" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -328,14 +326,9 @@ export default function Replay() {
           <h1 className="replay-title">{periodTitle(period)}</h1>
         </div>
         <div className="replay-actions">
-          <Button
-            variant="primary"
-            disabled={!data || queue.length === 0}
-            onClick={() => queue.length > 0 && play(queue[0], queue)}
-            leadingIcon={<PlayIcon className="size-4" />}
-          >
+          <PlayListButton tracks={queue} disabled={!data || queue.length === 0}>
             Play top tracks
-          </Button>
+          </PlayListButton>
           <Button
             disabled={!data || queue.length === 0 || creatingPlaylist}
             onClick={onGeneratePlaylist}
