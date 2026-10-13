@@ -3,13 +3,16 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/githubesson/lumen/internal/downloadfile"
 	"github.com/githubesson/lumen/internal/mediaembed"
 )
 
@@ -87,4 +90,23 @@ func TestServeTaggedTIDAL(t *testing.T) {
 			t.Fatalf("served %d bytes without a tag slot", rec.Body.Len())
 		}
 	})
+}
+
+// An assembled TIDAL track past the download size limit is refused, not
+// taken for a failure writing it to disk and streamed again with no limit.
+func TestTIDALDownloadPastTheSizeLimitIsRefused(t *testing.T) {
+	prev := downloadfile.MaxFileBytes
+	downloadfile.MaxFileBytes = 8
+	t.Cleanup(func() { downloadfile.MaxFileBytes = prev })
+	// Asking TIDAL for the track again gets a refusal.
+	h := &Tracks{TIDAL: refusingTIDAL(t, "asked again")}
+	resp := &http.Response{
+		Header: http.Header{"Content-Type": {"audio/flac"}},
+		Body:   io.NopCloser(strings.NewReader("more than eight bytes")),
+	}
+	rec := httptest.NewRecorder()
+	h.spoolTaggedTIDAL(rec, httptest.NewRequest(http.MethodGet, "/", nil), "1", resp, mediaembed.Metadata{Title: "T"}, nil)
+	if rec.Code != http.StatusBadGateway || rec.Body.String() != "track too large\n" {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
 }

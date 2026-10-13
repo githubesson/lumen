@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/githubesson/lumen/internal/downloadfile"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/mediaembed"
 	"github.com/githubesson/lumen/internal/pathsafe"
@@ -175,9 +176,14 @@ func (h *Tracks) streamTIDALDownload(w http.ResponseWriter, r *http.Request, tid
 		h.serveTIDALRaw(w, tidalID, resp)
 		return
 	}
+	h.spoolTaggedTIDAL(w, r, tidalID, resp, meta, cover)
+}
 
-	// ffmpeg needs the whole file on disk, which also keeps it for serving
-	// untagged if the remux fails.
+// spoolTaggedTIDAL spools the assembled TIDAL file in resp, which it closes,
+// and serves it through serveTaggedTIDAL: ffmpeg needs the whole file on
+// disk, which also keeps it for serving untagged if the remux fails.
+func (h *Tracks) spoolTaggedTIDAL(w http.ResponseWriter, r *http.Request, tidalID string, resp *http.Response, meta mediaembed.Metadata, cover []byte) {
+	ctx := r.Context()
 	contentType := resp.Header.Get("Content-Type")
 	hint := mediaembed.HintFromContentType(contentType)
 	body := &readErr{r: resp.Body}
@@ -189,6 +195,11 @@ func (h *Tracks) streamTIDALDownload(w http.ResponseWriter, r *http.Request, tid
 			// The client left.
 		case body.err != nil:
 			h.writeTIDALStreamError(w, "download", tidalID, body.err)
+		case errors.Is(err, downloadfile.ErrTooLarge):
+			// TIDAL sent more than any track is. Streaming it again would
+			// only skip the cap.
+			h.log().Warn("download: tidal track exceeds the download size limit", "tidal_track", tidalID, "limit", downloadfile.MaxFileBytes)
+			http.Error(w, "track too large", http.StatusBadGateway)
 		default:
 			// Writing the temp file failed, not TIDAL: the track can still
 			// stream through untagged.
