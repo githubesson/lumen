@@ -43,6 +43,11 @@ interface Props {
   selectable?: boolean;
   /** Per-row source badge; redundant when the whole page is one source. */
   showSourceBadge?: boolean;
+  /**
+   * The page's own artist (an album's): rows credited to exactly it leave
+   * out the artist line, so the ones with someone else on them stand out.
+   */
+  omitArtist?: string;
   /** Optional column inserted between Album and Time. Used by /replay to show plays. */
   extraColumn?: {
     header: string;
@@ -64,9 +69,11 @@ export default function TrackList({
   showHeader = true,
   selectable = true,
   showSourceBadge = true,
+  omitArtist,
   extraColumn,
   selectionControlsHostId,
 }: Props) {
+  const omittedArtist = omitArtist ? displayText(omitArtist).toLowerCase() : "";
   const { current, isPlaying } = usePlayer();
   const { play } = usePlayerControls();
   const { isFavorite, toggle } = useFavorites();
@@ -221,6 +228,10 @@ export default function TrackList({
                   showCover={showCover}
                   showAlbum={showAlbum}
                   showSourceBadge={showSourceBadge}
+                  showArtist={
+                    !omittedArtist ||
+                    displayText(t.artist).toLowerCase() !== omittedArtist
+                  }
                   renderExtra={extraColumn?.render}
                   extraClassName={extraColumn?.className}
                   isNow={current?.id === t.id}
@@ -269,6 +280,7 @@ interface TrackRowProps {
   showCover: boolean;
   showAlbum: boolean;
   showSourceBadge: boolean;
+  showArtist: boolean;
   renderExtra?: (track: TrackListItem) => ReactNode;
   extraClassName?: string;
   isNow: boolean;
@@ -297,6 +309,7 @@ export const TrackRow = memo(function TrackRow({
   showCover,
   showAlbum,
   showSourceBadge,
+  showArtist,
   renderExtra,
   extraClassName,
   isNow,
@@ -401,9 +414,11 @@ export const TrackRow = memo(function TrackRow({
             </Tooltip>
           )}
         </div>
-        <div className="track-sub" title={displayText(track.artist, "Unknown artist")}>
-          {displayText(track.artist, "Unknown artist")}
-        </div>
+        {showArtist && (
+          <div className="track-sub" title={displayText(track.artist, "Unknown artist")}>
+            {displayText(track.artist, "Unknown artist")}
+          </div>
+        )}
       </td>
       {showAlbum && (
         <td

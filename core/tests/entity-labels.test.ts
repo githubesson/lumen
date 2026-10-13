@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   albumArtistName,
   albumArtists,
+  albumCredits,
+  albumLength,
   albumSubtitle,
   artistMetaParts,
   artistSubtitle,
+  libraryAlbumFacts,
   libraryAlbumMetaParts,
   metaLine,
+  tidalAlbumFacts,
   tidalAlbumMetaParts,
   tidalArtistMetaParts,
 } from "../src/entity-labels";
@@ -77,6 +81,96 @@ describe("album labels", () => {
       "10 tracks · 3 saved · 2020",
     );
     expect(metaLine(["a", "", "b"])).toBe("a · b");
+  });
+});
+
+describe("album page", () => {
+  const track = (artist: string, source?: "local" | "tidal") => ({ artist, source });
+  const minutes = (...mins: number[]) => mins.map((m) => ({ duration_ms: m * 60_000 }));
+
+  it("links the album artist when a library track credits it", () => {
+    expect(
+      albumCredits({ artist_id: "ar-1", artist_name: "Band" }, [track("Band"), track("Band, Guest")]),
+    ).toEqual([{ name: "Band", artistId: "ar-1" }]);
+    // A feature alone still credits the artist; case doesn't matter.
+    expect(albumCredits({ artist_id: "ar-1", artist_name: "band" }, [track("Guest, Band")])).toEqual([
+      { name: "band", artistId: "ar-1" },
+    ]);
+    // Names with commas in them still match whole.
+    expect(
+      albumCredits({ artist_id: "ar-2", artist_name: "Tyler, The Creator" }, [
+        track("Tyler, The Creator, Guest"),
+      ]),
+    ).toEqual([{ name: "Tyler, The Creator", artistId: "ar-2" }]);
+  });
+
+  it("leaves the album artist unlinked when its page would be empty", () => {
+    // Nothing on the album credits it, as on a compilation.
+    expect(
+      albumCredits({ artist_id: "ar-va", artist_name: "Various Artists" }, [track("A"), track("B")]),
+    ).toEqual([{ name: "Various Artists" }]);
+    // Only part of a longer name.
+    expect(albumCredits({ artist_id: "ar-1", artist_name: "Band" }, [track("Band of Horses")])).toEqual([
+      { name: "Band" },
+    ]);
+    // A TIDAL row says nothing about the library's artists.
+    expect(albumCredits({ artist_id: "ar-1", artist_name: "Band" }, [track("Band", "tidal")])).toEqual([
+      { name: "Band" },
+    ]);
+    // No library id at all.
+    expect(albumCredits({ artist_name: "Band" }, [track("Band")])).toEqual([{ name: "Band" }]);
+  });
+
+  it("credits every main artist of a TIDAL release, linking only the album artist", () => {
+    expect(
+      albumCredits({ artist_id: "ar-1", artist_name: "A", artist_names: ["A", "B", "a"] }, [track("A, B")]),
+    ).toEqual([{ name: "A", artistId: "ar-1" }, { name: "B" }]);
+    expect(albumCredits({ artists: ["A", "B"], artist: "A" }, [track("A, B", "tidal")])).toEqual([
+      { name: "A" },
+      { name: "B" },
+    ]);
+    expect(albumCredits({ artist: "Foo Â· Bar" }, [])).toEqual([{ name: "Foo · Bar" }]);
+    expect(albumCredits({}, [track("A")])).toEqual([]);
+  });
+
+  it("measures the list's length", () => {
+    expect(albumLength(minutes(3, 4.5, 2))).toBe("3 tracks · 9 min");
+    expect(albumLength(minutes(40, 35))).toBe("2 tracks · 1 hr 15 min");
+    expect(albumLength(minutes(0.5))).toBe("1 track · 1 min");
+    // Unknown lengths add nothing, and with none known only the count shows.
+    expect(albumLength([{ duration_ms: 0 }, { duration_ms: Number.NaN }, ...minutes(2)])).toBe(
+      "3 tracks · 2 min",
+    );
+    expect(albumLength([{ duration_ms: 0 }])).toBe("1 track");
+    expect(albumLength([])).toBe("0 tracks");
+  });
+
+  it("lists a library album's details, leaving unknown ones out", () => {
+    expect(libraryAlbumFacts({ release_year: 2021 }, minutes(3, 4))).toEqual([
+      { key: "released", label: "Released", value: "2021" },
+      { key: "length", label: "Length", value: "2 tracks · 7 min" },
+    ]);
+    expect(libraryAlbumFacts({}, minutes(3))).toEqual([
+      { key: "length", label: "Length", value: "1 track · 3 min" },
+    ]);
+    // A copy of a TIDAL release says how much of it is saved.
+    expect(
+      libraryAlbumFacts({ tidal_album_id: "9", saved_count: 1, release_year: 2021 }, minutes(3, 4)).map(
+        (fact) => fact.value,
+      ),
+    ).toEqual(["2021", "2 tracks · 7 min", "1 of 2 tracks"]);
+    expect(libraryAlbumFacts({ saved_count: 1 }, minutes(3)).map((fact) => fact.key)).toEqual(["length"]);
+  });
+
+  it("lists a TIDAL album's saved count only when something is saved", () => {
+    expect(tidalAlbumFacts({ saved_count: 0, release_year: 2020 }, minutes(3)).map((f) => f.key)).toEqual([
+      "released",
+      "length",
+    ]);
+    expect(tidalAlbumFacts({ saved_count: 2 }, minutes(3, 3, 3))).toEqual([
+      { key: "length", label: "Length", value: "3 tracks · 9 min" },
+      { key: "saved", label: "Saved", value: "2 of 3 tracks" },
+    ]);
   });
 });
 

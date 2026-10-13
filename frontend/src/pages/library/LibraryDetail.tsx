@@ -1,9 +1,7 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ArrowLeft as ArrowLeftIcon,
   Library as LibraryIcon,
-  SquarePen as PencilSquareIcon,
-  Play as PlayIcon,
 } from "lucide-react";
 import {
   api,
@@ -16,27 +14,32 @@ import {
 } from "../../api";
 import {
   albumArtists,
-  libraryAlbumMetaParts,
-  tidalAlbumMetaParts,
-  type AlbumMetaPart,
+  albumCredits,
+  libraryAlbumFacts,
+  tidalAlbumFacts,
 } from "@music-library/core/entity-labels";
 import type { EntityTarget } from "@music-library/core/entity-target";
-import { displayText } from "../../lib/format";
 import { useEntityDetail } from "../../lib/useEntityDetail";
 import { dropCache, readCache, writeCache } from "../../lib/resourceCache";
 import TrackList from "../../components/TrackList";
-import CoverArt from "../../components/CoverArt";
 import { Button } from "../../components/Button";
 import { EditAlbumDialog } from "../../components/edit/EditAlbumDialog";
 import EmptyState from "../../components/EmptyState";
 import ErrorBanner from "../../components/ErrorBanner";
-import ListPageHeader from "../../components/ListPageHeader";
+import {
+  ALBUM_SELECTION_HOST_ID,
+  AlbumSleeve,
+  type AlbumSleeveAlbum,
+  type AlbumSleeveSearch,
+} from "../../components/library/AlbumSleeve";
 import SearchInput from "../../components/SearchInput";
-import { usePlayerControls } from "../../context/Player";
 import { useAuth } from "../../context/Auth";
 import { useKey } from "../../lib/keybindings";
-import { playableTracks } from "../../lib/track";
 import { AlbumDownloadControl } from "./AlbumDownloadControl";
+
+/** What "Saved" means on each kind of album page. */
+const LIBRARY_SAVED_HINT = "The rest of the release plays from TIDAL";
+const TIDAL_SAVED_HINT = "Played from the library instead of TIDAL";
 
 export function AlbumDetailView({
   id,
@@ -55,95 +58,72 @@ export function AlbumDetailView({
   // Bumped whenever the album is saved so the cover <img> reloads — the cover
   // URL is stable even when an admin replaces the artwork.
   const [coverNonce, setCoverNonce] = useState(0);
-  const { play } = usePlayerControls();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
   const search = useDetailTrackSearch("album", tracks);
   // The refetch carries fresh counts.
   const onDownloadChanged = useCallback(() => refresh(), [refresh]);
+  const album = entity && entity !== "notfound" ? entity : null;
+  const sleeve = useMemo<AlbumSleeveAlbum | null>(
+    () =>
+      album && tracks
+        ? {
+            title: album.title,
+            coverSrc: albumArtUrl(album, undefined, coverNonce),
+            credits: albumCredits(album, tracks),
+            facts: libraryAlbumFacts(album, tracks),
+            factHints: { saved: LIBRARY_SAVED_HINT },
+            tracks,
+          }
+        : null,
+    [album, tracks, coverNonce],
+  );
 
   if (entity === "notfound") {
     return <NotFound kind="Album" onBack={onBack} />;
   }
-  if (!entity || !tracks) {
-    return <DetailLoading kind="Album" label="Loading album…" error={error} onBack={onBack} />;
-  }
-  const album = entity;
-  const playable = playableTracks(tracks);
-  return (
-    <div className="view" style={{ display: "grid", gap: 18 }}>
-      <DetailBackRow onBack={onBack} />
-      <ListPageHeader
+  if (!sleeve || !album || !tracks) {
+    // A failed first load: the way back and the error, not a frame that
+    // would never fill.
+    if (error) return <DetailLoadError error={error} onBack={onBack} />;
+    return (
+      <AlbumSleeve
         kind="Album"
-        title={displayText(album.title)}
-        art={
-          <CoverArt
-            className="detail-art"
-            src={albumArtUrl(album, undefined, coverNonce)}
-            label={album.title}
-          />
-        }
-        meta={
-          <AlbumMeta
-            artists={albumArtists(album)}
-            parts={libraryAlbumMetaParts(album)}
-            savedHint="The rest of the release plays from TIDAL"
-          />
-        }
-        actions={
-          <>
-            <Button
-              variant="primary"
-              onClick={() => playable.length && play(playable[0], playable)}
-              disabled={playable.length === 0}
-              leadingIcon={<PlayIcon className="size-4" />}
-            >
-              Play all
-            </Button>
-            {isAdmin && album.tidal_album_id && (
-              <AlbumDownloadControl
-                tidalAlbumId={album.tidal_album_id}
-                tracks={tracks}
-                queuedCount={album.queued_count ?? 0}
-                onChanged={onDownloadChanged}
-                onError={setActionError}
-              />
-            )}
-            {isAdmin && (
-              <Button
-                onClick={() => setEditing(true)}
-                leadingIcon={<PencilSquareIcon className="size-3.5" />}
-              >
-                Edit
-              </Button>
-            )}
-          </>
-        }
-        corner={
-          <DetailTrackSearchBar
-            kind="album"
-            query={search.query}
-            onQueryChange={search.setQuery}
-            inputRef={search.inputRef}
-            matchCount={search.filteredTracks.length}
-            totalCount={tracks.length}
-            searchActive={search.searchActive}
-          />
-        }
+        onBack={onBack}
+        album={null}
+        loadingLabel="Loading album…"
+        search={sleeveSearch(search, 0)}
+        searchRef={search.inputRef}
       />
+    );
+  }
+  return (
+    <AlbumSleeve
+      kind="Album"
+      onBack={onBack}
+      album={sleeve}
+      loadingLabel="Loading album…"
+      onEdit={isAdmin ? () => setEditing(true) : undefined}
+      actions={
+        isAdmin && album.tidal_album_id ? (
+          <AlbumDownloadControl
+            tidalAlbumId={album.tidal_album_id}
+            tracks={tracks}
+            queuedCount={album.queued_count ?? 0}
+            onChanged={onDownloadChanged}
+            onError={setActionError}
+          />
+        ) : undefined
+      }
+      search={sleeveSearch(search, tracks.length)}
+      searchRef={search.inputRef}
+    >
       {(error || actionError) && <ErrorBanner message={(error || actionError)!} />}
-      <TrackList
+      <AlbumTrackList
         tracks={search.filteredTracks}
         queueSource={tracks}
-        showAlbum={false}
-        emptyState={
-          search.searchActive ? (
-            <EmptyState
-              title="No matches."
-              hint={`Nothing in this album matches "${search.query}".`}
-            />
-          ) : undefined
-        }
+        artist={albumArtists(album)}
+        query={search.searchActive ? search.query : null}
       />
       <EditAlbumDialog
         open={editing}
@@ -155,7 +135,7 @@ export function AlbumDetailView({
           setCoverNonce(Date.now());
         }}
       />
-    </div>
+    </AlbumSleeve>
   );
 }
 
@@ -175,7 +155,6 @@ export function TidalAlbumDetailView({
   // Kept apart from the load error: a later successful read clears that one,
   // but it says nothing about a download or cancel that failed.
   const [actionError, setActionError] = useState<string | null>(null);
-  const { play } = usePlayerControls();
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
   // Only the newest read may commit: a revisit's mount read is still out
@@ -196,6 +175,21 @@ export function TidalAlbumDetailView({
       .catch(() => {});
   }, [id]);
   const search = useDetailTrackSearch("album", album?.tracks ?? null);
+  const sleeve = useMemo<AlbumSleeveAlbum | null>(
+    () =>
+      album
+        ? {
+            title: album.title,
+            coverSrc: albumArtUrl({ ...album, source: "tidal" }),
+            coverMissing: !album.cover_url,
+            credits: albumCredits(album, album.tracks),
+            facts: tidalAlbumFacts(album, album.tracks),
+            factHints: { saved: TIDAL_SAVED_HINT },
+            tracks: album.tracks,
+          }
+        : null,
+    [album],
+  );
 
   useEffect(() => {
     const ac = new AbortController();
@@ -224,109 +218,128 @@ export function TidalAlbumDetailView({
     return () => ac.abort();
   }, [id]);
 
-  if (!album && !error) {
-    return <DetailLoading kind="TIDAL Album" label="Loading TIDAL album…" onBack={onBack} />;
+  if (!album || !sleeve) {
+    if (error) {
+      return (
+        <div className="view" style={{ display: "grid", gap: 18 }}>
+          <DetailBackRow onBack={onBack} />
+          <div
+            style={{
+              padding: 40,
+              textAlign: "center",
+              color: "var(--muted-foreground)",
+              fontSize: 14,
+            }}
+          >
+            <ErrorBanner message={error} />
+            <p style={{ color: "var(--foreground)", fontWeight: 500, fontSize: 14 }}>
+              TIDAL album unavailable.
+            </p>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <AlbumSleeve
+        kind="TIDAL Album"
+        onBack={onBack}
+        album={null}
+        loadingLabel="Loading TIDAL album…"
+        // An admin gets the album download. A library album only has a row
+        // when it copies a TIDAL release, which nothing says before it loads.
+        reserveActions={isAdmin}
+        search={sleeveSearch(search, 0)}
+        searchRef={search.inputRef}
+      />
+    );
   }
 
-  return (
-    <div className="view" style={{ display: "grid", gap: 18 }}>
-      <DetailBackRow onBack={onBack} />
-      {album ? (
-        <>
-          <ListPageHeader
-            kind="TIDAL Album"
-            title={displayText(album.title)}
-            art={
-              <CoverArt
-                className="detail-art"
-                src={albumArtUrl({ ...album, source: "tidal" })}
-                label={album.title}
-                forcePlaceholder={!album.cover_url}
-              />
-            }
-            meta={
-              <AlbumMeta
-                artists={albumArtists(album)}
-                parts={tidalAlbumMetaParts(album)}
-                savedHint="Played from the library instead of TIDAL"
-              />
-            }
-            actions={
-              <>
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    const playable = playableTracks(album.tracks);
-                    if (playable.length) play(playable[0], playable);
-                  }}
-                  disabled={playableTracks(album.tracks).length === 0}
-                  leadingIcon={<PlayIcon className="size-4" />}
-                >
-                  Play all
-                </Button>
-                {isAdmin && (
-                  <AlbumDownloadControl
-                    tidalAlbumId={album.id}
-                    tracks={album.tracks}
-                    queuedCount={album.queued_count ?? 0}
-                    onChanged={reload}
-                    onError={setActionError}
-                  />
-                )}
-                {album.library_album_id && (
-                  <Button
-                    onClick={() => onOpenAlbum({ kind: "local", id: album.library_album_id! })}
-                    leadingIcon={<LibraryIcon className="size-4" />}
-                  >
-                    Open in library
-                  </Button>
-                )}
-              </>
-            }
-            corner={
-              <DetailTrackSearchBar
-                kind="album"
-                query={search.query}
-                onQueryChange={search.setQuery}
-                inputRef={search.inputRef}
-                matchCount={search.filteredTracks.length}
-                totalCount={album.tracks.length}
-                searchActive={search.searchActive}
-              />
-            }
-          />
-          {(error || actionError) && <ErrorBanner message={(error || actionError)!} />}
-          <TrackList
-            tracks={search.filteredTracks}
-            queueSource={album.tracks}
-            showAlbum={false}
-            emptyState={
-              search.searchActive ? (
-                <EmptyState
-                  title="No matches."
-                  hint={`Nothing in this album matches "${search.query}".`}
-                />
-              ) : undefined
-            }
-          />
-        </>
-      ) : (
-        <div
-          style={{
-            padding: 40,
-            textAlign: "center",
-            color: "var(--muted-foreground)",
-            fontSize: 14,
-          }}
-        >
-          {error && <ErrorBanner message={error} />}
-          <p style={{ color: "var(--foreground)", fontWeight: 500, fontSize: 14 }}>
-            TIDAL album unavailable.
-          </p>
-        </div>
-      )}
-    </div>
+  const download = isAdmin && (
+    <AlbumDownloadControl
+      tidalAlbumId={album.id}
+      tracks={album.tracks}
+      queuedCount={album.queued_count ?? 0}
+      onChanged={reload}
+      onError={setActionError}
+    />
   );
+  return (
+    <AlbumSleeve
+      kind="TIDAL Album"
+      onBack={onBack}
+      album={sleeve}
+      loadingLabel="Loading TIDAL album…"
+      actions={
+        isAdmin || album.library_album_id ? (
+          <>
+            {download}
+            {album.library_album_id && (
+              <Button
+                onClick={() => onOpenAlbum({ kind: "local", id: album.library_album_id! })}
+                leadingIcon={<LibraryIcon className="size-4" />}
+              >
+                Open in library
+              </Button>
+            )}
+          </>
+        ) : undefined
+      }
+      search={sleeveSearch(search, album.tracks.length)}
+      searchRef={search.inputRef}
+    >
+      {(error || actionError) && <ErrorBanner message={(error || actionError)!} />}
+      <AlbumTrackList
+        tracks={search.filteredTracks}
+        queueSource={album.tracks}
+        artist={albumArtists(album)}
+        query={search.searchActive ? search.query : null}
+      />
+    </AlbumSleeve>
+  );
+}
+
+/** An album's list: no row covers, since every row has the album's. */
+function AlbumTrackList({
+  tracks,
+  queueSource,
+  artist,
+  query,
+}: {
+  tracks: TrackListItem[];
+  queueSource: TrackListItem[];
+  /** The album's own artist, whose name the rows then leave out. */
+  artist: string;
+  /** The search, when one is filtering the list. */
+  query: string | null;
+}) {
+  return (
+    <TrackList
+      tracks={tracks}
+      queueSource={queueSource}
+      showCover={false}
+      showAlbum={false}
+      omitArtist={artist}
+      selectionControlsHostId={ALBUM_SELECTION_HOST_ID}
+      emptyState={
+        query !== null ? (
+          <EmptyState title="No matches." hint={`Nothing in this album matches "${query}".`} />
+        ) : undefined
+      }
+    />
+  );
+}
+
+function sleeveSearch(
+  search: ReturnType<typeof useDetailTrackSearch>,
+  totalCount: number,
+): AlbumSleeveSearch {
+  return {
+    query: search.query,
+    setQuery: search.setQuery,
+    matchCount: search.filteredTracks.length,
+    totalCount,
+    searchActive: search.searchActive,
+  };
 }
 
 export function useDetailTrackSearch(
@@ -418,43 +431,12 @@ export function DetailTrackSearchBar({
   );
 }
 
-/**
- * Renders inside `.detail-header` as the top strip, over the same card
- * gradient as the cover/body below it.
- */
-/**
- * The detail page's frame while its first load is out: the Back row and a
- * header of the same shape, so neither pops in with the album.
- */
-function DetailLoading({
-  kind,
-  label,
-  error,
-  onBack,
-}: {
-  kind: string;
-  label: string;
-  /** A failed first load: shown instead of the header, with the way back. */
-  error?: string | null;
-  onBack: () => void;
-}) {
-  if (error) {
-    return (
-      <div className="view" style={{ display: "grid", gap: 18 }}>
-        <DetailBackRow onBack={onBack} />
-        <ErrorBanner message={error} />
-      </div>
-    );
-  }
+/** A failed first load: the way back and the error. */
+function DetailLoadError({ error, onBack }: { error: string; onBack: () => void }) {
   return (
-    <div className="view" style={{ display: "grid", gap: 18 }} aria-busy="true">
+    <div className="view" style={{ display: "grid", gap: 18 }}>
       <DetailBackRow onBack={onBack} />
-      <ListPageHeader
-        kind={kind}
-        title={<span className="skeleton-text" style={{ width: "min(320px, 60%)" }} />}
-        art={<div className="detail-art" aria-hidden="true" />}
-        meta={<span role="status">{label}</span>}
-      />
+      <ErrorBanner message={error} />
     </div>
   );
 }
@@ -505,34 +487,5 @@ export function NotFound({
         </Button>
       </div>
     </div>
-  );
-}
-
-/** An album page's meta row: who it's by, then its facts, dot-separated. */
-function AlbumMeta({
-  artists,
-  parts,
-  savedHint,
-}: {
-  artists: string;
-  parts: AlbumMetaPart[];
-  /** What the "N saved" count means on this kind of album page. */
-  savedHint: string;
-}) {
-  return (
-    <>
-      {artists && (
-        <>
-          <span>{artists}</span>
-          <span className="dot" />
-        </>
-      )}
-      {parts.map((part, index) => (
-        <Fragment key={part.key}>
-          {index > 0 && <span className="dot" />}
-          <span title={part.key === "saved" ? savedHint : undefined}>{part.text}</span>
-        </Fragment>
-      ))}
-    </>
   );
 }

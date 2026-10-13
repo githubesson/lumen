@@ -185,6 +185,8 @@ function apiRoutes(signedIn: boolean): [string, RegExp, Handler][] {
       const album = data.albums.find((a) => a.id === m[1]);
       return album ? { json: album } : notFound;
     }],
+    ["GET", new RegExp(`^/api/tidal/albums/${id}$`), (m) =>
+      m[1] === data.tidalAlbum.id ? { json: data.tidalAlbum } : notFound],
     ["GET", /^\/api\/artists$/, (_m, url) => paged(data.artists, url)],
     ["GET", new RegExp(`^/api/artists/${id}/tracks$`), (m) => ({ json: data.artistTracks(m[1]).map(data.listItem) })],
     ["GET", new RegExp(`^/api/artists/${id}$`), (m) => {
