@@ -536,15 +536,23 @@ export const api = {
 
   listPlaylistTracks: (id: string, options: RequestOptions = {}) =>
     request<PlaylistTracks>(`/api/playlists/${pathID(id)}/tracks`, options),
-  listPlaylistTracksIfChanged: (id: string, etag?: string, options: RequestOptions = {}) =>
+  /**
+   * `listPlaylistTracks`, sent with the ETag of the last read so an unchanged
+   * list costs a 304. `data` is null when nothing changed since `etag`.
+   */
+  listPlaylistTracksIfChanged: (
+    id: string,
+    etag?: string,
+    options: RequestOptions = {},
+  ): Promise<PlaylistTracksIfChanged> =>
     fetchAndRead(
       `/api/playlists/${pathID(id)}/tracks`,
       { ...options, headers: etag ? { "If-None-Match": etag } : {} },
       { allowNotModified: true },
       async (response) => {
         const nextEtag = response.headers.get("ETag") ?? undefined;
-        if (response.status === 304) return { etag: nextEtag, tracks: null };
-        return { etag: nextEtag, tracks: (await readJson<PlaylistTracks>(response)).tracks };
+        if (response.status === 304) return { etag: nextEtag, data: null };
+        return { etag: nextEtag, data: await readJson<PlaylistTracks>(response) };
       },
     ),
   addPlaylistTracks: (id: string, trackIds: string[]) =>
@@ -846,6 +854,13 @@ export interface PlaylistTracks {
   tidal_queued?: number;
   /** When the next failed download is retried (RFC 3339), if one waits. */
   tidal_retry_at?: string;
+}
+
+/** A conditional playlist-tracks read; see `api.listPlaylistTracksIfChanged`. */
+export interface PlaylistTracksIfChanged {
+  etag?: string;
+  /** The whole snapshot, or null when it hasn't changed since the ETag sent. */
+  data: PlaylistTracks | null;
 }
 
 export interface TidalStatus {

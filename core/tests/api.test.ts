@@ -75,10 +75,15 @@ describe("complete favorites", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>", { status: 200, headers: { "Content-Type": "text/html" } })));
     await expect(api.listPlaylistTracksIfChanged("playlist")).rejects.toMatchObject({ status: 200, message: "Unexpected non-JSON response from the server." });
   });
+  it("returns the whole playlist-tracks snapshot with its ETag", async () => {
+    const body = { tracks: [{ position: 0, track_id: "t1", title: "A", duration_ms: 1, source: "tidal" }], tidal_queued: 0, tidal_retry_at: "2026-10-14T00:00:00Z" };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(body, { headers: { ETag: '"v2"' } })));
+    expect(await api.listPlaylistTracksIfChanged("playlist", '"v1"')).toEqual({ etag: '"v2"', data: body });
+  });
   it("handles an unchanged playlist without parsing an empty response", async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 304, headers: { ETag: '"rows"' } }));
     vi.stubGlobal("fetch", fetchMock);
-    expect(await api.listPlaylistTracksIfChanged("playlist", '"rows"')).toEqual({ tracks: null, etag: '"rows"' });
+    expect(await api.listPlaylistTracksIfChanged("playlist", '"rows"')).toEqual({ data: null, etag: '"rows"' });
     expect(fetchMock).toHaveBeenCalledWith("/api/playlists/playlist/tracks", expect.objectContaining({ headers: expect.objectContaining({ "If-None-Match": '"rows"' }) }));
   });
 });

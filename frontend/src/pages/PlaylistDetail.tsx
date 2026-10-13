@@ -216,14 +216,14 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
       setPlaylist(p);
       if (pendingTrackMutationsRef.current === 0) {
         trackEtagRef.current = t.etag;
-        setTracks((previous) => reconcileItems(previous ?? [], t.tracks ?? []));
+        setTracks((previous) => reconcileItems(previous ?? [], t.data?.tracks ?? []));
       }
       if (c) setCollabs(c);
       setError(null);
       // Keep the sidebar's row (name, cover) in step without refetching the
       // list. Only when it's out of date: update() drops list reads in flight.
       const row = listedRef.current;
-      const cover = coverFor(t.tracks ?? []);
+      const cover = coverFor(t.data?.tracks ?? []);
       if (row && !sameListing(row, p, cover)) {
         // Optional fields are named outright: the response omits cleared
         // ones, and spreading it would keep the row's stale values.
@@ -278,7 +278,8 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         .then((response) => {
           if (!request.signal.aborted && gen === loadGenRef.current) {
             trackEtagRef.current = response.etag;
-            if (response.tracks) setTracks((previous) => reconcileItems(previous ?? [], response.tracks!));
+            const rows = response.data?.tracks;
+            if (rows) setTracks((previous) => reconcileItems(previous ?? [], rows));
           }
         })
         .catch(() => {})
@@ -420,7 +421,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
         const fresh = await api.listPlaylistTracksIfChanged(id);
         if (gen !== loadGenRef.current || pendingTrackMutationsRef.current > 0) return;
         trackEtagRef.current = fresh.etag;
-        const rows = fresh.tracks ?? next;
+        const rows = fresh.data?.tracks ?? next;
         setTracks((previous) => reconcileItems(previous ?? [], rows));
         updatePlaylists((listed) => listed?.map((row) => row.id === id ? { ...row, cover: coverFor(rows) } : row) ?? listed);
         setError(null);
