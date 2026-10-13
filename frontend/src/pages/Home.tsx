@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   Disc3 as DiscIcon,
@@ -95,19 +95,29 @@ export default function Home() {
   const artistsFill = useBoardFill(A_ROW);
 
   const recentLimit = Math.ceil(recentFill.count / RECENT_STEP) * RECENT_STEP;
+  const recentSent = useRef(0);
   const recentResource = useApiResource(
-    (signal) => api.listRecent(recentLimit, { signal }), "Could not load recently played tracks.",
+    (signal) => {
+      recentSent.current = recentLimit;
+      return api.listRecent(recentLimit, { signal });
+    },
+    "Could not load recently played tracks.",
     { cacheKey: "home:recent" },
   );
-  useReloadWhenLarger(recentResource.reload, recentLimit);
+  useReloadWhenLarger(recentResource.reload, recentLimit, recentSent);
   // The newest tracks, for the hero before anything is played and for
   // Albums.
   const trackLimit = Math.min(MAX_TRACKS, TRACKS_PER_SIX_ALBUMS * Math.ceil(Math.max(albumsFill.count, 6) / 6));
+  const trackSent = useRef(0);
   const tracksResource = useApiResource(
-    (signal) => api.listTracks({ limit: trackLimit, signal }), "Could not load your library.",
+    (signal) => {
+      trackSent.current = trackLimit;
+      return api.listTracks({ limit: trackLimit, signal });
+    },
+    "Could not load your library.",
     { cacheKey: "home:tracks" },
   );
-  useReloadWhenLarger(tracksResource.reload, trackLimit);
+  useReloadWhenLarger(tracksResource.reload, trackLimit, trackSent);
   // The Replay screen's "Last 30 days": the same request under the same
   // key, so either page warms the other.
   const replayResource = useApiResource<ReplayData>(
@@ -455,17 +465,15 @@ export default function Home() {
 }
 
 /**
- * Asks again once `size` (which the fetcher reads) grows past what the last
- * request asked for: a panel moved somewhere roomier gets the rows to fill
- * it. A smaller size waits for the next load.
+ * Asks again once `size` (which the fetcher reads) grows past the size the
+ * last request went out with (`sent`, which the fetcher records): a panel
+ * moved somewhere roomier gets the rows to fill it. A smaller size waits for
+ * the next load.
  */
-function useReloadWhenLarger(reload: () => Promise<void>, size: number) {
-  const asked = useRef(size);
+function useReloadWhenLarger(reload: () => Promise<void>, size: number, sent: MutableRefObject<number>) {
   useEffect(() => {
-    if (size <= asked.current) return;
-    asked.current = size;
-    void reload();
-  }, [reload, size]);
+    if (size > sent.current) void reload();
+  }, [reload, size, sent]);
 }
 
 /**
@@ -627,6 +635,7 @@ function HeroAlbum({
   const albumHref = target
     ? `/library?view=albums&${target.kind === "tidal" ? "tidalAlbum" : "album"}=${encodeURIComponent(target.id)}`
     : null;
+  const showTracks = !!albumID && fill.count > 0;
   const year = album.data?.release_year;
   const trackCount = album.data?.track_count;
 
@@ -709,8 +718,8 @@ function HeroAlbum({
           </div>
         </div>
       </div>
-      <div {...fill.area}>
-        {albumID && fill.count > 0 ? (
+      <div {...fill.area} data-tracks={showTracks || undefined}>
+        {showTracks ? (
           <HeroTracks albumID={albumID} track={track} rows={fill.count} trackCount={trackCount} bindCtx={bindCtx} />
         ) : (
           // Empty, but spaced like the list, so the room measures the same
@@ -725,7 +734,8 @@ function HeroAlbum({
 /**
  * The album's tracks under Jump back in, as many as there's room for: from
  * the one you were on, or fewer before it near the album's end. A row plays
- * the album from there. Loaded only once there's room.
+ * the album from there. Loaded only once there's room. Numbered by place on
+ * the album, since track numbers start over on each disc.
  */
 function HeroTracks({
   albumID,
@@ -750,10 +760,20 @@ function HeroTracks({
   const tracks = album.data ?? EMPTY_TRACKS;
   const queue = useMemo(() => playableTracks(tracks), [tracks]);
   if (tracks.length === 0) {
-    return album.loading ? (
-      <BoardRowPlaceholders count={Math.min(rows, trackCount ?? rows)} ranked bare />
-    ) : (
-      <div className="board-list" />
+    if (album.loading) return <BoardRowPlaceholders count={Math.min(rows, trackCount ?? rows)} ranked bare />;
+    // The empty list keeps the area measuring as it would with rows.
+    return (
+      <>
+        <div className="board-list" />
+        {album.error && (
+          <div role="status" className="board-resume-status">
+            <span>{album.error}</span>
+            <Button size="sm" onClick={() => void album.reload()}>
+              Retry
+            </Button>
+          </div>
+        )}
+      </>
     );
   }
   const at = Math.max(0, tracks.findIndex((t) => t.id === track.id));
@@ -763,7 +783,7 @@ function HeroTracks({
       tracks={tracks.slice(start, start + rows)}
       ranked
       bare
-      rank={(t, i) => t.track_no || start + i + 1}
+      rank={(_t, i) => start + i + 1}
       current={track.id}
       meta={(t) => fmtDurationMs(t.duration_ms)}
       onPlay={(t) => play(t, queue)}

@@ -435,3 +435,28 @@ it("shows the usual rows without room to spare", async () => {
   expect(within(panel("recent")!).getAllByRole("listitem")).toHaveLength(5);
   expect(mock.recent.mock.calls.map(([limit]) => limit)).toEqual([20]);
 });
+
+it("asks for a full panel again after a failed request is retried", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const played = Array.from({ length: 60 }, (_, i) => track(`r${i}`, "Halden Marsh"));
+  mock.recent.mockImplementation((limit: number) =>
+    limit > 20 ? Promise.reject(new TypeError("Failed to fetch")) : Promise.resolve(played.slice(0, limit)),
+  );
+  const restore = stubBoardLayout({ recent: 23 * 52 });
+  try {
+    await renderHome();
+    await act(async () => {});
+    // The request for a full panel failed, which left the list empty.
+    expect(within(panel("recent")!).queryAllByRole("listitem")).toEqual([]);
+    mock.recent.mockImplementation((limit: number) => Promise.resolve(played.slice(0, limit)));
+    // Retried at the usual size (the empty list has nothing to measure),
+    // then asked again once the rows show how much room there is.
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Retry recently played" })));
+    await act(async () => {});
+    expect(mock.recent.mock.calls.map(([limit]) => limit)).toEqual([20, 40, 20, 40]);
+    expect(within(panel("recent")!).getAllByRole("listitem")).toHaveLength(23);
+  } finally {
+    restore();
+    vi.mocked(console.warn).mockRestore();
+  }
+});

@@ -137,8 +137,17 @@
   margin-top: 12px;
 }
 /* Without tracks to show, the room goes above the cover, as it always did. */
-.board-resume > .board-fill:not(:has(li)) {
+.board-resume > .board-fill:not([data-tracks]) {
   order: -1;
+}
+.board-resume-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  font-size: 14px;
+  color: var(--muted-foreground);
 }
 
 /* ---- Rows --------------------------------------------------- */

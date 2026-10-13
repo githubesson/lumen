@@ -140,3 +140,22 @@ it("doesn't load the album's tracks without room for them", async () => {
   expect(within(resume()).queryAllByRole("listitem")).toEqual([]);
   expect(mock.albumTracks).not.toHaveBeenCalled();
 });
+
+it("keeps the hero in place and offers a retry when the album's tracks don't load", async () => {
+  mock.recent.mockResolvedValue([{ ...albumTrack(3), album_title: "Library LP", album_id: "a1" }]);
+  const tracks = [1, 2, 3, 4, 5].map(albumTrack);
+  mock.albumTracks.mockRejectedValueOnce(new TypeError("Failed to fetch")).mockResolvedValue(tracks);
+  const restore = stubBoardLayout({ resume: 12 + 2 * 52 });
+  try {
+    render(<MemoryRouter><Home /></MemoryRouter>);
+    await act(async () => {});
+    await act(async () => {});
+    // Still where the tracks go, so the cover doesn't drop to the bottom.
+    expect(resume().querySelector(".board-fill")!.hasAttribute("data-tracks")).toBe(true);
+    expect(within(resume()).queryAllByRole("listitem")).toEqual([]);
+    await act(async () => fireEvent.click(within(resume()).getByRole("button", { name: "Retry" })));
+    expect(within(resume()).getAllByRole("listitem").map((row) => row.textContent?.slice(0, 1))).toEqual(["3", "4"]);
+  } finally {
+    restore();
+  }
+});
