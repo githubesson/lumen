@@ -4,6 +4,15 @@ import { api, type Invite } from "../src/api";
 import { clearResourceCache } from "../src/lib/resourceCache";
 import { InvitesAdminSection } from "../src/pages/AdminInvites";
 
+const desktop = vi.hoisted(() => ({ backendUrl: null as string | null }));
+vi.mock("../src/lib/platform", async (original) => ({
+  ...(await original<typeof import("../src/lib/platform")>()),
+  isElectron: () => desktop.backendUrl !== null,
+}));
+vi.mock("../src/lib/desktopConfig", () => ({
+  useDesktopConfig: () => (desktop.backendUrl === null ? null : { backendUrl: desktop.backendUrl }),
+}));
+
 const day = 24 * 60 * 60 * 1000;
 
 function invite(overrides: Partial<Invite>): Invite {
@@ -22,6 +31,7 @@ beforeEach(() => {
   vi.spyOn(api, "createInvite").mockResolvedValue(invite({ id: "new", token: "t".repeat(32) }));
 });
 afterEach(() => {
+  desktop.backendUrl = null;
   cleanup();
   clearResourceCache();
   vi.restoreAllMocks();
@@ -79,4 +89,42 @@ it("files expired and used-up invites with the past ones, where they can't be re
   const past = document.getElementById(disclosure.getAttribute("aria-controls")!)!;
   expect(within(past).getByText("expired")).toBeTruthy();
   expect(within(past).getByText("exhausted")).toBeTruthy();
+});
+
+it("links the invite to this site on the web", async () => {
+  render(<InvitesAdminSection />);
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(
+    await screen.findByText(`${window.location.origin}/register?token=${"t".repeat(32)}`),
+  ).toBeTruthy();
+});
+
+it("links the invite to the configured server on the desktop app, not its local proxy", async () => {
+  desktop.backendUrl = "https://music.example.com";
+  render(<InvitesAdminSection />);
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(
+    await screen.findByText(`https://music.example.com/register?token=${"t".repeat(32)}`),
+  ).toBeTruthy();
+});
+
+it("makes one invite for a double submit", async () => {
+  let finish!: (created: Invite) => void;
+  vi.mocked(api.createInvite).mockImplementation(
+    () => new Promise((resolve) => { finish = resolve; }),
+  );
+  render(<InvitesAdminSection />);
+  const form = screen.getByRole("button", { name: "Create" }).closest("form")!;
+  fireEvent.submit(form);
+  fireEvent.submit(form);
+  expect(api.createInvite).toHaveBeenCalledTimes(1);
+  finish(invite({ id: "new", token: "t".repeat(32) }));
+  expect(await screen.findByText(/register\?token=/)).toBeTruthy();
+});
+
+it("says so when the server sends the invite back without its token", async () => {
+  vi.mocked(api.createInvite).mockResolvedValue(invite({ id: "new" }));
+  render(<InvitesAdminSection />);
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(await screen.findByText(/didn't send its link/)).toBeTruthy();
 });
