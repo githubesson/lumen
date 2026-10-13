@@ -36,12 +36,24 @@ type replaySummaryResp struct {
 type replayTrackResp struct {
 	trackListItemResp
 	Plays int `json:"plays"`
+	// The artists that `artist` names, in its order, with their ids and
+	// whether each has an artist page. Omitted when the track credits none.
+	PrimaryArtists []replayTrackArtistResp `json:"primary_artists,omitempty"`
+}
+
+type replayTrackArtistResp struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	HasPage bool   `json:"has_page"`
 }
 
 type replayArtistResp struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
 	Plays int    `json:"plays"`
+	// HasPage: GET /api/artists/{id} finds the artist for this viewer. False
+	// for an artist known only from TIDAL plays, which has no page to open.
+	HasPage bool `json:"has_page"`
 }
 
 type replayAlbumResp struct {
@@ -240,11 +252,16 @@ func toReplayResp(d *library.ReplayData) replayResp {
 			trackListItemResp: makeTrackListItemResp(t.TrackListItem, false, true),
 			Plays:             t.Plays,
 		}
+		for _, a := range t.PrimaryArtists {
+			row.PrimaryArtists = append(row.PrimaryArtists, replayTrackArtistResp{
+				ID: a.ID.String(), Name: a.Name, HasPage: a.HasPage,
+			})
+		}
 		out.TopTracks = append(out.TopTracks, row)
 	}
 	for _, a := range d.TopArtists {
 		out.TopArtists = append(out.TopArtists, replayArtistResp{
-			ID: a.ID.String(), Name: a.Name, Plays: a.Plays,
+			ID: a.ID.String(), Name: a.Name, Plays: a.Plays, HasPage: a.HasPage,
 		})
 	}
 	for _, a := range d.TopAlbums {

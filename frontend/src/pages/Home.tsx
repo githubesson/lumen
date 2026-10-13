@@ -42,7 +42,12 @@ import { trackAlbumTarget } from "@music-library/core/entity-target";
 import { startListPlayback, usePlayFromList } from "@music-library/core/player/play-list";
 import { playableTracks, playlistEntryToTrack } from "@music-library/core/track";
 import { periodKey, type Period } from "@music-library/core/replay/period";
-import { playsById, replayRequest, tracksByArtist } from "@music-library/core/replay/replay";
+import {
+  playsById,
+  replayQueries,
+  topArtistAction,
+  topArtistTracks,
+} from "@music-library/core/replay/replay";
 
 const EMPTY_TRACKS: TrackListItem[] = [];
 const EMPTY_PLAYLISTS: Playlist[] = [];
@@ -71,11 +76,12 @@ export default function Home() {
     (signal) => api.listTracks({ limit: 80, signal }), "Could not load your library.",
     { cacheKey: "home:tracks:80" },
   );
-  // The Replay screen's "Last 30 days" entry, so either page warms the other.
+  // The Replay screen's "Last 30 days": the same request under the same
+  // key, so either page warms the other.
   const replayResource = useApiResource<ReplayData>(
-    (signal) => api.getReplay(replayRequest(LAST_30_DAYS).range, { signal }),
+    (signal) => api.getReplay(replayQueries(LAST_30_DAYS).daily.params, { signal }),
     "Could not load what you've had on repeat.",
-    { cacheKey: `replay:${replayRequest(LAST_30_DAYS).cacheKey}` },
+    { cacheKey: replayQueries(LAST_30_DAYS).daily.cacheKey },
   );
   const favorites = useFavorites();
   const playlistResource = usePlaylists();
@@ -90,22 +96,23 @@ export default function Home() {
   const topTracks = replay?.top_tracks;
   const onRepeat = useMemo<TrackListItem[]>(() => (topTracks ?? []).slice(0, ON_REPEAT_ROWS), [topTracks]);
   const plays = useMemo(() => playsById(topTracks), [topTracks]);
-  const topArtists = useMemo<(BoardArtistItem & { tracks: TrackListItem[] })[]>(
-    () =>
-      (replay?.top_artists ?? []).slice(0, TOP_ARTISTS).map((artist) => {
-        // Their tracks among the window's top tracks: the picture, and what
-        // plays when the library has nothing by them (streamed only).
-        const own = tracksByArtist(artist.name, topTracks ?? []);
-        return {
-          id: artist.id,
-          name: artist.name,
-          detail: pluralize(artist.plays, "play", undefined, { locale: true }),
-          imageUrl: artistImageUrl({ name: artist.name }, own, 128),
-          tracks: own,
-        };
-      }),
-    [replay?.top_artists, topTracks],
-  );
+  const topArtists = useMemo<(BoardArtistItem & { tracks: TrackListItem[] })[]>(() => {
+    const artists = (replay?.top_artists ?? []).slice(0, TOP_ARTISTS);
+    // Their tracks among the window's top tracks: the picture, and what
+    // plays when they have no page to open (streamed only).
+    const byArtist = topArtistTracks(artists, topTracks ?? []);
+    return artists.map((artist) => {
+      const own = byArtist.get(artist.id) ?? [];
+      return {
+        id: artist.id,
+        name: artist.name,
+        detail: pluralize(artist.plays, "play", undefined, { locale: true }),
+        imageUrl: artistImageUrl({ name: artist.name }, own, 128),
+        action: topArtistAction(artist, own),
+        tracks: own,
+      };
+    });
+  }, [replay?.top_artists, topTracks]);
   const albums = useMemo(() => homeAlbums(tracks).slice(0, ALBUM_COVERS), [tracks]);
 
   const recentPlayer = usePlayFromList(play, recent);
@@ -330,11 +337,11 @@ export default function Home() {
             ) : (
               <BoardArtistList
                 artists={topArtists}
-                // The artist's library tracks, as on their page; their top
-                // tracks here when the library has none (streamed only).
-                onPlay={(artist) =>
-                  playFetched("artists", artist.name, (signal) => api.listArtistTracks(artist.id, { signal }), artist.tracks)
-                }
+                // Only an artist without a page plays from here: the library
+                // has nothing by them, so their top tracks are what there
+                // is. Through playFetched all the same, so it supersedes an
+                // album or playlist still loading.
+                onPlay={(artist) => playFetched("artists", artist.name, () => Promise.resolve(artist.tracks))}
               />
             )}
           </BoardPanel>
@@ -351,11 +358,11 @@ export default function Home() {
 }
 
 /**
- * Plays a list fetched on demand (an album's, a playlist's, an artist's
- * tracks), or `fallback` when it has nothing playable. When neither can play,
- * `failure` says why, for the panel the Play came from to show. Starting
- * another one, or leaving Home, aborts the fetch, so a late reply never
- * starts playback somewhere the user has moved on from.
+ * Plays a list fetched on demand (an album's, a playlist's) or already at
+ * hand (an artist's top tracks). When it can't play, `failure` says why, for
+ * the panel the Play came from to show. Starting another one, or leaving
+ * Home, aborts the fetch, so a late reply never starts playback somewhere
+ * the user has moved on from.
  */
 function useFetchAndPlay() {
   const { play } = usePlayerControls();
@@ -367,7 +374,6 @@ function useFetchAndPlay() {
       panel: BoardPanelId,
       label: string,
       load: (signal: AbortSignal) => Promise<TrackListItem[]>,
-      fallback: TrackListItem[] = [],
     ) => {
       request.current?.abort();
       const controller = new AbortController();
@@ -381,9 +387,8 @@ function useFetchAndPlay() {
         error = err;
       }
       if (controller.signal.aborted) return;
-      const queue = playableTracks(loaded).length > 0 ? loaded : fallback;
-      if (playableTracks(queue).length > 0) {
-        startListPlayback(play, queue, false);
+      if (playableTracks(loaded).length > 0) {
+        startListPlayback(play, loaded, false);
         return;
       }
       setFailure({

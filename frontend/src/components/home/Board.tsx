@@ -3,7 +3,9 @@ import { Link } from "react-router-dom";
 import { ListMusic as QueueListIcon, Play as PlayIcon } from "lucide-react";
 import { playlistArtUrl, trackCoverUrl, type Playlist, type TrackListItem } from "../../api";
 import { playlistSubtitle } from "@music-library/core/playlist-details";
+import type { TopArtistAction } from "@music-library/core/replay/replay";
 import CoverArt from "../CoverArt";
+import { TopArtistGlyph, TopArtistName } from "../TopArtist";
 import Section from "../Section";
 import { Button } from "../Button";
 import ErrorBanner from "../ErrorBanner";
@@ -223,9 +225,14 @@ export interface BoardArtistItem {
   /** What the tile says under the name, e.g. "96 plays". */
   detail: string;
   imageUrl: string | null;
+  /** Open their page, play them, or neither (see `topArtistAction`). */
+  action: TopArtistAction;
 }
 
-/** Artists as tiles, each a button that plays the artist. */
+/**
+ * Artists as tiles: each opens the artist's page, or plays the artist when
+ * they have none, as on Replay.
+ */
 export function BoardArtistList<T extends BoardArtistItem>({
   artists,
   onPlay,
@@ -236,19 +243,21 @@ export function BoardArtistList<T extends BoardArtistItem>({
   return (
     <ul className="board-artists">
       {artists.map((artist) => (
-        <li key={artist.id} className="board-artist">
-          {/* The play glyph shows over the picture on hover, so the name
-              keeps the tile's width. */}
+        <li key={artist.id} className="board-artist" data-inert={!artist.action || undefined}>
+          {/* The glyph shows over the picture on hover, so the name keeps
+              the tile's width. */}
           <CoverArt className="board-avatar" src={artist.imageUrl} label={artist.name} radius={999}>
-            <span className="board-play" aria-hidden="true">
-              <PlayIcon className="size-3.5" />
-            </span>
+            <TopArtistGlyph action={artist.action} className="board-play" iconClassName="size-3.5" />
           </CoverArt>
           <div className="board-row-text">
-            <button type="button" className="card-title board-hit" onClick={() => onPlay(artist)}>
-              <span className="sr-only">Play</span>{" "}
-              {displayText(artist.name)}
-            </button>
+            <TopArtistName
+              action={artist.action}
+              artistId={artist.id}
+              name={displayText(artist.name)}
+              onPlay={() => onPlay(artist)}
+              className="card-title board-hit"
+              plainClassName="card-title"
+            />
             <div className="card-sub">{artist.detail}</div>
           </div>
         </li>

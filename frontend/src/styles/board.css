@@ -229,7 +229,7 @@ button.board-play:active {
 }
 
 .board-row:not(.board-placeholder):is(:hover, :focus-within),
-.board-artist:not(.board-placeholder):is(:hover, :focus-within) {
+.board-artist:not(.board-placeholder, [data-inert]):is(:hover, :focus-within) {
   background: var(--accent);
 }
 :is(.board-row, .board-artist):is(:hover, :focus-within) :is(.board-play, .board-rank-play) {

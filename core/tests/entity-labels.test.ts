@@ -85,52 +85,37 @@ describe("album labels", () => {
 });
 
 describe("album page", () => {
-  const track = (artist: string, source?: "local" | "tidal") => ({ artist, source });
   const minutes = (...mins: number[]) => mins.map((m) => ({ duration_ms: m * 60_000 }));
 
-  it("links the album artist when a library track credits it", () => {
-    expect(
-      albumCredits({ artist_id: "ar-1", artist_name: "Band" }, [track("Band"), track("Band, Guest")]),
-    ).toEqual([{ name: "Band", artistId: "ar-1" }]);
-    // A feature alone still credits the artist; case doesn't matter.
-    expect(albumCredits({ artist_id: "ar-1", artist_name: "band" }, [track("Guest, Band")])).toEqual([
-      { name: "band", artistId: "ar-1" },
+  it("links the album artist when the server says it has a page", () => {
+    expect(albumCredits({ artist_id: "ar-1", artist_name: "Band", artist_has_page: true })).toEqual([
+      { name: "Band", artistId: "ar-1" },
     ]);
-    // Names with commas in them still match whole.
+    // A name with commas in it is one artist, linked whole.
     expect(
-      albumCredits({ artist_id: "ar-2", artist_name: "Tyler, The Creator" }, [
-        track("Tyler, The Creator, Guest"),
-      ]),
-    ).toEqual([{ name: "Tyler, The Creator", artistId: "ar-2" }]);
+      albumCredits({ artist_id: "ar-2", artist_name: "Earth, Wind & Fire", artist_has_page: true }),
+    ).toEqual([{ name: "Earth, Wind & Fire", artistId: "ar-2" }]);
   });
 
-  it("leaves the album artist unlinked when its page would be empty", () => {
-    // Nothing on the album credits it, as on a compilation.
+  it("leaves the album artist unlinked without a page to open", () => {
+    // Nothing in the library credits it, as on a compilation, or it is
+    // known only from TIDAL plays.
     expect(
-      albumCredits({ artist_id: "ar-va", artist_name: "Various Artists" }, [track("A"), track("B")]),
+      albumCredits({ artist_id: "ar-va", artist_name: "Various Artists", artist_has_page: false }),
     ).toEqual([{ name: "Various Artists" }]);
-    // Only part of a longer name.
-    expect(albumCredits({ artist_id: "ar-1", artist_name: "Band" }, [track("Band of Horses")])).toEqual([
-      { name: "Band" },
-    ]);
-    // A TIDAL row says nothing about the library's artists.
-    expect(albumCredits({ artist_id: "ar-1", artist_name: "Band" }, [track("Band", "tidal")])).toEqual([
-      { name: "Band" },
-    ]);
+    // A server too old to say.
+    expect(albumCredits({ artist_id: "ar-1", artist_name: "Band" })).toEqual([{ name: "Band" }]);
     // No library id at all.
-    expect(albumCredits({ artist_name: "Band" }, [track("Band")])).toEqual([{ name: "Band" }]);
+    expect(albumCredits({ artist_name: "Band", artist_has_page: true })).toEqual([{ name: "Band" }]);
   });
 
   it("credits every main artist of a TIDAL release, linking only the album artist", () => {
     expect(
-      albumCredits({ artist_id: "ar-1", artist_name: "A", artist_names: ["A", "B", "a"] }, [track("A, B")]),
+      albumCredits({ artist_id: "ar-1", artist_name: "A", artist_has_page: true, artist_names: ["A", "B", "a"] }),
     ).toEqual([{ name: "A", artistId: "ar-1" }, { name: "B" }]);
-    expect(albumCredits({ artists: ["A", "B"], artist: "A" }, [track("A, B", "tidal")])).toEqual([
-      { name: "A" },
-      { name: "B" },
-    ]);
-    expect(albumCredits({ artist: "Foo Â· Bar" }, [])).toEqual([{ name: "Foo · Bar" }]);
-    expect(albumCredits({}, [track("A")])).toEqual([]);
+    expect(albumCredits({ artists: ["A", "B"], artist: "A" })).toEqual([{ name: "A" }, { name: "B" }]);
+    expect(albumCredits({ artist: "Foo Â· Bar" })).toEqual([{ name: "Foo · Bar" }]);
+    expect(albumCredits({})).toEqual([]);
   });
 
   it("measures the list's length", () => {

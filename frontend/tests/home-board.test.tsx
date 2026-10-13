@@ -3,7 +3,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import type { ReplayData, TrackListItem } from "../src/api";
 import Home from "../src/pages/Home";
-import { clearResourceCache } from "../src/lib/resourceCache";
+import { clearResourceCache, readCache } from "../src/lib/resourceCache";
+import { replayQueries } from "@music-library/core/replay/replay";
 
 const mock = vi.hoisted(() => ({
   recent: vi.fn(), tracks: vi.fn(), replay: vi.fn(), getAlbum: vi.fn(),
@@ -98,25 +99,58 @@ it("holds On repeat's shape with placeholders on a first visit", async () => {
   expect(within(repeat).getByRole("status").getAttribute("aria-busy")).toBe("true");
 });
 
-it("plays a top artist's library tracks, or their tracks on repeat when the library has none", async () => {
-  const streamed = track("s1", "Halden Marsh, Kestrel Bay", { source: "tidal", cover_url: "https://example.test/c.jpg" });
+it("asks for the last 30 days by day, under the key Replay reads", async () => {
+  await renderHome();
+  const { daily } = replayQueries({ kind: "last-30" });
+  // The window moves with the clock, so its days are what must match.
+  const [params] = mock.replay.mock.calls[0];
+  expect(params).toEqual({ from: expect.any(String), to: expect.any(String), bucket: "day" });
+  expect([params.from.slice(0, 10), params.to.slice(0, 10)]).toEqual([
+    daily.params.from!.slice(0, 10),
+    daily.params.to!.slice(0, 10),
+  ]);
+  expect(readCache(daily.cacheKey)).toEqual(replay([]));
+});
+
+it("opens a top artist's page when they have one, and plays them when they don't", async () => {
+  const library = track("l1", "Halden Marsh");
+  const streamed = track("s1", "Halden Marsh, Earth, Wind & Fire", {
+    source: "tidal",
+    cover_url: "https://example.test/c.jpg",
+    primary_artists: [
+      { id: "ar-halden", name: "Halden Marsh", has_page: true },
+      { id: "ar-ewf", name: "Earth, Wind & Fire", has_page: false },
+    ],
+  } as Partial<TrackListItem>);
   mock.replay.mockResolvedValue(
-    replay([{ ...streamed, plays: 12 }], [{ id: "ar-kestrel", name: "Kestrel Bay", plays: 12 }]),
+    replay([{ ...streamed, plays: 12 }, { ...library, plays: 3 }], [
+      { id: "ar-ewf", name: "Earth, Wind & Fire", plays: 12, has_page: false },
+      { id: "ar-halden", name: "Halden Marsh", plays: 15, has_page: true },
+      { id: "ar-gone", name: "Gone", plays: 2, has_page: false },
+    ]),
   );
   await renderHome();
   const artists = within(panel("artists")!);
   expect(artists.getByText("12 plays")).toBeTruthy();
-  const play = artists.getByRole("button", { name: "Play Kestrel Bay" });
 
-  mock.artistTracks.mockResolvedValue([]);
+  // A page: the tile opens it, and its glyph is the arrow.
+  const open = artists.getByRole("link", { name: "Open Halden Marsh" });
+  expect(open.getAttribute("href")).toBe("/library?view=artists&artist=ar-halden");
+  expect(artists.queryByRole("button", { name: "Play Halden Marsh" })).toBeNull();
+  expect(open.closest("li")!.querySelector('[data-action="open"]')).not.toBeNull();
+
+  // Streamed only: no page, so the tile plays their tracks on repeat,
+  // matched though the name holds commas.
+  const play = artists.getByRole("button", { name: "Play Earth, Wind & Fire" });
+  expect(play.closest("li")!.querySelector('[data-action="play"]')).not.toBeNull();
   await act(async () => fireEvent.click(play));
-  expect(mock.artistTracks).toHaveBeenCalledWith("ar-kestrel", expect.anything());
+  expect(mock.artistTracks).not.toHaveBeenCalled();
   expect(mock.play).toHaveBeenLastCalledWith(expect.objectContaining({ id: "s1" }), [expect.objectContaining({ id: "s1" })]);
 
-  const library = [track("l1", "Kestrel Bay"), track("l2", "Kestrel Bay")];
-  mock.artistTracks.mockResolvedValue(library);
-  await act(async () => fireEvent.click(play));
-  expect(mock.play).toHaveBeenLastCalledWith(library[0], library);
+  // Neither a page nor anything to play: plain text, no glyph.
+  const gone = artists.getByText("Gone");
+  expect(gone.closest("a, button")).toBeNull();
+  expect(gone.closest("li")!.querySelector("[data-action]")).toBeNull();
 });
 
 it("opens an album from its card and plays it from the card's button", async () => {

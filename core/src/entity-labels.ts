@@ -1,6 +1,5 @@
 import type { Album, TidalAlbum, TrackListItem, TrackSource } from "./api";
 import { displayText, formatTotalMs, pluralize } from "./format";
-import { isLocalTrack } from "./track";
 
 /**
  * Subtitle and meta lines for albums and artists, built the same way on both
@@ -101,20 +100,19 @@ export interface AlbumCredit {
 /**
  * The artists an album page credits, in order: every main artist of a TIDAL
  * release when known, else the album artist. Only the album artist has a
- * library id, and it links only when one of the album's library tracks
- * credits it: an artist page lists the artist's own tracks, so an album
- * artist nothing is credited to ("Various Artists") would open "not found".
+ * library id, and it links only when the server says that artist has a page
+ * (`artist_has_page`): an album artist nothing in the library credits
+ * ("Various Artists", or one known only from TIDAL plays) would open "Not
+ * found". A server too old to say gets no link.
  */
-export function albumCredits(
-  album: {
-    artist_id?: string;
-    artist_name?: string;
-    artist_names?: string[];
-    artists?: string[];
-    artist?: string;
-  },
-  tracks: readonly Pick<TrackListItem, "artist" | "source">[],
-): AlbumCredit[] {
+export function albumCredits(album: {
+  artist_id?: string;
+  artist_has_page?: boolean;
+  artist_name?: string;
+  artist_names?: string[];
+  artists?: string[];
+  artist?: string;
+}): AlbumCredit[] {
   const listed = album.artist_names?.length
     ? album.artist_names
     : album.artists?.length
@@ -126,10 +124,7 @@ export function albumCredits(
     if (name && !names.some((other) => sameName(other, name))) names.push(name);
   }
   const own = displayText(album.artist_name);
-  const linked =
-    !!album.artist_id &&
-    !!own &&
-    tracks.some((track) => isLocalTrack(track) && creditsArtist(track.artist, own));
+  const linked = !!album.artist_id && album.artist_has_page === true && !!own;
   return names.map((name) =>
     linked && sameName(name, own) ? { name, artistId: album.artist_id } : { name },
   );
@@ -137,11 +132,6 @@ export function albumCredits(
 
 function sameName(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
-}
-
-/** A track row's artist is its main artists joined with ", ". */
-function creditsArtist(trackArtist: string | undefined, name: string): boolean {
-  return `, ${displayText(trackArtist).toLowerCase()}, `.includes(`, ${name.toLowerCase()}, `);
 }
 
 /**

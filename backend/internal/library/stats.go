@@ -43,12 +43,28 @@ type ReplaySummary struct {
 type ReplayTrack struct {
 	TrackListItem
 	Plays int
+	// PrimaryArtists are the artists that Artist names, in the same order,
+	// with their ids: a name alone can't say which artist it is.
+	PrimaryArtists []ReplayTrackArtist
+}
+
+// ReplayTrackArtist is one of a top track's primary artists. HasPage is the
+// artist-page test GetArtist uses (artistHasPage).
+type ReplayTrackArtist struct {
+	ID      uuid.UUID
+	Name    string
+	HasPage bool
 }
 
 type ReplayArtist struct {
 	ID    uuid.UUID
 	Name  string
 	Plays int
+	// HasPage says whether the artist has an artist page for the viewer:
+	// plays count every track, but an artist known only from TIDAL plays
+	// (hidden copies, library_visible = FALSE) has none. The same test as
+	// GetArtist (artistHasPage), so the two can't disagree.
+	HasPage bool
 }
 
 type ReplayAlbum struct {
@@ -212,7 +228,11 @@ func (s *Store) replayTopTracks(ctx context.Context, p ReplayStatsParams, out *R
 			t.external_id,
 			COALESCE(t.external_meta->>'cover_url', ''),
 			t.created_at,
-			c.plays
+			c.plays,
+			COALESCE(ARRAY_AGG(ar.id ORDER BY ta.position) FILTER (WHERE ta.role = 'primary'), '{}'),
+			COALESCE(ARRAY_AGG(ar.name ORDER BY ta.position) FILTER (WHERE ta.role = 'primary'), '{}'),
+			COALESCE(ARRAY_AGG(`+artistHasPage("ar.id", artistPageTrackP1)+` ORDER BY ta.position)
+				FILTER (WHERE ta.role = 'primary'), '{}')
 		FROM counts c
 		JOIN tracks t ON t.id = c.track_id
 		LEFT JOIN albums a ON a.id = t.album_id
@@ -227,10 +247,20 @@ func (s *Store) replayTopTracks(ctx context.Context, p ReplayStatsParams, out *R
 	defer rows.Close()
 	for rows.Next() {
 		var it ReplayTrack
+		var ids []uuid.UUID
+		var names []string
+		var pages []bool
 		if err := rows.Scan(&it.ID, &it.Title, &it.AlbumID, &it.AlbumTitle,
 			&it.TrackNo, &it.DurationMS, &it.Artist, &it.Aka, &it.Owned,
-			&it.Source, &it.ExternalID, &it.CoverURL, &it.CreatedAt, &it.Plays); err != nil {
+			&it.Source, &it.ExternalID, &it.CoverURL, &it.CreatedAt, &it.Plays,
+			&ids, &names, &pages); err != nil {
 			return err
+		}
+		if len(names) != len(ids) || len(pages) != len(ids) {
+			return fmt.Errorf("track %s: %d artist ids, %d names, %d page flags", it.ID, len(ids), len(names), len(pages))
+		}
+		for i, id := range ids {
+			it.PrimaryArtists = append(it.PrimaryArtists, ReplayTrackArtist{ID: id, Name: names[i], HasPage: pages[i]})
 		}
 		out.TopTracks = append(out.TopTracks, it)
 	}
@@ -239,7 +269,8 @@ func (s *Store) replayTopTracks(ctx context.Context, p ReplayStatsParams, out *R
 
 func (s *Store) replayTopArtists(ctx context.Context, p ReplayStatsParams, out *ReplayData) error {
 	rows, err := s.db.Query(ctx, `
-		SELECT ar.id, ar.name, COUNT(*)::int AS plays
+		SELECT ar.id, ar.name, COUNT(*)::int AS plays,
+		       `+artistHasPage("ar.id", artistPageTrackP1)+` AS has_page
 		FROM play_history ph
 		JOIN tracks t ON t.id = ph.track_id AND t.deleted_at IS NULL
 		    AND `+trackVisibleP1+`
@@ -258,7 +289,7 @@ func (s *Store) replayTopArtists(ctx context.Context, p ReplayStatsParams, out *
 	defer rows.Close()
 	for rows.Next() {
 		var a ReplayArtist
-		if err := rows.Scan(&a.ID, &a.Name, &a.Plays); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.Plays, &a.HasPage); err != nil {
 			return err
 		}
 		out.TopArtists = append(out.TopArtists, a)

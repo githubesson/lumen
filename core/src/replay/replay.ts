@@ -7,7 +7,10 @@ import type {
   ReplayActivityBucket,
   ReplayBucket,
   ReplayGenreSlice,
+  ReplayTrackArtist,
+  TrackListItem,
 } from "../api";
+import { playableTracks } from "../track";
 import { periodKey, periodRange, periodTitle, type Period } from "./period";
 
 export type ReplayRange = ReturnType<typeof periodRange>;
@@ -34,6 +37,40 @@ export function replayRequest(period: Period): ReplayRequest {
     range,
     cacheKey: `${periodKey(period)}:${day(range.from)}:${day(range.to)}`,
   };
+}
+
+/** One way of asking for a period: `getReplay`'s parameters, and the key its answer is cached under. */
+export interface ReplayQuery {
+  params: { from?: string; to?: string; bucket: "day" | "month" };
+  cacheKey: string;
+}
+
+export interface ReplayQueries {
+  range: ReplayRange;
+  /** By day: what is asked for first, under the key Home and Replay share. */
+  daily: ReplayQuery;
+  /**
+   * By month: asked for when the daily series came back cut short (see
+   * `replaySeriesComplete`), and cached under a key of its own, so a reader
+   * of the daily key never gets a monthly answer.
+   */
+  monthly: ReplayQuery;
+}
+
+/**
+ * How the web's Replay page and Home's board ask for a period, and the
+ * resource-cache keys the answers go under. Both ask by day, whatever the
+ * chart shows (the days with plays and the daily average need days), under
+ * one key, so either page warms the other. The phone still asks with the
+ * chart's bucket through `replayRequest` and keys its own cache on that.
+ */
+export function replayQueries(period: Period): ReplayQueries {
+  const { range, cacheKey } = replayRequest(period);
+  const query = (bucket: "day" | "month", by: string): ReplayQuery => ({
+    params: { from: range.from, to: range.to, bucket },
+    cacheKey: `replay:${by}:${cacheKey}`,
+  });
+  return { range, daily: query("day", "daily"), monthly: query("month", "monthly") };
 }
 
 /** How many top tracks a generated Replay playlist holds. */
@@ -69,21 +106,91 @@ export function playsById(
 }
 
 /**
- * The tracks credited to the artist named `name`, in their order. A track's
- * `artist` is its primary artists joined with ", " (as the server sends it),
- * so the name has to be one whole entry of that list: "Kestrel Bay" matches
- * "Halden Marsh, Kestrel Bay" but "Bay" matches nothing. A name that itself
- * contains ", " still matches, because the whole name is looked for between
- * separators.
+ * What a track says about its primary artists: their names joined with ", "
+ * (`artist`, as the server sends it) and, on Replay's top tracks, who they
+ * are (`primary_artists`).
  */
-export function tracksByArtist<T extends { artist?: string }>(
-  name: string,
+export interface ArtistCredits {
+  artist?: string;
+  primary_artists?: readonly { id: string }[];
+}
+
+/**
+ * The tracks crediting `artist` as a primary artist, in their order. A track
+ * that lists its artists' ids (Replay's top tracks) matches on the id, which
+ * nothing else can share. Otherwise the name has to be one whole entry of
+ * the track's `artist`, compared without case as the library compares
+ * names: "Kestrel Bay" matches "Halden Marsh, Kestrel Bay" but "Bay" matches
+ * nothing, and "Earth, Wind & Fire" matches although it holds the separator,
+ * because the whole name is looked for between separators. By name alone
+ * "Earth" would match that track too; the ids tell the two apart.
+ */
+export function tracksByArtist<T extends ArtistCredits>(
+  artist: { id?: string; name: string },
   tracks: readonly T[],
 ): T[] {
-  const needle = name.trim();
-  if (!needle) return [];
-  const entry = `, ${needle}, `;
-  return tracks.filter((track) => !!track.artist && `, ${track.artist}, `.includes(entry));
+  const name = artist.name.trim().toLocaleLowerCase();
+  const entry = `, ${name}, `;
+  return tracks.filter((track) => {
+    if (artist.id && track.primary_artists?.length) {
+      return track.primary_artists.some((credit) => credit.id === artist.id);
+    }
+    return !!name && !!track.artist && `, ${track.artist.toLocaleLowerCase()}, `.includes(entry);
+  });
+}
+
+/**
+ * Each top artist's tracks among the top tracks, by artist id, as
+ * `tracksByArtist` matches them: the picture on their tile, and what the
+ * tile plays when they have no page. An artist with none gets an empty list.
+ */
+export function topArtistTracks<T extends ArtistCredits>(
+  artists: readonly { id: string; name: string }[],
+  tracks: readonly T[],
+): Map<string, T[]> {
+  return new Map(artists.map((artist) => [artist.id, tracksByArtist(artist, tracks)]));
+}
+
+/** What clicking a top artist's tile does. */
+export type TopArtistAction = "open" | "play" | null;
+
+/**
+ * What a top artist's tile does, the same on Home and Replay: open the
+ * artist's page when the server says there is one, else play their tracks
+ * among the top tracks (an artist known only from TIDAL plays has no page),
+ * and nothing when there are none of those either. A server too old to say
+ * gets the same as no page, rather than a link that may open "Not found".
+ */
+export function topArtistAction(
+  artist: { has_page?: boolean },
+  tracks: readonly TrackListItem[],
+): TopArtistAction {
+  if (artist.has_page) return "open";
+  return playableTracks(tracks).length > 0 ? "play" : null;
+}
+
+/** An artist a track credits, with the page its name links to, if any. */
+export interface ArtistLink {
+  name: string;
+  /** The artist's id when they have a page to open; unset otherwise. */
+  artistId?: string;
+}
+
+/**
+ * A top track's artists, each linked only when they have a page. From a
+ * server that doesn't list them, the names stay one unlinked entry: split
+ * on ", ", a name holding one would come apart and link the wrong artist.
+ */
+export function replayTrackArtists(track: {
+  artist?: string;
+  primary_artists?: readonly ReplayTrackArtist[];
+}): ArtistLink[] {
+  if (track.primary_artists?.length) {
+    return track.primary_artists.map((a) =>
+      a.has_page ? { name: a.name, artistId: a.id } : { name: a.name },
+    );
+  }
+  return track.artist ? [{ name: track.artist }] : [];
 }
 
 /**
@@ -332,30 +439,6 @@ export function activityPeak(
     if (b.plays > 0 && (!peak || b.plays > peak.plays)) peak = b;
   }
   return peak;
-}
-
-/**
- * Each top artist's most played track among the top tracks, matched on the
- * track's primary artist names, so an artist tile can show art from music
- * the period actually played. Artists with no track in the list are absent.
- */
-export function topTrackByArtist<T extends { artist?: string }>(
-  artists: readonly { id: string; name: string }[],
-  tracks: readonly T[],
-): Map<string, T> {
-  const byName = new Map<string, T>();
-  for (const track of tracks) {
-    for (const name of (track.artist ?? "").split(", ")) {
-      const key = name.trim().toLocaleLowerCase();
-      if (key && !byName.has(key)) byName.set(key, track);
-    }
-  }
-  const out = new Map<string, T>();
-  for (const artist of artists) {
-    const track = byName.get(artist.name.trim().toLocaleLowerCase());
-    if (track) out.set(artist.id, track);
-  }
-  return out;
 }
 
 /** Each genre with its share of the listed genres' plays, as a percentage. */

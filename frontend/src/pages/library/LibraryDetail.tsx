@@ -70,7 +70,7 @@ export function AlbumDetailView({
         ? {
             title: album.title,
             coverSrc: albumArtUrl(album, undefined, coverNonce),
-            credits: albumCredits(album, tracks),
+            credits: albumCredits(album),
             facts: libraryAlbumFacts(album, tracks),
             factHints: { saved: LIBRARY_SAVED_HINT },
             tracks,
@@ -182,7 +182,7 @@ export function TidalAlbumDetailView({
             title: album.title,
             coverSrc: albumArtUrl({ ...album, source: "tidal" }),
             coverMissing: !album.cover_url,
-            credits: albumCredits(album, album.tracks),
+            credits: albumCredits(album),
             facts: tidalAlbumFacts(album, album.tracks),
             factHints: { saved: TIDAL_SAVED_HINT },
             tracks: album.tracks,

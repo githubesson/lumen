@@ -188,6 +188,22 @@ export const tidalTrack: TrackListItem = {
   cover_url: "/api/covers/remote?url=https%3A%2F%2Fresources.tidal.com%2Fimages%2Fd7a1%2F640x640.jpg",
 };
 
+/**
+ * A TIDAL track by an artist the library has nothing of. In Replay's top
+ * tracks, its artist is a top artist without a page: their tile plays.
+ */
+export const streamedTrack: TrackListItem = {
+  id: "tidal:402177310",
+  source: "tidal",
+  source_id: "402177310",
+  source_album_id: "402177301",
+  title: "Tidewater",
+  album_title: "Low Tide Radio",
+  duration_ms: 241_000,
+  artist: "Marisol Vey",
+  cover_url: "/api/covers/remote?url=https%3A%2F%2Fresources.tidal.com%2Fimages%2Fb3c9%2F640x640.jpg",
+};
+
 /** The TIDAL release `tidalTrack` is from. Nothing of it is in the library, so its page offers the download. */
 export const tidalAlbum: TidalAlbum = (() => {
   const rows: [title: string, seconds: number][] = [
@@ -572,7 +588,18 @@ const dailyRhythm = [4, 9, 0, 13, 7, 21, 16, 5, 11, 2, 18, 8, 0, 6, 12, 3, 15, 9
  */
 export function replay(bucket: ReplayBucket = "day", from?: string | null, to?: string | null): ReplayData {
   // More than the eight the panel lists, so "Show all" has more to show.
-  const top = ["t-al-postcard-3", "t-al-small-hours-3", "t-al-weather-1", "t-al-signal-2", "t-al-lanterns-1", "t-al-nordlys-2", "t-al-weather-4", "t-al-postcard-1", "t-al-signal-4", "t-al-small-hours-1", "t-al-lanterns-3", "t-al-nordlys-4"];
+  const top = ["t-al-postcard-3", "t-al-small-hours-3", "t-al-weather-1", streamedTrack.id, "t-al-signal-2", "t-al-lanterns-1", "t-al-nordlys-2", "t-al-weather-4", "t-al-postcard-1", "t-al-signal-4", "t-al-small-hours-1", "t-al-lanterns-3"];
+  // As the server sends them: each track's primary artists by id, and
+  // whether each has a page (every library artist does; Marisol Vey, only
+  // ever streamed, doesn't).
+  const topTrack = (id: string) => {
+    if (id === streamedTrack.id) {
+      return { ...streamedTrack, primary_artists: [{ id: "ar-marisol", name: "Marisol Vey", has_page: false }] };
+    }
+    const row = byId(id);
+    const credited = [row.artist_id, row.featured_id].filter((a): a is ArtistId => !!a);
+    return { ...listItem(row), primary_artists: credited.map((a) => ({ id: a, name: artistName(a), has_page: true })) };
+  };
   const now = Date.now();
   const first = Math.floor((from ? Date.parse(from) : now - 420 * DAY_MS) / DAY_MS) * DAY_MS;
   const end = Math.min(to ? Date.parse(to) : now, now);
@@ -590,7 +617,7 @@ export function replay(bucket: ReplayBucket = "day", from?: string | null, to?: 
   const total = activity.reduce((sum, b) => sum + b.plays, 0);
   const share = (weights: number[]) => weights.map((w) => Math.max(1, Math.round(total * w)));
   const trackPlays = share([0.06, 0.052, 0.045, 0.04, 0.034, 0.03, 0.026, 0.022, 0.019, 0.017, 0.015, 0.013]);
-  const artistPlays = share([0.23, 0.21, 0.18, 0.15, 0.13]);
+  const artistPlays = share([0.23, 0.21, 0.18, 0.15, 0.13, 0.1]);
   const albumPlays = share([0.22, 0.19, 0.16, 0.13, 0.1]);
   const genrePlays = share([0.23, 0.21, 0.18, 0.15, 0.13, 0.09]);
   return {
@@ -598,17 +625,18 @@ export function replay(bucket: ReplayBucket = "day", from?: string | null, to?: 
       total_plays: total,
       total_ms: total * 262_000,
       unique_tracks: 27,
-      unique_artists: 6,
+      unique_artists: 7,
       headline_artist: { id: "ar-velvet", name: "The Velvet Meridian", plays: artistPlays[0] },
     },
-    top_tracks: total > 0 ? top.map((id, i) => ({ ...listItem(byId(id)), plays: trackPlays[i] })) : [],
+    top_tracks: total > 0 ? top.map((id, i) => ({ ...topTrack(id), plays: trackPlays[i] })) : [],
     top_artists: total > 0
       ? [
-          { id: "ar-velvet", name: "The Velvet Meridian" },
-          { id: "ar-okoro", name: "Hana Okoro" },
-          { id: "ar-halden", name: "Halden Marsh" },
-          { id: "ar-lucien", name: "Saint Lucien & The Harbour Lights" },
-          { id: "ar-kestrel", name: "Kestrel Bay" },
+          { id: "ar-velvet", name: "The Velvet Meridian", has_page: true },
+          { id: "ar-marisol", name: "Marisol Vey", has_page: false },
+          { id: "ar-okoro", name: "Hana Okoro", has_page: true },
+          { id: "ar-halden", name: "Halden Marsh", has_page: true },
+          { id: "ar-lucien", name: "Saint Lucien & The Harbour Lights", has_page: true },
+          { id: "ar-kestrel", name: "Kestrel Bay", has_page: true },
         ].map((a, i) => ({ ...a, plays: artistPlays[i] }))
       : [],
     top_albums: total > 0

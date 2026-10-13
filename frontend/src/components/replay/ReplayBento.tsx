@@ -20,9 +20,12 @@ import {
   activitySeries,
   genreShares,
   playsPerUnit,
-  topTrackByArtist,
+  replayTrackArtists,
+  topArtistAction,
+  topArtistTracks,
   type ReplayCalendar,
 } from "@music-library/core/replay/replay";
+import { startListPlayback } from "@music-library/core/player/play-list";
 import {
   replayAlbumTarget,
   trackAlbumTarget,
@@ -34,6 +37,7 @@ import CoverArt from "../CoverArt";
 import { Button } from "../Button";
 import MediaCard, { MediaCardPlaceholders } from "../MediaCard";
 import ShelfScroller from "../ShelfScroller";
+import { TopArtistGlyph, TopArtistName, artistHref } from "../TopArtist";
 import TrackList from "../TrackList";
 import { FavoriteButton } from "../TrackRowCells";
 import { useFavorites } from "../../context/Favorites";
@@ -103,7 +107,6 @@ function peakLabel(start: string, bucket: ReplayBucket, spansYears: boolean) {
 
 const albumHref = (target: EntityTarget) =>
   `/library?view=albums&${target.kind === "tidal" ? "tidalAlbum" : "album"}=${encodeURIComponent(target.id)}`;
-const artistHref = (id: string) => `/library?view=artists&artist=${encodeURIComponent(id)}`;
 
 export default function ReplayBento({
   data,
@@ -143,13 +146,11 @@ export default function ReplayBento({
     series[0].bucket_start.slice(0, 4) !== series[series.length - 1].bucket_start.slice(0, 4);
   const unit = calendar?.unit === "month" ? "month" : "day";
   const genres = useMemo(() => genreShares(data.top_genres).slice(0, 5), [data.top_genres]);
-  const artistArt = useMemo(
-    () => topTrackByArtist(data.top_artists, data.top_tracks),
+  // Each top artist's tracks among the top tracks: the first is their
+  // picture, and all of them play when they have no page to open.
+  const artistTracks = useMemo(
+    () => topArtistTracks(data.top_artists, data.top_tracks),
     [data.top_artists, data.top_tracks],
-  );
-  const artistIds = useMemo(
-    () => new Map(data.top_artists.map((a) => [a.name.trim().toLocaleLowerCase(), a.id])),
-    [data.top_artists],
   );
   const perUnit = playsPerUnit(summary.total_plays, calendar);
   const playsColumn = useMemo(
@@ -180,7 +181,6 @@ export default function ReplayBento({
         <FeaturedTrack
           track={top}
           queue={queue}
-          artistIds={artistIds}
           onPlay={() => play(top, queue)}
         />
       )}
@@ -298,17 +298,28 @@ export default function ReplayBento({
       {tiles.art && (
         <CardsTile area="art" label="Top artists" alone={!tiles.alb}>
           {data.top_artists.map((a, i) => {
-            const art = artistArt.get(a.id);
+            const own = artistTracks.get(a.id) ?? [];
+            const action = topArtistAction(a, own);
             return (
-              <MediaCard
-                key={a.id}
-                to={artistHref(a.id)}
-                coverUrl={art ? trackCoverUrl(art, 384) : null}
-                artLabel={a.name}
-                title={displayText(a.name)}
-                subtitle={pluralize(a.plays, "play", undefined, { locale: true })}
-                rankBadge={<span className="replay-rank">{i + 1}</span>}
-              />
+              <div key={a.id} className={"card" + (action ? "" : " card-inert")}>
+                <CoverArt className="card-art" src={own[0] ? trackCoverUrl(own[0], 384) : null} label={a.name}>
+                  <span className="replay-rank">{i + 1}</span>
+                  <TopArtistGlyph action={action} className="card-play" iconClassName="size-4" />
+                </CoverArt>
+                <div>
+                  <TopArtistName
+                    action={action}
+                    artistId={a.id}
+                    name={displayText(a.name)}
+                    // As on Home: the library has nothing by them, so
+                    // their top tracks are what there is to play.
+                    onPlay={() => startListPlayback(play, own, false)}
+                    className="card-title card-link"
+                    plainClassName="card-title"
+                  />
+                  <div className="card-sub">{pluralize(a.plays, "play", undefined, { locale: true })}</div>
+                </div>
+              </div>
             );
           })}
         </CardsTile>
@@ -388,13 +399,10 @@ function WithPlays({ calendar }: { calendar: ReplayCalendar }) {
 function FeaturedTrack({
   track,
   queue,
-  artistIds,
   onPlay,
 }: {
   track: ReplayTrack;
   queue: TrackListItem[];
-  /** Top artists by lower-cased name, for linking the track's artists. */
-  artistIds: Map<string, string>;
   onPlay: () => void;
 }) {
   const { isFavorite, toggle } = useFavorites();
@@ -403,7 +411,8 @@ function FeaturedTrack({
   const onMore = bind(track, { queue });
   const album = trackAlbumTarget(track);
   const title = displayText(track.title);
-  const names = (track.artist ?? "").split(", ").filter(Boolean);
+  // Each linked only when it has a page to open.
+  const artists = replayTrackArtists(track);
   // An estimate from the track's length, and labelled as one: the API
   // reports plays per track, not how much of each play was heard.
   const time = track.duration_ms > 0 ? listeningTime(track.plays * track.duration_ms) : null;
@@ -425,24 +434,21 @@ function FeaturedTrack({
       <div className="bento-feat-body">
         <h2 className="bento-label">Most played track</h2>
         <div className="bento-feat-title" title={title}>{title}</div>
-        <div className="bento-feat-sub" title={[names.join(", ") || "Unknown artist", track.album_title].filter(Boolean).map((t) => displayText(t)).join(" · ")}>
-          {names.length === 0
+        <div className="bento-feat-sub" title={[track.artist || "Unknown artist", track.album_title].filter(Boolean).map((t) => displayText(t)).join(" · ")}>
+          {artists.length === 0
             ? "Unknown artist"
-            : names.map((name, i) => {
-                const id = artistIds.get(name.trim().toLocaleLowerCase());
-                return (
-                  <Fragment key={i}>
-                    {i > 0 && ", "}
-                    {id ? (
-                      <Link className="bento-link" to={artistHref(id)}>
-                        {displayText(name)}
-                      </Link>
-                    ) : (
-                      displayText(name)
-                    )}
-                  </Fragment>
-                );
-              })}
+            : artists.map((artist, i) => (
+                <Fragment key={i}>
+                  {i > 0 && ", "}
+                  {artist.artistId ? (
+                    <Link className="bento-link" to={artistHref(artist.artistId)}>
+                      {displayText(artist.name)}
+                    </Link>
+                  ) : (
+                    displayText(artist.name)
+                  )}
+                </Fragment>
+              ))}
           {track.album_title && (
             <>
               {" · "}

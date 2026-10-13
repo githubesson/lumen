@@ -12,7 +12,7 @@ import {
   type ReplayData,
   type TrackListItem,
 } from "../api";
-import { readCache, writeCache } from "../lib/resourceCache";
+import { dropCache, readCache, writeCache } from "../lib/resourceCache";
 import ErrorBanner from "../components/ErrorBanner";
 import EmptyState from "../components/EmptyState";
 import ReplayBento, { ReplayBentoPlaceholder } from "../components/replay/ReplayBento";
@@ -32,9 +32,10 @@ import {
   replayImageFilename,
   replayImageRequest,
   replayPlaylistRequest,
-  replayRequest,
+  replayQueries,
   replaySeriesComplete,
-  type ReplayRange,
+  type ReplayQueries,
+  type ReplayQuery,
 } from "@music-library/core/replay/replay";
 import {
   useLocalDay,
@@ -81,12 +82,25 @@ const monthSpanFormat = new Intl.DateTimeFormat(undefined, {
  * months itself (see `activitySeries`). The server caps how many buckets it
  * sends, so an all-time history longer than that comes back without its
  * newest days; then it is asked for again by month, and the figures count
- * months instead (see `replayCalendar`).
+ * months instead (see `replayCalendar`). Says which query answered, since
+ * the two are cached apart.
  */
-async function fetchReplay(range: ReplayRange, signal: AbortSignal): Promise<ReplayData> {
-  const daily = await api.getReplay({ ...range, bucket: "day" }, { signal });
-  if (replaySeriesComplete(daily)) return daily;
-  return api.getReplay({ ...range, bucket: "month" }, { signal });
+async function fetchReplay(
+  request: ReplayQueries,
+  signal: AbortSignal,
+): Promise<{ query: ReplayQuery; data: ReplayData }> {
+  const daily = await api.getReplay(request.daily.params, { signal });
+  if (replaySeriesComplete(daily)) return { query: request.daily, data: daily };
+  return { query: request.monthly, data: await api.getReplay(request.monthly.params, { signal }) };
+}
+
+/**
+ * The period's last answer: by day under the key Home shares, or by month
+ * under its own when the days were cut short. Only one is kept (see the
+ * fetch below), so this is the latest either way.
+ */
+function readReplayCache(request: ReplayQueries): ReplayData | null {
+  return readCache<ReplayData>(request.daily.cacheKey) ?? readCache<ReplayData>(request.monthly.cacheKey) ?? null;
 }
 
 function buildOptions(availableYears: number[]): PeriodOption[] {
@@ -155,33 +169,28 @@ export default function Replay() {
   // correct and exhaustive-deps clean (the old code keyed on a fresh
   // periodKey string).
   //
-  // The cache key carries the concrete days a rolling period covers (see
-  // `replayRequest`). A page left open past midnight recomputes the range
+  // The cache keys carry the concrete days a rolling period covers (see
+  // `replayQueries`). A page left open past midnight recomputes the range
   // (and refetches), so rolling periods don't keep acting on old dates.
   //
-  // The answers are daily (see `fetchReplay`), and the key says so: a
-  // monthly answer cached under the old key is never read back as daily.
+  // The daily key is the one Home's board uses for the last 30 days, so
+  // either page warms the other; a monthly fallback has a key of its own.
   const today = useLocalDay(subscribeTabShown);
-  const request = useMemo(() => {
-    const { range, cacheKey } = replayRequest(period);
-    return { range, asOf: today, cacheKey: `replay:daily:${cacheKey}` };
-  }, [period, today]);
+  const request = useMemo(() => ({ ...replayQueries(period), asOf: today }), [period, today]);
   const range = request.range;
   const chartBucket = range.bucket ?? "month";
-  // A period seen before this session answers from the cache while it
+  // A period seen before (here or on Home) answers from the cache while it
   // refreshes -- still that period's own numbers, never another's.
   const data =
-    loaded?.key === request.cacheKey
-      ? loaded.data
-      : (readCache<ReplayData>(request.cacheKey) ?? null);
+    loaded?.key === request.daily.cacheKey ? loaded.data : readReplayCache(request);
 
   useEffect(() => {
     const ac = new AbortController();
     // Changing the replay period starts a new API request lifecycle.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setError(null);
-    fetchReplay(request.range, ac.signal)
-      .then((d) => {
+    fetchReplay(request, ac.signal)
+      .then(({ query, data: d }) => {
         // Aborting after the response headers arrive does not reject this
         // promise: the transport drops the caller's abort listener as soon as
         // `fetch` resolves, before it parses the body. A superseded request
@@ -189,9 +198,14 @@ export default function Replay() {
         // with the previous period's, which the keyed derivation rejects --
         // leaving the loading state up for good.
         if (ac.signal.aborted) return;
-        setLoaded({ key: request.cacheKey, data: d });
+        setLoaded({ key: request.daily.cacheKey, data: d });
         setYears(d.available_years ?? []);
-        writeCache(request.cacheKey, d);
+        // One answer per period, under the key of the query that gave it:
+        // the daily key never holds months, and an older answer under the
+        // other key can't come back in front of this one.
+        const other = query === request.daily ? request.monthly : request.daily;
+        dropCache(other.cacheKey);
+        writeCache(query.cacheKey, d);
         writeCache("replay:years", d.available_years ?? []);
       })
       .catch((err) => {

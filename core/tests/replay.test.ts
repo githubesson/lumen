@@ -12,9 +12,12 @@ import {
   replayImageFilename,
   replayImageRequest,
   replayPlaylistRequest,
+  replayQueries,
   replayRequest,
   replaySeriesComplete,
-  topTrackByArtist,
+  replayTrackArtists,
+  topArtistAction,
+  topArtistTracks,
   tracksByArtist,
 } from "../src/replay/replay";
 import { canonicalPeriodKey, parsePeriodKey, periodKey, type Period } from "../src/replay/period";
@@ -53,6 +56,35 @@ describe("replayRequest", () => {
       range: { bucket: "month" },
       cacheKey: "all::",
     });
+  });
+});
+
+describe("replayQueries", () => {
+  it("asks Home and Replay for the same days, by day, under one key", () => {
+    vi.useFakeTimers({ now: new Date(Date.UTC(2026, 9, 2, 13)) });
+    const { range, daily } = replayQueries({ kind: "last-30" });
+    expect(daily).toEqual({
+      params: { from: range.from, to: range.to, bucket: "day" },
+      cacheKey: "replay:daily:last-30:2026-09-02:2026-10-02",
+    });
+    // The chart's own bucket stays on the range, for the page to draw with.
+    expect(range.bucket).toBe("day");
+    expect(replayQueries({ kind: "this-year" }).daily.params.bucket).toBe("day");
+  });
+
+  it("keeps the monthly fallback under a key of its own", () => {
+    vi.useFakeTimers({ now: new Date(Date.UTC(2026, 9, 2, 13)) });
+    const { range, daily, monthly } = replayQueries({ kind: "all" });
+    expect(range).toEqual({ bucket: "month" });
+    expect(daily).toEqual({ params: { from: undefined, to: undefined, bucket: "day" }, cacheKey: "replay:daily:all::" });
+    expect(monthly).toEqual({ params: { from: undefined, to: undefined, bucket: "month" }, cacheKey: "replay:monthly:all::" });
+  });
+
+  it("moves the key with the days a rolling period covers", () => {
+    vi.useFakeTimers({ now: new Date(Date.UTC(2026, 9, 2, 1)) });
+    const morning = replayQueries({ kind: "last-30" }).daily.cacheKey;
+    vi.setSystemTime(new Date(Date.UTC(2026, 9, 3, 1)));
+    expect(replayQueries({ kind: "last-30" }).daily.cacheKey).not.toBe(morning);
   });
 });
 
@@ -107,22 +139,112 @@ describe("tracksByArtist", () => {
     { id: "solo", artist: "Kestrel Bay" },
     { id: "duet", artist: "Halden Marsh, Kestrel Bay" },
     { id: "comma", artist: "Tyler, The Creator, Kali Uchis" },
+    { id: "ewf", artist: "Earth, Wind & Fire" },
     { id: "other", artist: "Kestrel Bayside" },
+    { id: "lower", artist: "kestrel bay" },
     { id: "none" },
   ];
+  const ids = (artist: { id?: string; name: string }, list = tracks) =>
+    tracksByArtist(artist, list).map((t) => t.id);
 
-  it("matches the name as a whole entry of the primary artists", () => {
-    expect(tracksByArtist("Kestrel Bay", tracks).map((t) => t.id)).toEqual(["solo", "duet"]);
-    expect(tracksByArtist("Bay", tracks)).toEqual([]);
+  it("matches the name as a whole entry of the primary artists, without case", () => {
+    expect(ids({ name: "Kestrel Bay" })).toEqual(["solo", "duet", "lower"]);
+    expect(ids({ name: "Bay" })).toEqual([]);
   });
 
   it("matches a name that contains the separator", () => {
-    expect(tracksByArtist("Tyler, The Creator", tracks).map((t) => t.id)).toEqual(["comma"]);
-    expect(tracksByArtist("Kali Uchis", tracks).map((t) => t.id)).toEqual(["comma"]);
+    expect(ids({ name: "Earth, Wind & Fire" })).toEqual(["ewf"]);
+    expect(ids({ name: "Tyler, The Creator" })).toEqual(["comma"]);
+    expect(ids({ name: "Kali Uchis" })).toEqual(["comma"]);
+  });
+
+  it("matches on ids when the tracks list them, so a name inside another can't", () => {
+    const credited = [
+      { id: "ewf", artist: "Earth, Wind & Fire", primary_artists: [{ id: "ar-ewf" }] },
+      { id: "earth", artist: "Earth", primary_artists: [{ id: "ar-earth" }] },
+      { id: "both", artist: "Earth, Earth, Wind & Fire", primary_artists: [{ id: "ar-earth" }, { id: "ar-ewf" }] },
+    ];
+    // By name, "Earth" is also the first entry of "Earth, Wind & Fire".
+    expect(ids({ name: "Earth" }, credited)).toEqual(["ewf", "earth", "both"]);
+    expect(ids({ id: "ar-earth", name: "Earth" }, credited)).toEqual(["earth", "both"]);
+    expect(ids({ id: "ar-ewf", name: "Earth, Wind & Fire" }, credited)).toEqual(["ewf", "both"]);
   });
 
   it("matches nothing for a blank name", () => {
-    expect(tracksByArtist("  ", tracks)).toEqual([]);
+    expect(ids({ name: "  " })).toEqual([]);
+  });
+});
+
+describe("topArtistTracks", () => {
+  const tracks = [
+    { id: "t1", artist: "Hana Okoro, The Velvet Meridian" },
+    { id: "t2", artist: "Halden Marsh" },
+    { id: "t3", artist: "the velvet meridian" },
+    { id: "t4", artist: "Earth, Wind & Fire" },
+  ];
+
+  it("lists each top artist's tracks in order, credited alone or with others", () => {
+    const map = topArtistTracks(
+      [
+        { id: "ar-velvet", name: "The Velvet Meridian" },
+        { id: "ar-halden", name: "Halden Marsh" },
+        { id: "ar-ewf", name: "Earth, Wind & Fire" },
+        { id: "ar-kestrel", name: "Kestrel Bay" },
+      ],
+      tracks,
+    );
+    expect(map.get("ar-velvet")?.map((t) => t.id)).toEqual(["t1", "t3"]);
+    expect(map.get("ar-halden")?.map((t) => t.id)).toEqual(["t2"]);
+    // A name with commas in it was never found when names were split.
+    expect(map.get("ar-ewf")?.map((t) => t.id)).toEqual(["t4"]);
+    expect(map.get("ar-kestrel")).toEqual([]);
+  });
+
+  it("keeps two artists apart when one's name is part of the other's", () => {
+    const map = topArtistTracks(
+      [
+        { id: "ar-ewf", name: "Earth, Wind & Fire" },
+        { id: "ar-earth", name: "Earth" },
+      ],
+      [{ id: "t4", artist: "Earth, Wind & Fire", primary_artists: [{ id: "ar-ewf" }] }],
+    );
+    expect(map.get("ar-ewf")?.map((t) => t.id)).toEqual(["t4"]);
+    expect(map.get("ar-earth")).toEqual([]);
+  });
+});
+
+describe("topArtistAction", () => {
+  const track = { id: "t", title: "T", duration_ms: 1 };
+
+  it("opens the artist's page when there is one, and plays them otherwise", () => {
+    expect(topArtistAction({ has_page: true }, [])).toBe("open");
+    expect(topArtistAction({ has_page: false }, [track])).toBe("play");
+    // A server that doesn't say can't promise a page.
+    expect(topArtistAction({}, [track])).toBe("play");
+  });
+
+  it("does nothing without a page or anything playable", () => {
+    expect(topArtistAction({ has_page: false }, [])).toBeNull();
+    expect(topArtistAction({ has_page: false }, [{ ...track, unavailable: true }])).toBeNull();
+  });
+});
+
+describe("replayTrackArtists", () => {
+  it("links each of a top track's artists that has a page", () => {
+    expect(
+      replayTrackArtists({
+        artist: "Earth, Wind & Fire, Guest",
+        primary_artists: [
+          { id: "ar-ewf", name: "Earth, Wind & Fire", has_page: true },
+          { id: "ar-guest", name: "Guest", has_page: false },
+        ],
+      }),
+    ).toEqual([{ name: "Earth, Wind & Fire", artistId: "ar-ewf" }, { name: "Guest" }]);
+  });
+
+  it("keeps the names whole and unlinked when the server doesn't list them", () => {
+    expect(replayTrackArtists({ artist: "Earth, Wind & Fire" })).toEqual([{ name: "Earth, Wind & Fire" }]);
+    expect(replayTrackArtists({})).toEqual([]);
   });
 });
 
@@ -394,27 +516,5 @@ describe("activityPeak", () => {
   it("has no peak without plays", () => {
     expect(activityPeak([day(2026, 10, 1, 0)])).toBeNull();
     expect(activityPeak([])).toBeNull();
-  });
-});
-
-describe("topTrackByArtist", () => {
-  const tracks = [
-    { id: "t1", artist: "Hana Okoro, The Velvet Meridian" },
-    { id: "t2", artist: "Halden Marsh" },
-    { id: "t3", artist: "the velvet meridian" },
-  ];
-
-  it("gives each artist its highest placed track, credited alone or with others", () => {
-    const map = topTrackByArtist(
-      [
-        { id: "ar-velvet", name: "The Velvet Meridian" },
-        { id: "ar-halden", name: "Halden Marsh" },
-        { id: "ar-kestrel", name: "Kestrel Bay" },
-      ],
-      tracks,
-    );
-    expect(map.get("ar-velvet")?.id).toBe("t1");
-    expect(map.get("ar-halden")?.id).toBe("t2");
-    expect(map.has("ar-kestrel")).toBe(false);
   });
 });

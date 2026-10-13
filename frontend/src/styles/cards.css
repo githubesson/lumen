@@ -148,6 +148,13 @@
   /* The card's corners (the link itself has none to inherit). */
   border-radius: var(--radius-xl);
 }
+/* The same hit as a button, for a card that plays rather than opens
+   (Replay's top artists without a page). */
+button.card-link {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
 .card-link:focus-visible {
   outline: none;
 }
@@ -190,6 +197,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A card with nothing to open or play: no pointer, no hover. */
+.card-inert {
+  cursor: default;
+}
+.card-inert:hover {
+  background: transparent;
 }
 
 /* Loading stand-ins (MediaCardPlaceholders). Not interactive. */
