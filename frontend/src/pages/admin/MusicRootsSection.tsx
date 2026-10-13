@@ -165,13 +165,17 @@ export function MusicRootsSection({
       signal: controller.signal,
     });
     if (controller.signal.aborted) return;
+    watchRef.current = null;
     setWatching(false);
-    if (!finished) return;
+    if (!finished) {
+      onError("Lost track of the rescan: the server stopped answering. It may still be running.");
+      return;
+    }
     if (rescanChangedLibrary(finished)) libraryChanged.emit();
     refreshUsageRef.current = true;
     void reloadUsage();
     void reloadErrors();
-  }, [reloadUsage, reloadErrors]);
+  }, [reloadUsage, reloadErrors, onError]);
   useEffect(() => {
     mountedRef.current = true;
     return () => {

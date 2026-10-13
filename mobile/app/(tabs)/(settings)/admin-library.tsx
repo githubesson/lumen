@@ -13,12 +13,7 @@ import {
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-  type QueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
   canManageMusicRoot,
@@ -27,10 +22,8 @@ import {
   musicRootKey,
   musicRootName,
   musicRootRemoval,
-  rescanChangedLibrary,
   rescanProgress,
   rootRemovalChangedLibrary,
-  watchRescan,
   type MusicRoot,
   type RescanStatus,
 } from "@music-library/core";
@@ -38,37 +31,8 @@ import { EmptyState } from "../../../components/empty-state";
 import { HeaderIconButton } from "../../../components/header-buttons";
 import { Card } from "../../../components/primitives";
 import { qk } from "../../../lib/query-keys";
+import { followRescan, rescanStatusQuery } from "../../../lib/rescan-watch";
 import { useTheme, type ThemeTokens } from "../../../theme/theme";
-
-const rescanStatusQuery = {
-  queryKey: qk.adminRescanStatus,
-  queryFn: ({ signal }: { signal: AbortSignal }) => api.rescanStatus({ signal }),
-  staleTime: 0,
-};
-
-let rescanWatch: Promise<void> | null = null;
-
-/**
- * Polls the rescan status through the query cache (which keeps the progress
- * on screen live) until the scan is idle, then fires one library-wide refresh
- * if the scan changed anything, so other screens pull updated lists. It runs
- * outside the screen so leaving Admin → Library mid-scan still refreshes, and
- * it starts from a known scan rather than reacting to idle statuses, since
- * every mount and focus fetch reports idle and would otherwise invalidate the
- * whole library cache. One watcher at a time.
- */
-function followRescan(queryClient: QueryClient): void {
-  if (rescanWatch) return;
-  rescanWatch = watchRescan({
-    fetchStatus: () => queryClient.fetchQuery(rescanStatusQuery),
-  })
-    .then((status) => {
-      if (status && rescanChangedLibrary(status)) libraryChanged.emit();
-    })
-    .finally(() => {
-      rescanWatch = null;
-    });
-}
 
 export default function AdminLibraryScreen() {
   const theme = useTheme();
