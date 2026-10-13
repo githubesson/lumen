@@ -49,6 +49,8 @@ export interface FillMetrics {
   margins: number;
   /** Items in the grid now. */
   items: number;
+  /** The min-height the area was given at its last measure, if any. */
+  heldAt?: number;
 }
 
 const usualFor = (usual: FillUsual, columns: number) => (typeof usual === "number" ? usual : usual(columns));
@@ -57,15 +59,17 @@ const usualFor = (usual: FillUsual, columns: number) => (typeof usual === "numbe
  * How many items fill the room, in whole rows, and the height the usual
  * ones need: fewer than usual when that's all there is.
  */
-export function fitItems(usual: FillUsual, { height, columns, row, gap, margins, items }: FillMetrics): Fit {
+export function fitItems(usual: FillUsual, { height, columns, row, gap, margins, items, heldAt }: FillMetrics): Fit {
   const usualCount = usualFor(usual, columns);
   const usualRows = Math.ceil(Math.min(usualCount, items) / columns);
+  const minHeight = usualRows > 0 ? margins + usualRows * row + (usualRows - 1) * gap : 0;
+  // As tall as its own min-height, the area has no room past it, and that
+  // min-height can be out of date (the columns just changed, so the rows
+  // did too): count on the one it gets now.
+  const room = heldAt !== undefined && height <= heldAt + 1 ? Math.min(height, minHeight) : height;
   // Half a pixel of slack for fractional sizes.
-  const rows = Math.floor((height - margins + gap + 0.5) / (row + gap));
-  return {
-    count: Math.max(usualCount, rows * columns),
-    minHeight: usualRows > 0 ? margins + usualRows * row + (usualRows - 1) * gap : 0,
-  };
+  const rows = Math.floor((room - margins + gap + 0.5) / (row + gap));
+  return { count: Math.max(usualCount, rows * columns), minHeight };
 }
 
 /**
@@ -92,11 +96,11 @@ export function useBoardFill(usual: FillUsual, emptyRow?: number): BoardFill {
       setFit((prev) => (prev === null ? prev : null));
       return;
     }
-    const items = grid?.childElementCount ?? 0;
-    const next = fitItems(usual, { height: area.clientHeight, columns, row, gap, margins, items });
-    setFit((prev) =>
-      prev && prev.count === next.count && Math.abs(prev.minHeight - next.minHeight) < 0.5 ? prev : next,
-    );
+    const metrics = { height: area.clientHeight, columns, row, gap, margins, items: grid?.childElementCount ?? 0 };
+    setFit((prev) => {
+      const next = fitItems(usual, { ...metrics, heldAt: prev?.minHeight });
+      return prev && prev.count === next.count && Math.abs(prev.minHeight - next.minHeight) < 0.5 ? prev : next;
+    });
   }, [area]);
 
   // After every render: the items, or the board around them, may have

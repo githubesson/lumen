@@ -44,3 +44,14 @@ it("shows nothing it wasn't asked to until a row fits", () => {
   expect(fitItems(0, rows({ ...tracks, height: 64 }))).toEqual({ count: 1, minHeight: 0 });
   expect(fitItems(0, rows({ ...tracks, height: 200 })).count).toBe(3);
 });
+
+it("counts no room past a min-height of its own, which may be out of date", () => {
+  // Two rows of narrow covers held the area at 455px; at four columns the
+  // covers are smaller and one row (124px) is the usual height now.
+  const covers4 = { columns: 4, row: 128, gap: 4, margins: -4, items: 4 };
+  expect(fitItems(covers, rows({ ...covers4, height: 455, heldAt: 455 }))).toEqual({ count: 4, minHeight: 124 });
+  // Taller than its min-height, the slot is giving it room: that counts.
+  expect(fitItems(covers, rows({ ...covers4, height: 455, heldAt: 124 })).count).toBe(12);
+  // Still the tallest in its row: the usual rows, as before.
+  expect(fitItems(5, rows({ height: 260, heldAt: 260 }))).toEqual({ count: 5, minHeight: 260 });
+});
