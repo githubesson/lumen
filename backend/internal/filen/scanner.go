@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/githubesson/lumen/internal/downloadfile"
+	"github.com/githubesson/lumen/internal/ffsafe"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/musicroots"
@@ -201,10 +202,13 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 		return err
 	}
 
-	var stderrBuf bytes.Buffer
+	// Read stderr to the end, keeping its tail for the error: a helper whose
+	// stderr goes unread can't finish writing it, so it stalls and is killed,
+	// leaving its partial file, instead of finishing the share.
+	stderrTail := ffsafe.NewTail(32 * 1024)
 	stderrDone := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(&stderrBuf, io.LimitReader(stderr, 32*1024))
+		_, _ = io.Copy(stderrTail, stderr)
 		close(stderrDone)
 	}()
 
@@ -237,7 +241,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 		return fmt.Errorf("filen download stalled: no progress for %s", idle)
 	}
 	if waitErr != nil {
-		detail := strings.TrimSpace(stderrBuf.String())
+		detail := strings.TrimSpace(stderrTail.String())
 		if detail == "" {
 			detail = waitErr.Error()
 		}
