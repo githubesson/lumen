@@ -1,14 +1,18 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { spawn } from "node:child_process"
+import { mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 import {
   downloadFolderLink,
   downloadSingleFile,
+  downloadWithTimeout,
   exceedsSizeLimit,
-  parseShareUrl
+  parseShareUrl,
+  removeStaleParts
 } from "./index.mjs"
 
 async function temporaryDirectory(t) {
@@ -191,4 +195,76 @@ test("exceedsSizeLimit rejects oversized declared sizes and chunk counts", () =>
   // A small declared size cannot hide a huge chunk count.
   assert.equal(exceedsSizeLimit(1 * MiB, 5000, 100 * MiB), true)
   assert.equal(exceedsSizeLimit("not a number", 1, 100 * MiB), true)
+})
+
+test("a download past the per-file timeout is aborted and its temp file removed", async t => {
+  const outDir = await temporaryDirectory(t)
+  let aborted = false
+  const cloud = {
+    async filePublicLinkInfo() {
+      return { name: "slow.mp3", size: 5, uuid: "file-id", chunks: 1 }
+    },
+    async downloadFileToLocal({ to, abortSignal }) {
+      await writeFile(to, "par")
+      await new Promise((_, reject) => abortSignal.addEventListener("abort", () => {
+        aborted = true
+        reject(new Error("Aborted"))
+      }))
+    }
+  }
+  // A 50ms limit in place of FILEN_FILE_TIMEOUT_MS, which is read at load.
+  const slow = {
+    ...cloud,
+    downloadFileToLocal: params => downloadWithTimeout(cloud, params, 50)
+  }
+  await assert.rejects(downloadSingleFile(slow, "link", "key", "", outDir), /timed out/)
+  assert.equal(aborted, true)
+  assert.deepEqual(await readdir(outDir), [])
+})
+
+test("removeStaleParts deletes only old temp files of that target", async t => {
+  const dir = await temporaryDirectory(t)
+  const target = path.join(dir, "song.mp3")
+  const old = path.join(dir, ".song.mp3.0b6e7c9a-3a63-4f1e-9a52-0d2f1d3b8c11.part")
+  const fresh = path.join(dir, ".song.mp3.1b6e7c9a-3a63-4f1e-9a52-0d2f1d3b8c11.part")
+  const other = path.join(dir, ".other.mp3.2b6e7c9a-3a63-4f1e-9a52-0d2f1d3b8c11.part")
+  const tracker = path.join(dir, ".song.mp3.123456789.part")
+  for (const p of [old, fresh, other, tracker]) await writeFile(p, "x")
+  const hourAgo = new Date(Date.now() - 60 * 60 * 1000)
+  for (const p of [old, other, tracker]) await utimes(p, hourAgo, hourAgo)
+  await removeStaleParts(target, 60 * 1000)
+  assert.deepEqual((await readdir(dir)).sort(), [path.basename(tracker), path.basename(other), path.basename(fresh)].sort())
+})
+
+test("SIGTERM removes the partial download before the helper exits", async t => {
+  const outDir = await temporaryDirectory(t)
+  const scriptDir = await temporaryDirectory(t)
+  const helper = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), "index.mjs")).href
+  const script = path.join(scriptDir, "stuck.mjs")
+  await writeFile(script, `
+import { writeFile } from "node:fs/promises"
+import { downloadSingleFile, exitCleanlyOnSignals } from ${JSON.stringify(helper)}
+exitCleanlyOnSignals()
+const cloud = {
+  async filePublicLinkInfo() { return { name: "song.mp3", size: 5, uuid: "file-id", chunks: 1 } },
+  async downloadFileToLocal({ to }) {
+    await writeFile(to, "par")
+    console.log("started")
+    await new Promise(() => setInterval(() => {}, 1000))
+  }
+}
+await downloadSingleFile(cloud, "link", "key", "", process.argv[2])
+`)
+  const child = spawn(process.execPath, [script, outDir], { stdio: ["ignore", "pipe", "inherit"] })
+  const exited = new Promise(resolve => child.on("exit", (code, signal) => resolve({ code, signal })))
+  await new Promise((resolve, reject) => {
+    child.stdout.on("data", chunk => {
+      if (String(chunk).includes("started")) resolve()
+    })
+    child.on("exit", () => reject(new Error("helper exited before the download started")))
+  })
+  assert.equal((await readdir(outDir)).length, 1)
+  child.kill("SIGTERM")
+  assert.deepEqual(await exited, { code: 143, signal: null })
+  assert.deepEqual(await readdir(outDir), [])
 })

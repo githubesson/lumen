@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,6 +41,17 @@ type ScanSummary struct {
 
 // Fallback per-file download deadline when *_FILE_TIMEOUT is unset or <= 0.
 const defaultFileTimeout = 30 * time.Minute
+
+// Variables only so tests can lower them.
+var (
+	// helperIdleGrace is added to the per-file timeout, which the helper
+	// enforces on each download, for the work around one: listing, checking
+	// and installing it.
+	helperIdleGrace = 5 * time.Minute
+	// helperStopGrace is how long a helper sent SIGTERM gets to delete its
+	// partial download and exit before it is killed.
+	helperStopGrace = 10 * time.Second
+)
 
 type Scanner struct {
 	Store        *Store
@@ -119,7 +132,9 @@ func (s *Scanner) ScanPin(ctx context.Context, pin Pin) (ScanSummary, error) {
 // fileTimeout reads the configured per-file deadline, falling back to the
 // default without writing it back: ScanPin runs concurrently (scanDue fans out
 // one goroutine per due pin while StartPinScan adds more from the admin
-// handler), so that was an unsynchronized write to shared state.
+// handler), so that was an unsynchronized write to shared state. The helper
+// enforces it on each download; scanPin stops a helper that goes quiet for
+// longer, rather than bounding the whole share by it.
 func (s *Scanner) fileTimeout() time.Duration {
 	if s.FileTimeout > 0 {
 		return s.FileTimeout
@@ -132,7 +147,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 	if err != nil {
 		return err
 	}
-	runCtx, cancel := context.WithTimeout(ctx, s.fileTimeout())
+	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	node := strings.TrimSpace(s.NodePath)
@@ -167,7 +182,12 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 		"FILEN_SHARE_PASSWORD="+pin.Password,
 		"FILEN_ALLOWED_EXTENSIONS="+strings.Join(ingest.SupportedExtensions(), ","),
 		"FILEN_MAX_FILE_BYTES="+strconv.FormatInt(downloadfile.MaxFileBytes, 10),
+		"FILEN_FILE_TIMEOUT_MS="+strconv.FormatInt(s.fileTimeout().Milliseconds(), 10),
 	)
+	// SIGTERM, not the default SIGKILL, so the helper can delete the partial
+	// file of the download in progress; WaitDelay kills it if it hangs.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = helperStopGrace
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -188,10 +208,21 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 		close(stderrDone)
 	}()
 
+	// The helper reports each file as it finishes it. One quiet for longer
+	// than a file may take is stuck (in a listing, say), so stop it. The
+	// clock only runs while waiting on the helper, not while ingesting.
+	idle := s.fileTimeout() + helperIdleGrace
+	var stalled atomic.Bool
+	watchdog := time.AfterFunc(idle, func() {
+		stalled.Store(true)
+		cancel()
+	})
+	defer watchdog.Stop()
+
 	// runCtx, not ctx: the helper process is bounded by runCtx, so ingesting
 	// its events under the wider context would outlive the process producing
 	// them.
-	readErr := s.readEvents(runCtx, pin, destBase, stdout, summary, retained)
+	readErr := s.readEvents(runCtx, pin, destBase, idleReader{stdout, watchdog, idle}, summary, retained)
 	if readErr != nil {
 		// Stop the helper when event validation fails; nobody is draining
 		// stdout now, so waiting for normal completion could block.
@@ -201,6 +232,9 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 	<-stderrDone
 	if readErr != nil {
 		return readErr
+	}
+	if stalled.Load() {
+		return fmt.Errorf("filen download stalled: no progress for %s", idle)
 	}
 	if waitErr != nil {
 		detail := strings.TrimSpace(stderrBuf.String())
@@ -219,6 +253,21 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 			"failed", summary.Failed)
 	}
 	return nil
+}
+
+// idleReader runs timer only while a Read waits on the helper, so time spent
+// ingesting what it already sent doesn't count.
+type idleReader struct {
+	r     io.Reader
+	timer *time.Timer
+	idle  time.Duration
+}
+
+func (r idleReader) Read(p []byte) (int, error) {
+	r.timer.Reset(r.idle)
+	n, err := r.r.Read(p)
+	r.timer.Stop()
+	return n, err
 }
 
 type helperEvent struct {

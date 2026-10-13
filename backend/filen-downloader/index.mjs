@@ -2,8 +2,9 @@
 import { FilenSDK } from "@filen/sdk"
 import path from "node:path"
 import fs from "node:fs/promises"
-import { constants as fsConstants } from "node:fs"
+import { constants as fsConstants, rmSync } from "node:fs"
 import { randomUUID } from "node:crypto"
+import { constants as osConstants } from "node:os"
 import { pathToFileURL } from "node:url"
 
 function usage() {
@@ -64,6 +65,15 @@ function maxFileBytes() {
 }
 
 const MAX_FILE_BYTES = maxFileBytes()
+
+// The backend passes FILEN_FILE_TIMEOUT through as the time one file's
+// download may take; a stuck file fails alone and the share carries on.
+function fileTimeoutMs() {
+  const n = Number(process.env.FILEN_FILE_TIMEOUT_MS)
+  return Number.isFinite(n) && n > 0 ? n : 30 * 60 * 1000
+}
+
+const FILE_TIMEOUT_MS = fileTimeoutMs()
 
 export function exceedsSizeLimit(size, chunks, limit = MAX_FILE_BYTES) {
   const declared = Number(size)
@@ -160,6 +170,97 @@ function isExistError(err) {
 
 async function tempPathForTarget(outDir, target) {
   return resolveInside(outDir, path.join(path.dirname(target), `.${path.basename(target)}.${randomUUID()}.part`))
+}
+
+const PART_SUFFIX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.part$/
+
+// removeStaleParts deletes temp files for target that a helper killed before
+// it could clean up left behind. Only ones untouched for longer than a
+// download may take: anything newer can belong to a helper still running.
+export async function removeStaleParts(target, olderThanMs = FILE_TIMEOUT_MS) {
+  const dir = path.dirname(target)
+  const prefix = `.${path.basename(target)}.`
+  let names
+  try {
+    names = await fs.readdir(dir)
+  } catch {
+    return
+  }
+  const cutoff = Date.now() - olderThanMs
+  await Promise.all(
+    names
+      .filter(name => name.startsWith(prefix) && PART_SUFFIX.test(name.slice(prefix.length)))
+      .map(async name => {
+        const p = path.join(dir, name)
+        const st = await fs.lstat(p).catch(() => null)
+        if (st?.isFile() && st.mtimeMs < cutoff) await fs.rm(p, { force: true }).catch(() => {})
+      })
+  )
+}
+
+// Temp files of downloads in progress, removed if the helper is stopped.
+const activeTempFiles = new Set()
+
+export function removeActiveTempFiles() {
+  for (const p of activeTempFiles) {
+    try {
+      rmSync(p, { force: true })
+    } catch {
+      /* best effort on the way out */
+    }
+  }
+  activeTempFiles.clear()
+}
+
+// The backend stops the helper with SIGTERM when a scan is cancelled or
+// stalls. Remove the partial download rather than leave it in the library.
+export function exitCleanlyOnSignals() {
+  for (const signal of ["SIGTERM", "SIGINT"]) {
+    process.once(signal, () => {
+      removeActiveTempFiles()
+      process.exit(128 + osConstants.signals[signal])
+    })
+  }
+}
+
+// downloadWithTimeout aborts a download that runs past timeoutMs.
+export async function downloadWithTimeout(cloud, params, timeoutMs = FILE_TIMEOUT_MS) {
+  const controller = new AbortController()
+  const download = cloud.downloadFileToLocal({ ...params, abortSignal: controller.signal })
+  // It rejects once aborted, after the race below has settled.
+  download.catch(() => {})
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort()
+      reject(new Error(`download timed out after ${Math.round(timeoutMs / 1000)}s`))
+    }, timeoutMs)
+  })
+  try {
+    return await Promise.race([download, timeout])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// fetchInto downloads one file to a temp name beside target, checks it, and
+// installs it without overwriting, returning the installed path. The temp
+// file goes on failure, on timeout, and when the helper is stopped.
+async function fetchInto(cloud, params, outDir, target, size) {
+  await fs.mkdir(path.dirname(target), { recursive: true })
+  await removeStaleParts(target)
+  const tmpPath = await tempPathForTarget(outDir, target)
+  activeTempFiles.add(tmpPath)
+  try {
+    await downloadWithTimeout(cloud, { ...params, to: tmpPath })
+    await assertCompleteDownload(tmpPath, size)
+    return await installNoOverwrite(outDir, tmpPath, target)
+  } catch (err) {
+    await fs.rm(tmpPath, { force: true }).catch(() => {})
+    throw err
+  } finally {
+    activeTempFiles.delete(tmpPath)
+  }
 }
 
 export async function assertCompleteDownload(tmpPath, expectedSize) {
@@ -266,25 +367,16 @@ export async function downloadSingleFile(cloud, linkUuid, linkKey, password, out
     return
   }
   try {
-    await fs.mkdir(path.dirname(target.path), { recursive: true })
-    const tmpPath = await tempPathForTarget(outDir, target.path)
-    try {
-      await cloud.downloadFileToLocal({
-        uuid: info.uuid,
-        bucket: info.bucket,
-        region: info.region,
-        chunks: info.chunks,
-        version: info.version,
-        key: linkKey,
-        size: info.size,
-        to: tmpPath
-      })
-      await assertCompleteDownload(tmpPath, info.size)
-      target.path = await installNoOverwrite(outDir, tmpPath, target.path)
-    } catch (err) {
-      await fs.rm(tmpPath, { force: true }).catch(() => {})
-      throw err
+    const params = {
+      uuid: info.uuid,
+      bucket: info.bucket,
+      region: info.region,
+      chunks: info.chunks,
+      version: info.version,
+      key: linkKey,
+      size: info.size
     }
+    target.path = await fetchInto(cloud, params, outDir, target.path, info.size)
     emit({ event: "file", status: "downloaded", relPath, path: target.path, size: info.size })
   } catch (err) {
     if (readOnlyError(err)) {
@@ -400,16 +492,7 @@ export async function downloadFolderLink(cloud, linkUuid, linkKey, password, out
       continue
     }
     try {
-      await fs.mkdir(path.dirname(target.path), { recursive: true })
-      const tmpPath = await tempPathForTarget(outDir, target.path)
-      try {
-        await cloud.downloadFileToLocal({ ...job.params, to: tmpPath })
-        await assertCompleteDownload(tmpPath, job.size)
-        target.path = await installNoOverwrite(outDir, tmpPath, target.path)
-      } catch (err) {
-        await fs.rm(tmpPath, { force: true }).catch(() => {})
-        throw err
-      }
+      target.path = await fetchInto(cloud, job.params, outDir, target.path, job.size)
       emit({ event: "file", status: "downloaded", relPath: job.relPath, path: target.path, size: job.size })
     } catch (err) {
       if (readOnlyError(err)) {
@@ -454,6 +537,7 @@ async function reuseRetained(retained, relPath, size) {
 }
 
 async function main() {
+  exitCleanlyOnSignals()
   const args = parseArgs(process.argv.slice(2))
   let retained = {}
   if (args.retainedStdin) {
