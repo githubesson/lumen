@@ -1,25 +1,51 @@
 /* ---------- Replay ---------- */
-.replay-hero {
-  background: var(--card);
-}
-.replay-hero-art {
-  background: var(--muted);
+.view.replay {
   display: grid;
-  place-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 16px;
 }
-.replay-collage {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  gap: 2px;
-  background: var(--border);
+.replay-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px 24px;
 }
-.replay-collage-cell {
-  background-size: cover;
-  background-position: center;
-  background-color: var(--muted);
+.replay-title {
+  margin: 4px 0 0;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.replay-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.replay-under {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.replay-range {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+@media (max-width: 760px) {
+  .replay-actions {
+    width: 100%;
+  }
+  .replay-actions .btn {
+    flex: 1 1 120px;
+  }
 }
 
 .period-pills {
@@ -62,31 +88,77 @@
   outline-offset: 2px;
 }
 
-/* One unified panel; the 1px gap over a --border background reveals as a
-   thin divider between cells, so wrapping rows pick up horizontal dividers
-   for free. Non-interactive metric rows shouldn't be standalone cards
-   (see Surfaces guideline). */
-.stat-grid {
+/* ---------- Replay bento ----------
+   One panel split by hairlines: a 1px gap over a --border background reads
+   as a thin divider between tiles (the stat grid's idiom, scaled up). The
+   tiles are placed by name; ReplayBento passes the wide (4-column) and
+   narrow (2-column) arrangements in as custom properties, leaving out the
+   tiles a period has no data for. The panel reflows on its own width, not
+   the window's, since the sidebar and lyrics panel take some of it. */
+.replay-results {
+  container: replay-panel / inline-size;
+}
+.replay-bento {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-areas: var(--bento-narrow);
   gap: 1px;
   background: var(--border);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
   overflow: hidden;
 }
-@media (max-width: 900px) {
-  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+@container replay-panel (min-width: 880px) {
+  .replay-bento {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-areas: var(--bento-wide);
+  }
 }
-@media (max-width: 420px) {
-  .stat-grid { grid-template-columns: 1fr; }
-}
-.stat-card {
-  background: var(--card);
-  padding: 16px;
-  display: grid;
-  gap: 4px;
+.bento-tile {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  padding: 16px;
+  background: var(--card);
+}
+.bento-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.bento-label {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.bento-note {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bento-link {
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+.bento-link:hover {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.bento-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* The figures: label at the top, value and its note at the bottom. */
+.stat-card {
+  justify-content: space-between;
+  gap: 8px;
 }
 .stat-card-label {
   font-size: 14px;
@@ -96,14 +168,22 @@
   text-overflow: ellipsis;
 }
 .stat-card-value {
-  font-size: 24px;
+  font-size: 30px;
   font-weight: 600;
   letter-spacing: -0.025em;
+  line-height: 1.15;
   color: var(--foreground);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.stat-card-value small {
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--muted-foreground);
+}
 .stat-card-sub {
+  margin-top: 2px;
   font-size: 12px;
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
@@ -111,20 +191,201 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-/* Override .shelf's horizontal-scroll layout: on Replay we want top artists
-   and albums to wrap into a responsive grid so wide screens get more cards
-   in view instead of a thin scroll strip. */
-.replay-shelf {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  grid-auto-flow: row;
-  grid-auto-columns: initial;
-  overflow: visible;
-  padding-bottom: 0;
-  scroll-snap-type: none;
+/* Days with plays: a cell per day, outlined when it had none. */
+.replay-days {
+  display: flex;
+  gap: 2px;
+  height: 12px;
+  margin-top: 6px;
 }
-.replay-shelf .card { cursor: default; }
+.replay-days > span {
+  flex: 1 1 0;
+  max-width: 12px;
+  border-radius: 2px;
+  background: var(--primary);
+  opacity: 0.85;
+}
+.replay-days > span.off {
+  background: transparent;
+  opacity: 1;
+  box-shadow: inset 0 0 0 1px var(--input);
+}
+.replay-days-meter {
+  display: block;
+  margin-top: 8px;
+}
+.replay-days-meter > span {
+  display: block;
+}
+
+/* The most played track. */
+.bento-feat {
+  flex-direction: row;
+  align-items: center;
+  gap: 20px;
+  padding: 20px;
+}
+.bento-feat-cover {
+  flex: none;
+  display: block;
+  border-radius: var(--radius-lg);
+}
+.bento-feat-art {
+  width: 208px;
+  aspect-ratio: 1;
+  border-radius: var(--radius-lg);
+}
+.bento-feat-body {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-self: stretch;
+  min-width: 0;
+}
+/* Two lines of title and one of artist and album at most (the rest is in
+   their tooltips), so the text never outgrows the cover: the tile, and the
+   rows of figures beside it, keep the placeholder's height when a period
+   with a long title loads. */
+.bento-feat-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-top: 6px;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+.bento-feat-sub {
+  margin-top: 2px;
+  font-size: 14px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bento-feat-n {
+  margin-top: 12px;
+  font-size: 14px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.bento-feat-n b {
+  font-weight: 500;
+  color: var(--foreground);
+}
+.bento-feat-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* Also on repeat: each row plays on click; its number turns into a play
+   button on hover and keyboard focus, as in the track tables. */
+.bento-rows {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.bento-row {
+  display: grid;
+  grid-template-columns: 24px 32px minmax(0, 1fr) minmax(40px, 72px) 32px;
+  align-items: center;
+  gap: 12px;
+  height: 48px;
+  margin: 0 -8px;
+  padding: 0 8px;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.bento-row:hover {
+  background: var(--ghost-hover);
+}
+.bento-rank {
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.bento-row:hover .idx-play,
+.bento-row:focus-within .idx-play {
+  opacity: 1;
+  pointer-events: auto;
+}
+.bento-row:hover .play-cell-interactive > :not(.idx-play),
+.bento-row:focus-within .play-cell-interactive > :not(.idx-play) {
+  opacity: 0;
+}
+.bento-row-art {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+}
+.bento-row-text {
+  display: grid;
+  min-width: 0;
+}
+.bento-row .genre-bar-track {
+  display: block;
+  height: 6px;
+}
+.bento-row .genre-bar-fill {
+  display: block;
+}
+.bento-row-n {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.bento-act .activity-chart {
+  height: 124px;
+}
+.bento-genre .genre-list {
+  max-width: none;
+}
+.bento-genre .genre-row {
+  grid-template-columns: minmax(72px, 112px) minmax(0, 1fr) auto;
+}
+
+/* Top artists and albums: Home's scrolling shelf, sized so four covers fill
+   the tile (eight when the other tile is missing and this one has the
+   panel's whole width). The rest scroll in, behind the shelf's edge fade
+   and arrows. The cards' own 8px padding lines their covers up with the
+   tile's edge. */
+.bento-minis {
+  container-type: inline-size;
+  margin: 0 -8px -8px;
+}
+.bento-minis .shelf-scroller,
+.bento-minis .shelf {
+  --shelf-col: calc((100cqi - 3 * var(--gap)) / 4);
+}
+.bento-minis .shelf {
+  padding-bottom: 0;
+}
+@container replay-panel (min-width: 880px) {
+  .bento-cards.is-alone .shelf-scroller,
+  .bento-cards.is-alone .shelf {
+    --shelf-col: calc((100cqi - 7 * var(--gap)) / 8);
+  }
+}
+.bento-foot {
+  display: flex;
+  margin-top: 8px;
+}
+.bento-foot .btn {
+  margin-left: -8px;
+}
 .replay-rank {
   position: absolute;
   left: 6px;
@@ -143,24 +404,65 @@
   color: var(--foreground);
 }
 
-/* Replay is a rare, read-through summary — the one surface in this app with a
-   delight budget. A short stagger lets the sections arrive rather than appear.
-   Decorative: it must never gate interaction: no pointer-events changes. */
-/* `backwards` rather than the plan's `forwards`: the sections contain non-portaled
-   `position: fixed` dialogs (EditTrackDialog / MoveToAlbumDialog inside
-   TrackList), and a retained end-state transform would make each section their
-   containing block forever. Filling backwards holds the offset through the
-   delay and then hands the element back to its normal styles. */
-.replay-enter > * {
-  animation: replay-enter 300ms var(--ease-out) backwards;
+/* Phones and narrow panes: two columns, a smaller cover beside the
+   most played track, and covers two to a row. */
+@container replay-panel (max-width: 559px) {
+  .bento-feat {
+    align-items: flex-start;
+    gap: 16px;
+    padding: 16px;
+  }
+  .bento-feat-art {
+    width: 112px;
+  }
+  .bento-feat-title {
+    font-size: 20px;
+  }
+  .stat-card-value {
+    font-size: 24px;
+  }
+  /* The bars would leave the titles a few letters; the counts stay. */
+  .bento-row {
+    grid-template-columns: 24px 32px minmax(0, 1fr) 32px;
+  }
+  .bento-row .genre-bar-track {
+    display: none;
+  }
+  .bento-minis .shelf-scroller,
+  .bento-minis .shelf {
+    /* Two and a bit, so the next cover shows there are more. */
+    --shelf-col: calc((100cqi - 2 * var(--gap)) / 2.3);
+  }
 }
-.replay-enter > *:nth-child(1) { animation-delay: 0ms; }
-.replay-enter > *:nth-child(2) { animation-delay: 40ms; }
-.replay-enter > *:nth-child(3) { animation-delay: 80ms; }
-.replay-enter > *:nth-child(4) { animation-delay: 120ms; }
-/* Clamp: without this a page with many sections keeps adding delay and the
-   last section arrives noticeably late. */
-.replay-enter > *:nth-child(n + 5) { animation-delay: 160ms; }
+
+/* While a period loads: the same tiles, nothing to point at. */
+.replay-bento.is-loading .bento-row {
+  cursor: default;
+}
+.replay-bento.is-loading .bento-row:hover {
+  background: transparent;
+}
+.replay-bento.is-loading .bento-foot {
+  pointer-events: none;
+}
+.replay-bento.is-loading .artist-play {
+  background: var(--muted);
+  cursor: default;
+}
+
+/* Replay is a rare, read-through summary -- the one surface in this app with
+   a delight budget. When a period's results land, each tile's contents rise
+   in, a tile at a time (--tile-delay, set by ReplayBento). The tiles
+   themselves stay put: moving one would open a gap onto the hairline
+   background behind it. Decorative: it never gates interaction. */
+/* `backwards` rather than `forwards`: a retained end-state transform would
+   make the element the containing block of any `position: fixed`
+   descendant for good. Filling backwards holds the offset through the
+   delay and then hands the element back to its normal styles. */
+.replay-enter > .bento-tile > * {
+  animation: replay-enter 300ms var(--ease-out) backwards;
+  animation-delay: var(--tile-delay, 0ms);
+}
 
 @keyframes replay-enter {
   from { opacity: 0; transform: translateY(8px); }
@@ -168,9 +470,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .replay-enter > * {
-    opacity: 1;
-    transform: none;
+  .replay-enter > .bento-tile > * {
     animation: none;
   }
 }
@@ -186,6 +486,10 @@
   justify-content: center;
   height: 100%;
   gap: 3px;
+  /* The baseline grounds the chart so empty buckets aren't lost in space.
+     A border rather than a pseudo-element, which keeps axe from measuring
+     the tick labels' contrast. */
+  border-bottom: 1px solid var(--border);
 }
 .activity-col {
   position: relative;
@@ -208,17 +512,6 @@
 }
 .activity-col:hover .activity-bar {
   opacity: 1;
-}
-.activity-chart::after {
-  /* baseline rule grounds the chart so empty buckets aren't lost in space. */
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 28px;
-  height: 1px;
-  background: var(--border);
-  pointer-events: none;
 }
 .activity-tick {
   position: absolute;

@@ -37,7 +37,6 @@ export default tseslint.config(
             },
             { pattern: "^WindowControls$", allow: ["layout", "root-window-controls"] },
             { pattern: "^SearchInput$", allow: ["layout", "playlist-search"] },
-            { pattern: "^ListPageHeader$", allow: ["layout", "replay-hero"] },
             { pattern: "^LoadingState$", allow: ["layout", "share-preview-status"] },
             { pattern: "^Section$", allow: ["layout", "artist-section"] },
           ],
