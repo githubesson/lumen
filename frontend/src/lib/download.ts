@@ -21,18 +21,6 @@ export {
   sanitizeFilename,
 } from "@music-library/core/audio-format";
 
-/** Canonical audio file extensions the app accepts/recognizes. */
-export const AUDIO_EXTENSIONS = [
-  "mp3", "flac", "m4a", "mp4", "aac", "alac", "ogg", "oga", "opus", "wav",
-  "aiff", "aif", "wma", "webm",
-] as const;
-
-/** True if a filename looks like an audio file we accept. */
-export function isAudioFile(name: string): boolean {
-  const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  return (AUDIO_EXTENSIONS as readonly string[]).includes(ext);
-}
-
 export function triggerDownload(
   track: TrackListItem,
   detail: TrackDetail | null,
