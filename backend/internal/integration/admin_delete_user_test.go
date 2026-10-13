@@ -113,6 +113,7 @@ func TestAdminDeleteUserRemovesUploads(t *testing.T) {
 	router.Delete("/admin/users/{id}", h.Delete)
 	del := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodDelete, "/admin/users/"+target.String(), strings.NewReader(body))
+		req.ContentLength = -1 // sent chunked, with no length up front
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(&http.Cookie{Name: "session", Value: token})
 		w := httptest.NewRecorder()

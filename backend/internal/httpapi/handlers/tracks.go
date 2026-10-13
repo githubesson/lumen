@@ -609,10 +609,8 @@ func (h *Tracks) RecordPlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req playReq
-	if r.ContentLength > 0 {
-		if !decodeJSON(w, r, &req) {
-			return
-		}
+	if !decodeOptionalJSON(w, r, &req) {
+		return
 	}
 	if req.Completion < 0 {
 		req.Completion = 0

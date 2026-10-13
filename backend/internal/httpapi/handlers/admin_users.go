@@ -132,10 +132,8 @@ func (h *AdminUsers) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req deleteUserReq
-	if r.ContentLength > 0 {
-		if !decodeJSON(w, r, &req) {
-			return
-		}
+	if !decodeOptionalJSON(w, r, &req) {
+		return
 	}
 	dispoByID := map[uuid.UUID]disposition{}
 	for _, d := range req.Dispositions {
