@@ -34,7 +34,7 @@ const QUESTIONS: { q: string; a: ReactNode }[] = [
   },
   {
     q: "Are the desktop builds signed?",
-    a: "Not yet. CI builds are unsigned pre-releases, so Windows SmartScreen and macOS Gatekeeper will warn on first launch, and in-app updates only work on Windows and Linux.",
+    a: "Not yet. CI builds are unsigned, so Windows SmartScreen and macOS Gatekeeper will warn on first launch, and in-app updates only work on Windows and Linux.",
   },
   {
     q: "Is it really free?",

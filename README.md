@@ -86,7 +86,7 @@ straight from this repo.
 
 ```sh
 cp .env.example .env
-# edit .env — at minimum set POSTGRES_PASSWORD and COVER_SIGN_KEY
+# edit .env — at minimum set POSTGRES_PASSWORD, COVER_SIGN_KEY and PUBLIC_HOSTS
 docker compose up -d --build
 ```
 
