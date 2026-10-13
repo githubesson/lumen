@@ -1,9 +1,10 @@
 // Package mediaembed shells out to ffmpeg to embed metadata and cover art
-// into an audio file: one assembled from TIDAL HLS segments (Embed), or a
-// library file on disk (EmbedFile). It stream-copies (-c copy) so there is
-// no re-encoding; ffmpeg just remuxes the audio into a fresh container with
-// tags and an attached picture. If ffmpeg is not on $PATH, callers should
-// fall back to serving the file without metadata.
+// into an audio file: one assembled from TIDAL HLS segments (Embed, or Spool
+// and then EmbedFile), or a library file on disk (EmbedFile). It
+// stream-copies (-c copy) so there is no re-encoding; ffmpeg just remuxes
+// the audio into a fresh container with tags and an attached picture. If
+// ffmpeg is not on $PATH, callers should fall back to serving the file
+// without metadata.
 package mediaembed
 
 import (
@@ -150,35 +151,39 @@ func Embed(ctx context.Context, r io.ReadCloser, cover []byte, meta Metadata, hi
 		r.Close()
 		return nil, errors.New("ffmpeg not available")
 	}
-
-	inExt := inputExt(hint)
-
-	// Write the assembled audio to a temp file first. ffmpeg's fMP4 demuxer
-	// needs a seekable input to parse the init segment + fragments correctly;
-	// piping through stdin produces empty/corrupt output.
-	inFile, err := os.CreateTemp("", "mediaembed-in-*"+inExt)
+	inPath, err := Spool(r, hint)
+	r.Close()
 	if err != nil {
-		r.Close()
-		return nil, fmt.Errorf("create temp input: %w", err)
+		return nil, err
 	}
-	inPath := inFile.Name()
+	defer os.Remove(inPath)
+	return embedPath(ctx, inPath, cover, meta, hint)
+}
+
+// Spool writes the audio from r to a temp file for EmbedFile, named for
+// hint, and returns its path; the caller removes it. ffmpeg's fMP4 demuxer
+// needs a seekable input to parse the init segment and fragments correctly:
+// piping through stdin produces empty or corrupt output.
+func Spool(r io.Reader, hint FormatHint) (string, error) {
+	f, err := os.CreateTemp("", "mediaembed-in-*"+inputExt(hint))
+	if err != nil {
+		return "", fmt.Errorf("create temp input: %w", err)
+	}
 	// Bounded like every downloaded file (the auto-download worker caps this
 	// same TIDAL stream at downloadfile.MaxFileBytes): an upstream that
 	// streams without end would otherwise fill the temp volume.
-	n, err := io.Copy(inFile, io.LimitReader(r, downloadfile.MaxFileBytes+1))
+	n, err := io.Copy(f, io.LimitReader(r, downloadfile.MaxFileBytes+1))
 	if err == nil && n > downloadfile.MaxFileBytes {
 		err = downloadfile.ErrTooLarge
 	}
-	if err != nil {
-		r.Close()
-		inFile.Close()
-		os.Remove(inPath)
-		return nil, fmt.Errorf("write temp input: %w", err)
+	if cerr := f.Close(); err == nil {
+		err = cerr
 	}
-	r.Close()
-	inFile.Close()
-	defer os.Remove(inPath)
-	return embedPath(ctx, inPath, cover, meta, hint)
+	if err != nil {
+		os.Remove(f.Name())
+		return "", fmt.Errorf("write temp input: %w", err)
+	}
+	return f.Name(), nil
 }
 
 // EmbedFile is Embed for a file already on disk, such as a library track:
