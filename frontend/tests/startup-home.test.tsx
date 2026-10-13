@@ -4,6 +4,7 @@ import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import type { Playlist, ReplayData, TrackListItem } from "../src/api";
 import { FavoritesProvider } from "../src/context/Favorites";
 import { PlaylistsProvider, usePlaylists } from "../src/context/Playlists";
+import { ThemeProvider } from "../src/context/Theme";
 import Home from "../src/pages/Home";
 import { clearResourceCache } from "../src/lib/resourceCache";
 
@@ -47,13 +48,15 @@ function Sidebar() {
 function renderHome() {
   return render(
     <MemoryRouter>
-      <FavoritesProvider>
-        <PlaylistsProvider>
-          <Sidebar />
-          <Link to="/library">Away</Link><Link to="/">Home</Link>
-          <Routes><Route path="/" element={<Home />} /><Route path="/library" element={<div>Library</div>} /></Routes>
-        </PlaylistsProvider>
-      </FavoritesProvider>
+      <ThemeProvider>
+        <FavoritesProvider>
+          <PlaylistsProvider>
+            <Sidebar />
+            <Link to="/library">Away</Link><Link to="/">Home</Link>
+            <Routes><Route path="/" element={<Home />} /><Route path="/library" element={<div>Library</div>} /></Routes>
+          </PlaylistsProvider>
+        </FavoritesProvider>
+      </ThemeProvider>
     </MemoryRouter>,
   );
 }

@@ -14,6 +14,7 @@ vi.mock("../../core/src/api", async (original) => ({
 }));
 vi.mock("../src/context/Auth", () => ({ useAuth: () => ({ me: { id: "user", username: "Listener" } }) }));
 vi.mock("../src/context/Player", () => ({ usePlayerControls: () => ({ play: vi.fn() }) }));
+vi.mock("../src/context/Theme", () => ({ useTheme: () => ({ homeBoard: undefined, setHomeBoard: vi.fn() }) }));
 vi.mock("../src/context/Favorites", () => ({
   useFavorites: () => ({ tracks: [], ids: new Set(), loading: false, error: null, refresh: vi.fn() }),
 }));

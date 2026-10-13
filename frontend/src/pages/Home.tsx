@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Disc3 as DiscIcon,
+  LayoutDashboard as CustomizeIcon,
   Play as PlayIcon,
   Sparkles as SparklesIcon,
 } from "lucide-react";
@@ -26,13 +27,23 @@ import {
   BoardRowPlaceholders,
   BoardTrackList,
   PanelStatus,
-  boardCellStyle,
   type BoardArtistItem,
 } from "../components/home/Board";
-import { boardLayout, type BoardCell, type BoardPanelId } from "../components/home/boardLayout";
+import { BoardSlot, useBoardEditor } from "../components/home/BoardEditing";
+import { boardLayout, type BoardPanelId } from "../components/home/boardLayout";
+import {
+  CUSTOMIZE_PARAM,
+  HOME_PANELS,
+  arrangementTweak,
+  panelIn,
+  readArrangement,
+  type HomeArrangement,
+  type HomePanelId,
+} from "../components/home/homeArrangement";
 import { homeAlbums } from "../components/home/homeAlbums";
 import { useTrackContextMenu } from "../lib/useTrackContextMenu";
 import { useAuth } from "../context/Auth";
+import { useTheme } from "../context/Theme";
 import { usePlayerControls } from "../context/Player";
 import { useFavorites } from "../context/Favorites";
 import { usePlaylists } from "../context/Playlists";
@@ -174,15 +185,38 @@ export default function Home() {
     topArtists.length,
   ]);
   if (present.length !== shown.length || present.some((id, i) => id !== shown[i])) setShown(present);
-  const layout = useMemo(() => boardLayout(present), [present]);
 
-  const panel = (cell: BoardCell) => {
-    switch (cell.id) {
+  // The board's slots keep their shapes; the arrangement says which panel
+  // fills each, and which are hidden. While customizing, every panel that
+  // isn't hidden is on the board, empty or not, so it can be moved.
+  const { homeBoard, setHomeBoard } = useTheme();
+  const arrangement = useMemo(() => readArrangement(homeBoard), [homeBoard]);
+  const [params, setParams] = useSearchParams();
+  const editing = params.has(CUSTOMIZE_PARAM);
+  const setEditing = (on: boolean) =>
+    setParams(
+      (p) => {
+        if (on) p.set(CUSTOMIZE_PARAM, "");
+        else p.delete(CUSTOMIZE_PARAM);
+        return p;
+      },
+      { replace: true },
+    );
+  const hasContent = (id: HomePanelId) => id === "resume" || present.includes(id);
+  const onBoard = (id: HomePanelId) => !arrangement.hidden.has(id) && (editing || hasContent(id));
+  const layout = boardLayout(HOME_PANELS.filter((slot) => onBoard(panelIn(arrangement, slot))));
+  const editor = useBoardEditor({
+    editing,
+    arrangement,
+    onChange: (next: HomeArrangement) => setHomeBoard(arrangementTweak(next)),
+    onDone: () => setEditing(false),
+  });
+
+  const panel = (id: HomePanelId) => {
+    switch (id) {
       case "resume":
         return (
           <ResumePanel
-            key={cell.id}
-            style={boardCellStyle(cell)}
             hero={hero}
             fromRecent={recent.length > 0}
             fallbackQueue={recent.length ? recent : tracks}
@@ -194,8 +228,6 @@ export default function Home() {
         const loading = pending(replayEmpty ? 0 : onRepeat.length, replayResource.loading, replayResource.error);
         return (
           <BoardPanel
-            key={cell.id}
-            cell={cell}
             sub="Last 30 days"
             title="On repeat"
             to={REPLAY_LINK}
@@ -234,8 +266,6 @@ export default function Home() {
       case "recent":
         return (
           <BoardPanel
-            key={cell.id}
-            cell={cell}
             sub="Picked up where you left off"
             title="Recently played"
             to="/recent"
@@ -256,8 +286,6 @@ export default function Home() {
       case "favorites":
         return (
           <BoardPanel
-            key={cell.id}
-            cell={cell}
             sub="Hearts"
             title="Your favorites"
             to="/favorites"
@@ -278,8 +306,6 @@ export default function Home() {
       case "albums":
         return (
           <BoardPanel
-            key={cell.id}
-            cell={cell}
             sub="Your library"
             title="Albums"
             to="/library?view=albums"
@@ -305,8 +331,6 @@ export default function Home() {
       case "playlists":
         return (
           <BoardPanel
-            key={cell.id}
-            cell={cell}
             sub="Curated"
             title="Playlists"
             to="/playlists"
@@ -330,8 +354,6 @@ export default function Home() {
       case "artists":
         return (
           <BoardPanel
-            key={cell.id}
-            cell={cell}
             sub="Last 30 days"
             title="Top artists"
             to={REPLAY_LINK}
@@ -357,7 +379,34 @@ export default function Home() {
   return (
     <div className="view board-view">
       {ctxMenu}
-      <div className="board">{layout.map(panel)}</div>
+      {editing && editor.bar}
+      {layout.length > 0 ? (
+        <div className="board">
+          {layout.map((cell, i) => {
+            const id = panelIn(arrangement, cell.id);
+            const next = layout[i + 1] ?? layout[i - 1];
+            return (
+              <BoardSlot
+                key={id}
+                cell={cell}
+                panel={id}
+                editing={editing ? editor.slot(id, next && panelIn(arrangement, next.id), !hasContent(id) && settled) : null}
+              >
+                {panel(id)}
+              </BoardSlot>
+            );
+          })}
+        </div>
+      ) : (
+        !editing && (
+          <div className="board-empty">
+            <p>Every panel on Home is hidden.</p>
+            <Button onClick={() => setEditing(true)} leadingIcon={<CustomizeIcon className="size-4" />}>
+              Customize Home
+            </Button>
+          </div>
+        )
+      )}
     </div>
   );
 }
@@ -414,14 +463,12 @@ function useFetchAndPlay() {
  * that loads, or a welcome for an empty library.
  */
 function ResumePanel({
-  style,
   hero,
   fromRecent,
   fallbackQueue,
   loading,
   error,
 }: {
-  style: CSSProperties;
   hero: TrackListItem | null;
   fromRecent: boolean;
   fallbackQueue: TrackListItem[];
@@ -430,11 +477,11 @@ function ResumePanel({
 }) {
   const { me } = useAuth();
   if (hero) {
-    return <HeroAlbum key={hero.id} style={style} track={hero} fromRecent={fromRecent} fallbackQueue={fallbackQueue} />;
+    return <HeroAlbum key={hero.id} track={hero} fromRecent={fromRecent} fallbackQueue={fallbackQueue} />;
   }
   if (loading) {
     return (
-      <div className="hero board-resume" style={style} aria-busy="true">
+      <div className="hero board-resume" aria-busy="true">
         <div className="hero-art" aria-hidden="true" />
         <div className="hero-body">
           <div className="hero-eyebrow">Jump back in</div>
@@ -459,7 +506,7 @@ function ResumePanel({
   }
   if (error) {
     return (
-      <div className="hero board-resume" style={style}>
+      <div className="hero board-resume">
         <div className="hero-body">
           <h1 className="hero-title">Your library</h1>
           <p>Some music could not be loaded. Retry the sections below.</p>
@@ -468,7 +515,7 @@ function ResumePanel({
     );
   }
   return (
-    <div className="hero board-resume" style={style}>
+    <div className="hero board-resume">
       <div className="hero-body">
         <div className="hero-eyebrow">Welcome, {me?.username}</div>
         <h1 className="hero-title">Your library is quiet</h1>
@@ -491,12 +538,10 @@ function ResumePanel({
  * anything, a library track), with Play picking up from that track.
  */
 function HeroAlbum({
-  style,
   track,
   fromRecent,
   fallbackQueue,
 }: {
-  style: CSSProperties;
   track: TrackListItem;
   fromRecent: boolean;
   /** Queue for a track with no local album to play through. */
@@ -550,7 +595,7 @@ function HeroAlbum({
   };
 
   return (
-    <div className="hero board-resume" style={style}>
+    <div className="hero board-resume">
       <CoverArt
         className="hero-art"
         src={trackCoverUrl(track)}

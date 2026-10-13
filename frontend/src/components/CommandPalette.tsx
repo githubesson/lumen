@@ -4,6 +4,7 @@ import { Description as DialogDescription, Title as DialogTitle } from "@radix-u
 import { useNavigate } from "react-router-dom";
 import {
   SlidersHorizontal as AdjustmentsHorizontalIcon,
+  LayoutDashboard as CustomizeIcon,
   LogOut as ArrowLeftEndOnRectangleIcon,
   Repeat as ArrowPathRoundedSquareIcon,
   Upload as ArrowUpTrayIcon,
@@ -45,6 +46,7 @@ import { displayText } from "../lib/format";
 import { albumSubtitle, artistSubtitle } from "@music-library/core/entity-labels";
 import { searchEntityTarget } from "@music-library/core/entity-target";
 import { useTrackContextMenu } from "../lib/useTrackContextMenu";
+import { CUSTOMIZE_HOME_PATH } from "./home/homeArrangement";
 import { useAuth } from "../context/Auth";
 import { usePlayer } from "../context/Player";
 import { useTheme } from "../context/Theme";
@@ -195,6 +197,13 @@ export default function CommandPalette({
           keywords: "tweaks preferences radius density layout output last.fm updates server discord desktop",
           icon: AdjustmentsHorizontalIcon,
           perform: onOpenTweaks,
+        },
+        {
+          id: "customize-home",
+          label: "Customize Home",
+          keywords: "rearrange reorder move swap hide panels board layout",
+          icon: CustomizeIcon,
+          perform: () => navigate(CUSTOMIZE_HOME_PATH),
         },
         {
           id: "upload",

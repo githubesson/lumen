@@ -1,8 +1,9 @@
-import { act, cleanup, fireEvent, render, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import type { ReplayData, TrackListItem } from "../src/api";
 import Home from "../src/pages/Home";
+import { ThemeProvider } from "../src/context/Theme";
 import { clearResourceCache, readCache } from "../src/lib/resourceCache";
 import { replayQueries } from "@music-library/core/replay/replay";
 
@@ -41,6 +42,7 @@ function replay(top: (TrackListItem & { plays: number })[], artists: ReplayData[
 beforeEach(() => {
   vi.clearAllMocks();
   clearResourceCache();
+  localStorage.clear();
   mock.recent.mockResolvedValue([track("r1", "Halden Marsh")]);
   mock.tracks.mockResolvedValue([]);
   mock.getAlbum.mockResolvedValue(null);
@@ -48,8 +50,8 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-async function renderHome() {
-  const view = render(<MemoryRouter><Home /></MemoryRouter>);
+async function renderHome(url = "/") {
+  const view = render(<MemoryRouter initialEntries={[url]}><ThemeProvider><Home /></ThemeProvider></MemoryRouter>);
   await act(async () => {});
   return view;
 }
@@ -287,4 +289,86 @@ it("says why an album didn't play, in its panel", async () => {
   await act(async () => fireEvent.click(albums.getByRole("button", { name: "Play Weather" })));
   expect(albums.queryByRole("alert")).toBeNull();
   expect(mock.play).toHaveBeenCalled();
+});
+
+/** Saves an arrangement the way the Theme context does. */
+const arrange = (homeBoard: { slots: string[]; hidden: string[] }) =>
+  localStorage.setItem("lumen.tweaks", JSON.stringify({ homeBoard }));
+const savedBoard = () => JSON.parse(localStorage.getItem("lumen.tweaks") ?? "{}").homeBoard;
+const slotOf = (id: string) => panel(id)?.dataset.slot;
+
+const withAlbum = () =>
+  mock.tracks.mockResolvedValue([track("1", "Halden Marsh", { album_id: "al-1", album_title: "Weather" })]);
+
+it("puts each panel in the slot it was moved to, and leaves hidden ones off", async () => {
+  withAlbum();
+  arrange({
+    slots: ["resume", "repeat", "albums", "favorites", "recent", "playlists", "artists"],
+    hidden: ["resume"],
+  });
+  await renderHome();
+  expect(slotOf("albums")).toBe("recent");
+  expect(slotOf("recent")).toBe("albums");
+  expect(panel("resume")).toBeNull();
+  // Not customizing: the panels work as usual.
+  expect(panel("albums")!.querySelector(".board-slot-body")!.hasAttribute("inert")).toBe(false);
+  expect(within(panel("albums")!).getByRole("button", { name: "Play Weather" })).toBeTruthy();
+});
+
+it("swaps and hides panels while customizing, and saves the arrangement", async () => {
+  withAlbum();
+  await renderHome("/?customize");
+  const bar = within(screen.getByRole("region", { name: "Customize Home" }));
+  const tile = (name: string) => within(screen.getByRole("group", { name }));
+  // The panels underneath are inert while they're arranged.
+  expect(panel("recent")!.querySelector(".board-slot-body")!.hasAttribute("inert")).toBe(true);
+  // Empty lists are on the board too, so they can be moved or hidden.
+  expect(tile("Your favorites").getByText("Shows up once it has something")).toBeTruthy();
+
+  fireEvent.click(tile("Albums").getByRole("button", { name: "Move" }));
+  expect(bar.getByText("Choose where Albums goes.")).toBeTruthy();
+  fireEvent.click(tile("Recently played").getByRole("button", { name: "Swap here" }));
+  expect(slotOf("albums")).toBe("recent");
+  expect(slotOf("recent")).toBe("albums");
+  expect(savedBoard()).toEqual({
+    slots: ["resume", "repeat", "albums", "favorites", "recent", "playlists", "artists"],
+    hidden: [],
+  });
+  expect(bar.getByRole("status").textContent).toBe("Swapped Albums and Recently played.");
+  // Focus stays with the panel that moved.
+  expect(document.activeElement).toBe(tile("Albums").getByRole("button", { name: "Move" }));
+
+  fireEvent.click(tile("Albums").getByRole("button", { name: "Hide" }));
+  expect(panel("albums")).toBeNull();
+  expect(savedBoard().hidden).toEqual(["albums"]);
+  fireEvent.click(within(bar.getByRole("group", { name: "Hidden panels" })).getByRole("button", { name: "Show Albums" }));
+  expect(slotOf("albums")).toBe("recent");
+
+  fireEvent.click(bar.getByRole("button", { name: "Reset" }));
+  expect(slotOf("albums")).toBe("albums");
+  expect(savedBoard()).toBeUndefined();
+
+  fireEvent.click(bar.getByRole("button", { name: "Done" }));
+  expect(screen.queryByRole("region", { name: "Customize Home" })).toBeNull();
+  expect(panel("favorites")).toBeNull();
+});
+
+it("swaps two panels dropped one on the other", async () => {
+  withAlbum();
+  await renderHome("/?customize");
+  const dataTransfer = { setData: vi.fn(), effectAllowed: "", dropEffect: "" };
+  fireEvent.dragStart(panel("albums")!, { dataTransfer });
+  fireEvent.dragOver(panel("resume")!, { dataTransfer });
+  fireEvent.drop(panel("resume")!, { dataTransfer });
+  expect(slotOf("albums")).toBe("resume");
+  expect(slotOf("resume")).toBe("albums");
+  expect(savedBoard().slots.slice(0, 5)).toEqual(["albums", "repeat", "recent", "favorites", "resume"]);
+});
+
+it("offers a way back when every panel is hidden", async () => {
+  arrange({ slots: [], hidden: ["resume", "repeat", "recent", "favorites", "albums", "playlists", "artists"] });
+  await renderHome();
+  expect(screen.getByText("Every panel on Home is hidden.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Customize Home" }));
+  expect(screen.getByRole("region", { name: "Customize Home" })).toBeTruthy();
 });

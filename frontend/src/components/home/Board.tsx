@@ -33,7 +33,6 @@ export function boardCellStyle(cell: BoardCell): CSSProperties {
 }
 
 export function BoardPanel({
-  cell,
   sub,
   title,
   to,
@@ -42,7 +41,6 @@ export function BoardPanel({
   footer,
   children,
 }: {
-  cell: BoardCell;
   sub: string;
   title: string;
   /** The page "view all" opens. */
@@ -56,8 +54,6 @@ export function BoardPanel({
   return (
     <Section
       className="board-panel"
-      style={boardCellStyle(cell)}
-      data-panel={cell.id}
       sub={sub}
       title={title}
       action={

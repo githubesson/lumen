@@ -15,8 +15,8 @@ import {
   setTitleBarTheme,
 } from "../lib/platform";
 
-import type { Theme, Density, Layout, Tweaks } from "../contracts/desktop";
-export type { Theme, Density, Layout, Tweaks } from "../contracts/desktop";
+import type { Theme, Density, Layout, Tweaks, HomeBoardTweak } from "../contracts/desktop";
+export type { Theme, Density, Layout, Tweaks, HomeBoardTweak } from "../contracts/desktop";
 
 const STORAGE_KEY = "lumen.tweaks";
 
@@ -36,6 +36,8 @@ function knownTweaks(raw: Partial<Tweaks> | null | undefined): Partial<Tweaks> {
   if (raw.radius !== undefined) out.radius = raw.radius;
   if (raw.density !== undefined) out.density = raw.density;
   if (raw.layout !== undefined) out.layout = raw.layout;
+  // Home reads it through readArrangement, which validates it.
+  if (raw.homeBoard !== undefined) out.homeBoard = raw.homeBoard;
   return out;
 }
 
@@ -59,6 +61,8 @@ interface ThemeState extends Tweaks {
   setRadius: (r: number) => void;
   setDensity: (d: Density) => void;
   setLayout: (l: Layout) => void;
+  /** Saves Home's arrangement; undefined goes back to the default. */
+  setHomeBoard: (board: HomeBoardTweak | undefined) => void;
 }
 
 const Ctx = createContext<ThemeState | null>(null);
@@ -131,6 +135,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const setHomeBoard = useCallback(
+    (board: HomeBoardTweak | undefined) =>
+      setTweaks(({ homeBoard: _previous, ...v }) => (board ? { ...v, homeBoard: board } : v)),
+    [],
+  );
+
   const value = useMemo<ThemeState>(
     () => ({
       ...tweaks,
@@ -139,6 +149,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setRadius,
       setDensity,
       setLayout,
+      setHomeBoard,
     }),
     [
       tweaks,
@@ -147,6 +158,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setRadius,
       setDensity,
       setLayout,
+      setHomeBoard,
     ],
   );
 
