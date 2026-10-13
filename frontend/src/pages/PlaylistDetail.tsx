@@ -284,15 +284,19 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     if (!id || !autoDownload || playlistAutoDownloadRefetchMs(snapshot) === false) return;
     let controller: AbortController | null = null;
     let timer: number | undefined;
+    // Set on cleanup: an aborted read still settles, and must not re-arm a
+    // loop for a snapshot this effect no longer owns.
+    let disposed = false;
     // Queued entries are looked at every 20 s; after a failed download, again
     // once its retry is due. A read that changes the snapshot restarts this.
     const schedule = () => {
       window.clearTimeout(timer);
+      if (disposed) return;
       const delay = playlistAutoDownloadRefetchMs(snapshot);
       if (delay !== false) timer = window.setTimeout(refresh, delay);
     };
     const refresh = () => {
-      if (controller) return;
+      if (disposed || controller) return;
       if (document.hidden || pendingTrackMutationsRef.current > 0) {
         schedule();
         return;
@@ -321,6 +325,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     schedule();
     document.addEventListener("visibilitychange", refresh);
     return () => {
+      disposed = true;
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", refresh);
       controller?.abort();

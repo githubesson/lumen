@@ -105,3 +105,26 @@ it("stops refetching once nothing is queued or waiting", async () => {
   await act(async () => { vi.advanceTimersByTime(120_000); });
   expect(mock.listPlaylistTracksIfChanged).toHaveBeenCalledTimes(1);
 });
+
+it("stops polling when the page goes away mid-read", async () => {
+  mock.listPlaylistTracksIfChanged.mockResolvedValueOnce({
+    etag: "v1",
+    data: { tracks: tidalRows, tidal_queued: 1 },
+  });
+  // The next read is still out when the page unmounts; it settles on abort.
+  mock.listPlaylistTracksIfChanged.mockImplementation(
+    (_id: string, _etag: string, { signal }: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      }),
+  );
+  await renderPage();
+  await act(async () => { vi.advanceTimersByTime(20_000); });
+  expect(mock.listPlaylistTracksIfChanged).toHaveBeenCalledTimes(2);
+
+  cleanup();
+  // Let the aborted read settle before the clock moves on.
+  await act(async () => {});
+  for (let i = 0; i < 6; i++) await act(async () => { vi.advanceTimersByTime(20_000); });
+  expect(mock.listPlaylistTracksIfChanged).toHaveBeenCalledTimes(2);
+});
