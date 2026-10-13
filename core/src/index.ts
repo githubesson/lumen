@@ -128,6 +128,7 @@ export * from "./auth/validation";
 export { useLastFMConnection } from "./lastfm/use-lastfm-connection";
 
 export * from "./admin/invites";
+export * from "./admin/invite-links";
 export * from "./admin/music-roots";
 export * from "./tidal/status";
 export * from "./tidal/track-info";

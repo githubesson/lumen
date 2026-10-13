@@ -1,3 +1,8 @@
+/**
+ * Invite links: the mobile app's registration deep link, the message an admin
+ * shares, and reading a token back out of whatever the invitee pastes.
+ */
+
 const INVITE_SCHEME = "musiclibrarymobile";
 const INVITE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,}$/;
 const URL_CANDIDATE_PATTERN = /(?:https?:\/\/|musiclibrarymobile:\/\/)[^\s<>"']+/gi;
@@ -24,10 +29,12 @@ export function extractInviteToken(input: string): string | null {
   return labeledToken && isInviteToken(labeledToken) ? labeledToken : null;
 }
 
+/** The mobile app's deep link that opens registration with `token` filled in. */
 export function buildInviteRegistrationUrl(token: string): string {
   return `${INVITE_SCHEME}://register?token=${encodeURIComponent(token)}`;
 }
 
+/** What an admin shares: the deep link, with the raw token as a fallback. */
 export function buildInviteShareMessage(token: string): string {
   const url = buildInviteRegistrationUrl(token);
   return [

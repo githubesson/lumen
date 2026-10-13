@@ -6,6 +6,7 @@ import { useHeaderHeight } from "expo-router/react-navigation";
 import * as Haptics from "expo-haptics";
 import {
   api,
+  extractInviteToken,
   inviteCheckErrorMessage,
   registrationErrorMessage,
   useAuth,
@@ -18,9 +19,6 @@ import {
   FormTextInput,
 } from "../../components/form-field";
 import { FormScreen } from "../../components/form-screen";
-import {
-  extractInviteToken,
-} from "../../lib/invite-registration";
 import { useTheme } from "../../theme/theme";
 
 type InviteSource = "route" | "manual";
