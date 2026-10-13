@@ -39,6 +39,7 @@ import {
   buildQueueTemplate,
   buildSignedOutTemplate,
   buildTrackListTemplate,
+  carPlayAlbumId,
   CARPLAY_TAB,
   decodeDestination,
   greetingFor,
@@ -406,7 +407,7 @@ export function CarPlayBridge() {
       ],
       upNextTitle: "Up Next",
       upNextEnabled: queueProgress.upcoming > 0,
-      albumArtistEnabled: !!currentTrack?.album_id,
+      albumArtistEnabled: !!currentTrack && carPlayAlbumId(currentTrack) !== null,
     });
   }, [connected, currentTrack, favorited, queueProgress.upcoming, repeat, shuffle]);
 
@@ -599,7 +600,7 @@ export function CarPlayBridge() {
     );
   });
   const onAlbumArtist = useEffectEvent(() => {
-    const albumId = currentTrack?.album_id;
+    const albumId = currentTrack ? carPlayAlbumId(currentTrack) : null;
     if (!albumId) return;
     void templateFor({ kind: "album", id: albumId }).then((template) => {
       if (template) void pushCarPlayList(template);

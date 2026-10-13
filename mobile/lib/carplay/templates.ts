@@ -3,6 +3,7 @@ import {
   canStartTrack,
   displayText,
   playlistArtUrl,
+  trackAlbumTarget,
   trackArtUrl,
   type Album,
   type Playlist,
@@ -331,6 +332,16 @@ function albumTile(album: Album): CarPlayImage {
 }
 
 /**
+ * The library album a track leads to in the car, or null when there's none
+ * to open here. The car browses library albums only, and a TIDAL track's
+ * `album_id` is a hidden album the library routes don't serve.
+ */
+export function carPlayAlbumId(track: TrackListItem): string | null {
+  const target = trackAlbumTarget(track);
+  return target?.kind === "local" ? target.id : null;
+}
+
+/**
  * The albums behind a run of recently played tracks, newest first and each
  * counted once — a play history is mostly the same few records repeating.
  */
@@ -343,7 +354,7 @@ export function recentAlbumTiles(
   const tiles: CarPlayImage[] = [];
 
   for (const track of tracks) {
-    const albumId = track.album_id;
+    const albumId = carPlayAlbumId(track);
     if (!albumId || seen.has(albumId)) continue;
     seen.add(albumId);
     tiles.push({

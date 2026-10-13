@@ -15,6 +15,7 @@ import {
   buildQueueTemplate,
   buildSignedOutTemplate,
   buildTrackListTemplate,
+  carPlayAlbumId,
   CARPLAY_TAB,
   decodeDestination,
   encodeDestination,
@@ -296,6 +297,19 @@ describe("home tab", () => {
     );
 
     expect(tiles.map((tile) => tile.id)).toEqual(["album:a1", "album:a2"]);
+  });
+
+  it("leaves out a TIDAL track's hidden library album", () => {
+    const tiles = recentAlbumTiles(
+      [
+        track("tidal:1", { source: "tidal", album_id: "hidden", source_album_id: "99" }),
+        track("t2", { source: "local", album_id: "a2" }),
+      ],
+      4,
+      () => "cover",
+    );
+
+    expect(tiles.map((tile) => tile.id)).toEqual(["album:a2"]);
   });
 
   it("shows no more covers than the car will draw", () => {
@@ -607,6 +621,19 @@ describe("browse templates", () => {
     expect(
       buildAlbumsTemplate({ limits: LIMITS, albums: undefined }).emptyTitle,
     ).toMatch(/offline/i);
+  });
+});
+
+describe("album links", () => {
+  it("opens a library track's album", () => {
+    expect(carPlayAlbumId(track("t1", { album_id: "a1" }))).toBe("a1");
+  });
+
+  it("has nothing to open for a TIDAL track or a track without an album", () => {
+    expect(
+      carPlayAlbumId(track("tidal:1", { source: "tidal", album_id: "hidden", source_album_id: "99" })),
+    ).toBeNull();
+    expect(carPlayAlbumId(track("t1"))).toBeNull();
   });
 });
 
