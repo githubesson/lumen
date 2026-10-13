@@ -1,5 +1,6 @@
-import type { Album, TidalAlbum, TrackSource } from "./api";
-import { displayText, pluralize } from "./format";
+import type { Album, TidalAlbum, TrackListItem, TrackSource } from "./api";
+import { displayText, formatTotalMs, pluralize } from "./format";
+import { isLocalTrack } from "./track";
 
 /**
  * Subtitle and meta lines for albums and artists, built the same way on both
@@ -88,6 +89,122 @@ export function tidalAlbumMetaParts(
   album: Pick<TidalAlbum, "track_count" | "saved_count" | "release_year">,
 ): AlbumMetaPart[] {
   return albumMetaParts(album.track_count, album.saved_count || undefined, album.release_year);
+}
+
+/** One artist an album page credits under its title. */
+export interface AlbumCredit {
+  name: string;
+  /** The library artist page the name opens; unset when there is none to open. */
+  artistId?: string;
+}
+
+/**
+ * The artists an album page credits, in order: every main artist of a TIDAL
+ * release when known, else the album artist. Only the album artist has a
+ * library id, and it links only when one of the album's library tracks
+ * credits it: an artist page lists the artist's own tracks, so an album
+ * artist nothing is credited to ("Various Artists") would open "not found".
+ */
+export function albumCredits(
+  album: {
+    artist_id?: string;
+    artist_name?: string;
+    artist_names?: string[];
+    artists?: string[];
+    artist?: string;
+  },
+  tracks: readonly Pick<TrackListItem, "artist" | "source">[],
+): AlbumCredit[] {
+  const listed = album.artist_names?.length
+    ? album.artist_names
+    : album.artists?.length
+      ? album.artists
+      : [album.artist_name || album.artist];
+  const names: string[] = [];
+  for (const raw of listed) {
+    const name = displayText(raw);
+    if (name && !names.some((other) => sameName(other, name))) names.push(name);
+  }
+  const own = displayText(album.artist_name);
+  const linked =
+    !!album.artist_id &&
+    !!own &&
+    tracks.some((track) => isLocalTrack(track) && creditsArtist(track.artist, own));
+  return names.map((name) =>
+    linked && sameName(name, own) ? { name, artistId: album.artist_id } : { name },
+  );
+}
+
+function sameName(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+/** A track row's artist is its main artists joined with ", ". */
+function creditsArtist(trackArtist: string | undefined, name: string): boolean {
+  return `, ${displayText(trackArtist).toLowerCase()}, `.includes(`, ${name.toLowerCase()}, `);
+}
+
+/**
+ * "12 tracks · 48 min": how long an album page's list is. The time is left
+ * out when no track has one, and a list under a minute reads "1 min".
+ */
+export function albumLength(tracks: readonly Pick<TrackListItem, "duration_ms">[]): string {
+  const total = tracks.reduce(
+    (sum, track) =>
+      sum + (Number.isFinite(track.duration_ms) && track.duration_ms > 0 ? track.duration_ms : 0),
+    0,
+  );
+  return joinParts([
+    pluralize(tracks.length, "track"),
+    total > 0 && formatTotalMs(Math.max(total, 60_000)),
+  ]);
+}
+
+/** One fact in an album page's Details. */
+export interface AlbumFact {
+  key: "released" | "length" | "saved";
+  label: string;
+  value: string;
+}
+
+function albumFacts(
+  tracks: readonly Pick<TrackListItem, "duration_ms">[],
+  savedCount: number | undefined,
+  releaseYear: number | undefined,
+): AlbumFact[] {
+  const facts: AlbumFact[] = [];
+  if (releaseYear) facts.push({ key: "released", label: "Released", value: String(releaseYear) });
+  facts.push({ key: "length", label: "Length", value: albumLength(tracks) });
+  if (savedCount !== undefined) {
+    facts.push({
+      key: "saved",
+      label: "Saved",
+      value: `${savedCount} of ${pluralize(tracks.length, "track")}`,
+    });
+  }
+  return facts;
+}
+
+/**
+ * A library album page's Details: the year when known, the length of its
+ * list, and for an album copying a TIDAL release, how much of it is saved.
+ * Unknown facts are left out rather than shown as a dash.
+ */
+export function libraryAlbumFacts(
+  album: Pick<Album, "tidal_album_id" | "saved_count" | "release_year">,
+  tracks: readonly Pick<TrackListItem, "duration_ms">[],
+): AlbumFact[] {
+  // Only an album copying a TIDAL release has a part to save.
+  const saved = album.tidal_album_id ? album.saved_count : undefined;
+  return albumFacts(tracks, saved, album.release_year);
+}
+
+/** The same for a TIDAL album page, where nothing saved is the usual case. */
+export function tidalAlbumFacts(
+  album: Pick<TidalAlbum, "saved_count" | "release_year">,
+  tracks: readonly Pick<TrackListItem, "duration_ms">[],
+): AlbumFact[] {
+  return albumFacts(tracks, album.saved_count || undefined, album.release_year);
 }
 
 /** "12 tracks · 3 albums", or "TIDAL artist" for one from search. */

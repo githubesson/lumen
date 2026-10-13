@@ -150,16 +150,6 @@
   padding: 12px 0 16px;
 }
 
-.detail-corner {
-  position: absolute;
-  right: 24px;
-  bottom: 24px;
-  z-index: 2;
-  max-width: calc(100% - 48px);
-  display: flex;
-  justify-content: flex-end;
-  pointer-events: auto;
-}
 .detail-track-search {
   display: flex;
   align-items: center;
@@ -178,22 +168,245 @@
   white-space: nowrap;
 }
 @media (max-width: 900px) {
-  .detail-header.has-corner {
-    flex-wrap: wrap;
-  }
-  .detail-corner {
-    position: relative;
-    right: auto;
-    bottom: auto;
-    width: 100%;
-    max-width: none;
-    margin-top: 4px;
-  }
   .detail-track-search {
     width: 100%;
   }
   .detail-track-search .search {
     width: 100%;
     max-width: none;
+  }
+}
+
+/* ============================================================
+   Album page: the sleeve column (components/library/AlbumSleeve)
+   ============================================================ */
+/* Who the album is in a column on the left, a divider, the list on the
+   right. The column stays put while the list scrolls: useSleeveLayout sets
+   its offset, and sets data-stacked when the view is too narrow for both. */
+.album-sleeve {
+  display: grid;
+  grid-template-columns: 280px 1px minmax(0, 1fr);
+  column-gap: 24px;
+  align-items: start;
+  /* Clipped rather than hidden: hidden would make the view a scroll
+     container, and the column could no longer stick as the content area
+     scrolls. */
+  overflow-x: clip;
+}
+.album-sleeve-side {
+  position: sticky;
+  top: var(--sleeve-top, var(--pad));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "back" "art" "head" "details";
+  gap: 16px;
+  min-width: 0;
+}
+.album-sleeve-back {
+  grid-area: back;
+  justify-self: start;
+  /* The arrow lines up with the cover's edge. */
+  margin: 0 0 -4px -10px;
+}
+.album-sleeve-art {
+  grid-area: art;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--radius-lg);
+}
+.album-sleeve-head {
+  grid-area: head;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.album-sleeve-name {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.album-sleeve-title {
+  margin: 2px 0;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.album-sleeve-by {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+.album-sleeve-by[role="status"] {
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.album-sleeve-artist {
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+.album-sleeve-artist:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.album-sleeve-artist:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.album-sleeve-play,
+.album-sleeve-more {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.album-sleeve-play-all,
+.album-sleeve-more > .btn {
+  flex: 1 1 auto;
+}
+/* The download control renders nothing once the whole release is saved. */
+.album-sleeve-more:empty {
+  display: none;
+}
+/* While loading: a button-sized bar holding the row's place. */
+.album-sleeve-more > .album-sleeve-more-skeleton {
+  flex: 1 1 auto;
+  height: 32px;
+  border-radius: var(--radius-lg);
+}
+.album-sleeve-shuffle {
+  position: relative;
+  flex: 0 0 32px;
+  width: 32px;
+  padding: 0;
+}
+.btn.album-sleeve-shuffle.active {
+  background: var(--muted);
+}
+/* Active-state dot, so "on" doesn't rely on the fill alone. */
+.album-sleeve-shuffle.active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 99px;
+  background: currentColor;
+}
+.album-sleeve-details {
+  grid-area: details;
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 14px;
+}
+.album-sleeve-details-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  margin-bottom: 6px;
+}
+.album-sleeve-details-head .iconbtn {
+  width: 28px;
+  height: 28px;
+  flex-basis: 28px;
+  color: var(--muted-foreground);
+}
+.album-sleeve-details-head .iconbtn:hover {
+  color: var(--foreground);
+}
+.album-sleeve-rule {
+  align-self: stretch;
+  background: var(--border);
+}
+.album-sleeve-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+.album-sleeve-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.search.album-sleeve-search {
+  flex: 0 1 280px;
+  width: 280px;
+  max-width: 100%;
+}
+.album-sleeve-select {
+  margin-left: auto;
+}
+/* Only number, title, time and actions: the list fits its column instead
+   of scrolling sideways. */
+.album-sleeve-list .table-scroll .table {
+  min-width: 0;
+}
+
+/* Too narrow for the column: it stacks into a header above the list, the
+   cover beside the title and the details under both. */
+.album-sleeve[data-stacked] {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 20px;
+}
+.album-sleeve[data-stacked] .album-sleeve-side {
+  position: static;
+  grid-template-columns: 176px minmax(0, 1fr);
+  grid-template-areas:
+    "back back"
+    "art head"
+    "details details";
+  column-gap: 24px;
+  align-items: end;
+}
+.album-sleeve[data-stacked] .album-sleeve-title {
+  font-size: 30px;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+}
+.album-sleeve[data-stacked] .album-sleeve-play-all,
+.album-sleeve[data-stacked] .album-sleeve-more > .btn {
+  flex: 0 0 auto;
+}
+.album-sleeve[data-stacked] .album-sleeve-more > .album-sleeve-more-skeleton {
+  flex: 0 0 160px;
+}
+.album-sleeve[data-stacked] .album-sleeve-rule {
+  height: 1px;
+}
+
+/* Phones: one column, the cover on top, buttons and search full width. */
+@media (max-width: 760px) {
+  .album-sleeve[data-stacked] .album-sleeve-side {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "back" "art" "head" "details";
+    align-items: stretch;
+  }
+  .album-sleeve[data-stacked] .album-sleeve-art {
+    width: min(100%, 220px);
+    justify-self: center;
+  }
+  .album-sleeve[data-stacked] .album-sleeve-title {
+    font-size: 24px;
+    line-height: 1.2;
+  }
+  .album-sleeve[data-stacked] .album-sleeve-play-all,
+  .album-sleeve[data-stacked] .album-sleeve-more > .btn,
+  .album-sleeve[data-stacked] .album-sleeve-more > .album-sleeve-more-skeleton {
+    flex: 1 1 auto;
+  }
+  .search.album-sleeve-search {
+    flex: 1 1 200px;
+    width: auto;
   }
 }

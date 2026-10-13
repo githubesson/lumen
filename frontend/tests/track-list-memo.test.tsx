@@ -46,3 +46,17 @@ it("skips unaffected rows with an extra column and still applies column changes"
   rerender(<TrackList tracks={tracks} selectable={false} showCover={false} extraColumn={{ header: "Plays", render: () => "Updated" }} />);
   expect(screen.getAllByText("Updated")).toHaveLength(2);
 });
+
+it("leaves out the artist line on rows credited to the page's own artist", () => {
+  const tracks: TrackListItem[] = [
+    { id: "a", title: "Solo", artist: "Band", duration_ms: 1000 },
+    { id: "b", title: "Duet", artist: "Band, Guest", duration_ms: 1000 },
+    { id: "c", title: "Same, other case", artist: "band", duration_ms: 1000 },
+  ];
+  const { container, rerender } = render(<TrackList tracks={tracks} selectable={false} omitArtist="Band" />);
+  const lines = () => [...container.querySelectorAll(".track-sub")].map((line) => line.textContent);
+  expect(lines()).toEqual(["Band, Guest"]);
+  // Without a page artist every row names its own.
+  rerender(<TrackList tracks={tracks} selectable={false} />);
+  expect(lines()).toEqual(["Band", "Band, Guest", "band"]);
+});

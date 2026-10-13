@@ -1,5 +1,5 @@
 import { test, type Page } from "playwright/test";
-import { albums, artists, pendingInvites, playlists } from "./fixtures";
+import { albums, artists, pendingInvites, playlists, tidalAlbum } from "./fixtures";
 import { checkUI, go, ready, signedIn } from "./helpers";
 
 // Every signed-in screen, reached in-app so the player bar keeps its track.
@@ -46,6 +46,13 @@ test("album detail", async ({ page }, testInfo) => {
   const album = albums.find((a) => a.id === "al-postcard")!;
   await go(page, `/library?album=${album.id}`);
   await ready(page, page.getByRole("heading", { name: album.title }));
+  await ready(page, rows(page));
+  await checkUI(page, testInfo);
+});
+
+test("TIDAL album detail", async ({ page }, testInfo) => {
+  await go(page, `/library?tidalAlbum=${tidalAlbum.id}`);
+  await ready(page, page.getByRole("heading", { name: tidalAlbum.title }));
   await ready(page, rows(page));
   await checkUI(page, testInfo);
 });

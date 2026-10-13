@@ -26,6 +26,7 @@ import type {
   SearchArtist,
   SearchResponse,
   TidalAutoDownloadStatus,
+  TidalAlbum,
   TidalStatus,
   TrackDetail,
   TrackListItem,
@@ -186,6 +187,38 @@ export const tidalTrack: TrackListItem = {
   artist: "Saint Lucien & The Harbour Lights",
   cover_url: "/api/covers/remote?url=https%3A%2F%2Fresources.tidal.com%2Fimages%2Fd7a1%2F640x640.jpg",
 };
+
+/** The TIDAL release `tidalTrack` is from. Nothing of it is in the library, so its page offers the download. */
+export const tidalAlbum: TidalAlbum = (() => {
+  const rows: [title: string, seconds: number][] = [
+    ["Harbour Lights (Live From the Union Chapel, Islington)", 231],
+    ["Night Ferry (Live From the Union Chapel, Islington)", 276],
+    ["A Coat Too Thin for November (Live From the Union Chapel, Islington)", 284],
+    ["The Cartographer's Lament (Live From the Union Chapel, Islington)", 318],
+  ];
+  const albumTracks = rows.map(([title, seconds], index): TrackListItem =>
+    title === tidalTrack.title
+      ? tidalTrack
+      : {
+          ...tidalTrack,
+          id: `tidal:3812455${71 + index}`,
+          source_id: `3812455${71 + index}`,
+          title,
+          duration_ms: seconds * 1000,
+        },
+  );
+  return {
+    id: tidalTrack.source_album_id!,
+    title: tidalTrack.album_title!,
+    artist: tidalTrack.artist,
+    artists: [tidalTrack.artist!],
+    release_year: 2023,
+    track_count: albumTracks.length,
+    duration_ms: albumTracks.reduce((sum, t) => sum + t.duration_ms, 0),
+    cover_url: tidalTrack.cover_url,
+    tracks: albumTracks,
+  };
+})();
 
 export const albums: Album[] = albumRows.map((album) => ({
   id: album.id,

@@ -18,7 +18,6 @@ export default function ListPageHeader({
   art,
   meta,
   actions,
-  corner,
   className,
 }: {
   kind: ReactNode;
@@ -32,17 +31,10 @@ export default function ListPageHeader({
   art?: ReactNode;
   meta?: ReactNode;
   actions?: ReactNode;
-  corner?: ReactNode;
   className?: string;
 }) {
   const cover = heroTrack ? trackCoverUrl(heroTrack) : null;
-  const headerClassName = [
-    "detail-header",
-    corner != null ? "has-corner" : "",
-    className ?? "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const headerClassName = ["detail-header", className ?? ""].filter(Boolean).join(" ");
   return (
     <header className={headerClassName}>
       {art ?? (
@@ -75,7 +67,6 @@ export default function ListPageHeader({
         {meta != null && <div className="detail-meta">{meta}</div>}
         {actions != null && <div className="detail-actions">{actions}</div>}
       </div>
-      {corner != null && <div className="detail-corner">{corner}</div>}
     </header>
   );
 }
