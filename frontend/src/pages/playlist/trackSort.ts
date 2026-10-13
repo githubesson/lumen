@@ -10,11 +10,7 @@ import type { SelectOption } from "../../components/Select";
 // the page passes core's comparator the title keys built here once per list.
 // Custom order with no search builds no keys.
 
-export {
-  SORT_DEFAULT_ASC,
-  compareSortableTracks as compareEntries,
-  type SortKey,
-} from "@music-library/core/track-sort";
+export { SORT_DEFAULT_ASC, type SortKey } from "@music-library/core/track-sort";
 
 export const SORT_OPTIONS: SelectOption<SortKey>[] = [
   { value: "custom", label: "Custom order" },

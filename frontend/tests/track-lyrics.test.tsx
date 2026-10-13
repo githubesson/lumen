@@ -59,7 +59,6 @@ it("shows an instrumental result as Instrumental, not as missing lyrics", async 
   expect(error).toBeNull();
   render(
     <PlayerLyricsLine
-      variant="sidebar"
       lyrics={lyrics}
       loading={false}
       error={error}

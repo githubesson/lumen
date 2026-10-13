@@ -16,11 +16,6 @@ export function formatDate(value?: string | null): string {
   );
 }
 
-/** Full locale date and time. Guards against bad dates. */
-export function formatDateTime(value?: string | null): string {
-  return parseDate(value)?.toLocaleString() ?? "-";
-}
-
 /** Human scan cadence (e.g. "60 min", "1.5 hr") from a seconds interval. */
 export function formatInterval(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return "-";
