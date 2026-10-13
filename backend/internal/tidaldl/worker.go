@@ -784,15 +784,5 @@ func TrackPath(t tidal.Track) string {
 	case t.TrackNo > 0:
 		name = fmt.Sprintf("%02d - %s", t.TrackNo, title)
 	}
-	return filepath.Join(safeName(artist), safeName(album), safeName(name))
-}
-
-// safeName sanitizes one path component. SanitizeName truncates by bytes,
-// which can split a multi-byte rune, and ingest rejects non-UTF-8 paths.
-func safeName(s string) string {
-	s = strings.ToValidUTF8(downloadfile.SanitizeName(s), "")
-	if s == "" {
-		return "unnamed"
-	}
-	return s
+	return filepath.Join(downloadfile.SanitizeName(artist), downloadfile.SanitizeName(album), downloadfile.SanitizeName(name))
 }
