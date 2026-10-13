@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -158,11 +157,7 @@ func (h *AdminTIDALDownloads) DownloadAlbum(w http.ResponseWriter, r *http.Reque
 	}
 	release, err := h.fullRelease(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
-		if errors.Is(err, tidal.ErrNotConfigured) {
-			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-			return
-		}
-		http.Error(w, "tidal album unavailable", http.StatusBadGateway)
+		writeTIDALError(w, err, "TIDAL refused this album", "tidal album unavailable")
 		return
 	}
 	var localAlbum *uuid.UUID

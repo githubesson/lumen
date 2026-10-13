@@ -226,7 +226,7 @@ func (h *Tracks) Unfavorite(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		http.Error(w, "bad track id", http.StatusBadRequest)
+		writeTrackResolveError(w, err)
 		return
 	}
 	if err := h.Library.ClearFavorite(r.Context(), u.ID, id); err != nil {
@@ -592,7 +592,7 @@ func (h *Tracks) NowPlaying(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
 	if err != nil {
-		http.Error(w, "bad track id", http.StatusBadRequest)
+		writeTrackResolveError(w, err)
 		return
 	}
 	h.runLastFM(func(ctx context.Context) error {
@@ -648,7 +648,7 @@ func (h *Tracks) Scrobble(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
 	if err != nil {
-		http.Error(w, "bad track id", http.StatusBadRequest)
+		writeTrackResolveError(w, err)
 		return
 	}
 	h.runLastFM(func(ctx context.Context) error {

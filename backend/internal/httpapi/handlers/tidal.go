@@ -97,15 +97,7 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		if errors.Is(err, tidal.ErrNotConfigured) {
-			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-			return
-		}
-		if errors.Is(err, tidal.ErrRefused) {
-			http.Error(w, tidalRefusalText("TIDAL refused this album", err), http.StatusBadGateway)
-			return
-		}
-		http.Error(w, "tidal album unavailable", http.StatusBadGateway)
+		writeTIDALError(w, err, "TIDAL refused this album", "tidal album unavailable")
 		return
 	}
 	out := makeTIDALAlbumResp(album)
@@ -187,15 +179,7 @@ func (h *TIDAL) Artist(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.TIDAL.ArtistReleases(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
-		if errors.Is(err, tidal.ErrNotConfigured) {
-			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-			return
-		}
-		if errors.Is(err, tidal.ErrRefused) {
-			http.Error(w, tidalRefusalText("TIDAL refused this artist", err), http.StatusBadGateway)
-			return
-		}
-		http.Error(w, "tidal artist unavailable", http.StatusBadGateway)
+		writeTIDALError(w, err, "TIDAL refused this artist", "tidal artist unavailable")
 		return
 	}
 	out := struct {
@@ -264,16 +248,11 @@ func (h *TIDAL) Track(w http.ResponseWriter, r *http.Request) {
 	}
 	d, err := h.TIDAL.TrackDetails(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
-		switch {
-		case errors.Is(err, tidal.ErrInvalidID):
+		if errors.Is(err, tidal.ErrInvalidID) {
 			http.Error(w, "invalid tidal track id", http.StatusBadRequest)
-		case errors.Is(err, tidal.ErrNotConfigured):
-			http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-		case errors.Is(err, tidal.ErrRefused):
-			http.Error(w, tidalRefusalText("TIDAL refused this track", err), http.StatusBadGateway)
-		default:
-			http.Error(w, "tidal track unavailable", http.StatusBadGateway)
+			return
 		}
+		writeTIDALError(w, err, "TIDAL refused this track", "tidal track unavailable")
 		return
 	}
 	out := tidalTrackResp{

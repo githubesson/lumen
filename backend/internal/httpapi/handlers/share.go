@@ -221,17 +221,11 @@ func (h *Share) Create(w http.ResponseWriter, r *http.Request) {
 		// long-lived, so the row must outlive this request.
 		id, err = materializeTIDALTrack(r.Context(), h.Library, h.TIDAL, ref.ID)
 		if err != nil {
-			if errors.Is(err, tidal.ErrNotConfigured) {
-				http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-				return
+			if !errors.Is(err, tidal.ErrNotConfigured) {
+				slog.Warn("share create: tidal track materialize failed",
+					"tidal_track", ref.ID, "user", u.ID, "err", err)
 			}
-			slog.Warn("share create: tidal track materialize failed",
-				"tidal_track", ref.ID, "user", u.ID, "err", err)
-			if errors.Is(err, tidal.ErrRefused) {
-				http.Error(w, tidalRefusalText("TIDAL refused this track", err), http.StatusBadGateway)
-				return
-			}
-			http.Error(w, "tidal track lookup failed", http.StatusBadGateway)
+			writeTIDALError(w, err, "TIDAL refused this track", "tidal track lookup failed")
 			return
 		}
 	default:
@@ -744,15 +738,9 @@ func (h *Share) audioPathForBuild(ctx context.Context, t *library.TrackDetail) (
 
 // writeAudioResolveError maps an audioPathForBuild failure to a response.
 func writeAudioResolveError(w http.ResponseWriter, err error) {
-	if errors.Is(err, tidal.ErrNotConfigured) {
-		http.Error(w, "tidal proxy is not configured", http.StatusServiceUnavailable)
-		return
+	if !writeTIDALUnavailable(w, err, "TIDAL refused this track") {
+		http.Error(w, "preview generation failed", http.StatusInternalServerError)
 	}
-	if errors.Is(err, tidal.ErrRefused) {
-		http.Error(w, tidalRefusalText("TIDAL refused this track", err), http.StatusBadGateway)
-		return
-	}
-	http.Error(w, "preview generation failed", http.StatusInternalServerError)
 }
 
 // coverPathWithFallback materializes the cover for ffmpeg, downgrading to a
