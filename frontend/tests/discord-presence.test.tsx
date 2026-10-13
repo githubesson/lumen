@@ -182,3 +182,22 @@ it("sends an update again when Discord didn't take the previous one", async () =
   await act(async () => mock.events.get("play")?.());
   expect(mock.push).toHaveBeenCalledTimes(2);
 });
+
+it("shows the track's text cleaned up for display, local or remote", async () => {
+  mock.player = {
+    current: { ...local, title: " Local ", artist: "Band Â· Friend", album_title: "" },
+    isPlaying: true,
+  };
+  const { rerender } = renderHook(() => useDiscordPresence());
+  await act(async () => {});
+  expect(mock.push).toHaveBeenLastCalledWith(expect.objectContaining({
+    trackId: "local-track", title: "Local", artist: "Band · Friend", album: undefined,
+  }));
+
+  select({ ...remote, activity: { ...remote.activity!, artist: "Duo Â· Trio", album: "LP " } });
+  rerender();
+  await act(async () => {});
+  expect(mock.push).toHaveBeenLastCalledWith(expect.objectContaining({
+    trackId: "remote-track", artist: "Duo · Trio", album: "LP",
+  }));
+});
