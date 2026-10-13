@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/playlists"
 	"github.com/githubesson/lumen/internal/tidal"
 )
 
@@ -105,6 +106,35 @@ func TestTrackEndpointsReportResolveFailureAsServerError(t *testing.T) {
 		w = serveAuthenticated(t, "/api/tracks/{id}", handler, "/api/tracks/not-a-track")
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("%s with a malformed id: status %d, want 400", name, w.Code)
+		}
+	}
+}
+
+// A failed playlist lookup is a 500 on every playlist endpoint. Most of
+// them used to answer 404, which clients take as the playlist being gone
+// and drop it from their cache.
+func TestPlaylistEndpointsReportLookupFailureAsServerError(t *testing.T) {
+	h := &Playlists{Store: playlists.NewStore(closedPool(t)), Covers: &Tracks{}}
+	for name, handler := range map[string]http.HandlerFunc{
+		"get":                   h.Get,
+		"update":                h.Update,
+		"delete":                h.Delete,
+		"cover":                 h.Cover,
+		"put cover":             h.PutCover,
+		"delete cover":          h.DeleteCover,
+		"list tracks":           h.ListTracks,
+		"add tracks":            h.AddTracks,
+		"remove track":          h.RemoveTrack,
+		"reorder":               h.Reorder,
+		"list collaborators":    h.ListCollaborators,
+		"invite collaborator":   h.InviteCollaborator,
+		"remove collaborator":   h.RemoveCollaborator,
+		"set collaborator role": h.SetCollaboratorRole,
+	} {
+		target := "/api/playlists/" + uuid.NewString() + "/x/" + uuid.NewString()
+		w := serveAuthenticated(t, "/api/playlists/{id}/x/{user_id}", handler, target)
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("%s: status %d, want 500", name, w.Code)
 		}
 	}
 }
