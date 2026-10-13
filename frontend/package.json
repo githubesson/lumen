@@ -33,6 +33,7 @@
     "electron-updater": "^6.8.9"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@music-library/core": "file:../core",
     "@radix-ui/react-dialog": "1.1.15",
     "@shadcn/lint": "^0.1.0",
