@@ -257,6 +257,11 @@ export function createTrackShareLink(
   });
 }
 
+/**
+ * Render a story video over an uploaded background. Returns the raw
+ * Response for the caller to save: like every form upload it has no request
+ * deadline, so reading the video isn't bounded either.
+ */
 export function createTrackStoryBackgroundVideo(
   trackId: string,
   startSec: number,

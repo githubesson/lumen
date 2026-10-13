@@ -1,8 +1,9 @@
 import {
   ApiError,
   buildQuery,
+  fetchAndRead,
   fetchPage,
-  rawFetch,
+  readJson,
   request,
   requestVoid,
 } from "./api-transport";
@@ -476,17 +477,20 @@ export const api = {
       body: JSON.stringify(input),
     }),
   /**
-   * Fetches the Replay top-songs share card as a 1080×1920 PNG. Returns the
-   * raw Response; callers read the body as bytes and hand it to the platform
-   * share sheet.
+   * Fetches the Replay top-songs share card as a 1080×1920 PNG, read in full
+   * under the request deadline; callers hand the bytes to the platform share
+   * sheet or a download.
    */
   getReplayImage: (
     params: { from?: string; to?: string; title?: string } = {},
     options: RequestOptions = {},
-  ) =>
-    rawFetch(
+  ): Promise<ArrayBuffer> =>
+    fetchAndRead(
       `/api/stats/replay/image${buildQuery({ from: params.from, to: params.to, title: params.title })}`,
       { ...options, headers: { Accept: "image/png" } },
+      // Rendering and then downloading a large PNG gets a longer deadline.
+      { timeoutMs: 60_000 },
+      (response) => response.arrayBuffer(),
     ),
 
   listPlaylists: (options: RequestOptions = {}) =>
@@ -532,19 +536,17 @@ export const api = {
 
   listPlaylistTracks: (id: string, options: RequestOptions = {}) =>
     request<PlaylistTracks>(`/api/playlists/${pathID(id)}/tracks`, options),
-  listPlaylistTracksIfChanged: async (id: string, etag?: string, options: RequestOptions = {}) => {
-    const response = await rawFetch(`/api/playlists/${pathID(id)}/tracks`, {
-      ...options,
-      headers: etag ? { "If-None-Match": etag } : {},
-    }, { allowNotModified: true });
-    const nextEtag = response.headers.get("ETag") ?? undefined;
-    if (response.status === 304) return { etag: nextEtag, tracks: null };
-    // Same contract as `request`: anything but JSON is an ApiError.
-    if (response.status === 204 || !(response.headers.get("content-type") ?? "").includes("application/json")) {
-      throw new ApiError(response.status, "Unexpected non-JSON response from the server.");
-    }
-    return { etag: nextEtag, tracks: (await response.json() as PlaylistTracks).tracks };
-  },
+  listPlaylistTracksIfChanged: (id: string, etag?: string, options: RequestOptions = {}) =>
+    fetchAndRead(
+      `/api/playlists/${pathID(id)}/tracks`,
+      { ...options, headers: etag ? { "If-None-Match": etag } : {} },
+      { allowNotModified: true },
+      async (response) => {
+        const nextEtag = response.headers.get("ETag") ?? undefined;
+        if (response.status === 304) return { etag: nextEtag, tracks: null };
+        return { etag: nextEtag, tracks: (await readJson<PlaylistTracks>(response)).tracks };
+      },
+    ),
   addPlaylistTracks: (id: string, trackIds: string[]) =>
     requestVoid(`/api/playlists/${pathID(id)}/tracks`, {
       method: "POST",

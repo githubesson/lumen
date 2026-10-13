@@ -83,32 +83,63 @@ export function buildQuery(
   return serialized ? `?${serialized}` : "";
 }
 
+function abortError(): Error {
+  const error = new Error("The request was aborted.");
+  error.name = "AbortError";
+  return error;
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  // Some runtimes' AbortSignal has no `reason`; theirs gets a plain AbortError.
+  return signal.reason instanceof Error ? signal.reason : abortError();
+}
+
+/** Settle with `work`, or reject as soon as `signal` aborts. */
+function untilAborted<T>(signal: AbortSignal, work: Promise<T>): Promise<T> {
+  if (signal.aborted) {
+    work.catch(() => {});
+    return Promise.reject(abortReason(signal));
+  }
+  let onAbort = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(abortReason(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  return Promise.race([work, aborted]).finally(() =>
+    signal.removeEventListener("abort", onAbort),
+  );
+}
+
 /**
  * Single fetch chokepoint for credentials, headers, cancellation, deadlines,
- * unauthorized-session notification, and normalized HTTP errors.
+ * unauthorized-session notification, and normalized HTTP errors. The deadline
+ * and the caller's abort stay in force until `read` has consumed the
+ * response, so a body that stalls after the headers arrive rejects with an
+ * AbortError instead of hanging. Form uploads have no deadline (they can be
+ * large), only the caller's abort.
  */
-export async function rawFetch(
+export async function fetchAndRead<T>(
   path: string,
-  init: RequestInit = {},
-  behavior: RequestBehavior = {},
-): Promise<Response> {
+  init: RequestInit,
+  behavior: RequestBehavior,
+  read: (response: Response) => T | Promise<T>,
+): Promise<T> {
   const generation = authGeneration;
   const isForm =
     typeof FormData !== "undefined" && init.body instanceof FormData;
-  const timeout = new AbortController();
+  const controller = new AbortController();
   const timer = isForm
     ? undefined
-    : setTimeout(() => timeout.abort(), behavior.timeoutMs ?? REQUEST_TIMEOUT_MS);
+    : setTimeout(() => controller.abort(), behavior.timeoutMs ?? REQUEST_TIMEOUT_MS);
   const callerSignal = init.signal ?? undefined;
-  const onCallerAbort = () => timeout.abort();
+  const onCallerAbort = () => controller.abort();
   callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
-  if (callerSignal?.aborted) timeout.abort();
+  if (callerSignal?.aborted) controller.abort();
 
-  let response: Response;
   try {
-    response = await fetch(apiUrl(path), {
+    const response = await fetch(apiUrl(path), {
       ...init,
-      signal: timeout.signal,
+      signal: controller.signal,
       credentials: "include",
       headers: {
         Accept: "application/json",
@@ -116,39 +147,69 @@ export async function rawFetch(
         ...(init.headers ?? {}),
       },
     });
+    // Browsers fail an aborted body read by themselves; racing the signal
+    // also covers runtimes whose bodies don't.
+    return await untilAborted(
+      controller.signal,
+      (async () => {
+        await throwIfFailed(response, behavior, generation);
+        return read(response);
+      })(),
+    );
   } finally {
     if (timer !== undefined) clearTimeout(timer);
     callerSignal?.removeEventListener("abort", onCallerAbort);
   }
+}
 
-  if (!response.ok && !(behavior.allowNotModified && response.status === 304)) {
-    const text = (await response.text().catch(() => "")).trim();
-    const notify = behavior.notifyUnauthorized;
-    if (
-      response.status === 401 &&
-      generation === authGeneration &&
-      notify !== false &&
-      (typeof notify !== "function" || notify(text))
-    ) {
-      onUnauthorized?.();
-    }
-    throw new ApiError(response.status, text || response.statusText);
+async function throwIfFailed(
+  response: Response,
+  behavior: RequestBehavior,
+  generation: number,
+): Promise<void> {
+  if (response.ok || (behavior.allowNotModified && response.status === 304)) return;
+  const text = (await response.text().catch(() => "")).trim();
+  const notify = behavior.notifyUnauthorized;
+  if (
+    response.status === 401 &&
+    generation === authGeneration &&
+    notify !== false &&
+    (typeof notify !== "function" || notify(text))
+  ) {
+    onUnauthorized?.();
   }
-  return response;
+  throw new ApiError(response.status, text || response.statusText);
+}
+
+/**
+ * `fetchAndRead` that hands back the response once its headers arrive. The
+ * deadline and the caller's abort no longer apply to its body, so this is
+ * for callers that don't need the body or own its lifetime; anything that
+ * reads the body should do it in `fetchAndRead`'s `read`.
+ */
+export function rawFetch(
+  path: string,
+  init: RequestInit = {},
+  behavior: RequestBehavior = {},
+): Promise<Response> {
+  return fetchAndRead(path, init, behavior, (response) => response);
 }
 
 export async function fetchPage<T>(
   path: string,
   params: PageParams = {},
 ): Promise<{ items: T[]; total: number }> {
-  const response = await rawFetch(
+  return fetchAndRead(
     `${path}${buildQuery({ limit: params.limit, offset: params.offset, q: params.q, sort: params.sort })}`,
     { signal: params.signal },
+    {},
+    async (response) => {
+      const items = ((await response.json()) ?? []) as T[];
+      const totalHeader = response.headers.get("X-Total-Count");
+      const total = totalHeader ? parseInt(totalHeader, 10) : items.length;
+      return { items, total: Number.isFinite(total) ? total : items.length };
+    },
   );
-  const items = ((await response.json()) ?? []) as T[];
-  const totalHeader = response.headers.get("X-Total-Count");
-  const total = totalHeader ? parseInt(totalHeader, 10) : items.length;
-  return { items, total: Number.isFinite(total) ? total : items.length };
 }
 
 /** Value-returning request for endpoints that promise JSON. */
@@ -157,7 +218,11 @@ export async function request<T>(
   init: RequestInit = {},
   behavior: RequestBehavior = {},
 ): Promise<T> {
-  const response = await rawFetch(path, init, behavior);
+  return fetchAndRead(path, init, behavior, (response) => readJson<T>(response));
+}
+
+/** Read a JSON body; anything but JSON is an ApiError. */
+export async function readJson<T>(response: Response): Promise<T> {
   const contentType = response.headers.get("content-type") ?? "";
   if (response.status === 204 || !contentType.includes("application/json")) {
     throw new ApiError(

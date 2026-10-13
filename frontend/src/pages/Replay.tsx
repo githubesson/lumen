@@ -271,8 +271,8 @@ export default function Replay() {
     setDownloadingImage(true);
     setImageError(null);
     try {
-      const res = await api.getReplayImage(replayImageRequest(period, range));
-      const blob = await res.blob();
+      const bytes = await api.getReplayImage(replayImageRequest(period, range));
+      const blob = new Blob([bytes], { type: "image/png" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;

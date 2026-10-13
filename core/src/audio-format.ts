@@ -4,13 +4,15 @@
  * These previously existed as two copies — `frontend/src/lib/download.ts` and
  * `mobile/lib/track-download.ts` — whose overlapping halves were identical
  * character-for-character. Nothing here touches the DOM or a native module:
- * the only I/O is `fetch`, which both runtimes provide. The platform modules
+ * the only I/O goes through the API transport's `fetch`, which both runtimes
+ * provide. The platform modules
  * keep the parts that genuinely differ (an `<a download>` click on web, an
  * `expo-file-system` write on mobile) and re-export these.
  */
 
 import { api, probeStreamUrl } from "./api";
 import type { TrackDetail, TrackListItem } from "./api";
+import { rawFetch } from "./api-transport";
 
 /**
  * Strip characters that are illegal in a filename on Windows, macOS, or iOS,
@@ -115,24 +117,27 @@ export async function extensionFromStream(
   trackId: string,
 ): Promise<string | undefined> {
   const url = probeStreamUrl(trackId);
+  // A best-effort probe: a 401 here doesn't sign the user out.
+  const behavior = { notifyUnauthorized: false };
   try {
-    const res = await fetch(url, {
-      method: "HEAD",
-      credentials: "include",
-    });
-    if (res.ok) {
-      return extensionForContentType(res.headers.get("content-type") ?? undefined);
-    }
+    const res = await rawFetch(
+      url,
+      { method: "HEAD", headers: { Accept: "*/*" } },
+      behavior,
+    );
+    return extensionForContentType(res.headers.get("content-type") ?? undefined);
   } catch {
     // Some servers/routes do not support HEAD; fall through to the range probe.
   }
 
   try {
-    const res = await fetch(url, {
-      credentials: "include",
-      headers: { Range: "bytes=0-0" },
-    });
-    if (!res.ok) return undefined;
+    const res = await rawFetch(
+      url,
+      { headers: { Accept: "*/*", Range: "bytes=0-0" } },
+      behavior,
+    );
+    // Only the headers matter; don't download the byte.
+    void res.body?.cancel().catch(() => {});
     return extensionForContentType(res.headers.get("content-type") ?? undefined);
   } catch {
     return undefined;

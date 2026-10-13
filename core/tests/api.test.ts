@@ -340,6 +340,51 @@ describe("request deadlines", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     expect(aborted).toHaveBeenCalled();
   });
+
+  // Headers arrive at once; the body never does, and a manually built
+  // Response ignores the request's signal.
+  const stalledBody = (headers: Record<string, string> = { "Content-Type": "application/json" }) =>
+    vi.fn(async () => new Response(new ReadableStream({ start() {} }), { headers }));
+
+  it("keeps the deadline while a JSON body is read", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", stalledBody());
+    const rejected = vi.fn();
+    api.listMusicRoots().catch(rejected);
+
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(rejected).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(rejected).toHaveBeenCalledWith(expect.objectContaining({ name: "AbortError" }));
+  });
+
+  it("aborts a stalled body when the caller cancels", async () => {
+    vi.stubGlobal("fetch", stalledBody({ "Content-Type": "application/json", ETag: '"v1"' }));
+    const page = new AbortController();
+    const pending = api.listAlbumsPage({ signal: page.signal });
+    const playlist = new AbortController();
+    const tracks = api.listPlaylistTracksIfChanged("p1", undefined, { signal: playlist.signal });
+    await Promise.resolve();
+    page.abort();
+    playlist.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await expect(tracks).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("reads the Replay image under the deadline", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", stalledBody({ "Content-Type": "image/png" }));
+    const rejected = vi.fn();
+    api.getReplayImage().catch(rejected);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(rejected).toHaveBeenCalledWith(expect.objectContaining({ name: "AbortError" }));
+  });
+
+  it("returns the Replay image bytes", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "image/png" } })));
+    expect(new Uint8Array(await api.getReplayImage())).toEqual(new Uint8Array([1, 2, 3]));
+  });
 });
 
 describe("search continuation and library sort", () => {
