@@ -253,19 +253,6 @@ func (s *Store) MarkScanFinished(ctx context.Context, id uuid.UUID, scanErr erro
 	return err
 }
 
-func (s *Store) DownloadForSource(ctx context.Context, pinID uuid.UUID, sourcePath string) (Download, error) {
-	sourcePath = dbtext.Clean(sourcePath)
-	d, err := scanDownload(s.db.QueryRow(ctx, `
-		SELECT id, pin_id, source_path, file_path, size_bytes, status, error,
-		       track_id, metadata, first_seen_at, downloaded_at, updated_at
-		FROM filen_downloads
-		WHERE pin_id = $1 AND source_path = $2`, pinID, sourcePath))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Download{}, ErrNotFound
-	}
-	return d, err
-}
-
 // retainedFile distinguishes the remote file's size from the canonical file's
 // size: audio deduplication can match files with different tags and byte sizes.
 type retainedFile struct {

@@ -79,11 +79,12 @@ console.log(JSON.stringify({event:"file",status:"existing",retained:true,relPath
 		if summary.Seen != 1 || summary.Existing != 1 || summary.Downloaded != 0 || summary.Ingested != 0 {
 			t.Fatalf("unexpected summary: %+v", summary)
 		}
-		history, err := store.DownloadForSource(ctx, pin.ID, "duplicate.mp3")
+		history, err := store.ListDownloads(ctx, pin.ID, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if history.TrackID == nil || *history.TrackID != id || history.FilePath != original {
+		if len(history) != 1 || history[0].SourcePath != "duplicate.mp3" ||
+			history[0].TrackID == nil || *history[0].TrackID != id || history[0].FilePath != original {
 			t.Fatalf("history changed: %+v", history)
 		}
 	})

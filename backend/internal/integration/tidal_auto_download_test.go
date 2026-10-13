@@ -158,7 +158,7 @@ func TestTIDALAutoDownloadAPI(t *testing.T) {
 		`{"track_ids":["tidal:`+tidalID+`"]}`); rec.Code != http.StatusNoContent {
 		t.Fatalf("add saved tidal track: %d %s", rec.Code, rec.Body)
 	}
-	entries, err := pls.Tracks(ctx, playlist.ID)
+	entries, _, err := pls.TracksWithQueue(ctx, playlist.ID, member)
 	if err != nil || len(entries) != 1 || entries[0].TrackID != local {
 		t.Fatalf("entries = %+v, %v", entries, err)
 	}
@@ -195,7 +195,7 @@ func TestTIDALAutoDownloadAPI(t *testing.T) {
 	if err := lib.HardDeleteByPath(ctx, savedPath); err != nil {
 		t.Fatal(err)
 	}
-	if entries, err := pls.Tracks(ctx, playlist.ID); err != nil || len(entries) != 1 || entries[0].TrackID != remote {
+	if entries, _, err := pls.TracksWithQueue(ctx, playlist.ID, member); err != nil || len(entries) != 1 || entries[0].TrackID != remote {
 		t.Fatalf("entries after delete = %+v, %v; want the TIDAL row %v", entries, err, remote)
 	}
 }

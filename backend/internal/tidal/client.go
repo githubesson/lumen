@@ -568,13 +568,8 @@ func readCapped(r io.Reader, max int64) ([]byte, error) {
 	return b, nil
 }
 
-func (c *Client) StreamURL(ctx context.Context, id string) (string, error) {
-	streamURL, _, err := c.streamURL(ctx, id)
-	return streamURL, err
-}
-
-// streamURL is StreamURL, also reporting whether the URL came from the
-// cache rather than a fresh resolution.
+// streamURL resolves a track's stream URL, also reporting whether the URL
+// came from the cache rather than a fresh resolution.
 func (c *Client) streamURL(ctx context.Context, id string) (string, bool, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {

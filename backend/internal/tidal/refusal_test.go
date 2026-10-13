@@ -73,7 +73,7 @@ func TestStreamRefusalSkipsLowerQualitiesAndIsRemembered(t *testing.T) {
 	defer srv.Close()
 	c := NewClient(Config{HifiAPIURL: srv.URL, Quality: "LOSSLESS"})
 	for attempt := 0; attempt < 3; attempt++ {
-		_, err := c.StreamURL(context.Background(), "123")
+		_, _, err := c.streamURL(context.Background(), "123")
 		var refused *RefusedError
 		if !errors.As(err, &refused) || refused.Reason != "Not available in your region" {
 			t.Fatalf("attempt %d: err = %v, want the refusal", attempt, err)

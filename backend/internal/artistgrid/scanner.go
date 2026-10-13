@@ -14,11 +14,12 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/githubesson/lumen/internal/dbtext"
 	"github.com/githubesson/lumen/internal/downloadfile"
 	"github.com/githubesson/lumen/internal/httpx"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
-	"github.com/githubesson/lumen/internal/pathsafe"
+	"github.com/githubesson/lumen/internal/musicroots"
 	"github.com/githubesson/lumen/internal/pinscan"
 	"github.com/githubesson/lumen/internal/sourceurl"
 )
@@ -31,6 +32,7 @@ type Scanner struct {
 	Client       *Client
 	Ingest       *ingest.Service
 	Library      *library.Store
+	Roots        *musicroots.Store
 	Logger       *slog.Logger
 	PollInterval time.Duration
 	FileTimeout  time.Duration
@@ -154,7 +156,7 @@ func (s *Scanner) trackerIDForPin(ctx context.Context, pin *Pin) string {
 }
 
 func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) error {
-	destBase, err := pinDestination(pin)
+	destBase, err := pinscan.Destination(ctx, s.Roots, pin.RootID, pin.RootPath, pin.DestinationSubdir)
 	if err != nil {
 		return err
 	}
@@ -170,6 +172,10 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 		tab = data.Tabs[0]
 	}
 	summary.Tab = tab
+	history, err := s.Store.downloadsBySource(ctx, pin.ID)
+	if err != nil {
+		return fmt.Errorf("load artistgrid download history: %w", err)
+	}
 
 	records := data.Records()
 	for _, rec := range records {
@@ -193,7 +199,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 			metadata := recordMetadata(data, pin, tab, rec, ctxMeta)
 			if sourceurl.ShouldSkipURL(sourceURL) {
 				summary.Skipped++
-				_ = s.Store.RecordDownload(ctx, DownloadInput{
+				s.record(ctx, history, DownloadInput{
 					PinID:     pin.ID,
 					SourceURL: sourceURL,
 					Status:    StatusSkipped,
@@ -202,7 +208,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 				})
 				continue
 			}
-			if s.previousStillPresent(ctx, pin.ID, sourceURL, summary) {
+			if s.previousStillPresent(ctx, history, pin.ID, sourceURL, summary) {
 				continue
 			}
 			status, resolvedURL, filePath, trackID, ingestInserted, err := s.downloadOne(
@@ -212,7 +218,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 				var skipErr downloadfile.SkipError
 				if errors.As(err, &skipErr) {
 					summary.Skipped++
-					_ = s.Store.RecordDownload(ctx, DownloadInput{
+					s.record(ctx, history, DownloadInput{
 						PinID:       pin.ID,
 						SourceURL:   sourceURL,
 						ResolvedURL: resolvedURL,
@@ -225,7 +231,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 					continue
 				}
 				summary.Failed++
-				_ = s.Store.RecordDownload(ctx, DownloadInput{
+				s.record(ctx, history, DownloadInput{
 					PinID:       pin.ID,
 					SourceURL:   sourceURL,
 					ResolvedURL: resolvedURL,
@@ -248,7 +254,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 			if ingestInserted {
 				summary.Ingested++
 			}
-			_ = s.Store.RecordDownload(ctx, DownloadInput{
+			s.record(ctx, history, DownloadInput{
 				PinID:       pin.ID,
 				SourceURL:   sourceURL,
 				ResolvedURL: resolvedURL,
@@ -301,14 +307,37 @@ func (s *Scanner) expandRecordURLs(ctx context.Context, urls []string) []string 
 	return out
 }
 
-func (s *Scanner) previousStillPresent(ctx context.Context, pinID uuid.UUID, sourceURL string, summary *ScanSummary) bool {
-	prev, err := s.Store.DownloadForSource(ctx, pinID, sourceURL)
-	if err != nil {
+// record stores a download outcome and mirrors it into the scan's history
+// (the pin's downloads by source URL), so a link listed twice in one scan
+// sees how the first went.
+func (s *Scanner) record(ctx context.Context, history map[string]Download, in DownloadInput) {
+	if err := s.Store.RecordDownload(ctx, in); err != nil {
+		return
+	}
+	key := dbtext.Clean(in.SourceURL)
+	d := history[key]
+	d.PinID, d.SourceURL, d.ResolvedURL = in.PinID, key, in.ResolvedURL
+	d.Status, d.Error, d.Metadata = in.Status, in.Error, in.Metadata
+	if in.FilePath != "" {
+		d.FilePath = in.FilePath
+	}
+	if in.TrackID != nil {
+		d.TrackID = in.TrackID
+	}
+	history[key] = d
+}
+
+// previousStillPresent settles a link the pin has handled before: a recorded
+// skip stands, and a download whose file is still there counts as existing
+// rather than being fetched again. It reports whether the link is settled.
+func (s *Scanner) previousStillPresent(ctx context.Context, history map[string]Download, pinID uuid.UUID, sourceURL string, summary *ScanSummary) bool {
+	prev, ok := history[dbtext.Clean(sourceURL)]
+	if !ok {
 		return false
 	}
 	switch prev.Status {
 	case StatusSkipped:
-		if prev.Error == "skipped host" {
+		if downloadfile.SkipFinal(prev.Error) {
 			summary.Skipped++
 			return true
 		}
@@ -316,7 +345,7 @@ func (s *Scanner) previousStillPresent(ctx context.Context, pinID uuid.UUID, sou
 		if pinscan.DownloadPresent(ctx, s.Store.db, prev.FilePath, prev.TrackID) {
 			if prev.TrackID == nil {
 				trackID, inserted := s.ingestPath(ctx, prev.FilePath, TrackContext{}, false)
-				_ = s.Store.RecordDownload(ctx, DownloadInput{
+				s.record(ctx, history, DownloadInput{
 					PinID:       pinID,
 					SourceURL:   sourceURL,
 					ResolvedURL: prev.ResolvedURL,
@@ -379,7 +408,7 @@ func (s *Scanner) downloadOne(
 	name := downloadfile.PickFilename(resp, resp.Request.URL.String(), fallbackName)
 	target := filepath.Join(destDir, name)
 	if !ingest.IsSupported(target) {
-		return "", resolvedURL, target, nil, false, downloadfile.SkipError{Reason: "unsupported file extension"}
+		return "", resolvedURL, target, nil, false, downloadfile.UnsupportedExtension(target)
 	}
 	var existing bool
 	target, existing, err = downloadfile.Save(resp.Body, target)
@@ -469,25 +498,6 @@ func (s *Scanner) applyTrackerMetadata(ctx context.Context, trackID uuid.UUID, t
 	if err := s.Library.UpdateTrack(ctx, trackID, patch); err != nil && s.Logger != nil {
 		s.Logger.Warn("artistgrid metadata patch failed", "track", trackID, "err", err)
 	}
-}
-
-func pinDestination(pin Pin) (string, error) {
-	root, err := filepath.Abs(pin.RootPath)
-	if err != nil {
-		return "", err
-	}
-	sub := strings.TrimSpace(pin.DestinationSubdir)
-	if sub == "" || filepath.Clean(sub) == "." {
-		return root, nil
-	}
-	if filepath.IsAbs(sub) {
-		return "", fmt.Errorf("destination_subdir must be relative")
-	}
-	dest, err := pathsafe.CleanSubdir(root, sub)
-	if err != nil {
-		return "", fmt.Errorf("destination_subdir escapes root")
-	}
-	return dest, nil
 }
 
 func recordMetadata(data TrackerData, pin Pin, tab string, rec Record, tc TrackContext) json.RawMessage {

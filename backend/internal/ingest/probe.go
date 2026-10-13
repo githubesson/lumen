@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/githubesson/lumen/internal/ffsafe"
@@ -56,7 +55,7 @@ func ProbeAudio(ctx context.Context, path string) (*AudioInfo, error) {
 			return info, nil
 		}
 	}
-	if hasFFprobe() {
+	if ffsafe.HasFFprobe() {
 		return ffprobeAudioInfo(ctx, path)
 	}
 	return nil, ErrProbeUnsupported
@@ -371,20 +370,7 @@ func probeFLAC(path string) (*AudioInfo, error) {
 
 /* ------------------------------------------------------------- ffprobe ----- */
 
-var (
-	ffprobeOnce    sync.Once
-	ffprobePresent bool
-)
-
 const ffprobeTimeout = 20 * time.Second
-
-func hasFFprobe() bool {
-	ffprobeOnce.Do(func() {
-		_, err := exec.LookPath("ffprobe")
-		ffprobePresent = err == nil
-	})
-	return ffprobePresent
-}
 
 // ffprobeAudioInfo shells out to ffprobe once to pull duration + nominal
 // format info in a single subprocess. Used as a fallback for formats our
@@ -406,7 +392,7 @@ func ffprobeAudioInfo(parent context.Context, path string) (*AudioInfo, error) {
 	)
 	cmd := exec.CommandContext(ctx, "ffprobe", args...)
 	out := &boundedBytes{max: subprocessOutLimit}
-	stderr := &lastBytes{max: subprocessErrTail}
+	stderr := ffsafe.NewTail(subprocessErrTail)
 	cmd.Stdout = out
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {

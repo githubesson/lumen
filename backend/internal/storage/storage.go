@@ -26,8 +26,6 @@ type Storage interface {
 	Stat(ctx context.Context, key string) (ObjectInfo, error)
 	// Delete removes an object. Missing keys are not an error.
 	Delete(ctx context.Context, key string) error
-	// Exists is a convenience on top of Stat.
-	Exists(ctx context.Context, key string) (bool, error)
 }
 
 // Walker is implemented by backends that can enumerate stored objects. It is

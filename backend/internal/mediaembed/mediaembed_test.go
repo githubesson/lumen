@@ -227,12 +227,12 @@ func minimalJPEG(t *testing.T) []byte {
 	return data
 }
 
-func TestExtFromFormat(t *testing.T) {
-	if ext := ExtFromFormat(FormatMP4); ext != ".m4a" {
-		t.Errorf("FormatMP4 ext = %q, want .m4a", ext)
+func TestOutputFormat(t *testing.T) {
+	if ext, format := outputFormat(FormatMP4); ext != ".m4a" || format != "mp4" {
+		t.Errorf("FormatMP4 = %q, %q; want .m4a, mp4", ext, format)
 	}
-	if ext := ExtFromFormat(FormatFLAC); ext != ".flac" {
-		t.Errorf("FormatFLAC ext = %q, want .flac", ext)
+	if ext, format := outputFormat(FormatFLAC); ext != ".flac" || format != "flac" {
+		t.Errorf("FormatFLAC = %q, %q; want .flac, flac", ext, format)
 	}
 }
 

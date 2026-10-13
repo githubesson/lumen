@@ -944,7 +944,7 @@ func TestDeletedSavedCopyFallsBackToTIDAL(t *testing.T) {
 		if plays, fav, rows := history(local); plays != 3 || !fav || rows != 1 {
 			t.Fatalf("%s: history on the saved copy = %d plays, fav %v, %d rows", del.name, plays, fav, rows)
 		}
-		if got, err := w.Library.RedirectSavedTIDAL(ctx, remote); err != nil || got != local {
+		if got, _, err := w.Library.ResolveSavedTIDAL(ctx, remote); err != nil || got != local {
 			t.Fatalf("%s: stale remote id redirected to %v, %v; want %v", del.name, got, err, local)
 		}
 		path, err := w.Store.TrackFilePath(ctx, local)
@@ -960,7 +960,7 @@ func TestDeletedSavedCopyFallsBackToTIDAL(t *testing.T) {
 		if plays, fav, rows := history(remote); plays != 3 || !fav || rows != 1 {
 			t.Fatalf("%s: history back on TIDAL = %d plays, fav %v, %d rows", del.name, plays, fav, rows)
 		}
-		if got, err := w.Library.RedirectSavedTIDAL(ctx, remote); err != nil || got != remote {
+		if got, _, err := w.Library.ResolveSavedTIDAL(ctx, remote); err != nil || got != remote {
 			t.Fatalf("%s: remote id redirected to %v, %v after delete", del.name, got, err)
 		}
 		if pending, err := w.Store.Pending(ctx, 100); err != nil || !containsRow(pending, remote) {

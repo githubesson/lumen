@@ -181,14 +181,3 @@ func (l *Local) Walk(ctx context.Context, prefix string, fn func(key string, mod
 	}
 	return err
 }
-
-func (l *Local) Exists(ctx context.Context, key string) (bool, error) {
-	_, err := l.Stat(ctx, key)
-	if err == nil {
-		return true, nil
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	return false, err
-}

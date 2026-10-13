@@ -110,7 +110,7 @@ func TestTrackDetailsReportsTheStreamBeingServed(t *testing.T) {
 	if err != nil || d.StreamedQuality != "" || d.MaxQuality != "LOSSLESS" {
 		t.Fatalf("before streaming: %+v %v", d, err)
 	}
-	if _, err := c.StreamURL(context.Background(), "123"); err != nil {
+	if _, _, err := c.streamURL(context.Background(), "123"); err != nil {
 		t.Fatal(err)
 	}
 	d, err = c.TrackDetails(context.Background(), "123")

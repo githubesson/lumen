@@ -1,5 +1,6 @@
 // Package ffsafe holds the input options every ffmpeg/ffprobe invocation must
-// place in front of an untrusted input file.
+// place in front of an untrusted input file, and the lookups and stderr
+// handling those invocations share.
 //
 // Ingest accepts files by extension only, and ffmpeg picks a demuxer by
 // sniffing content. Without these options an upload named x.mp3 whose body is
