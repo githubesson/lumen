@@ -18,7 +18,7 @@ import (
 	"github.com/githubesson/lumen/internal/httpx"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
-	"github.com/githubesson/lumen/internal/pathsafe"
+	"github.com/githubesson/lumen/internal/musicroots"
 	"github.com/githubesson/lumen/internal/pinscan"
 	"github.com/githubesson/lumen/internal/sourceurl"
 )
@@ -31,6 +31,7 @@ type Scanner struct {
 	Client       *Client
 	Ingest       *ingest.Service
 	Library      *library.Store
+	Roots        *musicroots.Store
 	Logger       *slog.Logger
 	PollInterval time.Duration
 	FileTimeout  time.Duration
@@ -154,7 +155,7 @@ func (s *Scanner) trackerIDForPin(ctx context.Context, pin *Pin) string {
 }
 
 func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) error {
-	destBase, err := pinDestination(pin)
+	destBase, err := pinscan.Destination(ctx, s.Roots, pin.RootID, pin.RootPath, pin.DestinationSubdir)
 	if err != nil {
 		return err
 	}
@@ -469,25 +470,6 @@ func (s *Scanner) applyTrackerMetadata(ctx context.Context, trackID uuid.UUID, t
 	if err := s.Library.UpdateTrack(ctx, trackID, patch); err != nil && s.Logger != nil {
 		s.Logger.Warn("artistgrid metadata patch failed", "track", trackID, "err", err)
 	}
-}
-
-func pinDestination(pin Pin) (string, error) {
-	root, err := filepath.Abs(pin.RootPath)
-	if err != nil {
-		return "", err
-	}
-	sub := strings.TrimSpace(pin.DestinationSubdir)
-	if sub == "" || filepath.Clean(sub) == "." {
-		return root, nil
-	}
-	if filepath.IsAbs(sub) {
-		return "", fmt.Errorf("destination_subdir must be relative")
-	}
-	dest, err := pathsafe.CleanSubdir(root, sub)
-	if err != nil {
-		return "", fmt.Errorf("destination_subdir escapes root")
-	}
-	return dest, nil
 }
 
 func recordMetadata(data TrackerData, pin Pin, tab string, rec Record, tc TrackContext) json.RawMessage {

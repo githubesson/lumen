@@ -21,7 +21,6 @@ import (
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/mediaembed"
 	"github.com/githubesson/lumen/internal/musicroots"
-	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/pinscan"
 	"github.com/githubesson/lumen/internal/tidal"
 )
@@ -239,52 +238,7 @@ func (w *Worker) Destination(ctx context.Context) (string, error) {
 }
 
 func (w *Worker) destinationFor(ctx context.Context, settings Settings) (string, error) {
-	root := w.PrimaryRoot
-	if settings.RootID != nil {
-		if w.Roots == nil {
-			return "", errors.New("music roots are not available")
-		}
-		r, err := w.Roots.Get(ctx, *settings.RootID)
-		if err != nil {
-			return "", fmt.Errorf("destination root: %w", err)
-		}
-		// Playback only serves files under enabled roots, so a copy saved
-		// here would 403 once the playlist switched to it.
-		if !r.Enabled {
-			return "", errors.New("destination music root is disabled")
-		}
-		root = r.Path
-	}
-	return ResolveDestination(root, settings.Subdir)
-}
-
-// ResolveDestination joins a music root and a relative subdirectory,
-// refusing any subdirectory that escapes the root.
-func ResolveDestination(root, subdir string) (string, error) {
-	if strings.TrimSpace(root) == "" {
-		return "", errors.New("no music root configured")
-	}
-	abs, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
-	}
-	// An absent root is usually an unmounted volume. Creating the subfolder
-	// would recreate the mount point and write onto the wrong filesystem.
-	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
-		return "", fmt.Errorf("music root %s is not available", abs)
-	}
-	subdir = strings.TrimSpace(subdir)
-	if subdir == "" || filepath.Clean(subdir) == "." {
-		return abs, nil
-	}
-	if filepath.IsAbs(subdir) {
-		return "", errors.New("subdir must be relative")
-	}
-	dest, err := pathsafe.CleanSubdir(abs, subdir)
-	if err != nil {
-		return "", errors.New("subdir escapes the music root")
-	}
-	return dest, nil
+	return pinscan.Destination(ctx, w.Roots, settings.RootID, w.PrimaryRoot, settings.Subdir)
 }
 
 // process gives one remote row a local copy — reusing one already in the

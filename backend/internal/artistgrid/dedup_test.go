@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/githubesson/lumen/internal/db"
@@ -215,5 +216,44 @@ func TestIngestPathAppliesTrackerMetadataToAdoptedDownload(t *testing.T) {
 	}
 	if got := title(); got != "Tracker title" {
 		t.Fatalf("title after an adopted download = %q", got)
+	}
+}
+
+// A pin whose root is missing (an unmounted volume, say) fails the scan with
+// the reason recorded, rather than recreating the root and writing into it.
+func TestScanPinRefusesUnavailableRoot(t *testing.T) {
+	url := os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("set LUMEN_REVIEW_TEST_DATABASE_URL to an isolated PostgreSQL database")
+	}
+	if err := db.Migrate(url); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	pool, err := db.Open(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	store := NewStore(pool)
+	missing := filepath.Join(t.TempDir(), "unmounted")
+	pin, err := store.AddPin(ctx, AddPinInput{TrackerID: "unmounted", RootPath: missing, DestinationSubdir: "Leaks"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.DeletePin(context.Background(), pin.ID) })
+	scanner := Scanner{Store: store}
+	if _, err := scanner.ScanPin(ctx, pin); err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Fatalf("scan err = %v", err)
+	}
+	got, err := store.GetPin(ctx, pin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got.LastError, "not available") || got.LastSuccessAt != nil {
+		t.Fatalf("pin after scan: last_error=%q last_success=%v", got.LastError, got.LastSuccessAt)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatalf("scan created the missing root: %v", err)
 	}
 }
