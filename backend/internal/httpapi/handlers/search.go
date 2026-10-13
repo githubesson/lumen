@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/safego"
 	"github.com/githubesson/lumen/internal/tidal"
 	"github.com/githubesson/lumen/internal/trackref"
 	"github.com/google/uuid"
@@ -145,7 +146,13 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i].data, results[i].count, results[i].err = h.searchStream(r.Context(), u.ID, query, limit, stream)
+			// A panic fails this stream (logged) instead of the process.
+			res, err := safego.Call("search "+stream.key, func() (result, error) {
+				data, count, err := h.searchStream(r.Context(), u.ID, query, limit, stream)
+				return result{data: data, count: count}, err
+			})
+			res.err = err
+			results[i] = res
 		}()
 	}
 	wg.Wait()

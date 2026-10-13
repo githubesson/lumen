@@ -233,3 +233,15 @@ func TestSearchUnconfiguredTIDAL(t *testing.T) {
 		}
 	}
 }
+
+// Search streams run off the request goroutine, out of the Recoverer's
+// reach, so a panic in one used to take the process down. It fails that
+// stream instead: a 500 for a library stream.
+func TestSearchSurvivesAPanickingStream(t *testing.T) {
+	store := &searchTestLibrary{viewer: uuid.New()}
+	// The fake panics when asked for another viewer's library.
+	w := runSearch(t, &Search{Library: store}, uuid.New(), "q=hello&type=all&sources=local")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500: %s", w.Code, w.Body.String())
+	}
+}
