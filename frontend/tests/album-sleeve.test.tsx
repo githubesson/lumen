@@ -117,6 +117,18 @@ it("holds the page's frame while the album loads", () => {
   expect(reserved.container.querySelector(".album-sleeve-more .skeleton-text")).toBeTruthy();
 });
 
+it("puts a quiet link under the details once the album is there", () => {
+  const link = <button type="button">Open in library</button>;
+  const { container } = renderSleeve({ detailsLink: link });
+  const foot = container.querySelector(".album-sleeve-details .album-sleeve-details-foot");
+  expect(foot?.textContent).toBe("Open in library");
+  // Below the facts, not in the actions row.
+  expect(container.querySelector(".album-sleeve-more")).toBeNull();
+  cleanup();
+  renderSleeve({ album: null, detailsLink: link });
+  expect(screen.queryByRole("button", { name: "Open in library" })).toBeNull();
+});
+
 it("stacks below the width threshold and keeps a tall column's bottom reachable", () => {
   const pad = { padTop: 20, viewportHeight: 600 };
   expect(sleeveLayout({ ...pad, contentWidth: STACK_BELOW_PX - 1, columnHeight: 400 }).stacked).toBe(true);

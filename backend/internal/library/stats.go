@@ -221,7 +221,7 @@ func (s *Store) replayTopTracks(ctx context.Context, p ReplayStatsParams, out *R
 		SELECT
 			t.id, t.title, t.album_id, COALESCE(a.title, ''),
 			COALESCE(t.track_no, 0), t.duration_ms,
-			COALESCE(STRING_AGG(ar.name, ', ' ORDER BY ta.position) FILTER (WHERE ta.role = 'primary'), ''),
+			COALESCE(STRING_AGG(ar.name, ', ' ORDER BY ta.position, ar.id) FILTER (WHERE ta.role = 'primary'), ''),
 			`+akaSubquery+`,
 			COALESCE(t.owner_id = $1, FALSE) AS owned,
 			t.source,
@@ -229,10 +229,15 @@ func (s *Store) replayTopTracks(ctx context.Context, p ReplayStatsParams, out *R
 			COALESCE(t.external_meta->>'cover_url', ''),
 			t.created_at,
 			c.plays,
-			COALESCE(ARRAY_AGG(ar.id ORDER BY ta.position) FILTER (WHERE ta.role = 'primary'), '{}'),
-			COALESCE(ARRAY_AGG(ar.name ORDER BY ta.position) FILTER (WHERE ta.role = 'primary'), '{}'),
-			COALESCE(ARRAY_AGG(`+artistHasPage("ar.id", artistPageTrackP1)+` ORDER BY ta.position)
-				FILTER (WHERE ta.role = 'primary'), '{}')
+			-- Each artist goes as one object of id, name and page flag, so
+			-- the three stay paired when legacy rows tie on position. The keys
+			-- are the field names of ReplayTrackArtist. The order matches the
+			-- names above; ar.id is unique among the primary artists of a track.
+			COALESCE(JSON_AGG(JSON_BUILD_OBJECT(
+				'ID', ar.id,
+				'Name', ar.name,
+				'HasPage', `+artistHasPage("ar.id", artistPageTrackP1)+`
+			) ORDER BY ta.position, ar.id) FILTER (WHERE ta.role = 'primary'), '[]')
 		FROM counts c
 		JOIN tracks t ON t.id = c.track_id
 		LEFT JOIN albums a ON a.id = t.album_id
@@ -247,20 +252,11 @@ func (s *Store) replayTopTracks(ctx context.Context, p ReplayStatsParams, out *R
 	defer rows.Close()
 	for rows.Next() {
 		var it ReplayTrack
-		var ids []uuid.UUID
-		var names []string
-		var pages []bool
 		if err := rows.Scan(&it.ID, &it.Title, &it.AlbumID, &it.AlbumTitle,
 			&it.TrackNo, &it.DurationMS, &it.Artist, &it.Aka, &it.Owned,
 			&it.Source, &it.ExternalID, &it.CoverURL, &it.CreatedAt, &it.Plays,
-			&ids, &names, &pages); err != nil {
+			&it.PrimaryArtists); err != nil {
 			return err
-		}
-		if len(names) != len(ids) || len(pages) != len(ids) {
-			return fmt.Errorf("track %s: %d artist ids, %d names, %d page flags", it.ID, len(ids), len(names), len(pages))
-		}
-		for i, id := range ids {
-			it.PrimaryArtists = append(it.PrimaryArtists, ReplayTrackArtist{ID: id, Name: names[i], HasPage: pages[i]})
 		}
 		out.TopTracks = append(out.TopTracks, it)
 	}

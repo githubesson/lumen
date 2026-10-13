@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import TrackContextMenu, { type TrackMenuSelection } from "../src/components/TrackContextMenu";
 import { KeyBindingsProvider, useKey } from "../src/lib/keybindings";
+import { useTrackContextMenu } from "../src/lib/useTrackContextMenu";
 import type { Playlist, TrackListItem } from "../src/api";
 
 const mock = vi.hoisted(() => ({
@@ -240,6 +241,71 @@ it("resumes a batched add after a failed batch instead of adding the first ones 
   expect(mock.add.mock.calls.slice(2).map(([, ids]) => [ids[0], ids.length])).toEqual([["t1000", 500]]);
   expect(screen.queryByRole("alert")).toBeNull();
   expect((item("Mine") as HTMLButtonElement).disabled).toBe(true);
+});
+
+describe("a menu opened for other tracks starts over", () => {
+  const many = Array.from({ length: 1500 }, (_, i): TrackListItem => ({ id: `t${i}`, title: `T${i}`, duration_ms: 1 }));
+  const failSecondBatch = () =>
+    mock.add.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("Offline"));
+
+  it("doesn't resume a failed add for a different set of tracks", async () => {
+    failSecondBatch();
+    const props = { track: many[0], x: 0, y: 0, onClose: vi.fn() };
+    const { rerender } = render(
+      <MemoryRouter><TrackContextMenu {...props} selection={{ tracks: many }} /></MemoryRouter>,
+    );
+    await act(async () => {});
+    await act(async () => { fireEvent.click(item("Mine")!); });
+    expect(screen.getByRole("alert").textContent).toContain("1000 of 1500 were added");
+
+    // The same menu, now for three other tracks: the add counted 1000 of the
+    // first set, which says nothing about these.
+    rerender(<MemoryRouter><TrackContextMenu {...props} track={tracks[0]} selection={{ tracks }} /></MemoryRouter>);
+    await act(async () => { fireEvent.click(item("Mine")!); });
+    expect(mock.add).toHaveBeenLastCalledWith("mine", ["a", "b", "c"]);
+  });
+
+  function Rows() {
+    const { bind, menu } = useTrackContextMenu();
+    return (
+      <MemoryRouter>
+        <div onContextMenu={bind(many[0], { selection: { tracks: many } })}>Big selection</div>
+        <div onContextMenu={bind(tracks[0])}>One track</div>
+        <div onContextMenu={bind(tracks[0], { selection: { tracks } })}>Small selection</div>
+        {menu}
+      </MemoryRouter>
+    );
+  }
+  // A long-press on Android opens a menu with no mousedown first, so the
+  // open one doesn't close: the new open replaces it.
+  const longPress = async (row: string) => {
+    await act(async () => { fireEvent.contextMenu(screen.getByText(row)); });
+  };
+
+  it("on a second open while the first is still showing", async () => {
+    render(<Rows />);
+    await longPress("One track");
+    await act(async () => { fireEvent.click(item("Mine")!); });
+    expect((item("Mine") as HTMLButtonElement).disabled).toBe(true);
+
+    // The tick was for that one track, not the selection.
+    await longPress("Small selection");
+    expect(screen.getByRole("menu", { name: "3 tracks" })).toBeTruthy();
+    expect((item("Mine") as HTMLButtonElement).disabled).toBe(false);
+
+    // A 1500-track add stops after the first batch; the next selection still
+    // gets all of its tracks, and no error.
+    failSecondBatch();
+    await longPress("Big selection");
+    await act(async () => { fireEvent.click(item("Mine")!); });
+    expect(screen.getByRole("alert").textContent).toContain("1000 of 1500 were added");
+    await longPress("Small selection");
+    expect(screen.queryByRole("alert")).toBeNull();
+    await act(async () => { fireEvent.click(item("Mine")!); });
+    expect(mock.add).toHaveBeenLastCalledWith("mine", ["a", "b", "c"]);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect((item("Mine") as HTMLButtonElement).disabled).toBe(true);
+  });
 });
 
 it("closes on Escape without the page's Escape also clearing the selection", async () => {

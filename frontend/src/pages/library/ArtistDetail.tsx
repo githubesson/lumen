@@ -451,7 +451,7 @@ function Discography({
           ))}
         </div>
       ) : (
-        <ShelfScroller>
+        <ShelfScroller label="Discography">
           {shown.map((release) => (
             <ReleaseCard key={release.id} release={release} onOpen={onOpen} />
           ))}

@@ -140,7 +140,7 @@
   text-decoration: none;
   cursor: pointer;
 }
-.board-hit:disabled {
+.board-hit[aria-disabled="true"] {
   cursor: default;
 }
 .board-hit::after {

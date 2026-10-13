@@ -150,11 +150,17 @@ export function BoardTrackList({
             label={track.album_title || track.title}
           />
           <div className="board-row-text">
+            {/* An unavailable track's button is aria-disabled rather than
+                disabled: it covers the row, and the browser sends no
+                mouse events to a disabled control, so a right-click on
+                the row would never open the track's menu. */}
             <button
               type="button"
               className="card-title board-hit"
-              disabled={track.unavailable}
-              onClick={() => onPlay(track)}
+              aria-disabled={track.unavailable || undefined}
+              onClick={() => {
+                if (!track.unavailable) onPlay(track);
+              }}
             >
               <span className="sr-only">Play</span>{" "}
               {displayText(track.title)}

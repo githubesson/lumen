@@ -11,6 +11,7 @@ import { trackCoverUrl, type TrackListItem } from "../api";
 import { displayText, fmtDurationMs } from "../lib/format";
 import { isLocalTrack } from "../lib/track";
 import { trackActions } from "@music-library/core/track";
+import { creditsOnly } from "@music-library/core/entity-labels";
 import CoverArt from "./CoverArt";
 import { EditTrackDialog } from "./edit/EditTrackDialog";
 import { MoveToAlbumDialog } from "./edit/MoveToAlbumDialog";
@@ -49,10 +50,11 @@ interface Props {
   /** Per-row source badge; redundant when the whole page is one source. */
   showSourceBadge?: boolean;
   /**
-   * The page's own artist (an album's): rows credited to exactly it leave
-   * out the artist line, so the ones with someone else on them stand out.
+   * The page's own artists (an album's, each a whole name): rows crediting
+   * only them leave out the artist line, so the ones with someone else on
+   * them stand out.
    */
-  omitArtist?: string;
+  omitArtists?: readonly string[];
   /** Optional column inserted between Album and Time. Used by /replay to show plays. */
   extraColumn?: {
     header: string;
@@ -75,11 +77,10 @@ export default function TrackList({
   showHeader = true,
   selectable = true,
   showSourceBadge = true,
-  omitArtist,
+  omitArtists,
   extraColumn,
   selectionControlsHostId,
 }: Props) {
-  const omittedArtist = omitArtist ? displayText(omitArtist).toLowerCase() : "";
   const { current, isPlaying } = usePlayer();
   const { play } = usePlayerControls();
   const { isFavorite, toggle } = useFavorites();
@@ -251,10 +252,7 @@ export default function TrackList({
                   showCover={showCover}
                   showAlbum={showAlbum}
                   showSourceBadge={showSourceBadge}
-                  showArtist={
-                    !omittedArtist ||
-                    displayText(t.artist).toLowerCase() !== omittedArtist
-                  }
+                  showArtist={!omitArtists?.length || !creditsOnly(t.artist, omitArtists)}
                   renderExtra={extraColumn?.render}
                   extraClassName={extraColumn?.className}
                   isNow={current?.id === t.id}

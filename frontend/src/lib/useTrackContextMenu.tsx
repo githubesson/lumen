@@ -49,6 +49,8 @@ function openedByKeyboard(e: ContextMenuEvent): boolean {
  */
 export function useTrackContextMenu() {
   const [state, setState] = useState<{
+    /** Which open this is. Keys the menu, so every open starts fresh. */
+    key: number;
     track: TrackListItem;
     x: number;
     y: number;
@@ -78,9 +80,17 @@ export function useTrackContextMenu() {
   useEffect(() => () => {
     cancelPendingOpen.current();
   }, []);
-  const open = useCallback((next: NonNullable<typeof state>) => {
+  // A bind while the menu is open (a long-press on Android, where no
+  // mousedown closes it first) opens a new menu rather than re-targeting the
+  // old one, so nothing it did for one track or selection, like how far a
+  // batched add got, carries over to the next.
+  const opens = useRef(0);
+  const open = useCallback((next: Omit<NonNullable<typeof state>, "key">) => {
     cancelPendingOpen.current();
-    cancelPendingOpen.current = openWhenLoaded(menuChunk, () => setState(next));
+    cancelPendingOpen.current = openWhenLoaded(menuChunk, () => {
+      opens.current += 1;
+      setState({ ...next, key: opens.current });
+    });
   }, []);
 
   const bind = useCallback(
@@ -127,7 +137,7 @@ export function useTrackContextMenu() {
   }, []);
 
   const menu = state ? (
-    <Suspense fallback={null}><TrackContextMenu
+    <Suspense key={state.key} fallback={null}><TrackContextMenu
       track={state.track}
       x={state.x}
       y={state.y}

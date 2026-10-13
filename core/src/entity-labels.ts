@@ -135,6 +135,37 @@ function sameName(a: string, b: string): boolean {
 }
 
 /**
+ * Whether a track credits only artists from `names` (an album's, from
+ * `albumCredits`), so the album's page can leave out its artist line. The
+ * track's `artist` is its artists joined with ", ", as the server sends it;
+ * names compare without case, as whole entries, the way `tracksByArtist`
+ * matches them. A name holding the separator is still one entry, so the
+ * credit has to split exactly into names from the list: on an album by
+ * "Earth, Wind & Fire" and "Kestrel Bay", "Kestrel Bay, Earth, Wind & Fire"
+ * credits only them, but "Earth" or "Kestrel Bay, Hana Okoro" credits
+ * someone else. False for a track crediting no one.
+ */
+export function creditsOnly(artist: string | null | undefined, names: readonly string[]): boolean {
+  const credit = displayText(artist).toLocaleLowerCase();
+  const entries = [...new Set(names.map((name) => displayText(name).toLocaleLowerCase()))].filter(Boolean);
+  if (!credit) return false;
+  // Where an entry can start: the beginning, and after the separator that
+  // follows an entry already matched. Each is after the one it came from,
+  // so one pass in order visits them all.
+  const starts = new Set([0]);
+  for (let at = 0; at < credit.length; at++) {
+    if (!starts.has(at)) continue;
+    for (const entry of entries) {
+      if (!credit.startsWith(entry, at)) continue;
+      const end = at + entry.length;
+      if (end === credit.length) return true;
+      if (credit.startsWith(", ", end)) starts.add(end + 2);
+    }
+  }
+  return false;
+}
+
+/**
  * "12 tracks · 48 min": how long an album page's list is. The time is left
  * out when no track has one, and a list under a minute reads "1 min".
  */

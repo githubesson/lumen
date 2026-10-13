@@ -52,9 +52,11 @@ export interface ReplayQueries {
   /**
    * By month: asked for when the daily series came back cut short (see
    * `replaySeriesComplete`), and cached under a key of its own, so a reader
-   * of the daily key never gets a monthly answer.
+   * of the daily key never gets a monthly answer. Only all time can be cut
+   * short: a bounded period is at most a year, far fewer days than the
+   * server's cap, so it has no monthly query (null) and never falls back.
    */
-  monthly: ReplayQuery;
+  monthly: ReplayQuery | null;
 }
 
 /**
@@ -70,7 +72,11 @@ export function replayQueries(period: Period): ReplayQueries {
     params: { from: range.from, to: range.to, bucket },
     cacheKey: `replay:${by}:${cacheKey}`,
   });
-  return { range, daily: query("day", "daily"), monthly: query("month", "monthly") };
+  return {
+    range,
+    daily: query("day", "daily"),
+    monthly: range.from ? null : query("month", "monthly"),
+  };
 }
 
 /** How many top tracks a generated Replay playlist holds. */

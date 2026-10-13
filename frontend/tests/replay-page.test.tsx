@@ -73,23 +73,77 @@ it("asks for plays by day and caches them under the daily key", async () => {
   expect(screen.getByText("Days with plays")).toBeTruthy();
 });
 
-it("asks again by month when the daily series was cut short, and keeps that apart from the daily key", async () => {
-  const { daily, monthly: query } = replayQueries({ kind: "this-year" });
+it("asks all time again by month when the daily series was cut short, and keeps that apart from the daily key", async () => {
+  const { daily, monthly: query } = replayQueries({ kind: "all" });
   // An earlier daily answer, from before the history outgrew the cap.
   writeCache(daily.cacheKey, answer("day", 10));
   const monthly = answer("month", 10);
   mock.getReplay.mockResolvedValueOnce(answer("day", 4)).mockResolvedValueOnce(monthly);
-  renderPage();
+  renderPage("/replay?period=all");
   await screen.findByText("Months with plays");
 
   expect(mock.getReplay).toHaveBeenCalledTimes(2);
-  expect(mock.getReplay.mock.calls[1][0]).toMatchObject({ bucket: "month" });
+  expect(mock.getReplay.mock.calls[0][0]).toEqual({ from: undefined, to: undefined, bucket: "day" });
+  expect(mock.getReplay.mock.calls[1][0]).toEqual({ from: undefined, to: undefined, bucket: "month" });
   expect(screen.queryByText("Days with plays")).toBeNull();
   expect(screen.getByText(/a month on average$/)).toBeTruthy();
   // Never under the daily key, which Home reads as days; and the old daily
   // answer is gone, so it can't come back in front of this one.
-  expect(readCache(query.cacheKey)).toBe(monthly);
+  expect(readCache(query!.cacheKey)).toBe(monthly);
   expect(readCache(daily.cacheKey)).toBeUndefined();
+});
+
+it("asks all time by month straight away once it has come back by month", async () => {
+  const { daily, monthly: query } = replayQueries({ kind: "all" });
+  writeCache(query!.cacheKey, answer("month", 10));
+  const fresh = answer("month", 10);
+  mock.getReplay.mockResolvedValue(fresh);
+  renderPage("/replay?period=all");
+  await act(async () => {});
+
+  // One request, by month: no thousands of days fetched only to be dropped.
+  expect(mock.getReplay).toHaveBeenCalledTimes(1);
+  expect(mock.getReplay.mock.calls[0][0]).toEqual({ from: undefined, to: undefined, bucket: "month" });
+  expect(readCache(query!.cacheKey)).toBe(fresh);
+  expect(readCache(daily.cacheKey)).toBeUndefined();
+  expect(screen.getByText("Months with plays")).toBeTruthy();
+});
+
+it("never asks a bounded period by month, even when its days look cut short", async () => {
+  const { range, daily, monthly } = replayQueries({ kind: "this-year" });
+  expect(monthly).toBeNull();
+  const short = answer("day", 4);
+  mock.getReplay.mockResolvedValue(short);
+  renderPage();
+  await screen.findByText("Days with plays");
+
+  expect(mock.getReplay).toHaveBeenCalledTimes(1);
+  expect(mock.getReplay).toHaveBeenCalledWith(
+    { from: range.from, to: range.to, bucket: "day" },
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+  // Still under the key Home shares.
+  expect(readCache(daily.cacheKey)).toBe(short);
+});
+
+it("names what the loading bento's days tile counts only when it's known", async () => {
+  // All time: by day or by month, nothing says which until it answers.
+  let answerDays!: (data: ReplayData) => void;
+  mock.getReplay
+    .mockReturnValueOnce(new Promise<ReplayData>((resolve) => (answerDays = resolve)))
+    .mockResolvedValueOnce(answer("month", 10));
+  renderPage("/replay?period=all");
+  const loading = within(screen.getByLabelText("Loading Replay"));
+  expect(loading.getByText("Plays")).toBeTruthy();
+  expect(loading.queryByText(/with plays$/)).toBeNull();
+  await act(async () => answerDays(answer("day", 4)));
+  expect(screen.getByText("Months with plays")).toBeTruthy();
+  cleanup();
+
+  // A bounded period always counts days.
+  mock.getReplay.mockReturnValue(new Promise(() => {}));
+  renderPage("/replay?period=last-30");
+  expect(within(screen.getByLabelText("Loading Replay")).getByText("Days with plays")).toBeTruthy();
 });
 
 it("opens on the last 30 days Home already loaded, while it refreshes", async () => {

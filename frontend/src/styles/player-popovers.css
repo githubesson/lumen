@@ -271,7 +271,9 @@
 }
 /* Laid out like the public share card: tight rows, small type, and hairline
    dividers between the header, the playing track and the list rather than
-   padded sections. Shared with the mini player's queue panel. */
+   padded sections. Shared with the mini player's queue panel. In both, the
+   playing track's band and the list under it are items of a flex column:
+   the band holds its height and only the list scrolls. */
 .queue-pop-head {
   display: flex;
   align-items: center;
@@ -307,14 +309,10 @@
 .queue-pop-close:hover {
   color: var(--foreground);
 }
-/* The list's side inset in both of its containers, this popover's body and
-   the mini player's queue panel. They pad the list by it, and the playing
-   track's band bleeds back out over it. */
-.queue-pop-body,
-.mini-panel-queue {
+/* The "Up next" list: the part of the queue that scrolls, inset from the
+   container's sides. */
+.queue-pop-list {
   --queue-inset: 4px;
-}
-.queue-pop-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -352,12 +350,11 @@
   box-shadow: inset 0 0 0 2px var(--focus-ring);
 }
 /* The playing track: a full-width band tinted like the share card's footer,
-   with a larger cover, between the header's hairline and its own. It spans
-   its container's --queue-inset on both sides; the explicit width keeps it
-   full-bleed whether the row is a div or a button. */
+   with a larger cover, between the header's hairline and its own. It sits
+   above the list, outside its scroll and inset, so it runs edge to edge and
+   stays in place. */
 .queue-pop-row.active {
-  width: calc(100% + 2 * var(--queue-inset, 0px));
-  margin: 0 calc(-1 * var(--queue-inset, 0px));
+  flex: none;
   padding: 8px 12px;
   gap: 12px;
   border-radius: 0;

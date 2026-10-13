@@ -82,16 +82,22 @@ const monthSpanFormat = new Intl.DateTimeFormat(undefined, {
  * months itself (see `activitySeries`). The server caps how many buckets it
  * sends, so an all-time history longer than that comes back without its
  * newest days; then it is asked for again by month, and the figures count
- * months instead (see `replayCalendar`). Says which query answered, since
- * the two are cached apart.
+ * months instead (see `replayCalendar`). Only all time has that fallback
+ * (`monthly`): a bounded period can't reach the cap. Once all time has come
+ * back by month, it is asked for by month straight away, rather than
+ * fetching every day again only to throw them away. Says which query
+ * answered, since the two are cached apart.
  */
 async function fetchReplay(
   request: ReplayQueries,
   signal: AbortSignal,
 ): Promise<{ query: ReplayQuery; data: ReplayData }> {
-  const daily = await api.getReplay(request.daily.params, { signal });
-  if (replaySeriesComplete(daily)) return { query: request.daily, data: daily };
-  return { query: request.monthly, data: await api.getReplay(request.monthly.params, { signal }) };
+  const { daily, monthly } = request;
+  const byMonth = async (query: ReplayQuery) => ({ query, data: await api.getReplay(query.params, { signal }) });
+  if (monthly && readCache(monthly.cacheKey) !== undefined) return byMonth(monthly);
+  const data = await api.getReplay(daily.params, { signal });
+  if (!monthly || replaySeriesComplete(data)) return { query: daily, data };
+  return byMonth(monthly);
 }
 
 /**
@@ -100,7 +106,8 @@ async function fetchReplay(
  * fetch below), so this is the latest either way.
  */
 function readReplayCache(request: ReplayQueries): ReplayData | null {
-  return readCache<ReplayData>(request.daily.cacheKey) ?? readCache<ReplayData>(request.monthly.cacheKey) ?? null;
+  const byDay = readCache<ReplayData>(request.daily.cacheKey);
+  return byDay ?? (request.monthly ? readCache<ReplayData>(request.monthly.cacheKey) : undefined) ?? null;
 }
 
 function buildOptions(availableYears: number[]): PeriodOption[] {
@@ -179,6 +186,11 @@ export default function Replay() {
   const request = useMemo(() => ({ ...replayQueries(period), asOf: today }), [period, today]);
   const range = request.range;
   const chartBucket = range.bucket ?? "month";
+  // What the loading bento's days tile counts. A bounded period always
+  // comes back by day. All time may come back by month, and nothing says
+  // which before its first answer: any earlier one would be on screen
+  // instead of the placeholder.
+  const placeholderUnit = request.monthly ? null : "day";
   // A period seen before (here or on Home) answers from the cache while it
   // refreshes -- still that period's own numbers, never another's.
   const data =
@@ -204,7 +216,7 @@ export default function Replay() {
         // the daily key never holds months, and an older answer under the
         // other key can't come back in front of this one.
         const other = query === request.daily ? request.monthly : request.daily;
-        dropCache(other.cacheKey);
+        if (other) dropCache(other.cacheKey);
         writeCache(query.cacheKey, d);
         writeCache("replay:years", d.available_years ?? []);
       })
@@ -374,7 +386,7 @@ export default function Replay() {
           entrance, presenting old results as freshly arrived. */}
       <div ref={resultsRef} className="replay-results">
         {showLoading ? (
-          <ReplayBentoPlaceholder chartBucket={chartBucket} />
+          <ReplayBentoPlaceholder chartBucket={chartBucket} unit={placeholderUnit} />
         ) : summary && summary.total_plays === 0 ? (
           <EmptyState
             icon={<SparklesIcon className="size-10" />}

@@ -8,7 +8,7 @@ import { replayQueries } from "@music-library/core/replay/replay";
 
 const mock = vi.hoisted(() => ({
   recent: vi.fn(), tracks: vi.fn(), replay: vi.fn(), getAlbum: vi.fn(),
-  albumTracks: vi.fn(), artistTracks: vi.fn(), play: vi.fn(),
+  albumTracks: vi.fn(), artistTracks: vi.fn(), play: vi.fn(), bind: vi.fn(),
 }));
 vi.mock("../../core/src/api", async (original) => ({
   ...await original<typeof import("../../core/src/api")>(),
@@ -25,7 +25,7 @@ vi.mock("../src/context/Favorites", () => ({
 vi.mock("../src/context/Playlists", () => ({
   usePlaylists: () => ({ data: [], loading: false, error: null, reload: vi.fn() }),
 }));
-vi.mock("../src/lib/useTrackContextMenu", () => ({ useTrackContextMenu: () => ({ bind: () => undefined, menu: null }) }));
+vi.mock("../src/lib/useTrackContextMenu", () => ({ useTrackContextMenu: () => ({ bind: mock.bind, menu: null }) }));
 
 const track = (id: string, artist: string, extra: Partial<TrackListItem> = {}): TrackListItem => ({
   id, title: `Track ${id}`, artist, duration_ms: 180_000, source: "local", ...extra,
@@ -75,6 +75,59 @@ it("ranks what's on repeat with its plays, and plays a row or the whole list", a
   ]);
   fireEvent.click(repeat.getByRole("button", { name: "Play all 3" }));
   expect(mock.play).toHaveBeenLastCalledWith(expect.objectContaining({ id: "a" }), expect.any(Array));
+});
+
+it("opens an unavailable row's menu on right-click, though the row doesn't play", async () => {
+  const open = vi.fn();
+  mock.bind.mockImplementation((t: TrackListItem) => (t.id === "gone" ? open : undefined));
+  const gone = { ...track("gone", "Kestrel Bay", { unavailable: true }), plays: 3 };
+  mock.replay.mockResolvedValue(replay([{ ...track("a", "Hana Okoro"), plays: 5 }, gone]));
+  await renderHome();
+
+  // The row's button covers the row. Disabled, it would get no mouse events
+  // in Chrome, right-clicks included, so it's only aria-disabled.
+  const button = within(panel("repeat")!).getByRole("button", { name: "Play Track gone" });
+  expect(button.hasAttribute("disabled")).toBe(false);
+  expect(button.getAttribute("aria-disabled")).toBe("true");
+  fireEvent.click(button);
+  expect(mock.play).not.toHaveBeenCalled();
+  fireEvent.contextMenu(button);
+  expect(open).toHaveBeenCalledTimes(1);
+
+  // A playable row is a plain button.
+  expect(within(panel("repeat")!).getByRole("button", { name: "Play Track a" }).hasAttribute("aria-disabled")).toBe(false);
+});
+
+it("keeps Top artists hidden while a failed On repeat retries, until it has artists to show", async () => {
+  const failed = "Could not load what you've had on repeat.";
+  mock.replay.mockRejectedValueOnce(new Error("offline"));
+  await renderHome();
+  expect(within(panel("repeat")!).getByText(failed)).toBeTruthy();
+  expect(panel("artists")).toBeNull();
+
+  // A retry that fails again: On repeat holds its place with placeholders,
+  // and Top artists doesn't flash in and out.
+  const retry = (reply: Promise<ReplayData>) =>
+    act(async () => {
+      mock.replay.mockReturnValueOnce(reply);
+      fireEvent.click(within(panel("repeat")!).getByRole("button", { name: "Retry on repeat" }));
+    });
+  const failing = deferred<ReplayData>();
+  await retry(failing.promise);
+  expect(panel("repeat")!.querySelectorAll(".board-placeholder")).toHaveLength(8);
+  expect(panel("artists")).toBeNull();
+  await act(async () => failing.reject(new Error("offline")));
+  expect(within(panel("repeat")!).getByText(failed)).toBeTruthy();
+  expect(panel("artists")).toBeNull();
+
+  // One that lands brings both in.
+  const landing = deferred<ReplayData>();
+  await retry(landing.promise);
+  expect(panel("artists")).toBeNull();
+  const top = { ...track("a", "Kestrel Bay"), plays: 4 };
+  await act(async () => landing.resolve(replay([top], [{ id: "ar-kestrel", name: "Kestrel Bay", plays: 4 }])));
+  expect(within(panel("repeat")!).getByRole("button", { name: "Play Track a" })).toBeTruthy();
+  expect(within(panel("artists")!).getByText("Kestrel Bay")).toBeTruthy();
 });
 
 it("leaves out On repeat and Top artists without plays this month, without flashing them on a revisit", async () => {
@@ -177,8 +230,9 @@ it("opens an album from its card and plays it from the card's button", async () 
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 /** Each panel and the columns it spans on the wide board, in order. */

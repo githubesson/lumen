@@ -50,18 +50,34 @@ it("skips unaffected rows with an extra column and still applies column changes"
   expect(screen.getAllByText("Updated")).toHaveLength(2);
 });
 
+const artistLines = (container: HTMLElement) =>
+  [...container.querySelectorAll(".track-sub")].map((line) => line.textContent);
+
 it("leaves out the artist line on rows credited to the page's own artist", () => {
   const tracks: TrackListItem[] = [
     { id: "a", title: "Solo", artist: "Band", duration_ms: 1000 },
     { id: "b", title: "Duet", artist: "Band, Guest", duration_ms: 1000 },
     { id: "c", title: "Same, other case", artist: "band", duration_ms: 1000 },
   ];
-  const { container, rerender } = render(<TrackList tracks={tracks} selectable={false} omitArtist="Band" />);
-  const lines = () => [...container.querySelectorAll(".track-sub")].map((line) => line.textContent);
-  expect(lines()).toEqual(["Band, Guest"]);
+  const { container, rerender } = render(<TrackList tracks={tracks} selectable={false} omitArtists={["Band"]} />);
+  expect(artistLines(container)).toEqual(["Band, Guest"]);
   // Without a page artist every row names its own.
   rerender(<TrackList tracks={tracks} selectable={false} />);
-  expect(lines()).toEqual(["Band", "Band, Guest", "band"]);
+  expect(artistLines(container)).toEqual(["Band", "Band, Guest", "band"]);
+});
+
+it("on a release billed to several artists, names a row's artists only when someone else is on it", () => {
+  const tracks: TrackListItem[] = [
+    { id: "a", title: "First alone", artist: "Halden Marsh", duration_ms: 1000 },
+    { id: "b", title: "Both", artist: "Halden Marsh, Earth, Wind & Fire", duration_ms: 1000 },
+    { id: "c", title: "Second alone", artist: "earth, wind & fire", duration_ms: 1000 },
+    { id: "d", title: "With a guest", artist: "Earth, Wind & Fire, Hana Okoro", duration_ms: 1000 },
+    { id: "e", title: "Part of a name", artist: "Earth", duration_ms: 1000 },
+  ];
+  const { container } = render(
+    <TrackList tracks={tracks} selectable={false} omitArtists={["Halden Marsh", "Earth, Wind & Fire"]} />,
+  );
+  expect(artistLines(container)).toEqual(["Earth, Wind & Fire, Hana Okoro", "Earth"]);
 });
 
 it("opens the selection menu for a right-click inside a selection, and a row's own menu outside it", () => {

@@ -138,6 +138,8 @@ export default function TrackContextMenu({
     return tracks.length > 1 ? tracks : null;
   }, [selection]);
   const trackIds = useMemo(() => (many ?? [track]).map((t) => t.id), [many, track]);
+  // The exact tracks, in order: what a batched add's progress is counted in.
+  const trackIdsKey = useMemo(() => trackIds.join("\n"), [trackIds]);
   const playable = useMemo(() => (many ? playableTracks(many) : []), [many]);
   const canPlay = many ? playable.length > 0 : actions.play;
   const fav = many ? favoriteState(many, isFavorite) : isFavorite(track.id) ? "all" : "none";
@@ -157,8 +159,10 @@ export default function TrackContextMenu({
   const menuClosed = useRef(false);
   // How many of `trackIds` each playlist already took from this menu. A
   // selection goes in batches, and a retry after a failed one resumes there
-  // instead of adding the earlier batches twice.
-  const landed = useRef(new Map<string, number>());
+  // instead of adding the earlier batches twice. The count is only good for
+  // the same tracks in the same order, so it's kept with them: a different
+  // set starts from its first track.
+  const landed = useRef(new Map<string, { ids: string; count: number }>());
   const [addingId, setAddingId] = useState<string | null>(null);
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [downloading, setDownloading] = useState(false);
@@ -302,13 +306,14 @@ export default function TrackContextMenu({
     if (addingId) return;
     setAddingId(p.id);
     setError(null);
-    const start = landed.current.get(p.id) ?? 0;
+    const prior = landed.current.get(p.id);
+    const start = prior?.ids === trackIdsKey ? prior.count : 0;
     let done = start;
     try {
       for (const batch of addBatches(trackIds.slice(start))) {
         await api.addPlaylistTracks(p.id, batch);
         done += batch.length;
-        landed.current.set(p.id, done);
+        landed.current.set(p.id, { ids: trackIdsKey, count: done });
       }
     } catch (err) {
       const message = errorMessage(err, "Add failed.");

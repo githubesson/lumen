@@ -13,12 +13,13 @@ import {
   type TrackListItem,
 } from "../../api";
 import {
-  albumArtists,
   albumCredits,
   libraryAlbumFacts,
   tidalAlbumFacts,
+  type AlbumCredit,
 } from "@music-library/core/entity-labels";
 import type { EntityTarget } from "@music-library/core/entity-target";
+import { albumDownloadState } from "@music-library/core/track";
 import { useEntityDetail } from "../../lib/useEntityDetail";
 import { dropCache, readCache, writeCache } from "../../lib/resourceCache";
 import TrackList from "../../components/TrackList";
@@ -122,7 +123,7 @@ export function AlbumDetailView({
       <AlbumTrackList
         tracks={search.filteredTracks}
         queueSource={tracks}
-        artist={albumArtists(album)}
+        credits={sleeve.credits}
         query={search.searchActive ? search.query : null}
       />
       <EditAlbumDialog
@@ -245,8 +246,9 @@ export function TidalAlbumDetailView({
         onBack={onBack}
         album={null}
         loadingLabel="Loading TIDAL album…"
-        // An admin gets the album download. A library album only has a row
-        // when it copies a TIDAL release, which nothing says before it loads.
+        // An admin always gets one row: the album download, or the library
+        // copy once all of it is saved. (A library album only has a row when
+        // it copies a TIDAL release, which nothing says before it loads.)
         reserveActions={isAdmin}
         search={sleeveSearch(search, 0)}
         searchRef={search.inputRef}
@@ -254,15 +256,13 @@ export function TidalAlbumDetailView({
     );
   }
 
-  const download = isAdmin && (
-    <AlbumDownloadControl
-      tidalAlbumId={album.id}
-      tracks={album.tracks}
-      queuedCount={album.queued_count ?? 0}
-      onChanged={reload}
-      onError={setActionError}
-    />
-  );
+  // The actions row holds one thing, so it never wraps and the loading frame
+  // (which holds a row for an admin) matches it: the admin's download
+  // control, or once the whole release is saved, its library copy. Anywhere
+  // else the library copy is a quiet link under the details.
+  const libraryAlbumId = album.library_album_id;
+  const canDownload = isAdmin && albumDownloadState(album.tracks, album.queued_count ?? 0).kind !== "none";
+  const openInLibrary = libraryAlbumId ? () => onOpenAlbum({ kind: "local", id: libraryAlbumId }) : null;
   return (
     <AlbumSleeve
       kind="TIDAL Album"
@@ -270,19 +270,28 @@ export function TidalAlbumDetailView({
       album={sleeve}
       loadingLabel="Loading TIDAL album…"
       actions={
-        isAdmin || album.library_album_id ? (
-          <>
-            {download}
-            {album.library_album_id && (
-              <Button
-                onClick={() => onOpenAlbum({ kind: "local", id: album.library_album_id! })}
-                leadingIcon={<LibraryIcon className="size-4" />}
-              >
-                Open in library
-              </Button>
-            )}
-          </>
+        canDownload ? (
+          <AlbumDownloadControl
+            tidalAlbumId={album.id}
+            tracks={album.tracks}
+            queuedCount={album.queued_count ?? 0}
+            onChanged={reload}
+            onError={setActionError}
+          />
+        ) : isAdmin && openInLibrary ? (
+          <Button onClick={openInLibrary} leadingIcon={<LibraryIcon className="size-4" />}>
+            Open in library
+          </Button>
         ) : undefined
+      }
+      detailsLink={
+        openInLibrary &&
+        (canDownload || !isAdmin) && (
+          <button type="button" className="album-sleeve-link" onClick={openInLibrary}>
+            <LibraryIcon className="size-3.5" aria-hidden="true" />
+            Open in library
+          </button>
+        )
       }
       search={sleeveSearch(search, album.tracks.length)}
       searchRef={search.inputRef}
@@ -291,7 +300,7 @@ export function TidalAlbumDetailView({
       <AlbumTrackList
         tracks={search.filteredTracks}
         queueSource={album.tracks}
-        artist={albumArtists(album)}
+        credits={sleeve.credits}
         query={search.searchActive ? search.query : null}
       />
     </AlbumSleeve>
@@ -302,23 +311,24 @@ export function TidalAlbumDetailView({
 function AlbumTrackList({
   tracks,
   queueSource,
-  artist,
+  credits,
   query,
 }: {
   tracks: TrackListItem[];
   queueSource: TrackListItem[];
-  /** The album's own artist, whose name the rows then leave out. */
-  artist: string;
+  /** The album's own artists: a row crediting only them leaves its artist line out. */
+  credits: AlbumCredit[];
   /** The search, when one is filtering the list. */
   query: string | null;
 }) {
+  const artists = useMemo(() => credits.map((credit) => credit.name), [credits]);
   return (
     <TrackList
       tracks={tracks}
       queueSource={queueSource}
       showCover={false}
       showAlbum={false}
-      omitArtist={artist}
+      omitArtists={artists}
       selectionControlsHostId={ALBUM_SELECTION_HOST_ID}
       emptyState={
         query !== null ? (

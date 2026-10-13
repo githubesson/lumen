@@ -7,6 +7,7 @@ import {
   albumSubtitle,
   artistMetaParts,
   artistSubtitle,
+  creditsOnly,
   libraryAlbumFacts,
   libraryAlbumMetaParts,
   metaLine,
@@ -176,5 +177,38 @@ describe("artist labels", () => {
     expect(tidalArtistMetaParts(8, 1)).toEqual(["8 releases", "1 popular track"]);
     expect(tidalArtistMetaParts(0, 10)).toEqual(["10 popular tracks"]);
     expect(tidalArtistMetaParts(0, 0)).toEqual([]);
+  });
+});
+
+describe("creditsOnly", () => {
+  it("is true when every artist a track credits is one of the album's", () => {
+    const album = ["Halden Marsh", "Kestrel Bay"];
+    expect(creditsOnly("Halden Marsh", album)).toBe(true);
+    expect(creditsOnly("Kestrel Bay, Halden Marsh", album)).toBe(true);
+    expect(creditsOnly("halden marsh, KESTREL BAY", album)).toBe(true);
+    // Anyone else on the track.
+    expect(creditsOnly("Halden Marsh, Hana Okoro", album)).toBe(false);
+    expect(creditsOnly("Hana Okoro", album)).toBe(false);
+    // A part of a name is not the name.
+    expect(creditsOnly("Kestrel", album)).toBe(false);
+    expect(creditsOnly("Kestrel Bay Band", album)).toBe(false);
+  });
+
+  it("keeps names with the separator in them whole", () => {
+    const album = ["Earth, Wind & Fire", "Kestrel Bay"];
+    expect(creditsOnly("Earth, Wind & Fire", album)).toBe(true);
+    expect(creditsOnly("Kestrel Bay, Earth, Wind & Fire", album)).toBe(true);
+    expect(creditsOnly("Earth", album)).toBe(false);
+    expect(creditsOnly("Earth, Wind", album)).toBe(false);
+    expect(creditsOnly("Earth, Wind & Fire, Hana Okoro", album)).toBe(false);
+    // Billed as two artists, "Earth" and "Wind & Fire" each count.
+    expect(creditsOnly("Wind & Fire, Earth", ["Earth", "Wind & Fire"])).toBe(true);
+  });
+
+  it("is false for a track crediting no one, or an album billing no one", () => {
+    expect(creditsOnly(undefined, ["Band"])).toBe(false);
+    expect(creditsOnly("  ", ["Band"])).toBe(false);
+    expect(creditsOnly("Band", [])).toBe(false);
+    expect(creditsOnly("Band", [""])).toBe(false);
   });
 });

@@ -70,6 +70,7 @@ export function AlbumSleeve({
   loadingLabel,
   actions,
   reserveActions = false,
+  detailsLink,
   onEdit,
   search,
   searchRef,
@@ -80,13 +81,19 @@ export function AlbumSleeve({
   album: AlbumSleeveAlbum | null;
   /** Announced while `album` is null. */
   loadingLabel: string;
-  /** More actions under Play (an album download, a link to the library copy). */
+  /**
+   * A row under Play for one more action (an album download, or the library
+   * copy of a release that's all saved). One control, so the row never wraps
+   * and the loading frame can hold its exact height.
+   */
   actions?: ReactNode;
   /**
    * While loading, hold a row for `actions` when the loaded page will almost
    * surely have them, so the details below don't move when it lands.
    */
   reserveActions?: boolean;
+  /** A quiet link under the details (a TIDAL release's library copy). */
+  detailsLink?: ReactNode;
   /** Admin: opens the album editor from the Details heading. */
   onEdit?: () => void;
   search: AlbumSleeveSearch;
@@ -184,6 +191,7 @@ export function AlbumSleeve({
                   </div>
                 ))}
           </dl>
+          {album && detailsLink && <div className="album-sleeve-details-foot">{detailsLink}</div>}
         </section>
       </header>
       <div className="album-sleeve-rule" aria-hidden="true" />

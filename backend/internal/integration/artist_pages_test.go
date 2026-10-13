@@ -1,8 +1,10 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -157,6 +159,54 @@ func TestReplayArtistsSayWhetherTheyHaveAPage(t *testing.T) {
 	if len(got) != 2 || got[0].ID != streamed || got[0].Name != streamedName || got[0].HasPage ||
 		got[1].ID != local || !got[1].HasPage || top.Artist != streamedName+", "+got[1].Name {
 		t.Fatalf("duet artists = %+v (%q)", got, top.Artist)
+	}
+}
+
+// Legacy rows can credit two primary artists at the same position. Each top
+// track artist's id, name and page flag still belong to the same artist, in
+// one order (position, then id) that the display string follows too.
+func TestReplayTopTrackArtistsStayPairedOnTiedPositions(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	lib := library.NewStore(pool)
+	viewer := redteamUser(t, ctx, pool)
+
+	// Streamed only: no page. In the library too: a page.
+	streamedName := "Tied Streamed " + uuid.NewString()[:8]
+	duet := tidalPlay(t, ctx, pool, lib, streamedName)
+	var streamed uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT artist_id FROM track_artists WHERE track_id=$1 AND position=0`, duet).Scan(&streamed); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM artists WHERE id=$1`, streamed) })
+	local := pageArtist(t, ctx, pool, "Tied Local")
+	credit(t, ctx, pool, redteamTrack(t, ctx, pool, nil, nil), local)
+	if _, err := pool.Exec(ctx, `INSERT INTO track_artists(track_id,artist_id,role,position) VALUES($1,$2,'primary',0)`, duet, local); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO play_history(user_id,track_id,played_at) VALUES($1,$2,NOW())`, viewer, duet); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := lib.ReplayStats(ctx, library.ReplayStatsParams{ViewerID: viewer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.TopTracks) != 1 || data.TopTracks[0].ID != duet {
+		t.Fatalf("top tracks = %+v", data.TopTracks)
+	}
+	top := data.TopTracks[0]
+	want := []library.ReplayTrackArtist{
+		{ID: streamed, Name: streamedName, HasPage: false},
+		{ID: local, Name: artistName(t, ctx, pool, local), HasPage: true},
+	}
+	if bytes.Compare(local[:], streamed[:]) < 0 {
+		want[0], want[1] = want[1], want[0]
+	}
+	if !reflect.DeepEqual(top.PrimaryArtists, want) {
+		t.Fatalf("artists = %+v, want %+v", top.PrimaryArtists, want)
+	}
+	if top.Artist != want[0].Name+", "+want[1].Name {
+		t.Fatalf("artist = %q, want the names in the same order as %+v", top.Artist, want)
 	}
 }
 

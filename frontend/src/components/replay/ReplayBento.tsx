@@ -569,7 +569,7 @@ function CardsTile({
       {/* More than fit scroll sideways, with the shelf's edge fades and
           arrows saying so, as on Home. */}
       <div className="bento-minis">
-        <ShelfScroller>{children}</ShelfScroller>
+        <ShelfScroller label={label}>{children}</ShelfScroller>
       </div>
     </section>
   );
@@ -578,8 +578,17 @@ function CardsTile({
 /**
  * The bento's shape while a period loads: the same tiles and labels with
  * bars in place of the figures, so nothing moves when the data lands.
+ * `unit` is what the days tile will count, when that's known before the
+ * data: all time counts months once its history outgrows the server's cap,
+ * so until it answers, its label is a bar too rather than one that changes.
  */
-export function ReplayBentoPlaceholder({ chartBucket }: { chartBucket: ReplayBucket }) {
+export function ReplayBentoPlaceholder({
+  chartBucket,
+  unit,
+}: {
+  chartBucket: ReplayBucket;
+  unit: "day" | "month" | null;
+}) {
   const { wide, narrow } = bentoAreas({ feat: true, list: true, genre: true, art: true, alb: true });
   const bar = (width: string) => <span className="skeleton-text" style={{ width }} />;
   return (
@@ -603,14 +612,14 @@ export function ReplayBentoPlaceholder({ chartBucket }: { chartBucket: ReplayBuc
           </div>
         </div>
       </div>
-      {[
+      {([
         ["plays", "Plays"],
         ["time", "Listening time"],
         ["tracks", "Tracks"],
-        ["days", "Days with plays"],
-      ].map(([area, label]) => (
+        ["days", unit === "month" ? "Months with plays" : unit === "day" ? "Days with plays" : null],
+      ] as const).map(([area, label]) => (
         <div key={area} className="bento-tile stat-card" style={{ gridArea: area }}>
-          <div className="stat-card-label">{label}</div>
+          <div className="stat-card-label">{label ?? bar("60%")}</div>
           <div>
             <div className="stat-card-value">{bar("45%")}</div>
             <div className="stat-card-sub">{bar("65%")}</div>

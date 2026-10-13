@@ -80,6 +80,18 @@ describe("replayQueries", () => {
     expect(monthly).toEqual({ params: { from: undefined, to: undefined, bucket: "month" }, cacheKey: "replay:monthly:all::" });
   });
 
+  it("has no monthly fallback for a bounded period, which can't outgrow the server's cap", () => {
+    vi.useFakeTimers({ now: new Date(Date.UTC(2026, 9, 2, 13)) });
+    for (const period of [
+      { kind: "this-year" },
+      { kind: "year", year: 2025 },
+      { kind: "this-month" },
+      { kind: "last-30" },
+    ] as const) {
+      expect(replayQueries(period).monthly, period.kind).toBeNull();
+    }
+  });
+
   it("moves the key with the days a rolling period covers", () => {
     vi.useFakeTimers({ now: new Date(Date.UTC(2026, 9, 2, 1)) });
     const morning = replayQueries({ kind: "last-30" }).daily.cacheKey;

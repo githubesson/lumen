@@ -322,6 +322,34 @@
 .album-sleeve-details-head .iconbtn:hover {
   color: var(--foreground);
 }
+/* Under the facts: a quiet link (a TIDAL release's library copy), kept out
+   of the actions row so that row holds one button and never wraps. */
+.album-sleeve-details-foot {
+  margin-top: 12px;
+}
+.album-sleeve-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.album-sleeve-link:hover {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.album-sleeve-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 .album-sleeve-rule {
   align-self: stretch;
   background: var(--border);

@@ -141,16 +141,20 @@ export default function Home() {
   const pending = (count: number, loading: boolean, error: string | null) =>
     count === 0 && !error && (!settled || loading);
 
-  // Once settled, a panel shows while it has something, while a load it
-  // started empty is under way (a retry), or to offer a retry. A list known
-  // to be empty stays hidden while it revalidates, so revisits don't flash
-  // it and reflow the board.
+  // Once settled, a panel shows while it has something, or to offer a retry.
+  // One whose list is unknown and loading again (a retry) stays as it was
+  // until real data arrives: the panel whose Retry was pressed keeps its
+  // place, with placeholders, and one already gone (Top artists, when On
+  // repeat failed) doesn't come back as placeholders only to vanish again
+  // if the retry fails. A list known to be empty stays hidden while it
+  // revalidates, so revisits don't flash it and reflow the board.
   const replayEmpty = replay ? replay.summary.total_plays === 0 : false;
+  const [shown, setShown] = useState<readonly BoardPanelId[]>(ALL_PANELS);
   const present = useMemo(() => {
     if (!settled) return ALL_PANELS;
     const out: BoardPanelId[] = [];
     const show = (id: BoardPanelId, count: number, known: boolean, loading: boolean, error: string | null) => {
-      if (count > 0 || (!known && loading) || error) out.push(id);
+      if (count > 0 || error || (!known && loading && shown.includes(id))) out.push(id);
     };
     show("repeat", replayEmpty ? 0 : onRepeat.length, replay !== null, replayResource.loading, replayResource.error);
     show("recent", recent.length, recentResource.data !== null, recentResource.loading, recentResource.error);
@@ -161,7 +165,7 @@ export default function Home() {
     show("artists", replayEmpty ? 0 : topArtists.length, replay !== null, replayResource.loading, null);
     return out;
   }, [
-    settled,
+    settled, shown,
     replay, replayEmpty, onRepeat.length, replayResource.loading, replayResource.error,
     recent.length, recentResource.data, recentResource.loading, recentResource.error,
     favs.length, favorites.loaded, favorites.loading, favorites.error,
@@ -169,6 +173,7 @@ export default function Home() {
     playlists.length, playlistResource.data, playlistResource.loading, playlistResource.error,
     topArtists.length,
   ]);
+  if (present.length !== shown.length || present.some((id, i) => id !== shown[i])) setShown(present);
   const layout = useMemo(() => boardLayout(present), [present]);
 
   const panel = (cell: BoardCell) => {

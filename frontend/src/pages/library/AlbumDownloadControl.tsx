@@ -46,21 +46,26 @@ export function AlbumDownloadControl({
   };
 
   if (state.kind === "queued") {
+    // Cancel is an icon, like Shuffle beside Play all: with its label the
+    // pair fills the album column, and a longer count would wrap it onto a
+    // second row.
     return (
       <>
         <Button disabled leadingIcon={<DownloadIcon className="size-4" />}>
           {state.label}
         </Button>
-        <Button
-          variant="ghost"
+        <button
+          type="button"
+          className="iconbtn"
+          aria-label="Cancel download"
+          title="Cancel download"
           disabled={busy}
           onClick={() =>
             void run(() => api.cancelTidalAlbumDownload(tidalAlbumId), "Could not cancel the download.")
           }
-          leadingIcon={<XIcon className="size-4" />}
         >
-          Cancel
-        </Button>
+          <XIcon className="size-4" />
+        </button>
       </>
     );
   }
