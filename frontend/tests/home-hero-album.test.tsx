@@ -6,11 +6,11 @@ import Home from "../src/pages/Home";
 import { clearResourceCache } from "../src/lib/resourceCache";
 
 const mock = vi.hoisted(() => ({
-  recent: vi.fn(), tracks: vi.fn(), getAlbum: vi.fn(),
+  recent: vi.fn(), tracks: vi.fn(), getAlbum: vi.fn(), replay: vi.fn(),
 }));
 vi.mock("../../core/src/api", async (original) => ({
   ...await original<typeof import("../../core/src/api")>(),
-  api: { listRecent: mock.recent, listTracks: mock.tracks, getAlbum: mock.getAlbum },
+  api: { listRecent: mock.recent, listTracks: mock.tracks, getAlbum: mock.getAlbum, getReplay: mock.replay },
 }));
 vi.mock("../src/context/Auth", () => ({ useAuth: () => ({ me: { id: "user", username: "Listener" } }) }));
 vi.mock("../src/context/Player", () => ({ usePlayerControls: () => ({ play: vi.fn() }) }));
@@ -36,6 +36,7 @@ beforeEach(() => {
   clearResourceCache();
   mock.tracks.mockResolvedValue([]);
   mock.getAlbum.mockResolvedValue(album);
+  mock.replay.mockReturnValue(new Promise(() => {}));
 });
 afterEach(cleanup);
 

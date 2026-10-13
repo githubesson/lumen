@@ -39,6 +39,43 @@ export function periodKey(p: Period): string {
   }
 }
 
+/**
+ * The period a {@link periodKey} names, or null for anything else. Lets a
+ * link open Replay on a given window (`/replay?period=last-30`).
+ */
+export function parsePeriodKey(key: string | null | undefined): Period | null {
+  switch (key) {
+    case "all":
+    case "this-year":
+    case "this-month":
+    case "last-30":
+      return { kind: key };
+  }
+  const year = /^year:(\d{4})$/.exec(key ?? "");
+  return year ? { kind: "year", year: Number(year[1]) } : null;
+}
+
+/**
+ * The one spelling of a `?period=` value, or null for the default (this
+ * year). Null also stands in for anything with no pill to show it: a value
+ * that isn't a period, the current year by number, or a year the server has
+ * no plays for. `availableYears` is null while unknown, and a year is kept
+ * until it is known.
+ */
+export function canonicalPeriodKey(
+  param: string | null | undefined,
+  availableYears: readonly number[] | null,
+  currentYear = new Date().getFullYear(),
+): string | null {
+  const period = parsePeriodKey(param);
+  if (!period || period.kind === "this-year") return null;
+  if (period.kind === "year") {
+    if (period.year === currentYear) return null;
+    if (availableYears && !availableYears.includes(period.year)) return null;
+  }
+  return periodKey(period);
+}
+
 /** Short label for the period picker chips. */
 export function periodLabel(p: Period): string {
   switch (p.kind) {

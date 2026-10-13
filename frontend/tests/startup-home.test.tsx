@@ -1,20 +1,23 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
-import type { Playlist, TrackListItem } from "../src/api";
+import type { Playlist, ReplayData, TrackListItem } from "../src/api";
 import { FavoritesProvider } from "../src/context/Favorites";
 import { PlaylistsProvider, usePlaylists } from "../src/context/Playlists";
 import Home from "../src/pages/Home";
 import { clearResourceCache } from "../src/lib/resourceCache";
 
 const mock = vi.hoisted(() => ({
-  recent: vi.fn(), tracks: vi.fn(), favorites: vi.fn(), playlists: vi.fn(),
+  recent: vi.fn(), tracks: vi.fn(), favorites: vi.fn(), playlists: vi.fn(), replay: vi.fn(),
   auth: { status: "authed", me: { id: "user", username: "Listener", must_reset_password: false } },
 }));
 vi.mock("../../core/src/auth/auth-core", () => ({ useAuth: () => mock.auth }));
 vi.mock("../../core/src/api", async (original) => ({
   ...await original<typeof import("../../core/src/api")>(),
-  api: { listRecent: mock.recent, listTracks: mock.tracks, listFavorites: mock.favorites, listPlaylists: mock.playlists },
+  api: {
+    listRecent: mock.recent, listTracks: mock.tracks, listFavorites: mock.favorites, listPlaylists: mock.playlists,
+    getReplay: mock.replay,
+  },
 }));
 vi.mock("../src/context/Player", () => ({ usePlayer: () => ({ play: vi.fn() }), usePlayerControls: () => ({ play: vi.fn() }) }));
 vi.mock("../src/lib/useTrackContextMenu", () => ({ useTrackContextMenu: () => ({ bind: vi.fn(), menu: null }) }));
@@ -23,6 +26,11 @@ vi.mock("../src/components/MediaCard", () => ({
   MediaCardPlaceholders: () => null,
 }));
 vi.mock("../src/components/PlaylistCard", () => ({ default: ({ playlist }: { playlist: Playlist }) => <div>{playlist.name}</div> }));
+
+const emptyReplay: ReplayData = {
+  summary: { total_plays: 0, total_ms: 0, unique_tracks: 0, unique_artists: 0 },
+  top_tracks: [], top_artists: [], top_albums: [], top_genres: [], activity: [], bucket: "day", available_years: [],
+};
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -54,6 +62,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   clearResourceCache();
   for (const fn of [mock.recent, mock.tracks, mock.favorites, mock.playlists]) fn.mockResolvedValue([]);
+  mock.replay.mockResolvedValue(emptyReplay);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 

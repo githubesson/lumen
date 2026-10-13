@@ -15,7 +15,9 @@ import {
   replayRequest,
   replaySeriesComplete,
   topTrackByArtist,
+  tracksByArtist,
 } from "../src/replay/replay";
+import { canonicalPeriodKey, parsePeriodKey, periodKey, type Period } from "../src/replay/period";
 import { pluralize } from "../src/format";
 
 afterEach(() => {
@@ -97,6 +99,69 @@ describe("playsById", () => {
     expect(map.get("a")).toBe(3);
     expect(map.get("b")).toBe(1);
     expect(playsById(undefined).size).toBe(0);
+  });
+});
+
+describe("tracksByArtist", () => {
+  const tracks = [
+    { id: "solo", artist: "Kestrel Bay" },
+    { id: "duet", artist: "Halden Marsh, Kestrel Bay" },
+    { id: "comma", artist: "Tyler, The Creator, Kali Uchis" },
+    { id: "other", artist: "Kestrel Bayside" },
+    { id: "none" },
+  ];
+
+  it("matches the name as a whole entry of the primary artists", () => {
+    expect(tracksByArtist("Kestrel Bay", tracks).map((t) => t.id)).toEqual(["solo", "duet"]);
+    expect(tracksByArtist("Bay", tracks)).toEqual([]);
+  });
+
+  it("matches a name that contains the separator", () => {
+    expect(tracksByArtist("Tyler, The Creator", tracks).map((t) => t.id)).toEqual(["comma"]);
+    expect(tracksByArtist("Kali Uchis", tracks).map((t) => t.id)).toEqual(["comma"]);
+  });
+
+  it("matches nothing for a blank name", () => {
+    expect(tracksByArtist("  ", tracks)).toEqual([]);
+  });
+});
+
+describe("parsePeriodKey", () => {
+  it("reads back every key periodKey writes", () => {
+    const periods: Period[] = [
+      { kind: "all" },
+      { kind: "this-year" },
+      { kind: "this-month" },
+      { kind: "last-30" },
+      { kind: "year", year: 2024 },
+    ];
+    for (const period of periods) expect(parsePeriodKey(periodKey(period))).toEqual(period);
+  });
+
+  it("rejects anything else", () => {
+    for (const key of [null, undefined, "", "last-7", "year:", "year:24", "year:2024x"]) {
+      expect(parsePeriodKey(key)).toBeNull();
+    }
+  });
+});
+
+describe("canonicalPeriodKey", () => {
+  it("keeps a period that has a pill", () => {
+    expect(canonicalPeriodKey("last-30", [2025])).toBe("last-30");
+    expect(canonicalPeriodKey("all", [])).toBe("all");
+    expect(canonicalPeriodKey("year:2025", [2025, 2026], 2026)).toBe("year:2025");
+  });
+
+  it("falls back to the default for this year, by either name, and for values that aren't periods", () => {
+    expect(canonicalPeriodKey(null, [2025])).toBeNull();
+    expect(canonicalPeriodKey("this-year", [2025])).toBeNull();
+    expect(canonicalPeriodKey("year:2026", [2025, 2026], 2026)).toBeNull();
+    expect(canonicalPeriodKey("bogus", [2025])).toBeNull();
+  });
+
+  it("drops a year without plays once the years are known, and keeps it until then", () => {
+    expect(canonicalPeriodKey("year:1999", [2025], 2026)).toBeNull();
+    expect(canonicalPeriodKey("year:1999", null, 2026)).toBe("year:1999");
   });
 });
 

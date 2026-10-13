@@ -30,6 +30,21 @@ export default function MediaCard({
   onContextMenu?: MouseEventHandler<HTMLElement>;
   playLabel?: string;
 }) {
+  const playButton = onPlay && (
+    <button
+      type="button"
+      className="card-play"
+      aria-label={playLabel ?? "Play"}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onPlay();
+      }}
+    >
+      <PlayIcon className="size-4" />
+    </button>
+  );
+  const linked = !!(to && onPlay);
   const art = (
     <CoverArt
       className="card-art"
@@ -37,26 +52,31 @@ export default function MediaCard({
       label={artLabel ?? (typeof title === "string" ? title : "")}
     >
       {rankBadge}
-      {onPlay && (
-        <button
-          type="button"
-          className="card-play"
-          aria-label={playLabel ?? "Play"}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onPlay();
-          }}
-        >
-          <PlayIcon className="size-4" />
-        </button>
-      )}
+      {!linked && playButton}
     </CoverArt>
   );
+  const sub = subtitle != null && <div className="card-sub">{subtitle}</div>;
+  if (to && linked) {
+    // Opens and plays. The play button can't sit inside the link, so the
+    // title is the link and stretches over the whole card (`.card-link`),
+    // with the play button after it (for Tab order) and above it.
+    return (
+      <div className="card card-linked" onContextMenu={onContextMenu}>
+        {art}
+        <div>
+          <Link className="card-title card-link" to={to}>
+            {title}
+          </Link>
+          {sub}
+        </div>
+        {playButton}
+      </div>
+    );
+  }
   const body = (
     <div>
       <div className="card-title">{title}</div>
-      {subtitle != null && <div className="card-sub">{subtitle}</div>}
+      {sub}
     </div>
   );
   if (to) {
