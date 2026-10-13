@@ -250,12 +250,12 @@ describe("TIDAL account management", () => {
           { status: 201 },
         ),
       )
-      .mockResolvedValueOnce(Response.json({ state: "pending" }));
+      .mockResolvedValueOnce(Response.json({ state: "expired" }));
     vi.stubGlobal("fetch", fetchMock);
 
     const flow = await api.startTidalAuth();
-    await expect(api.pollTidalAuth(flow.flow_id)).resolves.toEqual({
-      state: "pending",
+    await expect(api.waitForTidalAuthorization(flow.flow_id)).resolves.toEqual({
+      state: "expired",
     });
 
     expect(fetchMock).toHaveBeenNthCalledWith(

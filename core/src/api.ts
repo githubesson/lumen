@@ -407,11 +407,6 @@ export const api = {
     request<LastFMConnectResponse>("/api/integrations/lastfm/connect", {
       method: "POST",
     }),
-  completeLastFM: (options: RequestOptions = {}) =>
-    request<{ username: string }>("/api/integrations/lastfm/complete", {
-      method: "POST",
-      signal: options.signal,
-    }),
   waitForLastFMAuthorization,
   disconnectLastFM: () =>
     requestVoid("/api/integrations/lastfm", { method: "DELETE" }),
@@ -420,10 +415,6 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(input),
     }),
-  getCurrentPlaybackActivity: (excludeDeviceId?: string) =>
-    request<CurrentPlaybackActivityResponse>(
-      `/api/activity/current${buildQuery({ exclude_device_id: excludeDeviceId })}`,
-    ),
   clearPlaybackActivity: (deviceId: string) =>
     requestVoid(`/api/activity/${encodeURIComponent(deviceId)}`, {
       method: "DELETE",
@@ -602,11 +593,6 @@ export const api = {
       method: "POST",
       signal: options.signal,
     }),
-  pollTidalAuth: (flowId: string, options: RequestOptions = {}) =>
-    request<TidalAuthPoll>(
-      `/api/admin/tidal/auth/${pathID(flowId)}`,
-      options,
-    ),
   waitForTidalAuthorization,
   removeTidalAccount: (accountId: string, options: RequestOptions = {}) =>
     requestVoid(`/api/admin/tidal/accounts/${pathID(accountId)}`, {
@@ -637,11 +623,6 @@ export const api = {
     ),
 
   // Lyrics API (fastest valid result from the configured providers)
-  searchLyrics: (query: string, options: RequestOptions = {}) =>
-    request<LyricsResult[]>(
-      `/api/lyrics?q=${encodeURIComponent(query)}`,
-      options,
-    ),
   getLyrics: (params: {
     track_name: string;
     artist_name?: string;
@@ -701,10 +682,6 @@ export interface PlaybackActivityInput {
 
 export interface PlaybackActivity extends PlaybackActivityInput {
   updated_at: string;
-}
-
-export interface CurrentPlaybackActivityResponse {
-  activity: PlaybackActivity | null;
 }
 
 export interface SearchAlbum extends Album {
@@ -1032,9 +1009,6 @@ export function nextPageParam(
   }
   return loadedCount < lastPage.total ? { offset: loadedCount } : undefined;
 }
-
-/** @deprecated use Page<TrackListItem> */
-export type TracksPage = Page<TrackListItem>;
 
 export interface TrackPatch {
   title?: string;
