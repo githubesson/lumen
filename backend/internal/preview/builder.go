@@ -357,28 +357,34 @@ func (b *Builder) runAudio(parent context.Context, in Input, outPath string) err
 }
 
 func (b *Builder) runStory(parent context.Context, in Input, outPath string) error {
-	framePath := outPath + ".frame.png"
-	if err := writeStoryFrame(parent, framePath, in); err != nil {
+	img, err := buildStoryFrame(parent, in)
+	if err != nil {
 		return err
 	}
-	defer os.Remove(framePath)
-
-	return b.runFFmpeg(parent, buildStoryArgs(in, framePath, outPath), outPath)
+	return b.runFrame(parent, in, img, "story frame", outPath)
 }
 
 func (b *Builder) runStoryBackground(parent context.Context, in Input, outPath string) error {
-	framePath := outPath + ".frame.png"
-	if err := writeStoryBackgroundFrame(parent, framePath, in); err != nil {
+	img, err := buildStoryBackgroundFrame(parent, in)
+	if err != nil {
 		return err
 	}
-	defer os.Remove(framePath)
-
-	return b.runFFmpeg(parent, buildStoryArgs(in, framePath, outPath), outPath)
+	return b.runFrame(parent, in, img, "story background frame", outPath)
 }
 
 func (b *Builder) runCustomStoryBackground(parent context.Context, in Input, bg CustomBackground, outPath string) error {
+	img, err := buildCustomStoryBackgroundFrame(parent, bg)
+	if err != nil {
+		return err
+	}
+	return b.runFrame(parent, in, img, "custom story background frame", outPath)
+}
+
+// runFrame renders a story video over a still frame, written beside outPath
+// as a PNG for ffmpeg and removed afterwards. what names the frame in errors.
+func (b *Builder) runFrame(parent context.Context, in Input, img image.Image, what, outPath string) error {
 	framePath := outPath + ".frame.png"
-	if err := writeCustomStoryBackgroundFrame(parent, framePath, bg); err != nil {
+	if err := writePNG(framePath, img, what); err != nil {
 		return err
 	}
 	defer os.Remove(framePath)
@@ -571,50 +577,20 @@ func buildStoryArgs(in Input, framePath string, outPath string) []string {
 	return args
 }
 
-func writeStoryFrame(ctx context.Context, outPath string, in Input) error {
-	img, err := buildStoryFrame(ctx, in)
+// writePNG writes img to path, failing on a failed Close too, since that can
+// be where a write error shows up. A partial file is removed.
+func writePNG(path string, img image.Image, what string) error {
+	f, err := os.Create(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("create %s: %w", what, err)
 	}
-	f, err := os.Create(outPath)
+	err = png.Encode(f, img)
+	if cerr := f.Close(); err == nil && cerr != nil {
+		err = cerr
+	}
 	if err != nil {
-		return fmt.Errorf("create story frame: %w", err)
-	}
-	defer f.Close()
-	if err := png.Encode(f, img); err != nil {
-		return fmt.Errorf("encode story frame: %w", err)
-	}
-	return nil
-}
-
-func writeStoryBackgroundFrame(ctx context.Context, outPath string, in Input) error {
-	img, err := buildStoryBackgroundFrame(ctx, in)
-	if err != nil {
-		return err
-	}
-	f, err := os.Create(outPath)
-	if err != nil {
-		return fmt.Errorf("create story background frame: %w", err)
-	}
-	defer f.Close()
-	if err := png.Encode(f, img); err != nil {
-		return fmt.Errorf("encode story background frame: %w", err)
-	}
-	return nil
-}
-
-func writeCustomStoryBackgroundFrame(ctx context.Context, outPath string, bg CustomBackground) error {
-	img, err := buildCustomStoryBackgroundFrame(ctx, bg)
-	if err != nil {
-		return err
-	}
-	f, err := os.Create(outPath)
-	if err != nil {
-		return fmt.Errorf("create custom story background frame: %w", err)
-	}
-	defer f.Close()
-	if err := png.Encode(f, img); err != nil {
-		return fmt.Errorf("encode custom story background frame: %w", err)
+		os.Remove(path)
+		return fmt.Errorf("encode %s: %w", what, err)
 	}
 	return nil
 }
@@ -636,9 +612,9 @@ func buildStoryBackgroundFrame(ctx context.Context, in Input) (*image.RGBA, erro
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 
 	if !withImageFile(ctx, in.CoverPath, func(cover image.Image) {
-		drawSampledStoryBackground(ctx, img, cover, in.TrackID)
+		drawSampledStoryBackground(ctx, img, cover)
 	}) {
-		drawStoryGradientBackground(ctx, img, in)
+		drawStoryGradientBackground(img, in)
 	}
 
 	return img, nil
@@ -718,15 +694,15 @@ func centerAspectCrop(bounds image.Rectangle, aspect float64) image.Rectangle {
 	return image.Rect(bounds.Min.X, y0, bounds.Max.X, y0+nextH)
 }
 
-func drawSampledStoryBackground(ctx context.Context, dst *image.RGBA, cover image.Image, seed string) {
+func drawSampledStoryBackground(ctx context.Context, dst *image.RGBA, cover image.Image) {
 	drawBGGenBackground(ctx, dst, cover, 7)
 }
 
-func drawStoryGradientBackground(ctx context.Context, dst *image.RGBA, in Input) {
+func drawStoryGradientBackground(dst *image.RGBA, in Input) {
 	bounds := dst.Bounds()
 	w := bounds.Dx()
 	h := bounds.Dy()
-	palette := storyPaletteFromCover(ctx, in.CoverPath, in.TrackID)
+	palette := gradientStoryPalette()
 	rng := seededFloat(in.TrackID)
 	noiseSeed := hashSeed(in.TrackID)
 	for y := 0; y < h; y++ {
@@ -1014,17 +990,11 @@ type storyPalette struct {
 	b2   rgbf
 }
 
-func storyPaletteFromCover(ctx context.Context, coverPath string, seed string) storyPalette {
+// gradientStoryPalette colors the gradient drawn when the cover is missing or
+// doesn't decode, so it has no colors to take from the cover.
+func gradientStoryPalette() storyPalette {
 	a := rgbf{44, 70, 170}
 	b := rgbf{170, 30, 145}
-	if coverPath != "" {
-		withImageFile(ctx, coverPath, func(img image.Image) {
-			if p, ok := extractStoryParents(img); ok {
-				a = oklchToRGBF(storyOKLCH{l: 0.46, c: math.Max(0.08, math.Min(0.22, p[0].c)), h: p[0].h})
-				b = oklchToRGBF(storyOKLCH{l: 0.48, c: math.Max(0.08, math.Min(0.22, p[1].c)), h: p[1].h})
-			}
-		})
-	}
 	return storyPalette{
 		base: rgbf{28, 28, 45},
 		a:    a,
@@ -1056,51 +1026,6 @@ func withImageFile(ctx context.Context, path string, draw func(image.Image)) boo
 	defer release()
 	draw(img)
 	return true
-}
-
-type storyOKLCH struct{ l, c, h float64 }
-
-func extractStoryParents(src image.Image) ([2]storyOKLCH, bool) {
-	const size = 36
-	dst := image.NewRGBA(image.Rect(0, 0, size, size))
-	xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, src.Bounds(), xdraw.Src, nil)
-	var colors []storyOKLCH
-	for y := 0; y < size; y++ {
-		row := y * dst.Stride
-		for x := 0; x < size; x++ {
-			i := row + x*4
-			if dst.Pix[i+3] < 200 {
-				continue
-			}
-			c := rgbToStoryOKLCH(float64(dst.Pix[i]), float64(dst.Pix[i+1]), float64(dst.Pix[i+2]))
-			if c.l < 0.16 || c.l > 0.92 || c.c < 0.035 {
-				continue
-			}
-			colors = append(colors, c)
-		}
-	}
-	if len(colors) == 0 {
-		return [2]storyOKLCH{}, false
-	}
-	first := colors[0]
-	for _, c := range colors[1:] {
-		if c.c*(1-math.Abs(c.l-0.55)) > first.c*(1-math.Abs(first.l-0.55)) {
-			first = c
-		}
-	}
-	second := first
-	best := -1.0
-	for _, c := range colors {
-		d := storyColorDistance(first, c)
-		if d > best {
-			best = d
-			second = c
-		}
-	}
-	if best < 0.3 {
-		second = storyOKLCH{l: first.l, c: first.c, h: math.Mod(first.h+132, 360)}
-	}
-	return [2]storyOKLCH{first, second}, true
 }
 
 func seededFloat(seed string) float64 {

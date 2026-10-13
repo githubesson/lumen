@@ -83,7 +83,7 @@ func BuildReplayCard(ctx context.Context, in ReplayCardInput) (*image.RGBA, erro
 	if heroErr == nil {
 		drawReplayBlurredBackdrop(img, heroCover)
 	} else {
-		drawStoryGradientBackground(ctx, img, Input{TrackID: "replay:" + hero.Title})
+		drawStoryGradientBackground(img, Input{TrackID: "replay:" + hero.Title})
 	}
 	applyReplayScrim(img)
 

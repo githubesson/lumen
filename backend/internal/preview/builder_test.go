@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -229,5 +230,24 @@ func TestPreviewRendersEachCoverFormat(t *testing.T) {
 		if st, err := os.Stat(out); err != nil || st.Size() == 0 {
 			t.Errorf("%s: no preview written: %v", name, err)
 		}
+	}
+}
+
+func TestWritePNG(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "frame.png")
+	if err := writePNG(path, image.NewRGBA(image.Rect(0, 0, 2, 2)), "test frame"); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := png.Decode(f); err != nil {
+		t.Fatalf("written frame does not decode: %v", err)
+	}
+	if err := writePNG(filepath.Join(dir, "missing", "frame.png"), image.NewRGBA(image.Rect(0, 0, 1, 1)), "test frame"); err == nil || !strings.Contains(err.Error(), "test frame") {
+		t.Fatalf("err = %v", err)
 	}
 }

@@ -33,7 +33,7 @@ func drawBGGenBackground(ctx context.Context, dst *image.RGBA, cover image.Image
 	h := bounds.Dy()
 	colors, neutrals, darks := bgGenExtractPalette(cover, 12)
 	if len(colors) == 0 {
-		drawStoryGradientBackground(ctx, dst, Input{TrackID: strconv.FormatUint(uint64(seed), 10)})
+		drawStoryGradientBackground(dst, Input{TrackID: strconv.FormatUint(uint64(seed), 10)})
 		return
 	}
 
