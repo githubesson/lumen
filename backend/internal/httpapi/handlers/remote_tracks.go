@@ -15,8 +15,9 @@ import (
 )
 
 var (
-	// errBadTrackRef marks a track id that doesn't parse, the one resolve
-	// failure that is the caller's mistake.
+	// errBadTrackRef marks a track id that doesn't parse. It and
+	// tidal.ErrInvalidID, for a TIDAL id TIDAL could never have issued, are
+	// the resolve failures that are the caller's mistake.
 	errBadTrackRef = errors.New("bad track id")
 	// errTIDALLookup marks a failed TIDAL lookup of a track being
 	// materialized, which is TIDAL's failure rather than the server's.
@@ -54,7 +55,7 @@ func writeTIDALError(w http.ResponseWriter, err error, refusedLead, fallback str
 // else, such as a database error, a 500 the client can retry.
 func writeTrackResolveError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, errBadTrackRef):
+	case errors.Is(err, errBadTrackRef), errors.Is(err, tidal.ErrInvalidID):
 		http.Error(w, "bad track id", http.StatusBadRequest)
 	case errors.Is(err, library.ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)

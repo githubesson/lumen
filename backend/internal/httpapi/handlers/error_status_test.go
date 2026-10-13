@@ -64,6 +64,7 @@ func TestPublicAlbumCoverReportsLookupFailure(t *testing.T) {
 func TestWriteTrackResolveErrorStatuses(t *testing.T) {
 	_, badRef := resolveTrackRowID(context.Background(), nil, nil, uuid.New(), "not-a-track", false)
 	_, refusal := refusingTIDAL(t, "Not in your region").Track(context.Background(), "1")
+	_, invalid := refusingTIDAL(t, "unused").Track(context.Background(), "abc")
 	for _, tc := range []struct {
 		name   string
 		err    error
@@ -71,6 +72,8 @@ func TestWriteTrackResolveErrorStatuses(t *testing.T) {
 		body   string
 	}{
 		{"malformed id", badRef, http.StatusBadRequest, "bad track id"},
+		// tidal:abc parses, but materializing it asks TIDAL.
+		{"malformed tidal id", fmt.Errorf("%w: %w", errTIDALLookup, invalid), http.StatusBadRequest, "bad track id"},
 		{"missing or not visible", library.ErrNotFound, http.StatusNotFound, "not found"},
 		{"tidal not set up", tidal.ErrNotConfigured, http.StatusServiceUnavailable, "tidal proxy is not configured"},
 		{"tidal refused", fmt.Errorf("%w: %w", errTIDALLookup, refusal), http.StatusBadGateway, "TIDAL refused this track: Not in your region"},

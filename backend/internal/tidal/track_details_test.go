@@ -87,7 +87,11 @@ func TestTrackDetailsInvalidID(t *testing.T) {
 	c := NewClient(Config{HifiAPIURL: "http://127.0.0.1:1"})
 	for _, id := range []string{"", "0", "000", "-1", "12a", "1/2", "../x"} {
 		if _, err := c.TrackDetails(context.Background(), id); !errors.Is(err, ErrInvalidID) {
-			t.Errorf("%q: err = %v", id, err)
+			t.Errorf("TrackDetails(%q): err = %v", id, err)
+		}
+		// So a tidal:abc track ref is the caller's mistake, not TIDAL failing.
+		if _, err := c.Track(context.Background(), id); !errors.Is(err, ErrInvalidID) {
+			t.Errorf("Track(%q): err = %v", id, err)
 		}
 	}
 }

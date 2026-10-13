@@ -361,8 +361,8 @@ func (c *Client) FullAlbum(ctx context.Context, id string) (Album, error) {
 
 func (c *Client) Track(ctx context.Context, id string) (Track, error) {
 	id = strings.TrimSpace(id)
-	if id == "" {
-		return Track{}, errors.New("tidal track id is required")
+	if !validID(id) {
+		return Track{}, ErrInvalidID
 	}
 	if strings.TrimSpace(c.cfg.HifiAPIURL) == "" {
 		return Track{}, ErrNotConfigured
