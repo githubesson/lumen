@@ -322,43 +322,29 @@ func (h *Auth) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.DB.BeginTx(r.Context(), pgx.TxOptions{})
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	defer tx.Rollback(r.Context())
-
-	consumed, err := h.Invites.Consume(r.Context(), tx, inv.ID)
-	if err != nil {
-		if errors.Is(err, invites.ErrExhausted) {
-			http.Error(w, "invite is no longer usable", http.StatusBadRequest)
-			return
+	// The invite is used up only if the account is created with it.
+	var u *models.User
+	err = dbutil.WithTx(r.Context(), h.DB, func(tx pgx.Tx) error {
+		consumed, err := h.Invites.Consume(r.Context(), tx, inv.ID)
+		if err != nil {
+			return err
 		}
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		u, err = h.Users.CreateTx(r.Context(), tx, users.CreateParams{
+			Username:     req.Username,
+			PasswordHash: hash,
+			Role:         consumed.TargetRole,
+			InviteID:     &consumed.ID,
+		})
+		return err
+	})
+	switch {
+	case errors.Is(err, invites.ErrExhausted):
+		http.Error(w, "invite is no longer usable", http.StatusBadRequest)
 		return
-	}
-
-	var uid string
-	err = tx.QueryRow(r.Context(), `
-		INSERT INTO users (username, password_hash, role, invite_id, must_reset_password)
-		VALUES ($1, $2, $3, $4, FALSE)
-		RETURNING id`, req.Username, hash, consumed.TargetRole, consumed.ID).Scan(&uid)
-	if err != nil {
-		if dbutil.IsUniqueViolation(err) {
-			http.Error(w, "username taken", http.StatusConflict)
-			return
-		}
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	case dbutil.IsUniqueViolation(err):
+		http.Error(w, "username taken", http.StatusConflict)
 		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	u, err := h.Users.ByUsername(r.Context(), req.Username)
-	if err != nil {
+	case err != nil:
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

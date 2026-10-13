@@ -128,6 +128,13 @@ func TestAdminDeleteUserRemovesUploads(t *testing.T) {
 		return n
 	}
 
+	// Without dispositions the delete is refused with the preview, which asks
+	// about both playlists.
+	if w := del(""); w.Code != http.StatusConflict ||
+		!strings.Contains(w.Body.String(), keepPL.String()) || !strings.Contains(w.Body.String(), dropPL.String()) {
+		t.Fatalf("delete without dispositions = %d: %s", w.Code, w.Body.String())
+	}
+
 	// The second handover fails, so nothing happens: the first playlist isn't
 	// deleted and the account stays.
 	bad := fmt.Sprintf(`{"playlist_dispositions":[{"playlist_id":%q,"action":"delete"},{"playlist_id":%q,"action":"transfer","new_owner_id":%q}]}`,

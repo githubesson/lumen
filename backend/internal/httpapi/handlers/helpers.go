@@ -17,6 +17,7 @@ import (
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/models"
 	"github.com/githubesson/lumen/internal/playlists"
+	"github.com/githubesson/lumen/internal/users"
 )
 
 var errFileTooLarge = errors.New("file too large")
@@ -171,11 +172,11 @@ func pathUUID(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, b
 }
 
 // writeStoreError maps a store-layer error to an HTTP response: a not-found
-// sentinel (library or playlists) becomes 404, anything else 500. Call it only
-// once the caller has confirmed err != nil.
+// sentinel (library, playlists or users) becomes 404, anything else 500. Call
+// it only once the caller has confirmed err != nil.
 func writeStoreError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, library.ErrNotFound), errors.Is(err, playlists.ErrNotFound):
+	case errors.Is(err, library.ErrNotFound), errors.Is(err, playlists.ErrNotFound), errors.Is(err, users.ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, library.ErrInvalidInput):
 		// Only genuine caller mistakes get 400. A pgx reset or a context
