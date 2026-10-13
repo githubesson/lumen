@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/githubesson/lumen/internal/db"
 	"github.com/githubesson/lumen/internal/ingest"
@@ -59,9 +61,25 @@ func testPNG(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-// A track downloaded earlier keeps edits made in Lumen until the tracker's
-// tags for it change, and its album gets the era cover once, not every scan.
-func TestRescanKeepsEditsUntilTrackerChanges(t *testing.T) {
+// rescanFixture is a pin with one earlier download: a track playing from
+// song.flac under the pin's root, recorded with entry's tags, which the
+// download applied.
+type rescanFixture struct {
+	ctx       context.Context
+	pool      *pgxpool.Pool
+	store     *Store
+	lib       *library.Store
+	pin       Pin
+	root      string
+	trackID   uuid.UUID
+	tracker   Tracker
+	entry     Entry
+	era       string
+	sourceURL string
+}
+
+func newRescanFixture(t *testing.T, trackerID int64) *rescanFixture {
+	t.Helper()
 	url := os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("set LUMEN_REVIEW_TEST_DATABASE_URL to an isolated PostgreSQL database")
@@ -77,7 +95,7 @@ func TestRescanKeepsEditsUntilTrackerChanges(t *testing.T) {
 	t.Cleanup(pool.Close)
 	root := t.TempDir()
 	store := NewStore(pool)
-	pin, err := store.AddPin(ctx, AddPinInput{APIBaseURL: "https://tracker.example/api", TrackerID: 2, RootPath: root})
+	pin, err := store.AddPin(ctx, AddPinInput{APIBaseURL: "https://tracker.example/api", TrackerID: trackerID, RootPath: root})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,6 +110,76 @@ func TestRescanKeepsEditsUntilTrackerChanges(t *testing.T) {
 		pool.Exec(bg, `DELETE FROM artists WHERE name = $1`, artist)
 	})
 
+	path := filepath.Join(root, "song.flac")
+	if err := os.WriteFile(path, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	trackID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO tracks(id,title,duration_ms,file_path,file_size,format,audio_sha256) VALUES($1,'From tags',1000,$2,5,'flac',$3)`, trackID, path, trackID[:]); err != nil {
+		t.Fatal(err)
+	}
+	f := &rescanFixture{
+		ctx: ctx, pool: pool, store: store, lib: lib, pin: pin, root: root, trackID: trackID,
+		tracker:   Tracker{TrackerName: artist + " Tracker"},
+		entry:     Entry{ID: 5, RowNumber: 3, Name: "Song", Era: era, Type: "Leak"},
+		era:       era,
+		sourceURL: "https://files.example/" + sfx,
+	}
+	tc := BuildContext(f.tracker, pin, f.entry)
+	if err := (&Scanner{Library: lib}).applyTrackerMetadata(ctx, trackID, tc); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordDownload(ctx, DownloadInput{
+		PinID: pin.ID, EntryID: f.entry.ID, SourceURL: f.sourceURL, FilePath: path,
+		Status: StatusDownloaded, TrackID: &trackID, Metadata: entryMetadata(f.tracker, pin, f.entry, tc),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func (f *rescanFixture) title(t *testing.T) string {
+	t.Helper()
+	var got string
+	if err := f.pool.QueryRow(f.ctx, `SELECT title FROM tracks WHERE id=$1`, f.trackID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func (f *rescanFixture) edit(t *testing.T, to string) {
+	t.Helper()
+	if err := f.lib.UpdateTrack(f.ctx, f.trackID, library.TrackPatch{Title: &to}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// run starts a scan of the fixture's pin.
+func (f *rescanFixture) run(t *testing.T) *scanRun {
+	t.Helper()
+	var summary ScanSummary
+	return loadRun(t, f.store, f.pin, &summary)
+}
+
+// settle has each of entries, all listing the fixture's link, settle it in
+// run as the earlier download.
+func (f *rescanFixture) settle(t *testing.T, scanner *Scanner, run *scanRun, entries ...Entry) {
+	t.Helper()
+	for _, e := range entries {
+		tc := BuildContext(f.tracker, f.pin, e)
+		if !scanner.previousStillPresent(f.ctx, run, f.sourceURL, entryMetadata(f.tracker, f.pin, e, tc), tc) {
+			t.Fatalf("download not settled for entry %d: %+v", e.ID, run.summary)
+		}
+	}
+	if run.summary.Existing != len(entries) {
+		t.Fatalf("summary %+v, want %d existing", run.summary, len(entries))
+	}
+}
+
+// A track downloaded earlier keeps edits made in Lumen until the tracker's
+// tags for it change, and its album gets the era cover once, not every scan.
+func TestRescanKeepsEditsUntilTrackerChanges(t *testing.T) {
+	f := newRescanFixture(t, 2)
 	var imageHits atomic.Int32
 	img := testPNG(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -103,67 +191,27 @@ func TestRescanKeepsEditsUntilTrackerChanges(t *testing.T) {
 	client := NewClient(srv.URL)
 	client.HTTP = srv.Client()
 	scanner := Scanner{
-		Store:   store,
-		Library: lib,
+		Store:   f.store,
+		Library: f.lib,
 		Ingest: &ingest.Service{
-			DB: pool, Library: lib, Storage: storage.NewLocal(root), MusicRoot: root,
+			DB: f.pool, Library: f.lib, Storage: storage.NewLocal(f.root), MusicRoot: f.root,
 			Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		},
 	}
-
-	path := filepath.Join(root, "song.flac")
-	if err := os.WriteFile(path, []byte("audio"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	trackID := uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO tracks(id,title,duration_ms,file_path,file_size,format,audio_sha256) VALUES($1,'From tags',1000,$2,5,'flac',$3)`, trackID, path, trackID[:]); err != nil {
-		t.Fatal(err)
-	}
-	tracker := Tracker{TrackerName: artist + " Tracker"}
-	entry := Entry{ID: 5, RowNumber: 3, Name: "Song", Era: era, Type: "Leak"}
-	sourceURL := "https://files.example/" + sfx
-	title := func() string {
-		t.Helper()
-		var got string
-		if err := pool.QueryRow(ctx, `SELECT title FROM tracks WHERE id=$1`, trackID).Scan(&got); err != nil {
-			t.Fatal(err)
-		}
-		return got
-	}
-	edit := func(to string) {
-		t.Helper()
-		if err := lib.UpdateTrack(ctx, trackID, library.TrackPatch{Title: &to}); err != nil {
-			t.Fatal(err)
-		}
-	}
 	scan := func(e Entry) {
 		t.Helper()
-		var summary ScanSummary
-		run := loadRun(t, store, pin, &summary)
-		run.covers = eraCovers{client: client, images: map[string]int64{normalizeEraKey(era): 9}, keys: map[int64]string{}}
-		tc := BuildContext(tracker, pin, e)
-		if !scanner.previousStillPresent(ctx, run, sourceURL, entryMetadata(tracker, pin, e, tc), tc) || summary.Existing != 1 {
-			t.Fatalf("download not settled: %+v", summary)
-		}
+		run := f.run(t)
+		run.covers = eraCovers{client: client, images: map[string]int64{normalizeEraKey(f.era): 9}, keys: map[int64]string{}}
+		f.settle(t, &scanner, run, e)
 	}
 
-	// The first download applied the tracker's tags and recorded them.
-	tc := BuildContext(tracker, pin, entry)
-	scanner.applyTrackerMetadata(ctx, trackID, tc)
-	if err := store.RecordDownload(ctx, DownloadInput{
-		PinID: pin.ID, EntryID: entry.ID, SourceURL: sourceURL, FilePath: path,
-		Status: StatusDownloaded, TrackID: &trackID, Metadata: entryMetadata(tracker, pin, entry, tc),
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	edit("My title")
-	scan(entry)
-	if got := title(); got != "My title" {
+	f.edit(t, "My title")
+	scan(f.entry)
+	if got := f.title(t); got != "My title" {
 		t.Fatalf("unchanged tracker reverted the edit to %q", got)
 	}
 	var cover string
-	if err := pool.QueryRow(ctx, `SELECT COALESCE(a.cover_art_path,'') FROM tracks t JOIN albums a ON a.id=t.album_id WHERE t.id=$1`, trackID).Scan(&cover); err != nil || cover == "" {
+	if err := f.pool.QueryRow(f.ctx, `SELECT COALESCE(a.cover_art_path,'') FROM tracks t JOIN albums a ON a.id=t.album_id WHERE t.id=$1`, f.trackID).Scan(&cover); err != nil || cover == "" {
 		t.Fatalf("album cover = %q, %v", cover, err)
 	}
 	if n := imageHits.Load(); n != 1 {
@@ -171,10 +219,10 @@ func TestRescanKeepsEditsUntilTrackerChanges(t *testing.T) {
 	}
 
 	// A row inserted above moves the entry without changing its tags.
-	moved := entry
+	moved := f.entry
 	moved.RowNumber = 4
 	scan(moved)
-	if got := title(); got != "My title" {
+	if got := f.title(t); got != "My title" {
 		t.Fatalf("moved row reverted the edit to %q", got)
 	}
 	if n := imageHits.Load(); n != 1 {
@@ -184,13 +232,40 @@ func TestRescanKeepsEditsUntilTrackerChanges(t *testing.T) {
 	renamed := moved
 	renamed.Name = "Song (Remix)"
 	scan(renamed)
-	if got := title(); got != "Song (Remix)" {
+	if got := f.title(t); got != "Song (Remix)" {
 		t.Fatalf("tracker change not applied: %q", got)
 	}
-	edit("Mine again")
+	f.edit(t, "Mine again")
 	scan(renamed)
-	if got := title(); got != "Mine again" {
+	if got := f.title(t); got != "Mine again" {
 		t.Fatalf("second scan reverted the edit to %q", got)
+	}
+}
+
+// A tracker change that fails to apply isn't recorded as applied: the next
+// scan still sees it and tries again.
+func TestRescanRetriesFailedTagChange(t *testing.T) {
+	f := newRescanFixture(t, 4)
+	scanner := &Scanner{Store: f.store, Library: f.lib}
+	renamed := f.entry
+	renamed.Name = "Song (Remix)"
+	tc := BuildContext(f.tracker, f.pin, renamed)
+	metadata := entryMetadata(f.tracker, f.pin, renamed, tc)
+
+	// A year the tracks table can't hold fails the whole update.
+	broken := tc
+	broken.Year = math.MaxInt32 + 1
+	run := f.run(t)
+	if !scanner.previousStillPresent(f.ctx, run, f.sourceURL, metadata, broken) {
+		t.Fatal("download not settled")
+	}
+	if got := f.title(t); got != "Song" {
+		t.Fatalf("title after a failed update = %q", got)
+	}
+
+	f.settle(t, scanner, f.run(t), renamed)
+	if got := f.title(t); got != "Song (Remix)" {
+		t.Fatalf("change not applied on the scan after the failure: title %q", got)
 	}
 }
 

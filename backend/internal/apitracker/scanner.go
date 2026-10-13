@@ -268,7 +268,7 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 			if ingestInserted {
 				summary.Ingested++
 			}
-			if s.applyTrackerMetadataForFile(ctx, trackID, filePath, trackCtx) {
+			if applied, _ := s.applyTrackerMetadataForFile(ctx, trackID, filePath, trackCtx); applied {
 				s.applyEraCover(ctx, &run.covers, trackID, trackCtx.Album)
 			}
 			s.record(ctx, run, DownloadInput{
@@ -476,7 +476,7 @@ func (s *Scanner) previousStillPresent(ctx context.Context, run *scanRun, source
 		}
 		if prev.TrackID == nil {
 			trackID, inserted := s.ingestPath(ctx, prev.FilePath)
-			if s.applyTrackerMetadataForFile(ctx, trackID, prev.FilePath, trackCtx) {
+			if applied, _ := s.applyTrackerMetadataForFile(ctx, trackID, prev.FilePath, trackCtx); applied {
 				s.applyEraCover(ctx, &run.covers, trackID, trackCtx.Album)
 			}
 			s.record(ctx, run, DownloadInput{
@@ -509,11 +509,17 @@ func (s *Scanner) refreshTrackerMetadata(ctx context.Context, run *scanRun, prev
 	tagsChanged, differs := compareEntryMetadata(prev.Metadata, metadata)
 	switch {
 	case tagsChanged:
-		if s.applyTrackerMetadataForFile(ctx, prev.TrackID, prev.FilePath, trackCtx) {
+		applied, err := s.applyTrackerMetadataForFile(ctx, prev.TrackID, prev.FilePath, trackCtx)
+		if err != nil {
+			// Keep the old record, so the next scan sees the change and
+			// tries again.
+			return
+		}
+		if applied {
 			s.applyEraCover(ctx, &run.covers, prev.TrackID, trackCtx.Album)
 		}
 	case prev.albumNeedsCover && s.Ingest != nil && run.covers.imageID(trackCtx.Album) > 0:
-		if s.ownsFile(ctx, prev.TrackID, prev.FilePath) {
+		if owns, _ := s.ownsFile(ctx, prev.TrackID, prev.FilePath); owns {
 			s.applyEraCover(ctx, &run.covers, prev.TrackID, trackCtx.Album)
 		}
 	}
@@ -637,9 +643,9 @@ func (s *Scanner) ingestPath(ctx context.Context, p string) (*uuid.UUID, bool) {
 	return &out.TrackID, out.Inserted
 }
 
-func (s *Scanner) applyTrackerMetadata(ctx context.Context, trackID uuid.UUID, tc TrackContext) {
+func (s *Scanner) applyTrackerMetadata(ctx context.Context, trackID uuid.UUID, tc TrackContext) error {
 	if tc.Title == "" {
-		return
+		return nil
 	}
 	artists := []string{}
 	if tc.AlbumArtist != "" {
@@ -671,33 +677,41 @@ func (s *Scanner) applyTrackerMetadata(ctx context.Context, trackID uuid.UUID, t
 			patch.AlbumArtist = &tc.AlbumArtist
 		}
 	}
-	if err := s.Library.UpdateTrack(ctx, trackID, patch); err != nil && s.Logger != nil {
-		s.Logger.Warn("api tracker metadata patch failed", "track", trackID, "err", err)
-	}
+	return s.Library.UpdateTrack(ctx, trackID, patch)
 }
 
 // applyTrackerMetadataForFile applies the tracker's tags when filePath is
-// still the track's own file, not one ingest folded into another track.
-func (s *Scanner) applyTrackerMetadataForFile(ctx context.Context, trackID *uuid.UUID, filePath string, tc TrackContext) bool {
-	if !s.ownsFile(ctx, trackID, filePath) {
-		return false
+// still the track's own file, not one ingest folded into another track. It
+// reports whether it applied them; err, already logged, means it couldn't
+// tell or the update failed, rather than that the file isn't the track's.
+func (s *Scanner) applyTrackerMetadataForFile(ctx context.Context, trackID *uuid.UUID, filePath string, tc TrackContext) (bool, error) {
+	owns, err := s.ownsFile(ctx, trackID, filePath)
+	if !owns || err != nil {
+		return false, err
 	}
-	s.applyTrackerMetadata(ctx, *trackID, tc)
-	return true
+	if err := s.applyTrackerMetadata(ctx, *trackID, tc); err != nil {
+		if s.Logger != nil {
+			s.Logger.Warn("api tracker metadata patch failed", "track", *trackID, "err", err)
+		}
+		return false, err
+	}
+	return true, nil
 }
 
-func (s *Scanner) ownsFile(ctx context.Context, trackID *uuid.UUID, filePath string) bool {
+// ownsFile reports whether filePath is still trackID's own file. A failed
+// check is logged as well as returned.
+func (s *Scanner) ownsFile(ctx context.Context, trackID *uuid.UUID, filePath string) (bool, error) {
 	if s == nil || s.Library == nil || trackID == nil || *trackID == uuid.Nil || strings.TrimSpace(filePath) == "" {
-		return false
+		return false, nil
 	}
 	ok, err := s.Library.TrackHasFilePath(ctx, *trackID, filePath)
 	if err != nil {
 		if s.Logger != nil {
 			s.Logger.Warn("api tracker track path check failed", "track", *trackID, "path", filePath, "err", err)
 		}
-		return false
+		return false, err
 	}
-	return ok
+	return ok, nil
 }
 
 // applyEraCover gives the track's album its era image when it has no cover.
