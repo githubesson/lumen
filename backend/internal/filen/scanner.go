@@ -194,23 +194,16 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 	if err != nil {
 		return err
 	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
+	// Read stderr to the end, keeping its tail for the error: a helper whose
+	// stderr goes unread can't finish writing it, so it stalls and is killed,
+	// leaving its partial file, instead of finishing the share. exec copies
+	// into the tail itself, and Wait returns only once that copy has the
+	// helper's last words (or WaitDelay gives up on it).
+	stderrTail := ffsafe.NewTail(32 * 1024)
+	cmd.Stderr = stderrTail
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-
-	// Read stderr to the end, keeping its tail for the error: a helper whose
-	// stderr goes unread can't finish writing it, so it stalls and is killed,
-	// leaving its partial file, instead of finishing the share.
-	stderrTail := ffsafe.NewTail(32 * 1024)
-	stderrDone := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(stderrTail, stderr)
-		close(stderrDone)
-	}()
 
 	// The helper reports each file as it finishes it. One quiet for longer
 	// than a file may take is stuck (in a listing, say), so stop it. The
@@ -233,12 +226,13 @@ func (s *Scanner) scanPin(ctx context.Context, pin Pin, summary *ScanSummary) er
 		cancel()
 	}
 	waitErr := cmd.Wait()
-	<-stderrDone
-	if readErr != nil {
-		return readErr
-	}
+	// A stalled helper was stopped by the watchdog; whatever reading its
+	// output then failed with (a pipe closed under it) follows from that.
 	if stalled.Load() {
 		return fmt.Errorf("filen download stalled: no progress for %s", idle)
+	}
+	if readErr != nil {
+		return readErr
 	}
 	if waitErr != nil {
 		detail := strings.TrimSpace(stderrTail.String())
