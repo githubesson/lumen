@@ -5,7 +5,6 @@ import {
   movePlaylistEntry,
   playlistAutoDownloadRefetchMs,
   playlistTidalQueued,
-  queuedTidalCount,
   removePlaylistEntry,
 } from "../src/playlist-tracks";
 import {
@@ -81,12 +80,7 @@ describe("movePlaylistEntry", () => {
   });
 });
 
-describe("queuedTidalCount", () => {
-  it("counts the rows still on TIDAL", () => {
-    expect(queuedTidalCount([{ source: "tidal" }, { source: "local" }, {}, { source: "tidal" }])).toBe(2);
-    expect(queuedTidalCount([])).toBe(0);
-  });
-
+describe("PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS", () => {
   it("refreshes every 20 seconds while tracks are queued", () => {
     expect(PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS).toBe(20_000);
   });
@@ -102,6 +96,9 @@ describe("playlistTidalQueued", () => {
 
   it("counts rows still on TIDAL when the server doesn't send it", () => {
     expect(playlistTidalQueued({ tracks })).toBe(2);
+    const mixed = [{ source: "tidal" }, { source: "local" }, {}, { source: "tidal" }] as PlaylistTrackEntry[];
+    expect(playlistTidalQueued({ tracks: mixed })).toBe(2);
+    expect(playlistTidalQueued({ tracks: [] })).toBe(0);
     expect(playlistTidalQueued(undefined)).toBe(0);
   });
 });

@@ -20,6 +20,7 @@ import {
   activitySeries,
   genreShares,
   playsPerUnit,
+  replayAlbumSubtitle,
   replayTrackArtists,
   topArtistAction,
   topArtistTracks,
@@ -332,12 +333,7 @@ export default function ReplayBento({
               to={albumHref(replayAlbumTarget(a))}
               coverUrl={albumCoverUrl(a.id, 384)}
               title={displayText(a.title)}
-              subtitle={
-                <>
-                  {a.artist ? `${displayText(a.artist)} · ` : ""}
-                  {pluralize(a.plays, "play", undefined, { locale: true })}
-                </>
-              }
+              subtitle={replayAlbumSubtitle(a)}
               rankBadge={<span className="replay-rank">{i + 1}</span>}
             />
           ))}

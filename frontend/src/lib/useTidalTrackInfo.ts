@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { tidalRefusalMessage } from "@music-library/core/tidal/track-info";
+import {
+  tidalTrackInfoResult,
+  type TidalTrackInfoResult,
+} from "@music-library/core/tidal/track-info";
 import { api, type TidalTrackInfo } from "../api";
 
 /**
@@ -13,11 +16,11 @@ export function useTidalTrackInfo(
   open: boolean,
   tidalId: string | null,
   requestNonce = 0,
-): { info: TidalTrackInfo | null; loading: boolean; failed: boolean; refusal: string | null } {
+): TidalTrackInfoResult & { loading: boolean } {
   const [result, setResult] = useState<{
     tidalId: string;
-    info: TidalTrackInfo | null;
-    refusal: string | null;
+    data: TidalTrackInfo | null;
+    error?: unknown;
   } | null>(null);
 
   useEffect(() => {
@@ -29,11 +32,11 @@ export function useTidalTrackInfo(
     setResult(null);
     api
       .getTidalTrack(tidalId, { signal: controller.signal })
-      .then((info) => {
-        if (!cancelled) setResult({ tidalId, info: info.id === tidalId ? info : null, refusal: null });
+      .then((data) => {
+        if (!cancelled) setResult({ tidalId, data });
       })
       .catch((error: unknown) => {
-        if (!cancelled) setResult({ tidalId, info: null, refusal: tidalRefusalMessage(error) });
+        if (!cancelled) setResult({ tidalId, data: null, error });
       });
     return () => {
       cancelled = true;
@@ -41,7 +44,7 @@ export function useTidalTrackInfo(
     };
   }, [open, tidalId, requestNonce]);
 
-  if (!open || !tidalId) return { info: null, loading: false, failed: false, refusal: null };
+  if (!open || !tidalId) return { ...tidalTrackInfoResult(null, null), loading: false };
   if (result?.tidalId !== tidalId) return { info: null, loading: true, failed: false, refusal: null };
-  return { info: result.info, loading: false, failed: !result.info, refusal: result.refusal };
+  return { ...tidalTrackInfoResult(tidalId, result.data, result.error), loading: false };
 }

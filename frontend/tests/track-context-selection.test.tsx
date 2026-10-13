@@ -10,6 +10,7 @@ import type { Playlist, TrackListItem } from "../src/api";
 const mock = vi.hoisted(() => ({
   add: vi.fn(),
   play: vi.fn(),
+  shuffle: false,
   toggle: vi.fn(),
   favorites: new Set<string>(),
   reload: () => Promise.resolve(),
@@ -22,7 +23,7 @@ vi.mock("../../core/src/api", async (original) => ({
 vi.mock("../src/context/Auth", () => ({
   useAuth: () => ({ me: { id: "user", role: "admin", must_reset_password: false } }),
 }));
-vi.mock("../src/context/Player", () => ({ usePlayerControls: () => ({ play: mock.play }) }));
+vi.mock("../src/context/Player", () => ({ usePlayer: () => ({ play: mock.play, shuffle: mock.shuffle }) }));
 vi.mock("../src/context/Favorites", () => ({
   useFavorites: () => ({ isFavorite: (id: string) => mock.favorites.has(id), toggle: mock.toggle }),
 }));
@@ -99,6 +100,19 @@ it("plays the selection's playable tracks, from the first", async () => {
   fireEvent.click(item("Play")!);
   expect(mock.play).toHaveBeenCalledWith(tracks[0], [tracks[0], tracks[2]]);
   expect(onClose).toHaveBeenCalled();
+});
+
+it("starts a shuffled play of the selection at a random playable track", async () => {
+  mock.shuffle = true;
+  vi.spyOn(Math, "random").mockReturnValue(0.99);
+  try {
+    renderMenu({});
+    fireEvent.click(item("Play")!);
+    expect(mock.play).toHaveBeenCalledWith(tracks[2], [tracks[0], tracks[2]]);
+  } finally {
+    mock.shuffle = false;
+    vi.restoreAllMocks();
+  }
 });
 
 it("favorites the rest of a partly favorited selection, and unfavorites a fully favorited one", async () => {

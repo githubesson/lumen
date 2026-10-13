@@ -13,7 +13,7 @@ vi.mock("../../core/src/api", async (original) => ({
 }));
 vi.mock("../src/context/Playlists", () => ({ usePlaylists: () => ({ reload: () => Promise.resolve() }) }));
 vi.mock("../src/context/Player", () => ({
-  usePlayer: () => ({ current: null, isPlaying: false }),
+  usePlayer: () => ({ current: null, isPlaying: false, play: mock.play, shuffle: false }),
   usePlayerControls: () => ({ play: mock.play }),
 }));
 vi.mock("../src/context/Favorites", () => ({

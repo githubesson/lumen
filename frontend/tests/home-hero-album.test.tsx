@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import type { Album } from "../src/api";
@@ -6,14 +6,17 @@ import Home from "../src/pages/Home";
 import { clearResourceCache } from "../src/lib/resourceCache";
 
 const mock = vi.hoisted(() => ({
-  recent: vi.fn(), tracks: vi.fn(), getAlbum: vi.fn(), replay: vi.fn(),
+  recent: vi.fn(), tracks: vi.fn(), getAlbum: vi.fn(), replay: vi.fn(), albumTracks: vi.fn(), play: vi.fn(),
 }));
 vi.mock("../../core/src/api", async (original) => ({
   ...await original<typeof import("../../core/src/api")>(),
-  api: { listRecent: mock.recent, listTracks: mock.tracks, getAlbum: mock.getAlbum, getReplay: mock.replay },
+  api: {
+    listRecent: mock.recent, listTracks: mock.tracks, getAlbum: mock.getAlbum, getReplay: mock.replay,
+    listAlbumTracks: mock.albumTracks,
+  },
 }));
 vi.mock("../src/context/Auth", () => ({ useAuth: () => ({ me: { id: "user", username: "Listener" } }) }));
-vi.mock("../src/context/Player", () => ({ usePlayerControls: () => ({ play: vi.fn() }) }));
+vi.mock("../src/context/Player", () => ({ usePlayerControls: () => ({ play: mock.play }) }));
 vi.mock("../src/context/Theme", () => ({ useTheme: () => ({ homeBoard: undefined, setHomeBoard: vi.fn(), tweaksLoaded: true }) }));
 vi.mock("../src/context/Favorites", () => ({
   useFavorites: () => ({ tracks: [], ids: new Set(), loading: false, error: null, refresh: vi.fn() }),
@@ -72,4 +75,17 @@ it("offers no album link for a TIDAL hero without a release id", async () => {
   render(<MemoryRouter><Home /></MemoryRouter>);
   await act(async () => {});
   expect(screen.queryByRole("link", { name: "Open album" })).toBeNull();
+});
+
+it("plays the album from its first playable track when the listing lacks the hero", async () => {
+  mock.recent.mockResolvedValue([{
+    id: "t9", title: "Local", album_title: "Library LP", duration_ms: 1, source: "local", album_id: "a1",
+  }]);
+  const gone = { id: "tidal:5", title: "Gone", duration_ms: 1, source: "tidal", unavailable: true };
+  const second = { id: "t2", title: "Second", duration_ms: 1, source: "local" };
+  mock.albumTracks.mockResolvedValue([gone, second]);
+  render(<MemoryRouter><Home /></MemoryRouter>);
+  await act(async () => {});
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Play" })); });
+  expect(mock.play).toHaveBeenCalledWith(second, [second]);
 });

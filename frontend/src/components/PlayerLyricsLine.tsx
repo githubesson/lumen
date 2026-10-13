@@ -179,14 +179,12 @@ export default function PlayerLyricsLine({
   error,
   currentTime,
   durationSeconds,
-  variant = "compact",
 }: {
   lyrics: LyricsResult | null;
   loading: boolean;
   error: string | null;
   currentTime: number;
   durationSeconds: number;
-  variant?: "compact" | "panel" | "sidebar";
 }) {
   if (loading) {
     return (
@@ -198,12 +196,7 @@ export default function PlayerLyricsLine({
 
   if (error) {
     return (
-      <p
-        className={
-          "player-lyric-status player-lyric-status-error player-lyric-" +
-          variant
-        }
-      >
+      <p className="player-lyric-status player-lyric-status-error player-lyric-sidebar">
         {error}
       </p>
     );
@@ -211,25 +204,17 @@ export default function PlayerLyricsLine({
 
   if (!lyrics) {
     return (
-      <p className={"player-lyric-status player-lyric-" + variant}>
+      <p className="player-lyric-status player-lyric-sidebar">
         {LYRICS_NOT_FOUND_MESSAGE}
       </p>
     );
   }
 
-  if (variant === "sidebar") {
-    return (
-      <SidebarLyricsView
-        lyrics={lyrics}
-        currentTime={currentTime}
-        durationSeconds={durationSeconds}
-      />
-    );
-  }
-
   return (
-    <p className={"player-lyric-status player-lyric-" + variant}>
-      Lyrics view unavailable
-    </p>
+    <SidebarLyricsView
+      lyrics={lyrics}
+      currentTime={currentTime}
+      durationSeconds={durationSeconds}
+    />
   );
 }

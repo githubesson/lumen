@@ -17,8 +17,6 @@ import { createWindowManager } from "./windows";
 import { registerIpcHandlers } from "./ipc";
 import { installMediaPermissionHandlers } from "./permissions";
 
-export type { Density, Layout, Theme, Tweaks } from "./config";
-
 const DIST_DIR = path.join(__dirname, "..", "..", "dist");
 const FALLBACK_UPDATE_REPO_URL = "https://github.com/githubesson/lumen";
 const BUILD_ENV = readBakedBuildEnv();

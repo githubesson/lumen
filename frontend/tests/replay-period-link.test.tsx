@@ -10,7 +10,7 @@ vi.mock("../../core/src/api", async (original) => ({
   ...await original<typeof import("../../core/src/api")>(),
   api: { getReplay: mock.replay },
 }));
-vi.mock("../src/context/Player", () => ({ usePlayerControls: () => ({ play: vi.fn() }) }));
+vi.mock("../src/context/Player", () => ({ usePlayer: () => ({ play: vi.fn(), shuffle: false }) }));
 vi.mock("../src/context/Playlists", () => ({ usePlaylists: () => ({ reload: vi.fn() }) }));
 
 const empty: ReplayData = {

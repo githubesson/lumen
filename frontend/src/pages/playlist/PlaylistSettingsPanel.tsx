@@ -11,6 +11,7 @@ import Switch from "../../components/Switch";
 import { pluralize } from "../../lib/format";
 import {
   isValidPlaylistName,
+  playlistDetailsForm,
   playlistDetailsPayload,
   samePlaylistDetails,
   type PlaylistDetailsPayload,
@@ -54,25 +55,18 @@ export default function PlaylistSettingsPanel({
   onRemoveCover: () => void;
   autoDownload: boolean;
   savingAutoDownload: boolean;
+  /** Entries auto-download is saving, as the server counts them. */
   queuedTidal: number;
   onToggleAutoDownload: () => void;
   onDelete: () => void;
 }) {
-  const saved: PlaylistDetailsPayload = {
-    name: playlist.name,
-    description: playlist.description ?? "",
-    visibility: playlist.visibility,
-  };
+  const saved = playlistDetailsForm(playlist);
   // Null until edited, so a reload of the playlist shows through.
   const [draft, setDraft] = useState<PlaylistDetailsPayload | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const values = draft ?? saved;
-  const dirty =
-    draft !== null &&
-    (draft.name !== saved.name ||
-      draft.description !== saved.description ||
-      draft.visibility !== saved.visibility);
+  const dirty = draft !== null && !samePlaylistDetails(draft, saved);
   const edit = (patch: Partial<PlaylistDetailsPayload>) => setDraft({ ...values, ...patch });
 
   const save = async (e: FormEvent) => {
