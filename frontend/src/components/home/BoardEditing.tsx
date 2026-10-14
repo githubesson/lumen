@@ -273,7 +273,7 @@ export function useBoardEditor({
   );
 
   /** What a slot needs while editing: its drag handlers and its tile. */
-  const slot = (panel: HomePanel, next: HomePanelId | undefined, empty: boolean): SlotEditing => {
+  const slot = (panel: HomePanel, next: HomePanelId | undefined, note: string | null): SlotEditing => {
     const { id } = panel;
     const title = titleOf(panel);
     return {
@@ -322,7 +322,7 @@ export function useBoardEditor({
           id={id}
           title={title}
           detail={PANEL_KINDS[panel.kind].period ? periodSub(panel.period) : undefined}
-          empty={empty}
+          note={note}
           state={moving === id ? "moving" : moving ? "target" : "idle"}
           moveRef={(el) => {
             if (el) moveButtons.current.set(id, el);
@@ -447,7 +447,7 @@ function SlotEditor({
   id,
   title,
   detail,
-  empty,
+  note,
   state,
   moveRef,
   onMove,
@@ -460,8 +460,8 @@ function SlotEditor({
   title: string;
   /** What it shows, when there's a choice (a period). */
   detail?: string;
-  /** Has nothing to show right now, so it's off the board outside editing. */
-  empty: boolean;
+  /** Why it's off the board outside customizing (nothing to show yet), if it is. */
+  note: string | null;
   /** Idle, picked with Move, or a place the picked panel can go. */
   state: "idle" | "moving" | "target";
   moveRef: (el: HTMLButtonElement | null) => void;
@@ -479,7 +479,7 @@ function SlotEditor({
         <GripIcon className="board-slot-grip size-4" aria-hidden="true" />
         <div className="board-slot-name">{title}</div>
         {detail && <div className="board-slot-note">{detail}</div>}
-        {empty && <div className="board-slot-note">Shows up once it has something</div>}
+        {note && <div className="board-slot-note">{note}</div>}
         <div className="board-slot-actions">
           {state === "target" ? (
             <Button size="sm" variant="primary" onClick={onSwapHere} leadingIcon={<SwapIcon className="size-3.5" />}>

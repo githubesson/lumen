@@ -152,12 +152,10 @@ export function useBoardFill(usual: FillUsual, emptyRow?: number): BoardFill {
   // in `measure` ends that once nothing moves.
   useLayoutEffect(() => {
     latest.current = { usual, emptyRow };
+    remeasure.current = measure;
     measure();
   });
 
-  useEffect(() => {
-    remeasure.current = measure;
-  }, [measure]);
   useEffect(() => {
     const wait = deferred.current;
     return () => cancelAnimationFrame(wait.frame);

@@ -339,3 +339,23 @@ it("saves a typed name when the field loses focus, or when Escape closes the dia
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(savedBoard()!.panels!.find((p) => p.id === "recent")!.title).toBe("Just now");
 });
+
+it("shows a deleted playlist's panel as empty while customizing, and says why", async () => {
+  mock.playlists = [playlist("pl-1", "Late drives")];
+  arrange({ panels: [{ id: "playlist", kind: "playlist", w: 6, h: 1, playlist: "pl-gone" }] });
+  await renderHome("/?customize");
+  const gonePanel = panel("playlist")!;
+  expect(gonePanel.querySelectorAll(".board-placeholder")).toHaveLength(0);
+  expect(gonePanel.querySelector('[aria-busy="true"]')).toBeNull();
+  expect(tile("Playlist").getByText("Its playlist was deleted. Pick another in Edit.")).toBeTruthy();
+  expect(mock.playlistTracks).not.toHaveBeenCalled();
+});
+
+it("says so when no panel has anything to show yet, rather than that they're hidden", async () => {
+  mock.recent.mockResolvedValue([]);
+  arrange({ panels: [{ id: "recent", kind: "recent", w: 3, h: 1 }, { id: "favorites", kind: "favorites", w: 3, h: 1 }] });
+  await renderHome();
+  expect(order()).toEqual([]);
+  expect(screen.getByText("None of Home's panels has anything to show yet.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Customize Home" })).toBeTruthy();
+});

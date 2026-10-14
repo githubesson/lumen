@@ -50,6 +50,8 @@ const MAX_TRACKS = 500;
 
 /** A source not loaded yet: its panels show placeholders until it reports. */
 const UNKNOWN: SourceState<never> = { data: null, loading: true, error: null, reload: () => {} };
+/** A deleted playlist's tracks: none, and none coming. */
+const GONE: SourceState<TrackListItem[]> = { data: [], loading: false, error: null, reload: () => {} };
 
 const replaySource = (period: Period | undefined) => `replay:${periodKey(period ?? DEFAULT_PERIOD)}`;
 const playlistSource = (id: string | undefined) => `playlist:${id ?? ""}`;
@@ -147,8 +149,9 @@ export default function Home() {
   );
   const replayOf = (period: Period | undefined) =>
     (sources[replaySource(period)] as ApiResource<ReplayData> | undefined) ?? UNKNOWN;
+  const gone = (id: string | undefined) => !!playlistData && !playlistData.some((p) => p.id === id);
   const playlistOf = (id: string | undefined) =>
-    (id ? (sources[playlistSource(id)] as ApiResource<TrackListItem[]> | undefined) : undefined) ?? UNKNOWN;
+    gone(id) ? GONE : ((id ? (sources[playlistSource(id)] as ApiResource<TrackListItem[]> | undefined) : undefined) ?? UNKNOWN);
 
   const recent = recentResource.data ?? EMPTY_TRACKS;
   const tracks = tracksResource.data ?? EMPTY_TRACKS;
@@ -202,10 +205,7 @@ export default function Home() {
       case "playlists":
         return { source: "playlists", count: playlists?.length ?? 0, known: playlists !== null, loading: playlistResource.loading, error: playlistResource.error };
       case "playlist": {
-        // One deleted since has nothing to show.
-        if (playlists && !playlists.some((p) => p.id === panel.playlist)) {
-          return { source: playlistSource(panel.playlist), count: 0, known: true, loading: false, error: null };
-        }
+        // One deleted since has nothing to show (see `playlistOf`).
         const source = playlistOf(panel.playlist);
         return {
           source: playlistSource(panel.playlist),
@@ -294,6 +294,13 @@ export default function Home() {
     ? boardLayout(DEFAULT_PANEL_IDS.filter((_, i) => onBoard(slots[i])))
     : packedLayout(enabled.filter(onBoard).map(({ id, w, h }) => ({ id, w, h })));
   const byId = new Map(arrangement.panels.map((panel) => [panel.id, panel]));
+  /** Why a panel is off the board outside customizing, for its tile. */
+  const noteFor = (panel: HomePanel) =>
+    panel.kind === "playlist" && gone(panel.playlist)
+      ? "Its playlist was deleted. Pick another in Edit."
+      : !hasContent(panel) && settled
+        ? "Shows up once it has something"
+        : null;
   const panelIn = (cell: BoardCell) =>
     slots ? slots[DEFAULT_PANEL_IDS.indexOf(cell.id as (typeof DEFAULT_PANEL_IDS)[number])] : byId.get(cell.id)!;
   // The years a period panel can show: what any loaded period says has
@@ -363,7 +370,7 @@ export default function Home() {
                 key={panel.id}
                 cell={cell}
                 panel={panel.id}
-                editing={editing ? editor.slot(panel, next && panelIn(next).id, !hasContent(panel) && settled) : null}
+                editing={editing ? editor.slot(panel, next && panelIn(next).id, noteFor(panel)) : null}
               >
                 <HomePanelView panel={panel} ctx={ctx} />
               </BoardSlot>
@@ -373,7 +380,13 @@ export default function Home() {
       ) : (
         !editing && (
           <div className="board-empty">
-            <p>{arrangement.panels.length > 0 ? "Every panel on Home is hidden." : "There are no panels on Home."}</p>
+            <p>
+              {arrangement.panels.length === 0
+                ? "There are no panels on Home."
+                : enabled.length === 0
+                  ? "Every panel on Home is hidden."
+                  : "None of Home's panels has anything to show yet."}
+            </p>
             <Button onClick={() => setEditing(true)} leadingIcon={<CustomizeIcon className="size-4" />}>
               Customize Home
             </Button>
