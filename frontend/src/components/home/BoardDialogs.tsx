@@ -98,7 +98,8 @@ export function AddPanelDialog({
 }: {
   open: boolean;
   arrangement: HomeArrangement;
-  playlists: readonly Playlist[];
+  /** Null until loaded, or when they couldn't be. */
+  playlists: readonly Playlist[] | null;
   years: readonly number[];
   onAdd: (kind: PanelKind, options: Pick<HomePanel, "period" | "playlist">) => void;
   onClose: () => void;
@@ -144,7 +145,7 @@ function CatalogRow({
 }: {
   kind: PanelKind;
   arrangement: HomeArrangement;
-  playlists: readonly Playlist[];
+  playlists: readonly Playlist[] | null;
   years: readonly number[];
   onAdd: (kind: PanelKind, options: Pick<HomePanel, "period" | "playlist">) => void;
 }) {
@@ -155,7 +156,7 @@ function CatalogRow({
   // The first playlist not on Home yet, or the first.
   const [playlist, setPlaylist] = useState(() => {
     const onHome = new Set(arrangement.panels.map((panel) => panel.playlist));
-    return (playlists.find((p) => !onHome.has(p.id)) ?? playlists[0])?.id ?? "";
+    return (playlists?.find((p) => !onHome.has(p.id)) ?? playlists?.[0])?.id ?? "";
   });
   const options = {
     ...(info.period ? { period: parsePeriodKey(period) ?? DEFAULT_PERIOD } : {}),
@@ -211,7 +212,7 @@ function CatalogRow({
           />
         )}
         {info.playlist &&
-          (playlists.length > 0 ? (
+          (playlists && playlists.length > 0 ? (
             <Select
               variant="minimal"
               aria-label="Playlist for the new Playlist panel"
@@ -220,7 +221,7 @@ function CatalogRow({
               onChange={setPlaylist}
             />
           ) : (
-            <span className="board-catalog-desc">No playlists yet</span>
+            <span className="board-catalog-desc">{playlists ? "No playlists yet" : "Playlists aren't available right now"}</span>
           ))}
         {action}
       </div>
@@ -242,7 +243,7 @@ export function PanelSettingsDialog({
   panel: HomePanel | undefined;
   /** Its title now, which the dialog's names it by. */
   title: string;
-  playlists: readonly Playlist[];
+  playlists: readonly Playlist[] | null;
   years: readonly number[];
   onChange: (change: PanelChange) => void;
   onRemove: () => void;
@@ -315,7 +316,7 @@ function PanelSettings({
   onChange,
 }: {
   panel: HomePanel;
-  playlists: readonly Playlist[];
+  playlists: readonly Playlist[] | null;
   years: readonly number[];
   name: string;
   onName: (name: string) => void;
@@ -329,7 +330,7 @@ function PanelSettings({
     return !!board && board.clientWidth > 0 && board.clientWidth < 560;
   });
   const placeholder =
-    panel.kind === "playlist" ? (playlists.find((p) => p.id === panel.playlist)?.name ?? info.title) : info.title;
+    panel.kind === "playlist" ? (playlists?.find((p) => p.id === panel.playlist)?.name ?? info.title) : info.title;
 
   return (
     <form
@@ -358,7 +359,7 @@ function PanelSettings({
         </Field>
       )}
       {info.playlist &&
-        (playlists.length > 0 ? (
+        (playlists && playlists.length > 0 ? (
           <Field label="Playlist">
             <Select
               value={panel.playlist ?? ""}
@@ -368,7 +369,11 @@ function PanelSettings({
             />
           </Field>
         ) : (
-          <p className="board-settings-note">There are no playlists to show. Make one, or remove this panel.</p>
+          <p className="board-settings-note">
+            {playlists
+              ? "There are no playlists to show. Make one, or remove this panel."
+              : "Your playlists aren't available right now, so another can't be picked."}
+          </p>
         ))}
       {!narrow && (
         <FieldRow>

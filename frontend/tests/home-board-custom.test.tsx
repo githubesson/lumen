@@ -405,7 +405,25 @@ it("asks for a pinned playlist anyway when the playlists list can't be had", asy
   mock.playlistsFailed = true;
   mock.playlistTracks.mockResolvedValue({ tracks: [{ ...track("p1", "Kestrel Bay"), track_id: "p1", position: 0 }] });
   arrange({ panels: [{ id: "playlist", kind: "playlist", w: 6, h: 1, playlist: "pl-1" }] });
-  await renderHome();
+  const view = await renderHome();
   expect(mock.playlistTracks).toHaveBeenCalledWith("pl-1", expect.anything());
   expect(within(panel("playlist")!).getByRole("button", { name: "Play Track p1" })).toBeTruthy();
+
+  // Retrying the list doesn't empty the panel or ask for its tracks again.
+  mock.playlistsFailed = false;
+  view.rerender(<MemoryRouter><ThemeProvider><Home /></ThemeProvider></MemoryRouter>);
+  await act(async () => {});
+  expect(within(panel("playlist")!).getByRole("button", { name: "Play Track p1" })).toBeTruthy();
+  expect(mock.playlistTracks).toHaveBeenCalledTimes(1);
+});
+
+it("says another playlist can't be picked while the list is unavailable, not that there are none", async () => {
+  mock.playlists = null;
+  mock.playlistsFailed = true;
+  mock.playlistTracks.mockResolvedValue({ tracks: [] });
+  arrange({ panels: [{ id: "playlist", kind: "playlist", w: 6, h: 1, playlist: "pl-1" }] });
+  await renderHome("/?customize");
+  await act(async () => fireEvent.click(tile("Playlist").getByRole("button", { name: /^Edit/ })));
+  const dialog = within(await screen.findByRole("dialog", { name: "Edit Playlist" }));
+  expect(dialog.getByText("Your playlists aren't available right now, so another can't be picked.")).toBeTruthy();
 });

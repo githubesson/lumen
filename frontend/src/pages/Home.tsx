@@ -136,19 +136,22 @@ export default function Home() {
   // alongside Home), and only those still among them: a deleted one's
   // panel has nothing to show, not an error or its old tracks. If the list
   // can't be had, each is asked for anyway, to show its own state.
+  // Latched, so retrying the list doesn't empty the panels meanwhile.
   const playlistData = playlistResource.data;
-  const listFailed = playlistData === null && !playlistResource.loading;
+  const [listFailed, setListFailed] = useState(false);
+  if (playlistData === null && !playlistResource.loading && !listFailed) setListFailed(true);
+  const pinAll = playlistData === null && listFailed;
   const pinned = useMemo(
     () => [
       ...new Set(
         enabled.flatMap((panel) =>
-          panel.kind === "playlist" && panel.playlist && (listFailed || playlistData?.some((p) => p.id === panel.playlist))
+          panel.kind === "playlist" && panel.playlist && (pinAll || playlistData?.some((p) => p.id === panel.playlist))
             ? [panel.playlist]
             : [],
         ),
       ),
     ],
-    [enabled, playlistData, listFailed],
+    [enabled, playlistData, pinAll],
   );
   const replayOf = (period: Period | undefined) =>
     (sources[replaySource(period)] as ApiResource<ReplayData> | undefined) ?? UNKNOWN;
@@ -318,7 +321,7 @@ export default function Home() {
   const editor = useBoardEditor({
     editing,
     arrangement,
-    playlists: playlists ?? [],
+    playlists,
     years,
     onChange: (next) => setHomeBoard(arrangementTweak(next)),
     onDone: () => setEditing(false),

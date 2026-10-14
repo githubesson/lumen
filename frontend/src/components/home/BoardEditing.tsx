@@ -107,8 +107,8 @@ export function useBoardEditor({
 }: {
   editing: boolean;
   arrangement: HomeArrangement;
-  /** For playlist panels' names and the playlists they can show. */
-  playlists: readonly Playlist[];
+  /** For playlist panels' names and the playlists they can show; null until loaded. */
+  playlists: readonly Playlist[] | null;
   /** Past years with plays, for period panels to show. */
   years: readonly number[];
   onChange: (next: HomeArrangement) => void;
