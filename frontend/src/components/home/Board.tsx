@@ -111,12 +111,21 @@ function listStyle(count: number): CSSProperties {
 export function BoardTrackList({
   tracks,
   ranked,
+  rank = (_track, index) => index + 1,
+  bare,
+  current,
   meta,
   onPlay,
   onContextMenu,
 }: {
   tracks: TrackListItem[];
   ranked?: boolean;
+  /** A ranked row's number: its place in the list unless given. */
+  rank?: (track: TrackListItem, index: number) => number;
+  /** Rows without covers (an album's tracks, under its cover). */
+  bare?: boolean;
+  /** The track to mark as the one you were on. */
+  current?: string;
   /** The row's end column (a duration, a play count). */
   meta: (track: TrackListItem) => ReactNode;
   onPlay: (track: TrackListItem) => void;
@@ -130,21 +139,25 @@ export function BoardTrackList({
           key={track.id}
           className="board-row"
           data-ranked={ranked || undefined}
+          data-bare={bare || undefined}
           data-unavailable={track.unavailable || undefined}
+          aria-current={track.id === current || undefined}
           title={track.unavailable ? "No longer on TIDAL" : undefined}
           onContextMenu={onContextMenu(track)}
         >
           {ranked && (
             <span className="board-rank" aria-hidden="true">
-              <span>{i + 1}</span>
+              <span>{rank(track, i)}</span>
               <PlayIcon className="board-rank-play size-3.5" />
             </span>
           )}
-          <CoverArt
-            className="board-art"
-            src={trackCoverUrl(track, ROW_ART_SIZE)}
-            label={track.album_title || track.title}
-          />
+          {!bare && (
+            <CoverArt
+              className="board-art"
+              src={trackCoverUrl(track, ROW_ART_SIZE)}
+              label={track.album_title || track.title}
+            />
+          )}
           <div className="board-row-text">
             {/* An unavailable track's button is aria-disabled rather than
                 disabled: it covers the row, and the browser sends no
@@ -272,13 +285,13 @@ export function BoardArtistList<T extends BoardArtistItem>({
  * Stand-ins for rows still loading: the same 52px rows, so the panel keeps
  * its height when they arrive.
  */
-export function BoardRowPlaceholders({ count, ranked }: { count: number; ranked?: boolean }) {
+export function BoardRowPlaceholders({ count, ranked, bare }: { count: number; ranked?: boolean; bare?: boolean }) {
   return (
     <ul className="board-list" style={listStyle(count)} aria-hidden="true">
       {Array.from({ length: count }, (_, i) => (
-        <li key={i} className="board-row board-placeholder" data-ranked={ranked || undefined}>
+        <li key={i} className="board-row board-placeholder" data-ranked={ranked || undefined} data-bare={bare || undefined}>
           {ranked && <span className="board-rank" />}
-          <div className="board-art" />
+          {!bare && <div className="board-art" />}
           <SkeletonLines />
           <span className="board-row-end" />
         </li>

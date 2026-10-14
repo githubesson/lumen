@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   Disc3 as DiscIcon,
@@ -40,6 +40,7 @@ import {
   type HomePanelId,
 } from "../components/home/homeArrangement";
 import { homeAlbums } from "../components/home/homeAlbums";
+import { BOARD_ROW_HEIGHT, useBoardFill } from "../components/home/useBoardFill";
 import { useTrackContextMenu } from "../lib/useTrackContextMenu";
 import { useAuth } from "../context/Auth";
 import { useTheme } from "../context/Theme";
@@ -66,26 +67,57 @@ const ALL_PANELS: BoardPanelId[] = ["repeat", "recent", "favorites", "albums", "
 const LAST_30_DAYS: Period = { kind: "last-30" };
 const REPLAY_LINK = `/replay?period=${periodKey(LAST_30_DAYS)}`;
 
-// How much each panel holds; more is behind its "view all". Albums and Top
-// artists render up to six and their CSS shows as many as fit one row.
+// How much each panel usually holds; more is behind its "view all". A panel
+// whose slot has room to spare shows as many more as fit (see useBoardFill).
+// Albums and Top artists fill a row of their grid, and show at least four.
 const ON_REPEAT_ROWS = 8;
 const LIST_ROWS = 5;
 const PLAYLIST_ROWS = 4;
-const ALBUM_COVERS = 6;
-const TOP_ARTISTS = 6;
+const A_ROW = (columns: number) => Math.max(4, columns);
+
+// Recently played is asked for in steps of this many, enough to fill its
+// panel.
+const RECENT_STEP = 20;
+// The newest tracks, per six album covers: usually enough to find them.
+const TRACKS_PER_SIX_ALBUMS = 80;
+// The most tracks the server sends in one page.
+const MAX_TRACKS = 500;
+
+type BindTrackMenu = ReturnType<typeof useTrackContextMenu>["bind"];
 
 export default function Home() {
   const { play } = usePlayerControls();
+  const repeatFill = useBoardFill(ON_REPEAT_ROWS);
+  const recentFill = useBoardFill(LIST_ROWS);
+  const favoritesFill = useBoardFill(LIST_ROWS);
+  const albumsFill = useBoardFill(A_ROW);
+  const playlistsFill = useBoardFill(PLAYLIST_ROWS);
+  const artistsFill = useBoardFill(A_ROW);
+
+  const recentLimit = Math.ceil(recentFill.count / RECENT_STEP) * RECENT_STEP;
+  const recentSent = useRef(0);
   const recentResource = useApiResource(
-    (signal) => api.listRecent(20, { signal }), "Could not load recently played tracks.",
-    { cacheKey: "recent:20" },
+    (signal) => {
+      recentSent.current = recentLimit;
+      return api.listRecent(recentLimit, { signal });
+    },
+    "Could not load recently played tracks.",
+    { cacheKey: "home:recent" },
   );
+  useReloadWhenLarger(recentResource.reload, recentLimit, recentSent);
   // The newest tracks, for the hero before anything is played and for
-  // Albums. Enough of them to usually find six albums.
+  // Albums.
+  const trackLimit = Math.min(MAX_TRACKS, TRACKS_PER_SIX_ALBUMS * Math.ceil(Math.max(albumsFill.count, 6) / 6));
+  const trackSent = useRef(0);
   const tracksResource = useApiResource(
-    (signal) => api.listTracks({ limit: 80, signal }), "Could not load your library.",
-    { cacheKey: "home:tracks:80" },
+    (signal) => {
+      trackSent.current = trackLimit;
+      return api.listTracks({ limit: trackLimit, signal });
+    },
+    "Could not load your library.",
+    { cacheKey: "home:tracks" },
   );
+  useReloadWhenLarger(tracksResource.reload, trackLimit, trackSent);
   // The Replay screen's "Last 30 days": the same request under the same
   // key, so either page warms the other.
   const replayResource = useApiResource<ReplayData>(
@@ -104,10 +136,13 @@ export default function Home() {
   const playlists = playlistResource.data ?? EMPTY_PLAYLISTS;
   const replay = replayResource.data;
   const topTracks = replay?.top_tracks;
-  const onRepeat = useMemo<TrackListItem[]>(() => (topTracks ?? []).slice(0, ON_REPEAT_ROWS), [topTracks]);
+  const onRepeat = useMemo<TrackListItem[]>(
+    () => (topTracks ?? []).slice(0, repeatFill.count),
+    [topTracks, repeatFill.count],
+  );
   const plays = useMemo(() => playsById(topTracks), [topTracks]);
   const topArtists = useMemo<(BoardArtistItem & { tracks: TrackListItem[] })[]>(() => {
-    const artists = (replay?.top_artists ?? []).slice(0, TOP_ARTISTS);
+    const artists = replay?.top_artists ?? [];
     // Their tracks among the window's top tracks: the picture, and what
     // plays when they have no page to open (streamed only).
     const byArtist = topArtistTracks(artists, topTracks ?? []);
@@ -123,7 +158,7 @@ export default function Home() {
       };
     });
   }, [replay?.top_artists, topTracks]);
-  const albums = useMemo(() => homeAlbums(tracks).slice(0, ALBUM_COVERS), [tracks]);
+  const albums = useMemo(() => homeAlbums(tracks), [tracks]);
 
   const recentPlayer = usePlayFromList(play, recent);
   const favoritesPlayer = usePlayFromList(play, favs);
@@ -217,6 +252,7 @@ export default function Home() {
         return (
           <ResumePanel
             hero={hero}
+            bindCtx={bindCtx}
             fromRecent={recent.length > 0}
             fallbackQueue={recent.length ? recent : tracks}
             loading={recentResource.loading || tracksResource.loading}
@@ -243,22 +279,24 @@ export default function Home() {
               )
             }
           >
-            {loading ? (
-              <BoardRowPlaceholders count={ON_REPEAT_ROWS} ranked />
-            ) : (
-              <BoardTrackList
-                tracks={onRepeat}
-                ranked
-                meta={(t) => (
-                  <>
-                    {(plays.get(t.id) ?? 0).toLocaleString()}
-                    <span className="sr-only"> plays</span>
-                  </>
-                )}
-                onPlay={repeatPlayer.playTrack}
-                onContextMenu={(t) => bindCtx(t, { queue: onRepeat })}
-              />
-            )}
+            <div {...repeatFill.area}>
+              {loading ? (
+                <BoardRowPlaceholders count={repeatFill.count} ranked />
+              ) : (
+                <BoardTrackList
+                  tracks={onRepeat}
+                  ranked
+                  meta={(t) => (
+                    <>
+                      {(plays.get(t.id) ?? 0).toLocaleString()}
+                      <span className="sr-only"> plays</span>
+                    </>
+                  )}
+                  onPlay={repeatPlayer.playTrack}
+                  onContextMenu={(t) => bindCtx(t, { queue: onRepeat })}
+                />
+              )}
+            </div>
           </BoardPanel>
         );
       }
@@ -270,16 +308,18 @@ export default function Home() {
             to="/recent"
             status={<PanelStatus title="Recently played" loading={recentResource.loading} error={recentResource.error} reload={recentResource.reload} />}
           >
-            {pending(recent.length, recentResource.loading, recentResource.error) ? (
-              <BoardRowPlaceholders count={LIST_ROWS} />
-            ) : (
-              <BoardTrackList
-                tracks={recent.slice(0, LIST_ROWS)}
-                meta={(t) => fmtDurationMs(t.duration_ms)}
-                onPlay={recentPlayer.playTrack}
-                onContextMenu={(t) => bindCtx(t, { queue: recent })}
-              />
-            )}
+            <div {...recentFill.area}>
+              {pending(recent.length, recentResource.loading, recentResource.error) ? (
+                <BoardRowPlaceholders count={recentFill.count} />
+              ) : (
+                <BoardTrackList
+                  tracks={recent.slice(0, recentFill.count)}
+                  meta={(t) => fmtDurationMs(t.duration_ms)}
+                  onPlay={recentPlayer.playTrack}
+                  onContextMenu={(t) => bindCtx(t, { queue: recent })}
+                />
+              )}
+            </div>
           </BoardPanel>
         );
       case "favorites":
@@ -290,16 +330,18 @@ export default function Home() {
             to="/favorites"
             status={<PanelStatus title="Your favorites" loading={favorites.loading} error={favorites.error} reload={() => void favorites.refresh()} />}
           >
-            {pending(favs.length, favorites.loading, favorites.error) ? (
-              <BoardRowPlaceholders count={LIST_ROWS} />
-            ) : (
-              <BoardTrackList
-                tracks={favs.slice(0, LIST_ROWS)}
-                meta={(t) => fmtDurationMs(t.duration_ms)}
-                onPlay={favoritesPlayer.playTrack}
-                onContextMenu={(t) => bindCtx(t, { queue: favs })}
-              />
-            )}
+            <div {...favoritesFill.area}>
+              {pending(favs.length, favorites.loading, favorites.error) ? (
+                <BoardRowPlaceholders count={favoritesFill.count} />
+              ) : (
+                <BoardTrackList
+                  tracks={favs.slice(0, favoritesFill.count)}
+                  meta={(t) => fmtDurationMs(t.duration_ms)}
+                  onPlay={favoritesPlayer.playTrack}
+                  onContextMenu={(t) => bindCtx(t, { queue: favs })}
+                />
+              )}
+            </div>
           </BoardPanel>
         );
       case "albums":
@@ -311,19 +353,23 @@ export default function Home() {
             status={<PanelStatus title="Albums" loading={tracksResource.loading} error={tracksResource.error} reload={tracksResource.reload} />}
             alert={failure?.panel === "albums" ? failure.message : null}
           >
-            <div className="board-covers">
-              {pending(albums.length, tracksResource.loading, tracksResource.error) && <MediaCardPlaceholders count={ALBUM_COVERS} />}
-              {albums.map((a) => (
-                <MediaCard
-                  key={a.id}
-                  to={`/library?view=albums&album=${encodeURIComponent(a.id)}&by=${encodeURIComponent(a.artist)}`}
-                  coverUrl={albumCoverUrl(a.id, 384)}
-                  title={displayText(a.title)}
-                  subtitle={displayText(a.artist)}
-                  onPlay={() => playFetched("albums", a.title, (signal) => api.listAlbumTracks(a.id, { signal }))}
-                  playLabel={`Play ${a.title}`}
-                />
-              ))}
+            <div {...albumsFill.area}>
+              <div className="board-covers">
+                {pending(albums.length, tracksResource.loading, tracksResource.error) && (
+                  <MediaCardPlaceholders count={albumsFill.count} />
+                )}
+                {albums.slice(0, albumsFill.count).map((a) => (
+                  <MediaCard
+                    key={a.id}
+                    to={`/library?view=albums&album=${encodeURIComponent(a.id)}&by=${encodeURIComponent(a.artist)}`}
+                    coverUrl={albumCoverUrl(a.id, 384)}
+                    title={displayText(a.title)}
+                    subtitle={displayText(a.artist)}
+                    onPlay={() => playFetched("albums", a.title, (signal) => api.listAlbumTracks(a.id, { signal }))}
+                    playLabel={`Play ${a.title}`}
+                  />
+                ))}
+              </div>
             </div>
           </BoardPanel>
         );
@@ -336,18 +382,20 @@ export default function Home() {
             status={<PanelStatus title="Playlists" loading={playlistResource.loading} error={playlistResource.error} reload={playlistResource.reload} />}
             alert={failure?.panel === "playlists" ? failure.message : null}
           >
-            {pending(playlists.length, playlistResource.loading, playlistResource.error) ? (
-              <BoardRowPlaceholders count={PLAYLIST_ROWS} />
-            ) : (
-              <BoardPlaylistList
-                playlists={playlists.slice(0, PLAYLIST_ROWS)}
-                onPlay={(p) =>
-                  playFetched("playlists", p.name, async (signal) =>
-                    (await api.listPlaylistTracks(p.id, { signal })).tracks.map(playlistEntryToTrack),
-                  )
-                }
-              />
-            )}
+            <div {...playlistsFill.area}>
+              {pending(playlists.length, playlistResource.loading, playlistResource.error) ? (
+                <BoardRowPlaceholders count={playlistsFill.count} />
+              ) : (
+                <BoardPlaylistList
+                  playlists={playlists.slice(0, playlistsFill.count)}
+                  onPlay={(p) =>
+                    playFetched("playlists", p.name, async (signal) =>
+                      (await api.listPlaylistTracks(p.id, { signal })).tracks.map(playlistEntryToTrack),
+                    )
+                  }
+                />
+              )}
+            </div>
           </BoardPanel>
         );
       case "artists":
@@ -358,18 +406,20 @@ export default function Home() {
             to={REPLAY_LINK}
             alert={failure?.panel === "artists" ? failure.message : null}
           >
-            {pending(replayEmpty ? 0 : topArtists.length, replayResource.loading, replayResource.error) ? (
-              <BoardArtistPlaceholders count={TOP_ARTISTS} />
-            ) : (
-              <BoardArtistList
-                artists={topArtists}
-                // Only an artist without a page plays from here: the library
-                // has nothing by them, so their top tracks are what there
-                // is. Through playFetched all the same, so it supersedes an
-                // album or playlist still loading.
-                onPlay={(artist) => playFetched("artists", artist.name, () => Promise.resolve(artist.tracks))}
-              />
-            )}
+            <div {...artistsFill.area}>
+              {pending(replayEmpty ? 0 : topArtists.length, replayResource.loading, replayResource.error) ? (
+                <BoardArtistPlaceholders count={artistsFill.count} />
+              ) : (
+                <BoardArtistList
+                  artists={topArtists.slice(0, artistsFill.count)}
+                  // Only an artist without a page plays from here: the
+                  // library has nothing by them, so their top tracks are
+                  // what there is. Through playFetched all the same, so it
+                  // supersedes an album or playlist still loading.
+                  onPlay={(artist) => playFetched("artists", artist.name, () => Promise.resolve(artist.tracks))}
+                />
+              )}
+            </div>
           </BoardPanel>
         );
     }
@@ -412,6 +462,18 @@ export default function Home() {
       )}
     </div>
   );
+}
+
+/**
+ * Asks again once `size` (which the fetcher reads) grows past the size the
+ * last request went out with (`sent`, which the fetcher records): a panel
+ * moved somewhere roomier gets the rows to fill it. A smaller size waits for
+ * the next load.
+ */
+function useReloadWhenLarger(reload: () => Promise<void>, size: number, sent: MutableRefObject<number>) {
+  useEffect(() => {
+    if (size > sent.current) void reload();
+  }, [reload, size, sent]);
 }
 
 /**
@@ -467,12 +529,14 @@ function useFetchAndPlay() {
  */
 function ResumePanel({
   hero,
+  bindCtx,
   fromRecent,
   fallbackQueue,
   loading,
   error,
 }: {
   hero: TrackListItem | null;
+  bindCtx: BindTrackMenu;
   fromRecent: boolean;
   fallbackQueue: TrackListItem[];
   loading: boolean;
@@ -480,28 +544,30 @@ function ResumePanel({
 }) {
   const { me } = useAuth();
   if (hero) {
-    return <HeroAlbum key={hero.id} track={hero} fromRecent={fromRecent} fallbackQueue={fallbackQueue} />;
+    return <HeroAlbum key={hero.id} track={hero} fromRecent={fromRecent} fallbackQueue={fallbackQueue} bindCtx={bindCtx} />;
   }
   if (loading) {
     return (
       <div className="hero board-resume" aria-busy="true">
-        <div className="hero-art" aria-hidden="true" />
-        <div className="hero-body">
-          <div className="hero-eyebrow">Jump back in</div>
-          <h1 className="hero-title">
-            <span className="skeleton-text" style={{ width: "12ch" }} />
-          </h1>
-          {/* Same rows as the loaded hero, so its text doesn't jump. */}
-          <div className="hero-meta">
-            <span role="status">Loading your music…</span>
-          </div>
-          <div className="hero-actions">
-            <Button variant="primary" disabled leadingIcon={<PlayIcon className="size-4" />}>
-              Play
-            </Button>
-            <Button disabled leadingIcon={<DiscIcon className="size-4" />}>
-              Open album
-            </Button>
+        <div className="board-resume-head">
+          <div className="hero-art" aria-hidden="true" />
+          <div className="hero-body">
+            <div className="hero-eyebrow">Jump back in</div>
+            <h1 className="hero-title">
+              <span className="skeleton-text" style={{ width: "12ch" }} />
+            </h1>
+            {/* Same rows as the loaded hero, so its text doesn't jump. */}
+            <div className="hero-meta">
+              <span role="status">Loading your music…</span>
+            </div>
+            <div className="hero-actions">
+              <Button variant="primary" disabled leadingIcon={<PlayIcon className="size-4" />}>
+                Play
+              </Button>
+              <Button disabled leadingIcon={<DiscIcon className="size-4" />}>
+                Open album
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -538,19 +604,24 @@ function ResumePanel({
 
 /**
  * The hero: the album of the last track you played (or, before you've played
- * anything, a library track), with Play picking up from that track.
+ * anything, a library track), with Play picking up from that track. When its
+ * slot has room under the cover, the album's tracks fill it.
  */
 function HeroAlbum({
   track,
   fromRecent,
   fallbackQueue,
+  bindCtx,
 }: {
   track: TrackListItem;
   fromRecent: boolean;
   /** Queue for a track with no local album to play through. */
   fallbackQueue: TrackListItem[];
+  bindCtx: BindTrackMenu;
 }) {
   const { play } = usePlayerControls();
+  // None in its usual slot, where the hero is as tall as its row.
+  const fill = useBoardFill(0, BOARD_ROW_HEIGHT);
   const target = trackAlbumTarget(track);
   // Only a library album has a page to describe it and tracks to play through
   // here; a TIDAL track links to its release.
@@ -564,6 +635,7 @@ function HeroAlbum({
   const albumHref = target
     ? `/library?view=albums&${target.kind === "tidal" ? "tidalAlbum" : "album"}=${encodeURIComponent(target.id)}`
     : null;
+  const showTracks = !!albumID && fill.count > 0;
   const year = album.data?.release_year;
   const trackCount = album.data?.track_count;
 
@@ -602,48 +674,120 @@ function HeroAlbum({
 
   return (
     <div className="hero board-resume">
-      <CoverArt
-        className="hero-art"
-        src={trackCoverUrl(track)}
-        label={track.album_title ?? track.title}
-      />
-      <div className="hero-body">
-        <div className="hero-eyebrow">
-          {fromRecent ? "Jump back in" : "From your library"}
-        </div>
-        <h1 className="hero-title">{displayText(track.album_title ?? track.title)}</h1>
-        <div className="hero-meta">
-          <span>{displayText(track.artist, "Unknown artist")}</span>
-          {year ? (
-            <>
-              <span className="dot" aria-hidden="true" />
-              <span>{year}</span>
-            </>
-          ) : null}
-          {trackCount ? (
-            <>
-              <span className="dot" aria-hidden="true" />
-              <span>{pluralize(trackCount, "track")}</span>
-            </>
-          ) : null}
-        </div>
-        <div className="hero-actions">
-          <Button
-            variant="primary"
-            onClick={() => void onPlay()}
-            disabled={starting}
-            leadingIcon={<PlayIcon className="size-4" />}
-          >
-            Play
-          </Button>
-          {albumHref && (
-            <Link to={albumHref} className="btn">
-              <DiscIcon className="size-4" />
-              Open album
-            </Link>
-          )}
+      <div className="board-resume-head">
+        <CoverArt
+          className="hero-art"
+          src={trackCoverUrl(track)}
+          label={track.album_title ?? track.title}
+        />
+        <div className="hero-body">
+          <div className="hero-eyebrow">
+            {fromRecent ? "Jump back in" : "From your library"}
+          </div>
+          <h1 className="hero-title">{displayText(track.album_title ?? track.title)}</h1>
+          <div className="hero-meta">
+            <span>{displayText(track.artist, "Unknown artist")}</span>
+            {year ? (
+              <>
+                <span className="dot" aria-hidden="true" />
+                <span>{year}</span>
+              </>
+            ) : null}
+            {trackCount ? (
+              <>
+                <span className="dot" aria-hidden="true" />
+                <span>{pluralize(trackCount, "track")}</span>
+              </>
+            ) : null}
+          </div>
+          <div className="hero-actions">
+            <Button
+              variant="primary"
+              onClick={() => void onPlay()}
+              disabled={starting}
+              leadingIcon={<PlayIcon className="size-4" />}
+            >
+              Play
+            </Button>
+            {albumHref && (
+              <Link to={albumHref} className="btn">
+                <DiscIcon className="size-4" />
+                Open album
+              </Link>
+            )}
+          </div>
         </div>
       </div>
+      <div {...fill.area} data-tracks={showTracks || undefined}>
+        {showTracks ? (
+          <HeroTracks albumID={albumID} track={track} rows={fill.count} trackCount={trackCount} bindCtx={bindCtx} />
+        ) : (
+          // Empty, but spaced like the list, so the room measures the same
+          // with or without it.
+          <div className="board-list" />
+        )}
+      </div>
     </div>
+  );
+}
+
+/**
+ * The album's tracks under Jump back in, as many as there's room for: from
+ * the one you were on, or fewer before it near the album's end. A row plays
+ * the album from there. Loaded only once there's room. Numbered by place on
+ * the album, since track numbers start over on each disc.
+ */
+function HeroTracks({
+  albumID,
+  track,
+  rows,
+  trackCount,
+  bindCtx,
+}: {
+  albumID: string;
+  track: TrackListItem;
+  rows: number;
+  /** The album's length, when known, for the placeholders. */
+  trackCount: number | undefined;
+  bindCtx: BindTrackMenu;
+}) {
+  const { play } = usePlayerControls();
+  const album = useApiResource(
+    (signal) => api.listAlbumTracks(albumID, { signal }),
+    "Could not load the album's tracks.",
+    { cacheKey: `home:hero-tracks:${albumID}` },
+  );
+  const tracks = album.data ?? EMPTY_TRACKS;
+  const queue = useMemo(() => playableTracks(tracks), [tracks]);
+  if (tracks.length === 0) {
+    if (album.loading) return <BoardRowPlaceholders count={Math.min(rows, trackCount ?? rows)} ranked bare />;
+    // The empty list keeps the area measuring as it would with rows.
+    return (
+      <>
+        <div className="board-list" />
+        {album.error && (
+          <div role="status" className="board-resume-status">
+            <span title={album.error}>{album.error}</span>
+            <Button size="sm" onClick={() => void album.reload()} aria-label="Retry the album's tracks">
+              Retry
+            </Button>
+          </div>
+        )}
+      </>
+    );
+  }
+  const at = Math.max(0, tracks.findIndex((t) => t.id === track.id));
+  const start = Math.max(0, Math.min(at, tracks.length - rows));
+  return (
+    <BoardTrackList
+      tracks={tracks.slice(start, start + rows)}
+      ranked
+      bare
+      rank={(_t, i) => start + i + 1}
+      current={track.id}
+      meta={(t) => fmtDurationMs(t.duration_ms)}
+      onPlay={(t) => play(t, queue)}
+      onContextMenu={(t) => bindCtx(t, { queue })}
+    />
   );
 }

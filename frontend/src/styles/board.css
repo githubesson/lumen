@@ -83,25 +83,80 @@
   font-size: 14px;
   color: var(--muted-foreground);
 }
+/* A panel's items, as many as its slot has room for (useBoardFill). Once
+   measured, only the usual rows count toward the panel's height, so the
+   extra ones fill room the board already has and never make a row taller. */
+.board-fill {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.board-fill[data-measured] {
+  flex-basis: 0;
+  min-height: var(--board-fill-min);
+}
 
-/* Jump back in: today's hero, sized down to a panel. In a narrow slot
-   (moved there on a customized Home) its text goes under the cover. Phones
-   stack the hero already, and there the basis would be a height. */
+/* Jump back in: today's hero, sized down to a panel, with the album's
+   tracks under it when its slot has room for them. In a narrow slot (moved
+   there on a customized Home) its text goes under the cover. Phones stack
+   the cover and text already, and there the basis would be a height. */
 .hero.board-resume {
   min-height: 0;
   padding: 16px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 0;
+}
+.board-resume-head {
+  display: flex;
+  align-items: flex-end;
   gap: 24px;
 }
+/* The welcome, or the note when nothing loaded: text alone, at the bottom. */
+.board-resume > .hero-body {
+  flex: none;
+}
 @media (min-width: 761px) {
-  .hero.board-resume {
+  .board-resume-head {
     flex-wrap: wrap;
   }
-  .board-resume .hero-body {
+  .board-resume-head .hero-body {
     flex: 1 1 220px;
+  }
+}
+@media (max-width: 760px) {
+  .board-resume-head {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 .board-resume .hero-title {
   font-size: 24px;
+}
+.board-resume .board-list {
+  margin-top: 12px;
+}
+/* Without tracks to show, the room goes above the cover, as it always did. */
+.board-resume > .board-fill:not([data-tracks]) {
+  order: -1;
+}
+/* One line, so it fits the one row of room the tracks had. */
+.board-resume-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  font-size: 14px;
+  color: var(--muted-foreground);
+}
+.board-resume-status > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-resume-status > .btn {
+  flex: none;
 }
 
 /* ---- Rows --------------------------------------------------- */
@@ -134,6 +189,9 @@
 }
 .board-row[data-ranked] {
   grid-template-columns: 20px 40px minmax(0, 1fr) auto;
+}
+.board-row[data-ranked][data-bare] {
+  grid-template-columns: 20px minmax(0, 1fr) auto;
 }
 .board-row[data-unavailable] {
   opacity: 0.45;
@@ -195,6 +253,9 @@
 }
 .board-rank-play {
   opacity: 0;
+  color: var(--foreground);
+}
+.board-row[aria-current="true"] .board-rank {
   color: var(--foreground);
 }
 
@@ -271,29 +332,12 @@ button.board-play:active {
   opacity: 1;
 }
 
-/* ---- Albums: a row of covers, as many as fit ----------------- */
+/* ---- Albums: rows of covers, as many as fit ------------------ */
 .board-covers {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
   margin: 4px -8px -8px;
-}
-/* As many covers as fit one row (two rows of two when narrow). Each width
-   hides the rest, rather than restoring a display value. */
-@container board-panel (max-width: 759px) {
-  .board-covers > :nth-child(n + 5) {
-    display: none;
-  }
-}
-@container board-panel (min-width: 760px) and (max-width: 919px) {
-  .board-covers > :nth-child(n + 6) {
-    display: none;
-  }
-}
-@container board-panel (min-width: 920px) {
-  .board-covers > :nth-child(n + 7) {
-    display: none;
-  }
 }
 .board-panel .card:hover,
 .board-panel .card:focus-within {
@@ -318,7 +362,7 @@ button.board-play:active {
   }
 }
 
-/* ---- Top artists: tiles in a row, a list when narrow --------- */
+/* ---- Top artists: rows of tiles, a list when narrow ---------- */
 .board-artists {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -326,16 +370,6 @@ button.board-play:active {
   margin: 4px -8px -8px;
   padding: 0;
   list-style: none;
-}
-@container board-panel (max-width: 1039px) {
-  .board-artists > :nth-child(n + 5) {
-    display: none;
-  }
-}
-@container board-panel (min-width: 1040px) and (max-width: 1299px) {
-  .board-artists > :nth-child(n + 6) {
-    display: none;
-  }
 }
 .board-artist {
   position: relative;
