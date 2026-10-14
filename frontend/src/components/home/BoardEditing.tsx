@@ -1,33 +1,45 @@
 import { useEffect, useRef, useState, type DragEvent, type DragEventHandler, type ReactNode, type RefObject } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import {
   ArrowLeftRight as SwapIcon,
   Check as CheckIcon,
   Eye as EyeIcon,
   EyeOff as EyeOffIcon,
   GripVertical as GripIcon,
+  Plus as PlusIcon,
   RotateCcw as ResetIcon,
+  SlidersHorizontal as EditIcon,
 } from "lucide-react";
+import type { Playlist } from "../../api";
 import { Button } from "../Button";
 import { useKey } from "../../lib/keybindings";
 import { boardCellStyle } from "./Board";
 import type { BoardCell } from "./boardLayout";
+import { AddPanelDialog, PanelSettingsDialog, ResetBoardDialog } from "./BoardDialogs";
 import {
   DEFAULT_ARRANGEMENT,
-  HOME_PANELS,
-  HOME_PANEL_TITLES,
+  DEFAULT_PANEL_IDS,
+  addPanel,
+  findPanel,
   isDefaultArrangement,
+  panelTitle,
+  removePanel,
   setPanelHidden,
   swapPanels,
+  updatePanel,
   type HomeArrangement,
+  type HomePanel,
   type HomePanelId,
+  type PanelChange,
 } from "./homeArrangement";
+import { PANEL_KINDS, periodSub, type PanelKind } from "./panelKinds";
 
 /**
  * Customizing Home: while editing, every panel turns into a tile to drag
- * onto another (they swap slots) or to hide, and a bar above the board
- * lists hidden panels, Reset and Done. Move, then Swap here on another
- * panel, does the same as a drag, from the keyboard or a touch screen.
+ * onto another (they swap places), to edit (its size, name and what it
+ * shows) or to hide, and a bar above the board lists hidden panels, Add
+ * panel, Reset and Done. Move, then Swap here on another panel, does the
+ * same as a drag, from the keyboard or a touch screen.
  */
 
 /** The morph running now, and the slots it lifted. */
@@ -88,14 +100,22 @@ export interface SlotEditing {
 export function useBoardEditor({
   editing,
   arrangement,
+  playlists,
+  years,
   onChange,
   onDone,
 }: {
   editing: boolean;
   arrangement: HomeArrangement;
+  /** For playlist panels' names and the playlists they can show. */
+  playlists: readonly Playlist[];
+  /** Past years with plays, for period panels to show. */
+  years: readonly number[];
   onChange: (next: HomeArrangement) => void;
   onDone: () => void;
 }) {
+  const titleOf = (panel: HomePanel | undefined) => (panel ? panelTitle(panel, playlists) : "");
+  const titleById = (id: HomePanelId) => titleOf(findPanel(latest.current, id) ?? findPanel(arrangement, id));
   // Picked with Move, waiting for Swap here.
   const [moving, setMoving] = useState<HomePanelId | null>(null);
   const [dragging, setDragging] = useState<HomePanelId | null>(null);
@@ -108,11 +128,17 @@ export function useBoardEditor({
   const dragDepth = useRef(new Map<HomePanelId, number>());
   const moveButtons = useRef(new Map<HomePanelId, HTMLButtonElement>());
   const doneButton = useRef<HTMLButtonElement>(null);
-  if (!editing && (moving || dragging || target || announcement)) {
+  // The open dialog: Add panel, a panel's settings (and where focus goes if
+  // it's removed), or Reset's confirmation.
+  const [dialog, setDialog] = useState<
+    { kind: "add" } | { kind: "settings"; id: HomePanelId; next: HomePanelId | undefined } | { kind: "reset" } | null
+  >(null);
+  if (!editing && (moving || dragging || target || announcement || dialog)) {
     setMoving(null);
     setDragging(null);
     setTarget(null);
     setAnnouncement("");
+    setDialog(null);
   }
 
   // The arrangement the last change left. A view transition runs its update
@@ -123,23 +149,47 @@ export function useBoardEditor({
     latest.current = arrangement;
   }, [arrangement]);
 
-  /** Applies a change, then focuses what `focus` names once it's on the board. */
+  /**
+   * Applies a change, then focuses what `focus` names once it's on the
+   * board, scrolling to it when `reveal` (a panel just added at the end).
+   */
   const change = (
     update: (current: HomeArrangement) => HomeArrangement,
     message: string,
     focus?: HomePanelId | "done",
-    lift?: HomePanelId[],
+    {
+      lift,
+      reveal = false,
+      instant = false,
+    }: {
+      lift?: HomePanelId[];
+      reveal?: boolean;
+      /** From a dialog: the panels' morph would run over it as it closes. */
+      instant?: boolean;
+    } = {},
   ) => {
     setMoving(null);
-    morphBoard(() => {
+    const apply = () => {
       const next = update(latest.current);
       latest.current = next;
       flushSync(() => onChange(next));
       if (focus === "done") doneButton.current?.focus();
-      else if (focus) moveButtons.current.get(focus)?.focus({ preventScroll: true });
-    }, lift);
+      else if (focus) {
+        const button = moveButtons.current.get(focus);
+        button?.focus({ preventScroll: true });
+        if (reveal) button?.closest(".board-slot")?.scrollIntoView?.({ block: "nearest" });
+      }
+    };
+    if (instant) apply();
+    else morphBoard(apply, lift);
     setAnnouncement(message);
   };
+
+  /**
+   * A change from a panel's settings: no morph, which would run over the
+   * dialog. Each is one interaction, so the next builds on its render.
+   */
+  const changeNow = (id: HomePanelId, panelChange: PanelChange) => onChange(updatePanel(latest.current, id, panelChange));
 
   const endDrag = () => {
     dragSource.current = null;
@@ -152,19 +202,39 @@ export function useBoardEditor({
     if (from === to) return;
     change(
       (current) => swapPanels(current, from, to),
-      `Swapped ${HOME_PANEL_TITLES[from]} and ${HOME_PANEL_TITLES[to]}.`,
+      `Swapped ${titleById(from)} and ${titleById(to)}.`,
       focus,
-      [from, to],
+      { lift: [from, to] },
     );
   };
 
   const hide = (id: HomePanelId, focusNext: HomePanelId | undefined) =>
-    change((current) => setPanelHidden(current, id, true), `${HOME_PANEL_TITLES[id]} hidden.`, focusNext ?? "done");
+    change((current) => setPanelHidden(current, id, true), `${titleById(id)} hidden.`, focusNext ?? "done");
 
-  // Show, hide, swap and reset all end a pending Move (in `change`), so the
-  // panel they focus has its Move button, not Swap here.
+  // Show, hide, swap, add, remove and reset all end a pending Move (in
+  // `change`), so the panel they focus has its Move button, not Swap here.
   const show = (id: HomePanelId) =>
-    change((current) => setPanelHidden(current, id, false), `${HOME_PANEL_TITLES[id]} shown.`, id);
+    change((current) => setPanelHidden(current, id, false), `${titleById(id)} shown.`, id);
+
+  const add = (kind: PanelKind, options: Pick<HomePanel, "period" | "playlist">) => {
+    setDialog(null);
+    const { arrangement: next, id } = addPanel(latest.current, kind, options);
+    if (!id) return;
+    const panel = findPanel(next, id)!;
+    const shownAgain = !!findPanel(latest.current, id);
+    change(
+      (current) => addPanel(current, kind, options).arrangement,
+      `${titleOf(panel)} ${shownAgain ? "shown" : "added"}.`,
+      id,
+      { reveal: true, instant: true },
+    );
+  };
+
+  const remove = (id: HomePanelId, focusNext: HomePanelId | undefined) => {
+    const title = titleById(id);
+    setDialog(null);
+    change((current) => removePanel(current, id), `${title} removed.`, focusNext ?? "done", { instant: true });
+  };
 
   // Leaving hands focus to the top bar's Customize button, where editing
   // started, rather than dropping it with the bar.
@@ -175,10 +245,17 @@ export function useBoardEditor({
     onDone();
   };
 
+  // Panels the user added are lost to a reset, so that asks first.
+  const added = arrangement.panels.filter((panel) => !(DEFAULT_PANEL_IDS as readonly string[]).includes(panel.id));
+  const resetNow = () => {
+    setDialog(null);
+    change(() => DEFAULT_ARRANGEMENT, "Home is back to its default layout.", "done", { instant: dialog !== null });
+  };
   const reset = () => {
     setMoving(null);
     if (isDefaultArrangement(arrangement)) return;
-    change(() => DEFAULT_ARRANGEMENT, "Home is back to its default layout.", "done");
+    if (added.length > 0) setDialog({ kind: "reset" });
+    else resetNow();
   };
 
   useKey(
@@ -191,85 +268,133 @@ export function useBoardEditor({
         done();
       }
     },
-    { id: "home:customize", enabled: editing },
+    // A dialog answers Escape itself.
+    { id: "home:customize", enabled: editing && !dialog },
   );
 
   /** What a slot needs while editing: its drag handlers and its tile. */
-  const slot = (id: HomePanelId, next: HomePanelId | undefined, empty: boolean): SlotEditing => ({
-    dragging: dragging === id,
-    target: target === id,
-    moving: moving === id,
-    onDragStart: (e: DragEvent<HTMLElement>) => {
-      e.dataTransfer.effectAllowed = "move";
-      // Firefox only starts a drag that carries data.
-      e.dataTransfer.setData("text/plain", HOME_PANEL_TITLES[id]);
-      dragSource.current = id;
-      setMoving(null);
-      // Restyling the source in dragstart can cancel the drag in Chrome.
-      requestAnimationFrame(() => setDragging(dragSource.current));
-    },
-    onDragEnter: () => {
-      const from = dragSource.current;
-      if (!from || from === id) return;
-      dragDepth.current.set(id, (dragDepth.current.get(id) ?? 0) + 1);
-      setTarget(id);
-    },
-    onDragOver: (e: DragEvent<HTMLElement>) => {
-      const from = dragSource.current;
-      if (!from || from === id) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-    },
-    onDragLeave: () => {
-      const depth = (dragDepth.current.get(id) ?? 0) - 1;
-      if (depth > 0) {
-        dragDepth.current.set(id, depth);
-        return;
-      }
-      dragDepth.current.delete(id);
-      setTarget((t) => (t === id ? null : t));
-    },
-    onDrop: (e: DragEvent<HTMLElement>) => {
-      e.preventDefault();
-      const from = dragSource.current;
-      endDrag();
-      if (from) swap(from, id);
-    },
-    onDragEnd: endDrag,
-    editor: (
-      <SlotEditor
-        id={id}
-        title={HOME_PANEL_TITLES[id]}
-        empty={empty}
-        state={moving === id ? "moving" : moving ? "target" : "idle"}
-        moveRef={(el) => {
-          if (el) moveButtons.current.set(id, el);
-          else moveButtons.current.delete(id);
-        }}
-        onMove={() => {
-          setMoving(id);
-          setAnnouncement(`Moving ${HOME_PANEL_TITLES[id]}. Choose Swap here on another panel, or press Escape to cancel.`);
-        }}
-        onCancel={() => setMoving(null)}
-        onSwapHere={() => moving && swap(moving, id, moving)}
-        onHide={() => hide(id, next)}
-      />
-    ),
-  });
+  const slot = (panel: HomePanel, next: HomePanelId | undefined, empty: boolean): SlotEditing => {
+    const { id } = panel;
+    const title = titleOf(panel);
+    return {
+      dragging: dragging === id,
+      target: target === id,
+      moving: moving === id,
+      onDragStart: (e: DragEvent<HTMLElement>) => {
+        e.dataTransfer.effectAllowed = "move";
+        // Firefox only starts a drag that carries data.
+        e.dataTransfer.setData("text/plain", title);
+        dragSource.current = id;
+        setMoving(null);
+        // Restyling the source in dragstart can cancel the drag in Chrome.
+        requestAnimationFrame(() => setDragging(dragSource.current));
+      },
+      onDragEnter: () => {
+        const from = dragSource.current;
+        if (!from || from === id) return;
+        dragDepth.current.set(id, (dragDepth.current.get(id) ?? 0) + 1);
+        setTarget(id);
+      },
+      onDragOver: (e: DragEvent<HTMLElement>) => {
+        const from = dragSource.current;
+        if (!from || from === id) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+      },
+      onDragLeave: () => {
+        const depth = (dragDepth.current.get(id) ?? 0) - 1;
+        if (depth > 0) {
+          dragDepth.current.set(id, depth);
+          return;
+        }
+        dragDepth.current.delete(id);
+        setTarget((t) => (t === id ? null : t));
+      },
+      onDrop: (e: DragEvent<HTMLElement>) => {
+        e.preventDefault();
+        const from = dragSource.current;
+        endDrag();
+        if (from) swap(from, id);
+      },
+      onDragEnd: endDrag,
+      editor: (
+        <SlotEditor
+          id={id}
+          title={title}
+          detail={PANEL_KINDS[panel.kind].period ? periodSub(panel.period) : undefined}
+          empty={empty}
+          state={moving === id ? "moving" : moving ? "target" : "idle"}
+          moveRef={(el) => {
+            if (el) moveButtons.current.set(id, el);
+            else moveButtons.current.delete(id);
+          }}
+          onMove={() => {
+            setMoving(id);
+            setAnnouncement(`Moving ${title}. Choose Swap here on another panel, or press Escape to cancel.`);
+          }}
+          onCancel={() => setMoving(null)}
+          onSwapHere={() => moving && swap(moving, id, moving)}
+          onEdit={() => {
+            setMoving(null);
+            setDialog({ kind: "settings", id, next });
+          }}
+          onHide={() => hide(id, next)}
+        />
+      ),
+    };
+  };
 
   const bar = (
     <BoardEditBar
       arrangement={arrangement}
-      moving={moving}
+      titleOf={titleOf}
+      moving={moving && titleOf(findPanel(arrangement, moving))}
       announcement={announcement}
       doneRef={doneButton}
       onShow={show}
+      onAdd={() => {
+        setMoving(null);
+        setDialog({ kind: "add" });
+      }}
       onReset={reset}
       onDone={done}
     />
   );
 
-  return { slot, bar };
+  const settingsPanel = dialog?.kind === "settings" ? findPanel(arrangement, dialog.id) : undefined;
+  // On the body, over the app, like the app-wide dialogs, rather than in
+  // the board's scrolling page.
+  const dialogs = editing && createPortal(
+    <>
+      <AddPanelDialog
+        open={dialog?.kind === "add"}
+        arrangement={arrangement}
+        playlists={playlists}
+        years={years}
+        onAdd={add}
+        onClose={() => setDialog(null)}
+      />
+      <PanelSettingsDialog
+        open={!!settingsPanel}
+        panel={settingsPanel}
+        title={titleOf(settingsPanel)}
+        playlists={playlists}
+        years={years}
+        onChange={(panelChange) => settingsPanel && changeNow(settingsPanel.id, panelChange)}
+        onRemove={() => dialog?.kind === "settings" && remove(dialog.id, dialog.next)}
+        onClose={() => setDialog(null)}
+      />
+      <ResetBoardDialog
+        open={dialog?.kind === "reset"}
+        added={added.map((panel) => titleOf(panel))}
+        onReset={resetNow}
+        onClose={() => setDialog(null)}
+      />
+    </>,
+    document.body,
+  );
+
+  return { slot, bar, dialogs };
 }
 
 /**
@@ -298,7 +423,6 @@ export function BoardSlot({
         viewTransitionName: editing ? `board-${panel}` : undefined,
       }}
       data-panel={panel}
-      data-slot={cell.id}
       data-editing={editing ? "" : undefined}
       data-dragging={editing?.dragging || undefined}
       data-target={editing?.target || undefined}
@@ -322,16 +446,20 @@ export function BoardSlot({
 function SlotEditor({
   id,
   title,
+  detail,
   empty,
   state,
   moveRef,
   onMove,
   onCancel,
   onSwapHere,
+  onEdit,
   onHide,
 }: {
   id: HomePanelId;
   title: string;
+  /** What it shows, when there's a choice (a period). */
+  detail?: string;
   /** Has nothing to show right now, so it's off the board outside editing. */
   empty: boolean;
   /** Idle, picked with Move, or a place the picked panel can go. */
@@ -340,6 +468,7 @@ function SlotEditor({
   onMove: () => void;
   onCancel: () => void;
   onSwapHere: () => void;
+  onEdit: () => void;
   onHide: () => void;
 }) {
   return (
@@ -349,6 +478,7 @@ function SlotEditor({
       <div className="board-slot-label" style={{ viewTransitionName: `board-label-${id}` }}>
         <GripIcon className="board-slot-grip size-4" aria-hidden="true" />
         <div className="board-slot-name">{title}</div>
+        {detail && <div className="board-slot-note">{detail}</div>}
         {empty && <div className="board-slot-note">Shows up once it has something</div>}
         <div className="board-slot-actions">
           {state === "target" ? (
@@ -367,6 +497,11 @@ function SlotEditor({
               <span className="sr-only"> {title}</span>
             </Button>
           )}
+          {state === "idle" && (
+            <Button size="sm" onClick={onEdit} leadingIcon={<EditIcon className="size-3.5" />}>
+              Edit<span className="sr-only"> {title}</span>
+            </Button>
+          )}
           {state !== "moving" && (
             <Button size="sm" variant="ghost" onClick={onHide} leadingIcon={<EyeOffIcon className="size-3.5" />}>
               Hide<span className="sr-only"> {title}</span>
@@ -380,49 +515,57 @@ function SlotEditor({
 
 function BoardEditBar({
   arrangement,
+  titleOf,
   moving,
   announcement,
   doneRef,
   onShow,
+  onAdd,
   onReset,
   onDone,
 }: {
   arrangement: HomeArrangement;
-  moving: HomePanelId | null;
+  titleOf: (panel: HomePanel) => string;
+  /** The title of the panel picked with Move. */
+  moving: string | null;
   announcement: string;
   doneRef: RefObject<HTMLButtonElement>;
   onShow: (id: HomePanelId) => void;
+  onAdd: () => void;
   onReset: () => void;
   onDone: () => void;
 }) {
-  const hidden = HOME_PANELS.filter((id) => arrangement.hidden.has(id));
+  const hidden = arrangement.panels.filter((panel) => panel.hidden);
   return (
     <div className="board-editbar" role="region" aria-label="Customize Home">
       <div className="board-editbar-text">
         <h2 className="board-editbar-title">Customize Home</h2>
         <p className="board-editbar-hint">
           {moving
-            ? `Choose where ${HOME_PANEL_TITLES[moving]} goes.`
-            : "Drag a panel onto another to swap them."}
+            ? `Choose where ${moving} goes.`
+            : "Drag a panel onto another to swap them, or edit one to change its size and what it shows."}
         </p>
       </div>
       {hidden.length > 0 && (
         <div className="board-editbar-hidden" role="group" aria-label="Hidden panels">
           <span className="board-editbar-label">Hidden</span>
-          {hidden.map((id) => (
+          {hidden.map((panel) => (
             <Button
-              key={id}
+              key={panel.id}
               size="sm"
-              onClick={() => onShow(id)}
-              aria-label={`Show ${HOME_PANEL_TITLES[id]}`}
+              onClick={() => onShow(panel.id)}
+              aria-label={`Show ${titleOf(panel)}`}
               leadingIcon={<EyeIcon className="size-3.5" />}
             >
-              {HOME_PANEL_TITLES[id]}
+              {titleOf(panel)}
             </Button>
           ))}
         </div>
       )}
       <div className="board-editbar-actions">
+        <Button size="sm" onClick={onAdd} leadingIcon={<PlusIcon className="size-3.5" />}>
+          Add panel
+        </Button>
         <Button
           size="sm"
           variant="ghost"

@@ -22,13 +22,17 @@ import type { BoardCell } from "./boardLayout";
 // Row art is 40-48px; the server's next size up covers a 2x screen.
 const ROW_ART_SIZE = 128;
 
-/** The grid spans `boardLayout` gave a panel, for the board's CSS. */
+/** Where the layout put a panel, for the board's CSS. */
 export function boardCellStyle(cell: BoardCell): CSSProperties {
   return {
     "--board-span": cell.span,
     "--board-rows": cell.rows,
     "--board-span-md": cell.spanMd,
     "--board-rows-md": cell.rowsMd,
+    "--board-col": cell.col,
+    "--board-row": cell.row,
+    "--board-col-md": cell.colMd,
+    "--board-row-md": cell.rowMd,
   } as CSSProperties;
 }
 

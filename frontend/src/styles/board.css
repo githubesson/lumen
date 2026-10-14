@@ -1,8 +1,10 @@
 /* ============================================================
    Home board: a bento of panels sized by what they hold, with no
-   sideways scrolling. Placement comes from boardLayout() as spans
+   sideways scrolling. Placement comes from the layout as spans
    (--board-span / --board-rows on the wide board, --board-span-md /
-   --board-rows-md on the medium one); narrow boards stack.
+   --board-rows-md on the medium one) and, on a customized board, the
+   lines they start on (--board-col / --board-row, and -md); narrow
+   boards stack.
    ============================================================ */
 .board-view {
   container: board / inline-size;
@@ -14,8 +16,8 @@
   align-items: stretch;
 }
 .board > * {
-  grid-column: span var(--board-span, 6);
-  grid-row: span var(--board-rows, 1);
+  grid-column: var(--board-col, auto) / span var(--board-span, 6);
+  grid-row: var(--board-row, auto) / span var(--board-rows, 1);
   min-width: 0;
   margin: 0;
 }
@@ -24,8 +26,8 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .board > * {
-    grid-column: span var(--board-span-md, 2);
-    grid-row: span var(--board-rows-md, 1);
+    grid-column: var(--board-col-md, auto) / span var(--board-span-md, 2);
+    grid-row: var(--board-row-md, auto) / span var(--board-rows-md, 1);
   }
 }
 @container board (max-width: 559px) {
@@ -65,6 +67,15 @@
 }
 .board-panel > .section-head {
   margin-bottom: 4px;
+}
+/* A long name (a playlist's, or the user's own) wraps; "view all" stays whole. */
+.board-panel > .section-head > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.board-panel .section-link {
+  flex: none;
+  white-space: nowrap;
 }
 /* Why a Play from this panel failed (an album's tracks didn't load). */
 .board-alert {
@@ -415,6 +426,113 @@ button.board-play:active {
   }
 }
 
+/* ---- Your listening: a period's figures ---------------------- */
+.board-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin: 8px 0 0;
+}
+@container board-panel (min-width: 600px) {
+  .board-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.board-stat {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.board-stat dt {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.board-stat dd {
+  margin: 0;
+  overflow: hidden;
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-stats-note {
+  margin: 12px 0 0;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-stats-note > span {
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+/* ---- Top genres: a name, its share, and a bar ---------------- */
+.board-genres {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 12px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+@container board-panel (min-width: 600px) {
+  .board-genres {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 24px;
+  }
+}
+.board-genre {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+}
+.board-genre-name {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-genre-share {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.board-genre-bar {
+  grid-column: 1 / -1;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--muted);
+}
+.board-genre-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+}
+/* The same height as a loaded row: a line of text and the bar's room. */
+.board-genre.board-placeholder {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 30px;
+}
+
+/* ---- Listening activity: the chart takes the panel's room ---- */
+.board-chart {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 148px;
+  margin-top: 8px;
+}
+.board-chart > .activity-chart {
+  position: absolute;
+  inset: 0;
+  height: auto;
+}
+
 /* ---- Customizing --------------------------------------------- */
 .board-editbar {
   position: sticky;
@@ -578,4 +696,96 @@ html[data-board-morph]::view-transition-group(*.board-label.board-lift) {
       opacity 120ms ease,
       visibility 120ms;
   }
+}
+
+/* ---- Add a panel, and a panel's settings --------------------- */
+.board-catalog {
+  display: grid;
+  gap: 16px;
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+}
+.board-catalog-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+.board-catalog-heading {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.board-catalog-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.board-catalog-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+.board-catalog-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+.board-catalog-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.board-catalog-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+.board-catalog-desc {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.board-catalog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.board-catalog-on {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+@media (max-width: 560px) {
+  .board-catalog-row {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+  .board-catalog-actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+}
+.board-settings {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  overflow-y: auto;
+}
+.board-reset {
+  padding: 16px;
+  overflow-y: auto;
+  font-size: 14px;
+}
+.board-reset > p {
+  margin: 0;
 }
