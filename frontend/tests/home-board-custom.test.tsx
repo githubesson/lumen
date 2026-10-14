@@ -267,7 +267,7 @@ it("removes a panel from its settings, and asks before Reset drops added ones", 
   const bar = within(screen.getByRole("region", { name: "Customize Home" }));
   await act(async () => fireEvent.click(bar.getByRole("button", { name: "Reset" })));
   const confirm = within(await screen.findByRole("dialog", { name: "Reset Home?" }));
-  expect(confirm.getByText(/the 1 panel you added \(\s*Top genres\) is removed/)).toBeTruthy();
+  expect(confirm.getByText(/the 1 panel you added \(\s*Top genres \(Last 30 days\)\) is removed/)).toBeTruthy();
   await act(async () => fireEvent.click(confirm.getByRole("button", { name: "Cancel" })));
   expect(savedBoard()!.panels!.map((p) => p.id)).toEqual(["recent", "genres"]);
 
@@ -471,4 +471,32 @@ it("changes which playlist a Playlist panel shows from its settings", async () =
   expect(savedBoard()!.panels![0]).toMatchObject({ playlist: "pl-2" });
   expect(panel("playlist")!.querySelector(".section-title")!.textContent).toBe("Morning");
   expect(mock.playlistTracks.mock.calls.map(([id]) => id)).toEqual(["pl-1", "pl-2"]);
+});
+
+it("starts a second On repeat on another period, and names it by its period throughout", async () => {
+  await renderHome("/?customize");
+  const bar = within(screen.getByRole("region", { name: "Customize Home" }));
+  await act(async () => fireEvent.click(bar.getByRole("button", { name: "Add panel" })));
+  const dialog = await screen.findByRole("dialog", { name: "Add a panel" });
+  const row = within(within(dialog).getByText("On repeat").closest("li")!);
+  // The default board shows the last 30 days already.
+  expect(row.getByRole("combobox", { name: "Period for On repeat" }).textContent).toContain("This year");
+  await act(async () => fireEvent.click(row.getByRole("button", { name: "Add On repeat" })));
+  expect(savedBoard()!.panels!.at(-1)).toMatchObject({ id: "repeat-2", period: "this-year" });
+
+  const added = tile("On repeat (This year)");
+  fireEvent.click(added.getByRole("button", { name: /^Move\s*On repeat \(This year\)$/ }));
+  expect(bar.getByText("Choose where On repeat (This year) goes.")).toBeTruthy();
+  fireEvent.click(added.getByRole("button", { name: /^Cancel move/ }));
+
+  fireEvent.click(added.getByRole("button", { name: /^Hide\s*On repeat \(This year\)$/ }));
+  expect(bar.getByRole("status").textContent).toBe("On repeat (This year) hidden.");
+  const chip = within(bar.getByRole("group", { name: "Hidden panels" })).getByRole("button", { name: "Show On repeat (This year)" });
+  expect(chip.textContent).toBe("On repeat (This year)");
+  fireEvent.click(chip);
+  expect(bar.getByRole("status").textContent).toBe("On repeat (This year) shown.");
+
+  await act(async () => fireEvent.click(bar.getByRole("button", { name: "Reset" })));
+  const confirm = within(await screen.findByRole("dialog", { name: "Reset Home?" }));
+  expect(confirm.getByText(/\(\s*On repeat \(This year\)\) is removed/)).toBeTruthy();
 });

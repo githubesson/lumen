@@ -152,7 +152,16 @@ function CatalogRow({
   const info = PANEL_KINDS[kind];
   const Icon = KIND_ICONS[kind];
   const existing = allowsMany(kind) ? undefined : arrangement.panels.find((panel) => panel.kind === kind);
-  const [period, setPeriod] = useState(periodKey(DEFAULT_PERIOD));
+  // The period picked, or else one no panel of this kind shows yet (the
+  // usual one first), so a second On repeat isn't a copy of the first.
+  const [pickedPeriod, setPeriod] = useState("");
+  const shown = new Set(
+    arrangement.panels.filter((panel) => panel.kind === kind).map((panel) => periodKey(panel.period ?? DEFAULT_PERIOD)),
+  );
+  const freePeriod = [periodKey(DEFAULT_PERIOD), ...periodOptions(years).map((option) => option.value)].find(
+    (key) => !shown.has(key),
+  );
+  const period = pickedPeriod || (freePeriod ?? periodKey(DEFAULT_PERIOD));
   // The one picked, or else the first playlist not on Home yet, or the
   // first: worked out as the list comes, which can be after the dialog opens.
   const [picked, setPlaylist] = useState("");

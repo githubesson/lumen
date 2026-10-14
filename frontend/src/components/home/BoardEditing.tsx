@@ -355,7 +355,6 @@ export function useBoardEditor({
   const bar = (
     <BoardEditBar
       arrangement={arrangement}
-      titleOf={titleOf}
       labelOf={labelOf}
       moving={moving && labelOf(findPanel(arrangement, moving))}
       announcement={announcement}
@@ -395,7 +394,7 @@ export function useBoardEditor({
       />
       <ResetBoardDialog
         open={dialog?.kind === "reset"}
-        added={added.map((panel) => titleOf(panel))}
+        added={added.map((panel) => labelOf(panel))}
         onReset={resetNow}
         onClose={() => setDialog(null)}
       />
@@ -527,7 +526,6 @@ function SlotEditor({
 
 function BoardEditBar({
   arrangement,
-  titleOf,
   labelOf,
   moving,
   announcement,
@@ -538,7 +536,6 @@ function BoardEditBar({
   onDone,
 }: {
   arrangement: HomeArrangement;
-  titleOf: (panel: HomePanel) => string;
   labelOf: (panel: HomePanel) => string;
   /** The name of the panel picked with Move. */
   moving: string | null;
@@ -571,7 +568,7 @@ function BoardEditBar({
               aria-label={`Show ${labelOf(panel)}`}
               leadingIcon={<EyeIcon className="size-3.5" />}
             >
-              {titleOf(panel)}
+              {labelOf(panel)}
             </Button>
           ))}
         </div>
