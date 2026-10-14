@@ -55,11 +55,12 @@ export interface FillMetrics {
 
 const usualFor = (usual: FillUsual, columns: number) => (typeof usual === "number" ? usual : usual(columns));
 
-// How many changes one fill makes before paint, at most. Measuring settles
-// in two or three; the cap keeps a layout that never settles from looping
-// until React gives up on the whole page. The resize observer picks up from
-// there a frame later.
-const MAX_CHANGES_PER_FRAME = 8;
+// How many changes all of Home's fills make in one run of renders, at most:
+// each settles in one or two, and React gives up on the page past 50. A
+// layout that never settles stops here instead, until the next render or
+// resize measures again.
+const MAX_CHANGES_PER_RUN = 24;
+let changesThisRun = 0;
 
 /**
  * How many items fill the room, in whole rows, and the height the usual
@@ -86,9 +87,8 @@ export function useBoardFill(usual: FillUsual, emptyRow?: number): BoardFill {
   const [area, setArea] = useState<HTMLDivElement | null>(null);
   const [fit, setFit] = useState<Fit | null>(null);
   const latest = useRef({ usual, emptyRow });
-  // The fit last set, and how many changes it's had since the last frame.
+  // The fit last set.
   const current = useRef<Fit | null>(null);
-  const changes = useRef(0);
 
   const measure = useCallback(() => {
     if (!area) return;
@@ -99,13 +99,13 @@ export function useBoardFill(usual: FillUsual, emptyRow?: number): BoardFill {
       if (prev === next || (prev && next && prev.count === next.count && Math.abs(prev.minHeight - next.minHeight) < 0.5)) {
         return;
       }
-      if (changes.current >= MAX_CHANGES_PER_FRAME) return;
-      if (changes.current++ === 0) {
-        const reset = () => {
-          changes.current = 0;
-        };
-        if (typeof requestAnimationFrame === "function") requestAnimationFrame(reset);
-        else setTimeout(reset);
+      if (changesThisRun >= MAX_CHANGES_PER_RUN) return;
+      // React renders the changes a layout effect makes before it returns,
+      // so a microtask comes after the whole run, hidden window or not.
+      if (changesThisRun++ === 0) {
+        queueMicrotask(() => {
+          changesThisRun = 0;
+        });
       }
       current.current = next;
       setFit(next);
