@@ -16,12 +16,31 @@ export interface Tweaks {
 }
 
 /**
- * Which panel fills each of Home's slots, and which are hidden, by panel id
- * (see the renderer's homeArrangement.ts, which validates it on read).
+ * Home's panels in board order, with their sizes and what they show (see
+ * the renderer's homeArrangement.ts, which validates it on read). The first
+ * customizing build saved `slots` and `hidden` instead, which still read.
  */
 export interface HomeBoardTweak {
-  slots: string[];
-  hidden: string[];
+  panels?: HomePanelTweak[];
+  /** Which default panel filled each of the seven slots (first build). */
+  slots?: string[];
+  /** Hidden default panels (first build). */
+  hidden?: string[];
+}
+
+export interface HomePanelTweak {
+  id: string;
+  kind: string;
+  /** Sixths of the wide board. */
+  w: number;
+  /** Board rows. */
+  h: number;
+  hidden?: boolean;
+  title?: string;
+  /** A Replay period key ("last-30", "year:2024"…). */
+  period?: string;
+  /** A playlist id. */
+  playlist?: string;
 }
 
 export interface DiscordActivityPayload {

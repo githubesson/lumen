@@ -73,3 +73,30 @@ it("stops a fill that never settles before React gives up on the page", async ()
     settle();
   }
 });
+
+it("settles every fill on a board with more of them than one run's budget", async () => {
+  // Fifty panels, each with room for six rows where it usually shows two.
+  const ids = Array.from({ length: 50 }, (_, i) => `p${i}`);
+  const restore = stubBoardLayout(Object.fromEntries(ids.map((id) => [id, 6 * 52])));
+  function Panel({ id }: { id: string }) {
+    const fill = useBoardFill(2);
+    return (
+      <div data-panel={id}>
+        <div {...fill.area}>
+          <ul className="board-list">
+            {Array.from({ length: fill.count }, (_, i) => <li key={i} className="board-row" />)}
+          </ul>
+        </div>
+      </div>
+    );
+  }
+  try {
+    render(<>{ids.map((id) => <Panel key={id} id={id} />)}</>);
+    await act(async () => {});
+    // Those over the budget measure again in the next frame.
+    await act(() => new Promise((done) => setTimeout(done, 50)));
+    expect(ids.filter((id) => document.querySelectorAll(`[data-panel="${id}"] .board-row`).length !== 6)).toEqual([]);
+  } finally {
+    restore();
+  }
+});

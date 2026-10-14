@@ -173,6 +173,10 @@
 .btn-danger:hover:not(:disabled) {
   background: color-mix(in oklch, var(--destructive) 20%, transparent);
 }
+/* Light mode's red measures 4:1 on its own tint; a darker shade reads. */
+[data-theme="light"] .btn-danger {
+  color: color-mix(in oklch, var(--destructive) 80%, black);
+}
 .btn-sm {
   height: 28px;
   padding: 0 10px;

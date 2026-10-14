@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import type { ReplayData, TrackListItem } from "../src/api";
+import type { HomeBoardTweak } from "../src/contracts/desktop";
 import Home from "../src/pages/Home";
 import { ThemeProvider } from "../src/context/Theme";
 import { clearResourceCache, readCache } from "../src/lib/resourceCache";
@@ -102,7 +103,7 @@ it("opens an unavailable row's menu on right-click, though the row doesn't play"
 });
 
 it("keeps Top artists hidden while a failed On repeat retries, until it has artists to show", async () => {
-  const failed = "Could not load what you've had on repeat.";
+  const failed = "Could not load what you've played in the last 30 days.";
   mock.replay.mockRejectedValueOnce(new Error("offline"));
   await renderHome();
   expect(within(panel("repeat")!).getByText(failed)).toBeTruthy();
@@ -293,23 +294,32 @@ it("says why an album didn't play, in its panel", async () => {
 });
 
 /** Saves an arrangement the way the Theme context does. */
-const arrange = (homeBoard: { slots: string[]; hidden: string[] }) =>
-  localStorage.setItem("lumen.tweaks", JSON.stringify({ homeBoard }));
-const savedBoard = () => JSON.parse(localStorage.getItem("lumen.tweaks") ?? "{}").homeBoard;
-const slotOf = (id: string) => panel(id)?.dataset.slot;
+const arrange = (homeBoard: HomeBoardTweak) => localStorage.setItem("lumen.tweaks", JSON.stringify({ homeBoard }));
+const savedBoard = (): HomeBoardTweak => JSON.parse(localStorage.getItem("lumen.tweaks") ?? "{}").homeBoard;
+const savedIds = () => savedBoard().panels!.map((p) => p.id);
+const order = () => [...document.querySelectorAll<HTMLElement>(".board-slot")].map((el) => el.dataset.panel);
+/** The columns and rows a panel spans on the wide board. */
+const shapeOf = (id: string) => {
+  const style = panel(id)!.style;
+  return `${style.getPropertyValue("--board-span")}x${style.getPropertyValue("--board-rows")}`;
+};
 
 const withAlbum = () =>
   mock.tracks.mockResolvedValue([track("1", "Halden Marsh", { album_id: "al-1", album_title: "Weather" })]);
 
 it("puts each panel in the slot it was moved to, and leaves hidden ones off", async () => {
   withAlbum();
+  mock.recent.mockResolvedValue([track("r1", "Halden Marsh"), track("r2", "Hana Okoro")]);
+  // As the first customizing build saved it.
   arrange({
     slots: ["resume", "repeat", "albums", "favorites", "recent", "playlists", "artists"],
     hidden: ["resume"],
   });
   await renderHome();
-  expect(slotOf("albums")).toBe("recent");
-  expect(slotOf("recent")).toBe("albums");
+  // Still the default board's shape, laid out as it adapts to the empty
+  // panels: the short list in Recently played's slot takes its row.
+  expect(order()).toEqual(["albums", "recent"]);
+  expect([shapeOf("albums"), shapeOf("recent")]).toEqual(["6x1", "6x1"]);
   expect(panel("resume")).toBeNull();
   // Not customizing: the panels work as usual.
   expect(panel("albums")!.querySelector(".board-slot-body")!.hasAttribute("inert")).toBe(false);
@@ -329,29 +339,27 @@ it("swaps and hides panels while customizing, and saves the arrangement", async 
   fireEvent.click(tile("Albums").getByRole("button", { name: /^Move\s*Albums$/ }));
   expect(bar.getByText("Choose where Albums goes.")).toBeTruthy();
   fireEvent.click(tile("Recently played").getByRole("button", { name: /^Swap here\s*with Recently played$/ }));
-  expect(slotOf("albums")).toBe("recent");
-  expect(slotOf("recent")).toBe("albums");
-  expect(savedBoard()).toEqual({
-    slots: ["resume", "repeat", "albums", "favorites", "recent", "playlists", "artists"],
-    hidden: [],
-  });
+  // They trade places; the sizes stay with the places.
+  expect(order()).toEqual(["resume", "repeat", "albums", "favorites", "recent", "playlists", "artists"]);
+  expect([shapeOf("albums"), shapeOf("recent")]).toEqual(["2x1", "4x1"]);
+  expect(savedIds()).toEqual(["resume", "repeat", "albums", "favorites", "recent", "playlists", "artists"]);
   expect(bar.getByRole("status").textContent).toBe("Swapped Albums and Recently played.");
   // Focus stays with the panel that moved.
   expect(document.activeElement).toBe(tile("Albums").getByRole("button", { name: /^Move\s*Albums$/ }));
 
   fireEvent.click(tile("Albums").getByRole("button", { name: /^Hide\s*Albums$/ }));
   expect(panel("albums")).toBeNull();
-  expect(savedBoard().hidden).toEqual(["albums"]);
+  expect(savedBoard().panels!.filter((p) => p.hidden).map((p) => p.id)).toEqual(["albums"]);
   // Showing it again while another panel is picked ends that Move, and
   // focus lands on the shown panel's Move button.
   fireEvent.click(tile("Playlists").getByRole("button", { name: /^Move\s*Playlists$/ }));
   fireEvent.click(within(bar.getByRole("group", { name: "Hidden panels" })).getByRole("button", { name: "Show Albums" }));
-  expect(slotOf("albums")).toBe("recent");
+  expect(order()[2]).toBe("albums");
   expect(document.activeElement).toBe(tile("Albums").getByRole("button", { name: /^Move\s*Albums$/ }));
   expect(screen.queryByRole("button", { name: /^Swap here/ })).toBeNull();
 
   fireEvent.click(bar.getByRole("button", { name: "Reset" }));
-  expect(slotOf("albums")).toBe("albums");
+  expect(order()[4]).toBe("albums");
   expect(savedBoard()).toBeUndefined();
 
   fireEvent.click(bar.getByRole("button", { name: "Done" }));
@@ -374,9 +382,9 @@ it("swaps two panels dropped one on the other", async () => {
   expect(panel("resume")!.hasAttribute("data-target")).toBe(true);
   fireEvent.dragOver(label, { dataTransfer });
   fireEvent.drop(label, { dataTransfer });
-  expect(slotOf("albums")).toBe("resume");
-  expect(slotOf("resume")).toBe("albums");
-  expect(savedBoard().slots.slice(0, 5)).toEqual(["albums", "repeat", "recent", "favorites", "resume"]);
+  expect(order().slice(0, 5)).toEqual(["albums", "repeat", "recent", "favorites", "resume"]);
+  expect([shapeOf("albums"), shapeOf("resume")]).toEqual(["4x1", "4x1"]);
+  expect(savedIds().slice(0, 5)).toEqual(["albums", "repeat", "recent", "favorites", "resume"]);
 });
 
 it("keeps both of two changes made before the first one's transition runs", async () => {
@@ -399,7 +407,7 @@ it("keeps both of two changes made before the first one's transition runs", asyn
     act(() => updates.splice(0).forEach((update) => update()));
     expect(panel("albums")).toBeNull();
     expect(panel("playlists")).toBeNull();
-    expect(savedBoard().hidden).toEqual(["albums", "playlists"]);
+    expect(savedBoard().panels!.filter((p) => p.hidden).map((p) => p.id)).toEqual(["albums", "playlists"]);
   } finally {
     delete (document as { startViewTransition?: unknown }).startViewTransition;
     vi.unstubAllGlobals();

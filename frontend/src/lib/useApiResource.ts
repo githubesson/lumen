@@ -25,14 +25,16 @@ export interface ApiResource<T> {
  *
  * With a `cacheKey`, a remount starts from the last result for that key and
  * refetches behind it (`loading` is still true meanwhile). The key is read
- * once per mount; a page showing a different resource should remount.
+ * once per mount; a page showing a different resource should remount. A
+ * resource cached some other way (by the fetcher itself) can start from
+ * `initial` instead, also read once per mount.
  */
 export function useApiResource<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
   fallbackMessage = "Something went wrong.",
-  { cacheKey }: { cacheKey?: string } = {},
+  { cacheKey, initial }: { cacheKey?: string; initial?: () => T | null } = {},
 ): ApiResource<T> {
-  const [data, setData] = useState<T | null>(() => readCache<T>(cacheKey) ?? null);
+  const [data, setData] = useState<T | null>(() => readCache<T>(cacheKey) ?? initial?.() ?? null);
   const cacheKeyRef = useRef(cacheKey);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

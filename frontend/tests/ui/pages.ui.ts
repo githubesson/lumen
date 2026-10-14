@@ -44,11 +44,11 @@ test("home, panels in roomier slots", async ({ page }, testInfo) => {
   await go(page, "/?customize");
   await ready(page, page.locator('[data-panel="artists"] .board-artist'));
   await press(page, "button", "Move Jump back in");
-  await press(page, "button", "Swap here with On repeat");
+  await press(page, "button", "Swap here with On repeat (Last 30 days)");
   // Leaving by link rather than Done, which hands focus (and its tooltip)
   // to the top bar's Customize button.
   await go(page, "/");
-  await ready(page, page.locator('[data-panel="repeat"][data-slot="resume"] .board-row'));
+  await ready(page, page.locator('[data-panel="repeat"] .board-row'));
   // Phones stack the board, so every panel is as tall as it needs.
   if ((page.viewportSize()?.width ?? 0) > 760) {
     await ready(page, page.locator('[data-panel="resume"] .board-row:not(.board-placeholder)'));
