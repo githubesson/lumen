@@ -62,7 +62,7 @@ test("home, adding a panel", async ({ page }, testInfo) => {
 test("home, a panel's settings", async ({ page }, testInfo) => {
   await go(page, "/?customize");
   await boardReady(page);
-  await press(page, /^Edit\s*Heavy rotation$/);
+  await press(page, /^Edit\s*Heavy rotation \(Last 30 days\)$/);
   await ready(page, page.getByRole("dialog", { name: "Edit Heavy rotation" }));
   await checkUI(page, testInfo);
 });

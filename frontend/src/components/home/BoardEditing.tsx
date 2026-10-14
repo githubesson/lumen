@@ -115,7 +115,13 @@ export function useBoardEditor({
   onDone: () => void;
 }) {
   const titleOf = (panel: HomePanel | undefined) => (panel ? panelTitle(panel, playlists) : "");
-  const titleById = (id: HomePanelId) => titleOf(findPanel(latest.current, id) ?? findPanel(arrangement, id));
+  /**
+   * A panel's name for screen readers and announcements: with its period,
+   * so two On repeats tell apart without the line under the name.
+   */
+  const labelOf = (panel: HomePanel | undefined) =>
+    panel && PANEL_KINDS[panel.kind].period ? `${titleOf(panel)} (${periodSub(panel.period)})` : titleOf(panel);
+  const labelById = (id: HomePanelId) => labelOf(findPanel(latest.current, id) ?? findPanel(arrangement, id));
   // Picked with Move, waiting for Swap here.
   const [moving, setMoving] = useState<HomePanelId | null>(null);
   const [dragging, setDragging] = useState<HomePanelId | null>(null);
@@ -202,19 +208,19 @@ export function useBoardEditor({
     if (from === to) return;
     change(
       (current) => swapPanels(current, from, to),
-      `Swapped ${titleById(from)} and ${titleById(to)}.`,
+      `Swapped ${labelById(from)} and ${labelById(to)}.`,
       focus,
       { lift: [from, to] },
     );
   };
 
   const hide = (id: HomePanelId, focusNext: HomePanelId | undefined) =>
-    change((current) => setPanelHidden(current, id, true), `${titleById(id)} hidden.`, focusNext ?? "done");
+    change((current) => setPanelHidden(current, id, true), `${labelById(id)} hidden.`, focusNext ?? "done");
 
   // Show, hide, swap, add, remove and reset all end a pending Move (in
   // `change`), so the panel they focus has its Move button, not Swap here.
   const show = (id: HomePanelId) =>
-    change((current) => setPanelHidden(current, id, false), `${titleById(id)} shown.`, id);
+    change((current) => setPanelHidden(current, id, false), `${labelById(id)} shown.`, id);
 
   const add = (kind: PanelKind, options: Pick<HomePanel, "period" | "playlist">) => {
     setDialog(null);
@@ -224,14 +230,14 @@ export function useBoardEditor({
     const shownAgain = !!findPanel(latest.current, id);
     change(
       (current) => addPanel(current, kind, options).arrangement,
-      `${titleOf(panel)} ${shownAgain ? "shown" : "added"}.`,
+      `${labelOf(panel)} ${shownAgain ? "shown" : "added"}.`,
       id,
       { reveal: true, instant: true },
     );
   };
 
   const remove = (id: HomePanelId, focusNext: HomePanelId | undefined) => {
-    const title = titleById(id);
+    const title = labelById(id);
     setDialog(null);
     change((current) => removePanel(current, id), `${title} removed.`, focusNext ?? "done", { instant: true });
   };
@@ -276,6 +282,7 @@ export function useBoardEditor({
   const slot = (panel: HomePanel, next: HomePanelId | undefined, note: string | null): SlotEditing => {
     const { id } = panel;
     const title = titleOf(panel);
+    const label = labelOf(panel);
     return {
       dragging: dragging === id,
       target: target === id,
@@ -321,6 +328,7 @@ export function useBoardEditor({
         <SlotEditor
           id={id}
           title={title}
+          label={label}
           detail={PANEL_KINDS[panel.kind].period ? periodSub(panel.period) : undefined}
           note={note}
           state={moving === id ? "moving" : moving ? "target" : "idle"}
@@ -330,7 +338,7 @@ export function useBoardEditor({
           }}
           onMove={() => {
             setMoving(id);
-            setAnnouncement(`Moving ${title}. Choose Swap here on another panel, or press Escape to cancel.`);
+            setAnnouncement(`Moving ${label}. Choose Swap here on another panel, or press Escape to cancel.`);
           }}
           onCancel={() => setMoving(null)}
           onSwapHere={() => moving && swap(moving, id, moving)}
@@ -348,7 +356,8 @@ export function useBoardEditor({
     <BoardEditBar
       arrangement={arrangement}
       titleOf={titleOf}
-      moving={moving && titleOf(findPanel(arrangement, moving))}
+      labelOf={labelOf}
+      moving={moving && labelOf(findPanel(arrangement, moving))}
       announcement={announcement}
       doneRef={doneButton}
       onShow={show}
@@ -446,6 +455,7 @@ export function BoardSlot({
 function SlotEditor({
   id,
   title,
+  label,
   detail,
   note,
   state,
@@ -458,6 +468,8 @@ function SlotEditor({
 }: {
   id: HomePanelId;
   title: string;
+  /** Its name for screen readers, which tells two of a kind apart. */
+  label: string;
   /** What it shows, when there's a choice (a period). */
   detail?: string;
   /** Why it's off the board outside customizing (nothing to show yet), if it is. */
@@ -472,7 +484,7 @@ function SlotEditor({
   onHide: () => void;
 }) {
   return (
-    <div className="board-slot-editor" role="group" aria-label={title}>
+    <div className="board-slot-editor" role="group" aria-label={label}>
       {/* Its own view transition group, so it glides to the middle of the
           panel's new place rather than fading between two spots. */}
       <div className="board-slot-label" style={{ viewTransitionName: `board-label-${id}` }}>
@@ -483,7 +495,7 @@ function SlotEditor({
         <div className="board-slot-actions">
           {state === "target" ? (
             <Button size="sm" variant="primary" onClick={onSwapHere} leadingIcon={<SwapIcon className="size-3.5" />}>
-              Swap here<span className="sr-only"> with {title}</span>
+              Swap here<span className="sr-only"> with {label}</span>
             </Button>
           ) : (
             <Button
@@ -494,17 +506,17 @@ function SlotEditor({
               leadingIcon={<SwapIcon className="size-3.5" />}
             >
               {state === "moving" ? "Cancel move" : "Move"}
-              <span className="sr-only"> {title}</span>
+              <span className="sr-only"> {label}</span>
             </Button>
           )}
           {state === "idle" && (
             <Button size="sm" onClick={onEdit} leadingIcon={<EditIcon className="size-3.5" />}>
-              Edit<span className="sr-only"> {title}</span>
+              Edit<span className="sr-only"> {label}</span>
             </Button>
           )}
           {state !== "moving" && (
             <Button size="sm" variant="ghost" onClick={onHide} leadingIcon={<EyeOffIcon className="size-3.5" />}>
-              Hide<span className="sr-only"> {title}</span>
+              Hide<span className="sr-only"> {label}</span>
             </Button>
           )}
         </div>
@@ -516,6 +528,7 @@ function SlotEditor({
 function BoardEditBar({
   arrangement,
   titleOf,
+  labelOf,
   moving,
   announcement,
   doneRef,
@@ -526,7 +539,8 @@ function BoardEditBar({
 }: {
   arrangement: HomeArrangement;
   titleOf: (panel: HomePanel) => string;
-  /** The title of the panel picked with Move. */
+  labelOf: (panel: HomePanel) => string;
+  /** The name of the panel picked with Move. */
   moving: string | null;
   announcement: string;
   doneRef: RefObject<HTMLButtonElement>;
@@ -554,7 +568,7 @@ function BoardEditBar({
               key={panel.id}
               size="sm"
               onClick={() => onShow(panel.id)}
-              aria-label={`Show ${titleOf(panel)}`}
+              aria-label={`Show ${labelOf(panel)}`}
               leadingIcon={<EyeIcon className="size-3.5" />}
             >
               {titleOf(panel)}

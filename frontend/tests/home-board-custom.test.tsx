@@ -206,7 +206,10 @@ it("adds a panel for a period picked in Add a panel, at the end of the board", a
   expect(panel("repeat-2")!.querySelector(".section-sub")!.textContent).toBe("This year");
   expect(askedFor()).toEqual(["last-30", "this-year"]);
   expect(savedBoard()!.panels!.at(-1)).toEqual({ id: "repeat-2", kind: "repeat", w: 2, h: 2, period: "this-year" });
-  expect(bar.getByRole("status").textContent).toBe("On repeat added.");
+  // Named with its period, as is its tile, beside the other On repeat.
+  expect(bar.getByRole("status").textContent).toBe("On repeat (This year) added.");
+  expect(tile("On repeat (This year)")).toBeTruthy();
+  expect(tile("On repeat (Last 30 days)")).toBeTruthy();
   // Focus goes to the new panel, ready to move it.
   expect(document.activeElement).toBe(within(panel("repeat-2")!).getByRole("button", { name: /^Move/ }));
 });
@@ -223,7 +226,9 @@ it("shows a hidden panel from Add a panel rather than adding a second one", asyn
 
 it("changes a panel's period, name and size from its settings", async () => {
   await renderHome("/?customize");
-  await act(async () => fireEvent.click(tile("On repeat").getByRole("button", { name: /^Edit\s*On repeat$/ })));
+  await act(async () =>
+    fireEvent.click(tile("On repeat (Last 30 days)").getByRole("button", { name: /^Edit\s*On repeat \(Last 30 days\)$/ })),
+  );
   const dialog = within(await screen.findByRole("dialog", { name: "Edit On repeat" }));
 
   await pick(dialog, "Shows", "All time");
@@ -238,7 +243,7 @@ it("changes a panel's period, name and size from its settings", async () => {
   expect(savedBoard()!.panels![1].title).toBeUndefined();
   await act(async () => fireEvent.click(dialog.getByRole("button", { name: "Done" })));
   expect(savedBoard()!.panels![1]).toEqual({ id: "repeat", kind: "repeat", w: 6, h: 1, title: "Heavy rotation", period: "all" });
-  expect(tile("Heavy rotation")).toBeTruthy();
+  expect(tile("Heavy rotation (All time)")).toBeTruthy();
   expect(panel("repeat")!.querySelector(".section-title")!.textContent).toBe("Heavy rotation");
 });
 
@@ -251,7 +256,7 @@ it("removes a panel from its settings, and asks before Reset drops added ones", 
     ],
   });
   await renderHome("/?customize");
-  await act(async () => fireEvent.click(tile("Your listening").getByRole("button", { name: /^Edit/ })));
+  await act(async () => fireEvent.click(tile("Your listening (Last 30 days)").getByRole("button", { name: /^Edit/ })));
   const settings = within(await screen.findByRole("dialog", { name: "Edit Your listening" }));
   await act(async () => fireEvent.click(settings.getByRole("button", { name: "Remove panel" })));
   expect(order()).toEqual(["recent", "genres"]);

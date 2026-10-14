@@ -44,7 +44,7 @@ test("home, panels in roomier slots", async ({ page }, testInfo) => {
   await go(page, "/?customize");
   await ready(page, page.locator('[data-panel="artists"] .board-artist'));
   await press(page, "button", "Move Jump back in");
-  await press(page, "button", "Swap here with On repeat");
+  await press(page, "button", "Swap here with On repeat (Last 30 days)");
   // Leaving by link rather than Done, which hands focus (and its tooltip)
   // to the top bar's Customize button.
   await go(page, "/");
