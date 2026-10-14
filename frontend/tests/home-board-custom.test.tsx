@@ -427,3 +427,19 @@ it("says another playlist can't be picked while the list is unavailable, not tha
   const dialog = within(await screen.findByRole("dialog", { name: "Edit Playlist" }));
   expect(dialog.getByText("Your playlists aren't available right now, so another can't be picked.")).toBeTruthy();
 });
+
+it("picks a playlist for a new Playlist panel once the list comes, even after Add panel opened", async () => {
+  mock.playlists = null;
+  const view = await renderHome("/?customize");
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Add panel" })));
+  const dialog = await screen.findByRole("dialog", { name: "Add a panel" });
+  const row = () => within(within(dialog).getByText("Playlist").closest("li")!);
+  expect(row().getByText("Playlists aren't available right now")).toBeTruthy();
+
+  mock.playlists = [playlist("pl-1", "Late drives"), playlist("pl-2", "Morning")];
+  view.rerender(<MemoryRouter initialEntries={["/?customize"]}><ThemeProvider><Home /></ThemeProvider></MemoryRouter>);
+  await act(async () => {});
+  expect(row().getByRole("combobox", { name: "Playlist for the new Playlist panel" }).textContent).toContain("Late drives");
+  await act(async () => fireEvent.click(row().getByRole("button", { name: "Add Playlist" })));
+  expect(savedBoard()!.panels!.at(-1)).toMatchObject({ kind: "playlist", playlist: "pl-1" });
+});

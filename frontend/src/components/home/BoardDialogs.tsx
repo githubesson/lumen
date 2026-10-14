@@ -153,11 +153,11 @@ function CatalogRow({
   const Icon = KIND_ICONS[kind];
   const existing = allowsMany(kind) ? undefined : arrangement.panels.find((panel) => panel.kind === kind);
   const [period, setPeriod] = useState(periodKey(DEFAULT_PERIOD));
-  // The first playlist not on Home yet, or the first.
-  const [playlist, setPlaylist] = useState(() => {
-    const onHome = new Set(arrangement.panels.map((panel) => panel.playlist));
-    return (playlists?.find((p) => !onHome.has(p.id)) ?? playlists?.[0])?.id ?? "";
-  });
+  // The one picked, or else the first playlist not on Home yet, or the
+  // first: worked out as the list comes, which can be after the dialog opens.
+  const [picked, setPlaylist] = useState("");
+  const onHome = new Set(arrangement.panels.map((panel) => panel.playlist));
+  const playlist = picked || ((playlists?.find((p) => !onHome.has(p.id)) ?? playlists?.[0])?.id ?? "");
   const options = {
     ...(info.period ? { period: parsePeriodKey(period) ?? DEFAULT_PERIOD } : {}),
     ...(info.playlist ? { playlist } : {}),
