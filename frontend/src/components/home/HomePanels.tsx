@@ -149,7 +149,7 @@ function useWant(ctx: PanelContext, id: HomePanelId, count: number | null) {
 export function HomePanelView({ panel, ctx }: PanelProps) {
   switch (panel.kind) {
     case "resume":
-      return <ResumePanel ctx={ctx} />;
+      return <ResumePanel ctx={ctx} title={panel.title} />;
     case "repeat":
       return <RepeatPanel panel={panel} ctx={ctx} />;
     case "artists":
@@ -633,7 +633,7 @@ function PlaylistsPanel({ panel, ctx }: PanelProps) {
  * played anything, a library track), a placeholder of the same shape while
  * that loads, or a welcome for an empty library.
  */
-function ResumePanel({ ctx }: { ctx: PanelContext }) {
+function ResumePanel({ ctx, title }: { ctx: PanelContext; /** The user's name for it, over the hero. */ title?: string }) {
   const { me } = useAuth();
   const recent = ctx.recent.data ?? EMPTY_TRACKS;
   const tracks = ctx.tracks.data ?? EMPTY_TRACKS;
@@ -646,6 +646,7 @@ function ResumePanel({ ctx }: { ctx: PanelContext }) {
         fromRecent={recent.length > 0}
         fallbackQueue={recent.length ? recent : tracks}
         bindCtx={ctx.bindCtx}
+        title={title}
       />
     );
   }
@@ -655,7 +656,7 @@ function ResumePanel({ ctx }: { ctx: PanelContext }) {
         <div className="board-resume-head">
           <div className="hero-art" aria-hidden="true" />
           <div className="hero-body">
-            <div className="hero-eyebrow">Jump back in</div>
+            <div className="hero-eyebrow">{title ?? "Jump back in"}</div>
             <h1 className="hero-title">
               <span className="skeleton-text" style={{ width: "12ch" }} />
             </h1>
@@ -715,12 +716,14 @@ function HeroAlbum({
   fromRecent,
   fallbackQueue,
   bindCtx,
+  title,
 }: {
   track: TrackListItem;
   fromRecent: boolean;
   /** Queue for a track with no local album to play through. */
   fallbackQueue: TrackListItem[];
   bindCtx: BindTrackMenu;
+  title?: string;
 }) {
   const { play } = usePlayerControls();
   // None in its usual slot, where the hero is as tall as its row.
@@ -778,7 +781,7 @@ function HeroAlbum({
       <div className="board-resume-head">
         <CoverArt className="hero-art" src={trackCoverUrl(track)} label={track.album_title ?? track.title} />
         <div className="hero-body">
-          <div className="hero-eyebrow">{fromRecent ? "Jump back in" : "From your library"}</div>
+          <div className="hero-eyebrow">{title ?? (fromRecent ? "Jump back in" : "From your library")}</div>
           <h1 className="hero-title">{displayText(track.album_title ?? track.title)}</h1>
           <div className="hero-meta">
             <span>{displayText(track.artist, "Unknown artist")}</span>

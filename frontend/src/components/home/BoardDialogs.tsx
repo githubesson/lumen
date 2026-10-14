@@ -157,7 +157,6 @@ function CatalogRow({
     const onHome = new Set(arrangement.panels.map((panel) => panel.playlist));
     return (playlists.find((p) => !onHome.has(p.id)) ?? playlists[0])?.id ?? "";
   });
-  const titleId = `board-catalog-${kind}`;
   const options = {
     ...(info.period ? { period: parsePeriodKey(period) ?? DEFAULT_PERIOD } : {}),
     ...(info.playlist ? { playlist } : {}),
@@ -173,7 +172,7 @@ function CatalogRow({
     );
   } else if (existing) {
     action = (
-      <Button size="sm" onClick={() => onAdd(kind, {})} leadingIcon={<EyeIcon className="size-3.5" />} aria-describedby={titleId}>
+      <Button size="sm" onClick={() => onAdd(kind, {})} leadingIcon={<EyeIcon className="size-3.5" />} aria-label={`Show ${info.title}`}>
         Show
       </Button>
     );
@@ -185,7 +184,7 @@ function CatalogRow({
         disabled={!canAdd(arrangement, kind) || (info.playlist && !playlist)}
         onClick={() => onAdd(kind, options)}
         leadingIcon={<PlusIcon className="size-3.5" />}
-        aria-describedby={titleId}
+        aria-label={`Add ${info.title}`}
       >
         Add
       </Button>
@@ -198,9 +197,7 @@ function CatalogRow({
         <Icon className="size-4" />
       </span>
       <div className="board-catalog-text">
-        <div className="board-catalog-title" id={titleId}>
-          {info.title}
-        </div>
+        <div className="board-catalog-title">{info.title}</div>
         <div className="board-catalog-desc">{info.description}</div>
       </div>
       <div className="board-catalog-actions">
@@ -217,7 +214,7 @@ function CatalogRow({
           (playlists.length > 0 ? (
             <Select
               variant="minimal"
-              aria-label="Playlist to show"
+              aria-label="Playlist for the new Playlist panel"
               value={playlist}
               options={playlistOptions(playlists)}
               onChange={setPlaylist}

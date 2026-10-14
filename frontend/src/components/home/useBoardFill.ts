@@ -56,10 +56,13 @@ export interface FillMetrics {
 const usualFor = (usual: FillUsual, columns: number) => (typeof usual === "number" ? usual : usual(columns));
 
 // How many changes all of Home's fills make in one run of renders, at most:
-// each settles in one or two, and React gives up on the page past 50. A
-// layout that never settles stops here instead, until the next render or
-// resize measures again.
-const MAX_CHANGES_PER_RUN = 24;
+// each settles in one or two, and React gives up on the page past 50
+// renders in a row, which a change can cost. A fill over the budget (on a
+// board of many panels) measures again in the next frame, a run of its own,
+// for a few frames at most, so a layout that never settles still stops
+// until the next render or resize measures again.
+const MAX_CHANGES_PER_RUN = 40;
+const MAX_DEFERRED_FRAMES = 3;
 let changesThisRun = 0;
 
 /**
@@ -89,6 +92,11 @@ export function useBoardFill(usual: FillUsual, emptyRow?: number): BoardFill {
   const latest = useRef({ usual, emptyRow });
   // The fit last set.
   const current = useRef<Fit | null>(null);
+  // A measure put off to the next frame for want of budget, and how many
+  // frames in a row this fill has had to wait.
+  const deferred = useRef({ frame: 0, frames: 0 });
+  // The measure a deferred frame runs: the latest, for the area it has now.
+  const remeasure = useRef(() => {});
 
   const measure = useCallback(() => {
     if (!area) return;
@@ -96,10 +104,21 @@ export function useBoardFill(usual: FillUsual, emptyRow?: number): BoardFill {
     // setState to the same value renders the component again first.
     const set = (next: Fit | null) => {
       const prev = current.current;
+      const wait = deferred.current;
       if (prev === next || (prev && next && prev.count === next.count && Math.abs(prev.minHeight - next.minHeight) < 0.5)) {
+        wait.frames = 0;
         return;
       }
-      if (changesThisRun >= MAX_CHANGES_PER_RUN) return;
+      if (changesThisRun >= MAX_CHANGES_PER_RUN) {
+        if (!wait.frame && wait.frames < MAX_DEFERRED_FRAMES) {
+          wait.frames++;
+          wait.frame = requestAnimationFrame(() => {
+            wait.frame = 0;
+            remeasure.current();
+          });
+        }
+        return;
+      }
       // React renders the changes a layout effect makes before it returns,
       // so a microtask comes after the whole run, hidden window or not.
       if (changesThisRun++ === 0) {
@@ -135,6 +154,14 @@ export function useBoardFill(usual: FillUsual, emptyRow?: number): BoardFill {
     latest.current = { usual, emptyRow };
     measure();
   });
+
+  useEffect(() => {
+    remeasure.current = measure;
+  }, [measure]);
+  useEffect(() => {
+    const wait = deferred.current;
+    return () => cancelAnimationFrame(wait.frame);
+  }, []);
 
   // The slot growing or shrinking later on (a resize, a panel next to it
   // loading).

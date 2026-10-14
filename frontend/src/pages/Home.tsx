@@ -130,9 +130,20 @@ export default function Home() {
     for (const panel of enabled) if (PANEL_KINDS[panel.kind].period) out.set(replaySource(panel.period), panel.period ?? DEFAULT_PERIOD);
     return [...out];
   }, [enabled]);
+  // Not a playlist that's gone from the user's list: its panel has nothing
+  // to show, so there's nothing to ask for.
+  const playlistData = playlistResource.data;
   const pinned = useMemo(
-    () => [...new Set(enabled.flatMap((panel) => (panel.kind === "playlist" && panel.playlist ? [panel.playlist] : [])))],
-    [enabled],
+    () => [
+      ...new Set(
+        enabled.flatMap((panel) =>
+          panel.kind === "playlist" && panel.playlist && (!playlistData || playlistData.some((p) => p.id === panel.playlist))
+            ? [panel.playlist]
+            : [],
+        ),
+      ),
+    ],
+    [enabled, playlistData],
   );
   const replayOf = (period: Period | undefined) =>
     (sources[replaySource(period)] as ApiResource<ReplayData> | undefined) ?? UNKNOWN;
@@ -141,7 +152,7 @@ export default function Home() {
 
   const recent = recentResource.data ?? EMPTY_TRACKS;
   const tracks = tracksResource.data ?? EMPTY_TRACKS;
-  const playlists = playlistResource.data;
+  const playlists = playlistData;
   const albums = useMemo(() => homeAlbums(tracks), [tracks]);
 
   // Wait for recently played before picking the hero, so a library track
@@ -207,16 +218,16 @@ export default function Home() {
     }
   };
   const contents = new Map(enabled.map((panel) => [panel.id, contentOf(panel)]));
-  // A source's load state shows once, in the first panel on the board that
-  // draws on it (On repeat's, for Top artists).
+  // A source's load state shows once, in the first panel drawing on it that
+  // has something to show (On repeat's, for Top artists), or the first at
+  // all when none has yet.
   const owners = new Set<HomePanelId>();
-  const owned = new Set<string>();
+  const bySource = new Map<string, HomePanelId[]>();
   for (const panel of enabled) {
     const content = contents.get(panel.id);
-    if (!content || owned.has(content.source)) continue;
-    owned.add(content.source);
-    owners.add(panel.id);
+    if (content) bySource.set(content.source, [...(bySource.get(content.source) ?? []), panel.id]);
   }
+  for (const ids of bySource.values()) owners.add(ids.find((id) => contents.get(id)!.count > 0) ?? ids[0]);
 
   // Until every list has settled once (arrived or failed), the board keeps
   // its full shape, with placeholders where a list hasn't come in or came in
@@ -332,10 +343,12 @@ export default function Home() {
 
   // The desktop app reads the arrangement from its config file; until then
   // the board would take the default shape and then jump.
-  if (!tweaksLoaded) return <div className="view board-view">{loaders}</div>;
+  if (!tweaksLoaded) return <div className="view board-view" />;
 
   return (
     <div className="view board-view">
+      {/* Only for the board the app has read: the default one's might not
+          be the user's. */}
       {loaders}
       {ctxMenu}
       {editing && editor.bar}

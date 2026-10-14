@@ -164,7 +164,7 @@ it("asks for nothing from Replay when no panel shows a period", async () => {
   expect(mock.replay).not.toHaveBeenCalled();
 });
 
-it("leaves off a playlist panel whose playlist is gone", async () => {
+it("leaves off a playlist panel whose playlist is gone, without asking for it", async () => {
   mock.playlists = [playlist("pl-1", "Late drives")];
   arrange({
     panels: [
@@ -174,6 +174,7 @@ it("leaves off a playlist panel whose playlist is gone", async () => {
   });
   await renderHome();
   expect(order()).toEqual(["recent"]);
+  expect(mock.playlistTracks).not.toHaveBeenCalled();
   // The packed board widens what's left to close the gap.
   expect(shapeOf("recent")).toBe("6x1");
 });
@@ -189,7 +190,7 @@ it("adds a panel for a period picked in Add a panel, at the end of the board", a
 
   const repeatRow = within(dialog.getByText("On repeat").closest("li")!);
   await pick(repeatRow, "Period for On repeat", "This year");
-  await act(async () => fireEvent.click(repeatRow.getByRole("button", { name: "Add" })));
+  await act(async () => fireEvent.click(repeatRow.getByRole("button", { name: "Add On repeat" })));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add a panel" })).toBeNull());
 
   expect(order().at(-1)).toBe("repeat-2");
@@ -208,7 +209,7 @@ it("shows a hidden panel from Add a panel rather than adding a second one", asyn
   await renderHome("/?customize");
   await act(async () => fireEvent.click(screen.getByRole("button", { name: "Add panel" })));
   const row = within(within(await screen.findByRole("dialog", { name: "Add a panel" })).getByText("Recently played").closest("li")!);
-  await act(async () => fireEvent.click(row.getByRole("button", { name: "Show" })));
+  await act(async () => fireEvent.click(row.getByRole("button", { name: "Show Recently played" })));
   expect(order()).toEqual(["recent", "albums"]);
   expect(savedBoard()!.panels!.map((p) => p.id)).toEqual(["recent", "albums"]);
 });
@@ -271,4 +272,70 @@ it("offers a way back when every panel was removed", async () => {
   expect(screen.getByText("There are no panels on Home.")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Customize Home" }));
   expect(screen.getByRole("button", { name: "Add panel" })).toBeTruthy();
+});
+
+it("sizes one request for the newest tracks for Albums and Recently added together", async () => {
+  mock.tracks.mockResolvedValue([track("n1", "Hana Okoro", { album_id: "al-1", album_title: "Weather" })]);
+  arrange({ panels: [{ id: "albums", kind: "albums", w: 3, h: 1 }, { id: "added", kind: "added", w: 3, h: 1 }] });
+  await renderHome();
+  expect(order()).toEqual(["albums", "added"]);
+  expect(mock.tracks).toHaveBeenCalledTimes(1);
+  expect(mock.tracks).toHaveBeenCalledWith(expect.objectContaining({ limit: 80 }));
+});
+
+it("shows a period's error once, in the first panel drawing on it", async () => {
+  mock.replay.mockRejectedValue(new Error("offline"));
+  arrange({
+    panels: [
+      { id: "stats", kind: "stats", w: 2, h: 1, period: "this-month" },
+      { id: "genres", kind: "genres", w: 2, h: 1, period: "this-month" },
+      { id: "recent", kind: "recent", w: 2, h: 1 },
+    ],
+  });
+  await renderHome();
+  expect(order()).toEqual(["stats", "recent"]);
+  expect(within(panel("stats")!).getByText("Could not load what you've played this month.")).toBeTruthy();
+  expect(within(panel("stats")!).getByRole("button", { name: "Retry your listening" })).toBeTruthy();
+});
+
+it("shows a period's error in the first panel that has something, not an empty one before it", async () => {
+  mock.replay.mockResolvedValue(replay([{ id: "a", plays: 9 }]));
+  arrange({
+    panels: [
+      { id: "genres", kind: "genres", w: 2, h: 1 },
+      { id: "repeat", kind: "repeat", w: 2, h: 1 },
+    ],
+  });
+  await renderHome();
+  // No genre tags: Top genres is empty and off the board.
+  expect(order()).toEqual(["repeat"]);
+
+  // A revisit whose refresh fails: On repeat still has the last answer, and
+  // carries the error; the empty Top genres doesn't come back to show it.
+  cleanup();
+  mock.replay.mockRejectedValue(new Error("offline"));
+  await renderHome();
+  expect(order()).toEqual(["repeat"]);
+  expect(within(panel("repeat")!).getByRole("button", { name: "Retry on repeat" })).toBeTruthy();
+});
+
+it("puts Jump back in's own name over the hero", async () => {
+  arrange({ panels: [{ id: "resume", kind: "resume", w: 6, h: 1, title: "Where I left off" }] });
+  await renderHome();
+  expect(panel("resume")!.querySelector(".hero-eyebrow")!.textContent).toBe("Where I left off");
+});
+
+it("saves a typed name when the field loses focus, or when Escape closes the dialog", async () => {
+  await renderHome("/?customize");
+  await act(async () => fireEvent.click(tile("Recently played").getByRole("button", { name: /^Edit/ })));
+  const dialog = within(await screen.findByRole("dialog", { name: "Edit Recently played" }));
+  const name = dialog.getByRole("textbox", { name: "Name" });
+  fireEvent.change(name, { target: { value: "Lately" } });
+  await act(async () => fireEvent.blur(name));
+  expect(savedBoard()!.panels!.find((p) => p.id === "recent")!.title).toBe("Lately");
+
+  fireEvent.change(name, { target: { value: "Just now" } });
+  await act(async () => fireEvent.keyDown(window, { key: "Escape" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(savedBoard()!.panels!.find((p) => p.id === "recent")!.title).toBe("Just now");
 });
