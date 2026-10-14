@@ -385,7 +385,7 @@ export function useBoardEditor({
       <PanelSettingsDialog
         open={!!settingsPanel}
         panel={settingsPanel}
-        title={titleOf(settingsPanel)}
+        title={labelOf(settingsPanel)}
         playlists={playlists}
         years={years}
         onChange={(panelChange) => settingsPanel && changeNow(settingsPanel.id, panelChange)}
@@ -566,9 +566,10 @@ function BoardEditBar({
               size="sm"
               onClick={() => onShow(panel.id)}
               aria-label={`Show ${labelOf(panel)}`}
+              className="board-editbar-chip"
               leadingIcon={<EyeIcon className="size-3.5" />}
             >
-              {labelOf(panel)}
+              <span>{labelOf(panel)}</span>
             </Button>
           ))}
         </div>

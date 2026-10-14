@@ -571,6 +571,21 @@ button.board-play:active {
   align-items: center;
   gap: 8px;
 }
+/* A long name (the user's own, with its period) ends in an ellipsis; the
+   whole of it is in the chip's label and tooltip. */
+.board-editbar-hidden {
+  min-width: 0;
+  max-width: 100%;
+}
+.board-editbar-chip {
+  min-width: 0;
+  max-width: 100%;
+}
+.board-editbar-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .board-editbar-label {
   margin-right: 2px;
   font-size: 12px;

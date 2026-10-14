@@ -22,6 +22,8 @@ const board: HomeBoardTweak = {
     { id: "favorites", kind: "favorites", w: 2, h: 1, hidden: true },
     { id: "albums", kind: "albums", w: 6, h: 1 },
     { id: "playlists", kind: "playlists", w: 6, h: 1, hidden: true },
+    // A long name, which its hidden chip cuts short on a narrow bar.
+    { id: "artists-2", kind: "artists", w: 2, h: 1, period: "all", hidden: true, title: "Everyone I kept coming back to all year long" },
   ],
 };
 
@@ -63,7 +65,7 @@ test("home, a panel's settings", async ({ page }, testInfo) => {
   await go(page, "/?customize");
   await boardReady(page);
   await press(page, /^Edit\s*Heavy rotation \(Last 30 days\)$/);
-  await ready(page, page.getByRole("dialog", { name: "Edit Heavy rotation" }));
+  await ready(page, page.getByRole("dialog", { name: "Edit Heavy rotation (Last 30 days)" }));
   await checkUI(page, testInfo);
 });
 

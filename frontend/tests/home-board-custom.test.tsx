@@ -229,7 +229,7 @@ it("changes a panel's period, name and size from its settings", async () => {
   await act(async () =>
     fireEvent.click(tile("On repeat (Last 30 days)").getByRole("button", { name: /^Edit\s*On repeat \(Last 30 days\)$/ })),
   );
-  const dialog = within(await screen.findByRole("dialog", { name: "Edit On repeat" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Edit On repeat (Last 30 days)" }));
 
   await pick(dialog, "Shows", "All time");
   expect(panel("repeat")!.querySelector(".section-sub")!.textContent).toBe("All time");
@@ -257,7 +257,7 @@ it("removes a panel from its settings, and asks before Reset drops added ones", 
   });
   await renderHome("/?customize");
   await act(async () => fireEvent.click(tile("Your listening (Last 30 days)").getByRole("button", { name: /^Edit/ })));
-  const settings = within(await screen.findByRole("dialog", { name: "Edit Your listening" }));
+  const settings = within(await screen.findByRole("dialog", { name: "Edit Your listening (Last 30 days)" }));
   await act(async () => fireEvent.click(settings.getByRole("button", { name: "Remove panel" })));
   expect(order()).toEqual(["recent", "genres"]);
   expect(savedBoard()!.panels!.map((p) => p.id)).toEqual(["recent", "genres"]);
