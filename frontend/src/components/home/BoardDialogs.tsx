@@ -357,16 +357,19 @@ function PanelSettings({
           />
         </Field>
       )}
-      {info.playlist && (
-        <Field label="Playlist">
-          <Select
-            value={panel.playlist ?? ""}
-            options={playlistOptions(playlists)}
-            placeholder="Pick a playlist"
-            onChange={(playlist) => onChange({ playlist })}
-          />
-        </Field>
-      )}
+      {info.playlist &&
+        (playlists.length > 0 ? (
+          <Field label="Playlist">
+            <Select
+              value={panel.playlist ?? ""}
+              options={playlistOptions(playlists)}
+              placeholder="Pick a playlist"
+              onChange={(playlist) => onChange({ playlist })}
+            />
+          </Field>
+        ) : (
+          <p className="board-settings-note">There are no playlists to show. Make one, or remove this panel.</p>
+        ))}
       {!narrow && (
         <FieldRow>
           <Field label="Width">

@@ -10,7 +10,7 @@ import { replayQueries } from "@music-library/core/replay/replay";
 
 const mock = vi.hoisted(() => ({
   recent: vi.fn(), tracks: vi.fn(), replay: vi.fn(), getAlbum: vi.fn(), albumTracks: vi.fn(),
-  playlistTracks: vi.fn(), play: vi.fn(), bind: vi.fn(), playlists: [] as Playlist[],
+  playlistTracks: vi.fn(), play: vi.fn(), bind: vi.fn(), playlists: [] as Playlist[] | null, playlistsFailed: false,
 }));
 vi.mock("../../core/src/api", async (original) => ({
   ...await original<typeof import("../../core/src/api")>(),
@@ -25,7 +25,13 @@ vi.mock("../src/context/Favorites", () => ({
   useFavorites: () => ({ tracks: [], ids: new Set(), loaded: true, loading: false, error: null, refresh: vi.fn() }),
 }));
 vi.mock("../src/context/Playlists", () => ({
-  usePlaylists: () => ({ data: mock.playlists, loading: false, error: null, reload: vi.fn() }),
+  // Null while the shell is still loading them, or when that failed.
+  usePlaylists: () => ({
+    data: mock.playlists,
+    loading: mock.playlists === null && !mock.playlistsFailed,
+    error: mock.playlistsFailed ? "Could not load playlists." : null,
+    reload: vi.fn(),
+  }),
 }));
 vi.mock("../src/lib/useTrackContextMenu", () => ({ useTrackContextMenu: () => ({ bind: mock.bind, menu: null }) }));
 
@@ -69,6 +75,7 @@ beforeEach(() => {
   clearResourceCache();
   localStorage.clear();
   mock.playlists = [];
+  mock.playlistsFailed = false;
   mock.recent.mockResolvedValue([track("r1", "Halden Marsh")]);
   mock.tracks.mockResolvedValue([track("n1", "Hana Okoro"), track("n2", "Halden Marsh")]);
   mock.getAlbum.mockResolvedValue(null);
@@ -358,4 +365,47 @@ it("says so when no panel has anything to show yet, rather than that they're hid
   expect(order()).toEqual([]);
   expect(screen.getByText("None of Home's panels has anything to show yet.")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Customize Home" })).toBeTruthy();
+});
+
+it("waits for the user's playlists before asking for a pinned one's tracks", async () => {
+  mock.playlists = null;
+  mock.playlistTracks.mockResolvedValue({ tracks: [{ ...track("p1", "Kestrel Bay"), track_id: "p1", position: 0 }] });
+  arrange({
+    panels: [
+      { id: "playlist", kind: "playlist", w: 3, h: 1, playlist: "pl-1" },
+      { id: "playlist-2", kind: "playlist", w: 3, h: 1, playlist: "pl-gone" },
+    ],
+  });
+  const view = await renderHome();
+  // Placeholders meanwhile, not an error.
+  expect(mock.playlistTracks).not.toHaveBeenCalled();
+  expect(panel("playlist")!.querySelectorAll(".board-placeholder").length).toBeGreaterThan(0);
+  expect(screen.queryByText("Could not load the playlist.")).toBeNull();
+
+  // The list lands without the deleted one: only the other is asked for.
+  mock.playlists = [playlist("pl-1", "Late drives")];
+  view.rerender(<MemoryRouter><ThemeProvider><Home /></ThemeProvider></MemoryRouter>);
+  await act(async () => {});
+  expect(mock.playlistTracks.mock.calls.map(([id]) => id)).toEqual(["pl-1"]);
+  expect(order()).toEqual(["playlist"]);
+});
+
+it("says there's nothing to pick for a deleted playlist's panel when no playlists are left", async () => {
+  arrange({ panels: [{ id: "playlist", kind: "playlist", w: 6, h: 1, playlist: "pl-gone" }] });
+  await renderHome("/?customize");
+  expect(tile("Playlist").getByText("Its playlist was deleted, and there's no other to pick.")).toBeTruthy();
+  await act(async () => fireEvent.click(tile("Playlist").getByRole("button", { name: /^Edit/ })));
+  const dialog = within(await screen.findByRole("dialog", { name: "Edit Playlist" }));
+  expect(dialog.getByText("There are no playlists to show. Make one, or remove this panel.")).toBeTruthy();
+  expect(dialog.queryByRole("combobox", { name: "Playlist" })).toBeNull();
+});
+
+it("asks for a pinned playlist anyway when the playlists list can't be had", async () => {
+  mock.playlists = null;
+  mock.playlistsFailed = true;
+  mock.playlistTracks.mockResolvedValue({ tracks: [{ ...track("p1", "Kestrel Bay"), track_id: "p1", position: 0 }] });
+  arrange({ panels: [{ id: "playlist", kind: "playlist", w: 6, h: 1, playlist: "pl-1" }] });
+  await renderHome();
+  expect(mock.playlistTracks).toHaveBeenCalledWith("pl-1", expect.anything());
+  expect(within(panel("playlist")!).getByRole("button", { name: "Play Track p1" })).toBeTruthy();
 });

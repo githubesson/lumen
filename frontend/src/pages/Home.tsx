@@ -132,20 +132,23 @@ export default function Home() {
     for (const panel of enabled) if (PANEL_KINDS[panel.kind].period) out.set(replaySource(panel.period), panel.period ?? DEFAULT_PERIOD);
     return [...out];
   }, [enabled]);
-  // Not a playlist that's gone from the user's list: its panel has nothing
-  // to show, so there's nothing to ask for.
+  // Asked for once the user's playlists are known (the shell loads them
+  // alongside Home), and only those still among them: a deleted one's
+  // panel has nothing to show, not an error or its old tracks. If the list
+  // can't be had, each is asked for anyway, to show its own state.
   const playlistData = playlistResource.data;
+  const listFailed = playlistData === null && !playlistResource.loading;
   const pinned = useMemo(
     () => [
       ...new Set(
         enabled.flatMap((panel) =>
-          panel.kind === "playlist" && panel.playlist && (!playlistData || playlistData.some((p) => p.id === panel.playlist))
+          panel.kind === "playlist" && panel.playlist && (listFailed || playlistData?.some((p) => p.id === panel.playlist))
             ? [panel.playlist]
             : [],
         ),
       ),
     ],
-    [enabled, playlistData],
+    [enabled, playlistData, listFailed],
   );
   const replayOf = (period: Period | undefined) =>
     (sources[replaySource(period)] as ApiResource<ReplayData> | undefined) ?? UNKNOWN;
@@ -297,7 +300,9 @@ export default function Home() {
   /** Why a panel is off the board outside customizing, for its tile. */
   const noteFor = (panel: HomePanel) =>
     panel.kind === "playlist" && gone(panel.playlist)
-      ? "Its playlist was deleted. Pick another in Edit."
+      ? playlistData!.length > 0
+        ? "Its playlist was deleted. Pick another in Edit."
+        : "Its playlist was deleted, and there's no other to pick."
       : !hasContent(panel) && settled
         ? "Shows up once it has something"
         : null;

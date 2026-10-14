@@ -781,6 +781,11 @@ html[data-board-morph]::view-transition-group(*.board-label.board-lift) {
   padding: 16px;
   overflow-y: auto;
 }
+.board-settings-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
 .board-reset {
   padding: 16px;
   overflow-y: auto;
