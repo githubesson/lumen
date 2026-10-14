@@ -11,7 +11,8 @@ import {
   type ReplayData,
   type TrackListItem,
 } from "../api";
-import { dropCache, readCache, writeCache } from "../lib/resourceCache";
+import { readCache } from "../lib/resourceCache";
+import { REPLAY_YEARS_KEY, fetchReplay, readReplayCache, storeReplay } from "../lib/replayData";
 import ErrorBanner from "../components/ErrorBanner";
 import EmptyState from "../components/EmptyState";
 import ReplayBento, { ReplayBentoPlaceholder } from "../components/replay/ReplayBento";
@@ -33,9 +34,6 @@ import {
   replayImageRequest,
   replayPlaylistRequest,
   replayQueries,
-  replaySeriesComplete,
-  type ReplayQueries,
-  type ReplayQuery,
 } from "@music-library/core/replay/replay";
 import {
   useLocalDay,
@@ -75,40 +73,6 @@ const monthSpanFormat = new Intl.DateTimeFormat(undefined, {
   timeZone: "UTC",
 });
 
-/**
- * The period's plays, asked for by day whatever its chart shows: days with
- * plays and the daily average need them, and the chart adds them up into
- * months itself (see `activitySeries`). The server caps how many buckets it
- * sends, so an all-time history longer than that comes back without its
- * newest days; then it is asked for again by month, and the figures count
- * months instead (see `replayCalendar`). Only all time has that fallback
- * (`monthly`): a bounded period can't reach the cap. Once all time has come
- * back by month, it is asked for by month straight away, rather than
- * fetching every day again only to throw them away. Says which query
- * answered, since the two are cached apart.
- */
-async function fetchReplay(
-  request: ReplayQueries,
-  signal: AbortSignal,
-): Promise<{ query: ReplayQuery; data: ReplayData }> {
-  const { daily, monthly } = request;
-  const byMonth = async (query: ReplayQuery) => ({ query, data: await api.getReplay(query.params, { signal }) });
-  if (monthly && readCache(monthly.cacheKey) !== undefined) return byMonth(monthly);
-  const data = await api.getReplay(daily.params, { signal });
-  if (!monthly || replaySeriesComplete(data)) return { query: daily, data };
-  return byMonth(monthly);
-}
-
-/**
- * The period's last answer: by day under the key Home shares, or by month
- * under its own when the days were cut short. Only one is kept (see the
- * fetch below), so this is the latest either way.
- */
-function readReplayCache(request: ReplayQueries): ReplayData | null {
-  const byDay = readCache<ReplayData>(request.daily.cacheKey);
-  return byDay ?? (request.monthly ? readCache<ReplayData>(request.monthly.cacheKey) : undefined) ?? null;
-}
-
 function buildOptions(availableYears: number[]): PeriodOption[] {
   return buildPeriodOptions(availableYears).map((period) => ({
     key: periodKey(period),
@@ -125,7 +89,7 @@ export default function Replay() {
   // gap where `data` is null or the selector would collapse mid-load.
   // Remembered across visits so the pills are all there on arrival. Null
   // until a response (now or on an earlier visit) has said which years exist.
-  const [years, setYears] = useState<number[] | null>(() => readCache<number[]>("replay:years") ?? null);
+  const [years, setYears] = useState<number[] | null>(() => readCache<number[]>(REPLAY_YEARS_KEY) ?? null);
 
   // The period lives in the URL (`?period=last-30`), so a link can open a
   // given window; without one it's this year. Only its one spelling is acted
@@ -210,13 +174,7 @@ export default function Replay() {
         if (ac.signal.aborted) return;
         setLoaded({ key: request.daily.cacheKey, data: d });
         setYears(d.available_years ?? []);
-        // One answer per period, under the key of the query that gave it:
-        // the daily key never holds months, and an older answer under the
-        // other key can't come back in front of this one.
-        const other = query === request.daily ? request.monthly : request.daily;
-        if (other) dropCache(other.cacheKey);
-        writeCache(query.cacheKey, d);
-        writeCache("replay:years", d.available_years ?? []);
+        storeReplay(request, query, d);
       })
       .catch((err) => {
         if (ac.signal.aborted) return;
