@@ -62,4 +62,14 @@ it("stops a fill that never settles before React gives up on the page", async ()
   } finally {
     restore();
   }
+  // The budget comes back after the run: a fill that settles still fills.
+  cleanup();
+  const settle = stubBoardLayout({ panel: 6 * 52 });
+  try {
+    render(<Panel />);
+    await act(async () => {});
+    expect(document.querySelectorAll(".board-row")).toHaveLength(6);
+  } finally {
+    settle();
+  }
 });
