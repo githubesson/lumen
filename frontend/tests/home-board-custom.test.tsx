@@ -443,3 +443,27 @@ it("picks a playlist for a new Playlist panel once the list comes, even after Ad
   await act(async () => fireEvent.click(row().getByRole("button", { name: "Add Playlist" })));
   expect(savedBoard()!.panels!.at(-1)).toMatchObject({ kind: "playlist", playlist: "pl-1" });
 });
+
+it("adds the playlist the user picks over the one it would start on", async () => {
+  mock.playlists = [playlist("pl-1", "Late drives"), playlist("pl-2", "Morning")];
+  await renderHome("/?customize");
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Add panel" })));
+  const dialog = await screen.findByRole("dialog", { name: "Add a panel" });
+  const row = within(within(dialog).getByText("Playlist").closest("li")!);
+  await pick(row, "Playlist for the new Playlist panel", "Morning");
+  await act(async () => fireEvent.click(row.getByRole("button", { name: "Add Playlist" })));
+  expect(savedBoard()!.panels!.at(-1)).toMatchObject({ kind: "playlist", playlist: "pl-2" });
+});
+
+it("changes which playlist a Playlist panel shows from its settings", async () => {
+  mock.playlists = [playlist("pl-1", "Late drives"), playlist("pl-2", "Morning")];
+  mock.playlistTracks.mockResolvedValue({ tracks: [] });
+  arrange({ panels: [{ id: "playlist", kind: "playlist", w: 6, h: 1, playlist: "pl-1" }] });
+  await renderHome("/?customize");
+  await act(async () => fireEvent.click(tile("Late drives").getByRole("button", { name: /^Edit/ })));
+  const dialog = within(await screen.findByRole("dialog", { name: "Edit Late drives" }));
+  await pick(dialog, "Playlist", "Morning");
+  expect(savedBoard()!.panels![0]).toMatchObject({ playlist: "pl-2" });
+  expect(panel("playlist")!.querySelector(".section-title")!.textContent).toBe("Morning");
+  expect(mock.playlistTracks.mock.calls.map(([id]) => id)).toEqual(["pl-1", "pl-2"]);
+});
