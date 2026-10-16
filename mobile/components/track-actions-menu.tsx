@@ -1,5 +1,18 @@
-import { useCallback, useState, type ReactElement } from "react";
-import { Alert, Pressable, StyleSheet, View } from "react-native";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
+import {
+  Alert,
+  Pressable,
+  StyleSheet,
+  View,
+  type GestureResponderEvent,
+} from "react-native";
 import { useRouter } from "expo-router";
 import { Directory, File } from "expo-file-system";
 import * as Haptics from "expo-haptics";
@@ -29,8 +42,11 @@ import {
   swiftDisabled,
   swiftFrame,
   swiftLabelStyle,
+  swiftOnAppear,
+  swiftOnDisappear,
   type SwiftUIComponents,
 } from "./optional-swift-ui";
+import { TrackMenuPreview } from "./track-menu-preview";
 
 type TrackActionModel = ReturnType<typeof useTrackActionModel>;
 
@@ -65,7 +81,8 @@ function TrackActionsContextMenuHost({
 }) {
   const theme = useTheme();
   const actions = useTrackActionModel(track);
-  const { ContextMenu, Host, RNHostView } = swiftUI;
+  const preview = useHeldMenuPreview();
+  const { ContextMenu, Group, Host, RNHostView } = swiftUI;
 
   return (
     <Host
@@ -77,11 +94,121 @@ function TrackActionsContextMenuHost({
           <TrackActionItems actions={actions} swiftUI={swiftUI} />
         </ContextMenu.Items>
         <ContextMenu.Trigger>
-          <RNHostView>{children}</RNHostView>
+          <RNHostView>
+            {/* iOS shrinks the row in place on press, then morphs it into the
+                preview. Rows are transparent, so without a backing the
+                morphing row showed the rows behind it. Lists sit on the theme
+                background, so it can't be seen in place. It wraps the row so a
+                dimmed row's opacity doesn't thin it. */}
+            <View
+              collapsable={false}
+              style={[styles.rowBacking, { backgroundColor: theme.color.bg }]}
+              {...preview.touchHandlers}
+            >
+              {children}
+            </View>
+          </RNHostView>
         </ContextMenu.Trigger>
+        <ContextMenu.Preview>
+          <Group modifiers={preview.modifiers}>
+            <RNHostView matchContents>
+              <TrackMenuPreview track={track} active={preview.active} />
+            </RNHostView>
+          </Group>
+        </ContextMenu.Preview>
       </ContextMenu>
     </Host>
   );
+}
+
+/**
+ * Hold time before the preview mounts: longer than a tap, and well short of
+ * the ~0.5 s iOS takes to open the menu.
+ */
+const PREVIEW_MOUNT_DELAY_MS = 150;
+/** Finger travel that makes a touch a scroll rather than a press-and-hold. */
+const PREVIEW_TOUCH_SLOP = 10;
+/** Keeps the preview mounted through the menu's closing animation. */
+const PREVIEW_UNMOUNT_DELAY_MS = 600;
+
+/**
+ * Mounts a row's menu preview (glass and artwork) only while a press is held
+ * or the menu is open, so long lists don't build one per row. The menu taking
+ * over cancels the row's touch where it started; a scroll cancels it after
+ * moving. The preview's own appear/disappear marks the menu open and closed.
+ */
+function useHeldMenuPreview() {
+  const [held, setHeld] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const origin = useRef({ x: 0, y: 0 });
+
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!closing) return;
+    const t = setTimeout(() => setClosing(false), PREVIEW_UNMOUNT_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [closing]);
+
+  const touchHandlers = useMemo(() => {
+    const clearTimer = () => {
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+    };
+    const release = () => {
+      clearTimer();
+      setHeld(false);
+    };
+    const moved = (e: GestureResponderEvent) =>
+      Math.hypot(
+        e.nativeEvent.pageX - origin.current.x,
+        e.nativeEvent.pageY - origin.current.y,
+      ) > PREVIEW_TOUCH_SLOP;
+
+    return {
+      onTouchStart: (e: GestureResponderEvent) => {
+        origin.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY };
+        clearTimer();
+        timer.current = setTimeout(() => {
+          timer.current = null;
+          setHeld(true);
+        }, PREVIEW_MOUNT_DELAY_MS);
+      },
+      onTouchMove: (e: GestureResponderEvent) => {
+        if (moved(e)) release();
+      },
+      onTouchEnd: release,
+      onTouchCancel: (e: GestureResponderEvent) => {
+        if (moved(e)) {
+          release();
+          return;
+        }
+        clearTimer();
+        setHeld(true);
+      },
+    };
+  }, []);
+
+  const modifiers = useMemo(
+    () => [
+      swiftOnAppear(() => setMenuOpen(true)),
+      swiftOnDisappear(() => {
+        setMenuOpen(false);
+        setHeld(false);
+        setClosing(true);
+      }),
+    ],
+    [],
+  );
+
+  return { active: held || menuOpen || closing, touchHandlers, modifiers };
 }
 
 export function TrackActionsMenuButton({
@@ -480,6 +607,9 @@ function notifyMissingNativeMenu() {
 const styles = StyleSheet.create({
   contextHost: {
     width: "100%",
+  },
+  rowBacking: {
+    flex: 1,
   },
 });
 

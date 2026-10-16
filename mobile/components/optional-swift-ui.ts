@@ -14,6 +14,7 @@ export type SwiftUIComponents = {
   ControlGroup: ComponentType<any>;
   ContextMenu: SwiftContextMenu;
   Divider: ComponentType<any>;
+  Group: ComponentType<any>;
   Host: ComponentType<any>;
   Menu: ComponentType<any>;
   RNHostView: ComponentType<any>;
@@ -37,6 +38,7 @@ export function getOptionalSwiftUI(): SwiftUIComponents | null {
       ControlGroup: swiftUI.ControlGroup,
       ContextMenu: swiftUI.ContextMenu,
       Divider: swiftUI.Divider,
+      Group: swiftUI.Group,
       Host: swiftUI.Host,
       Menu: swiftUI.Menu,
       RNHostView: swiftUI.RNHostView,
@@ -85,3 +87,9 @@ export const swiftFrame = (params: {
 export const swiftLabelStyle = (
   style: "automatic" | "iconOnly" | "titleAndIcon" | "titleOnly",
 ) => modifier("labelStyle", { style });
+
+export const swiftOnAppear = (handler: () => void) =>
+  modifier("onAppear", { eventListener: handler });
+
+export const swiftOnDisappear = (handler: () => void) =>
+  modifier("onDisappear", { eventListener: handler });
