@@ -13,8 +13,11 @@ const COVER_SIZE = 36;
 /**
  * What press-and-hold lifts above the track menu: the track on the dock's
  * own glass pill, sized like the phone mini-player. Every row carries one, so
- * until `active` it's only an empty box that holds the preview's size; the
- * glass and artwork mount once a press is held.
+ * the glass and artwork mount only while `active` (a press held, or the menu
+ * open); until then the pill is the dock's scrim and the track's text.
+ *
+ * The root view must stay the same view for the row's life: SwiftUI hosts
+ * that exact view in the preview, so a swapped-in root never shows.
  */
 export function TrackMenuPreview({
   track,
@@ -24,31 +27,31 @@ export function TrackMenuPreview({
   active: boolean;
 }) {
   const { width } = useWindowDimensions();
+  const colors = useDockColors();
+  const presentation = useTrackRowPresentation(track);
   const size = {
     width: Math.min(width - DOCK.phoneMiniMargin * 2, PREVIEW_MAX_WIDTH),
     height: DOCK.miniHeight,
   };
-  if (!active) return <View style={size} />;
-  return <PreviewPill track={track} size={size} />;
-}
-
-function PreviewPill({
-  track,
-  size,
-}: {
-  track: TrackListItem;
-  size: { width: number; height: number };
-}) {
-  const colors = useDockColors();
-  const presentation = useTrackRowPresentation(track);
   return (
     <View
+      collapsable={false}
       pointerEvents="none"
       style={[styles.pill, size, { borderColor: colors.border }]}
     >
-      <DockSurface />
+      {active ? (
+        <DockSurface />
+      ) : (
+        <View
+          style={[StyleSheet.absoluteFill, { backgroundColor: colors.scrim }]}
+        />
+      )}
       <View style={[styles.row, presentation.dimmed && styles.dimmed]}>
-        <CoverArt track={track} size={COVER_SIZE} transitionMs={0} />
+        {active ? (
+          <CoverArt track={track} size={COVER_SIZE} transitionMs={0} />
+        ) : (
+          <View style={styles.cover} />
+        )}
         <View style={styles.meta}>
           <Text
             numberOfLines={1}
@@ -89,6 +92,10 @@ const styles = StyleSheet.create({
   // effect for good (see DockSurface).
   dimmed: {
     opacity: 0.4,
+  },
+  cover: {
+    width: COVER_SIZE,
+    height: COVER_SIZE,
   },
   meta: {
     flex: 1,
