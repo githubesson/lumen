@@ -14,6 +14,7 @@ import * as Haptics from "expo-haptics";
 import * as WebBrowser from "expo-web-browser";
 import {
   lastFMConnectionState,
+  SMOOTH_MIX_SECONDS,
   useAuth,
   useLastFMConnection,
 } from "@music-library/core";
@@ -23,9 +24,11 @@ import {
 } from "../../../components/dock/dock-context";
 import { OtaUpdateRows } from "../../../components/ota-updates";
 import { Card, SectionLabel } from "../../../components/primitives";
+import { SegmentedControl } from "../../../components/segmented-control";
 import { useTheme, useThemeMode, type ThemeMode, type ThemeTokens } from "../../../theme/theme";
 import { diagnosticsLog } from "../../../lib/diagnostics/log";
 import { offlineStore, useOfflineForced } from "../../../lib/offline-mode";
+import { smoothMixStore, useSmoothMix } from "../../../lib/smooth-mix";
 
 export default function SettingsScreen() {
   const theme = useTheme();
@@ -92,6 +95,10 @@ export default function SettingsScreen() {
 
       <Section title="Appearance" theme={theme}>
         <ModePicker mode={mode} setMode={setMode} theme={theme} />
+      </Section>
+
+      <Section title="Playback" theme={theme}>
+        <SmoothMixRow theme={theme} />
       </Section>
 
       <Section title="Offline" theme={theme}>
@@ -291,6 +298,29 @@ function OfflineModeRow({ theme }: { theme: ThemeTokens }) {
       >
         Only downloaded music plays. No network is used until you turn this
         off.
+      </Text>
+    </View>
+  );
+}
+
+const SMOOTH_MIX_OPTIONS = [
+  { label: "Off", value: "0" },
+  ...SMOOTH_MIX_SECONDS.map((seconds) => ({ label: `${seconds}s`, value: String(seconds) })),
+];
+
+function SmoothMixRow({ theme }: { theme: ThemeTokens }) {
+  const seconds = useSmoothMix();
+  return (
+    <View style={{ paddingHorizontal: theme.space.md, paddingVertical: 12, gap: theme.space.sm }}>
+      <Text style={{ color: theme.color.fg, fontSize: 16 }}>Smooth mix</Text>
+      <SegmentedControl
+        options={SMOOTH_MIX_OPTIONS}
+        value={String(seconds)}
+        onChange={(value) => smoothMixStore.set(Number(value))}
+      />
+      <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>
+        Fade each song into the next. An album playing in order still runs
+        straight through.
       </Text>
     </View>
   );

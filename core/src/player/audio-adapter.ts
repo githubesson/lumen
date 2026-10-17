@@ -38,6 +38,14 @@ export interface AudioAdapter {
    * false when it is not ready so the core can fall back to `load` + `play`.
    */
   activatePrepared?(url: string): boolean;
+  /**
+   * Start a source previously passed to `prepareNext` while the current one
+   * plays on, fading the current out and it in over `seconds`; the current
+   * one then stops. From then on it is the current source, as after
+   * `activatePrepared`, and only its events fire. Returns false when it is not
+   * ready, or the platform can't fade, and changes nothing then.
+   */
+  crossfadeToPrepared?(url: string, seconds: number): boolean;
   /** Cancel and release any source prepared for a future transition. */
   clearPrepared?(): void;
   /**

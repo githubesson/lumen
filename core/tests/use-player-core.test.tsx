@@ -485,6 +485,225 @@ describe("usePlayerCore", () => {
 });
 
 
+describe("usePlayerCore smooth mix", () => {
+  // Playing `a` of queue4() 150s into 180s, with `b` prepared.
+  async function nearTheEnd(options: Partial<UsePlayerCoreOptions> = {}, queue = queue4()) {
+    const fake = await setup({ crossfadeSeconds: 6, ...options });
+    fake.adapter.activatePrepared = vi.fn(() => true);
+    fake.adapter.crossfadeToPrepared = vi.fn(() => true);
+    act(() => fake.result.current.controls.play(queue[0], queue));
+    fake.state.dur = 180;
+    fake.state.time = 150;
+    act(() => fake.emit("timeupdate"));
+    expect(fake.adapter.prepareNext).toHaveBeenCalledWith(`test://stream/${queue[1].id}`);
+    vi.mocked(fake.adapter.play).mockClear();
+    return fake;
+  }
+
+  it("crossfades into the prepared track over what's left of this one", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    state.time = 173;
+    act(() => emit("timeupdate"));
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+
+    state.time = 175;
+    act(() => emit("timeupdate"));
+    expect(adapter.crossfadeToPrepared).toHaveBeenCalledWith("test://stream/b", 5);
+    expect(result.current.state.current?.id).toBe("b");
+    expect(result.current.state.index).toBe(1);
+    expect(result.current.state.isPlaying).toBe(true);
+    // The adapter started it; nothing loads or plays it again.
+    expect(adapter.activatePrepared).not.toHaveBeenCalled();
+    expect(adapter.load).toHaveBeenCalledTimes(1);
+    expect(adapter.play).not.toHaveBeenCalled();
+  });
+
+  it("plays on while the prepared track isn't ready, and tries again", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    vi.mocked(adapter.crossfadeToPrepared!).mockReturnValueOnce(false);
+    state.time = 175;
+    act(() => emit("timeupdate"));
+    expect(result.current.state.current?.id).toBe("a");
+    expect(result.current.state.isPlaying).toBe(true);
+    expect(adapter.load).toHaveBeenCalledTimes(1);
+
+    state.time = 176;
+    act(() => emit("timeupdate"));
+    expect(adapter.crossfadeToPrepared).toHaveBeenLastCalledWith("test://stream/b", 4);
+    expect(result.current.state.current?.id).toBe("b");
+  });
+
+  it("fades into a short song over half its length, without cutting this one", async () => {
+    const queue = queue4();
+    queue[1] = { ...queue[1], duration_ms: 4_000 };
+    const { adapter, state, emit } = await nearTheEnd({}, queue);
+    state.time = 175;
+    act(() => emit("timeupdate"));
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+
+    state.time = 178;
+    act(() => emit("timeupdate"));
+    expect(adapter.crossfadeToPrepared).toHaveBeenCalledWith("test://stream/b", 2);
+  });
+
+  it("goes on from the crossfaded track as usual", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    state.time = 175;
+    act(() => emit("timeupdate"));
+    expect(result.current.state.current?.id).toBe("b");
+
+    // Skipping mid-fade loads the track after it; nothing was prepared yet.
+    act(() => result.current.controls.next());
+    expect(adapter.load).toHaveBeenLastCalledWith("test://stream/c");
+    expect(result.current.state.current?.id).toBe("c");
+
+    // And c's own end hands off to d once, as any track's does.
+    state.dur = 180;
+    state.time = 150;
+    act(() => emit("timeupdate"));
+    expect(adapter.prepareNext).toHaveBeenLastCalledWith("test://stream/d");
+    act(() => emit("ended"));
+    expect(adapter.activatePrepared).toHaveBeenCalledOnce();
+    expect(adapter.activatePrepared).toHaveBeenCalledWith("test://stream/d");
+    expect(result.current.state.current?.id).toBe("d");
+    expect(adapter.crossfadeToPrepared).toHaveBeenCalledOnce();
+  });
+
+  it("doesn't fade when a pause arrives with the same native status", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    act(() => {
+      emit("pause");
+      state.time = 177;
+      emit("timeupdate");
+    });
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+    expect(result.current.state.current?.id).toBe("a");
+    expect(result.current.state.isPlaying).toBe(false);
+  });
+
+  it("doesn't fade out of a song that failed in the same batch", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    act(() => {
+      emit("error");
+      state.time = 177;
+      emit("timeupdate");
+    });
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+    expect(result.current.state.current?.id).toBe("a");
+    expect(result.current.state.playbackError?.trackId).toBe("a");
+  });
+
+  it("prepares again after a pick that changes nothing", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    vi.mocked(adapter.prepareNext!).mockClear();
+    // Tapping the playing track in a queue (CarPlay, say) drops what was
+    // prepared; the pick still commits, so the next update prepares again.
+    act(() => result.current.controls.jumpTo(0));
+    state.time = 160;
+    act(() => emit("timeupdate"));
+    expect(adapter.prepareNext).toHaveBeenCalledWith("test://stream/b");
+    state.time = 177;
+    act(() => emit("timeupdate"));
+    expect(adapter.crossfadeToPrepared).toHaveBeenCalledWith("test://stream/b", 3);
+  });
+
+  it("still fades after a pause and a resume in one batch", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    // A brief interruption: both statuses arrive before React renders, and
+    // the two state changes cancel out.
+    act(() => {
+      emit("pause");
+      emit("play");
+    });
+    expect(result.current.state.isPlaying).toBe(true);
+    state.time = 177;
+    act(() => emit("timeupdate"));
+    expect(adapter.crossfadeToPrepared).toHaveBeenCalledWith("test://stream/b", 3);
+  });
+
+  it("doesn't fade into the old queue when a new one starts before it commits", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    vi.mocked(adapter.prepareNext!).mockClear();
+    // A remote command or CarPlay plays outside a React event; a timeupdate
+    // can land before the new queue commits.
+    act(() => {
+      result.current.controls.play(t("x"), [t("x"), t("y")]);
+      state.time = 177;
+      emit("timeupdate");
+    });
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+    expect(adapter.prepareNext).not.toHaveBeenCalled();
+    expect(result.current.state.current?.id).toBe("x");
+    expect(result.current.state.queue.map((track) => track.id)).toEqual(["x", "y"]);
+    expect(adapter.load).toHaveBeenLastCalledWith("test://stream/x");
+
+    // Once it has, the new queue's next track is prepared as usual.
+    state.dur = 180;
+    state.time = 150;
+    act(() => emit("timeupdate"));
+    expect(adapter.prepareNext).toHaveBeenCalledWith("test://stream/y");
+  });
+
+  it("doesn't fade into the old order when shuffle changes before it commits", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    // CarPlay's shuffle button runs outside a React event too.
+    act(() => {
+      result.current.controls.setShuffle(true);
+      state.time = 177;
+      emit("timeupdate");
+    });
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+    expect(result.current.state.current?.id).toBe("a");
+    expect(result.current.state.index).toBe(0);
+  });
+
+  it("leaves the last second to the ordinary handoff", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    state.time = 179.5;
+    act(() => emit("timeupdate"));
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+
+    act(() => emit("ended"));
+    expect(adapter.activatePrepared).toHaveBeenCalledWith("test://stream/b");
+    expect(result.current.state.current?.id).toBe("b");
+  });
+
+  it("runs an album playing in order straight through", async () => {
+    const album = queue4().map((track, i) => ({ ...track, album_id: "x", track_no: i + 1 }));
+    const { adapter, state, emit } = await nearTheEnd({}, album);
+    state.time = 175;
+    act(() => emit("timeupdate"));
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+  });
+
+  it("is off without a length, and while paused", async () => {
+    const off = await nearTheEnd({ crossfadeSeconds: 0 });
+    off.state.time = 175;
+    act(() => off.emit("timeupdate"));
+    expect(off.adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+
+    const paused = await nearTheEnd();
+    act(() => paused.result.current.controls.pause());
+    paused.state.time = 175;
+    act(() => paused.emit("timeupdate"));
+    expect(paused.adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+  });
+
+  it("never fades into a fresh shuffle at the end of the queue", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    act(() => result.current.controls.setShuffle(true));
+    act(() => result.current.controls.setRepeat("all"));
+    act(() => result.current.controls.jumpTo(3));
+    for (const time of [150, 175]) {
+      state.time = time;
+      act(() => emit("timeupdate"));
+    }
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+    expect(result.current.state.index).toBe(3);
+    expect(result.current.state.isPlaying).toBe(true);
+  });
+});
+
 describe("usePlayerCore with unavailable tracks", () => {
   // Dropped from TIDAL with no library copy: no gate needed to skip them.
   const gone = (id: string): TrackListItem => ({ ...t(id), unavailable: true });

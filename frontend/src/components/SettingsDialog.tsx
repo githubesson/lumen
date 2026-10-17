@@ -8,7 +8,11 @@ import {
   X as XMarkIcon,
   type LucideIcon,
 } from "lucide-react";
-import { lastFMConnectionState, useLastFMConnection } from "@music-library/core";
+import {
+  lastFMConnectionState,
+  SMOOTH_MIX_SECONDS,
+  useLastFMConnection,
+} from "@music-library/core";
 import { useTheme, type Density, type Layout, type Theme } from "../context/Theme";
 import { useAudioOutput, useAudioOutputDevices } from "../lib/audioOutput";
 import { useKey, useModalKeyScope } from "../lib/keybindings";
@@ -63,6 +67,10 @@ const LAYOUTS: SelectOption<Layout>[] = [
   { value: "sidebar", label: "Sidebar" },
   { value: "wide", label: "Wide" },
 ];
+const SMOOTH_MIX: SelectOption[] = [
+  { value: "0", label: "Off" },
+  ...SMOOTH_MIX_SECONDS.map((s) => ({ value: String(s), label: `${s} seconds` })),
+];
 
 /**
  * App settings as a modal with a searchable section list on the left and
@@ -84,10 +92,12 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
     radius,
     density,
     layout,
+    smoothMix,
     setTheme,
     setRadius,
     setDensity,
     setLayout,
+    setSmoothMix,
   } = useTheme();
   const { supported: audioOutputSupported } = useAudioOutput();
   const {
@@ -259,15 +269,35 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
       id: "playback",
       title: "Playback",
       icon: SpeakerIcon,
-      settings: audioOutputSupported
-        ? [
-            {
-              id: "output",
-              keywords: "output device audio speaker headphones sound",
-              render: () => <OutputDeviceSetting />,
-            },
-          ]
-        : [],
+      settings: [
+        ...(audioOutputSupported
+          ? [
+              {
+                id: "output",
+                keywords: "output device audio speaker headphones sound",
+                render: () => <OutputDeviceSetting />,
+              },
+            ]
+          : []),
+        {
+          id: "smooth-mix",
+          keywords: "smooth mix crossfade fade transition gapless songs",
+          render: () => (
+            <SettingRow
+              label="Smooth mix"
+              description="Fade each song into the next. An album playing in order still runs straight through."
+            >
+              <Select
+                variant="minimal"
+                aria-label="Smooth mix"
+                value={String(smoothMix ?? 0)}
+                options={SMOOTH_MIX}
+                onChange={(s) => setSmoothMix(Number(s))}
+              />
+            </SettingRow>
+          ),
+        },
+      ],
     },
     {
       id: "desktop",

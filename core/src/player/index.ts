@@ -7,6 +7,7 @@ export {
   extrapolatePosition,
   fisherYatesWithAnchor,
   repeatModeLabel,
+  SMOOTH_MIX_SECONDS,
   type PlayerControls,
   type PlayerState,
   type PlayOptions,

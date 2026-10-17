@@ -14,6 +14,7 @@ import {
   VOLUME_STORAGE_KEY,
   canStartTrack,
   clampVolume,
+  continuesAlbum,
   fisherYatesWithAnchor,
   nextRepeatMode,
   shouldReportPlay,
@@ -42,6 +43,12 @@ export interface UsePlayerCoreOptions {
    * Tracks flagged `unavailable` are skipped regardless.
    */
   isTrackPlayable?: (trackId: string) => boolean;
+  /**
+   * Smooth mix: fade each track into the next over this many seconds, when
+   * the adapter can (`crossfadeToPrepared`). 0 or absent plays them back to
+   * back. An album playing in order runs straight through either way.
+   */
+  crossfadeSeconds?: number;
 }
 
 export interface UsePlayerCoreReturn {
@@ -52,6 +59,9 @@ export interface UsePlayerCoreReturn {
 
 const TIME_STATE_GRANULARITY_SEC = 0.25;
 const NEXT_TRACK_PREPARE_RATIO = 0.7;
+// Closer to the end than this, a crossfade isn't worth starting; the track
+// ends and hands off as it would without one.
+const MIN_CROSSFADE_SEC = 1;
 
 function quantizeTime(seconds: number, duration: number): number {
   const clamped =
@@ -122,6 +132,7 @@ export function usePlayerCore({
   interpolateProgress = true,
   resolveTrackUri,
   isTrackPlayable,
+  crossfadeSeconds = 0,
 }: UsePlayerCoreOptions): UsePlayerCoreReturn {
   const [current, setCurrent] = useState<TrackListItem | null>(null);
   // `queue` is the actual play order — when shuffle is on it's a Fisher-Yates
@@ -156,6 +167,19 @@ export function usePlayerCore({
   const preparedNextRef = useRef<{ trackId: string; uri: string } | null>(null);
   const playbackAttemptRef = useRef(0);
   const handoffRef = useRef<{ track: TrackListItem; attempt: number } | null>(null);
+  // Picks made by play(), jumpTo() and prev(), and changes to shuffle or
+  // repeat, and the last one React has committed. Until they match, the
+  // event handlers still see the old queue's next track, and a timeupdate
+  // must not prepare it or crossfade into it. Each pick also bumps state, so
+  // it always commits, and only its own commit (not an earlier,
+  // higher-priority one) clears it.
+  const picksRef = useRef(0);
+  const committedPicksRef = useRef(0);
+  const [picks, setPicks] = useState(0);
+  const notePick = useCallback(() => {
+    picksRef.current += 1;
+    setPicks(picksRef.current);
+  }, []);
   // Anchor used to interpolate currentTime against the wall clock between the
   // adapter's (infrequent) timeupdate pings.
   const anchorRef = useRef<{ audioTime: number; wallTime: number }>({
@@ -300,6 +324,7 @@ export function usePlayerCore({
   const play = useCallback<PlayerControls["play"]>(
     (track, q, options) => {
       if (!canStartTrack(track, isTrackPlayable)) return false;
+      notePick();
       const base = q && q.length ? q : [track];
       // Set here, with the queue, rather than through setShuffle: that
       // reorders the queue this render has, not the one starting now.
@@ -320,7 +345,7 @@ export function usePlayerCore({
       resetClockForTrackChange(track.id);
       playbackReportedRef.current = null;
     },
-    [isTrackPlayable, resetClockForTrackChange, shuffle, startTrack],
+    [isTrackPlayable, notePick, resetClockForTrackChange, shuffle, startTrack],
   );
 
   const toggle = useCallback<PlayerControls["toggle"]>(() => {
@@ -337,8 +362,20 @@ export function usePlayerCore({
     if (current) setIsPlaying(false);
   }, [current]);
 
-  const next = useCallback<PlayerControls["next"]>(() => {
-    if (!queue.length) return;
+  // Move to the next track: for next(), at a track's end, and ahead of the
+  // end for smooth mix. With `fadeSeconds` it only crossfades into the track
+  // prepared for that; when it can't (not ready yet, nothing next), it
+  // changes nothing and returns false, and the current track plays on.
+  const advance = useCallback((fadeSeconds = 0): boolean => {
+    const crossfade = fadeSeconds > 0;
+    const stop = () => {
+      if (!crossfade) {
+        clearPreparedNext();
+        setIsPlaying(false);
+      }
+      return false;
+    };
+    if (!queue.length) return false;
     // Guard the empty forward range explicitly: firstPlayableIndex infers
     // scan direction from from/to ordering, so (index+1, length-1) at the
     // last track would scan BACKWARD and return the current track instead
@@ -349,14 +386,12 @@ export function usePlayerCore({
         : -1;
     let nextQueue: TrackListItem[] | null = null;
     if (nextIndex === -1) {
-      if (repeat !== "all") {
-        clearPreparedNext();
-        setIsPlaying(false);
-        return;
-      }
+      if (repeat !== "all") return stop();
       // Wrap. If shuffle is on, reshuffle for a fresh pass so you don't
-      // replay the same permutation.
+      // replay the same permutation. Nothing was prepared from that one, so
+      // it is never crossfaded into.
       if (shuffle && sourceQueue.length > 1) {
+        if (crossfade) return false;
         const reshuffled = fisherYatesWithAnchor(sourceQueue, null);
         nextIndex = firstPlayableIndex(
           reshuffled,
@@ -368,31 +403,25 @@ export function usePlayerCore({
       } else {
         nextIndex = firstPlayableIndex(queue, 0, index, isTrackPlayable);
       }
-      if (nextIndex === -1) {
-        // Nothing playable anywhere in the queue — stop instead of looping
-        // into tracks that cannot start.
-        clearPreparedNext();
-        setIsPlaying(false);
-        return;
-      }
+      // Nothing playable anywhere in the queue — stop instead of looping
+      // into tracks that cannot start.
+      if (nextIndex === -1) return stop();
     }
 
     const nextTrack = (nextQueue ?? queue)[nextIndex] ?? null;
-    if (!nextTrack) {
-      clearPreparedNext();
-      setIsPlaying(false);
-      return;
-    }
+    if (!nextTrack) return stop();
 
     const prepared = preparedNextRef.current;
     const nextUri = resolvePlayableUri(nextTrack.id);
+    const isPrepared = prepared?.trackId === nextTrack.id && prepared.uri === nextUri;
+    if (crossfade && !(isPrepared && adapter.crossfadeToPrepared?.(nextUri, fadeSeconds))) {
+      return false;
+    }
     // A failed source can't restart in place; it is loaded again.
     const sameTrack = loadedTrackIdRef.current === nextTrack.id && !failureRef.current;
     playbackAttemptRef.current += 1;
     const activated =
-      prepared?.trackId === nextTrack.id &&
-      prepared.uri === nextUri &&
-      adapter.activatePrepared?.(nextUri) === true;
+      crossfade || (isPrepared && adapter.activatePrepared?.(nextUri) === true);
     if (activated) {
       loadedTrackIdRef.current = nextTrack.id;
     } else {
@@ -430,6 +459,7 @@ export function usePlayerCore({
     setDuration(activated || sameTrack ? adapter.duration() || 0 : 0);
     anchorRef.current = { audioTime: 0, wallTime: performance.now() };
     playbackReportedRef.current = null;
+    return true;
   }, [
     adapter,
     clearPlaybackError,
@@ -443,6 +473,10 @@ export function usePlayerCore({
     sourceQueue,
     startPlayback,
   ]);
+
+  const next = useCallback<PlayerControls["next"]>(() => {
+    advance();
+  }, [advance]);
 
   const prev = useCallback<PlayerControls["prev"]>(() => {
     if (!queue.length) return;
@@ -471,13 +505,14 @@ export function usePlayerCore({
       restartCurrent();
       return;
     }
+    notePick();
     clearPreparedNext();
     setIndex(ni);
     setCurrent(queue[ni]);
     startTrack(queue[ni]);
     resetClockForTrackChange(queue[ni].id);
     playbackReportedRef.current = null;
-  }, [adapter, clearPreparedNext, current, queue, index, isTrackPlayable, resetClockForTrackChange, retryFailedTrack, startTrack]);
+  }, [adapter, clearPreparedNext, current, queue, index, isTrackPlayable, notePick, resetClockForTrackChange, retryFailedTrack, startTrack]);
 
   const jumpTo = useCallback<PlayerControls["jumpTo"]>(
     (i) => {
@@ -485,6 +520,7 @@ export function usePlayerCore({
       // Silently ignore taps on tracks that can't start (unavailable, or not
       // downloaded while offline) — queue UIs dim them instead.
       if (!canStartTrack(queue[i], isTrackPlayable)) return;
+      notePick();
       clearPreparedNext();
       setIndex(i);
       setCurrent(queue[i]);
@@ -492,7 +528,7 @@ export function usePlayerCore({
       resetClockForTrackChange(queue[i].id);
       playbackReportedRef.current = null;
     },
-    [clearPreparedNext, queue, isTrackPlayable, resetClockForTrackChange, startTrack],
+    [clearPreparedNext, queue, isTrackPlayable, notePick, resetClockForTrackChange, startTrack],
   );
 
   const seek = useCallback<PlayerControls["seek"]>(
@@ -520,6 +556,7 @@ export function usePlayerCore({
 
   const setShuffle = useCallback<PlayerControls["setShuffle"]>((value) => {
     if (value === shuffle) return;
+    notePick();
     setShuffleState(value);
     if (!queue.length) return;
     if (value) {
@@ -538,20 +575,21 @@ export function usePlayerCore({
         current ? Math.max(0, source.findIndex((t) => t.id === current.id)) : 0,
       );
     }
-  }, [shuffle, queue, sourceQueue, current]);
+  }, [shuffle, queue, sourceQueue, current, notePick]);
 
   const toggleShuffle = useCallback<PlayerControls["toggleShuffle"]>(() => {
     setShuffle(!shuffle);
   }, [setShuffle, shuffle]);
 
   const setRepeat = useCallback<PlayerControls["setRepeat"]>((value) => {
+    notePick();
     setRepeatState(value);
-  }, []);
+  }, [notePick]);
 
-  const cycleRepeat = useCallback<PlayerControls["cycleRepeat"]>(
-    () => setRepeatState((r) => nextRepeatMode(r)),
-    [],
-  );
+  const cycleRepeat = useCallback<PlayerControls["cycleRepeat"]>(() => {
+    notePick();
+    setRepeatState((r) => nextRepeatMode(r));
+  }, [notePick]);
 
   const nextTrackToPrepare = useMemo(() => {
     if (!current || repeat === "one" || !queue.length) return null;
@@ -635,20 +673,28 @@ export function usePlayerCore({
     isPlaying,
     current,
     next,
+    advance,
     nextTrackToPrepare,
     repeat,
     resolvePlayableUri,
+    crossfadeSeconds,
   });
   useEffect(() => {
     eventStateRef.current = {
       isPlaying,
       current,
       next,
+      advance,
       nextTrackToPrepare,
       repeat,
       resolvePlayableUri,
+      crossfadeSeconds,
     };
-  }, [isPlaying, current, next, nextTrackToPrepare, repeat, resolvePlayableUri]);
+  }, [isPlaying, current, next, advance, nextTrackToPrepare, repeat, resolvePlayableUri, crossfadeSeconds]);
+
+  useEffect(() => {
+    committedPicksRef.current = picks;
+  }, [picks]);
 
   // Wire adapter events → hook state.
   useEffect(() => {
@@ -678,7 +724,9 @@ export function usePlayerCore({
       const trackId = currentTrack?.id;
       const now = adapter.currentTime();
       const d = adapter.duration();
+      const selecting = picksRef.current !== committedPicksRef.current;
       if (
+        !selecting &&
         toPrepare &&
         adapter.prepareNext &&
         d > 0 &&
@@ -713,6 +761,31 @@ export function usePlayerCore({
             listenedSecondsRef.current,
           )
           .catch(() => {});
+      }
+      // Smooth mix: start the next track before this one ends, so the fade
+      // ends with it. A short next song fades in over half its length at
+      // most, and starts that much later rather than cutting this one short.
+      // Until the prepared track is ready, each update tries again with
+      // what's left.
+      const { crossfadeSeconds: fade, isPlaying: playing, advance: advanceTo } =
+        eventStateRef.current;
+      const remaining = d - now;
+      const nextSeconds = (toPrepare?.duration_ms ?? 0) / 1000;
+      const fadeLength = nextSeconds > 0 ? Math.min(fade, nextSeconds / 2) : fade;
+      if (
+        !selecting &&
+        fade > 0 &&
+        playing &&
+        currentTrack &&
+        toPrepare &&
+        adapter.crossfadeToPrepared &&
+        preparedNextRef.current?.trackId === toPrepare.id &&
+        d > 0 &&
+        remaining <= fadeLength &&
+        remaining >= MIN_CROSSFADE_SEC &&
+        !continuesAlbum(currentTrack, toPrepare)
+      ) {
+        advanceTo(remaining);
       }
     });
     const offMeta = adapter.on("loadedmetadata", () => {
@@ -751,6 +824,9 @@ export function usePlayerCore({
       // Playback can start outside our controls (lock-screen play command,
       // an interruption ending with auto-resume) — adopt the platform state.
       setIsPlaying(true);
+      // As in the pause handler. A pause and this play in one batch cancel
+      // out and commit nothing, so the effect wouldn't set it back.
+      eventStateRef.current.isPlaying = true;
     });
     const offPause = adapter.on("pause", () => {
       syncListenedTime();
@@ -764,12 +840,17 @@ export function usePlayerCore({
       // only genuine pauses reach this handler.
       playbackAttemptRef.current += 1;
       setIsPlaying(false);
+      // Until that commits, a timeupdate from the same native status must
+      // see the pause too, or smooth mix would start the next song.
+      eventStateRef.current.isPlaying = false;
     });
     const offError = adapter.on("error", () => {
       // Stop on the failed track rather than skipping it: the failure is
       // shown there, and playing the track again retries it.
       playbackAttemptRef.current += 1;
       setIsPlaying(false);
+      // As in the pause handler: nothing may fade out of a failed song.
+      eventStateRef.current.isPlaying = false;
       const { current: track, resolvePlayableUri: resolveUri } = eventStateRef.current;
       if (!track) return;
       const failure = { trackId: track.id };

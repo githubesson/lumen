@@ -38,6 +38,7 @@ function knownTweaks(raw: Partial<Tweaks> | null | undefined): Partial<Tweaks> {
   if (raw.layout !== undefined) out.layout = raw.layout;
   // Home reads it through readArrangement, which validates it.
   if (raw.homeBoard !== undefined) out.homeBoard = raw.homeBoard;
+  if (typeof raw.smoothMix === "number" && raw.smoothMix >= 0) out.smoothMix = raw.smoothMix;
   return out;
 }
 
@@ -63,6 +64,8 @@ interface ThemeState extends Tweaks {
   setLayout: (l: Layout) => void;
   /** Saves Home's arrangement; undefined goes back to the default. */
   setHomeBoard: (board: HomeBoardTweak | undefined) => void;
+  /** Smooth mix's crossfade in seconds; 0 turns it off. */
+  setSmoothMix: (seconds: number) => void;
   /**
    * The saved tweaks are in. Always on the web; in Electron once config.json
    * has been read, so Home doesn't lay out a default board and then jump.
@@ -148,6 +151,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setTweaks(({ homeBoard: _previous, ...v }) => (board ? { ...v, homeBoard: board } : v)),
     [],
   );
+  // Off is saved as 0 rather than dropped: Electron merges config.json over
+  // this origin's copy, which could still hold an older length.
+  const setSmoothMix = useCallback(
+    (seconds: number) => setTweaks((v) => ({ ...v, smoothMix: seconds })),
+    [],
+  );
 
   const value = useMemo<ThemeState>(
     () => ({
@@ -158,6 +167,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setDensity,
       setLayout,
       setHomeBoard,
+      setSmoothMix,
       tweaksLoaded,
     }),
     [
@@ -168,6 +178,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setDensity,
       setLayout,
       setHomeBoard,
+      setSmoothMix,
       tweaksLoaded,
     ],
   );

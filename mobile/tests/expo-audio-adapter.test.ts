@@ -9,7 +9,7 @@
  * The adapter is a hook, but for a single render its hooks are trivial, so
  * React is shimmed and the hook is called as a plain function.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // React is shimmed below; this factory performs a single render of the hook.
 import { useExpoAudioAdapter as createTestAdapter } from "../adapters/expo-audio-adapter";
 
@@ -17,48 +17,65 @@ const h = vi.hoisted(() => {
   const calls: string[] = [];
   let resolveSeek: (() => void) | null = null;
   let rejectSeek: (() => void) | null = null;
-  let statusListener: ((status: unknown) => void) | null = null;
-  const fakePlayer = {
-    currentStatus: { isLoaded: true, playing: false, didJustFinish: false, duration: 0 },
-    addListener: (_event: string, cb: (status: unknown) => void) => {
-      statusListener = cb;
-      return { remove: () => {} };
-    },
-    play: () => {
-      calls.push("play");
-    },
-    pause: () => {
-      calls.push("pause");
-    },
-    seekTo: (seconds: number) => {
-      calls.push("seekTo");
-      return new Promise<void>((resolve, reject) => {
-        resolveSeek = () => {
-          fakePlayer.currentTime = seconds;
-          resolve();
-        };
-        rejectSeek = () => reject(new Error("seek failed"));
-      });
-    },
-    replace: (_source: { uri: string }) => {
-      calls.push("replace");
-    },
-    currentTime: 0,
-    duration: 0,
+  // The adapter makes two native players: smooth mix fades between them.
+  // Calls on the second are recorded with a "b:" prefix.
+  function makePlayer(prefix: string) {
+    const player = {
+      statusListener: null as ((status: unknown) => void) | null,
+      currentStatus: { isLoaded: true, playing: false, didJustFinish: false, duration: 0 } as Record<string, unknown>,
+      addListener: (_event: string, cb: (status: unknown) => void) => {
+        player.statusListener = cb;
+        return { remove: () => {} };
+      },
+      play: () => {
+        calls.push(`${prefix}play`);
+      },
+      pause: () => {
+        calls.push(`${prefix}pause`);
+      },
+      seekTo: (seconds: number) => {
+        calls.push(`${prefix}seekTo`);
+        return new Promise<void>((resolve, reject) => {
+          resolveSeek = () => {
+            player.currentTime = seconds;
+            resolve();
+          };
+          rejectSeek = () => reject(new Error("seek failed"));
+        });
+      },
+      replace: (source: { uri?: string }) => {
+        calls.push(source.uri ? `${prefix}replace` : `${prefix}empty`);
+      },
+      setActiveForLockScreen: vi.fn(),
+      updateLockScreenMetadata: vi.fn(),
+      clearLockScreenControls: vi.fn(),
+      currentTime: 0,
+      duration: 0,
+      volume: 1,
+      muted: false,
+    };
+    return player;
+  }
+  const fakePlayer = makePlayer("");
+  const secondPlayer = makePlayer("b:");
+  type FakePlayer = typeof fakePlayer;
+  const emitStatusOn = (player: FakePlayer, status: unknown, liveStatus = status) => {
+    // Native events are snapshots: the live getter can already be ahead of
+    // the event when JS receives it. Match them unless testing that delay.
+    player.currentStatus = liveStatus as FakePlayer["currentStatus"];
+    player.statusListener?.(status);
   };
   return {
     calls,
     record: vi.fn(),
     fakePlayer,
+    secondPlayer,
+    constructed: 0,
     finishSeek: () => resolveSeek?.(),
     captureSeekCompletion: () => resolveSeek,
     failSeek: () => rejectSeek?.(),
-    emitStatus: (status: unknown, liveStatus = status) => {
-      // Native events are snapshots: the live getter can already be ahead of
-      // the event when JS receives it. Match them unless testing that delay.
-      fakePlayer.currentStatus = liveStatus as typeof fakePlayer.currentStatus;
-      statusListener?.(status);
-    },
+    emitStatusOn,
+    emitStatus: (status: unknown, liveStatus = status) => emitStatusOn(fakePlayer, status, liveStatus),
   };
 });
 
@@ -99,7 +116,7 @@ vi.mock("expo-audio/build/AudioModule", () => ({
   default: {
     AudioPlayer: class {
       constructor() {
-        return h.fakePlayer;
+        return h.constructed++ % 2 === 0 ? h.fakePlayer : h.secondPlayer;
       }
     },
   },
@@ -112,11 +129,18 @@ beforeEach(() => {
   vi.restoreAllMocks();
   h.record.mockClear();
   h.calls.length = 0;
-  h.fakePlayer.currentTime = 0;
-  h.fakePlayer.duration = 0;
-  h.fakePlayer.currentStatus = {
-    isLoaded: true, playing: false, didJustFinish: false, duration: 0,
-  };
+  h.constructed = 0;
+  for (const player of [h.fakePlayer, h.secondPlayer]) {
+    player.currentTime = 0;
+    player.duration = 0;
+    player.volume = 1;
+    player.muted = false;
+    player.currentStatus = {
+      isLoaded: true, playing: false, didJustFinish: false, duration: 0,
+    };
+    player.setActiveForLockScreen.mockClear();
+    player.updateLockScreenMetadata.mockClear();
+  }
 });
 
 describe("useExpoAudioAdapter seek/play ordering", () => {
@@ -580,5 +604,190 @@ describe("useExpoAudioAdapter source failures", () => {
 
     h.emitStatus(status({ error: "The new item failed." }));
     expect(error).toHaveBeenCalledOnce();
+  });
+});
+
+describe("useExpoAudioAdapter smooth mix", () => {
+  const next = "https://example.test/next.mp3";
+  const loaded = {
+    isLoaded: true,
+    playing: false,
+    didJustFinish: false,
+    duration: 200,
+    timeControlStatus: "paused",
+    reasonForWaitingToPlay: "unknown",
+  };
+  const playing = { ...loaded, playing: true, timeControlStatus: "playing" };
+
+  // The first player plays the current song at 0.8 with the lock screen on
+  // it, and the next song is preloaded.
+  async function playingWithNextReady() {
+    const adapter = createTestAdapter();
+    const events: string[] = [];
+    for (const event of ["loadedmetadata", "play", "pause", "ended", "error"] as const) {
+      adapter.on(event, () => events.push(event));
+    }
+    adapter.setVolume(0.8);
+    adapter.load("https://example.test/one.mp3");
+    adapter.setActiveForLockScreen(true, { title: "One" }, {});
+    h.emitStatus(playing);
+    adapter.prepareNext!(next);
+    await flushMicrotasks();
+    h.secondPlayer.currentStatus = { ...loaded, isLoaded: false };
+    events.length = 0;
+    h.calls.length = 0;
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
+    return { adapter, events };
+  }
+
+  // Start a 4s crossfade and let the second player load and play.
+  async function crossfading() {
+    const setup = await playingWithNextReady();
+    expect(setup.adapter.crossfadeToPrepared!(next, 4)).toBe(true);
+    h.emitStatusOn(h.secondPlayer, loaded);
+    h.emitStatusOn(h.secondPlayer, playing);
+    return setup;
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("fades the next song in on the second player, then empties the first", async () => {
+    const { adapter, events } = await playingWithNextReady();
+    expect(adapter.crossfadeToPrepared!(next, 4)).toBe(true);
+    expect(h.calls).toEqual(["b:replace"]);
+    expect(h.secondPlayer.volume).toBe(0);
+    expect(h.fakePlayer.volume).toBeCloseTo(0.8);
+    // The lock screen and its commands follow the song.
+    expect(h.secondPlayer.setActiveForLockScreen).toHaveBeenCalledWith(true, { title: "One" }, {});
+
+    // It starts once loaded, as a prepared song does.
+    h.emitStatusOn(h.secondPlayer, loaded);
+    expect(h.calls).toEqual(["b:replace", "b:play"]);
+    h.emitStatusOn(h.secondPlayer, playing);
+    expect(events).toEqual(["loadedmetadata", "play"]);
+
+    vi.advanceTimersByTime(2000);
+    expect(h.secondPlayer.volume).toBeCloseTo(0.8 * Math.SQRT1_2);
+    expect(h.fakePlayer.volume).toBeCloseTo(0.8 * Math.SQRT1_2);
+    // The fading song's end isn't the current song's.
+    h.emitStatus({ ...loaded, didJustFinish: true, currentTime: 200 });
+    expect(events).toEqual(["loadedmetadata", "play"]);
+
+    vi.advanceTimersByTime(2000);
+    expect(h.calls).toEqual(["b:replace", "b:play", "pause", "empty"]);
+    expect(h.secondPlayer.volume).toBeCloseTo(0.8);
+    // The idle player stays silent.
+    expect(h.fakePlayer.volume).toBe(0);
+
+    // From here the second player is the player.
+    h.secondPlayer.duration = 180;
+    expect(adapter.duration()).toBe(180);
+    adapter.updateLockScreenMetadata({ title: "Two" });
+    expect(h.secondPlayer.updateLockScreenMetadata).toHaveBeenCalledWith({ title: "Two" });
+    adapter.pause();
+    expect(h.calls.at(-1)).toBe("b:pause");
+  });
+
+  it("stops the fading song at once on a pause", async () => {
+    const { adapter } = await crossfading();
+    vi.advanceTimersByTime(1000);
+    adapter.setVolume(0.4);
+    expect(h.secondPlayer.volume).toBeCloseTo(0.4 * Math.sin(Math.PI / 8));
+    expect(h.fakePlayer.volume).toBeCloseTo(0.4 * Math.cos(Math.PI / 8));
+
+    adapter.pause();
+    expect(h.calls).toEqual(["b:replace", "b:play", "pause", "empty", "b:pause"]);
+    expect(h.secondPlayer.volume).toBeCloseTo(0.4);
+    expect(h.fakePlayer.volume).toBe(0);
+  });
+
+  it("reports a system pause of the incoming song, and the pause that follows ends the fade", async () => {
+    const { adapter, events } = await crossfading();
+    vi.advanceTimersByTime(1000);
+    // An interruption pauses both players; only the active one's pause counts.
+    h.emitStatus(loaded);
+    h.emitStatusOn(h.secondPlayer, loaded);
+    expect(events).toEqual(["loadedmetadata", "play", "pause"]);
+
+    // The core answers with pause(), which stops and empties the fading song.
+    adapter.pause();
+    expect(h.calls).toEqual(["b:replace", "b:play", "pause", "empty", "b:pause"]);
+  });
+
+  it("reports the incoming song failing as it starts", async () => {
+    const { adapter, events } = await playingWithNextReady();
+    expect(adapter.crossfadeToPrepared!(next, 4)).toBe(true);
+    h.emitStatusOn(h.secondPlayer, { ...loaded, isLoaded: false, duration: 0, error: "The server returned 502." });
+    expect(events).toEqual(["error"]);
+    expect(h.calls).toEqual(["b:replace"]);
+  });
+
+  it("ends the fade at once on a seek", async () => {
+    const { adapter } = await crossfading();
+    adapter.seek(30);
+    expect(h.calls).toEqual(["b:replace", "b:play", "pause", "empty", "b:seekTo"]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("ends the fade at once on a new source, which loads on the active player", async () => {
+    const { adapter } = await crossfading();
+    adapter.load("https://example.test/three.mp3");
+    expect(h.calls).toEqual(["b:replace", "b:play", "pause", "empty", "b:replace"]);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(h.secondPlayer.volume).toBeCloseTo(0.8);
+    expect(h.fakePlayer.volume).toBe(0);
+  });
+
+  it("swaps back to the first player for the next crossfade", async () => {
+    const { adapter } = await crossfading();
+    vi.advanceTimersByTime(4000);
+    adapter.updateLockScreenMetadata({ title: "Two" });
+    const third = "https://example.test/third.mp3";
+    adapter.prepareNext!(third);
+    await flushMicrotasks();
+    // Emptied after its fade.
+    h.fakePlayer.currentStatus = { ...loaded, isLoaded: false };
+    h.calls.length = 0;
+
+    expect(adapter.crossfadeToPrepared!(third, 3)).toBe(true);
+    expect(h.calls).toEqual(["replace"]);
+    expect(h.fakePlayer.setActiveForLockScreen).toHaveBeenCalledWith(true, { title: "Two" }, {});
+    h.emitStatus(loaded);
+    expect(h.calls).toEqual(["replace", "play"]);
+  });
+
+  it("pauses a player something native restarts after its fade", async () => {
+    const { events } = await crossfading();
+    // Mid-fade, the outgoing player is meant to play.
+    h.emitStatus(playing);
+    expect(h.calls).toEqual(["b:replace", "b:play"]);
+
+    vi.advanceTimersByTime(4000);
+    h.calls.length = 0;
+    h.emitStatus(playing);
+    expect(h.calls).toEqual(["pause"]);
+    expect(events).toEqual(["loadedmetadata", "play"]);
+  });
+
+  it("doesn't fade from a song the system just paused", async () => {
+    const { adapter } = await playingWithNextReady();
+    // The live status already says paused when the timeupdate arrives.
+    h.fakePlayer.currentStatus = loaded;
+    expect(adapter.crossfadeToPrepared!(next, 4)).toBe(false);
+    expect(h.calls).toEqual([]);
+    expect(h.secondPlayer.setActiveForLockScreen).not.toHaveBeenCalled();
+  });
+
+  it("changes nothing until the next song is preloaded", () => {
+    const adapter = createTestAdapter();
+    adapter.load("https://example.test/one.mp3");
+    adapter.prepareNext!(next);
+    h.calls.length = 0;
+    expect(adapter.crossfadeToPrepared!(next, 4)).toBe(false);
+    expect(adapter.crossfadeToPrepared!("https://example.test/other.mp3", 4)).toBe(false);
+    adapter.pause();
+    expect(h.calls).toEqual(["pause"]);
   });
 });
