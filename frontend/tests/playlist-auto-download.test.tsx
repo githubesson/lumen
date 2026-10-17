@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PlaylistTrackEntry } from "../src/api";
 import PlaylistDetail from "../src/pages/PlaylistDetail";
+import { ConfirmProvider } from "../src/context/Confirm";
 import { clearResourceCache } from "../src/lib/resourceCache";
 
 const mock = vi.hoisted(() => ({
@@ -60,6 +61,7 @@ async function renderPage() {
     <MemoryRouter initialEntries={["/playlists/p1"]}>
       <Routes><Route path="/playlists/:id" element={<PlaylistDetail />} /></Routes>
     </MemoryRouter>,
+    { wrapper: ConfirmProvider },
   );
   await act(async () => {});
 }

@@ -30,6 +30,7 @@ vi.mock("../src/context/Favorites", () => ({
 vi.mock("../src/context/Playlists", () => ({
   usePlaylists: () => ({ data: mock.playlists, error: null, loading: false, reload: mock.reload }),
 }));
+vi.mock("../src/context/Confirm", () => ({ useConfirm: () => vi.fn() }));
 
 const playlist = (id: string, name: string, extra: Partial<Playlist> = {}): Playlist => ({
   id, owner_id: "user", name, visibility: "private", is_smart: false,

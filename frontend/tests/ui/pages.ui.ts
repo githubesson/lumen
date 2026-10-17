@@ -3,6 +3,7 @@ import {
   albums,
   artists,
   pendingInvites,
+  playlistTracks,
   playlists,
   tidalAlbum,
   tidalAlbumPartlySaved,
@@ -193,6 +194,21 @@ test("playlist settings", async ({ page }, testInfo) => {
   await checkUI(page, testInfo);
 });
 
+// Confirmations show what they act on as a card: here the playlist's cover,
+// name and size.
+test("delete playlist confirmation", async ({ page }, testInfo) => {
+  await go(page, `/playlists/${shared.id}`);
+  // Its own count, not the library rows still showing as it loads: the card
+  // is drawn from what has loaded when Delete is pressed.
+  const count = `${playlistTracks(shared.id).length} tracks`;
+  await ready(page, page.getByText(count, { exact: true }));
+  await press(page, "tab", "Settings");
+  await press(page, "button", /^Delete$/);
+  const dialog = page.getByRole("alertdialog", { name: "Delete this playlist?" });
+  await ready(page, dialog.getByText(`${count} · Collaborative`, { exact: true }));
+  await checkUI(page, testInfo);
+});
+
 test("new playlist", async ({ page }, testInfo) => {
   await go(page, "/playlists/new");
   await ready(page, page.getByRole("heading", { name: "New playlist" }));
@@ -229,8 +245,40 @@ test("admin users", async ({ page }, testInfo) => {
   await checkUI(page, testInfo);
 });
 
+// A person without a picture shows their initials.
+test("disable user confirmation", async ({ page }, testInfo) => {
+  await go(page, "/admin/users");
+  await ready(page, page.getByText("oskar.lindqvist"));
+  await press(page, "button", "Disable jonas");
+  const dialog = page.getByRole("alertdialog", { name: "Disable this account?" });
+  await ready(page, dialog.getByText("jonas", { exact: true }));
+  await checkUI(page, testInfo, {
+    exceptions: [
+      {
+        // axe compares the stack under each line of text, the page beneath
+        // the modal included. At 1440px the message's two lines sit over
+        // different table rows, so it gives up; the same text is measured
+        // over other pages in the other confirmation specs.
+        selector: ".confirm-message",
+        rules: ["text-contrast"],
+        reason: "Two lines of modal text over different table rows behind the scrim, which axe can't resolve. The same style is measured in the other confirmation specs.",
+      },
+    ],
+  });
+});
+
 test("admin invites", async ({ page }, testInfo) => {
   await go(page, "/admin/invites");
   await ready(page, page.getByRole("heading", { name: "Active invites" }));
+  await checkUI(page, testInfo);
+});
+
+// Things without a picture of their own get an icon.
+test("revoke invite confirmation", async ({ page }, testInfo) => {
+  await go(page, "/admin/invites");
+  await ready(page, page.getByRole("heading", { name: "Active invites" }));
+  await press(page, "button", /^Revoke /);
+  const dialog = page.getByRole("alertdialog", { name: "Revoke this invite?" });
+  await ready(page, dialog.getByText("User invite", { exact: true }));
   await checkUI(page, testInfo);
 });

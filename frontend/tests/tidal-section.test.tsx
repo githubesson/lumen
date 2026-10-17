@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, type TidalStatus } from "../src/api";
 import { clearResourceCache } from "../src/lib/resourceCache";
 import { TidalSection } from "../src/pages/admin/TidalSection";
+import { ConfirmProvider } from "../src/context/Confirm";
 
 vi.mock("../src/pages/admin/TidalAutoDownloadCard", () => ({ TidalAutoDownloadCard: () => null }));
 
@@ -24,7 +25,7 @@ afterEach(() => {
 
 it("claims nothing about accounts or the extension when the status fails to load", async () => {
   vi.mocked(api.tidalStatus).mockRejectedValue(new Error("offline"));
-  render(<TidalSection roots={[]} />);
+  render(<TidalSection roots={[]} />, { wrapper: ConfirmProvider });
   expect(await screen.findByText("Failed to load TIDAL status.")).toBeTruthy();
   expect(screen.queryByText(/require the Lumen hifi-api extension/)).toBeNull();
   expect(screen.queryByText(/No TIDAL account is linked/)).toBeNull();
@@ -34,7 +35,7 @@ it("claims nothing about accounts or the extension when the status fails to load
 it("says no account is linked only once a status says so", async () => {
   let answer!: (s: TidalStatus) => void;
   vi.mocked(api.tidalStatus).mockReturnValue(new Promise((resolve) => { answer = resolve; }));
-  render(<TidalSection roots={[]} />);
+  render(<TidalSection roots={[]} />, { wrapper: ConfirmProvider });
   expect(screen.getByText("checking")).toBeTruthy();
   expect(screen.queryByText(/No TIDAL account is linked/)).toBeNull();
   answer(status({}));
@@ -45,7 +46,7 @@ it("says no account is linked only once a status says so", async () => {
 
 it("explains the extension when a loaded status lacks account controls", async () => {
   vi.mocked(api.tidalStatus).mockResolvedValue(status({ management_supported: false }));
-  render(<TidalSection roots={[]} />);
+  render(<TidalSection roots={[]} />, { wrapper: ConfirmProvider });
   expect(await screen.findByText(/require the Lumen hifi-api extension/)).toBeTruthy();
   expect(screen.queryByText(/No TIDAL account is linked/)).toBeNull();
 });
@@ -57,7 +58,7 @@ it("names linked accounts and where they come from", async () => {
       { id: "b", user_id: "", removable: false },
     ] as TidalStatus["accounts"],
   }));
-  render(<TidalSection roots={[]} />);
+  render(<TidalSection roots={[]} />, { wrapper: ConfirmProvider });
   expect(await screen.findByText("Account 123")).toBeTruthy();
   expect(screen.getByText("Managed by Lumen")).toBeTruthy();
   expect(screen.getByText("Account unknown")).toBeTruthy();

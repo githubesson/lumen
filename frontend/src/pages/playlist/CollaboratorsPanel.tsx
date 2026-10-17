@@ -1,5 +1,9 @@
 import { FormEvent, useState } from "react";
-import { UserMinus as UserMinusIcon, UserPlus as UserPlusIcon } from "lucide-react";
+import {
+  LogOut as LogOutIcon,
+  UserMinus as UserMinusIcon,
+  UserPlus as UserPlusIcon,
+} from "lucide-react";
 import {
   api,
   errorMessage,
@@ -10,6 +14,7 @@ import { Button } from "../../components/Button";
 import ErrorBanner from "../../components/ErrorBanner";
 import EmptyState from "../../components/EmptyState";
 import { Field, NativeSelect, TextInput } from "../../components/Field";
+import { useConfirm, type ConfirmSubject } from "../../context/Confirm";
 import { fmtDate } from "../../lib/format";
 import {
   collaboratorPermissions,
@@ -24,6 +29,7 @@ export default function CollaboratorsPanel({
   me,
   onChanged,
   onLeft,
+  subject,
 }: {
   playlistId: string;
   collaborators: Collaborator[];
@@ -32,11 +38,14 @@ export default function CollaboratorsPanel({
   onChanged: () => Promise<void>;
   /** After you remove yourself, which ends your access to the playlist. */
   onLeft: () => void;
+  /** The playlist, as the confirmation to leave it shows it. */
+  subject?: () => ConfirmSubject;
 }) {
   const [username, setUsername] = useState("");
   const [role, setRole] = useState<CollaboratorRole>("editor");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const confirm = useConfirm();
 
   const invite = async (e: FormEvent) => {
     e.preventDefault();
@@ -53,13 +62,34 @@ export default function CollaboratorsPanel({
     }
   };
 
-  const remove = async (userId: string, isSelf: boolean) => {
-    const question = isSelf
-      ? "Leave this playlist? You'll lose access to it."
-      : "Remove this collaborator?";
-    if (!window.confirm(question)) return;
+  const remove = async (c: Collaborator, isSelf: boolean) => {
+    const pending = c.status === "pending";
+    const confirmed = await confirm(
+      isSelf
+        ? {
+            title: "Leave this playlist?",
+            message: "You lose access to it unless you're invited again.",
+            subject: subject?.(),
+            confirmLabel: "Leave",
+            confirmIcon: LogOutIcon,
+          }
+        : {
+            title: pending ? "Withdraw this invite?" : "Remove from this playlist?",
+            message: pending
+              ? "They can't join the playlist with it anymore."
+              : "They lose access to the playlist.",
+            subject: {
+              art: { person: c.username },
+              name: c.username,
+              detail: `${c.role === "editor" ? "Editor" : "Viewer"} · ${pending ? "Invite pending" : "Accepted"}`,
+            },
+            confirmLabel: pending ? "Withdraw" : "Remove",
+            confirmIcon: UserMinusIcon,
+          },
+    );
+    if (!confirmed) return;
     try {
-      await api.removeCollaborator(playlistId, userId);
+      await api.removeCollaborator(playlistId, c.user_id);
       if (isSelf) onLeft();
       else await onChanged();
     } catch (err) {
@@ -169,7 +199,7 @@ export default function CollaboratorsPanel({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => void remove(c.user_id, row.isSelf)}
+                    onClick={() => void remove(c, row.isSelf)}
                     leadingIcon={<UserMinusIcon className="size-3.5" />}
                   >
                     {row.isSelf ? "Leave" : "Remove"}

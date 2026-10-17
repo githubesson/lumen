@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, type Invite } from "../src/api";
 import { clearResourceCache } from "../src/lib/resourceCache";
 import { InvitesAdminSection } from "../src/pages/AdminInvites";
+import { ConfirmProvider } from "../src/context/Confirm";
 
 const desktop = vi.hoisted(() => ({ backendUrl: null as string | null }));
 vi.mock("../src/lib/platform", async (original) => ({
@@ -38,7 +39,7 @@ afterEach(() => {
 });
 
 it("doesn't send max uses the server would quietly turn into 1", async () => {
-  render(<InvitesAdminSection />);
+  render(<InvitesAdminSection />, { wrapper: ConfirmProvider });
   const maxUses = screen.getByLabelText("Max uses");
   const create = screen.getByRole("button", { name: "Create" });
 
@@ -65,7 +66,7 @@ it("doesn't send max uses the server would quietly turn into 1", async () => {
 });
 
 it("rejects an expiry in the past", () => {
-  render(<InvitesAdminSection />);
+  render(<InvitesAdminSection />, { wrapper: ConfirmProvider });
   fireEvent.change(screen.getByLabelText("Expires (optional)"), {
     target: { value: "2020-01-01T00:00" },
   });
@@ -81,7 +82,7 @@ it("files expired and used-up invites with the past ones, where they can't be re
     invite({ id: "expired", expires_at: new Date(Date.now() - 1000).toISOString() }),
     invite({ id: "spent", uses: 1 }),
   ]);
-  render(<InvitesAdminSection />);
+  render(<InvitesAdminSection />, { wrapper: ConfirmProvider });
   const disclosure = await screen.findByRole("button", { name: /Used, expired and revoked/ });
   expect(within(disclosure).getByText("2")).toBeTruthy();
   expect(screen.getAllByRole("button", { name: /^Revoke / })).toHaveLength(1);
@@ -92,7 +93,7 @@ it("files expired and used-up invites with the past ones, where they can't be re
 });
 
 it("links the invite to this site on the web", async () => {
-  render(<InvitesAdminSection />);
+  render(<InvitesAdminSection />, { wrapper: ConfirmProvider });
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(
     await screen.findByText(`${window.location.origin}/register?token=${"t".repeat(32)}`),
@@ -101,7 +102,7 @@ it("links the invite to this site on the web", async () => {
 
 it("links the invite to the configured server on the desktop app, not its local proxy", async () => {
   desktop.backendUrl = "https://music.example.com";
-  render(<InvitesAdminSection />);
+  render(<InvitesAdminSection />, { wrapper: ConfirmProvider });
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(
     await screen.findByText(`https://music.example.com/register?token=${"t".repeat(32)}`),
@@ -113,7 +114,7 @@ it("makes one invite for a double submit", async () => {
   vi.mocked(api.createInvite).mockImplementation(
     () => new Promise((resolve) => { finish = resolve; }),
   );
-  render(<InvitesAdminSection />);
+  render(<InvitesAdminSection />, { wrapper: ConfirmProvider });
   const form = screen.getByRole("button", { name: "Create" }).closest("form")!;
   fireEvent.submit(form);
   fireEvent.submit(form);
@@ -124,7 +125,7 @@ it("makes one invite for a double submit", async () => {
 
 it("says so when the server sends the invite back without its token", async () => {
   vi.mocked(api.createInvite).mockResolvedValue(invite({ id: "new" }));
-  render(<InvitesAdminSection />);
+  render(<InvitesAdminSection />, { wrapper: ConfirmProvider });
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(await screen.findByText(/didn't send its link/)).toBeTruthy();
 });

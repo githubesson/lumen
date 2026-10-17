@@ -1,7 +1,8 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import TrackContextMenu from "../src/components/TrackContextMenu";
+import { ConfirmProvider } from "../src/context/Confirm";
 import type { TrackListItem } from "../src/api";
 
 const mock = vi.hoisted(() => ({
@@ -35,6 +36,7 @@ function renderMenu(track: TrackListItem, props: { onEdit?: () => void; onMoveTo
       <TrackContextMenu track={track} x={0} y={0} onClose={onClose} {...props} />
       <Location />
     </MemoryRouter>,
+    { wrapper: ConfirmProvider },
   );
   return onClose;
 }
@@ -94,14 +96,34 @@ it("looks the album up when the row lacks it, and says when there is none", asyn
   expect(screen.getByRole("status").textContent).toBe("/");
 });
 
-it("confirms deleting an own upload with the shared copy", async () => {
+it("asks before deleting an own upload, in the app's dialog", async () => {
   mock.role = "user";
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-  renderMenu({ id: "t1", title: "Mine", duration_ms: 1, source: "local", owned: true });
+  const confirm = vi.spyOn(window, "confirm");
+  const onClose = renderMenu({ id: "t1", title: "Mine", duration_ms: 1, source: "local", owned: true });
   await act(async () => { fireEvent.click(item("Delete from my library")!); });
-  expect(confirm).toHaveBeenCalledWith(
-    'Delete "Mine" from your library? This permanently removes the file you uploaded.',
-  );
+  expect(onClose).toHaveBeenCalled();
+  expect(confirm).not.toHaveBeenCalled();
+  const dialog = await screen.findByRole("alertdialog", { name: "Delete from your library?" });
+  expect(within(dialog).getByText("Mine")).toBeTruthy();
+  expect(within(dialog).getByText("This permanently removes the file you uploaded.")).toBeTruthy();
+  expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
+  await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" })); });
   expect(mock.deleteTrack).not.toHaveBeenCalled();
   confirm.mockRestore();
+});
+
+it("deletes from the dialog, and keeps it open to show a failure", async () => {
+  mock.role = "user";
+  mock.deleteTrack.mockRejectedValueOnce(new Error("offline"));
+  renderMenu({ id: "t1", title: "Mine", duration_ms: 1, source: "local", owned: true });
+  await act(async () => { fireEvent.click(item("Delete from my library")!); });
+  const dialog = await screen.findByRole("alertdialog", { name: "Delete from your library?" });
+  await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Delete" })); });
+  expect(mock.deleteTrack).toHaveBeenCalledWith("t1");
+  expect(within(dialog).getByRole("alert").textContent).toBe("Delete failed.");
+
+  mock.deleteTrack.mockResolvedValueOnce(undefined);
+  await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Delete" })); });
+  expect(mock.deleteTrack).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
 });

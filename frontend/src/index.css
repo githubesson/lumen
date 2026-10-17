@@ -79,6 +79,7 @@
 @import "./styles/welcome.css";
 @import "./styles/forms.css";
 @import "./styles/dialogs.css";
+@import "./styles/confirm.css";
 @import "./styles/primitives.css";
 @import "./styles/command-palette.css";
 @import "./styles/badges.css";

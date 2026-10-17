@@ -25,6 +25,7 @@ import {
   reserveExternalWindow,
 } from "../../lib/platform";
 import { useApiResource } from "../../lib/useApiResource";
+import { useConfirm } from "../../context/Confirm";
 import { TidalAutoDownloadCard } from "./TidalAutoDownloadCard";
 
 const PROXY_BADGES: Record<TidalProxyState, string> = {
@@ -55,6 +56,7 @@ const cardTitleStyle = {
 } as const;
 
 export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
+  const confirm = useConfirm();
   const {
     data: status,
     error: loadError,
@@ -101,9 +103,19 @@ export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
     if (!(await start(reservedWindow))) closeExternalWindow(reservedWindow);
   };
 
-  const removeAccount = (account: TidalAccount) => {
-    if (!window.confirm(`Unlink TIDAL account ${account.user_id || account.id}?`)) return;
-    void unlink(account);
+  const removeAccount = async (account: TidalAccount) => {
+    const confirmed = await confirm({
+      title: "Unlink this TIDAL account?",
+      message: "Lumen stops using it for TIDAL. You can link it again later.",
+      subject: {
+        art: { icon: LinkIcon },
+        name: tidalAccountLabel(account),
+        detail: tidalAccountSource(account),
+      },
+      confirmLabel: "Unlink",
+      confirmIcon: TrashIcon,
+    });
+    if (confirmed) await unlink(account);
   };
 
   return (
@@ -257,7 +269,7 @@ export function TidalSection({ roots }: { roots: MusicRoot[] | null }) {
                     variant="danger"
                     leadingIcon={<TrashIcon className="size-3.5" />}
                     disabled={busy}
-                    onClick={() => removeAccount(account)}
+                    onClick={() => void removeAccount(account)}
                   >
                     {unlinkingId === account.id ? "Unlinking..." : "Unlink"}
                   </Button>
