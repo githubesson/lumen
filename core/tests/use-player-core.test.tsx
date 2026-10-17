@@ -581,6 +581,20 @@ describe("usePlayerCore smooth mix", () => {
     expect(result.current.state.isPlaying).toBe(false);
   });
 
+  it("still fades after a pause and a resume in one batch", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    // A brief interruption: both statuses arrive before React renders, and
+    // the two state changes cancel out.
+    act(() => {
+      emit("pause");
+      emit("play");
+    });
+    expect(result.current.state.isPlaying).toBe(true);
+    state.time = 177;
+    act(() => emit("timeupdate"));
+    expect(adapter.crossfadeToPrepared).toHaveBeenCalledWith("test://stream/b", 3);
+  });
+
   it("doesn't fade into the old queue when a new one starts before it commits", async () => {
     const { result, adapter, state, emit } = await nearTheEnd();
     vi.mocked(adapter.prepareNext!).mockClear();

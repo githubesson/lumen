@@ -814,6 +814,9 @@ export function usePlayerCore({
       // Playback can start outside our controls (lock-screen play command,
       // an interruption ending with auto-resume) — adopt the platform state.
       setIsPlaying(true);
+      // As in the pause handler. A pause and this play in one batch cancel
+      // out and commit nothing, so the effect wouldn't set it back.
+      eventStateRef.current.isPlaying = true;
     });
     const offPause = adapter.on("pause", () => {
       syncListenedTime();
