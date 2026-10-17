@@ -176,6 +176,57 @@ describe("crossfadeToPrepared", () => {
     expect(prepared.volume).toBeCloseTo(0.4);
   });
 
+  it("keeps the outgoing song's hls.js until its fade ends, then destroys it once", async () => {
+    const { adapter, active, prepared } = setup();
+    act(() => adapter.load("/api/tracks/tidal%3Aone/stream"));
+    await vi.waitFor(() => expect(mock.instances).toHaveLength(1));
+    act(() => adapter.prepareNext?.("/api/tracks/tidal%3Atwo/stream"));
+    await vi.waitFor(() => expect(mock.instances).toHaveLength(2));
+    await act(async () => {});
+    const outgoing = mock.instances.find((hls) => hls.media === active)!;
+    const incoming = mock.instances.find((hls) => hls.media === prepared)!;
+    Object.defineProperty(prepared, "readyState", {
+      configurable: true,
+      get: () => HTMLMediaElement.HAVE_ENOUGH_DATA,
+    });
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
+
+    expect(adapter.crossfadeToPrepared?.("/api/tracks/tidal%3Atwo/stream", 4)).toBe(true);
+    vi.advanceTimersByTime(3900);
+    expect(outgoing.destroy).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(200);
+    expect(outgoing.destroy).toHaveBeenCalledOnce();
+    expect(incoming.destroy).not.toHaveBeenCalled();
+    // The playing stream's fatal errors are still reported.
+    const error = vi.fn();
+    adapter.on("error", error);
+    incoming.fail(manifestFailed);
+    expect(error).toHaveBeenCalledOnce();
+  });
+
+  it("ends a fade before preparing the next song on the element it leaves", async () => {
+    const { adapter, active, prepared } = setup();
+    act(() => adapter.load("/api/tracks/tidal%3Aone/stream"));
+    await vi.waitFor(() => expect(mock.instances).toHaveLength(1));
+    act(() => adapter.prepareNext?.("/api/tracks/tidal%3Atwo/stream"));
+    await vi.waitFor(() => expect(mock.instances).toHaveLength(2));
+    await act(async () => {});
+    const outgoing = mock.instances.find((hls) => hls.media === active)!;
+    const incoming = mock.instances.find((hls) => hls.media === prepared)!;
+    Object.defineProperty(prepared, "readyState", {
+      configurable: true,
+      get: () => HTMLMediaElement.HAVE_ENOUGH_DATA,
+    });
+    expect(adapter.crossfadeToPrepared?.("/api/tracks/tidal%3Atwo/stream", 4)).toBe(true);
+
+    act(() => adapter.prepareNext?.("/api/tracks/tidal%3Athree/stream"));
+    expect(outgoing.destroy).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(mock.instances).toHaveLength(3));
+    expect(mock.instances[2].media).toBe(active);
+    expect(incoming.destroy).not.toHaveBeenCalled();
+    expect(prepared.volume).toBeCloseTo(1);
+  });
+
   it("changes nothing when the next song isn't ready or can't take a volume", () => {
     const { adapter, active, prepared } = playingWithNextReady();
     Object.defineProperty(prepared, "readyState", { configurable: true, get: () => 0 });

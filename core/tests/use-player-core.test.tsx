@@ -533,13 +533,40 @@ describe("usePlayerCore smooth mix", () => {
     expect(result.current.state.current?.id).toBe("b");
   });
 
-  it("fades into a short song over half its length", async () => {
+  it("fades into a short song over half its length, without cutting this one", async () => {
     const queue = queue4();
     queue[1] = { ...queue[1], duration_ms: 4_000 };
     const { adapter, state, emit } = await nearTheEnd({}, queue);
     state.time = 175;
     act(() => emit("timeupdate"));
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+
+    state.time = 178;
+    act(() => emit("timeupdate"));
     expect(adapter.crossfadeToPrepared).toHaveBeenCalledWith("test://stream/b", 2);
+  });
+
+  it("goes on from the crossfaded track as usual", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    state.time = 175;
+    act(() => emit("timeupdate"));
+    expect(result.current.state.current?.id).toBe("b");
+
+    // Skipping mid-fade loads the track after it; nothing was prepared yet.
+    act(() => result.current.controls.next());
+    expect(adapter.load).toHaveBeenLastCalledWith("test://stream/c");
+    expect(result.current.state.current?.id).toBe("c");
+
+    // And c's own end hands off to d once, as any track's does.
+    state.dur = 180;
+    state.time = 150;
+    act(() => emit("timeupdate"));
+    expect(adapter.prepareNext).toHaveBeenLastCalledWith("test://stream/d");
+    act(() => emit("ended"));
+    expect(adapter.activatePrepared).toHaveBeenCalledOnce();
+    expect(adapter.activatePrepared).toHaveBeenCalledWith("test://stream/d");
+    expect(result.current.state.current?.id).toBe("d");
+    expect(adapter.crossfadeToPrepared).toHaveBeenCalledOnce();
   });
 
   it("leaves the last second to the ordinary handoff", async () => {

@@ -624,7 +624,7 @@ describe("useExpoAudioAdapter smooth mix", () => {
   async function playingWithNextReady() {
     const adapter = createTestAdapter();
     const events: string[] = [];
-    for (const event of ["loadedmetadata", "play", "pause", "ended"] as const) {
+    for (const event of ["loadedmetadata", "play", "pause", "ended", "error"] as const) {
       adapter.on(event, () => events.push(event));
     }
     adapter.setVolume(0.8);
@@ -699,6 +699,27 @@ describe("useExpoAudioAdapter smooth mix", () => {
     adapter.pause();
     expect(h.calls).toEqual(["b:replace", "b:play", "pause", "empty", "b:pause"]);
     expect(h.secondPlayer.volume).toBeCloseTo(0.4);
+  });
+
+  it("reports a system pause of the incoming song, and the pause that follows ends the fade", async () => {
+    const { adapter, events } = await crossfading();
+    vi.advanceTimersByTime(1000);
+    // An interruption pauses both players; only the active one's pause counts.
+    h.emitStatus(loaded);
+    h.emitStatusOn(h.secondPlayer, loaded);
+    expect(events).toEqual(["loadedmetadata", "play", "pause"]);
+
+    // The core answers with pause(), which stops and empties the fading song.
+    adapter.pause();
+    expect(h.calls).toEqual(["b:replace", "b:play", "pause", "empty", "b:pause"]);
+  });
+
+  it("reports the incoming song failing as it starts", async () => {
+    const { adapter, events } = await playingWithNextReady();
+    expect(adapter.crossfadeToPrepared!(next, 4)).toBe(true);
+    h.emitStatusOn(h.secondPlayer, { ...loaded, isLoaded: false, duration: 0, error: "The server returned 502." });
+    expect(events).toEqual(["error"]);
+    expect(h.calls).toEqual(["b:replace"]);
   });
 
   it("swaps back to the first player for the next crossfade", async () => {

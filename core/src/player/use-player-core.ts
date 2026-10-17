@@ -738,11 +738,16 @@ export function usePlayerCore({
           )
           .catch(() => {});
       }
-      // Smooth mix: start the next track before this one ends. Until the
-      // prepared track is ready, each update tries again with what's left.
+      // Smooth mix: start the next track before this one ends, so the fade
+      // ends with it. A short next song fades in over half its length at
+      // most, and starts that much later rather than cutting this one short.
+      // Until the prepared track is ready, each update tries again with
+      // what's left.
       const { crossfadeSeconds: fade, isPlaying: playing, advance: advanceTo } =
         eventStateRef.current;
       const remaining = d - now;
+      const nextSeconds = (toPrepare?.duration_ms ?? 0) / 1000;
+      const fadeLength = nextSeconds > 0 ? Math.min(fade, nextSeconds / 2) : fade;
       if (
         fade > 0 &&
         playing &&
@@ -751,13 +756,11 @@ export function usePlayerCore({
         adapter.crossfadeToPrepared &&
         preparedNextRef.current?.trackId === toPrepare.id &&
         d > 0 &&
-        remaining <= fade &&
+        remaining <= fadeLength &&
         remaining >= MIN_CROSSFADE_SEC &&
         !continuesAlbum(currentTrack, toPrepare)
       ) {
-        // A short next song fades in over half its length at most.
-        const nextSeconds = toPrepare.duration_ms / 1000;
-        advanceTo(nextSeconds > 0 ? Math.min(remaining, nextSeconds / 2) : remaining);
+        advanceTo(remaining);
       }
     });
     const offMeta = adapter.on("loadedmetadata", () => {
