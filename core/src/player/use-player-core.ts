@@ -167,11 +167,12 @@ export function usePlayerCore({
   const preparedNextRef = useRef<{ trackId: string; uri: string } | null>(null);
   const playbackAttemptRef = useRef(0);
   const handoffRef = useRef<{ track: TrackListItem; attempt: number } | null>(null);
-  // Picks made by play(), jumpTo() and prev(), and the last one React has
-  // committed. Until they match, the event handlers still see the old
-  // queue's next track, and a timeupdate must not prepare it or crossfade
-  // into it. Each pick also bumps state, so it always commits, and only its
-  // own commit (not an earlier, higher-priority one) clears it.
+  // Picks made by play(), jumpTo() and prev(), and changes to shuffle or
+  // repeat, and the last one React has committed. Until they match, the
+  // event handlers still see the old queue's next track, and a timeupdate
+  // must not prepare it or crossfade into it. Each pick also bumps state, so
+  // it always commits, and only its own commit (not an earlier,
+  // higher-priority one) clears it.
   const picksRef = useRef(0);
   const committedPicksRef = useRef(0);
   const [picks, setPicks] = useState(0);
@@ -555,6 +556,7 @@ export function usePlayerCore({
 
   const setShuffle = useCallback<PlayerControls["setShuffle"]>((value) => {
     if (value === shuffle) return;
+    notePick();
     setShuffleState(value);
     if (!queue.length) return;
     if (value) {
@@ -573,20 +575,21 @@ export function usePlayerCore({
         current ? Math.max(0, source.findIndex((t) => t.id === current.id)) : 0,
       );
     }
-  }, [shuffle, queue, sourceQueue, current]);
+  }, [shuffle, queue, sourceQueue, current, notePick]);
 
   const toggleShuffle = useCallback<PlayerControls["toggleShuffle"]>(() => {
     setShuffle(!shuffle);
   }, [setShuffle, shuffle]);
 
   const setRepeat = useCallback<PlayerControls["setRepeat"]>((value) => {
+    notePick();
     setRepeatState(value);
-  }, []);
+  }, [notePick]);
 
-  const cycleRepeat = useCallback<PlayerControls["cycleRepeat"]>(
-    () => setRepeatState((r) => nextRepeatMode(r)),
-    [],
-  );
+  const cycleRepeat = useCallback<PlayerControls["cycleRepeat"]>(() => {
+    notePick();
+    setRepeatState((r) => nextRepeatMode(r));
+  }, [notePick]);
 
   const nextTrackToPrepare = useMemo(() => {
     if (!current || repeat === "one" || !queue.length) return null;

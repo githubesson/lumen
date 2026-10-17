@@ -644,6 +644,19 @@ describe("usePlayerCore smooth mix", () => {
     expect(adapter.prepareNext).toHaveBeenCalledWith("test://stream/y");
   });
 
+  it("doesn't fade into the old order when shuffle changes before it commits", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    // CarPlay's shuffle button runs outside a React event too.
+    act(() => {
+      result.current.controls.setShuffle(true);
+      state.time = 177;
+      emit("timeupdate");
+    });
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+    expect(result.current.state.current?.id).toBe("a");
+    expect(result.current.state.index).toBe(0);
+  });
+
   it("leaves the last second to the ordinary handoff", async () => {
     const { result, adapter, state, emit } = await nearTheEnd();
     state.time = 179.5;
