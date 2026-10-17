@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
 import { X as XMarkIcon } from "lucide-react";
 import { trapTab } from "../lib/focusTrap";
 import { useModalKeyScope } from "../lib/keybindings";
@@ -14,18 +14,31 @@ const openDialogs: object[] = [];
  * playlist dialogs (which hand-rolled their own scaffold and dropped
  * Escape-to-close) can reuse it. While open it holds focus (Tab cycles inside,
  * page shortcuts pause) and gives it back to the opener on close. Pass the
- * scrollable body as `children` and an optional sticky `footer`.
+ * scrollable body as `children` and an optional sticky `footer`. Without a
+ * `title` there's no header bar, and `labelledBy` names the heading inside.
  */
 export function DialogShell({
   open,
   title,
+  labelledBy,
+  describedBy,
+  role = "dialog",
+  initialFocus,
   onClose,
   children,
   footer,
   maxWidth,
 }: {
   open: boolean;
-  title: ReactNode;
+  /** The header bar's title; leave it out for a dialog without one. */
+  title?: ReactNode;
+  /** Without a title, the id of the heading inside that names the dialog. */
+  labelledBy?: string;
+  describedBy?: string;
+  /** "alertdialog" for a question that interrupts, like a confirmation. */
+  role?: "dialog" | "alertdialog";
+  /** Takes focus on open, instead of the panel. */
+  initialFocus?: RefObject<HTMLElement | null>;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
@@ -42,8 +55,10 @@ export function DialogShell({
   // Callers pass a fresh arrow each render; the effect below must only run as
   // the dialog opens and closes, or it would pull focus back every render.
   const latestClose = useRef(onClose);
+  const latestInitialFocus = useRef(initialFocus);
   useEffect(() => {
     latestClose.current = onClose;
+    latestInitialFocus.current = initialFocus;
   });
 
   useEffect(() => {
@@ -53,9 +68,11 @@ export function DialogShell({
     const restoreTo = document.activeElement as HTMLElement | null;
     const layer = layerRef.current;
     const panel = panelRef.current;
-    // An autoFocus field already has focus. Otherwise start on the panel, so
-    // the first Tab lands on the first control.
-    if (!panel?.contains(document.activeElement)) panel?.focus();
+    // An autoFocus field already has focus. Otherwise start on the chosen
+    // control, or the panel, so the first Tab lands on the first control.
+    if (!panel?.contains(document.activeElement)) {
+      (latestInitialFocus.current?.current ?? panel)?.focus();
+    }
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (openDialogs[openDialogs.length - 1] !== token) return;
@@ -93,9 +110,10 @@ export function DialogShell({
   return (
     <div
       ref={layerRef}
-      role="dialog"
+      role={role}
       aria-modal="true"
-      aria-labelledby={title ? titleId : undefined}
+      aria-labelledby={title ? titleId : labelledBy}
+      aria-describedby={describedBy}
       data-closed={!visible || undefined}
       className="dialog-layer group fixed inset-0 grid place-items-center p-4"
       onPointerDown={(e) => {
@@ -119,23 +137,25 @@ export function DialogShell({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="dialog relative grid max-h-[80vh] w-full max-w-lg grid-rows-[auto_1fr_auto] overflow-hidden outline-none transition-[opacity,transform] duration-200 ease-out group-data-closed:scale-95 group-data-closed:opacity-0 motion-reduce:transition-none motion-reduce:group-data-closed:scale-100"
+        className={`dialog relative grid max-h-[80vh] w-full max-w-lg ${title ? "grid-rows-[auto_1fr_auto]" : "grid-rows-[1fr_auto]"} overflow-hidden outline-none transition-[opacity,transform] duration-200 ease-out group-data-closed:scale-95 group-data-closed:opacity-0 motion-reduce:transition-none motion-reduce:group-data-closed:scale-100`}
         style={maxWidth !== undefined ? { maxWidth } : undefined}
       >
-        <div
-          className="flex items-center justify-between px-4 py-3"
-          style={{ borderBottom: "1px solid var(--border)" }}
-        >
-          <h2 id={titleId} style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>{title}</h2>
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            className="iconbtn"
+        {title && (
+          <div
+            className="flex items-center justify-between px-4 py-3"
+            style={{ borderBottom: "1px solid var(--border)" }}
           >
-            <XMarkIcon className="size-3.5" aria-hidden="true" />
-          </button>
-        </div>
+            <h2 id={titleId} style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>{title}</h2>
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={onClose}
+              className="iconbtn"
+            >
+              <XMarkIcon className="size-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        )}
         {children}
         {footer}
       </div>
