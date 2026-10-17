@@ -14,6 +14,10 @@ let publicBackendUrl = "";
 let card: DiscordCardOptions = DEFAULT_DISCORD_CARD;
 let lastActivity: DiscordActivityPayload | null = null;
 let lastStartMs = 0;
+// The newest update asked for, confirmed by Discord or not. A card change
+// redraws this one: `lastActivity` can still be the track a push in flight
+// is replacing.
+let requested: { payload: DiscordActivityPayload; at: number } | null = null;
 let retryAfter = 0;
 let failures = 0;
 // The newest update Discord couldn't take (closed, or in reconnect backoff),
@@ -41,15 +45,15 @@ function scheduleRetry(payload: DiscordActivityPayload): void {
     const pending = retryActivity;
     retryActivity = null;
     if (!pending) return;
-    // A playing track has moved on while it waited.
-    const waitedSec = (Date.now() - pending.queuedAt) / 1000;
-    void pushDiscordActivity(
-      pending.payload.isPlaying
-        ? { ...pending.payload, elapsedSec: (pending.payload.elapsedSec ?? 0) + waitedSec }
-        : pending.payload,
-    );
+    void pushDiscordActivity(movedOn(pending.payload, pending.queuedAt));
   }, Math.max(1000, retryAfter - Date.now()));
   retryTimer.unref?.();
+}
+
+/** `payload` as it stands now: a playing track has moved on since `sinceMs`. */
+function movedOn(payload: DiscordActivityPayload, sinceMs: number): DiscordActivityPayload {
+  if (!payload.isPlaying) return payload;
+  return { ...payload, elapsedSec: (payload.elapsedSec ?? 0) + (Date.now() - sinceMs) / 1000 };
 }
 
 /** The last activity as it stands now, its elapsed time moved on if playing. */
@@ -80,7 +84,7 @@ export function configureDiscordPresence(options: {
     card = options.card;
     // Redraw what Discord shows now; the renderer only sends on player events.
     // A push still waiting to be retried picks the new card up when it goes.
-    if (lastActivity && !retryActivity) void pushDiscordActivity(currentActivity(lastActivity));
+    if (requested && !retryActivity) void pushDiscordActivity(movedOn(requested.payload, requested.at));
   }
 }
 
@@ -154,6 +158,7 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
   // A newer update supersedes one waiting to be retried.
   cancelRetry();
   const generation = ++pushGeneration;
+  requested = { payload, at: Date.now() };
   const discord = await ensureDiscord();
   // A newer push or a clear arrived while connecting: this one is stale.
   if (generation !== pushGeneration) return { ok: false, error: "superseded" };
@@ -236,6 +241,7 @@ export async function clearDiscordActivity(): Promise<void> {
   // would otherwise queue it to be restored after the reconnect backoff.
   lastActivity = null;
   lastStartMs = 0;
+  requested = null;
   if (!client) return;
   try {
     await client.clearActivity();
@@ -252,6 +258,7 @@ export async function teardownDiscordPresence(): Promise<void> {
   client = null;
   lastActivity = null;
   lastStartMs = 0;
+  requested = null;
   if (!current) return;
   try {
     await current.clearActivity();

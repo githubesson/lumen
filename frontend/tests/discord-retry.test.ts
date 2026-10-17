@@ -203,3 +203,24 @@ it("clears the card while paused when it's set to, and restores it on play", asy
   expect(request).toHaveBeenCalledTimes(2);
   expect(request.mock.calls[1][1].activity.assets.small_image).toBe("pause");
 });
+
+it("redraws the newest track when the card changes while that track's push is in flight", async () => {
+  let finish!: () => void;
+  const request = vi.fn()
+    .mockResolvedValueOnce(undefined)
+    .mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }))
+    .mockResolvedValue(undefined);
+  const { exports } = load(vi.fn().mockResolvedValue(undefined), request);
+  exports.configureDiscordPresence({ clientId: "fixture", card: DEFAULT_CARD });
+  await exports.pushDiscordActivity({ trackId: "a", title: "Song A", isPlaying: true });
+  const b = exports.pushDiscordActivity({ trackId: "b", title: "Song B", isPlaying: true });
+  // B has reached Discord and waits on its reply when the card changes.
+  await new Promise((resolve) => setImmediate(resolve));
+  exports.configureDiscordPresence({ card: { ...DEFAULT_CARD, state: "on repeat" } });
+  await new Promise((resolve) => setImmediate(resolve));
+  finish();
+  await b;
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(request.mock.calls.map((call) => call[1].activity.details)).toEqual(["Song A", "Song B", "Song B"]);
+  expect(request.mock.calls[2][1].activity.state).toBe("on repeat");
+});

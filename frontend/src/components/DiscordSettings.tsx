@@ -42,21 +42,38 @@ const TYPING_SAVE_MS = 600;
  * pause), and the desktop app redraws the card in Discord when they land.
  */
 export function DiscordCardSettings({ desktop }: { desktop: DesktopSettingsState }) {
-  const [card, setCard] = useState(desktop.config.discordCard);
+  const saved = desktop.config.discordCard;
+  const [card, setCard] = useState(saved);
   const [error, setError] = useState<string>();
   const latest = useRef(card);
   const unsaved = useRef<DiscordCardOptions | null>(null);
+  const saving = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const id = useId();
+
+  // Saved options that change while nothing here is waiting or saving (an
+  // earlier mount's save landing after a remount, say) replace the draft.
+  useEffect(() => {
+    if (unsaved.current || saving.current) return;
+    latest.current = saved;
+    setCard(saved);
+  }, [saved]);
 
   const flush = useCallback(() => {
     clearTimeout(timer.current);
     const next = unsaved.current;
     unsaved.current = null;
     if (!next) return;
-    void updateDesktopConfig({ discordCard: next }).then((result) => {
-      setError(result.ok ? undefined : result.error);
-    });
+    saving.current += 1;
+    void updateDesktopConfig({ discordCard: next })
+      .then(
+        (result) => (result.ok ? undefined : result.error),
+        (cause: unknown) => (cause instanceof Error ? cause.message : "Could not save."),
+      )
+      .then((message) => {
+        saving.current -= 1;
+        setError(message);
+      });
   }, []);
   // Leaving the section or closing Settings saves what was typed last.
   useEffect(() => flush, [flush]);

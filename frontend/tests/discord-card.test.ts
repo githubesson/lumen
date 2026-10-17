@@ -27,7 +27,10 @@ it("hides a line that's empty or whose fields are all missing", () => {
 
 it("keeps lines within Discord's 2–128 characters", () => {
   expect(fillDiscordTemplate("{title}", { title: "x" })).toBe("x ");
+  expect(fillDiscordTemplate("{title}", { title: "🎧" })).toBe("🎧 ");
   expect(fillDiscordTemplate("{title}", { title: "a".repeat(200) })).toHaveLength(128);
+  // A cut never leaves half of an emoji.
+  expect(fillDiscordTemplate("{title}", { title: `${"a".repeat(127)}🎧` })).toBe("a".repeat(127));
 });
 
 it("reads saved options, falling back to the defaults for anything malformed", () => {

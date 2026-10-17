@@ -41,12 +41,16 @@ export interface DiscordCardFields {
   album?: string;
 }
 
-/** Discord wants 2–128 characters per line; a single character is padded. */
+/**
+ * Discord wants 2–128 characters per line: a single character (one emoji
+ * included) is padded, and a cut never splits an emoji's surrogate pair.
+ */
 export function clampForDiscord(value: string | undefined, max = 128): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
   if (!trimmed) return undefined;
-  return trimmed.length < 2 ? `${trimmed} ` : trimmed.slice(0, max);
+  if (Array.from(trimmed).length < 2) return `${trimmed} `;
+  return trimmed.slice(0, max).replace(/[\ud800-\udbff]$/, "");
 }
 
 const TOKEN = /(\{(?:title|artist|album)\})/i;
