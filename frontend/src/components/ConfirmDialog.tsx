@@ -63,6 +63,7 @@ export function ConfirmDialog({
   onSettle: (id: number, confirmed: boolean) => void;
 }) {
   const titleId = useId();
+  const subjectId = useId();
   const messageId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
@@ -107,7 +108,8 @@ export function ConfirmDialog({
       open={open}
       role="alertdialog"
       labelledBy={titleId}
-      describedBy={messageId}
+      // What it happens to (the card), then what happens.
+      describedBy={subject ? `${subjectId} ${messageId}` : messageId}
       // The safe answer, so a stray Enter doesn't go ahead.
       initialFocus={cancelRef}
       onClose={cancel}
@@ -129,7 +131,7 @@ export function ConfirmDialog({
       }
     >
       <div className="confirm-body">
-        {subject && <SubjectCard subject={subject} />}
+        {subject && <SubjectCard id={subjectId} subject={subject} />}
         <div className="confirm-text">
           <h2 id={titleId} className="confirm-title">{title}</h2>
           <p id={messageId} className="confirm-message">{message}</p>
@@ -140,7 +142,7 @@ export function ConfirmDialog({
   );
 }
 
-function SubjectCard({ subject: { art, name, detail } }: { subject: ConfirmSubject }) {
+function SubjectCard({ id, subject: { art, name, detail } }: { id: string; subject: ConfirmSubject }) {
   return (
     <div className="confirm-subject">
       {"cover" in art ? (
@@ -154,7 +156,7 @@ function SubjectCard({ subject: { art, name, detail } }: { subject: ConfirmSubje
           <art.icon className="size-5" aria-hidden />
         </span>
       )}
-      <div className="confirm-subject-text">
+      <div id={id} className="confirm-subject-text">
         <div className="confirm-subject-name">{name}</div>
         {detail && <div className="confirm-subject-detail">{detail}</div>}
       </div>
