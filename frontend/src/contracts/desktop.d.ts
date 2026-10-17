@@ -153,8 +153,11 @@ export interface DesktopConfig {
   discordCard: DiscordCardOptions;
 }
 export type DesktopConfigPatch = Partial<
-  Pick<DesktopConfig, "backendUrl" | "discordEnabled" | "alwaysOnTop" | "fh6RadioEnabled" | "discordCard">
->;
+  Pick<DesktopConfig, "backendUrl" | "discordEnabled" | "alwaysOnTop" | "fh6RadioEnabled">
+> & {
+  /** Only the options that changed; the desktop app merges them onto the saved card. */
+  discordCard?: Partial<DiscordCardOptions>;
+};
 export type DesktopConfigUpdateResult =
   | { ok: false; error: string }
   | {

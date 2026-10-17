@@ -159,11 +159,11 @@ export function registerIpcHandlers(deps: {
     if (typeof patch?.discordEnabled === "boolean") {
       writePatch.discordEnabled = patch.discordEnabled;
     }
-    const discordCard =
-      patch?.discordCard && typeof patch.discordCard === "object"
-        ? normalizeDiscordCard(patch.discordCard)
-        : undefined;
-    if (discordCard) writePatch.discordCard = discordCard;
+    // Settings sends only the options that changed. They go onto the card as
+    // stored when this write lands, so an earlier save still in the queue
+    // (from a Settings view since closed, say) isn't overwritten.
+    const cardChanges =
+      patch?.discordCard && typeof patch.discordCard === "object" ? patch.discordCard : undefined;
     if (typeof patch?.alwaysOnTop === "boolean") {
       writePatch.alwaysOnTop = patch.alwaysOnTop;
     }
@@ -176,11 +176,15 @@ export function registerIpcHandlers(deps: {
     if (typeof patch?.fh6BridgePort === "number") {
       writePatch.fh6BridgePort = Math.max(1, Math.min(65535, Math.floor(patch.fh6BridgePort)));
     }
-    await saveConfigPatch(writePatch);
+    const written = await saveConfigPatch((current) =>
+      cardChanges
+        ? { ...writePatch, discordCard: normalizeDiscordCard(cardChanges, normalizeDiscordCard(current.discordCard)) }
+        : writePatch,
+    );
     if (writePatch.discordEnabled !== undefined) {
       configureDiscordPresence({ enabled: writePatch.discordEnabled });
     }
-    if (discordCard) configureDiscordPresence({ card: discordCard });
+    if (cardChanges) configureDiscordPresence({ card: normalizeDiscordCard(written.discordCard) });
     if (writePatch.alwaysOnTop !== undefined) {
       windows.alwaysOnTop = writePatch.alwaysOnTop;
       windows.mainWindow?.setAlwaysOnTop(windows.alwaysOnTop);

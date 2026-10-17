@@ -50,13 +50,13 @@ export function useDesktopConfig(): DesktopConfig | null {
 /** Save settings; a new server reloads the window onto its sign-in page. */
 export async function updateDesktopConfig(
   patch: DesktopConfigPatch,
-): Promise<{ ok: true; changed: boolean } | { ok: false; error: string }> {
+): Promise<{ ok: true; changed: boolean; config: DesktopConfig } | { ok: false; error: string }> {
   const desktop = electron();
   if (!desktop) return { ok: false, error: "Only the desktop app has these settings." };
   const result = await desktop.updateConfig(patch);
   if (!result.ok) return result;
   publish(result.config);
-  return { ok: true, changed: result.changed };
+  return { ok: true, changed: result.changed, config: result.config };
 }
 
 /** Check there's a Lumen server at `address`; resolves to its origin. */

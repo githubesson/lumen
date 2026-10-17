@@ -17,12 +17,15 @@ export const DEFAULT_DISCORD_CARD: DiscordCardOptions = {
 /** Longest template kept; Discord cuts each line at 128 characters anyway. */
 const MAX_TEMPLATE = 128;
 
-/** Fill in defaults and drop anything malformed, e.g. from a hand-edited config. */
-export function normalizeDiscordCard(raw: unknown): DiscordCardOptions {
+/**
+ * Read options from `raw` (a hand-edited config, or the options Settings
+ * changed), taking each field that's missing or malformed from `base`.
+ */
+export function normalizeDiscordCard(raw: unknown, base = DEFAULT_DISCORD_CARD): DiscordCardOptions {
   const value = raw && typeof raw === "object" ? (raw as Partial<Record<keyof DiscordCardOptions, unknown>>) : {};
   const text = (v: unknown, fallback: string) => (typeof v === "string" ? v.slice(0, MAX_TEMPLATE) : fallback);
   const flag = (v: unknown, fallback: boolean) => (typeof v === "boolean" ? v : fallback);
-  const d = DEFAULT_DISCORD_CARD;
+  const d = base;
   return {
     details: text(value.details, d.details),
     state: text(value.state, d.state),

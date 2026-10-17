@@ -46,7 +46,8 @@ export function DiscordCardSettings({ desktop }: { desktop: DesktopSettingsState
   const [card, setCard] = useState(saved);
   const [error, setError] = useState<string>();
   const latest = useRef(card);
-  const unsaved = useRef<DiscordCardOptions | null>(null);
+  // Options changed since the last save; only these are sent.
+  const unsaved = useRef<Partial<DiscordCardOptions> | null>(null);
   const saving = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const id = useId();
@@ -61,28 +62,32 @@ export function DiscordCardSettings({ desktop }: { desktop: DesktopSettingsState
 
   const flush = useCallback(() => {
     clearTimeout(timer.current);
-    const next = unsaved.current;
+    const changes = unsaved.current;
     unsaved.current = null;
-    if (!next) return;
+    if (!changes) return;
     saving.current += 1;
-    void updateDesktopConfig({ discordCard: next })
-      .then(
-        (result) => (result.ok ? undefined : result.error),
-        (cause: unknown) => (cause instanceof Error ? cause.message : "Could not save."),
-      )
-      .then((message) => {
+    void updateDesktopConfig({ discordCard: changes })
+      .catch((cause: unknown) => ({
+        ok: false as const,
+        error: cause instanceof Error ? cause.message : "Could not save.",
+      }))
+      .then((result) => {
         saving.current -= 1;
-        setError(message);
+        setError(result.ok ? undefined : result.error);
+        // Once idle, show the card as saved, with any other save merged in.
+        if (result.ok && !saving.current && !unsaved.current) {
+          latest.current = result.config.discordCard;
+          setCard(result.config.discordCard);
+        }
       });
   }, []);
   // Leaving the section or closing Settings saves what was typed last.
   useEffect(() => flush, [flush]);
 
   const change = (patch: Partial<DiscordCardOptions>, typing = false) => {
-    const next = { ...latest.current, ...patch };
-    latest.current = next;
-    unsaved.current = next;
-    setCard(next);
+    latest.current = { ...latest.current, ...patch };
+    unsaved.current = { ...unsaved.current, ...patch };
+    setCard(latest.current);
     clearTimeout(timer.current);
     if (typing) timer.current = setTimeout(flush, TYPING_SAVE_MS);
     else flush();

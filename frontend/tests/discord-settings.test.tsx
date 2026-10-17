@@ -24,9 +24,17 @@ function desktop(discordCard: DiscordCardOptions) {
 const line = (n: number) => screen.getByRole("textbox", { name: `Line ${n}` }) as HTMLInputElement;
 const savedCards = () => mock.update.mock.calls.map(([patch]) => patch.discordCard);
 
+// Stands in for the desktop app: merges the options sent onto the saved card.
+let stored = card;
+function store(changes: Partial<DiscordCardOptions>) {
+  stored = { ...stored, ...changes };
+  return { ok: true, config: desktop(stored).config, changed: false };
+}
+
 beforeEach(() => {
+  stored = card;
   mock.update.mockReset();
-  mock.update.mockImplementation(async (patch) => ({ ok: true, config: patch, changed: false }));
+  mock.update.mockImplementation(async ({ discordCard }) => store(discordCard));
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
@@ -36,10 +44,12 @@ it("saves typing once it pauses, and what's left when the section closes", async
   fireEvent.change(line(1), { target: { value: "{title} — {artist}" } });
   expect(mock.update).not.toHaveBeenCalled();
   await act(async () => { vi.advanceTimersByTime(600); });
-  expect(savedCards()).toEqual([{ ...card, details: "{title} — {artist}" }]);
+  // Only what changed goes out.
+  expect(savedCards()).toEqual([{ details: "{title} — {artist}" }]);
   fireEvent.change(line(3), { target: { value: "" } });
   view.unmount();
-  expect(savedCards().at(-1)).toEqual({ ...card, details: "{title} — {artist}", largeText: "" });
+  expect(savedCards().at(-1)).toEqual({ largeText: "" });
+  expect(stored).toEqual({ ...card, details: "{title} — {artist}", largeText: "" });
 });
 
 it("shows why a save failed, including one the desktop app threw on", async () => {
@@ -54,8 +64,8 @@ it("shows why a save failed, including one the desktop app threw on", async () =
 
 it("takes up a save that lands after the section remounts, so the next edit keeps it", async () => {
   let land!: () => void;
-  mock.update.mockImplementationOnce((patch) => new Promise((resolve) => {
-    land = () => resolve({ ok: true, config: patch, changed: false });
+  mock.update.mockImplementationOnce(({ discordCard }) => new Promise((resolve) => {
+    land = () => resolve(store(discordCard));
   }));
   const first = render(<DiscordCardSettings desktop={desktop(card)} />);
   fireEvent.change(line(1), { target: { value: "{artist}" } });
@@ -68,7 +78,26 @@ it("takes up a save that lands after the section remounts, so the next edit keep
   second.rerender(<DiscordCardSettings desktop={desktop({ ...card, details: "{artist}" })} />);
   expect(line(1).value).toBe("{artist}");
   await act(async () => { fireEvent.click(screen.getAllByRole("switch")[0]); });
-  expect(savedCards().at(-1)).toEqual({ ...card, details: "{artist}", cover: false });
+  expect(savedCards().at(-1)).toEqual({ cover: false });
+  expect(stored).toEqual({ ...card, details: "{artist}", cover: false });
+});
+
+it("keeps an earlier view's save when an edit goes out before it lands, and then shows both", async () => {
+  // The desktop app writes saves in order, so the earlier one lands first.
+  const queue: Array<() => void> = [];
+  mock.update.mockImplementation(({ discordCard }) => new Promise((resolve) => {
+    queue.push(() => resolve(store(discordCard)));
+  }));
+  const first = render(<DiscordCardSettings desktop={desktop(card)} />);
+  fireEvent.change(line(1), { target: { value: "{artist}" } });
+  fireEvent.blur(line(1));
+  first.unmount();
+  render(<DiscordCardSettings desktop={desktop(card)} />);
+  await act(async () => { fireEvent.click(screen.getAllByRole("switch")[0]); });
+  await act(async () => { queue.shift()!(); });
+  await act(async () => { queue.shift()!(); });
+  expect(stored).toEqual({ ...card, details: "{artist}", cover: false });
+  expect(line(1).value).toBe("{artist}");
 });
 
 it("keeps typing that hasn't saved yet when an older save lands", async () => {

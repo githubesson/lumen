@@ -41,3 +41,9 @@ it("reads saved options, falling back to the defaults for anything malformed", (
     showPaused: false,
   });
 });
+
+it("takes options Settings didn't change, or sent malformed, from the saved card", () => {
+  const saved = { ...DEFAULT_DISCORD_CARD, details: "{artist}", cover: false };
+  expect(normalizeDiscordCard({ state: "from {album}" }, saved)).toEqual({ ...saved, state: "from {album}" });
+  expect(normalizeDiscordCard({ statusName: "nope", playState: 0 }, saved)).toEqual(saved);
+});

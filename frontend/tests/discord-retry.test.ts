@@ -224,3 +224,21 @@ it("redraws the newest track when the card changes while that track's push is in
   expect(request.mock.calls.map((call) => call[1].activity.details)).toEqual(["Song A", "Song B", "Song B"]);
   expect(request.mock.calls[2][1].activity.state).toBe("on repeat");
 });
+
+it("restores the newest track after a disconnect, not the last one Discord confirmed", async () => {
+  const login = vi.fn().mockResolvedValue(undefined);
+  const request = vi.fn()
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error("socket hiccup"))
+    .mockResolvedValue(undefined);
+  const { exports, advance, handlers } = load(login, request);
+  exports.configureDiscordPresence({ clientId: "fixture", card: DEFAULT_CARD });
+  await exports.pushDiscordActivity({ trackId: "a", title: "Song A", isPlaying: true });
+  // B never reached Discord, and is waiting to be retried when Discord drops.
+  await exports.pushDiscordActivity({ trackId: "b", title: "Song B", isPlaying: true });
+  handlers.get("disconnected")!();
+  await advance(1_000);
+  await advance(30_000);
+  expect(login).toHaveBeenCalledTimes(2);
+  expect(request.mock.calls.at(-1)![1].activity.details).toBe("Song B");
+});

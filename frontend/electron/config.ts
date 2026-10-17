@@ -50,10 +50,11 @@ export async function loadConfig(): Promise<Config> {
 // toggles flipped quickly) would drop one without this queue.
 let writes: Promise<unknown> = Promise.resolve();
 
-export function saveConfigPatch(patch: Config): Promise<Config> {
+/** `patch` may be worked out from the config it lands on, inside the queue. */
+export function saveConfigPatch(patch: Config | ((current: Config) => Config)): Promise<Config> {
   const write = writes.then(async () => {
     const current = await loadConfig();
-    const next: Config = { ...current, ...patch };
+    const next: Config = { ...current, ...(typeof patch === "function" ? patch(current) : patch) };
     await fsp.mkdir(path.dirname(configPath()), { recursive: true });
     await fsp.writeFile(configPath(), JSON.stringify(next, null, 2));
     return next;

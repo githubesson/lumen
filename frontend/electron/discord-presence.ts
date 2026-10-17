@@ -14,9 +14,9 @@ let publicBackendUrl = "";
 let card: DiscordCardOptions = DEFAULT_DISCORD_CARD;
 let lastActivity: DiscordActivityPayload | null = null;
 let lastStartMs = 0;
-// The newest update asked for, confirmed by Discord or not. A card change
-// redraws this one: `lastActivity` can still be the track a push in flight
-// is replacing.
+// The newest update asked for, confirmed by Discord or not. A card change or
+// a reconnect redraws this one: `lastActivity` can still be the track a push
+// in flight (or waiting to be retried) is replacing.
 let requested: { payload: DiscordActivityPayload; at: number } | null = null;
 let retryAfter = 0;
 let failures = 0;
@@ -54,13 +54,6 @@ function scheduleRetry(payload: DiscordActivityPayload): void {
 function movedOn(payload: DiscordActivityPayload, sinceMs: number): DiscordActivityPayload {
   if (!payload.isPlaying) return payload;
   return { ...payload, elapsedSec: (payload.elapsedSec ?? 0) + (Date.now() - sinceMs) / 1000 };
-}
-
-/** The last activity as it stands now, its elapsed time moved on if playing. */
-function currentActivity(activity: DiscordActivityPayload): DiscordActivityPayload {
-  return activity.isPlaying
-    ? { ...activity, elapsedSec: Math.max(0, (Date.now() - lastStartMs) / 1000) }
-    : activity;
 }
 
 export function configureDiscordPresence(options: {
@@ -107,8 +100,8 @@ async function ensureDiscord(): Promise<DiscordClient | null> {
         client = null;
         retryAfter = Math.max(retryAfter, Date.now() + 30_000);
         // Steady playback sends no new updates, so reconnect after the
-        // backoff and restore what Discord was showing.
-        if (lastActivity) scheduleRetry(currentActivity(lastActivity));
+        // backoff and restore the newest activity asked for.
+        if (requested) scheduleRetry(movedOn(requested.payload, requested.at));
       }
     });
     await nextClient.login({ clientId });

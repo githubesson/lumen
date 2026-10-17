@@ -25,14 +25,15 @@ const config: DesktopConfig = {
 async function desktopBridge(page: Page) {
   await page.addInitScript((config) => {
     const saves: DesktopConfigPatch[] = [];
-    Object.assign(window, { desktopSaves: saves });
+    Object.assign(window, { desktopSaves: saves, desktopConfig: config });
     const bridge: Record<string, unknown> = {
       isElectron: true,
       platform: "win32",
       getConfig: async () => config,
-      updateConfig: async (patch: DesktopConfigPatch) => {
-        saves.push(patch);
-        Object.assign(config, patch);
+      updateConfig: async ({ discordCard, ...patch }: DesktopConfigPatch) => {
+        saves.push({ discordCard, ...patch });
+        // Like the desktop app, merge the card options sent onto the saved card.
+        Object.assign(config, patch, { discordCard: { ...config.discordCard, ...discordCard } });
         return { ok: true, config: { ...config }, changed: false };
       },
       getSignOutIntent: async () => false,
@@ -111,8 +112,12 @@ test("discord card preview follows its lines", async ({ page }) => {
   await expect(page.locator(".discord-card-state")).toContainText("·");
   await page.getByRole("textbox", { name: "Line 3" }).fill("");
   await expect(page.locator(".discord-card-line")).toHaveCount(1);
-  // Typing saves once it pauses, with the whole card.
+  // Typing saves once it pauses, sending only the options that changed.
   await expect
-    .poll(() => page.evaluate(() => (window as unknown as { desktopSaves: DesktopConfigPatch[] }).desktopSaves.at(-1)?.discordCard))
-    .toMatchObject({ state: "{artist} · {album}", largeText: "" });
+    .poll(() => page.evaluate(() => (window as unknown as { desktopConfig: DesktopConfig }).desktopConfig.discordCard))
+    .toEqual({ ...config.discordCard, state: "{artist} · {album}", largeText: "" });
+  const sent = await page.evaluate(() =>
+    (window as unknown as { desktopSaves: DesktopConfigPatch[] }).desktopSaves.flatMap((save) => Object.keys(save.discordCard ?? {})),
+  );
+  expect(new Set(sent)).toEqual(new Set(["state", "largeText"]));
 });
