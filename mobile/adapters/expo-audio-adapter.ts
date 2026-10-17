@@ -18,6 +18,9 @@ import type {
 } from "@music-library/core";
 import { createAudioAdapterEmitter } from "@music-library/core/player/audio-adapter";
 
+// How often a crossfade steps the two players' volumes.
+const FADE_STEP_MS = 50;
+
 function isReleasedSharedObjectError(error: unknown) {
   if (!(error instanceof Error)) return false;
   return (
@@ -55,13 +58,23 @@ export interface ExpoAudioAdapter extends AudioAdapter {
  * an audio interruption): buffering stalls, source swaps and natural track
  * end all pass through `playing: false` natively but must not be forwarded
  * as pauses, since the core mirrors `pause` straight into `isPlaying`.
+ *
+ * Smooth mix plays the next song on a second native player while the current
+ * one fades out, and the two then swap roles. Only the active player's
+ * statuses become events, and the lock screen moves with it. Without smooth
+ * mix only the first player ever plays.
  */
 export function useExpoAudioAdapter(): ExpoAudioAdapter {
   // We only need coarse native ticks because the UI smooths progress locally.
-  const player = useCompatibleAudioPlayer(1000);
+  const first = useCompatibleAudioPlayer(1000);
+  const second = useCompatibleAudioPlayer(1000);
+  const players = useMemo(() => [first, second] as const, [first, second]);
+  // Which player has the current song; the other is idle or fading out.
+  const activeIndexRef = useRef(0);
+  const activePlayer = useCallback(() => players[activeIndexRef.current], [players]);
   const diagnostics = useMemo(
-    () => createPlaybackDiagnostics(() => player.currentStatus),
-    [player],
+    () => createPlaybackDiagnostics(() => activePlayer().currentStatus),
+    [activePlayer],
   );
 
   const [listeners] = useState(createAudioAdapterEmitter);
@@ -100,6 +113,21 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
     duration: 0,
     failed: false,
   });
+  // The user's volume. A crossfade scales each player's share of it.
+  const volumeRef = useRef(1);
+  // A crossfade under way: `outgoing` plays on, fading out, while the active
+  // player fades in.
+  const fadeRef = useRef<{
+    outgoing: AudioPlayer;
+    startedAt: number;
+    seconds: number;
+    timer: ReturnType<typeof setInterval>;
+  } | null>(null);
+  // What the lock screen shows, so it can move to the other player.
+  const lockScreenRef = useRef<{
+    metadata?: AudioMetadata;
+    options?: AudioLockScreenOptions;
+  } | null>(null);
 
   const dispatch = useCallback((event: AudioAdapterEvent) => {
     if (event !== "timeupdate") {
@@ -131,17 +159,17 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       pendingPreparedPlaybackRef.current = null;
       if (pending.shouldPlay) {
         diagnostics.record("audio-prepared-start", {}, status);
-        player.play();
+        activePlayer().play();
         diagnostics.record("audio-play-issued");
       }
     },
-    [diagnostics, player],
+    [activePlayer, diagnostics],
   );
 
   // Subscribe directly to native player events so the app doesn't re-render on
   // every playback tick.
   useEffect(() => {
-    const current = player.currentStatus;
+    const current = activePlayer().currentStatus;
     prevStatusRef.current = {
       isLoaded: current.isLoaded,
       playing: current.playing,
@@ -150,7 +178,14 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       failed: false,
     };
 
-    const subscription = player.addListener("playbackStatusUpdate", (status) => {
+    const subscriptions = players.map((player) => player.addListener("playbackStatusUpdate", (status) => {
+      if (player !== activePlayer()) {
+        // Besides the active player, only one fading out may play. Something
+        // native restarting the other (Android resuming every player when
+        // audio focus returns) would put an old song under the current one.
+        if (status.playing && fadeRef.current?.outgoing !== player) player.pause();
+        return;
+      }
       diagnostics.observe(status, Boolean(pendingPreparedPlaybackRef.current), Boolean(pendingSeekRef.current));
       // A synchronous prepared start can clear the pending-play flag before
       // queued events arrive. Suppress outgoing ends until an ordinary source
@@ -242,12 +277,22 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       if (isLoaded) dispatch("timeupdate");
       if (!prev.didJustFinish && didJustFinish) dispatch("ended");
       if (!prev.failed && failed) dispatch("error");
-    });
+    }));
 
     return () => {
-      subscription.remove();
+      for (const subscription of subscriptions) subscription.remove();
     };
-  }, [diagnostics, dispatch, player, startPreparedPlaybackIfReady]);
+  }, [activePlayer, diagnostics, dispatch, players, startPreparedPlaybackIfReady]);
+
+  // Stop a crossfade's volume steps with the players.
+  useEffect(
+    () => () => {
+      const fade = fadeRef.current;
+      fadeRef.current = null;
+      if (fade) clearInterval(fade.timer);
+    },
+    [],
+  );
 
   // Before each swap: whether the source being replaced was still loading.
   const noteOutgoingSource = useCallback(() => {
@@ -256,10 +301,62 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
     hasSourceRef.current = true;
   }, []);
 
-  const adapter = useMemo<ExpoAudioAdapter>(
-    () => ({
+  const adapter = useMemo<ExpoAudioAdapter>(() => {
+    // A new source on the active player. Reset the status diff so its first
+    // loadedmetadata fires. The outgoing track may have been playing; the
+    // incoming item's paused statuses during the swap are a transition, not a
+    // pause the core should mirror into isPlaying.
+    const resetStatusDiff = () => {
+      const prev = prevStatusRef.current;
+      prev.isLoaded = false;
+      prev.duration = 0;
+      prev.didJustFinish = false;
+      prev.failed = false;
+      prev.playing = false;
+    };
+
+    // The user's volume on each player, times its share of a crossfade.
+    // Equal-power curves, so the mix doesn't dip halfway through.
+    const applyVolume = () => {
+      const volume = volumeRef.current;
+      const fade = fadeRef.current;
+      if (!fade) {
+        for (const player of players) player.volume = volume;
+        return;
+      }
+      const progress = Math.min(1, (performance.now() - fade.startedAt) / (fade.seconds * 1000));
+      activePlayer().volume = volume * Math.sin((progress * Math.PI) / 2);
+      fade.outgoing.volume = volume * Math.cos((progress * Math.PI) / 2);
+    };
+
+    // End a crossfade now: the outgoing player stops and the active one plays
+    // at full volume. Anything that takes over playback (a pause, a seek,
+    // another source) ends it first.
+    const finishFade = () => {
+      const fade = fadeRef.current;
+      if (!fade) return;
+      fadeRef.current = null;
+      clearInterval(fade.timer);
+      fade.outgoing.pause();
+      // Empty it as well: when an interruption ends, iOS resumes every player
+      // it paused, and the old song must not come back.
+      fade.outgoing.replace({});
+      applyVolume();
+      diagnostics.record("audio-crossfade-finished");
+    };
+
+    const stepFade = () => {
+      const fade = fadeRef.current;
+      if (!fade) return;
+      if (performance.now() - fade.startedAt >= fade.seconds * 1000) finishFade();
+      else applyVolume();
+    };
+
+    return {
       load(url) {
         diagnostics.source(url.startsWith("file:") ? "local" : "stream", false);
+        finishFade();
+        const player = activePlayer();
         playbackGenerationRef.current += 1;
         pendingPreparedPlaybackRef.current = null;
         // Seeks against the outgoing item must not delay the new track.
@@ -285,15 +382,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
           player.replace({ uri: url });
         }
         diagnostics.record("audio-source-replaced");
-        // Reset the status diff so the new track's first loadedmetadata fires.
-        prevStatusRef.current.isLoaded = false;
-        prevStatusRef.current.duration = 0;
-        prevStatusRef.current.didJustFinish = false;
-        prevStatusRef.current.failed = false;
-        // The outgoing track may have been playing; the incoming item's
-        // paused statuses during the swap are a transition, not a pause the
-        // core should mirror into isPlaying.
-        prevStatusRef.current.playing = false;
+        resetStatusDiff();
       },
       prepareNext(url) {
         if (preparedRef.current?.url === url) return;
@@ -319,6 +408,8 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         const prepared = preparedRef.current;
         if (!prepared || prepared.url !== url || !prepared.ready) return false;
         diagnostics.source(url.startsWith("file:") ? "local" : "stream", true);
+        finishFade();
+        const player = activePlayer();
         preparedRef.current = null;
         prepareGenerationRef.current += 1;
         playbackGenerationRef.current += 1;
@@ -337,12 +428,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
           awaitingSourceStatusRef.current = true;
           player.replace({ uri: url });
           diagnostics.record("audio-source-replaced");
-          prevStatusRef.current.isLoaded = false;
-          prevStatusRef.current.duration = 0;
-          prevStatusRef.current.didJustFinish = false;
-          prevStatusRef.current.failed = false;
-          // Same as load(): the swap's paused statuses are not a real pause.
-          prevStatusRef.current.playing = false;
+          resetStatusDiff();
           startPreparedPlaybackIfReady(player.currentStatus);
           diagnostics.record("audio-prepared-activated", { pendingStart: Boolean(pendingPreparedPlaybackRef.current) });
           // replace() has consumed the native preload; Android/web retain the
@@ -355,6 +441,53 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
           void clearPreloadedSource(url).catch(() => {});
           return false;
         }
+      },
+      crossfadeToPrepared(url, seconds) {
+        const prepared = preparedRef.current;
+        if (!prepared || prepared.url !== url || !prepared.ready || !(seconds > 0)) return false;
+        diagnostics.source(url.startsWith("file:") ? "local" : "stream", true);
+        finishFade();
+        const outgoing = activePlayer();
+        const incomingIndex = 1 - activeIndexRef.current;
+        const incoming = players[incomingIndex];
+        preparedRef.current = null;
+        prepareGenerationRef.current += 1;
+        try {
+          incoming.volume = 0;
+          incoming.replace({ uri: url });
+        } catch {
+          // As in activatePrepared, the current song plays on and its end
+          // loads this one afresh.
+          diagnostics.record("audio-crossfade-failed");
+          applyVolume();
+          void clearPreloadedSource(url).catch(() => {});
+          return false;
+        }
+        playbackGenerationRef.current += 1;
+        activeIndexRef.current = incomingIndex;
+        fadeRef.current = {
+          outgoing,
+          startedAt: performance.now(),
+          seconds,
+          timer: setInterval(stepFade, FADE_STEP_MS),
+        };
+        applyVolume();
+        // Start it on its first loaded status, as activatePrepared does.
+        pendingPreparedPlaybackRef.current = { shouldPlay: true };
+        pendingSeekRef.current = null;
+        awaitingSourceStatusRef.current = true;
+        // This player's last source finished long ago: no failure of it can
+        // still be on its way.
+        outgoingMayFailRef.current = false;
+        hasSourceRef.current = true;
+        resetStatusDiff();
+        // The lock screen, Control Center and their commands follow the song.
+        const lockScreen = lockScreenRef.current;
+        if (lockScreen) incoming.setActiveForLockScreen(true, lockScreen.metadata, lockScreen.options);
+        startPreparedPlaybackIfReady(incoming.currentStatus);
+        diagnostics.record("audio-crossfade-started", { seconds, pendingStart: Boolean(pendingPreparedPlaybackRef.current) });
+        void clearPreloadedSource(url).catch(() => {});
+        return true;
       },
       clearPrepared() {
         if (pendingPreparedPlaybackRef.current) diagnostics.record("audio-pending-start-cleared");
@@ -373,7 +506,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         const pending = pendingPreparedPlaybackRef.current;
         if (pending) {
           pending.shouldPlay = true;
-          startPreparedPlaybackIfReady(player.currentStatus);
+          startPreparedPlaybackIfReady(activePlayer().currentStatus);
           return;
         }
         const pendingSeek = pendingSeekRef.current;
@@ -388,19 +521,21 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
             return;
           }
         }
-        player.play();
+        activePlayer().play();
         diagnostics.record("audio-play-issued");
       },
       pause() {
         diagnostics.record("audio-pause-request");
+        finishFade();
         playbackGenerationRef.current += 1;
         const pending = pendingPreparedPlaybackRef.current;
         if (pending) pending.shouldPlay = false;
-        player.pause();
+        activePlayer().pause();
       },
       seek(seconds) {
         diagnostics.record("audio-seek-request", { seconds });
-        const seekPromise = player.seekTo(seconds).then(
+        finishFade();
+        const seekPromise = activePlayer().seekTo(seconds).then(
           () => {
             if (pendingSeekRef.current !== seekPromise) return;
             pendingSeekRef.current = null;
@@ -417,26 +552,30 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         pendingSeekRef.current = seekPromise;
       },
       setVolume(v) {
-        player.volume = v;
+        volumeRef.current = v;
+        applyVolume();
       },
       setMuted(m) {
-        player.muted = m;
+        for (const player of players) player.muted = m;
       },
       currentTime() {
-        return player.currentTime ?? 0;
+        return activePlayer().currentTime ?? 0;
       },
       duration() {
-        return player.duration ?? 0;
+        return activePlayer().duration ?? 0;
       },
       setActiveForLockScreen(active, metadata, options) {
-        player.setActiveForLockScreen(active, metadata, options);
+        lockScreenRef.current = active ? { metadata, options } : null;
+        activePlayer().setActiveForLockScreen(active, metadata, options);
       },
       updateLockScreenMetadata(metadata) {
-        player.updateLockScreenMetadata(metadata);
+        if (lockScreenRef.current) lockScreenRef.current.metadata = metadata;
+        activePlayer().updateLockScreenMetadata(metadata);
       },
       clearLockScreenControls() {
+        lockScreenRef.current = null;
         try {
-          player.clearLockScreenControls();
+          activePlayer().clearLockScreenControls();
         } catch (error) {
           if (!isReleasedSharedObjectError(error)) throw error;
         }
@@ -444,6 +583,7 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       on: listeners.on,
       dispose() {
         diagnostics.record("audio-dispose");
+        finishFade();
         playbackGenerationRef.current += 1;
         pendingSeekRef.current = null;
         pendingPreparedPlaybackRef.current = null;
@@ -453,9 +593,8 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
         if (prepared) void clearPreloadedSource(prepared.url).catch(() => {});
         listeners.clear();
       },
-    }),
-    [diagnostics, dispatch, listeners, noteOutgoingSource, player, startPreparedPlaybackIfReady],
-  );
+    };
+  }, [activePlayer, diagnostics, dispatch, listeners, noteOutgoingSource, players, startPreparedPlaybackIfReady]);
 
   return adapter;
 }

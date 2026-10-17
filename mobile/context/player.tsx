@@ -34,6 +34,7 @@ import { downloadStore } from "../lib/downloads";
 import { isTrackPlayableOffline } from "../lib/offline-mode";
 import { recordCrashBreadcrumb } from "../lib/crash-reporting";
 import { recordPlaybackDiagnostic } from "../lib/diagnostics/playback";
+import { useSmoothMix } from "../lib/smooth-mix";
 import {
   addLockScreenCommandListener,
   isLockScreenControlsAvailable,
@@ -137,6 +138,7 @@ function canPlayLocally(track: TrackListItem): boolean {
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const adapter = useExpoAudioAdapter();
   const [appState, setAppState] = useState(() => AppState.currentState);
+  const crossfadeSeconds = useSmoothMix();
   const { state, controls, time } = usePlayerCore({
     adapter,
     storage: asyncStorageAdapter,
@@ -146,6 +148,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // Offline (or forced offline): only downloaded tracks may start, and
     // next/prev/auto-advance skip over everything else.
     isTrackPlayable: isTrackPlayableOffline,
+    crossfadeSeconds,
   });
   // Destructured so hooks below depend only on the fields they read. Depending
   // on `state` wholesale would rebuild them on every queue change.
