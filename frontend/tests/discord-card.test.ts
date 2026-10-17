@@ -46,4 +46,8 @@ it("takes options Settings didn't change, or sent malformed, from the saved card
   const saved = { ...DEFAULT_DISCORD_CARD, details: "{artist}", cover: false };
   expect(normalizeDiscordCard({ state: "from {album}" }, saved)).toEqual({ ...saved, state: "from {album}" });
   expect(normalizeDiscordCard({ statusName: "nope", playState: 0 }, saved)).toEqual(saved);
+  // Every real choice is taken, including going back to the app's name.
+  for (const statusName of ["app", "details", "state"] as const) {
+    expect(normalizeDiscordCard({ statusName }, { ...saved, statusName: "state" }).statusName).toBe(statusName);
+  }
 });

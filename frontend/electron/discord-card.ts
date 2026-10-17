@@ -31,7 +31,9 @@ export function normalizeDiscordCard(raw: unknown, base = DEFAULT_DISCORD_CARD):
     state: text(value.state, d.state),
     largeText: text(value.largeText, d.largeText),
     statusName:
-      value.statusName === "details" || value.statusName === "state" ? value.statusName : d.statusName,
+      value.statusName === "app" || value.statusName === "details" || value.statusName === "state"
+        ? value.statusName
+        : d.statusName,
     cover: flag(value.cover, d.cover),
     playState: flag(value.playState, d.playState),
     showPaused: flag(value.showPaused, d.showPaused),

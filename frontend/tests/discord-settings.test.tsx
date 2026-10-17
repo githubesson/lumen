@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { normalizeDiscordCard } from "../electron/discord-card";
 import { DiscordCardSettings } from "../src/components/DiscordSettings";
 import type { DesktopSettingsState } from "../src/components/DesktopSettings";
 import type { DesktopConfig, DiscordCardOptions } from "../src/contracts/desktop";
@@ -24,10 +25,11 @@ function desktop(discordCard: DiscordCardOptions) {
 const line = (n: number) => screen.getByRole("textbox", { name: `Line ${n}` }) as HTMLInputElement;
 const savedCards = () => mock.update.mock.calls.map(([patch]) => patch.discordCard);
 
-// Stands in for the desktop app: merges the options sent onto the saved card.
+// Stands in for the desktop app: merges the options sent onto the saved card
+// the way it does.
 let stored = card;
 function store(changes: Partial<DiscordCardOptions>) {
-  stored = { ...stored, ...changes };
+  stored = normalizeDiscordCard(changes, stored);
   return { ok: true, config: desktop(stored).config, changed: false };
 }
 
@@ -140,4 +142,12 @@ it("doesn't report a failed save whose options a newer save then saved", async (
   fireEvent.change(line(2), { target: { value: "{album}" } });
   fireEvent.blur(line(2));
   expect(savedCards().at(-1)).toEqual({ state: "{album}" });
+});
+
+it("resets to the default card, the app's name in the status included", async () => {
+  stored = { ...card, details: "{artist}", statusName: "details", cover: false };
+  render(<DiscordCardSettings desktop={desktop(stored)} />);
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Reset" })); });
+  expect(stored).toEqual(card);
+  expect(screen.queryByRole("button", { name: "Reset" })).toBeNull();
 });
