@@ -11,6 +11,7 @@ import {
   configureDiscordPresence,
   teardownDiscordPresence,
 } from "./discord-presence";
+import { normalizeDiscordCard } from "./discord-card";
 import { createLocalProxy } from "./local-proxy";
 import { readBakedBuildEnv } from "./build-env";
 import { createWindowManager } from "./windows";
@@ -78,6 +79,7 @@ if (!gotLock) {
       clientId: (cfg.discordClientId ?? "").trim() || DEFAULT_DISCORD_CLIENT_ID,
       enabled: cfg.discordEnabled ?? true,
       backendUrl,
+      card: normalizeDiscordCard(cfg.discordCard),
     });
     windows.alwaysOnTop = cfg.alwaysOnTop ?? false;
     const updateBranch =

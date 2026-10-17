@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as fsp from "node:fs/promises";
 import type { UpdateBranch } from "./updater";
 
-import type { Tweaks } from "../src/contracts/desktop";
+import type { DiscordCardOptions, Tweaks } from "../src/contracts/desktop";
 export type { Tweaks } from "../src/contracts/desktop";
 
 export interface Config {
@@ -11,6 +11,8 @@ export interface Config {
   backendUrl?: string;
   discordClientId?: string;
   discordEnabled?: boolean;
+  /** Read through normalizeDiscordCard: the file may be hand-edited. */
+  discordCard?: Partial<DiscordCardOptions>;
   alwaysOnTop?: boolean;
   fh6RadioEnabled?: boolean;
   fh6GameDir?: string;
@@ -25,6 +27,7 @@ export interface SavePatch {
   backendUrl?: string;
   discordClientId?: string;
   discordEnabled?: boolean;
+  discordCard?: Partial<DiscordCardOptions>;
   alwaysOnTop?: boolean;
   fh6RadioEnabled?: boolean;
   fh6GameDir?: string;

@@ -28,6 +28,7 @@ import {
   pushDiscordActivity,
   type DiscordActivityPayload,
 } from "./discord-presence";
+import { normalizeDiscordCard } from "./discord-card";
 import type { LocalProxy } from "./local-proxy";
 import type { WindowManager } from "./windows";
 import { downloadToFile, exportDownloadUrl, uniqueExportPath } from "./track-export";
@@ -46,6 +47,7 @@ async function readDesktopConfig(): Promise<DesktopConfig> {
     fh6RadioEnabled: cfg.fh6RadioEnabled === true,
     fh6GameDir: cfg.fh6GameDir ?? "",
     fh6BridgePort: cfg.fh6BridgePort ?? DEFAULT_FH6_BRIDGE_PORT,
+    discordCard: normalizeDiscordCard(cfg.discordCard),
   };
 }
 
@@ -157,6 +159,11 @@ export function registerIpcHandlers(deps: {
     if (typeof patch?.discordEnabled === "boolean") {
       writePatch.discordEnabled = patch.discordEnabled;
     }
+    const discordCard =
+      patch?.discordCard && typeof patch.discordCard === "object"
+        ? normalizeDiscordCard(patch.discordCard)
+        : undefined;
+    if (discordCard) writePatch.discordCard = discordCard;
     if (typeof patch?.alwaysOnTop === "boolean") {
       writePatch.alwaysOnTop = patch.alwaysOnTop;
     }
@@ -173,6 +180,7 @@ export function registerIpcHandlers(deps: {
     if (writePatch.discordEnabled !== undefined) {
       configureDiscordPresence({ enabled: writePatch.discordEnabled });
     }
+    if (discordCard) configureDiscordPresence({ card: discordCard });
     if (writePatch.alwaysOnTop !== undefined) {
       windows.alwaysOnTop = writePatch.alwaysOnTop;
       windows.mainWindow?.setAlwaysOnTop(windows.alwaysOnTop);

@@ -49,9 +49,9 @@ export interface DiscordActivityPayload {
    *  the start timestamp). Title/artist/album aren't reliable: re-uploads or
    *  duplicate metadata would falsely match. */
   trackId?: string;
-  /** Track title shown as "details" on the Discord card. */
+  /** The card's lines fill {title}, {artist} and {album} from these
+   *  (see DiscordCardOptions). */
   title: string;
-  /** Artist shown as "state" (renders as "by ARTIST"). */
   artist?: string;
   album?: string;
   /** Publicly reachable URL to cover art (served via the backend). */
@@ -62,6 +62,27 @@ export interface DiscordActivityPayload {
   elapsedSec?: number;
   /** When false, presence shows "paused" style (no timestamps). */
   isPlaying: boolean;
+}
+
+/**
+ * How the Discord card reads. Each line is a template where {title},
+ * {artist} and {album} fill in; an empty template hides its line.
+ */
+export interface DiscordCardOptions {
+  /** First line, bold. */
+  details: string;
+  /** Second line. */
+  state: string;
+  /** Third line, also the cover's tooltip. */
+  largeText: string;
+  /** What follows "Listening to" in the member list: the app's name or a line. */
+  statusName: "app" | "details" | "state";
+  /** The album cover, or the Lumen logo when off. */
+  cover: boolean;
+  /** The play/pause badge on the cover. */
+  playState: boolean;
+  /** Keep the card up while paused, or clear it until playback resumes. */
+  showPaused: boolean;
 }
 
 export interface FH6StatusPayload {
@@ -129,9 +150,10 @@ export interface DesktopConfig {
   fh6RadioEnabled: boolean;
   fh6GameDir: string;
   fh6BridgePort: number;
+  discordCard: DiscordCardOptions;
 }
 export type DesktopConfigPatch = Partial<
-  Pick<DesktopConfig, "backendUrl" | "discordEnabled" | "alwaysOnTop" | "fh6RadioEnabled">
+  Pick<DesktopConfig, "backendUrl" | "discordEnabled" | "alwaysOnTop" | "fh6RadioEnabled" | "discordCard">
 >;
 export type DesktopConfigUpdateResult =
   | { ok: false; error: string }
