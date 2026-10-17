@@ -37,7 +37,10 @@ import { postJson } from "./fh6-bridge";
 import type { DesktopConfig, ExportTrackFileItem } from "../src/contracts/desktop";
 
 async function readDesktopConfig(): Promise<DesktopConfig> {
-  const cfg = await loadConfig();
+  return desktopConfigOf(await loadConfig());
+}
+
+function desktopConfigOf(cfg: Config): DesktopConfig {
   return {
     backendUrl: cfg.backendUrl ?? "",
     // `discordEnabled` defaults to true so existing installs keep the
@@ -147,7 +150,7 @@ export function registerIpcHandlers(deps: {
   // is optional, so Settings can flip one toggle at a time.
   async function applyConfigPatch(
     patch: SavePatch | undefined,
-  ): Promise<{ ok: false; error: string } | { ok: true; changed: boolean }> {
+  ): Promise<{ ok: false; error: string } | { ok: true; changed: boolean; written: Config }> {
     const writePatch: SavePatch = {};
     let normalized: string | null = null;
     if (patch?.backendUrl !== undefined) {
@@ -190,10 +193,10 @@ export function registerIpcHandlers(deps: {
       windows.mainWindow?.setAlwaysOnTop(windows.alwaysOnTop);
     }
     const prev = deps.getBackendUrl();
-    if (normalized === null) return { ok: true, changed: false };
+    if (normalized === null) return { ok: true, changed: false, written };
     deps.setBackendUrl(normalized);
     configureDiscordPresence({ backendUrl: normalized });
-    return { ok: true, changed: prev !== normalized };
+    return { ok: true, changed: prev !== normalized, written };
   }
 
   ipcMain.handle("config:update", async (_e, patch: SavePatch) => {
@@ -209,7 +212,9 @@ export function registerIpcHandlers(deps: {
       }
       setTimeout(() => windows.mainWindow?.webContents.reload(), 0);
     }
-    return { ...result, config: await readDesktopConfig() };
+    // Answer with the config this write produced. Reading the file again
+    // could catch the next queued write mid-way and parse as empty.
+    return { ok: true, changed: result.changed, config: desktopConfigOf(result.written) };
   });
 
   // First-run and change-server check: is there a Lumen server at this
