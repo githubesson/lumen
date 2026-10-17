@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { buildNowPlayingMetadata, type TrackListItem } from "@music-library/core";
 import {
   DEFAULT_DISCORD_CARD,
@@ -15,6 +16,7 @@ import { Button } from "./Button";
 import type { DesktopSettingsState } from "./DesktopSettings";
 import { Select, type SelectOption } from "./Select";
 import SettingRow from "./SettingRow";
+import { useSettingsSide } from "./SettingsSide";
 import Switch from "./Switch";
 
 const STATUS_NAMES: SelectOption<DiscordCardOptions["statusName"]>[] = [
@@ -40,9 +42,12 @@ const TYPING_SAVE_MS = 600;
  * line, the three lines' templates and the cover/badge/paused switches. Edits
  * show in the preview at once and save as they're made (typing after a
  * pause), and the desktop app redraws the card in Discord when they land.
+ * The preview sits in the dialog's side column, beside the options, where
+ * the window has room for it, and above them where it doesn't.
  */
 export function DiscordCardSettings({ desktop }: { desktop: DesktopSettingsState }) {
   const saved = desktop.config.discordCard;
+  const side = useSettingsSide();
   const [card, setCard] = useState(saved);
   const [error, setError] = useState<string>();
   const latest = useRef(card);
@@ -117,9 +122,13 @@ export function DiscordCardSettings({ desktop }: { desktop: DesktopSettingsState
 
   return (
     <>
-      <div className="settings-row">
-        <DiscordCardPreview card={card} />
-      </div>
+      {side ? (
+        createPortal(<DiscordCardPreview card={card} />, side)
+      ) : (
+        <div className="settings-row">
+          <DiscordCardPreview card={card} />
+        </div>
+      )}
       <SettingRow
         id={`${id}-lines`}
         label="Card text"

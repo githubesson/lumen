@@ -91,6 +91,11 @@ test.beforeEach(async ({ page }) => {
 test("discord settings", async ({ page }, testInfo) => {
   await openSection(page, "Discord");
   await ready(page, page.locator(".discord-popout"));
+  // With room beside the dialog the preview opens a side column, so it stays
+  // in view while the options scroll; otherwise it heads the section.
+  const side = (page.viewportSize()?.width ?? 0) >= 1100;
+  await expect(page.locator(side ? ".settings-side .discord-popout" : ".settings-pane .discord-popout")).toBeVisible();
+  await expect(page.locator(".settings[data-side]")).toHaveCount(side ? 1 : 0);
   await checkUI(page, testInfo, {
     exceptions: [
       ...desktopExceptions,
