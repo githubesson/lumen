@@ -151,6 +151,362 @@
   font-size: 12px;
 }
 
+/* Discord card options (DiscordSettings.tsx). The preview keeps Discord's
+   own dark colours in both themes, so it reads as Discord's card. */
+.discord-lines {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 10px;
+  align-items: center;
+}
+.discord-line {
+  display: contents;
+}
+.discord-line-label {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+/* The profile popout, card and member list row as Discord's default client
+   draws them in its darkest theme, sized and coloured off a real popout.
+   Discord's font stack, with Segoe UI added: gg sans ships inside Discord,
+   not the system, and Segoe UI is the nearest shape Windows always has. */
+.discord-preview {
+  --discord-popout: #060606;
+  --discord-body: #020202;
+  --discord-card: #1a1a1c;
+  --discord-bubble: #212225;
+  --discord-text: #f2f3f5;
+  --discord-text-normal: #dbdee1;
+  --discord-text-muted: #b5bac1;
+  --discord-green: #45a366;
+  --discord-blurple: #5865f2;
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  margin: 0;
+  font-family: "gg sans", "Noto Sans", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: var(--discord-text);
+}
+
+.discord-popout {
+  width: 306px;
+  padding: 0 2px 2px;
+  border: 1px solid #141414;
+  border-radius: 8px;
+  background: var(--discord-popout);
+  overflow: hidden;
+}
+.discord-banner {
+  position: relative;
+  height: 107px;
+  border-bottom: 1px solid #0a0a0a;
+  margin: 0 -2px;
+}
+.discord-banner-more {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #161616;
+  border-radius: 999px;
+  background: #030303;
+  color: #fff;
+}
+.discord-banner-more .discord-more-dots {
+  width: 13px;
+}
+.discord-popout-body {
+  position: relative;
+  display: grid;
+  padding: 59px 16px 16px;
+  border-radius: 0 0 6px 6px;
+  background: var(--discord-body);
+}
+
+.discord-avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--discord-blurple);
+  color: #fff;
+}
+.discord-avatar-status {
+  position: absolute;
+  border-radius: 999px;
+  background: var(--discord-green);
+}
+.discord-popout-avatar {
+  position: absolute;
+  top: -45px;
+  left: 14px;
+  width: 80px;
+  height: 80px;
+  box-shadow: 0 0 0 6px var(--discord-body);
+}
+.discord-popout-avatar .discord-avatar-logo {
+  width: 47px;
+}
+.discord-popout-avatar .discord-avatar-status {
+  right: 4px;
+  bottom: 5px;
+  width: 16px;
+  height: 16px;
+  box-shadow: 0 0 0 5px var(--discord-body);
+}
+
+/* The "set a custom status" thought bubble on your own profile. */
+.discord-status-bubble {
+  position: absolute;
+  top: -7px;
+  left: 105px;
+  right: 16px;
+  min-height: 54px;
+  padding: 9px 12px 7px;
+  border: 1px solid #3f3f43;
+  border-radius: 16px;
+  background: var(--discord-bubble);
+  font-size: 14px;
+  font-style: italic;
+  font-weight: 500;
+  line-height: 18px;
+  color: #c4c9ce;
+}
+.discord-status-bubble::before,
+.discord-status-bubble::after {
+  content: "";
+  position: absolute;
+  border: 1px solid #3f3f43;
+  border-radius: 999px;
+  background: var(--discord-bubble);
+}
+/* A bump on the bubble's top edge (its lower half hidden under the bubble's
+   padding box) and a small circle up and left of it. */
+.discord-status-bubble::before {
+  top: -10px;
+  left: 10px;
+  width: 18px;
+  height: 18px;
+  clip-path: inset(0 0 9px 0);
+}
+.discord-status-bubble::after {
+  top: -17px;
+  left: -4px;
+  width: 10px;
+  height: 10px;
+}
+/* Inline, so the second line wraps back under it as Discord's does. */
+.discord-status-bubble-add {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-right: 5px;
+  vertical-align: -3px;
+}
+
+.discord-popout-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 24px;
+}
+.discord-popout-username {
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 18px;
+  color: var(--discord-text);
+}
+
+.discord-card {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 8px 6px;
+  border-radius: 8px;
+  background: var(--discord-card);
+}
+.discord-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--discord-text-normal);
+}
+.discord-card-head .discord-more-dots {
+  width: 13px;
+  margin-right: 6px;
+  color: #b9babf;
+}
+.discord-card-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.discord-card-art {
+  position: relative;
+  flex: 0 0 60px;
+  width: 60px;
+  height: 60px;
+}
+.discord-card-art img,
+.discord-card-art .brand-mark {
+  width: 60px;
+  height: 60px;
+  flex-basis: 60px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+/* Lumen's "play"/"pause" assets are black glyphs; Discord cuts a ring out of
+   the cover for them, so they sit on the card's colour. */
+.discord-card-badge {
+  position: absolute;
+  right: -6px;
+  bottom: -5px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--discord-card);
+  color: #000;
+}
+.discord-card-text {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+}
+.discord-card-details,
+.discord-card-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.discord-card-details {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 18px;
+}
+.discord-card-line {
+  font-size: 12px;
+  line-height: 16px;
+}
+.discord-card-state {
+  font-weight: 500;
+}
+.discord-card-time {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-family: "gg mono", "Source Code Pro", Consolas, "Andale Mono WT", "Andale Mono", "Lucida Console", "DejaVu Sans Mono", "Liberation Mono", Monaco, "Courier New", Courier, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--discord-text-normal);
+}
+.discord-card-bar {
+  flex: 1;
+  height: 2px;
+  border-radius: 999px;
+  background: #2d2d31;
+  overflow: hidden;
+}
+.discord-card-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #f9f9f9;
+}
+.discord-card-session {
+  gap: 4px;
+  color: #7ec191;
+}
+.discord-card-session svg {
+  width: 14px;
+  height: 14px;
+}
+
+.discord-edit-profile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  margin-top: 16px;
+  border: 1px solid #666;
+  border-radius: 8px;
+  background: #595959;
+  font-size: 14px;
+  font-weight: 500;
+  color: #fff;
+}
+.discord-edit-profile svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* A member list row: where "Status text" shows. */
+.discord-member {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 306px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--discord-body);
+}
+.discord-member-avatar {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+}
+.discord-member-avatar .discord-avatar-logo {
+  width: 19px;
+}
+.discord-member-avatar .discord-avatar-status {
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
+  box-shadow: 0 0 0 3px var(--discord-body);
+}
+.discord-member-text {
+  display: grid;
+  min-width: 0;
+}
+.discord-member-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.discord-member-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--discord-text-muted);
+}
+.discord-member-status strong {
+  font-weight: 600;
+}
+
 /* On/off switch (Switch.tsx) */
 .switch {
   position: relative;

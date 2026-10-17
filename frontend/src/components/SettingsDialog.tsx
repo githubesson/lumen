@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
 import {
   Download as DownloadIcon,
   Link2 as LinkIcon,
@@ -6,7 +6,6 @@ import {
   Palette as PaletteIcon,
   Volume2 as SpeakerIcon,
   X as XMarkIcon,
-  type LucideIcon,
 } from "lucide-react";
 import { lastFMConnectionState, useLastFMConnection } from "@music-library/core";
 import { useTheme, type Density, type Layout, type Theme } from "../context/Theme";
@@ -17,12 +16,13 @@ import { openExternal } from "../lib/platform";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import { Button } from "./Button";
 import { ServerSetting, ToggleSetting, useDesktopSettings } from "./DesktopSettings";
+import { DiscordCardSettings, DiscordIcon } from "./DiscordSettings";
 import DesktopUpdates, { useDesktopUpdates } from "./DesktopUpdates";
 import SearchInput from "./SearchInput";
 import { Select, type SelectOption } from "./Select";
 import SettingRow from "./SettingRow";
 
-export type SectionId = "appearance" | "playback" | "desktop" | "connections" | "updates";
+export type SectionId = "appearance" | "playback" | "desktop" | "connections" | "discord" | "updates";
 
 interface Props {
   open: boolean;
@@ -41,7 +41,7 @@ interface SettingDef {
 interface SectionDef {
   id: SectionId;
   title: string;
-  icon: LucideIcon;
+  icon: ComponentType<{ className?: string; "aria-hidden"?: "true" }>;
   settings: SettingDef[];
 }
 
@@ -342,23 +342,38 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
             </SettingRow>
           ),
         },
-        ...(desktop
-          ? [
-              {
-                id: "discord",
-                keywords: "discord rich presence status listening activity",
-                render: () => (
-                  <ToggleSetting
-                    desktop={desktop}
-                    setting="discordEnabled"
-                    label="Discord status"
-                    description="Show what you're listening to. Needs the Discord app running."
-                  />
-                ),
-              },
-            ]
-          : []),
       ],
+    },
+    {
+      id: "discord",
+      title: "Discord",
+      icon: DiscordIcon,
+      settings: desktop
+        ? [
+            {
+              id: "discord",
+              keywords: "discord rich presence status listening activity",
+              render: () => (
+                <ToggleSetting
+                  desktop={desktop}
+                  setting="discordEnabled"
+                  label="Discord status"
+                  description="Show what you're listening to. Needs the Discord app running."
+                />
+              ),
+            },
+            ...(desktop.config.discordEnabled
+              ? [
+                  {
+                    id: "discord-card",
+                    keywords:
+                      "discord rich presence card customize text lines title artist album status member list cover art badge play pause paused preview",
+                    render: () => <DiscordCardSettings desktop={desktop} />,
+                  },
+                ]
+              : []),
+          ]
+        : [],
     },
     {
       id: "updates",
