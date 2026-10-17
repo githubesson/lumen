@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Server as ServerIcon } from "lucide-react";
 import { api, type APITrackerDownload, type APITrackerPin } from "../../api";
 import { Field, TextInput } from "../../components/Field";
 import { AdminSectionIntro } from "./AdminSectionTitle";
@@ -33,8 +34,11 @@ export function APITrackerPinsSection({
     scan: api.scanAPITrackerPin,
     listDownloads: api.listAPITrackerDownloads,
     kind: "API tracker",
-    confirmRemove: (pin) =>
-      `Remove API tracker ${pin.label || pin.tracker_name || pin.tracker_id}?\n\nDownloaded files stay on disk and remain in the library.`,
+    subject: (pin) => ({
+      art: { icon: ServerIcon },
+      name: pinName(pin),
+      detail: `Downloads to ${pin.destination_path}`,
+    }),
     onError,
   });
 

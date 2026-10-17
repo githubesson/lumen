@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Cloud as CloudIcon } from "lucide-react";
 import { api, type FilenDownload, type FilenPin } from "../../api";
 import { Field, TextInput } from "../../components/Field";
 import { AdminSectionIntro } from "./AdminSectionTitle";
@@ -34,8 +35,11 @@ export function FilenPinsSection({
     scan: api.scanFilenPin,
     listDownloads: api.listFilenDownloads,
     kind: "Filen share",
-    confirmRemove: (pin) =>
-      `Remove Filen share ${pin.label || pin.share_url}?\n\nDownloaded files stay on disk and remain in the library.`,
+    subject: (pin) => ({
+      art: { icon: CloudIcon },
+      name: pinActionName(pin),
+      detail: `Downloads to ${pin.destination_path}`,
+    }),
     onError,
   });
 

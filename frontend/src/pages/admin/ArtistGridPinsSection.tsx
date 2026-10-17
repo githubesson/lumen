@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Radar as TrackerIcon } from "lucide-react";
 import { api, type ArtistGridDownload, type ArtistGridPin } from "../../api";
 import { Field, TextInput } from "../../components/Field";
 import { AdminSectionIntro } from "./AdminSectionTitle";
@@ -37,8 +38,11 @@ export function ArtistGridPinsSection({
     scan: api.scanArtistGridPin,
     listDownloads: api.listArtistGridDownloads,
     kind: "tracker",
-    confirmRemove: (pin) =>
-      `Remove tracker pin ${pinName(pin)}?\n\nDownloaded files stay on disk and remain in the library.`,
+    subject: (pin) => ({
+      art: { icon: TrackerIcon },
+      name: pinName(pin),
+      detail: `Downloads to ${pin.destination_path}`,
+    }),
     onError,
   });
 

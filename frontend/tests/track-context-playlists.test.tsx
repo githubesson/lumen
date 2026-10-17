@@ -14,6 +14,7 @@ vi.mock("../../core/src/api", async (original) => ({
 vi.mock("../src/context/Auth", () => ({ useAuth: () => ({ me: { id: "user", role: "user", must_reset_password: false } }) }));
 vi.mock("../src/context/Player", () => ({ usePlayer: () => ({ play: vi.fn() }), usePlayerControls: () => ({ play: vi.fn() }) }));
 vi.mock("../src/context/Favorites", () => ({ useFavorites: () => ({ isFavorite: () => false, toggle: vi.fn() }) }));
+vi.mock("../src/context/Confirm", () => ({ useConfirm: () => vi.fn() }));
 
 const playlist: Playlist = {
   id: "playlist", owner_id: "user", name: "Editable", visibility: "private",

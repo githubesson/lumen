@@ -1,4 +1,5 @@
 import {
+  inviteExpiryLabel,
   inviteRoleLabel,
   inviteStatus,
   inviteUsage,
@@ -10,6 +11,7 @@ import {
   Check as CheckIcon,
   Clipboard as ClipboardIcon,
   Plus as PlusIcon,
+  Ticket as TicketIcon,
   Trash2 as TrashIcon,
 } from "lucide-react";
 import { api, errorMessage, type Invite, type Role } from "../api";
@@ -26,6 +28,7 @@ import { fmtDate, fmtDateTime } from "../lib/format";
 import { isElectron } from "../lib/platform";
 import { useApiResource } from "../lib/useApiResource";
 import { useCopiedFlag } from "../lib/useCopiedFlag";
+import { useConfirm } from "../context/Confirm";
 
 /**
  * The web registration link for `token`, on the server's origin. The web app
@@ -53,6 +56,7 @@ export function InvitesAdminSection() {
     { cacheKey: "admin:invites" },
   );
   const [actionError, setActionError] = useState<string | null>(null);
+  const confirm = useConfirm();
   const error = actionError ?? loadError;
 
   const [role, setRole] = useState<Role>("user");
@@ -95,10 +99,21 @@ export function InvitesAdminSection() {
     }
   };
 
-  const revoke = async (id: string) => {
-    if (!window.confirm("Revoke this invite?")) return;
+  const revoke = async (inv: Invite) => {
+    const confirmed = await confirm({
+      title: "Revoke this invite?",
+      message: "Its link stops working, so no one else can sign up with it.",
+      subject: {
+        art: { icon: TicketIcon },
+        name: `${inviteRoleLabel(inv.target_role)} invite`,
+        detail: `${inviteUsage(inv)} used · ${inviteExpiryLabel(inv, fmtDate)}`,
+      },
+      confirmLabel: "Revoke",
+      confirmIcon: TrashIcon,
+    });
+    if (!confirmed) return;
     try {
-      await api.revokeInvite(id);
+      await api.revokeInvite(inv.id);
       await reload();
     } catch (err) {
       setActionError(errorMessage(err, "Failed to revoke."));
@@ -271,7 +286,7 @@ function InviteTable({
   rows: Invite[];
   emptyLabel?: string;
   showStatus?: boolean;
-  onRevoke?: (id: string) => void;
+  onRevoke?: (inv: Invite) => void;
 }) {
   const columns = (showStatus ? 5 : 4) + (onRevoke ? 1 : 0);
   return (
@@ -319,7 +334,7 @@ function InviteTable({
                   <button
                     type="button"
                     className="iconbtn iconbtn-danger"
-                    onClick={() => onRevoke(inv.id)}
+                    onClick={() => onRevoke(inv)}
                     aria-label={`Revoke ${inv.target_role} invite created ${fmtDate(inv.created_at)}`}
                     title="Revoke"
                   >

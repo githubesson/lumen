@@ -8,6 +8,7 @@ import {
   Lock as LockClosedIcon,
   Music as MusicalNoteIcon,
   Plus as PlusIcon,
+  Trash2 as TrashIcon,
   Users as UsersIcon,
 } from "lucide-react";
 import {
@@ -24,6 +25,7 @@ import {
   type TrackListItem,
 } from "../api";
 import { useAuth } from "../context/Auth";
+import { useConfirm, type ConfirmSubject } from "../context/Confirm";
 import { usePlayerControls } from "../context/Player";
 import { Button } from "../components/Button";
 import PlayListButton from "../components/PlayListButton";
@@ -42,6 +44,7 @@ import { useKey } from "../lib/keybindings";
 import { fmtTotalMs, pluralize } from "../lib/format";
 import {
   playlistCoverSizeError,
+  playlistSubtitle,
   type PlaylistDetailsPayload,
 } from "@music-library/core/playlist-details";
 import { playlistPermissions } from "@music-library/core/playlist-permissions";
@@ -68,6 +71,7 @@ type Tab = "tracks" | "collaborators" | "settings";
 const PLAYLIST_SELECTION_CONTROLS_ID = "playlist-track-selection-controls";
 // Header art is 200px wide; enough for a 2x screen.
 const HEADER_ART_SIZE = 400;
+const SUBJECT_ART_SIZE = 96;
 
 interface CachedPlaylist {
   playlist: Playlist;
@@ -123,6 +127,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
   const { play } = usePlayerControls();
   const { isFavorite, toggle: toggleFav } = useFavorites();
   const { me } = useAuth();
+  const confirm = useConfirm();
 
   // A revisit starts from what this page showed last time; a first visit
   // starts from the sidebar's row, so the header is up while tracks load.
@@ -569,10 +574,33 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
     navigate("/playlists", { replace: true });
   };
 
+  // The playlist as the delete and leave confirmations show it.
+  const subject = (): ConfirmSubject => ({
+    art: {
+      cover: playlist.custom_cover
+        ? playlistCoverUrl(playlist.id, playlist.custom_cover, SUBJECT_ART_SIZE)
+        : firstCoverTrack && trackCoverUrl(firstCoverTrack, SUBJECT_ART_SIZE),
+      label: playlist.name,
+    },
+    name: playlist.name,
+    detail: [tracks && pluralize(tracks.length, "track"), playlistSubtitle(playlist)]
+      .filter(Boolean)
+      .join(" · "),
+  });
+
   const onDelete = async () => {
     if (
       !id ||
-      !window.confirm(`Delete "${playlist.name}"? This cannot be undone.`)
+      !(await confirm({
+        title: "Delete this playlist?",
+        message:
+          playlist.visibility === "collaborative"
+            ? "Its collaborators lose it too. Its tracks stay in your library."
+            : "Its tracks stay in your library.",
+        subject: subject(),
+        confirmLabel: "Delete",
+        confirmIcon: TrashIcon,
+      }))
     )
       return;
     try {
@@ -814,6 +842,7 @@ function PlaylistDetailView({ id }: { id: string | undefined }) {
           me={me}
           onChanged={load}
           onLeft={leavePlaylist}
+          subject={subject}
         />
       )}
 

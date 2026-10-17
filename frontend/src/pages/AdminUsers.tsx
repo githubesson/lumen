@@ -11,6 +11,7 @@ import { Button } from "../components/Button";
 import EmptyState from "../components/EmptyState";
 import ErrorBanner from "../components/ErrorBanner";
 import { useAuth } from "../context/Auth";
+import { useConfirm } from "../context/Confirm";
 import AdminPanel from "../components/admin/AdminPanel";
 import AdminSection from "../components/admin/AdminSection";
 import { fmtDate, fmtDateTime, pluralize } from "../lib/format";
@@ -61,6 +62,7 @@ export function UsersAdminSection() {
     null,
   );
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const confirm = useConfirm();
 
   const summary = useMemo(() => (users ? summaryLine(users) : ""), [users]);
 
@@ -75,9 +77,19 @@ export function UsersAdminSection() {
   const toggleDisabled = async (user: AdminUser) => {
     if (
       !user.disabled &&
-      !window.confirm(
-        `Disable ${user.username}?\n\nThey're signed out everywhere and can't sign in until you enable the account again.`,
-      )
+      !(await confirm({
+        title: "Disable this account?",
+        message: "They're signed out everywhere and can't sign in until you enable it again.",
+        subject: {
+          art: { person: user.username },
+          name: user.username,
+          detail: `${user.role === "admin" ? "Admin" : "User"} · ${
+            user.last_login_at ? `last signed in ${fmtDate(user.last_login_at)}` : "never signed in"
+          }`,
+        },
+        confirmLabel: "Disable",
+        confirmIcon: UserXIcon,
+      }))
     ) {
       return;
     }

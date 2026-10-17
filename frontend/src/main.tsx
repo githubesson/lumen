@@ -7,6 +7,7 @@ import { ThemeProvider } from "./context/Theme";
 import { PlayerProvider } from "./context/Player";
 import { FavoritesProvider } from "./context/Favorites";
 import { ShareProvider } from "./context/Share";
+import { ConfirmProvider } from "./context/Confirm";
 import { TrackInfoProvider } from "./context/TrackInfo";
 import { LyricsPanelProvider } from "./context/LyricsPanel";
 import { KeyBindingsProvider } from "./lib/keybindings";
@@ -24,7 +25,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                 <LyricsPanelProvider>
                   <TrackInfoProvider>
                     <ShareProvider>
-                      <App />
+                      <ConfirmProvider>
+                        <App />
+                      </ConfirmProvider>
                     </ShareProvider>
                   </TrackInfoProvider>
                 </LyricsPanelProvider>

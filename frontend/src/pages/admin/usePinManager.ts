@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Trash2 as TrashIcon } from "lucide-react";
 import { ApiError, errorMessage, isValidPinID } from "../../api";
+import { useConfirm, type ConfirmSubject } from "../../context/Confirm";
 import { libraryChanged } from "../../lib/events";
 
 /** Minimal shape every pin (ArtistGrid tracker / Filen share) shares. */
@@ -31,8 +33,8 @@ export interface PinManagerConfig<Pin extends PinLike, Download extends Download
   listDownloads: (id: string, limit: number) => Promise<Download[]>;
   /** Human label for this source, used in error copy ("Tracker" / "Filen share"). */
   kind: string;
-  /** Confirmation prompt shown before removing a pin. */
-  confirmRemove: (pin: Pin) => string;
+  /** The pin, as the confirmation before removing it shows it. */
+  subject: (pin: Pin) => ConfirmSubject;
   /** Report errors to the shared section error banner (empty string clears). */
   onError: (message: string) => void;
 }
@@ -63,6 +65,7 @@ const missingIDMessage = (kind: string) =>
 export function usePinManager<Pin extends PinLike, Download extends DownloadLike>(
   config: PinManagerConfig<Pin, Download>,
 ): PinManager<Pin, Download> {
+  const confirm = useConfirm();
   const [pins, setPins] = useState<Pin[] | null>(null);
   const [busyPins, setBusyPins] = useState<Set<string>>(() => new Set());
   const [historyPinID, setHistoryPinID] = useState<string | null>(null);
@@ -159,15 +162,23 @@ export function usePinManager<Pin extends PinLike, Download extends DownloadLike
     (pin: Pin) => {
       const id = requireID(pin);
       if (!id) return;
-      if (!window.confirm(cfg.current.confirmRemove(pin))) return;
-      void withBusy(id, async () => {
-        await cfg.current.remove(id);
-        clearScanTimers(id);
-        setHistoryPinID((current) => (current === id ? null : current));
-        await reload();
+      void confirm({
+        title: `Remove this ${cfg.current.kind}?`,
+        message: "It stops being scanned. Files it downloaded stay on disk and in the library.",
+        subject: cfg.current.subject(pin),
+        confirmLabel: "Remove",
+        confirmIcon: TrashIcon,
+      }).then((confirmed) => {
+        if (!confirmed) return;
+        return withBusy(id, async () => {
+          await cfg.current.remove(id);
+          clearScanTimers(id);
+          setHistoryPinID((current) => (current === id ? null : current));
+          await reload();
+        });
       });
     },
-    [requireID, withBusy, reload, clearScanTimers],
+    [requireID, confirm, withBusy, reload, clearScanTimers],
   );
 
   const scanPin = useCallback(

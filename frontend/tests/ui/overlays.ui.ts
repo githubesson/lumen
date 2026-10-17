@@ -45,6 +45,25 @@ test("track info dialog", async ({ page }, testInfo) => {
   await checkUI(page, testInfo);
 });
 
+// Destructive actions ask in the app's own dialog, never the browser's. The
+// menu closes as it opens.
+test("confirm dialog", async ({ page }, testInfo) => {
+  let nativeDialogs = 0;
+  page.on("dialog", (native) => {
+    nativeDialogs += 1;
+    void native.dismiss();
+  });
+  const menu = await openContextMenu(page);
+  await menu.getByRole("menuitem", { name: "Remove from library" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "Remove for everyone?" });
+  await ready(page, dialog.getByRole("button", { name: "Remove" }));
+  await expect(dialog).toContainText(menuTrack.title);
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  expect(nativeDialogs).toBe(0);
+  await checkUI(page, testInfo);
+});
+
 test("settings dialog", async ({ page }, testInfo) => {
   // Below 760px Settings lives in the navigation drawer.
   const topbar = page.locator(".topbar").getByRole("button", { name: "Settings", exact: true });

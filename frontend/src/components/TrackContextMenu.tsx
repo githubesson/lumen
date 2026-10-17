@@ -34,7 +34,7 @@ import { canAddToPlaylist } from "@music-library/core/playlist-permissions";
 import { prepareTrackDownload } from "@music-library/core/audio-format";
 import { resolveTrackAlbumTarget } from "@music-library/core/entity-target";
 import { startListPlayback } from "@music-library/core/player/play-list";
-import { deleteOwnUploadMessage, trackActions } from "@music-library/core/track";
+import { trackActions } from "@music-library/core/track";
 import CoverArt from "./CoverArt";
 import { libraryChanged } from "../lib/events";
 import { triggerDownload } from "../lib/download";
@@ -53,6 +53,7 @@ import {
 } from "../lib/trackMenu";
 import { useDismiss } from "../lib/useDismiss";
 import { useAuth } from "../context/Auth";
+import { useConfirm, type ConfirmOptions } from "../context/Confirm";
 import { useFavorites } from "../context/Favorites";
 import { usePlayer } from "../context/Player";
 import { usePlaylists } from "../context/Playlists";
@@ -131,6 +132,7 @@ export default function TrackContextMenu({
   const navigate = useNavigate();
   const { isFavorite, toggle: toggleFav } = useFavorites();
   const { me } = useAuth();
+  const confirm = useConfirm();
   const isAdmin = me?.role === "admin";
   const actions = trackActions(track, { isAdmin });
 
@@ -169,7 +171,6 @@ export default function TrackContextMenu({
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [downloading, setDownloading] = useState(false);
   const [viewingAlbum, setViewingAlbum] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Another client may have changed the playlists since the shell loaded
@@ -392,32 +393,53 @@ export default function TrackContextMenu({
   };
 
   // Shared confirm + hard-delete flow. Both deletes are irreversible (server
-  // drops the DB row and unlinks the file), so confirm before firing.
-  const confirmDelete = async (message: string, del: () => Promise<void>) => {
-    if (deleting) return;
-    if (!window.confirm(message)) return;
-    setDeleting(true);
-    setError(null);
-    try {
-      await del();
-      libraryChanged.emit();
-      onClose();
-    } catch (err) {
-      setError(errorMessage(err, "Delete failed."));
-      setDeleting(false);
-    }
+  // drops the DB row and unlinks the file), so confirm before firing. The menu
+  // closes as the dialog opens, so the delete runs from the dialog, which
+  // shows its progress and any error.
+  const confirmDelete = (
+    options: Pick<ConfirmOptions, "title" | "message" | "busyLabel" | "confirmLabel">,
+    del: () => Promise<void>,
+  ) => {
+    onClose();
+    void confirm({
+      ...options,
+      subject: {
+        art: { cover: trackCoverUrl(track, THUMB_SIZE), label: track.album_title || track.title },
+        name: displayText(track.title),
+        detail: trackSubline(track),
+      },
+      confirmIcon: TrashIcon,
+      action: async () => {
+        await del();
+        libraryChanged.emit();
+      },
+      errorFallback: "Delete failed.",
+    });
   };
 
   // Personal uploads only (track.owned): removes the DB row and the file the
   // user uploaded.
   const runDelete = () =>
-    confirmDelete(deleteOwnUploadMessage(track), () => api.deleteTrack(track.id));
+    confirmDelete(
+      {
+        title: "Delete from your library?",
+        message: "This permanently removes the file you uploaded.",
+        confirmLabel: "Delete",
+        busyLabel: "Deleting…",
+      },
+      () => api.deleteTrack(track.id),
+    );
 
   // Admin-only, for global (shared-library) tracks: unlinks the file(s) from
   // disk so a rescan won't re-add it — removes the song for everyone.
   const runAdminDelete = () =>
     confirmDelete(
-      `Remove "${track.title}" from the shared library? This permanently deletes the file from the server for everyone.`,
+      {
+        title: "Remove for everyone?",
+        message: "This permanently deletes the file from the server, so it leaves every library.",
+        confirmLabel: "Remove",
+        busyLabel: "Removing…",
+      },
       () => api.deleteGlobalTrack(track.id),
     );
 
@@ -659,11 +681,10 @@ export default function TrackContextMenu({
                 role="menuitem"
                 className="ctx-item ctx-danger"
                 aria-label="Delete from my library"
-                onClick={() => void runDelete()}
-                disabled={deleting}
+                onClick={runDelete}
               >
                 <TrashIcon className="size-3.5" />
-                <span>{deleting ? "Deleting…" : "Delete"}</span>
+                <span>Delete</span>
               </button>
             )}
             {showRemove && (
@@ -672,11 +693,10 @@ export default function TrackContextMenu({
                 role="menuitem"
                 className="ctx-item ctx-danger"
                 aria-label="Remove from library"
-                onClick={() => void runAdminDelete()}
-                disabled={deleting}
+                onClick={runAdminDelete}
               >
                 <TrashIcon className="size-3.5" />
-                <span>{deleting ? "Removing…" : "Remove"}</span>
+                <span>Remove</span>
               </button>
             )}
           </div>
@@ -687,13 +707,18 @@ export default function TrackContextMenu({
   );
 }
 
-/** The track the menu acts on: its cover, title, and artist · album. */
-function TrackHeader({ track, titleId }: { track: TrackListItem; titleId: string }) {
-  const title = displayText(track.title);
-  const sub = [
+/** "Artist · Album", under a track's title. */
+function trackSubline(track: TrackListItem): string {
+  return [
     displayText(track.artist, "Unknown artist"),
     track.album_title ? displayText(track.album_title) : "",
   ].filter(Boolean).join(" · ");
+}
+
+/** The track the menu acts on: its cover, title, and artist · album. */
+function TrackHeader({ track, titleId }: { track: TrackListItem; titleId: string }) {
+  const title = displayText(track.title);
+  const sub = trackSubline(track);
   return (
     <div className="ctx-head">
       <CoverArt

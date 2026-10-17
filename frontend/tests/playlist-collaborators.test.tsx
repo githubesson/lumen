@@ -1,8 +1,9 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { playlistPermissions } from "@music-library/core/playlist-permissions";
 import type { Collaborator, EffectiveRole, Visibility } from "../src/api";
 import CollaboratorsPanel from "../src/pages/playlist/CollaboratorsPanel";
+import { ConfirmProvider } from "../src/context/Confirm";
 
 const mock = vi.hoisted(() => ({
   inviteCollaborator: vi.fn(),
@@ -41,12 +42,12 @@ function renderPanel(
       onChanged={onChanged}
       onLeft={onLeft}
     />,
+    { wrapper: ConfirmProvider },
   );
   return { onChanged, onLeft };
 }
 
 it("lets a collaborator leave but not remove others, change roles or invite", async () => {
-  vi.spyOn(window, "confirm").mockReturnValue(true);
   mock.removeCollaborator.mockResolvedValue(undefined);
   const { onLeft, onChanged } = renderPanel("editor", "collaborative", { id: "u2" });
 
@@ -54,6 +55,10 @@ it("lets a collaborator leave but not remove others, change roles or invite", as
   expect(screen.queryByRole("combobox")).toBeNull();
   expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Leave" }));
+  await act(async () => {});
+  expect(mock.removeCollaborator).not.toHaveBeenCalled();
+  const dialog = await screen.findByRole("alertdialog", { name: "Leave this playlist?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Leave" }));
   await act(async () => {});
   expect(mock.removeCollaborator).toHaveBeenCalledWith("p1", "u2");
   expect(onLeft).toHaveBeenCalledTimes(1);
