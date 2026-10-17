@@ -13,6 +13,8 @@ export interface Tweaks {
   layout: Layout;
   /** Home's arrangement on this device; absent for the default. */
   homeBoard?: HomeBoardTweak;
+  /** Smooth mix's crossfade on this device, in seconds; absent or 0 is off. */
+  smoothMix?: number;
 }
 
 /**

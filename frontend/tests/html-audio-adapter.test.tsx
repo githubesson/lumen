@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { act, cleanup, render } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useHtmlAudioAdapter } from "../src/adapters/html-audio-adapter";
 
 type FakeHls = {
@@ -37,7 +37,7 @@ vi.mock("hls.js/light", () => ({ default: class {
   on(_event: string, handler: (event: string, data: object) => void) { this.handler = handler; }
   fail(data: object) { this.handler?.("hlsError", data); }
 } }));
-afterEach(() => { cleanup(); vi.restoreAllMocks(); mock.instances = []; });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); mock.instances = []; });
 
 function setup() {
   // No native HLS, so TIDAL streams go through hls.js.
@@ -119,4 +119,77 @@ it("gives up on a playlist or segment the server refused", async () => {
   expect(current.startLoad).toHaveBeenCalledOnce();
   expect(current.destroy).toHaveBeenCalled();
   expect(error).toHaveBeenCalledOnce();
+});
+
+describe("crossfadeToPrepared", () => {
+  const one = "/api/tracks/one/stream";
+  const two = "/api/tracks/two/stream";
+
+  // `one` playing at 0.8, `two` prepared and buffered.
+  function playingWithNextReady() {
+    const player = setup();
+    act(() => {
+      player.adapter.setVolume(0.8);
+      player.adapter.load(one);
+      player.adapter.prepareNext?.(two);
+    });
+    Object.defineProperty(player.prepared, "readyState", {
+      configurable: true,
+      get: () => HTMLMediaElement.HAVE_ENOUGH_DATA,
+    });
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
+    return player;
+  }
+
+  it("fades the next song in while this one fades out, then stops this one", () => {
+    const { adapter, active, prepared } = playingWithNextReady();
+    const ended = vi.fn();
+    adapter.on("ended", ended);
+
+    expect(adapter.crossfadeToPrepared?.(two, 4)).toBe(true);
+    expect(prepared.volume).toBe(0);
+    expect(active.volume).toBeCloseTo(0.8);
+    expect(active.getAttribute("src")).toBe(one);
+
+    vi.advanceTimersByTime(2000);
+    expect(prepared.volume).toBeCloseTo(0.8 * Math.SQRT1_2);
+    expect(active.volume).toBeCloseTo(0.8 * Math.SQRT1_2);
+    // The outgoing song's events are no longer the player's.
+    active.dispatchEvent(new Event("ended"));
+    expect(ended).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(2000);
+    expect(prepared.volume).toBeCloseTo(0.8);
+    expect(active.hasAttribute("src")).toBe(false);
+  });
+
+  it("keeps a volume change in proportion mid-fade, and a pause ends the fade", () => {
+    const { adapter, active, prepared } = playingWithNextReady();
+    adapter.crossfadeToPrepared?.(two, 4);
+    vi.advanceTimersByTime(1000);
+    adapter.setVolume(0.4);
+    expect(prepared.volume).toBeCloseTo(0.4 * Math.sin(Math.PI / 8));
+    expect(active.volume).toBeCloseTo(0.4 * Math.cos(Math.PI / 8));
+
+    adapter.pause();
+    expect(active.hasAttribute("src")).toBe(false);
+    expect(prepared.volume).toBeCloseTo(0.4);
+  });
+
+  it("changes nothing when the next song isn't ready or can't take a volume", () => {
+    const { adapter, active, prepared } = playingWithNextReady();
+    Object.defineProperty(prepared, "readyState", { configurable: true, get: () => 0 });
+    expect(adapter.crossfadeToPrepared?.(two, 4)).toBe(false);
+
+    // iOS Safari: volume always reads 1.
+    Object.defineProperty(prepared, "readyState", {
+      configurable: true,
+      get: () => HTMLMediaElement.HAVE_ENOUGH_DATA,
+    });
+    Object.defineProperty(prepared, "volume", { configurable: true, get: () => 1, set: () => {} });
+    expect(adapter.crossfadeToPrepared?.(two, 4)).toBe(false);
+    expect(active.volume).toBeCloseTo(0.8);
+    expect(active.getAttribute("src")).toBe(one);
+    expect(adapter.activatePrepared?.(two)).toBe(true);
+  });
 });

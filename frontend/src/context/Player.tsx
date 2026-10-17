@@ -24,6 +24,7 @@ import { isElectron } from "../lib/platform";
 import { useMediaSession } from "../lib/useMediaSession";
 import { usePageVisible } from "../lib/usePageVisible";
 import { useAuth } from "./Auth";
+import { useTheme } from "./Theme";
 
 type Ctx = PlayerState & PlayerControls;
 
@@ -58,10 +59,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Nothing shows the clock while the page is hidden; like mobile's
   // app-state gate, stop sampling it until the page is visible again.
   const pageVisible = usePageVisible();
+  const { smoothMix } = useTheme();
   const { state, controls, time } = usePlayerCore({
     adapter,
     storage: webStorage,
     interpolateProgress: pageVisible,
+    crossfadeSeconds: smoothMix ?? 0,
   });
   usePlaybackActivityPublisher({
     state,

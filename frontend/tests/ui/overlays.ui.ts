@@ -91,7 +91,7 @@ test("confirm dialog over the command palette", async ({ page }) => {
   await expect(page.locator(".player-bar")).not.toContainText(menuTrack.title);
 });
 
-test("settings dialog", async ({ page }, testInfo) => {
+async function openSettings(page: Page) {
   // Below 760px Settings lives in the navigation drawer.
   const topbar = page.locator(".topbar").getByRole("button", { name: "Settings", exact: true });
   if (!(await topbar.isVisible())) {
@@ -99,6 +99,18 @@ test("settings dialog", async ({ page }, testInfo) => {
   }
   await page.getByRole("button", { name: "Settings", exact: true }).first().dispatchEvent("click");
   await ready(page, page.getByRole("dialog").getByText("Appearance").first());
+  return page.getByRole("dialog");
+}
+
+test("settings dialog", async ({ page }, testInfo) => {
+  await openSettings(page);
+  await checkUI(page, testInfo);
+});
+
+test("settings playback section", async ({ page }, testInfo) => {
+  const dialog = await openSettings(page);
+  await dialog.getByRole("button", { name: "Playback" }).click();
+  await ready(page, dialog.getByText("Smooth mix", { exact: true }));
   await checkUI(page, testInfo);
 });
 
