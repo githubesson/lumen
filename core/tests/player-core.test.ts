@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canStartTrack,
   clampVolume,
+  continuesAlbum,
   extrapolatePosition,
   fisherYatesWithAnchor,
   nextRepeatMode,
@@ -119,5 +120,23 @@ describe("canStartTrack", () => {
   it("applies the platform gate to available tracks", () => {
     expect(canStartTrack({ id: "a" }, (id) => id === "b")).toBe(false);
     expect(canStartTrack({ id: "b" }, (id) => id === "b")).toBe(true);
+  });
+});
+
+describe("continuesAlbum", () => {
+  it("is the next track number on the same album", () => {
+    const one = { album_id: "x", track_no: 1 };
+    expect(continuesAlbum(one, { album_id: "x", track_no: 2 })).toBe(true);
+    expect(continuesAlbum(one, { album_id: "x", track_no: 3 })).toBe(false);
+    expect(continuesAlbum({ album_id: "x", track_no: 2 }, one)).toBe(false);
+    expect(continuesAlbum(one, { album_id: "y", track_no: 2 })).toBe(false);
+  });
+
+  it("matches TIDAL albums by source id, and never without an album or number", () => {
+    const tidal = (track_no?: number) => ({ source: "tidal" as const, source_album_id: "9", track_no });
+    expect(continuesAlbum(tidal(4), tidal(5))).toBe(true);
+    expect(continuesAlbum({ ...tidal(4), source: "local" as const }, tidal(5))).toBe(false);
+    expect(continuesAlbum({ track_no: 1 }, { track_no: 2 })).toBe(false);
+    expect(continuesAlbum(tidal(), tidal(1))).toBe(false);
   });
 });

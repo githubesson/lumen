@@ -139,6 +139,26 @@ export function canStartTrack(
   return !track.unavailable && (!isPlayable || isPlayable(track.id));
 }
 
+/** Smooth mix's crossfade lengths to choose from, in seconds. */
+export const SMOOTH_MIX_SECONDS = [3, 6, 9, 12] as const;
+
+/**
+ * Whether `next` is the track after `current` on the same album, as when an
+ * album plays in order. Smooth mix doesn't fade there: album tracks often run
+ * into each other, and a fade would break the join.
+ */
+export function continuesAlbum(
+  current: Pick<TrackListItem, "album_id" | "source" | "source_album_id" | "track_no">,
+  next: Pick<TrackListItem, "album_id" | "source" | "source_album_id" | "track_no">,
+): boolean {
+  const sameAlbum =
+    (!!current.album_id && current.album_id === next.album_id) ||
+    (!!current.source_album_id &&
+      current.source === next.source &&
+      current.source_album_id === next.source_album_id);
+  return sameAlbum && current.track_no != null && next.track_no === current.track_no + 1;
+}
+
 /** Clamp a volume value to [0, 1]. */
 export function clampVolume(v: number): number {
   return Math.max(0, Math.min(1, v));
