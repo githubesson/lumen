@@ -49,6 +49,9 @@ export function DiscordCardSettings({ desktop }: { desktop: DesktopSettingsState
   // Options changed since the last save; only these are sent.
   const unsaved = useRef<Partial<DiscordCardOptions> | null>(null);
   const saving = useRef(0);
+  // Numbers each save, and the newest save that carried each option.
+  const saves = useRef(0);
+  const sentIn = useRef<Partial<Record<keyof DiscordCardOptions, number>>>({});
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const id = useId();
 
@@ -65,6 +68,9 @@ export function DiscordCardSettings({ desktop }: { desktop: DesktopSettingsState
     const changes = unsaved.current;
     unsaved.current = null;
     if (!changes) return;
+    const keys = Object.keys(changes) as (keyof DiscordCardOptions)[];
+    const save = ++saves.current;
+    for (const key of keys) sentIn.current[key] = save;
     saving.current += 1;
     void updateDesktopConfig({ discordCard: changes })
       .catch((cause: unknown) => ({
@@ -75,10 +81,11 @@ export function DiscordCardSettings({ desktop }: { desktop: DesktopSettingsState
         saving.current -= 1;
         if (!result.ok) {
           // Keep what didn't save for the next save (an edit, blur or
-          // closing), at its newest value: only changed options go out.
-          const retry = Object.fromEntries(
-            Object.keys(changes).map((key) => [key, latest.current[key as keyof DiscordCardOptions]]),
-          );
+          // closing), at its newest value: only changed options go out. An
+          // option a newer save also carried is that save's to land or fail.
+          const failed = keys.filter((key) => sentIn.current[key] === save);
+          if (!failed.length) return;
+          const retry = Object.fromEntries(failed.map((key) => [key, latest.current[key]]));
           unsaved.current = { ...unsaved.current, ...retry };
           setError(result.error);
           return;

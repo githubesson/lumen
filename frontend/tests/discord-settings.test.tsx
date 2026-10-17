@@ -121,3 +121,23 @@ it("sends an edit that failed to save again with the next save, and keeps showin
   expect(line(1).value).toBe("{artist}");
   expect(screen.queryByText("Disk is full")).toBeNull();
 });
+
+it("doesn't report a failed save whose options a newer save then saved", async () => {
+  const answers: Array<(ok: boolean) => void> = [];
+  mock.update.mockImplementation(({ discordCard }) => new Promise((resolve) => {
+    answers.push((ok) => resolve(ok ? store(discordCard) : { ok: false, error: "Disk is full" }));
+  }));
+  render(<DiscordCardSettings desktop={desktop(card)} />);
+  const cover = () => screen.getAllByRole("switch")[0];
+  await act(async () => { fireEvent.click(cover()); });
+  await act(async () => { fireEvent.click(cover()); });
+  await act(async () => { answers.shift()!(false); });
+  await act(async () => { answers.shift()!(true); });
+  expect(screen.queryByText("Disk is full")).toBeNull();
+  expect(savedCards()).toEqual([{ cover: false }, { cover: true }]);
+  expect(stored).toEqual(card);
+  // Nothing was left over to send again.
+  fireEvent.change(line(2), { target: { value: "{album}" } });
+  fireEvent.blur(line(2));
+  expect(savedCards().at(-1)).toEqual({ state: "{album}" });
+});
