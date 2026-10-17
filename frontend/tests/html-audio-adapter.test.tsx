@@ -182,6 +182,31 @@ describe("crossfadeToPrepared", () => {
     expect(prepared.volume).toBeCloseTo(0.4);
   });
 
+  it("ends the fade at once on a seek, a new source or disposal", () => {
+    const seek = playingWithNextReady();
+    seek.adapter.crossfadeToPrepared?.(two, 4);
+    seek.adapter.seek(30);
+    expect(seek.active.hasAttribute("src")).toBe(false);
+    expect(seek.prepared.volume).toBeCloseTo(0.8);
+    expect(vi.getTimerCount()).toBe(0);
+    cleanup();
+    vi.useRealTimers();
+
+    const load = playingWithNextReady();
+    load.adapter.crossfadeToPrepared?.(two, 4);
+    act(() => load.adapter.load("/api/tracks/three/stream"));
+    expect(load.active.hasAttribute("src")).toBe(false);
+    expect(load.prepared.getAttribute("src")).toBe("/api/tracks/three/stream");
+    expect(vi.getTimerCount()).toBe(0);
+    cleanup();
+    vi.useRealTimers();
+
+    const dispose = playingWithNextReady();
+    dispose.adapter.crossfadeToPrepared?.(two, 4);
+    dispose.adapter.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("keeps the outgoing song's hls.js until its fade ends, then destroys it once", async () => {
     const { adapter, active, prepared } = setup();
     act(() => adapter.load("/api/tracks/tidal%3Aone/stream"));

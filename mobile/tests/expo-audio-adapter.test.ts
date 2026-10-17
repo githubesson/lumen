@@ -724,6 +724,22 @@ describe("useExpoAudioAdapter smooth mix", () => {
     expect(h.calls).toEqual(["b:replace"]);
   });
 
+  it("ends the fade at once on a seek", async () => {
+    const { adapter } = await crossfading();
+    adapter.seek(30);
+    expect(h.calls).toEqual(["b:replace", "b:play", "pause", "empty", "b:seekTo"]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("ends the fade at once on a new source, which loads on the active player", async () => {
+    const { adapter } = await crossfading();
+    adapter.load("https://example.test/three.mp3");
+    expect(h.calls).toEqual(["b:replace", "b:play", "pause", "empty", "b:replace"]);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(h.secondPlayer.volume).toBeCloseTo(0.8);
+    expect(h.fakePlayer.volume).toBe(0);
+  });
+
   it("swaps back to the first player for the next crossfade", async () => {
     const { adapter } = await crossfading();
     vi.advanceTimersByTime(4000);

@@ -167,10 +167,18 @@ export function usePlayerCore({
   const preparedNextRef = useRef<{ trackId: string; uri: string } | null>(null);
   const playbackAttemptRef = useRef(0);
   const handoffRef = useRef<{ track: TrackListItem; attempt: number } | null>(null);
-  // Set when play(), jumpTo() or prev() picks a track, until React commits
-  // the pick. Until then the event handlers still see the old queue's next
-  // track, and a timeupdate must not prepare it or crossfade into it.
-  const selectionPendingRef = useRef(false);
+  // Picks made by play(), jumpTo() and prev(), and the last one React has
+  // committed. Until they match, the event handlers still see the old
+  // queue's next track, and a timeupdate must not prepare it or crossfade
+  // into it. Each pick also bumps state, so it always commits, and only its
+  // own commit (not an earlier, higher-priority one) clears it.
+  const picksRef = useRef(0);
+  const committedPicksRef = useRef(0);
+  const [picks, setPicks] = useState(0);
+  const notePick = useCallback(() => {
+    picksRef.current += 1;
+    setPicks(picksRef.current);
+  }, []);
   // Anchor used to interpolate currentTime against the wall clock between the
   // adapter's (infrequent) timeupdate pings.
   const anchorRef = useRef<{ audioTime: number; wallTime: number }>({
@@ -315,7 +323,7 @@ export function usePlayerCore({
   const play = useCallback<PlayerControls["play"]>(
     (track, q, options) => {
       if (!canStartTrack(track, isTrackPlayable)) return false;
-      selectionPendingRef.current = true;
+      notePick();
       const base = q && q.length ? q : [track];
       // Set here, with the queue, rather than through setShuffle: that
       // reorders the queue this render has, not the one starting now.
@@ -336,7 +344,7 @@ export function usePlayerCore({
       resetClockForTrackChange(track.id);
       playbackReportedRef.current = null;
     },
-    [isTrackPlayable, resetClockForTrackChange, shuffle, startTrack],
+    [isTrackPlayable, notePick, resetClockForTrackChange, shuffle, startTrack],
   );
 
   const toggle = useCallback<PlayerControls["toggle"]>(() => {
@@ -496,14 +504,14 @@ export function usePlayerCore({
       restartCurrent();
       return;
     }
-    selectionPendingRef.current = true;
+    notePick();
     clearPreparedNext();
     setIndex(ni);
     setCurrent(queue[ni]);
     startTrack(queue[ni]);
     resetClockForTrackChange(queue[ni].id);
     playbackReportedRef.current = null;
-  }, [adapter, clearPreparedNext, current, queue, index, isTrackPlayable, resetClockForTrackChange, retryFailedTrack, startTrack]);
+  }, [adapter, clearPreparedNext, current, queue, index, isTrackPlayable, notePick, resetClockForTrackChange, retryFailedTrack, startTrack]);
 
   const jumpTo = useCallback<PlayerControls["jumpTo"]>(
     (i) => {
@@ -511,7 +519,7 @@ export function usePlayerCore({
       // Silently ignore taps on tracks that can't start (unavailable, or not
       // downloaded while offline) — queue UIs dim them instead.
       if (!canStartTrack(queue[i], isTrackPlayable)) return;
-      selectionPendingRef.current = true;
+      notePick();
       clearPreparedNext();
       setIndex(i);
       setCurrent(queue[i]);
@@ -519,7 +527,7 @@ export function usePlayerCore({
       resetClockForTrackChange(queue[i].id);
       playbackReportedRef.current = null;
     },
-    [clearPreparedNext, queue, isTrackPlayable, resetClockForTrackChange, startTrack],
+    [clearPreparedNext, queue, isTrackPlayable, notePick, resetClockForTrackChange, startTrack],
   );
 
   const seek = useCallback<PlayerControls["seek"]>(
@@ -681,10 +689,9 @@ export function usePlayerCore({
     };
   }, [isPlaying, current, next, advance, nextTrackToPrepare, repeat, resolvePlayableUri, crossfadeSeconds]);
 
-  // Any commit carries a pick made before it (see selectionPendingRef).
   useEffect(() => {
-    selectionPendingRef.current = false;
-  });
+    committedPicksRef.current = picks;
+  }, [picks]);
 
   // Wire adapter events → hook state.
   useEffect(() => {
@@ -714,7 +721,7 @@ export function usePlayerCore({
       const trackId = currentTrack?.id;
       const now = adapter.currentTime();
       const d = adapter.duration();
-      const selecting = selectionPendingRef.current;
+      const selecting = picksRef.current !== committedPicksRef.current;
       if (
         !selecting &&
         toPrepare &&
@@ -839,6 +846,8 @@ export function usePlayerCore({
       // shown there, and playing the track again retries it.
       playbackAttemptRef.current += 1;
       setIsPlaying(false);
+      // As in the pause handler: nothing may fade out of a failed song.
+      eventStateRef.current.isPlaying = false;
       const { current: track, resolvePlayableUri: resolveUri } = eventStateRef.current;
       if (!track) return;
       const failure = { trackId: track.id };

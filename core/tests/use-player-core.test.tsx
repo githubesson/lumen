@@ -581,6 +581,32 @@ describe("usePlayerCore smooth mix", () => {
     expect(result.current.state.isPlaying).toBe(false);
   });
 
+  it("doesn't fade out of a song that failed in the same batch", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    act(() => {
+      emit("error");
+      state.time = 177;
+      emit("timeupdate");
+    });
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+    expect(result.current.state.current?.id).toBe("a");
+    expect(result.current.state.playbackError?.trackId).toBe("a");
+  });
+
+  it("prepares again after a pick that changes nothing", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    vi.mocked(adapter.prepareNext!).mockClear();
+    // Tapping the playing track in a queue (CarPlay, say) drops what was
+    // prepared; the pick still commits, so the next update prepares again.
+    act(() => result.current.controls.jumpTo(0));
+    state.time = 160;
+    act(() => emit("timeupdate"));
+    expect(adapter.prepareNext).toHaveBeenCalledWith("test://stream/b");
+    state.time = 177;
+    act(() => emit("timeupdate"));
+    expect(adapter.crossfadeToPrepared).toHaveBeenCalledWith("test://stream/b", 3);
+  });
+
   it("still fades after a pause and a resume in one batch", async () => {
     const { result, adapter, state, emit } = await nearTheEnd();
     // A brief interruption: both statuses arrive before React renders, and
