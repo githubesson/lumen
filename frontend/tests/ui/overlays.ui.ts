@@ -64,6 +64,33 @@ test("confirm dialog", async ({ page }, testInfo) => {
   await checkUI(page, testInfo);
 });
 
+// The palette is a Radix modal whose focus trap would pull focus straight
+// back out of a dialog opened over it, leaving Enter to run the palette's
+// highlighted item underneath. The confirmation must hold the keyboard.
+test("confirm dialog over the command palette", async ({ page }) => {
+  await page.keyboard.press("ControlOrMeta+k");
+  const input = page.locator("[cmdk-input]");
+  await input.fill(menuTrack.title);
+  const result = page.locator(".cmdk-list [cmdk-item]").filter({ hasText: menuTrack.title }).first();
+  await result.click({ button: "right" });
+  await page.getByRole("menu").getByRole("menuitem", { name: "Remove from library" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "Remove for everyone?" });
+  const cancel = dialog.getByRole("button", { name: "Cancel" });
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(dialog.getByRole("button", { name: "Remove" })).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(cancel).toBeFocused();
+  // Answers the dialog. The palette stays up with the search as it was, and
+  // focus goes back into it.
+  await page.keyboard.press("Enter");
+  await expect(dialog).toBeHidden();
+  await expect(page.locator("[cmdk-dialog]")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest("[cmdk-dialog]"))).toBe(true);
+  await expect(input).toHaveValue(menuTrack.title);
+  await expect(page.locator(".player-bar")).not.toContainText(menuTrack.title);
+});
+
 test("settings dialog", async ({ page }, testInfo) => {
   // Below 760px Settings lives in the navigation drawer.
   const topbar = page.locator(".topbar").getByRole("button", { name: "Settings", exact: true });

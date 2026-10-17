@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
 import { X as XMarkIcon } from "lucide-react";
+import { FocusScope } from "@radix-ui/react-focus-scope";
 import { trapTab } from "../lib/focusTrap";
 import { useModalKeyScope } from "../lib/keybindings";
 import { useTransitionMount } from "../lib/useTransitionMount";
@@ -106,59 +107,84 @@ export function DialogShell({
   }, [interactive]);
   useModalKeyScope(interactive);
 
-  if (!mounted) return null;
+  // Radix pauses its focus traps under the newest FocusScope. This one mounts
+  // as the dialog opens, a frame before the panel, so a Radix modal beneath
+  // (the command palette) stops pulling focus back out of the dialog, which
+  // would also leave Enter running the palette's highlighted item. Focus
+  // itself stays with the effect above.
+  const radixPause = open && (
+    <FocusScope
+      hidden
+      onMountAutoFocus={(event) => {
+        event.preventDefault();
+        // Mounted already open, the panel took focus before the pause, and
+        // the trap took it back: take it again.
+        const panel = panelRef.current;
+        if (panel && !panel.contains(document.activeElement)) {
+          (latestInitialFocus.current?.current ?? panel).focus();
+        }
+      }}
+      onUnmountAutoFocus={(event) => event.preventDefault()}
+    />
+  );
+
   return (
-    <div
-      ref={layerRef}
-      role={role}
-      aria-modal="true"
-      aria-labelledby={title ? titleId : labelledBy}
-      aria-describedby={describedBy}
-      data-closed={!visible || undefined}
-      className="dialog-layer group fixed inset-0 grid place-items-center p-4"
-      onPointerDown={(e) => {
-        e.stopPropagation();
-        e.nativeEvent.stopImmediatePropagation();
-      }}
-      onMouseDown={(e) => {
-        e.stopPropagation();
-        e.nativeEvent.stopImmediatePropagation();
-      }}
-    >
-      {/* Click-outside to close. Not a button: the header's close button
-          covers keyboards and screen readers, and a labelled full-screen
-          button would get a hover tooltip and a Tab stop outside the panel. */}
-      <div
-        aria-hidden="true"
-        onClick={onClose}
-        className="absolute inset-0 transition-opacity duration-200 ease-out group-data-closed:opacity-0"
-        style={{ background: "var(--scrim)" }}
-      />
-      <div
-        ref={panelRef}
-        tabIndex={-1}
-        className={`dialog relative grid max-h-[80vh] w-full max-w-lg ${title ? "grid-rows-[auto_1fr_auto]" : "grid-rows-[1fr_auto]"} overflow-hidden outline-none transition-[opacity,transform] duration-200 ease-out group-data-closed:scale-95 group-data-closed:opacity-0 motion-reduce:transition-none motion-reduce:group-data-closed:scale-100`}
-        style={maxWidth !== undefined ? { maxWidth } : undefined}
-      >
-        {title && (
+    <>
+      {radixPause}
+      {mounted && (
+        <div
+          ref={layerRef}
+          role={role}
+          aria-modal="true"
+          aria-labelledby={title ? titleId : labelledBy}
+          aria-describedby={describedBy}
+          data-closed={!visible || undefined}
+          className="dialog-layer group fixed inset-0 grid place-items-center p-4"
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            e.nativeEvent.stopImmediatePropagation();
+          }}
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            e.nativeEvent.stopImmediatePropagation();
+          }}
+        >
+          {/* Click-outside to close. Not a button: the header's close button
+              covers keyboards and screen readers, and a labelled full-screen
+              button would get a hover tooltip and a Tab stop outside the panel. */}
           <div
-            className="flex items-center justify-between px-4 py-3"
-            style={{ borderBottom: "1px solid var(--border)" }}
+            aria-hidden="true"
+            onClick={onClose}
+            className="absolute inset-0 transition-opacity duration-200 ease-out group-data-closed:opacity-0"
+            style={{ background: "var(--scrim)" }}
+          />
+          <div
+            ref={panelRef}
+            tabIndex={-1}
+            className={`dialog relative grid max-h-[80vh] w-full max-w-lg ${title ? "grid-rows-[auto_1fr_auto]" : "grid-rows-[1fr_auto]"} overflow-hidden outline-none transition-[opacity,transform] duration-200 ease-out group-data-closed:scale-95 group-data-closed:opacity-0 motion-reduce:transition-none motion-reduce:group-data-closed:scale-100`}
+            style={maxWidth !== undefined ? { maxWidth } : undefined}
           >
-            <h2 id={titleId} style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>{title}</h2>
-            <button
-              type="button"
-              aria-label="Close"
-              onClick={onClose}
-              className="iconbtn"
-            >
-              <XMarkIcon className="size-3.5" aria-hidden="true" />
-            </button>
+            {title && (
+              <div
+                className="flex items-center justify-between px-4 py-3"
+                style={{ borderBottom: "1px solid var(--border)" }}
+              >
+                <h2 id={titleId} style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>{title}</h2>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  onClick={onClose}
+                  className="iconbtn"
+                >
+                  <XMarkIcon className="size-3.5" aria-hidden="true" />
+                </button>
+              </div>
+            )}
+            {children}
+            {footer}
           </div>
-        )}
-        {children}
-        {footer}
-      </div>
-    </div>
+        </div>
+      )}
+    </>
   );
 }

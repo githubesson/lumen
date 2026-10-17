@@ -36,6 +36,7 @@
     "@eslint/js": "^9.39.5",
     "@music-library/core": "file:../core",
     "@radix-ui/react-dialog": "1.1.15",
+    "@radix-ui/react-focus-scope": "1.1.7",
     "@shadcn/lint": "^0.1.0",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/react": "^16.3.3",
