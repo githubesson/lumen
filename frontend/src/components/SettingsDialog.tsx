@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
 import {
   Download as DownloadIcon,
   Link2 as LinkIcon,
@@ -26,7 +26,7 @@ import DesktopUpdates, { useDesktopUpdates } from "./DesktopUpdates";
 import SearchInput from "./SearchInput";
 import { Select, type SelectOption } from "./Select";
 import SettingRow from "./SettingRow";
-import { SettingsSideContext } from "./SettingsSide";
+import { SettingsSideContext, useSettingsSideColumn } from "./SettingsSide";
 
 // Room for the side column beside the 700px dialog (keep in step with the
 // min-width in settings.css).
@@ -129,17 +129,7 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
   const desktop = useDesktopSettings(interactive);
 
   // The side column opens while a section claims it and the window has room.
-  const roomForSide = useMediaQuery(SIDE_ROOM);
-  const [sideTarget, setSideTarget] = useState<HTMLDivElement | null>(null);
-  const [sideClaims, setSideClaims] = useState(0);
-  const claimSide = useCallback(() => {
-    setSideClaims((n) => n + 1);
-    return () => setSideClaims((n) => n - 1);
-  }, []);
-  const side = useMemo(
-    () => ({ target: roomForSide ? sideTarget : null, claim: claimSide }),
-    [roomForSide, sideTarget, claimSide],
-  );
+  const { side, open: sideOpen, setTarget: setSideTarget } = useSettingsSideColumn(useMediaQuery(SIDE_ROOM));
 
   // Shell passes a fresh arrow each render; the effect below must only run on
   // mount/unmount or it would yank focus back to the panel on every render.
@@ -484,8 +474,10 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        data-side={(roomForSide && sideClaims > 0) || undefined}
-        className="dialog settings relative transition-[opacity,transform,max-width,grid-template-columns] duration-200 ease-out group-data-closed:scale-95 group-data-closed:opacity-0 motion-reduce:transition-none motion-reduce:group-data-closed:scale-100"
+        data-side={sideOpen || undefined}
+        // Widening animates only while open: a column claimed as the dialog
+        // opens (on the Discord section, say) is there before it fades in.
+        className="dialog settings relative transition-[opacity,transform,max-width,grid-template-columns] group-data-closed:transition-[opacity,transform] duration-200 ease-out group-data-closed:scale-95 group-data-closed:opacity-0 motion-reduce:transition-none motion-reduce:group-data-closed:scale-100"
       >
         <nav className="settings-nav" aria-label="Settings sections">
           <div className="settings-nav-top">

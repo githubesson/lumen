@@ -126,3 +126,18 @@ test("discord card preview follows its lines", async ({ page }) => {
   );
   expect(new Set(sent)).toEqual(new Set(["state", "largeText"]));
 });
+
+test("the side column shuts when the Discord options go", async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 1100, "Only wide windows have the side column.");
+  await openSection(page, "Discord");
+  const dialog = page.locator(".settings");
+  await expect(dialog).toHaveAttribute("data-side", "true");
+  await page.locator(".settings-nav-item", { hasText: "Appearance" }).click();
+  await expect(dialog).not.toHaveAttribute("data-side");
+  await page.locator(".settings-nav-item", { hasText: "Discord" }).click();
+  await expect(dialog).toHaveAttribute("data-side", "true");
+  // Turning the status off takes the card options, and the column, away.
+  await page.getByRole("switch", { name: "Discord status" }).click();
+  await expect(dialog).not.toHaveAttribute("data-side");
+  await expect(page.locator(".discord-popout")).toHaveCount(0);
+});
