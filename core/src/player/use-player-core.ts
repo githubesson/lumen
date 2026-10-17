@@ -167,6 +167,10 @@ export function usePlayerCore({
   const preparedNextRef = useRef<{ trackId: string; uri: string } | null>(null);
   const playbackAttemptRef = useRef(0);
   const handoffRef = useRef<{ track: TrackListItem; attempt: number } | null>(null);
+  // Set when play(), jumpTo() or prev() picks a track, until React commits
+  // the pick. Until then the event handlers still see the old queue's next
+  // track, and a timeupdate must not prepare it or crossfade into it.
+  const selectionPendingRef = useRef(false);
   // Anchor used to interpolate currentTime against the wall clock between the
   // adapter's (infrequent) timeupdate pings.
   const anchorRef = useRef<{ audioTime: number; wallTime: number }>({
@@ -311,6 +315,7 @@ export function usePlayerCore({
   const play = useCallback<PlayerControls["play"]>(
     (track, q, options) => {
       if (!canStartTrack(track, isTrackPlayable)) return false;
+      selectionPendingRef.current = true;
       const base = q && q.length ? q : [track];
       // Set here, with the queue, rather than through setShuffle: that
       // reorders the queue this render has, not the one starting now.
@@ -491,6 +496,7 @@ export function usePlayerCore({
       restartCurrent();
       return;
     }
+    selectionPendingRef.current = true;
     clearPreparedNext();
     setIndex(ni);
     setCurrent(queue[ni]);
@@ -505,6 +511,7 @@ export function usePlayerCore({
       // Silently ignore taps on tracks that can't start (unavailable, or not
       // downloaded while offline) — queue UIs dim them instead.
       if (!canStartTrack(queue[i], isTrackPlayable)) return;
+      selectionPendingRef.current = true;
       clearPreparedNext();
       setIndex(i);
       setCurrent(queue[i]);
@@ -674,6 +681,11 @@ export function usePlayerCore({
     };
   }, [isPlaying, current, next, advance, nextTrackToPrepare, repeat, resolvePlayableUri, crossfadeSeconds]);
 
+  // Any commit carries a pick made before it (see selectionPendingRef).
+  useEffect(() => {
+    selectionPendingRef.current = false;
+  });
+
   // Wire adapter events → hook state.
   useEffect(() => {
     const syncListenedTime = () => {
@@ -702,7 +714,9 @@ export function usePlayerCore({
       const trackId = currentTrack?.id;
       const now = adapter.currentTime();
       const d = adapter.duration();
+      const selecting = selectionPendingRef.current;
       if (
+        !selecting &&
         toPrepare &&
         adapter.prepareNext &&
         d > 0 &&
@@ -749,6 +763,7 @@ export function usePlayerCore({
       const nextSeconds = (toPrepare?.duration_ms ?? 0) / 1000;
       const fadeLength = nextSeconds > 0 ? Math.min(fade, nextSeconds / 2) : fade;
       if (
+        !selecting &&
         fade > 0 &&
         playing &&
         currentTrack &&
@@ -812,6 +827,9 @@ export function usePlayerCore({
       // only genuine pauses reach this handler.
       playbackAttemptRef.current += 1;
       setIsPlaying(false);
+      // Until that commits, a timeupdate from the same native status must
+      // see the pause too, or smooth mix would start the next song.
+      eventStateRef.current.isPlaying = false;
     });
     const offError = adapter.on("error", () => {
       // Stop on the failed track rather than skipping it: the failure is

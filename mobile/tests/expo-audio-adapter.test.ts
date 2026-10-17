@@ -678,7 +678,8 @@ describe("useExpoAudioAdapter smooth mix", () => {
     vi.advanceTimersByTime(2000);
     expect(h.calls).toEqual(["b:replace", "b:play", "pause", "empty"]);
     expect(h.secondPlayer.volume).toBeCloseTo(0.8);
-    expect(h.fakePlayer.volume).toBeCloseTo(0.8);
+    // The idle player stays silent.
+    expect(h.fakePlayer.volume).toBe(0);
 
     // From here the second player is the player.
     h.secondPlayer.duration = 180;
@@ -699,6 +700,7 @@ describe("useExpoAudioAdapter smooth mix", () => {
     adapter.pause();
     expect(h.calls).toEqual(["b:replace", "b:play", "pause", "empty", "b:pause"]);
     expect(h.secondPlayer.volume).toBeCloseTo(0.4);
+    expect(h.fakePlayer.volume).toBe(0);
   });
 
   it("reports a system pause of the incoming song, and the pause that follows ends the fade", async () => {
@@ -751,6 +753,15 @@ describe("useExpoAudioAdapter smooth mix", () => {
     h.emitStatus(playing);
     expect(h.calls).toEqual(["pause"]);
     expect(events).toEqual(["loadedmetadata", "play"]);
+  });
+
+  it("doesn't fade from a song the system just paused", async () => {
+    const { adapter } = await playingWithNextReady();
+    // The live status already says paused when the timeupdate arrives.
+    h.fakePlayer.currentStatus = loaded;
+    expect(adapter.crossfadeToPrepared!(next, 4)).toBe(false);
+    expect(h.calls).toEqual([]);
+    expect(h.secondPlayer.setActiveForLockScreen).not.toHaveBeenCalled();
   });
 
   it("changes nothing until the next song is preloaded", () => {

@@ -121,6 +121,11 @@ it("gives up on a playlist or segment the server refused", async () => {
   expect(error).toHaveBeenCalledOnce();
 });
 
+// jsdom never plays an element; mark it playing for a crossfade to start.
+function playing(audio: HTMLAudioElement) {
+  Object.defineProperty(audio, "paused", { configurable: true, get: () => false });
+}
+
 describe("crossfadeToPrepared", () => {
   const one = "/api/tracks/one/stream";
   const two = "/api/tracks/two/stream";
@@ -137,6 +142,7 @@ describe("crossfadeToPrepared", () => {
       configurable: true,
       get: () => HTMLMediaElement.HAVE_ENOUGH_DATA,
     });
+    playing(player.active);
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
     return player;
   }
@@ -185,6 +191,7 @@ describe("crossfadeToPrepared", () => {
     await act(async () => {});
     const outgoing = mock.instances.find((hls) => hls.media === active)!;
     const incoming = mock.instances.find((hls) => hls.media === prepared)!;
+    playing(active);
     Object.defineProperty(prepared, "readyState", {
       configurable: true,
       get: () => HTMLMediaElement.HAVE_ENOUGH_DATA,
@@ -213,6 +220,7 @@ describe("crossfadeToPrepared", () => {
     await act(async () => {});
     const outgoing = mock.instances.find((hls) => hls.media === active)!;
     const incoming = mock.instances.find((hls) => hls.media === prepared)!;
+    playing(active);
     Object.defineProperty(prepared, "readyState", {
       configurable: true,
       get: () => HTMLMediaElement.HAVE_ENOUGH_DATA,
@@ -227,8 +235,14 @@ describe("crossfadeToPrepared", () => {
     expect(prepared.volume).toBeCloseTo(1);
   });
 
-  it("changes nothing when the next song isn't ready or can't take a volume", () => {
+  it("changes nothing when the next song isn't ready or can't take a volume, or nothing plays", () => {
     const { adapter, active, prepared } = playingWithNextReady();
+    // The browser paused it: the timeupdate it sends with the pause comes
+    // first, and must not start the next song.
+    Object.defineProperty(active, "paused", { configurable: true, get: () => true });
+    expect(adapter.crossfadeToPrepared?.(two, 4)).toBe(false);
+    playing(active);
+
     Object.defineProperty(prepared, "readyState", { configurable: true, get: () => 0 });
     expect(adapter.crossfadeToPrepared?.(two, 4)).toBe(false);
 

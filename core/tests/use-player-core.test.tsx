@@ -569,6 +569,41 @@ describe("usePlayerCore smooth mix", () => {
     expect(adapter.crossfadeToPrepared).toHaveBeenCalledOnce();
   });
 
+  it("doesn't fade when a pause arrives with the same native status", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    act(() => {
+      emit("pause");
+      state.time = 177;
+      emit("timeupdate");
+    });
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+    expect(result.current.state.current?.id).toBe("a");
+    expect(result.current.state.isPlaying).toBe(false);
+  });
+
+  it("doesn't fade into the old queue when a new one starts before it commits", async () => {
+    const { result, adapter, state, emit } = await nearTheEnd();
+    vi.mocked(adapter.prepareNext!).mockClear();
+    // A remote command or CarPlay plays outside a React event; a timeupdate
+    // can land before the new queue commits.
+    act(() => {
+      result.current.controls.play(t("x"), [t("x"), t("y")]);
+      state.time = 177;
+      emit("timeupdate");
+    });
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+    expect(adapter.prepareNext).not.toHaveBeenCalled();
+    expect(result.current.state.current?.id).toBe("x");
+    expect(result.current.state.queue.map((track) => track.id)).toEqual(["x", "y"]);
+    expect(adapter.load).toHaveBeenLastCalledWith("test://stream/x");
+
+    // Once it has, the new queue's next track is prepared as usual.
+    state.dur = 180;
+    state.time = 150;
+    act(() => emit("timeupdate"));
+    expect(adapter.prepareNext).toHaveBeenCalledWith("test://stream/y");
+  });
+
   it("leaves the last second to the ordinary handoff", async () => {
     const { result, adapter, state, emit } = await nearTheEnd();
     state.time = 179.5;

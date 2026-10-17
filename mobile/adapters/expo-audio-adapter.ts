@@ -315,13 +315,16 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       prev.playing = false;
     };
 
-    // The user's volume on each player, times its share of a crossfade.
-    // Equal-power curves, so the mix doesn't dip halfway through.
+    // The user's volume on the active player, times its share of a
+    // crossfade (equal-power curves, so the mix doesn't dip halfway through).
+    // The idle player stays silent: on Android replace({}) can't empty it,
+    // and if audio focus returning restarts it, nothing is heard before the
+    // status listener pauses it.
     const applyVolume = () => {
       const volume = volumeRef.current;
       const fade = fadeRef.current;
       if (!fade) {
-        for (const player of players) player.volume = volume;
+        for (const player of players) player.volume = player === activePlayer() ? volume : 0;
         return;
       }
       const progress = Math.min(1, (performance.now() - fade.startedAt) / (fade.seconds * 1000));
@@ -445,6 +448,10 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
       crossfadeToPrepared(url, seconds) {
         const prepared = preparedRef.current;
         if (!prepared || prepared.url !== url || !prepared.ready || !(seconds > 0)) return false;
+        // A paused song has nothing to fade from. The live status matters: a
+        // system pause reaches the core in the same native status as the
+        // timeupdate that would start the fade.
+        if (!isPlaybackActive(activePlayer().currentStatus)) return false;
         diagnostics.source(url.startsWith("file:") ? "local" : "stream", true);
         finishFade();
         const outgoing = activePlayer();
@@ -459,7 +466,6 @@ export function useExpoAudioAdapter(): ExpoAudioAdapter {
           // As in activatePrepared, the current song plays on and its end
           // loads this one afresh.
           diagnostics.record("audio-crossfade-failed");
-          applyVolume();
           void clearPreloadedSource(url).catch(() => {});
           return false;
         }

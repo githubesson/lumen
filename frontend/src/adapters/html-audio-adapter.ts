@@ -352,7 +352,13 @@ export function useHtmlAudioAdapter(): {
       },
       crossfadeToPrepared(url, seconds) {
         const next = preparedAudioRef.current;
-        if (!next || !(seconds > 0) || !volumeIsSettable(next)) return false;
+        const current = activeAudioRef.current ?? audioRef.current;
+        // A paused song has nothing to fade from. The browser marks an element
+        // paused before the timeupdate it sends with the pause, so a pause it
+        // makes itself can't start the next song.
+        if (!next || !current || current.paused || !(seconds > 0) || !volumeIsSettable(next)) {
+          return false;
+        }
         return activate(url, seconds);
       },
       clearPrepared() {
