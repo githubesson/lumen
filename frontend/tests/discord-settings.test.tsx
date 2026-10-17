@@ -107,3 +107,17 @@ it("keeps typing that hasn't saved yet when an older save lands", async () => {
   view.rerender(<DiscordCardSettings desktop={desktop({ ...card, state: "{title}" })} />);
   expect(line(2).value).toBe("{album}");
 });
+
+it("sends an edit that failed to save again with the next save, and keeps showing it", async () => {
+  mock.update.mockResolvedValueOnce({ ok: false, error: "Disk is full" });
+  render(<DiscordCardSettings desktop={desktop(card)} />);
+  fireEvent.change(line(1), { target: { value: "{artist}" } });
+  await act(async () => { fireEvent.blur(line(1)); });
+  expect(screen.getByText("Disk is full")).toBeTruthy();
+  expect(stored).toEqual(card);
+  await act(async () => { fireEvent.click(screen.getAllByRole("switch")[0]); });
+  expect(savedCards().at(-1)).toEqual({ details: "{artist}", cover: false });
+  expect(stored).toEqual({ ...card, details: "{artist}", cover: false });
+  expect(line(1).value).toBe("{artist}");
+  expect(screen.queryByText("Disk is full")).toBeNull();
+});

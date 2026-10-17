@@ -73,9 +73,20 @@ export function DiscordCardSettings({ desktop }: { desktop: DesktopSettingsState
       }))
       .then((result) => {
         saving.current -= 1;
-        setError(result.ok ? undefined : result.error);
+        if (!result.ok) {
+          // Keep what didn't save for the next save (an edit, blur or
+          // closing), at its newest value: only changed options go out.
+          const retry = Object.fromEntries(
+            Object.keys(changes).map((key) => [key, latest.current[key as keyof DiscordCardOptions]]),
+          );
+          unsaved.current = { ...unsaved.current, ...retry };
+          setError(result.error);
+          return;
+        }
+        // The message stays until nothing that failed is left to save.
+        if (!unsaved.current) setError(undefined);
         // Once idle, show the card as saved, with any other save merged in.
-        if (result.ok && !saving.current && !unsaved.current) {
+        if (!saving.current && !unsaved.current) {
           latest.current = result.config.discordCard;
           setCard(result.config.discordCard);
         }
