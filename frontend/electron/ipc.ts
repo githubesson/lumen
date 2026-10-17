@@ -28,6 +28,7 @@ import {
   pushDiscordActivity,
   type DiscordActivityPayload,
 } from "./discord-presence";
+import { normalizeDiscordCard } from "./discord-card";
 import type { LocalProxy } from "./local-proxy";
 import type { WindowManager } from "./windows";
 import { downloadToFile, exportDownloadUrl, uniqueExportPath } from "./track-export";
@@ -36,7 +37,10 @@ import { postJson } from "./fh6-bridge";
 import type { DesktopConfig, ExportTrackFileItem } from "../src/contracts/desktop";
 
 async function readDesktopConfig(): Promise<DesktopConfig> {
-  const cfg = await loadConfig();
+  return desktopConfigOf(await loadConfig());
+}
+
+function desktopConfigOf(cfg: Config): DesktopConfig {
   return {
     backendUrl: cfg.backendUrl ?? "",
     // `discordEnabled` defaults to true so existing installs keep the
@@ -46,6 +50,7 @@ async function readDesktopConfig(): Promise<DesktopConfig> {
     fh6RadioEnabled: cfg.fh6RadioEnabled === true,
     fh6GameDir: cfg.fh6GameDir ?? "",
     fh6BridgePort: cfg.fh6BridgePort ?? DEFAULT_FH6_BRIDGE_PORT,
+    discordCard: normalizeDiscordCard(cfg.discordCard),
   };
 }
 
@@ -145,7 +150,7 @@ export function registerIpcHandlers(deps: {
   // is optional, so Settings can flip one toggle at a time.
   async function applyConfigPatch(
     patch: SavePatch | undefined,
-  ): Promise<{ ok: false; error: string } | { ok: true; changed: boolean }> {
+  ): Promise<{ ok: false; error: string } | { ok: true; changed: boolean; written: Config }> {
     const writePatch: SavePatch = {};
     let normalized: string | null = null;
     if (patch?.backendUrl !== undefined) {
@@ -157,6 +162,11 @@ export function registerIpcHandlers(deps: {
     if (typeof patch?.discordEnabled === "boolean") {
       writePatch.discordEnabled = patch.discordEnabled;
     }
+    // Settings sends only the options that changed. They go onto the card as
+    // stored when this write lands, so an earlier save still in the queue
+    // (from a Settings view since closed, say) isn't overwritten.
+    const cardChanges =
+      patch?.discordCard && typeof patch.discordCard === "object" ? patch.discordCard : undefined;
     if (typeof patch?.alwaysOnTop === "boolean") {
       writePatch.alwaysOnTop = patch.alwaysOnTop;
     }
@@ -169,19 +179,24 @@ export function registerIpcHandlers(deps: {
     if (typeof patch?.fh6BridgePort === "number") {
       writePatch.fh6BridgePort = Math.max(1, Math.min(65535, Math.floor(patch.fh6BridgePort)));
     }
-    await saveConfigPatch(writePatch);
+    const written = await saveConfigPatch((current) =>
+      cardChanges
+        ? { ...writePatch, discordCard: normalizeDiscordCard(cardChanges, normalizeDiscordCard(current.discordCard)) }
+        : writePatch,
+    );
     if (writePatch.discordEnabled !== undefined) {
       configureDiscordPresence({ enabled: writePatch.discordEnabled });
     }
+    if (cardChanges) configureDiscordPresence({ card: normalizeDiscordCard(written.discordCard) });
     if (writePatch.alwaysOnTop !== undefined) {
       windows.alwaysOnTop = writePatch.alwaysOnTop;
       windows.mainWindow?.setAlwaysOnTop(windows.alwaysOnTop);
     }
     const prev = deps.getBackendUrl();
-    if (normalized === null) return { ok: true, changed: false };
+    if (normalized === null) return { ok: true, changed: false, written };
     deps.setBackendUrl(normalized);
     configureDiscordPresence({ backendUrl: normalized });
-    return { ok: true, changed: prev !== normalized };
+    return { ok: true, changed: prev !== normalized, written };
   }
 
   ipcMain.handle("config:update", async (_e, patch: SavePatch) => {
@@ -197,7 +212,9 @@ export function registerIpcHandlers(deps: {
       }
       setTimeout(() => windows.mainWindow?.webContents.reload(), 0);
     }
-    return { ...result, config: await readDesktopConfig() };
+    // Answer with the config this write produced. Reading the file again
+    // could catch the next queued write mid-way and parse as empty.
+    return { ok: true, changed: result.changed, config: desktopConfigOf(result.written) };
   });
 
   // First-run and change-server check: is there a Lumen server at this

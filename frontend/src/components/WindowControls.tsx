@@ -10,6 +10,7 @@ export default function WindowControls({ className = "" }: { className?: string 
   return (
     <div
       className={`window-controls${className ? ` ${className}` : ""}`}
+      role="group"
       aria-label="Window controls"
     >
       <button

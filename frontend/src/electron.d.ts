@@ -1,5 +1,5 @@
 import type { RendererElectronApi } from "./contracts/desktop";
-export type { DiscordActivityPayload, FH6StatusPayload, ExportTrackFileItem,
+export type { DiscordActivityPayload, DiscordCardOptions, FH6StatusPayload, ExportTrackFileItem,
   ExportTrackFilesResult, Tweaks, UpdateBranch, UpdateStatus, DesktopConfig,
   DesktopConfigPatch, MiniPlayerPanelAnchor, ServerTestResult }  from "./contracts/desktop";
 

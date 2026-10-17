@@ -9,7 +9,10 @@ function load(
   request = vi.fn().mockResolvedValue(undefined),
   clearActivity = vi.fn().mockResolvedValue(undefined),
 ) {
-  const compiled = ts.transpileModule(readFileSync(new URL("../electron/discord-presence.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const compile = (file: string) => ts.transpileModule(readFileSync(new URL(file, import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const compiled = compile("../electron/discord-presence.ts");
+  const card = {};
+  runInNewContext(compile("../electron/discord-card.ts"), { exports: card });
   const clock = { now: 0 };
   const timers: Array<{ at: number; fn: () => void; cleared: boolean }> = [];
   const destroy = vi.fn().mockResolvedValue(undefined);
@@ -24,7 +27,7 @@ function load(
       return timer;
     },
     clearTimeout: (timer: { cleared: boolean }) => { timer.cleared = true; },
-    require: () => ({ Client: class { on(event: string, fn: () => void) { handlers.set(event, fn); } login = login; destroy = destroy; request = request; clearActivity = clearActivity; } }),
+    require: (id: string) => id === "./discord-card" ? card : ({ Client: class { on(event: string, fn: () => void) { handlers.set(event, fn); } login = login; destroy = destroy; request = request; clearActivity = clearActivity; } }),
   });
   /** Advance the clock and run timers that came due. */
   const advance = async (to: number) => {
@@ -36,7 +39,7 @@ function load(
     }
     await new Promise((resolve) => setImmediate(resolve));
   };
-  return { exports, clock, destroy, request, advance, handlers, pendingTimers: () => timers.filter((t) => !t.cleared) };
+  return { exports, clock, destroy, request, clearActivity, advance, handlers, pendingTimers: () => timers.filter((t) => !t.cleared) };
 }
 
 it("backs off failed Discord connections and destroys each failed client", async () => {
@@ -154,4 +157,88 @@ it("doesn't show an update that was cleared while Discord was still connecting",
   expect(await push).toMatchObject({ ok: false });
   expect(request).not.toHaveBeenCalled();
   expect(pendingTimers()).toHaveLength(0);
+});
+
+const DEFAULT_CARD = { details: "{title}", state: "{artist}", largeText: "{album}", statusName: "app", cover: true, playState: true, showPaused: true } as const;
+
+it("draws the card from its options", async () => {
+  const { exports, request } = load(vi.fn().mockResolvedValue(undefined));
+  exports.configureDiscordPresence({
+    clientId: "fixture",
+    card: { ...DEFAULT_CARD, details: "{title} — {artist}", state: "", statusName: "details", cover: false, playState: false },
+  });
+  await exports.pushDiscordActivity({ title: "Song", artist: "Band", album: "Record", coverUrl: "https://cdn.example/c.jpg", isPlaying: true });
+  const activity = request.mock.calls[0][1].activity;
+  expect(activity.details).toBe("Song — Band");
+  expect(activity.state).toBeUndefined();
+  expect(activity.status_display_type).toBe(2);
+  expect(activity.assets).toEqual({ large_image: "lumen", large_text: "Record" });
+});
+
+it("redraws what Discord shows when the card changes, keeping the track's start", async () => {
+  const { exports, request, clock } = load(vi.fn().mockResolvedValue(undefined));
+  exports.configureDiscordPresence({ clientId: "fixture", card: DEFAULT_CARD });
+  await exports.pushDiscordActivity({ trackId: "t1", title: "Song", artist: "Band", isPlaying: true, elapsedSec: 0 });
+  clock.now = 20_000;
+  exports.configureDiscordPresence({ card: { ...DEFAULT_CARD, details: "{artist}" } });
+  // An unchanged card sends nothing.
+  exports.configureDiscordPresence({ card: { ...DEFAULT_CARD, details: "{artist}" } });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(request).toHaveBeenCalledTimes(2);
+  const activity = request.mock.calls[1][1].activity;
+  expect(activity.details).toBe("Band");
+  expect(activity.timestamps.start).toBe(0);
+});
+
+it("clears the card while paused when it's set to, and restores it on play", async () => {
+  const { exports, request, clearActivity } = load(vi.fn().mockResolvedValue(undefined));
+  exports.configureDiscordPresence({ clientId: "fixture", card: { ...DEFAULT_CARD, showPaused: false } });
+  await exports.pushDiscordActivity({ trackId: "t1", title: "Song", isPlaying: true });
+  expect(await exports.pushDiscordActivity({ trackId: "t1", title: "Song", isPlaying: false })).toEqual({ ok: true });
+  expect(clearActivity).toHaveBeenCalledOnce();
+  expect(request).toHaveBeenCalledOnce();
+  // Turning the option back on while paused shows the paused card.
+  exports.configureDiscordPresence({ card: DEFAULT_CARD });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(request).toHaveBeenCalledTimes(2);
+  expect(request.mock.calls[1][1].activity.assets.small_image).toBe("pause");
+});
+
+it("redraws the newest track when the card changes while that track's push is in flight", async () => {
+  let finish!: () => void;
+  const request = vi.fn()
+    .mockResolvedValueOnce(undefined)
+    .mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }))
+    .mockResolvedValue(undefined);
+  const { exports } = load(vi.fn().mockResolvedValue(undefined), request);
+  exports.configureDiscordPresence({ clientId: "fixture", card: DEFAULT_CARD });
+  await exports.pushDiscordActivity({ trackId: "a", title: "Song A", isPlaying: true });
+  const b = exports.pushDiscordActivity({ trackId: "b", title: "Song B", isPlaying: true });
+  // B has reached Discord and waits on its reply when the card changes.
+  await new Promise((resolve) => setImmediate(resolve));
+  exports.configureDiscordPresence({ card: { ...DEFAULT_CARD, state: "on repeat" } });
+  await new Promise((resolve) => setImmediate(resolve));
+  finish();
+  await b;
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(request.mock.calls.map((call) => call[1].activity.details)).toEqual(["Song A", "Song B", "Song B"]);
+  expect(request.mock.calls[2][1].activity.state).toBe("on repeat");
+});
+
+it("restores the newest track after a disconnect, not the last one Discord confirmed", async () => {
+  const login = vi.fn().mockResolvedValue(undefined);
+  const request = vi.fn()
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error("socket hiccup"))
+    .mockResolvedValue(undefined);
+  const { exports, advance, handlers } = load(login, request);
+  exports.configureDiscordPresence({ clientId: "fixture", card: DEFAULT_CARD });
+  await exports.pushDiscordActivity({ trackId: "a", title: "Song A", isPlaying: true });
+  // B never reached Discord, and is waiting to be retried when Discord drops.
+  await exports.pushDiscordActivity({ trackId: "b", title: "Song B", isPlaying: true });
+  handlers.get("disconnected")!();
+  await advance(1_000);
+  await advance(30_000);
+  expect(login).toHaveBeenCalledTimes(2);
+  expect(request.mock.calls.at(-1)![1].activity.details).toBe("Song B");
 });

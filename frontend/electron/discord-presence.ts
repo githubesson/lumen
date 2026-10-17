@@ -1,4 +1,5 @@
-import type { DiscordActivityPayload } from "../src/contracts/desktop";
+import type { DiscordActivityPayload, DiscordCardOptions } from "../src/contracts/desktop";
+import { DEFAULT_DISCORD_CARD, discordCardLines, discordStatusDisplayType } from "./discord-card";
 export type { DiscordActivityPayload } from "../src/contracts/desktop";
 
 // discord-rpc is CommonJS-only and intentionally loaded lazily.
@@ -10,8 +11,13 @@ let connecting = false;
 let clientId = "";
 let enabled = true;
 let publicBackendUrl = "";
+let card: DiscordCardOptions = DEFAULT_DISCORD_CARD;
 let lastActivity: DiscordActivityPayload | null = null;
 let lastStartMs = 0;
+// The newest update asked for, confirmed by Discord or not. A card change or
+// a reconnect redraws this one: `lastActivity` can still be the track a push
+// in flight (or waiting to be retried) is replacing.
+let requested: { payload: DiscordActivityPayload; at: number } | null = null;
 let retryAfter = 0;
 let failures = 0;
 // The newest update Discord couldn't take (closed, or in reconnect backoff),
@@ -39,21 +45,22 @@ function scheduleRetry(payload: DiscordActivityPayload): void {
     const pending = retryActivity;
     retryActivity = null;
     if (!pending) return;
-    // A playing track has moved on while it waited.
-    const waitedSec = (Date.now() - pending.queuedAt) / 1000;
-    void pushDiscordActivity(
-      pending.payload.isPlaying
-        ? { ...pending.payload, elapsedSec: (pending.payload.elapsedSec ?? 0) + waitedSec }
-        : pending.payload,
-    );
+    void pushDiscordActivity(movedOn(pending.payload, pending.queuedAt));
   }, Math.max(1000, retryAfter - Date.now()));
   retryTimer.unref?.();
+}
+
+/** `payload` as it stands now: a playing track has moved on since `sinceMs`. */
+function movedOn(payload: DiscordActivityPayload, sinceMs: number): DiscordActivityPayload {
+  if (!payload.isPlaying) return payload;
+  return { ...payload, elapsedSec: (payload.elapsedSec ?? 0) + (Date.now() - sinceMs) / 1000 };
 }
 
 export function configureDiscordPresence(options: {
   clientId?: string;
   enabled?: boolean;
   backendUrl?: string;
+  card?: DiscordCardOptions;
 }): void {
   if ((options.clientId !== undefined && clientId !== options.clientId.trim()) || (options.enabled === true && !enabled)) {
     retryAfter = 0;
@@ -65,6 +72,12 @@ export function configureDiscordPresence(options: {
     const shouldDisconnect = enabled && !options.enabled;
     enabled = options.enabled;
     if (shouldDisconnect) void teardownDiscordPresence();
+  }
+  if (options.card && JSON.stringify(options.card) !== JSON.stringify(card)) {
+    card = options.card;
+    // Redraw what Discord shows now; the renderer only sends on player events.
+    // A push still waiting to be retried picks the new card up when it goes.
+    if (requested && !retryActivity) void pushDiscordActivity(movedOn(requested.payload, requested.at));
   }
 }
 
@@ -87,14 +100,8 @@ async function ensureDiscord(): Promise<DiscordClient | null> {
         client = null;
         retryAfter = Math.max(retryAfter, Date.now() + 30_000);
         // Steady playback sends no new updates, so reconnect after the
-        // backoff and restore what Discord was showing.
-        if (lastActivity) {
-          scheduleRetry(
-            lastActivity.isPlaying
-              ? { ...lastActivity, elapsedSec: Math.max(0, (Date.now() - lastStartMs) / 1000) }
-              : lastActivity,
-          );
-        }
+        // backoff and restore the newest activity asked for.
+        if (requested) scheduleRetry(movedOn(requested.payload, requested.at));
       }
     });
     await nextClient.login({ clientId });
@@ -116,13 +123,6 @@ async function ensureDiscord(): Promise<DiscordClient | null> {
   } finally {
     connecting = false;
   }
-}
-
-function clampForDiscord(value: string | undefined, max = 128): string | undefined {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  return trimmed.length < 2 ? `${trimmed} ` : trimmed.slice(0, max);
 }
 
 function discordCoverImage(coverUrl: string | undefined): string {
@@ -151,6 +151,7 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
   // A newer update supersedes one waiting to be retried.
   cancelRetry();
   const generation = ++pushGeneration;
+  requested = { payload, at: Date.now() };
   const discord = await ensureDiscord();
   // A newer push or a clear arrived while connecting: this one is stale.
   if (generation !== pushGeneration) return { ok: false, error: "superseded" };
@@ -159,6 +160,16 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
     return { ok: false, error: "discord client unavailable" };
   }
   try {
+    // Hidden while paused: clear the card, but remember the track so a card
+    // change or a reconnect still knows what's loaded.
+    if (!payload.isPlaying && !card.showPaused) {
+      await discord.clearActivity();
+      if (generation === pushGeneration) {
+        lastActivity = payload;
+        lastStartMs = 0;
+      }
+      return { ok: true };
+    }
     const now = Date.now();
     const elapsedMs = Math.max(0, Math.floor((payload.elapsedSec ?? 0) * 1000));
     const startTimestamp = now - elapsedMs;
@@ -178,12 +189,14 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
         ? start + Math.floor(payload.durationSec * 1000)
         : undefined;
 
+    const lines = discordCardLines(card, payload);
     await discord.request("SET_ACTIVITY", {
       pid: process.pid,
       activity: {
         type: 2,
-        details: clampForDiscord(payload.title) ?? "Music",
-        state: clampForDiscord(payload.artist ?? payload.album),
+        status_display_type: discordStatusDisplayType(card),
+        details: lines.details,
+        state: lines.state,
         timestamps: payload.isPlaying
           ? {
               start: Math.floor(start / 1000),
@@ -191,10 +204,14 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
             }
           : undefined,
         assets: {
-          large_image: discordCoverImage(payload.coverUrl),
-          large_text: clampForDiscord(payload.album),
-          small_image: payload.isPlaying ? "play" : "pause",
-          small_text: payload.isPlaying ? "Playing" : "Paused",
+          large_image: card.cover ? discordCoverImage(payload.coverUrl) : "lumen",
+          large_text: lines.largeText,
+          ...(card.playState
+            ? {
+                small_image: payload.isPlaying ? "play" : "pause",
+                small_text: payload.isPlaying ? "Playing" : "Paused",
+              }
+            : {}),
         },
         instance: false,
       },
@@ -217,6 +234,7 @@ export async function clearDiscordActivity(): Promise<void> {
   // would otherwise queue it to be restored after the reconnect backoff.
   lastActivity = null;
   lastStartMs = 0;
+  requested = null;
   if (!client) return;
   try {
     await client.clearActivity();
@@ -233,6 +251,7 @@ export async function teardownDiscordPresence(): Promise<void> {
   client = null;
   lastActivity = null;
   lastStartMs = 0;
+  requested = null;
   if (!current) return;
   try {
     await current.clearActivity();
