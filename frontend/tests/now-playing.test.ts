@@ -174,6 +174,17 @@ it("serves the current cover, fetched once per cover", async () => {
   expect((await nowPlaying(server)).track!.coverUrl).toBe(coverUrl);
   await fetch(coverUrl!);
   expect(fetchCover).toHaveBeenCalledTimes(1);
+
+  // Signed for another user, it can be that user's own cover: a different one.
+  const forUser = (u: string) => `${SIGNED_COVER}&u=${u}`;
+  server.update({ title: "Song", coverUrl: forUser("alice"), isPlaying: true });
+  const alice = (await nowPlaying(server)).track!.coverUrl;
+  await fetch(alice!);
+  server.update({ title: "Song", coverUrl: forUser("bob"), isPlaying: true });
+  const bob = (await nowPlaying(server)).track!.coverUrl;
+  await fetch(bob!);
+  expect(new Set([coverUrl, alice, bob]).size).toBe(3);
+  expect(fetchCover).toHaveBeenCalledTimes(3);
 });
 
 it("fetches covers only from https or the app's signed paths, and serves only raster images", async () => {
@@ -181,6 +192,8 @@ it("fetches covers only from https or the app's signed paths, and serves only ra
   const { server } = await serve(fetchCover);
   for (const coverUrl of ["http://192.168.1.1/admin", `${APP_ORIGIN}/api/tracks/t1/stream`, "file:///etc/passwd"]) {
     server.update({ title: "Song", coverUrl, isPlaying: true });
+    // Not offered to overlays, and not served if asked for.
+    expect((await nowPlaying(server)).track!.coverUrl).toBeNull();
     expect((await fetch(at(server, "/cover"))).status).toBe(404);
   }
   expect(fetchCover).not.toHaveBeenCalled();

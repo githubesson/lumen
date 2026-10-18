@@ -140,12 +140,14 @@ export function createNowPlayingServer(options: {
   }
 
   /** The app's signed cover path without its signature, which changes when
-   *  the renderer re-signs; any other source as it is. */
+   *  the renderer re-signs; any other source as it is. The user (`u`) stays:
+   *  it picks that user's own cover, which no other account may see. */
   function coverIdentity(source: string): string {
     try {
       const url = new URL(source);
       if (url.origin === options.appOrigin() && url.pathname.startsWith("/api/public/covers/")) {
-        return url.origin + url.pathname;
+        const user = url.searchParams.get("u");
+        return url.origin + url.pathname + (user ? `?u=${encodeURIComponent(user)}` : "");
       }
     } catch {
       // Not a URL: never fetched, so its identity doesn't matter.
@@ -159,7 +161,8 @@ export function createNowPlayingServer(options: {
     const duration = activity.durationSec && activity.durationSec > 0 ? activity.durationSec : null;
     let position = (activity.elapsedSec ?? 0) + (activity.isPlaying ? (now - at) / 1000 : 0);
     if (duration !== null) position = Math.min(position, duration);
-    const version = activity.coverUrl
+    // A cover that will never be fetched isn't offered.
+    const version = activity.coverUrl && coverAllowed(activity.coverUrl)
       ? createHash("sha256").update(coverIdentity(activity.coverUrl)).digest("hex").slice(0, 12)
       : null;
     return {
@@ -273,7 +276,7 @@ export function createNowPlayingServer(options: {
   }
 
   function fail(res: ServerResponse, cause: unknown): void {
-    console.warn("[now-playing]", (cause as Error).message);
+    console.warn("[now-playing]", cause instanceof Error ? cause.message : String(cause));
     if (res.headersSent) res.destroy();
     else sendJson(res, 500, { error: "Internal error" });
   }
