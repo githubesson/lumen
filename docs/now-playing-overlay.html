@@ -3,7 +3,8 @@
   Now playing overlay for Lumen desktop's now-playing API.
 
   Turn the API on under Settings → Connections → Now playing API, then add
-  this file to OBS as a Browser source, about 480 × 120 (times `scale`).
+  this file to OBS as a Browser source, about 480 × 136 (times `scale`), which
+  leaves room for the card's shadow.
   The card fills the source's width, up to 36rem. It shows while a track is
   loaded and hides when nothing is, or while Lumen is closed.
 
@@ -22,10 +23,12 @@
 <head>
 <meta charset="utf-8">
 <title>Lumen · Now playing</title>
-<!-- Geist, as in the app. Without it the overlay uses the system font. -->
+<!-- Geist, as in the app. It loads without holding up the page (the print
+     media switches to all once it arrives), so until then, or if Google
+     Fonts can't be reached, the overlay uses the system font. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..600&display=swap" media="print" onload="this.media = 'all'">
 <style>
   /* The app's Nova neutral tokens, in hex: OBS before 31 runs Chromium 103,
      which doesn't parse oklch(). No color-scheme: in some Chromium builds a
@@ -338,13 +341,17 @@
     progress.hidden = !clock.duration;
     if (clock.duration) {
       durationLabel.textContent = time(clock.duration);
-      // Room for the longest elapsed time, so the bar doesn't shift.
-      elapsedLabel.style.minWidth = `${durationLabel.getBoundingClientRect().width}px`;
+      sizeElapsed();
     }
     shownSecond = -1;
     draw();
     if (playing && shown) start();
     else stop();
+  }
+
+  // Room for the longest elapsed time, so the bar doesn't shift.
+  function sizeElapsed() {
+    elapsedLabel.style.minWidth = `${durationLabel.getBoundingClientRect().width}px`;
   }
 
   function draw() {
@@ -438,7 +445,11 @@
       line.style.setProperty("--duration", `${Math.max(4, moving / 0.6)}s`);
     }
   }
-  document.fonts.addEventListener("loadingdone", fit);
+  // Widths change when Geist arrives after the first track.
+  document.fonts.addEventListener("loadingdone", () => {
+    fit();
+    sizeElapsed();
+  });
   addEventListener("resize", fit);
 
   function say(title, detail) {
