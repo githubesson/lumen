@@ -91,6 +91,11 @@ test.beforeEach(async ({ page }) => {
 test("discord settings", async ({ page }, testInfo) => {
   await openSection(page, "Discord");
   await ready(page, page.locator(".discord-popout"));
+  // With room beside the dialog the preview opens a side column, so it stays
+  // in view while the options scroll; otherwise it heads the section.
+  const side = (page.viewportSize()?.width ?? 0) >= 1100;
+  await expect(page.locator(side ? ".settings-side .discord-popout" : ".settings-pane .discord-popout")).toBeVisible();
+  await expect(page.locator(".settings[data-side]")).toHaveCount(side ? 1 : 0);
   await checkUI(page, testInfo, {
     exceptions: [
       ...desktopExceptions,
@@ -120,4 +125,38 @@ test("discord card preview follows its lines", async ({ page }) => {
     (window as unknown as { desktopSaves: DesktopConfigPatch[] }).desktopSaves.flatMap((save) => Object.keys(save.discordCard ?? {})),
   );
   expect(new Set(sent)).toEqual(new Set(["state", "largeText"]));
+});
+
+test("the side column shuts when the Discord options go", async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 1100, "Only wide windows have the side column.");
+  await openSection(page, "Discord");
+  const dialog = page.locator(".settings");
+  await expect(dialog).toHaveAttribute("data-side", "true");
+  await page.locator(".settings-nav-item", { hasText: "Appearance" }).click();
+  await expect(dialog).not.toHaveAttribute("data-side");
+  await page.locator(".settings-nav-item", { hasText: "Discord" }).click();
+  await expect(dialog).toHaveAttribute("data-side", "true");
+  // Turning the status off takes the card options, and the column, away.
+  await page.getByRole("switch", { name: "Discord status" }).click();
+  await expect(dialog).not.toHaveAttribute("data-side");
+  await expect(page.locator(".discord-popout")).toHaveCount(0);
+});
+
+// The suite runs with reduced motion. The closed state lists its own
+// transitions (so a width change while closed snaps); that rule must not
+// outrank reduced motion and bring the closing fade back.
+test("settings close at once with reduced motion", async ({ page }) => {
+  await openSection(page, "Discord");
+  await ready(page, page.locator(".discord-popout"));
+  const closing = await page.evaluate(async () => {
+    const dialog = document.querySelector<HTMLElement>(".settings")!;
+    const open = getComputedStyle(dialog).transitionProperty;
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    for (let frame = 0; frame < 30 && !dialog.closest("[data-closed]"); frame++) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    const style = getComputedStyle(dialog);
+    return { open, closed: !!dialog.closest("[data-closed]"), transition: style.transitionProperty, opacity: style.opacity };
+  });
+  expect(closing).toEqual({ open: "none", closed: true, transition: "none", opacity: "0" });
 });

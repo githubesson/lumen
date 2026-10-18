@@ -1,8 +1,10 @@
+import { StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { normalizeDiscordCard } from "../electron/discord-card";
 import { DiscordCardSettings } from "../src/components/DiscordSettings";
 import type { DesktopSettingsState } from "../src/components/DesktopSettings";
+import { SettingsSideContext, useSettingsSideColumn } from "../src/components/SettingsSide";
 import type { DesktopConfig, DiscordCardOptions } from "../src/contracts/desktop";
 
 const mock = vi.hoisted(() => ({ update: vi.fn() }));
@@ -150,4 +152,54 @@ it("resets to the default card, the app's name in the status included", async ()
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Reset" })); });
   expect(stored).toEqual(card);
   expect(screen.queryByRole("button", { name: "Reset" })).toBeNull();
+});
+
+it("puts the preview in the dialog's side column when there is one, and claims it while shown", () => {
+  const target = document.createElement("div");
+  const release = vi.fn();
+  const claim = vi.fn(() => release);
+  const view = render(
+    <SettingsSideContext.Provider value={{ target, claim }}>
+      <DiscordCardSettings desktop={desktop(card)} />
+    </SettingsSideContext.Provider>,
+  );
+  expect(target.querySelector(".discord-popout")).toBeTruthy();
+  expect(view.container.querySelector(".discord-popout")).toBeNull();
+  expect(claim).toHaveBeenCalledOnce();
+  view.unmount();
+  expect(release).toHaveBeenCalledOnce();
+});
+
+// The dialog's side column as SettingsDialog wires it, with the section in it.
+function Dialog({ section, roomy = true }: { section: boolean; roomy?: boolean }) {
+  const { side, open, setTarget } = useSettingsSideColumn(roomy);
+  return (
+    <div data-testid="dialog" data-side={open || undefined}>
+      <SettingsSideContext.Provider value={side}>
+        {section && <DiscordCardSettings desktop={desktop(card)} />}
+      </SettingsSideContext.Provider>
+      <div ref={setTarget} data-testid="side" />
+    </div>
+  );
+}
+
+it("opens the side column while the section shows, and shuts it when it goes", () => {
+  const view = render(<StrictMode><Dialog section={false} /></StrictMode>);
+  const dialog = screen.getByTestId("dialog");
+  expect(dialog.dataset.side).toBeUndefined();
+  view.rerender(<StrictMode><Dialog section /></StrictMode>);
+  expect(dialog.dataset.side).toBe("true");
+  expect(screen.getByTestId("side").querySelector(".discord-popout")).toBeTruthy();
+  view.rerender(<StrictMode><Dialog section={false} /></StrictMode>);
+  expect(dialog.dataset.side).toBeUndefined();
+  expect(screen.getByTestId("side").childElementCount).toBe(0);
+  view.rerender(<StrictMode><Dialog section /></StrictMode>);
+  expect(dialog.dataset.side).toBe("true");
+});
+
+it("keeps the preview above the options, and the column shut, without room for it", () => {
+  render(<Dialog section roomy={false} />);
+  expect(screen.getByTestId("dialog").dataset.side).toBeUndefined();
+  expect(screen.getByTestId("side").childElementCount).toBe(0);
+  expect(screen.getByTestId("dialog").querySelector(".settings-row .discord-popout")).toBeTruthy();
 });

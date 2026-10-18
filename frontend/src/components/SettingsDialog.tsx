@@ -17,6 +17,7 @@ import { useAudioOutput, useAudioOutputDevices } from "../lib/audioOutput";
 import { useKey, useModalKeyScope } from "../lib/keybindings";
 import { trapTab } from "../lib/focusTrap";
 import { openExternal } from "../lib/platform";
+import { useMediaQuery } from "../lib/useMediaQuery";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import { Button } from "./Button";
 import { ServerSetting, ToggleSetting, useDesktopSettings } from "./DesktopSettings";
@@ -25,6 +26,11 @@ import DesktopUpdates, { useDesktopUpdates } from "./DesktopUpdates";
 import SearchInput from "./SearchInput";
 import { Select, type SelectOption } from "./Select";
 import SettingRow from "./SettingRow";
+import { SettingsSideContext, useSettingsSideColumn } from "./SettingsSide";
+
+// Room for the side column beside the 700px dialog (keep in step with the
+// min-width in settings.css).
+const SIDE_ROOM = "(min-width: 1100px)";
 
 export type SectionId = "appearance" | "playback" | "desktop" | "connections" | "discord" | "updates";
 
@@ -121,6 +127,9 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
   const interactive = open && mounted;
   const updates = useDesktopUpdates(interactive);
   const desktop = useDesktopSettings(interactive);
+
+  // The side column opens while a section claims it and the window has room.
+  const { side, open: sideOpen, setTarget: setSideTarget } = useSettingsSideColumn(useMediaQuery(SIDE_ROOM));
 
   // Shell passes a fresh arrow each render; the effect below must only run on
   // mount/unmount or it would yank focus back to the panel on every render.
@@ -465,7 +474,10 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="dialog settings relative transition-[opacity,transform] duration-200 ease-out group-data-closed:scale-95 group-data-closed:opacity-0 motion-reduce:transition-none motion-reduce:group-data-closed:scale-100"
+        data-side={sideOpen || undefined}
+        // Widening animates only while open: a column claimed as the dialog
+        // opens (on the Discord section, say) is there before it fades in.
+        className="dialog settings relative transition-[opacity,transform,max-width,grid-template-columns] group-data-closed:transition-[opacity,transform] duration-200 ease-out group-data-closed:scale-95 group-data-closed:opacity-0 motion-reduce:transition-none motion-reduce:group-data-closed:transition-none motion-reduce:group-data-closed:scale-100"
       >
         <nav className="settings-nav" aria-label="Settings sections">
           <div className="settings-nav-top">
@@ -510,35 +522,40 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
         </nav>
 
         <div className="settings-pane dialog-scroll">
-          {matches ? (
-            <>
-              <h2 id={titleId} className="settings-heading">
-                Search results
-              </h2>
-              {matches.length === 0 ? (
-                <p className="settings-empty">No settings match “{query.trim()}”.</p>
-              ) : (
-                matches.map((s) => (
-                  <section key={s.id} className="settings-group">
-                    <h3 className="settings-subheading">{s.title}</h3>
-                    {s.settings.map((st) => (
-                      <Fragment key={st.id}>{st.render()}</Fragment>
-                    ))}
-                  </section>
-                ))
-              )}
-            </>
-          ) : (
-            <>
-              <h2 id={titleId} className="settings-heading">
-                {current.title}
-              </h2>
-              {current.settings.map((st) => (
-                <Fragment key={st.id}>{st.render()}</Fragment>
-              ))}
-            </>
-          )}
+          <SettingsSideContext.Provider value={side}>
+            {matches ? (
+              <>
+                <h2 id={titleId} className="settings-heading">
+                  Search results
+                </h2>
+                {matches.length === 0 ? (
+                  <p className="settings-empty">No settings match “{query.trim()}”.</p>
+                ) : (
+                  matches.map((s) => (
+                    <section key={s.id} className="settings-group">
+                      <h3 className="settings-subheading">{s.title}</h3>
+                      {s.settings.map((st) => (
+                        <Fragment key={st.id}>{st.render()}</Fragment>
+                      ))}
+                    </section>
+                  ))
+                )}
+              </>
+            ) : (
+              <>
+                <h2 id={titleId} className="settings-heading">
+                  {current.title}
+                </h2>
+                {current.settings.map((st) => (
+                  <Fragment key={st.id}>{st.render()}</Fragment>
+                ))}
+              </>
+            )}
+          </SettingsSideContext.Provider>
         </div>
+
+        {/* Filled by the section that claims it (see SettingsSide). */}
+        <div ref={setSideTarget} className="settings-side" />
       </div>
     </div>
   );

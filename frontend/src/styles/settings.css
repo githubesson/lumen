@@ -3,13 +3,39 @@
    ============================================================ */
 .settings {
   display: grid;
-  grid-template-columns: 216px minmax(0, 1fr);
+  /* The third column is the side column (SettingsSide), shut until claimed. */
+  grid-template-columns: 216px minmax(0, 1fr) 0px;
   width: 100%;
   max-width: 700px;
   height: min(560px, calc(100dvh - 32px));
   overflow: hidden;
   box-shadow: var(--shadow-md);
   outline: none;
+}
+/* Opening it widens the dialog by the column, so the rows keep their width
+   and the column slides out at the right edge (both transition together). */
+.settings[data-side] {
+  grid-template-columns: 216px minmax(0, 1fr) 346px;
+  max-width: 1046px;
+}
+.settings-side {
+  display: none;
+}
+/* Room for the side column (keep in step with SIDE_ROOM in SettingsDialog). */
+@media (min-width: 1100px) {
+  .settings-side {
+    display: grid;
+    /* Held to the right edge, so the content rides out with it. */
+    justify-content: end;
+    align-content: safe center;
+    min-width: 0;
+    padding: 20px;
+    overflow: hidden auto;
+    background: var(--sidebar);
+  }
+  .settings[data-side] .settings-side {
+    border-left: 1px solid var(--border);
+  }
 }
 
 /* Left: close, search, section list */
