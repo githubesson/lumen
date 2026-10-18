@@ -176,6 +176,16 @@
 .settings-input.input {
   font-size: 12px;
 }
+/* An address to copy, under its settings row. */
+.settings-copy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-copy .input {
+  flex: 1;
+  min-width: 0;
+}
 
 /* Discord card options (DiscordSettings.tsx). The preview keeps Discord's
    own dark colours in both themes, so it reads as Discord's card. */

@@ -30,17 +30,14 @@ import {
 } from "./discord-presence";
 import { normalizeDiscordCard } from "./discord-card";
 import type { LocalProxy } from "./local-proxy";
+import { newNowPlayingToken, nowPlayingToken, type NowPlayingServer } from "./now-playing";
 import type { WindowManager } from "./windows";
 import { downloadToFile, exportDownloadUrl, uniqueExportPath } from "./track-export";
 import { postJson } from "./fh6-bridge";
 
 import type { DesktopConfig, ExportTrackFileItem } from "../src/contracts/desktop";
 
-async function readDesktopConfig(): Promise<DesktopConfig> {
-  return desktopConfigOf(await loadConfig());
-}
-
-function desktopConfigOf(cfg: Config): DesktopConfig {
+function desktopConfigOf(cfg: Config, nowPlaying: NowPlayingServer): DesktopConfig {
   return {
     backendUrl: cfg.backendUrl ?? "",
     // `discordEnabled` defaults to true so existing installs keep the
@@ -51,6 +48,10 @@ function desktopConfigOf(cfg: Config): DesktopConfig {
     fh6GameDir: cfg.fh6GameDir ?? "",
     fh6BridgePort: cfg.fh6BridgePort ?? DEFAULT_FH6_BRIDGE_PORT,
     discordCard: normalizeDiscordCard(cfg.discordCard),
+    nowPlayingApiEnabled: cfg.nowPlayingApiEnabled === true,
+    nowPlayingApiUrl: nowPlaying.url,
+    nowPlayingApiToken: nowPlaying.token,
+    nowPlayingApiError: nowPlaying.error,
   };
 }
 
@@ -81,10 +82,13 @@ export function registerIpcHandlers(deps: {
   updateManager: DesktopUpdateManager;
   getBackendUrl: () => string;
   setBackendUrl: (url: string) => void;
+  nowPlaying: NowPlayingServer;
+  /** The now-playing API's port, read from config.json at launch. */
+  nowPlayingPort: () => number;
 }): void {
-  const { windows, localProxy, updateManager } = deps;
+  const { windows, localProxy, updateManager, nowPlaying } = deps;
 
-  ipcMain.handle("config:get", () => readDesktopConfig());
+  ipcMain.handle("config:get", async () => desktopConfigOf(await loadConfig(), nowPlaying));
 
   ipcMain.handle("tweaks:get", async () => {
     const cfg = await loadConfig();
@@ -146,6 +150,19 @@ export function registerIpcHandlers(deps: {
     }
   });
 
+  // Runs the API as `written` says. Each toggle calls this after its own write,
+  // in write order, so the newest save decides even when an earlier one was
+  // still queued when it started.
+  async function followNowPlaying(written: Config): Promise<void> {
+    if (written.nowPlayingApiEnabled !== true) {
+      nowPlaying.close();
+      return;
+    }
+    nowPlaying.token = nowPlayingToken(written.nowPlayingApiToken) || nowPlaying.token;
+    // A failure shows as the error in the config this replies with.
+    await nowPlaying.start(deps.nowPlayingPort()).catch(() => undefined);
+  }
+
   // Validate a patch, persist it and apply its live side effects. Every field
   // is optional, so Settings can flip one toggle at a time.
   async function applyConfigPatch(
@@ -179,11 +196,35 @@ export function registerIpcHandlers(deps: {
     if (typeof patch?.fh6BridgePort === "number") {
       writePatch.fh6BridgePort = Math.max(1, Math.min(65535, Math.floor(patch.fh6BridgePort)));
     }
-    const written = await saveConfigPatch((current) =>
-      cardChanges
-        ? { ...writePatch, discordCard: normalizeDiscordCard(cardChanges, normalizeDiscordCard(current.discordCard)) }
-        : writePatch,
-    );
+    const listening = !!nowPlaying.url;
+    if (typeof patch?.nowPlayingApiEnabled === "boolean") {
+      // Only saved on once it listens, so a taken port leaves it off.
+      if (patch.nowPlayingApiEnabled) {
+        try {
+          await nowPlaying.start(deps.nowPlayingPort());
+        } catch (error) {
+          return { ok: false, error: (error as Error).message };
+        }
+      }
+      writePatch.nowPlayingApiEnabled = patch.nowPlayingApiEnabled;
+    }
+    let written: Config;
+    try {
+      written = await saveConfigPatch((current) => ({
+        ...writePatch,
+        ...(cardChanges
+          ? { discordCard: normalizeDiscordCard(cardChanges, normalizeDiscordCard(current.discordCard)) }
+          : {}),
+        // Turning it on keeps the saved token, or saves the one made at launch.
+        ...(writePatch.nowPlayingApiEnabled
+          ? { nowPlayingApiToken: nowPlayingToken(current.nowPlayingApiToken) || nowPlaying.token }
+          : {}),
+      }));
+    } catch (error) {
+      // Not saved on, so not left on.
+      if (writePatch.nowPlayingApiEnabled && !listening) nowPlaying.close();
+      throw error;
+    }
     if (writePatch.discordEnabled !== undefined) {
       configureDiscordPresence({ enabled: writePatch.discordEnabled });
     }
@@ -192,6 +233,7 @@ export function registerIpcHandlers(deps: {
       windows.alwaysOnTop = writePatch.alwaysOnTop;
       windows.mainWindow?.setAlwaysOnTop(windows.alwaysOnTop);
     }
+    if (writePatch.nowPlayingApiEnabled !== undefined) await followNowPlaying(written);
     const prev = deps.getBackendUrl();
     if (normalized === null) return { ok: true, changed: false, written };
     deps.setBackendUrl(normalized);
@@ -214,7 +256,16 @@ export function registerIpcHandlers(deps: {
     }
     // Answer with the config this write produced. Reading the file again
     // could catch the next queued write mid-way and parse as empty.
-    return { ok: true, changed: result.changed, config: desktopConfigOf(result.written) };
+    return { ok: true, changed: result.changed, config: desktopConfigOf(result.written, nowPlaying) };
+  });
+
+  // Saved first: a token that didn't reach config.json would stop working at
+  // the next launch, and the old one would come back.
+  ipcMain.handle("now-playing:new-token", async () => {
+    const token = newNowPlayingToken();
+    const written = await saveConfigPatch({ nowPlayingApiToken: token });
+    nowPlaying.token = token;
+    return desktopConfigOf(written, nowPlaying);
   });
 
   // First-run and change-server check: is there a Lumen server at this
@@ -459,14 +510,18 @@ export function registerIpcHandlers(deps: {
   // "Listening to Lumen" above the card (instead of "Playing").
   // ──────────────────────────────────────────────────────────────────────
 
+  // The same feed is what the now-playing API reports, so it's kept whether
+  // or not Discord status is on.
   ipcMain.handle("discord:activity", async (_e, payload: DiscordActivityPayload) => {
     if (!payload || typeof payload.title !== "string") {
       return { ok: false, error: "invalid payload" };
     }
+    nowPlaying.update(payload);
     return pushDiscordActivity(payload);
   });
 
   ipcMain.handle("discord:clear", async () => {
+    nowPlaying.update(null);
     await clearDiscordActivity();
     return { ok: true };
   });

@@ -59,6 +59,13 @@ export async function updateDesktopConfig(
   return { ok: true, changed: result.changed, config: result.config };
 }
 
+/** Replace the now-playing API's token; links with the old one stop working. */
+export async function newNowPlayingApiToken(): Promise<void> {
+  const desktop = electron();
+  if (!desktop) throw new Error("Only the desktop app has the now playing API.");
+  publish(await desktop.newNowPlayingApiToken());
+}
+
 /** Check there's a Lumen server at `address`; resolves to its origin. */
 export function testDesktopServer(address: string): Promise<ServerTestResult> {
   const desktop = electron();

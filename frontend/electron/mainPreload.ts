@@ -10,6 +10,7 @@ const api: ElectronApi = {
   getConfig: () => ipcRenderer.invoke("config:get"),
   updateConfig: (patch) => ipcRenderer.invoke("config:update", patch),
   testServer: (url) => ipcRenderer.invoke("config:test-server", url),
+  newNowPlayingApiToken: () => ipcRenderer.invoke("now-playing:new-token"),
   getFH6Status: () => ipcRenderer.invoke("fh6:status"),
   chooseFH6GameDir: () => ipcRenderer.invoke("fh6:choose-game-dir"),
   chooseFH6MediaSource: () => ipcRenderer.invoke("fh6:choose-media-source"),

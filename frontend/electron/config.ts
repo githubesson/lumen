@@ -17,6 +17,11 @@ export interface Config {
   fh6RadioEnabled?: boolean;
   fh6GameDir?: string;
   fh6BridgePort?: number;
+  nowPlayingApiEnabled?: boolean;
+  /** Not in Settings: set by hand when another app holds the default. */
+  nowPlayingApiPort?: number;
+  /** Read through nowPlayingToken: the file may be hand-edited. */
+  nowPlayingApiToken?: string;
   tweaks?: Partial<Tweaks>;
   audioSinkId?: string;
   updateBranch?: UpdateBranch;
@@ -32,6 +37,7 @@ export interface SavePatch {
   fh6RadioEnabled?: boolean;
   fh6GameDir?: string;
   fh6BridgePort?: number;
+  nowPlayingApiEnabled?: boolean;
 }
 
 function configPath(): string {

@@ -18,7 +18,8 @@ macOS, and Linux desktop app via Electron.
   [discord.com/developers](https://discord.com/developers/applications) and
   put its ID in `.env`, copied from [.env.example](./.env.example); the
   build step bakes it into the packaged app, and the app's `config.json`
-  can override it at runtime), automatic desktop updates, FH6 radio page
+  can override it at runtime), a local [now playing API](#now-playing-api)
+  for stream overlays, automatic desktop updates, FH6 radio page
 
 Styling is Tailwind CSS v4 (via the Vite plugin). Shared logic (API client,
 player state, auth, favorites) comes from
@@ -188,6 +189,67 @@ packages. It is unavailable in the Windows portable build. macOS auto-update
 requires a signed app and ZIP update artifact; the ZIP is produced by the
 release workflow, but the intentionally unsigned CI builds cannot auto-update
 until signing is configured.
+
+### Now playing API
+
+**Settings → Connections → Now playing API** starts a read-only HTTP server
+at `http://127.0.0.1:48638` for stream overlays (an OBS browser source, say)
+and other tools on the same computer. It's off by default and listens on
+loopback only. It follows the same track Discord status does, whether or not
+that's on: this player, or another of your devices that's playing while this
+one isn't.
+
+Every request needs the API's token, as `?token=` (which `<img>` and
+`EventSource` can send) or an `Authorization: Bearer` header; anything else
+gets 401. Settings shows the link with the token in it and can make a new
+token, which cuts off links and event streams using the old one. With the
+token, any origin may read it (CORS `*`), so overlays hosted elsewhere work.
+
+| Endpoint | Returns |
+| --- | --- |
+| `GET /now-playing` | The current state as JSON (below) |
+| `GET /cover` | The current track's cover image, or 404 when there's none |
+| `GET /events` | Server-sent events: the same JSON on connect and on every change |
+
+```json
+{
+  "playing": true,
+  "track": {
+    "id": "8c1f…",
+    "title": "Musze To Mieć",
+    "artist": "Kaz Bałagane",
+    "album": "Musze To Mieć",
+    "durationSec": 203,
+    "positionSec": 181.4,
+    "coverUrl": "http://127.0.0.1:48638/cover?v=fe60119b72c2&token=…"
+  }
+}
+```
+
+`track` is `null` when nothing is loaded, and `id`, `artist`, `album`,
+`durationSec` and `coverUrl` can be `null`. While playing, `positionSec`
+counts forward from the last player event (to within about a second), so an
+overlay can run its own progress bar between messages. `coverUrl` carries the
+token and changes when the cover does. If another app holds port 48638,
+Settings says so; set `nowPlayingApiPort` in the app's `config.json` and
+restart to use another.
+
+A minimal overlay, with `TOKEN` replaced by the token from Settings:
+
+```html
+<img id="cover" width="96" height="96" hidden />
+<span id="line"></span>
+<script>
+  const cover = document.getElementById("cover");
+  const line = document.getElementById("line");
+  new EventSource("http://127.0.0.1:48638/events?token=TOKEN").onmessage = ({ data }) => {
+    const { track } = JSON.parse(data);
+    line.textContent = track ? [track.title, track.artist].filter(Boolean).join(" · ") : "";
+    cover.hidden = !track?.coverUrl;
+    if (track?.coverUrl && cover.src !== track.coverUrl) cover.src = track.coverUrl;
+  };
+</script>
+```
 
 ## Docker
 

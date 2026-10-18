@@ -21,7 +21,7 @@ const card: DiscordCardOptions = {
 };
 
 function desktop(discordCard: DiscordCardOptions) {
-  const config = { backendUrl: "", discordEnabled: true, alwaysOnTop: false, fh6RadioEnabled: false, fh6GameDir: "", fh6BridgePort: 1, discordCard } satisfies DesktopConfig;
+  const config = { backendUrl: "", discordEnabled: true, alwaysOnTop: false, fh6RadioEnabled: false, fh6GameDir: "", fh6BridgePort: 1, discordCard, nowPlayingApiEnabled: false, nowPlayingApiUrl: "", nowPlayingApiToken: "", nowPlayingApiError: "" } satisfies DesktopConfig;
   return { config } as unknown as DesktopSettingsState;
 }
 const line = (n: number) => screen.getByRole("textbox", { name: `Line ${n}` }) as HTMLInputElement;
