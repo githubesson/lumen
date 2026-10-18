@@ -349,9 +349,10 @@
     else stop();
   }
 
-  // Room for the longest elapsed time, so the bar doesn't shift.
+  // Room for the longest elapsed time, so the bar doesn't shift. The computed
+  // width is the layout's, unscaled by the hidden card's transform.
   function sizeElapsed() {
-    elapsedLabel.style.minWidth = `${durationLabel.getBoundingClientRect().width}px`;
+    elapsedLabel.style.minWidth = getComputedStyle(durationLabel).width;
   }
 
   function draw() {
