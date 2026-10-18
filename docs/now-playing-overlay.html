@@ -1,0 +1,499 @@
+<!doctype html>
+<!--
+  Now playing overlay for Lumen desktop's now-playing API.
+
+  Turn the API on under Settings → Connections → Now playing API, then add
+  this file to OBS as a Browser source, about 480 × 136 (times `scale`), which
+  leaves room for the card's shadow.
+  The card fills the source's width, up to 36rem. It shows while a track is
+  loaded and hides when nothing is, or while Lumen is closed.
+
+  Options, as query parameters or in OPTIONS below:
+    token       The token from the link in Settings (required)
+    port        The API's port, if you changed it in config.json (48638)
+    theme       dark or light (dark)
+    hidePaused  1 hides the card while playback is paused
+    scale       Size, e.g. 1.5 on a 1440p canvas (1)
+
+  OBS's "Local file" box can't pass query parameters. Either fill in OPTIONS
+  and tick it, or leave it unticked and use a URL like
+  file:///C:/overlays/now-playing-overlay.html?token=…
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lumen · Now playing</title>
+<!-- Geist, as in the app. It loads without holding up the page (the print
+     media switches to all once it arrives), so until then, or if Google
+     Fonts can't be reached, the overlay uses the system font. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..600&display=swap" media="print" onload="this.media = 'all'">
+<style>
+  /* The app's Nova neutral tokens, in hex: OBS before 31 runs Chromium 103,
+     which doesn't parse oklch(). No color-scheme: in some Chromium builds a
+     dark scheme paints the page's background, and OBS needs it clear. */
+  :root {
+    --scale: 1;
+    --card: rgb(23 23 23 / 0.92);
+    --foreground: #fafafa;
+    --muted-foreground: #a1a1a1;
+    --muted: #262626;
+    --border: rgb(255 255 255 / 0.1);
+    --bar: rgb(255 255 255 / 0.14);
+    --fill: #fafafa;
+    --ambient: 0.4;
+    --shadow: 0 0.5rem 1.5rem -0.5rem rgb(0 0 0 / 0.6);
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    font-size: calc(16px * var(--scale));
+  }
+  :root[data-theme="light"] {
+    --card: rgb(255 255 255 / 0.94);
+    --foreground: #0a0a0a;
+    --muted-foreground: #585858;
+    --muted: #e9e9e9;
+    --border: rgb(0 0 0 / 0.1);
+    --bar: rgb(0 0 0 / 0.1);
+    --fill: #171717;
+    --ambient: 0.14;
+    --shadow: 0 0.5rem 1.5rem -0.5rem rgb(0 0 0 / 0.35);
+  }
+
+  html, body { margin: 0; background: transparent; }
+  body {
+    display: grid;
+    padding: 0.75rem;
+    overflow: hidden;
+    font-family: Geist, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* The card and the setup notice share a cell, so either sits at the top. */
+  body > * { grid-area: 1 / 1; align-self: start; }
+
+  .np {
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    box-sizing: border-box;
+    width: min(100%, 36rem);
+    padding: 0.75rem 1rem 0.75rem 0.75rem;
+    overflow: hidden;
+    color: var(--foreground);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 0.875rem;
+    box-shadow: var(--shadow);
+    transition: opacity 200ms ease-in, transform 200ms ease-in;
+  }
+  .np[data-shown="false"] { opacity: 0; transform: translateY(0.5rem) scale(0.98); }
+  .np[data-shown="true"] { transition-duration: 360ms; transition-timing-function: var(--ease-out); }
+
+  /* The cover again, blurred, tints the card with the album's colors. */
+  .np-ambient {
+    position: absolute;
+    inset: -2rem;
+    z-index: -1;
+    opacity: var(--ambient);
+    filter: blur(2rem) saturate(1.6);
+  }
+
+  .np-art {
+    position: relative;
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 4.5rem;
+    height: 4.5rem;
+    overflow: hidden;
+    border-radius: 0.5rem;
+    color: var(--muted-foreground);
+    background: var(--muted);
+  }
+  .np-art::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+  .np-note { width: 1.75rem; height: 1.75rem; }
+  .np-covers { position: absolute; inset: 0; transition: filter 200ms ease; }
+  .np-ambient img, .np-covers img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  /* Paused is the exception, so it's the state that gets a mark. */
+  .np-paused {
+    position: absolute;
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    color: #fff;
+    background: rgb(0 0 0 / 0.55);
+    border-radius: 999px;
+    opacity: 0;
+    transform: scale(0.8);
+    transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
+  }
+  .np-paused svg { width: 0.875rem; height: 0.875rem; }
+  .np[data-playing="false"] .np-paused { opacity: 1; transform: none; }
+  .np[data-playing="false"] .np-covers { filter: brightness(0.75); }
+
+  .np-text { flex: 1; min-width: 0; display: grid; gap: 0.125rem; }
+  .np-line { overflow: hidden; white-space: nowrap; }
+  .np-line[hidden] { display: none; }
+  .np-line > span { display: inline-block; }
+  .np-title { font-size: 0.9375rem; font-weight: 600; line-height: 1.35; letter-spacing: -0.01em; }
+  .np-sub { font-size: 0.8125rem; line-height: 1.35; color: var(--muted-foreground); }
+
+  /* A line too long for the card scrolls to its end and back. It fades out
+     at the right, and at the left once it has moved; the padding lets its
+     last letters stop clear of the fade. */
+  @property --np-edge { syntax: "<length>"; inherits: false; initial-value: 0px; }
+  .np-line.np-scroll {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--np-edge), #000 calc(100% - 1.5rem), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 var(--np-edge), #000 calc(100% - 1.5rem), transparent);
+    animation: np-edge var(--duration) linear infinite alternate;
+  }
+  .np-line.np-scroll > span {
+    padding-right: 1.5rem;
+    animation: np-marquee var(--duration) linear infinite alternate;
+  }
+  @keyframes np-marquee {
+    0%, 20% { transform: none; }
+    80%, 100% { transform: translateX(var(--shift)); }
+  }
+  @keyframes np-edge {
+    0%, 20% { --np-edge: 0px; }
+    24%, 100% { --np-edge: 1rem; }
+  }
+
+  .np-progress {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    font-size: 0.6875rem;
+    line-height: 1;
+    color: var(--muted-foreground);
+    font-variant-numeric: tabular-nums;
+  }
+  .np-progress[hidden] { display: none; }
+  .np-bar {
+    position: relative;
+    flex: 1;
+    height: 0.1875rem;
+    overflow: hidden;
+    background: var(--bar);
+    border-radius: 999px;
+  }
+  .np-fill {
+    position: absolute;
+    inset: 0;
+    background: var(--fill);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: background-color 200ms ease;
+  }
+  .np[data-playing="false"] .np-fill { background: var(--muted-foreground); }
+
+  .np-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    box-sizing: border-box;
+    width: min(100%, 36rem);
+    padding: 0.875rem 1rem;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    color: var(--foreground);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 0.875rem;
+    box-shadow: var(--shadow);
+  }
+  .np-notice[hidden] { display: none; }
+  .np-notice svg { flex: none; width: 1rem; height: 1rem; margin-top: 0.125rem; color: var(--muted-foreground); }
+  .np-notice strong { display: block; font-weight: 600; }
+  .np-notice p { margin: 0; color: var(--muted-foreground); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .np, .np-paused { transition-duration: 0s !important; }
+  }
+</style>
+</head>
+<body>
+  <main class="np" data-shown="false" data-playing="true">
+    <div class="np-ambient"></div>
+    <div class="np-art">
+      <svg class="np-note" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+      <div class="np-covers"></div>
+      <span class="np-paused"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="14" y="3" width="5" height="18" rx="1"/><rect x="5" y="3" width="5" height="18" rx="1"/></svg></span>
+    </div>
+    <div class="np-text">
+      <div class="np-line np-title"><span></span></div>
+      <div class="np-line np-sub"><span></span></div>
+      <div class="np-progress">
+        <span class="np-elapsed">0:00</span>
+        <div class="np-bar"><div class="np-fill"></div></div>
+        <span class="np-duration">0:00</span>
+      </div>
+    </div>
+  </main>
+  <div class="np-notice" role="status" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>
+    <div><strong></strong><p></p></div>
+  </div>
+
+<script>
+  // For OBS's "Local file" box, which can't pass query parameters. Anything
+  // in the page's URL wins over these.
+  const OPTIONS = {
+    token: "",
+    port: 48638,
+    theme: "dark",
+    hidePaused: false,
+    scale: 1,
+  };
+
+  const params = new URLSearchParams(location.search);
+  const option = (name) => params.get(name) ?? String(OPTIONS[name]);
+  const token = option("token").trim();
+  const port = Number(option("port"));
+  const api = `http://127.0.0.1:${Number.isInteger(port) && port > 0 && port <= 65535 ? port : 48638}`;
+  const hidePaused = /^(1|true|yes)$/i.test(option("hidePaused"));
+  const scaleOption = Number(option("scale"));
+  const scale = scaleOption >= 0.25 && scaleOption <= 4 ? scaleOption : 1;
+
+  document.documentElement.dataset.theme = option("theme") === "light" ? "light" : "dark";
+  document.documentElement.style.setProperty("--scale", scale);
+
+  const $ = (selector) => document.querySelector(selector);
+  const card = $(".np");
+  const layers = [$(".np-covers"), $(".np-ambient")];
+  const text = $(".np-text");
+  const titleLine = $(".np-title");
+  const subLine = $(".np-sub");
+  const progress = $(".np-progress");
+  const elapsedLabel = $(".np-elapsed");
+  const durationLabel = $(".np-duration");
+  const fill = $(".np-fill");
+  const notice = $(".np-notice");
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+
+  let trackKey = null;
+  let coverUrl = null;
+  // Where playback was at `at` (performance.now()), counted forward while playing.
+  let clock = null;
+  let shownSecond = -1;
+  let frame = 0;
+
+  function render(snapshot) {
+    const track = snapshot?.track ?? null;
+    const playing = snapshot?.playing === true;
+    const wasShown = card.dataset.shown === "true";
+    const shown = !!track && (playing || !hidePaused);
+    card.dataset.shown = String(shown);
+    if (!track) {
+      // The last track stays in the card while it fades out.
+      clock = null;
+      stop();
+      return;
+    }
+    card.dataset.playing = String(playing);
+
+    // A single's album is usually its title, which needn't be said twice.
+    const album = track.album && track.album !== track.title ? track.album : null;
+    const sub = [track.artist, album].filter(Boolean).join(" · ");
+    const key = track.id ?? `${track.title}\n${sub}`;
+    const changed = key !== trackKey;
+    if (changed || titleLine.textContent !== track.title || subLine.textContent !== sub) {
+      titleLine.firstElementChild.textContent = track.title;
+      subLine.firstElementChild.textContent = sub;
+      subLine.hidden = !sub;
+      fit();
+      if (changed && wasShown && shown && !reducedMotion.matches) {
+        text.animate(
+          [{ opacity: 0, transform: "translateY(0.375rem)", filter: "blur(2px)" }, { opacity: 1, transform: "none", filter: "none" }],
+          { duration: 320, easing: "cubic-bezier(0.23, 1, 0.32, 1)" },
+        );
+      }
+    }
+    trackKey = key;
+    setCover(track.coverUrl);
+
+    const now = performance.now();
+    let position = track.positionSec;
+    if (!changed && playing && clock?.playing) {
+      // The app reports whole seconds, so an update can land up to a second
+      // behind the bar. Don't step back for that; a seek is further.
+      const counted = clock.position + (now - clock.at) / 1000;
+      if (position < counted && counted - position < 1.5) position = counted;
+    }
+    clock = { position, at: now, playing, duration: track.durationSec };
+    progress.hidden = !clock.duration;
+    if (clock.duration) {
+      durationLabel.textContent = time(clock.duration);
+      sizeElapsed();
+    }
+    shownSecond = -1;
+    draw();
+    if (playing && shown) start();
+    else stop();
+  }
+
+  // Room for the longest elapsed time, so the bar doesn't shift. The computed
+  // width is the layout's, unscaled by the hidden card's transform.
+  function sizeElapsed() {
+    elapsedLabel.style.minWidth = getComputedStyle(durationLabel).width;
+  }
+
+  function draw() {
+    if (!clock?.duration) return;
+    const counted = clock.position + (clock.playing ? (performance.now() - clock.at) / 1000 : 0);
+    const position = Math.min(counted, clock.duration);
+    fill.style.transform = `scaleX(${position / clock.duration})`;
+    const second = Math.floor(position);
+    if (second !== shownSecond) {
+      shownSecond = second;
+      elapsedLabel.textContent = time(second);
+    }
+  }
+
+  function loop() {
+    draw();
+    frame = requestAnimationFrame(loop);
+  }
+  function start() {
+    if (!frame) frame = requestAnimationFrame(loop);
+  }
+  function stop() {
+    cancelAnimationFrame(frame);
+    frame = 0;
+  }
+
+  function time(seconds) {
+    const total = Math.max(0, Math.floor(seconds));
+    const pad = (value) => String(value).padStart(2, "0");
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor(total / 60) % 60;
+    return hours ? `${hours}:${pad(minutes)}:${pad(total % 60)}` : `${minutes}:${pad(total % 60)}`;
+  }
+
+  // The new cover is decoded before it fades in over the old one.
+  function setCover(url) {
+    url ||= null;
+    if (url === coverUrl) return;
+    coverUrl = url;
+    if (!url) {
+      clearCovers();
+      return;
+    }
+    const image = new Image();
+    image.src = url;
+    image.decode().then(
+      () => {
+        if (coverUrl === url) for (const layer of layers) addCover(layer, url);
+      },
+      () => {
+        if (coverUrl !== url) return;
+        // The app couldn't fetch it this time. Ask again with the next update.
+        coverUrl = null;
+        clearCovers();
+      },
+    );
+  }
+
+  function addCover(layer, url) {
+    const older = [...layer.children];
+    const image = document.createElement("img");
+    image.alt = "";
+    image.src = url;
+    layer.append(image);
+    image
+      .animate([{ opacity: 0 }, { opacity: 1 }], { duration: reducedMotion.matches ? 0 : 400, easing: "ease-out" })
+      .finished.then(() => older.forEach((old) => old.remove()), () => {});
+  }
+
+  function clearCovers() {
+    for (const layer of layers) {
+      for (const image of layer.children) {
+        image
+          .animate([{ opacity: 0 }], { duration: reducedMotion.matches ? 0 : 200, fill: "forwards" })
+          .finished.then(() => image.remove(), () => {});
+      }
+    }
+  }
+
+  // Lines that don't fit scroll, at about 28px a second.
+  function fit() {
+    for (const line of [titleLine, subLine]) {
+      const span = line.firstElementChild;
+      line.classList.remove("np-scroll");
+      // Reading the width here also restarts the scroll for new text.
+      if (reducedMotion.matches || span.offsetWidth <= line.clientWidth) continue;
+      line.classList.add("np-scroll");
+      const distance = span.offsetWidth - line.clientWidth;
+      const moving = distance / (28 * scale);
+      span.style.setProperty("--shift", `${-distance}px`);
+      line.style.setProperty("--duration", `${Math.max(4, moving / 0.6)}s`);
+    }
+  }
+  // Widths change when Geist arrives after the first track.
+  document.fonts.addEventListener("loadingdone", () => {
+    fit();
+    sizeElapsed();
+  });
+  addEventListener("resize", fit);
+
+  function say(title, detail) {
+    notice.hidden = !title;
+    notice.querySelector("strong").textContent = title ?? "";
+    notice.querySelector("p").textContent = detail ?? "";
+  }
+
+  let events = null;
+  let retry = 0;
+
+  function connect() {
+    clearTimeout(retry);
+    events?.close();
+    events = new EventSource(`${api}/events?token=${encodeURIComponent(token)}`);
+    events.onmessage = ({ data }) => {
+      say(null);
+      render(JSON.parse(data));
+    };
+    events.onerror = () => {
+      // Whatever's on screen may be stale now. EventSource reconnects by
+      // itself while Lumen is closed; it gives up only on an answer like 401.
+      render(null);
+      if (events.readyState === EventSource.CLOSED) recheck();
+    };
+  }
+
+  async function recheck() {
+    let delay = 5000;
+    try {
+      const response = await fetch(`${api}/now-playing?token=${encodeURIComponent(token)}`, { cache: "no-store" });
+      if (response.status === 401) {
+        say("Lumen didn't accept this token", "A new one was probably made. Copy the link again from Settings → Connections → Now playing API.");
+        delay = 15000;
+      }
+    } catch {
+      // Not answering yet.
+    }
+    retry = setTimeout(connect, delay);
+  }
+
+  if (token) connect();
+  else say("Add the API token", "Copy the link from Lumen's Settings → Connections → Now playing API and add its ?token=… to this page's address.");
+</script>
+</body>
+</html>
