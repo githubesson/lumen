@@ -141,3 +141,22 @@ test("the side column shuts when the Discord options go", async ({ page }) => {
   await expect(dialog).not.toHaveAttribute("data-side");
   await expect(page.locator(".discord-popout")).toHaveCount(0);
 });
+
+// The suite runs with reduced motion. The closed state lists its own
+// transitions (so a width change while closed snaps); that rule must not
+// outrank reduced motion and bring the closing fade back.
+test("settings close at once with reduced motion", async ({ page }) => {
+  await openSection(page, "Discord");
+  await ready(page, page.locator(".discord-popout"));
+  const closing = await page.evaluate(async () => {
+    const dialog = document.querySelector<HTMLElement>(".settings")!;
+    const open = getComputedStyle(dialog).transitionProperty;
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    for (let frame = 0; frame < 30 && !dialog.closest("[data-closed]"); frame++) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    const style = getComputedStyle(dialog);
+    return { open, closed: !!dialog.closest("[data-closed]"), transition: style.transitionProperty, opacity: style.opacity };
+  });
+  expect(closing).toEqual({ open: "none", closed: true, transition: "none", opacity: "0" });
+});
