@@ -2,11 +2,7 @@ import { usePlayer, usePlayerTime, useRemotePlayback } from "../../context/Playe
 import { lyricsDurationSeconds, useTrackLyrics } from "../../lib/useTrackLyrics";
 import { DeviceConnectionStatus, DeviceList } from "../PlaybackDevicePopover";
 import PlayerLyricsLine from "../PlayerLyricsLine";
-import {
-  QueueList,
-  useQueuePosition,
-  type ExternalQueue,
-} from "../QueuePopover";
+import { QueueList, useQueuePosition } from "../QueuePopover";
 import {
   useContextMenuClickGuard,
   useTrackContextMenu,
@@ -34,20 +30,16 @@ const LABELS: Record<MiniPanel, string> = {
 export default function MiniPlayerPanel({
   panel,
   enter,
-  externalQueue,
 }: {
   panel: MiniPanel;
   enter?: "forward" | "back";
-  externalQueue?: ExternalQueue;
 }) {
-  const position = useQueuePosition(externalQueue);
-  const title =
-    panel === "queue" && externalQueue ? externalQueue.title : TITLES[panel];
+  const position = useQueuePosition();
 
   return (
     <>
       <div className="mini-panel-head" key={panel} data-enter={enter}>
-        <span className="mini-panel-title">{title}</span>
+        <span className="mini-panel-title">{TITLES[panel]}</span>
         {panel === "queue" && position && (
           <span className="queue-pop-pos">{position}</span>
         )}
@@ -65,7 +57,7 @@ export default function MiniPlayerPanel({
           data-enter={enter}
         >
           {panel === "queue" ? (
-            <MiniQueue externalQueue={externalQueue} />
+            <MiniQueue />
           ) : panel === "lyrics" ? (
             <MiniLyrics />
           ) : (
@@ -77,11 +69,11 @@ export default function MiniPlayerPanel({
   );
 }
 
-function MiniQueue({ externalQueue }: { externalQueue?: ExternalQueue }) {
+function MiniQueue() {
   const { targetDevice } = useRemotePlayback();
   // Only this app's own queue gets the row menu, as in the queue popover.
   const { bind, menu } = useTrackContextMenu();
-  const canContext = !externalQueue && !targetDevice;
+  const canContext = !targetDevice;
   // A click that dismisses an open menu mustn't also play the row under it.
   const clickGuard = useContextMenuClickGuard();
   return (
@@ -90,10 +82,7 @@ function MiniQueue({ externalQueue }: { externalQueue?: ExternalQueue }) {
       onMouseDownCapture={clickGuard.onMouseDownCapture}
       onClickCapture={clickGuard.onClickCapture}
     >
-      <QueueList
-        externalQueue={externalQueue}
-        bindCtx={canContext ? bind : undefined}
-      />
+      <QueueList bindCtx={canContext ? bind : undefined} />
       {menu}
     </div>
   );

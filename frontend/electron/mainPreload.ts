@@ -11,11 +11,6 @@ const api: ElectronApi = {
   updateConfig: (patch) => ipcRenderer.invoke("config:update", patch),
   testServer: (url) => ipcRenderer.invoke("config:test-server", url),
   newNowPlayingApiToken: () => ipcRenderer.invoke("now-playing:new-token"),
-  getFH6Status: () => ipcRenderer.invoke("fh6:status"),
-  chooseFH6GameDir: () => ipcRenderer.invoke("fh6:choose-game-dir"),
-  chooseFH6MediaSource: () => ipcRenderer.invoke("fh6:choose-media-source"),
-  installFH6Radio: (opts) => ipcRenderer.invoke("fh6:install", opts),
-  syncFH6Session: () => ipcRenderer.invoke("fh6:sync-session"),
   setTitleBarTheme: (opts) => ipcRenderer.invoke("titlebar:theme", opts),
   setMiniPlayerMode: (enabled) =>
     ipcRenderer.invoke("window:mini-player:set", enabled),

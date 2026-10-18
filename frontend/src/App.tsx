@@ -25,7 +25,6 @@ const PlaylistNew = lazy(() => import("./pages/PlaylistNew"));
 const PlaylistDetail = lazy(() => import("./pages/PlaylistDetail"));
 const PendingInvites = lazy(() => import("./pages/PendingInvites"));
 const Admin = lazy(() => import("./pages/Admin"));
-const FH6Radio = lazy(() => import("./pages/FH6Radio"));
 
 const PageFallback = () => (
   <div
@@ -120,7 +119,6 @@ export default function App() {
           <Route path="/playlists/new" element={<Suspense fallback={<PageFallback />}><PlaylistNew /></Suspense>} />
           <Route path="/playlists/:id" element={<Suspense fallback={<PageFallback />}><PlaylistDetail /></Suspense>} />
           <Route path="/invites" element={<Suspense fallback={<PageFallback />}><PendingInvites /></Suspense>} />
-          <Route path="/fh6-radio" element={<Suspense fallback={<PageFallback />}><FH6Radio /></Suspense>} />
           <Route
             path="/admin"
             element={

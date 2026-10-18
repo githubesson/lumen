@@ -13,28 +13,12 @@ import {
   useTrackContextMenu,
 } from "../lib/useTrackContextMenu";
 
-interface ExternalQueueTrack {
-  id: string;
-  title: string;
-  artist?: string;
-  album?: string;
-}
-
-/** A queue this app doesn't own, e.g. the Lumen Radio bridge's. */
-export interface ExternalQueue {
-  title: string;
-  currentIndex: number;
-  tracks: ExternalQueueTrack[];
-  onJump?: (index: number) => void;
-}
-
 type BindTrackContext = ReturnType<typeof useTrackContextMenu>["bind"];
 
 interface Props {
   open: boolean;
   /** Element the popover anchors above; usually the queue button. */
   anchor: HTMLElement | null;
-  externalQueue?: ExternalQueue;
   onClose: () => void;
 }
 
@@ -46,21 +30,20 @@ interface Props {
 export default function QueuePopover({
   open,
   anchor,
-  externalQueue,
   onClose,
 }: Props) {
   const { targetDevice } = useRemotePlayback();
-  const position = useQueuePosition(externalQueue);
+  const position = useQueuePosition();
   const ref = useRef<HTMLDivElement>(null);
   // Same right-click menu as every other track list. Only for this app's
-  // own queue: a remote device's or the bridge's rows aren't ours to act on.
+  // own queue: a remote device's rows aren't ours to act on.
   const {
     bind: bindCtx,
     menu: ctxMenu,
     close: closeCtx,
     isOpen: ctxOpen,
   } = useTrackContextMenu();
-  const canContext = !externalQueue && !targetDevice;
+  const canContext = !targetDevice;
 
   useDismiss(ref, {
     onDismiss: onClose,
@@ -112,7 +95,7 @@ export default function QueuePopover({
       onClickCapture={clickGuard.onClickCapture}
     >
       <div className="queue-pop-head">
-        <span className="queue-pop-title-h">{externalQueue?.title ?? "Queue"}</span>
+        <span className="queue-pop-title-h">Queue</span>
         {position && <span className="queue-pop-pos">{position}</span>}
         <span style={{ flex: 1 }} />
         <button
@@ -126,7 +109,6 @@ export default function QueuePopover({
       </div>
 
       <QueueList
-        externalQueue={externalQueue}
         bindCtx={canContext ? bindCtx : undefined}
         onJumped={onClose}
       />
@@ -136,21 +118,11 @@ export default function QueuePopover({
   );
 }
 
-function clampIndex(index: number, length: number) {
-  if (length <= 0) return 0;
-  return Math.max(0, Math.min(index, length - 1));
-}
-
 /** "12 / 40": where playback is in the queue, or null with nothing playing. */
-export function useQueuePosition(externalQueue?: ExternalQueue): string | null {
+export function useQueuePosition(): string | null {
   const { queue, index, current } = usePlayer();
   const { targetDevice } = useRemotePlayback();
   const remoteQueue = targetDevice?.queue;
-  if (externalQueue) {
-    const total = externalQueue.tracks.length;
-    if (total === 0) return null;
-    return `${clampIndex(externalQueue.currentIndex, total) + 1} / ${total}`;
-  }
   if (!current) return null;
   const { position, total } = queueProgress({ queue, index }, remoteQueue);
   return `${position} / ${total}`;
@@ -165,11 +137,9 @@ export function useQueuePosition(externalQueue?: ExternalQueue): string | null {
  * the list scrolls, and spans the container whatever its scrollbar takes.
  */
 export function QueueList({
-  externalQueue,
   bindCtx,
   onJumped,
 }: {
-  externalQueue?: ExternalQueue;
   /** Right-click menu for this app's own queue rows. */
   bindCtx?: BindTrackContext;
   /** Called after a row click jumps playback. */
@@ -183,43 +153,27 @@ export function QueueList({
     { queue, index },
     targetDevice?.queue,
   );
-  return <QueueContents queue={queue} index={index} current={current} jumpTo={jumpTo} upcomingTotal={upcomingTotal} externalQueue={externalQueue} bindCtx={bindCtx} onJumped={onJumped} />;
+  return <QueueContents queue={queue} index={index} current={current} jumpTo={jumpTo} upcomingTotal={upcomingTotal} bindCtx={bindCtx} onJumped={onJumped} />;
 }
 
-const QueueContents = memo(function QueueContents({ queue, index, current, jumpTo, upcomingTotal, externalQueue, bindCtx, onJumped }: {
+const QueueContents = memo(function QueueContents({ queue, index, current, jumpTo, upcomingTotal, bindCtx, onJumped }: {
   queue: TrackListItem[];
   index: number;
   current: TrackListItem | null;
   jumpTo: (index: number) => void;
   /** Tracks after the current one in the whole queue, beyond any remote window. */
   upcomingTotal: number;
-  externalQueue?: ExternalQueue;
   bindCtx?: BindTrackContext;
   onJumped?: () => void;
 }) {
+  const upcoming = queue.slice(index + 1);
 
-  const usingExternal = !!externalQueue;
-  const externalTracks = externalQueue?.tracks ?? [];
-  const externalIndex = clampIndex(
-    externalQueue?.currentIndex ?? 0,
-    externalTracks.length,
-  );
-  const externalCurrent = externalTracks[externalIndex];
-  const externalUpcoming = externalTracks.slice(externalIndex + 1);
-  const localUpcoming = queue.slice(index + 1);
-  const upcoming = usingExternal ? externalUpcoming : localUpcoming;
-  const isEmpty = usingExternal
-    ? externalTracks.length === 0
-    : !current && queue.length === 0;
-
-  if (isEmpty) {
+  if (!current && queue.length === 0) {
     return (
       <div className="queue-pop-list">
         <div className="queue-pop-empty">
           <MusicalNoteIcon className="size-5" aria-hidden="true" />
-          <span>
-            {usingExternal ? "No bridge queue loaded." : "Play something to start a queue."}
-          </span>
+          <span>Play something to start a queue.</span>
         </div>
       </div>
     );
@@ -227,13 +181,7 @@ const QueueContents = memo(function QueueContents({ queue, index, current, jumpT
 
   return (
     <>
-      {usingExternal && externalCurrent ? (
-        <QueueRow
-          title={externalCurrent.title}
-          artist={externalCurrent.artist ?? externalCurrent.album}
-          active
-        />
-      ) : !usingExternal && current ? (
+      {current && (
         <QueueRow
           title={current.title}
           artist={current.artist}
@@ -241,43 +189,25 @@ const QueueContents = memo(function QueueContents({ queue, index, current, jumpT
           active
           onContextMenu={bindCtx?.(current, { queue, onPlay: () => jumpTo(index) })}
         />
-      ) : null}
+      )}
 
       <div className="queue-pop-list">
         {upcoming.length > 0 ? (
           <>
-            <div className="queue-pop-heading">
-              Up next · {usingExternal ? upcoming.length : upcomingTotal}
-            </div>
-            {usingExternal
-              ? externalUpcoming.map((t, i) => (
-                <QueueRow
-                  key={`${t.id}-${externalIndex + 1 + i}`}
-                  title={t.title}
-                  artist={t.artist ?? t.album}
-                  onClick={
-                    externalQueue?.onJump
-                      ? () => {
-                          externalQueue.onJump?.(externalIndex + 1 + i);
-                          onJumped?.();
-                        }
-                      : undefined
-                  }
-                />
-              ))
-              : localUpcoming.map((t, i) => (
-                <QueueRow
-                  key={`${t.id}-${index + 1 + i}`}
-                  title={t.title}
-                  artist={t.artist}
-                  coverUrl={trackCoverUrl(t, 64)}
-                  onClick={() => {
-                    jumpTo(index + 1 + i);
-                    onJumped?.();
-                  }}
-                  onContextMenu={bindCtx?.(t, { queue, onPlay: () => jumpTo(index + 1 + i) })}
-                />
-              ))}
+            <div className="queue-pop-heading">Up next · {upcomingTotal}</div>
+            {upcoming.map((t, i) => (
+              <QueueRow
+                key={`${t.id}-${index + 1 + i}`}
+                title={t.title}
+                artist={t.artist}
+                coverUrl={trackCoverUrl(t, 64)}
+                onClick={() => {
+                  jumpTo(index + 1 + i);
+                  onJumped?.();
+                }}
+                onContextMenu={bindCtx?.(t, { queue, onPlay: () => jumpTo(index + 1 + i) })}
+              />
+            ))}
           </>
         ) : (
           <div className="queue-pop-hint">Nothing queued after this.</div>

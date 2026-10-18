@@ -5,11 +5,9 @@ import NowPlaying from "../src/components/player/NowPlaying";
 import { usePlayerDisplay } from "../src/components/player/usePlayerDisplay";
 
 const mock = vi.hoisted(() => ({
-  player: null as unknown as PlayerState & { seek: () => void },
+  player: null as unknown as PlayerState,
   remote: { targetDevice: null as PlaybackDevice | null, commandPending: false },
 }));
-vi.mock("react-router-dom", () => ({ useLocation: () => ({ pathname: "/" }) }));
-vi.mock("../src/lib/fh6", () => ({ fh6Transport: vi.fn(), useFH6Snapshot: () => null }));
 vi.mock("../src/context/Player", () => ({
   usePlayer: () => mock.player,
   useRemotePlayback: () => mock.remote,
@@ -43,7 +41,6 @@ beforeEach(() => {
     shuffle: true,
     repeat: "one",
     playbackError: null,
-    seek: vi.fn(),
   };
   mock.remote = { targetDevice: desktop, commandPending: false };
 });
@@ -94,14 +91,14 @@ it("shows the current track's playback error in place of its artist", () => {
 it("renders the error as the artist line and announces it", () => {
   const message = "TIDAL only has a preview of this track.";
   const { container, rerender } = render(
-    <NowPlaying track={track} title="Song" artist="Artist · Album" isFH6Mode={false} />,
+    <NowPlaying track={track} title="Song" artist="Artist · Album" />,
   );
   const line = container.querySelector(".np-artist")!;
   expect(line.textContent).toBe("Artist · Album");
   expect(screen.getByRole("status").textContent).toBe("");
 
   rerender(
-    <NowPlaying track={track} title="Song" artist="Artist · Album" error={message} isFH6Mode={false} />,
+    <NowPlaying track={track} title="Song" artist="Artist · Album" error={message} />,
   );
   expect(line.textContent).toBe(message);
   expect(line.getAttribute("title")).toBe(message);

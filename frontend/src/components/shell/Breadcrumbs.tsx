@@ -56,9 +56,6 @@ function buildCrumbs(
       { label: "Replay", current: true },
     ];
   }
-  if (pathname.startsWith("/fh6-radio")) {
-    return [{ label: "Lumen Radio", current: true }];
-  }
   if (pathname === "/playlists") {
     return [{ label: "Playlists", current: true }];
   }

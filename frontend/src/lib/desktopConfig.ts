@@ -3,10 +3,10 @@ import type { DesktopConfig, DesktopConfigPatch, ServerTestResult } from "../ele
 import { electron } from "./platform";
 
 /**
- * The desktop app's own settings (server, Discord, window, FH6 radio), shared
- * by everything that shows or changes them, so a toggle in Settings is seen
- * at once by the sidebar and the FH6 page. Null on the web and until the
- * first load resolves.
+ * The desktop app's own settings (server, Discord, window, now-playing API),
+ * shared by everything that shows or changes them, so a change in Settings is
+ * seen at once everywhere else. Null on the web and until the first load
+ * resolves.
  */
 let config: DesktopConfig | null = null;
 let loading: Promise<void> | null = null;

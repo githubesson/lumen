@@ -1,25 +1,11 @@
-// electron-builder packaging config. JS instead of YAML so optional pieces
-// can be decided at build time — most importantly the private radio add-on,
-// which YAML could only express as an always-required path (every build on a
-// machine without _local/ failed until the block was hand-removed).
-const fs = require("fs");
+// electron-builder packaging config. JS instead of YAML so pieces can be
+// decided at build time: the update channel, and the DMG signing hook.
 const path = require("path");
 const { execFileSync } = require("child_process");
 // The update channel follows the version the release workflow stamps into
 // package.json: 0.1.4 publishes latest*.yml, 0.1.4-dev.57 publishes dev*.yml.
 const UPDATE_CHANNEL =
   /^\d+\.\d+\.\d+-([0-9A-Za-z-]+)/.exec(require("./package.json").version)?.[1] ?? "latest";
-
-// Optional private add-on: the FH6 radio bridge DLL + config live in a local,
-// untracked folder. Bundled when present, silently skipped when not.
-const RADIO_DIST = path.join(
-  __dirname,
-  "..",
-  "_local",
-  "fh6-spotify-mod",
-  "lumen-radio",
-  "dist",
-);
 
 /**
  * Sign, notarize, and staple the DMG container itself. electron-builder
@@ -75,7 +61,7 @@ async function signAndNotarizeDmg(result) {
 }
 
 /** @type {import("electron-builder").Configuration} */
-const config = {
+module.exports = {
   appId: "com.lumen.music-library",
   productName: "Lumen",
   copyright: "",
@@ -166,17 +152,3 @@ const config = {
     artifactName: "${productName}-${version}-setup.${ext}",
   },
 };
-
-if (fs.existsSync(RADIO_DIST)) {
-  console.log("packaging: bundling FH6 radio add-on from _local/");
-  // This bridge is a Windows DLL and must not leak into macOS/Linux packages.
-  config.win.extraResources = [
-    {
-      from: "../_local/fh6-spotify-mod/lumen-radio/dist",
-      to: "lumen-radio",
-      filter: ["version.dll", "fh6-radio/config.toml"],
-    },
-  ];
-}
-
-module.exports = config;

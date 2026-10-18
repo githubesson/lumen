@@ -8,9 +8,6 @@ const config: DesktopConfig = {
   backendUrl: "https://music.example.com",
   discordEnabled: true,
   alwaysOnTop: false,
-  fh6RadioEnabled: false,
-  fh6GameDir: "",
-  fh6BridgePort: 8787,
   discordCard: {
     details: "{title}",
     state: "{artist}",

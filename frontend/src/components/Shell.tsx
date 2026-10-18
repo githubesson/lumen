@@ -4,7 +4,6 @@ import { api, type Playlist } from "../api";
 import { useAuth } from "../context/Auth";
 import { usePlaylists } from "../context/Playlists";
 import { useKey } from "../lib/keybindings";
-import { useDesktopConfig } from "../lib/desktopConfig";
 import { useLyricsPanel } from "../context/LyricsPanel";
 import MiniPlayer from "./MiniPlayer";
 import LyricsSidebar from "./LyricsSidebar";
@@ -67,7 +66,6 @@ export default function Shell() {
       if (lost && opener instanceof HTMLElement && opener.isConnected) opener.focus();
     };
   }, [paletteOpen]);
-  const fh6RadioEnabled = useDesktopConfig()?.fh6RadioEnabled === true;
   const { mobileNavOpen, setMobileNavOpen } = useMobileNav();
 
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -188,7 +186,6 @@ export default function Shell() {
         mobileOpen={mobileNavOpen}
         playlists={playlistRows}
         pendingCount={pendingCount}
-        fh6RadioEnabled={fh6RadioEnabled}
         onAddMusic={() => {
           setMobileNavOpen(false);
           openUpload();

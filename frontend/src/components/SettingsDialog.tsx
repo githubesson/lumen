@@ -336,18 +336,6 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
                 />
               ),
             },
-            {
-              id: "fh6-radio",
-              keywords: "lumen radio fh6 forza horizon game",
-              render: () => (
-                <ToggleSetting
-                  desktop={desktop}
-                  setting="fh6RadioEnabled"
-                  label="Lumen Radio for FH6"
-                  description="Adds the Forza Horizon 6 radio installer and controls to the sidebar."
-                />
-              ),
-            },
           ]
         : [],
     },

@@ -56,7 +56,6 @@ surface for invites and library management.
 - Discord Rich Presence ("Listening to Lumen" with cover art)
 - Local read-only now-playing API (JSON, cover and live events) for stream overlays such as OBS
 - First-run server-setup window, always-on-top toggle, custom window controls
-- Optional Forza Horizon 6 in-game radio bridge
 
 ### Mobile app (Expo, iOS / Android)
 

@@ -8,7 +8,6 @@ export default function NowPlaying({
   title,
   artist,
   error,
-  isFH6Mode,
   onContextMenu,
 }: {
   track: TrackListItem | null;
@@ -16,7 +15,6 @@ export default function NowPlaying({
   artist: string;
   /** Why the track stopped playing; shown in place of the artist. */
   error?: string | null;
-  isFH6Mode: boolean;
   onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
 }) {
   const coverSrc = track ? trackCoverUrl(track) : null;
@@ -25,11 +23,7 @@ export default function NowPlaying({
       <CoverArt
         className="np-art"
         src={coverSrc}
-        label={
-          isFH6Mode
-            ? "Lumen Radio"
-            : displayText(track?.album_title || track?.title, "·")
-        }
+        label={displayText(track?.album_title || track?.title, "·")}
         forcePlaceholder={!track}
       />
       <div className="np-text">

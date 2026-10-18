@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { repeatModeLabel, type RepeatMode } from "@music-library/core";
 import { usePlayer } from "../../context/Player";
-import ProgressBar, { type ProgressOverride } from "./ProgressBar";
+import ProgressBar from "./ProgressBar";
 import VolumeControl from "./VolumeControl";
 
 export default function Transport({
@@ -17,25 +17,19 @@ export default function Transport({
   playing,
   muted,
   volume,
-  isFH6Mode,
   commandPending,
   transportDisabled,
   miniPlayerMode,
-  progressOverride,
-  fh6Transport,
 }: {
   shuffle: boolean;
   repeat: RepeatMode;
   playing: boolean;
   muted: boolean;
   volume: number;
-  isFH6Mode: boolean;
   commandPending: boolean;
   /** Disables previous, play/pause and next. */
   transportDisabled: boolean;
   miniPlayerMode: boolean;
-  progressOverride?: ProgressOverride;
-  fh6Transport: (action: string, body?: unknown) => Promise<void>;
 }) {
   const {
     toggle,
@@ -56,7 +50,7 @@ export default function Transport({
           aria-label="Shuffle"
           aria-pressed={shuffle}
           onClick={toggleShuffle}
-          disabled={isFH6Mode || commandPending}
+          disabled={commandPending}
         >
           <ArrowsRightLeftIcon className="size-3.5" />
         </button>
@@ -64,7 +58,7 @@ export default function Transport({
           type="button"
           className="t-btn"
           aria-label="Previous"
-          onClick={isFH6Mode ? () => void fh6Transport("previous") : prev}
+          onClick={prev}
           disabled={transportDisabled}
         >
           <BackwardIcon className="size-3.5" />
@@ -73,11 +67,7 @@ export default function Transport({
           type="button"
           className="play-btn"
           aria-label={playing ? "Pause" : "Play"}
-          onClick={
-            isFH6Mode
-              ? () => void fh6Transport(playing ? "pause" : "play")
-              : toggle
-          }
+          onClick={toggle}
           disabled={transportDisabled}
         >
           {playing ? (
@@ -90,7 +80,7 @@ export default function Transport({
           type="button"
           className="t-btn"
           aria-label="Next"
-          onClick={isFH6Mode ? () => void fh6Transport("next") : next}
+          onClick={next}
           disabled={transportDisabled}
         >
           <ForwardIcon className="size-3.5" />
@@ -100,7 +90,7 @@ export default function Transport({
           className={"t-btn" + (repeat !== "off" ? " active" : "")}
           aria-label={repeatModeLabel(repeat)}
           onClick={cycleRepeat}
-          disabled={isFH6Mode || commandPending}
+          disabled={commandPending}
         >
           <ArrowPathRoundedSquareIcon className="size-3.5" />
           {repeat === "one" && (
@@ -125,10 +115,7 @@ export default function Transport({
           onSeek={setVolume}
         />
       </div>
-      <ProgressBar
-        miniPlayerMode={miniPlayerMode}
-        override={progressOverride}
-      />
+      <ProgressBar miniPlayerMode={miniPlayerMode} />
     </div>
   );
 }
