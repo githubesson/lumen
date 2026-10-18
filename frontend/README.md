@@ -251,6 +251,11 @@ A minimal overlay, with `TOKEN` replaced by the token from Settings:
 </script>
 ```
 
+For a fuller one, [docs/now-playing-overlay.html](../docs/now-playing-overlay.html) is
+a card with the cover, a progress bar, a paused mark and scrolling for long
+titles, ready for an OBS browser source. Its header lists the options (token,
+port, theme, hiding while paused, scale).
+
 ## Docker
 
 The [Dockerfile](./Dockerfile) builds the app and serves `dist/` with nginx
