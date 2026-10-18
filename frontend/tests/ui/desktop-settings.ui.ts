@@ -20,6 +20,10 @@ const config: DesktopConfig = {
     playState: true,
     showPaused: true,
   },
+  nowPlayingApiEnabled: false,
+  nowPlayingApiUrl: "",
+  nowPlayingApiToken: "first-token-0123456789",
+  nowPlayingApiError: "",
 };
 
 async function desktopBridge(page: Page) {

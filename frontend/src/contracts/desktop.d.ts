@@ -153,9 +153,20 @@ export interface DesktopConfig {
   fh6GameDir: string;
   fh6BridgePort: number;
   discordCard: DiscordCardOptions;
+  /** The local now-playing API for overlays (electron/now-playing.ts). */
+  nowPlayingApiEnabled: boolean;
+  /** Its origin while it listens, otherwise "". */
+  nowPlayingApiUrl: string;
+  /** What every request to it must carry, as ?token=. */
+  nowPlayingApiToken: string;
+  /** Why it couldn't start, otherwise "". */
+  nowPlayingApiError: string;
 }
 export type DesktopConfigPatch = Partial<
-  Pick<DesktopConfig, "backendUrl" | "discordEnabled" | "alwaysOnTop" | "fh6RadioEnabled">
+  Pick<
+    DesktopConfig,
+    "backendUrl" | "discordEnabled" | "alwaysOnTop" | "fh6RadioEnabled" | "nowPlayingApiEnabled"
+  >
 > & {
   /** Only the options that changed; the desktop app merges them onto the saved card. */
   discordCard?: Partial<DiscordCardOptions>;
@@ -185,6 +196,8 @@ export interface ElectronApi {
   getConfig(): Promise<DesktopConfig>;
   updateConfig(patch: DesktopConfigPatch): Promise<DesktopConfigUpdateResult>;
   testServer(url: string): Promise<ServerTestResult>;
+  /** Replace the now-playing API's token; links with the old one stop working. */
+  newNowPlayingApiToken(): Promise<DesktopConfig>;
   getFH6Status(): Promise<FH6StatusPayload>;
   chooseFH6GameDir(): Promise<{
     ok: boolean;

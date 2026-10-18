@@ -78,7 +78,8 @@ interface SignedCoverCacheEntry {
 
 /**
  * Push the currently playing track to Discord Rich Presence when running
- * inside Electron. No-ops in the browser build.
+ * inside Electron. No-ops in the browser build. The desktop app's local
+ * now-playing API reports the same feed, so this runs with Discord off too.
  *
  * A selected remote device uses its activity timestamps; local adapter events
  * are ignored until playback returns to this desktop.

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu } from "electron";
+import { app, BrowserWindow, Menu, net } from "electron";
 import * as path from "node:path";
 import {
   DesktopUpdateManager,
@@ -13,6 +13,13 @@ import {
 } from "./discord-presence";
 import { normalizeDiscordCard } from "./discord-card";
 import { createLocalProxy } from "./local-proxy";
+import {
+  createNowPlayingServer,
+  DEFAULT_NOW_PLAYING_PORT,
+  newNowPlayingToken,
+  nowPlayingPort,
+  nowPlayingToken,
+} from "./now-playing";
 import { readBakedBuildEnv } from "./build-env";
 import { createWindowManager } from "./windows";
 import { registerIpcHandlers } from "./ipc";
@@ -39,6 +46,11 @@ const localProxy = createLocalProxy({
   getBackendUrl: () => backendUrl,
 });
 const windows = createWindowManager({ localProxy, updateManager });
+const nowPlaying = createNowPlayingServer({
+  fetch: (url, init) => net.fetch(url, init),
+  appOrigin: () => (localProxy.port ? `http://127.0.0.1:${localProxy.port}` : ""),
+});
+let nowPlayingApiPort = DEFAULT_NOW_PLAYING_PORT;
 
 registerIpcHandlers({
   windows,
@@ -48,6 +60,8 @@ registerIpcHandlers({
   setBackendUrl: (url) => {
     backendUrl = url;
   },
+  nowPlaying,
+  nowPlayingPort: () => nowPlayingApiPort,
 });
 
 // Before ready on purpose: Electron builds its default menu during startup
@@ -95,6 +109,21 @@ if (!gotLock) {
         console.warn("[config] could not save the local proxy port:", error);
       });
     }
+    nowPlayingApiPort = nowPlayingPort(cfg.nowPlayingApiPort);
+    // A new token is only saved once the API is on (Settings saves it then).
+    const savedToken = nowPlayingToken(cfg.nowPlayingApiToken);
+    nowPlaying.token = savedToken || newNowPlayingToken();
+    // A port another app holds shows in Settings rather than stopping startup.
+    if (cfg.nowPlayingApiEnabled === true) {
+      if (!savedToken) {
+        void saveConfigPatch({ nowPlayingApiToken: nowPlaying.token }).catch((error) => {
+          console.warn("[config] could not save the now-playing token:", error);
+        });
+      }
+      await nowPlaying.start(nowPlayingApiPort).catch((error: Error) => {
+        console.warn("[now-playing]", error.message);
+      });
+    }
     // With no server yet the renderer shows its first-run setup.
     await windows.openMain();
   });
@@ -109,6 +138,7 @@ if (!gotLock) {
 
   app.on("before-quit", () => {
     localProxy.close();
+    nowPlaying.close();
     void teardownDiscordPresence();
   });
 }
