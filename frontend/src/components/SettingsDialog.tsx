@@ -37,12 +37,10 @@ import { SettingsSideContext, useSettingsSideColumn } from "./SettingsSide";
 // min-width in settings.css).
 const SIDE_ROOM = "(min-width: 1100px)";
 
-export type SectionId = "appearance" | "playback" | "desktop" | "connections" | "discord" | "updates";
+type SectionId = "appearance" | "playback" | "desktop" | "connections" | "discord" | "updates";
 
 interface Props {
   open: boolean;
-  /** Section to show on opening; otherwise the last one viewed. */
-  section?: SectionId;
   onClose: () => void;
 }
 
@@ -89,7 +87,7 @@ const SMOOTH_MIX: SelectOption[] = [
  * which had outgrown a popover once audio output, Last.fm and desktop updates
  * moved in. The desktop app's server and window options live here too.
  */
-export default function SettingsDialog({ open, section, onClose }: Props) {
+export default function SettingsDialog({ open, onClose }: Props) {
   const { mounted, visible } = useTransitionMount(open, 200);
   const titleId = useId();
   const layerRef = useRef<HTMLDivElement>(null);
@@ -198,13 +196,12 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
   );
   useModalKeyScope(interactive);
 
-  // Start fresh each time the dialog opens, on the section asked for if any.
+  // Start each opening with a clear search, on the last section viewed.
   useEffect(() => {
     if (!open) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setQuery("");
-    if (section) setActive(section);
-  }, [open, section]);
+  }, [open]);
 
   const lastFMState = lastFMConnectionState(lastFM, lastFMError);
 
