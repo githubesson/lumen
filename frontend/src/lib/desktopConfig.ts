@@ -31,8 +31,8 @@ function load() {
     });
 }
 
-// Start reading at boot, while auth resolves, so the sidebar's desktop-only
-// items are known by the time it first paints instead of popping in.
+// Start reading at boot, while auth resolves: the desktop app renders nothing
+// until it knows its server.
 load();
 
 function subscribe(listener: () => void) {
