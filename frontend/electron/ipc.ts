@@ -1,7 +1,6 @@
 import { app, ipcMain, net, session, dialog, shell } from "electron";
 import * as path from "node:path";
 import * as fsp from "node:fs/promises";
-import type { OpenDialogOptions } from "electron";
 import {
   normalizeUpdateBranch,
   parseGitHubRepoUrl,
@@ -15,14 +14,6 @@ import {
   type Tweaks,
 } from "./config";
 import {
-  DEFAULT_FH6_BRIDGE_PORT,
-  fh6BridgeUrl,
-  fh6Status,
-  installFH6Radio,
-  normalizeGameDir,
-  type FH6InstallRequest,
-} from "./fh6-radio";
-import {
   clearDiscordActivity,
   configureDiscordPresence,
   pushDiscordActivity,
@@ -33,7 +24,6 @@ import type { LocalProxy } from "./local-proxy";
 import { newNowPlayingToken, nowPlayingToken, type NowPlayingServer } from "./now-playing";
 import type { WindowManager } from "./windows";
 import { downloadToFile, exportDownloadUrl, uniqueExportPath } from "./track-export";
-import { postJson } from "./fh6-bridge";
 
 import type { DesktopConfig, ExportTrackFileItem } from "../src/contracts/desktop";
 
@@ -44,9 +34,6 @@ function desktopConfigOf(cfg: Config, nowPlaying: NowPlayingServer): DesktopConf
     // integration on without a migration step.
     discordEnabled: cfg.discordEnabled ?? true,
     alwaysOnTop: cfg.alwaysOnTop ?? false,
-    fh6RadioEnabled: cfg.fh6RadioEnabled === true,
-    fh6GameDir: cfg.fh6GameDir ?? "",
-    fh6BridgePort: cfg.fh6BridgePort ?? DEFAULT_FH6_BRIDGE_PORT,
     discordCard: normalizeDiscordCard(cfg.discordCard),
     nowPlayingApiEnabled: cfg.nowPlayingApiEnabled === true,
     nowPlayingApiUrl: nowPlaying.url,
@@ -186,15 +173,6 @@ export function registerIpcHandlers(deps: {
       patch?.discordCard && typeof patch.discordCard === "object" ? patch.discordCard : undefined;
     if (typeof patch?.alwaysOnTop === "boolean") {
       writePatch.alwaysOnTop = patch.alwaysOnTop;
-    }
-    if (typeof patch?.fh6RadioEnabled === "boolean") {
-      writePatch.fh6RadioEnabled = patch.fh6RadioEnabled;
-    }
-    if (typeof patch?.fh6GameDir === "string") {
-      writePatch.fh6GameDir = normalizeGameDir(patch.fh6GameDir);
-    }
-    if (typeof patch?.fh6BridgePort === "number") {
-      writePatch.fh6BridgePort = Math.max(1, Math.min(65535, Math.floor(patch.fh6BridgePort)));
     }
     const listening = !!nowPlaying.url;
     if (typeof patch?.nowPlayingApiEnabled === "boolean") {
@@ -423,71 +401,6 @@ export function registerIpcHandlers(deps: {
         failed,
         errors,
       };
-    } catch (e) {
-      return { ok: false, error: (e as Error).message };
-    }
-  });
-
-  ipcMain.handle("fh6:status", async () => fh6Status());
-
-  ipcMain.handle("fh6:choose-game-dir", async () => {
-    const options: OpenDialogOptions = {
-      title: "Choose Forza Horizon 6 install folder",
-      properties: ["openDirectory"],
-    };
-    const mainWindow = windows.mainWindow;
-    const result = mainWindow
-      ? await dialog.showOpenDialog(mainWindow, options)
-      : await dialog.showOpenDialog(options);
-    if (result.canceled || result.filePaths.length === 0) return { ok: false };
-    const gameDir = normalizeGameDir(result.filePaths[0]);
-    await saveConfigPatch({ fh6GameDir: gameDir });
-    return { ok: true, gameDir, status: await fh6Status() };
-  });
-
-  ipcMain.handle("fh6:choose-media-source", async () => {
-    const options: OpenDialogOptions = {
-      title: "Choose radio media ZIP or folder",
-      properties: ["openFile", "openDirectory"],
-      filters: [
-        { name: "Radio media", extensions: ["zip"] },
-        { name: "All files", extensions: ["*"] },
-      ],
-    };
-    const mainWindow = windows.mainWindow;
-    const result = mainWindow
-      ? await dialog.showOpenDialog(mainWindow, options)
-      : await dialog.showOpenDialog(options);
-    if (result.canceled || result.filePaths.length === 0) return { ok: false };
-    return { ok: true, path: normalizeGameDir(result.filePaths[0]) };
-  });
-
-  ipcMain.handle("fh6:install", async (_e, req: FH6InstallRequest) => {
-    try {
-      return await installFH6Radio(req ?? {});
-    } catch (e) {
-      return { ok: false, error: (e as Error).message, status: await fh6Status() };
-    }
-  });
-
-  ipcMain.handle("fh6:sync-session", async () => {
-    try {
-      const cfg = await loadConfig();
-      if (cfg.fh6RadioEnabled !== true) {
-        return { ok: false, error: "Lumen Radio is disabled in settings" };
-      }
-      if (!deps.getBackendUrl()) return { ok: false, error: "Backend URL is not configured" };
-      if (!localProxy.port) return { ok: false, error: "Local app proxy is not ready" };
-
-      const cookieHeader = await appCookieHeader();
-      if (!cookieHeader) return { ok: false, error: "Log in to Lumen first" };
-
-      const bridgeUrl = fh6BridgeUrl(cfg.fh6BridgePort ?? DEFAULT_FH6_BRIDGE_PORT);
-      return await postJson(`${bridgeUrl}/api/lumen/session`, {
-        server_url: deps.getBackendUrl(),
-        session_cookie: cookieHeader,
-        username: "",
-      });
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }

@@ -14,9 +14,6 @@ export interface Config {
   /** Read through normalizeDiscordCard: the file may be hand-edited. */
   discordCard?: Partial<DiscordCardOptions>;
   alwaysOnTop?: boolean;
-  fh6RadioEnabled?: boolean;
-  fh6GameDir?: string;
-  fh6BridgePort?: number;
   nowPlayingApiEnabled?: boolean;
   /** Not in Settings: set by hand when another app holds the default. */
   nowPlayingApiPort?: number;
@@ -34,9 +31,6 @@ export interface SavePatch {
   discordEnabled?: boolean;
   discordCard?: Partial<DiscordCardOptions>;
   alwaysOnTop?: boolean;
-  fh6RadioEnabled?: boolean;
-  fh6GameDir?: string;
-  fh6BridgePort?: number;
   nowPlayingApiEnabled?: boolean;
 }
 

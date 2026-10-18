@@ -19,7 +19,7 @@ macOS, and Linux desktop app via Electron.
   put its ID in `.env`, copied from [.env.example](./.env.example); the
   build step bakes it into the packaged app, and the app's `config.json`
   can override it at runtime), a local [now playing API](#now-playing-api)
-  for stream overlays, automatic desktop updates, FH6 radio page
+  for stream overlays, automatic desktop updates
 
 Styling is Tailwind CSS v4 (via the Vite plugin). Shared logic (API client,
 player state, auth, favorites) comes from
@@ -135,10 +135,7 @@ npm run electron:build:mac           # package a DMG for this Mac's architecture
 npm run electron:build:mac:universal # package the universal DMG (release artifact)
 ```
 
-Packaging config is [electron-builder.cjs](./electron-builder.cjs). It
-bundles an optional FH6-radio bridge (a game-mod DLL) from an untracked
-`_local/` folder when that folder exists, and skips it otherwise — no config
-edits needed either way.
+Packaging config is [electron-builder.cjs](./electron-builder.cjs).
 
 Icon files (`icon.ico`/`icon.icns`/`icon.png`/`Assets.car`) and the DMG
 background are committed, so packaging never regenerates them. After changing

@@ -300,11 +300,10 @@ electron-builder did not receive notarization credentials. Confirm
 `APPLE_KEYCHAIN_PROFILE` is exported in the build process and names a valid
 local Keychain profile.
 
-#### Missing optional FH6 resource or package metadata warnings
+#### Package metadata warnings
 
-Warnings about `_local/fh6-spotify-mod/lumen-radio/dist`, a missing package
-description/author, or the existing Vite chunk-size warning are not signing or
-notarization failures. Report them separately; do not confuse them with an
+Warnings about a missing package description/author, or the existing Vite
+chunk-size warning, are not signing or notarization failures. Report them separately; do not confuse them with an
 Apple signing failure.
 
 ## Release handoff

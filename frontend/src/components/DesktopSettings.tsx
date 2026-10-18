@@ -122,7 +122,7 @@ export function ToggleSetting({
   below,
 }: {
   desktop: DesktopSettingsState;
-  setting: "discordEnabled" | "alwaysOnTop" | "fh6RadioEnabled" | "nowPlayingApiEnabled";
+  setting: "discordEnabled" | "alwaysOnTop" | "nowPlayingApiEnabled";
   label: string;
   description: string;
   /** Shown when the last save didn't fail. */

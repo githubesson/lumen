@@ -1,13 +1,11 @@
 import { useCallback, useState } from "react";
 import { ListMusic as QueueListIcon } from "lucide-react";
-import QueuePopover, { type ExternalQueue } from "../QueuePopover";
+import QueuePopover from "../QueuePopover";
 import { usePopoverOpen, type MiniPanelToggle } from "./useMiniPlayerMode";
 
 export default function QueueButton({
-  externalQueue,
   panel,
 }: {
-  externalQueue?: ExternalQueue;
   /** In the mini player the queue opens in its panel instead of a popover. */
   panel?: MiniPanelToggle;
 }) {
@@ -38,7 +36,6 @@ export default function QueueButton({
       <QueuePopover
         open={queueOpen}
         anchor={queueBtn}
-        externalQueue={externalQueue}
         onClose={closeQueue}
       />
     </>

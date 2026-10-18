@@ -87,19 +87,6 @@ export interface DiscordCardOptions {
   showPaused: boolean;
 }
 
-export interface FH6StatusPayload {
-  enabled: boolean;
-  gameDir: string;
-  bridgeUrl: string;
-  gameDirExists: boolean;
-  exeFound: boolean;
-  bridgeInstalled: boolean;
-  configInstalled: boolean;
-  mediaInstalled: boolean;
-  packagedModAvailable: boolean;
-  candidates: string[];
-}
-
 export interface ExportTrackFileItem {
   url: string;
   filename: string;
@@ -149,9 +136,6 @@ export interface DesktopConfig {
   backendUrl: string;
   discordEnabled: boolean;
   alwaysOnTop: boolean;
-  fh6RadioEnabled: boolean;
-  fh6GameDir: string;
-  fh6BridgePort: number;
   discordCard: DiscordCardOptions;
   /** The local now-playing API for overlays (electron/now-playing.ts). */
   nowPlayingApiEnabled: boolean;
@@ -165,7 +149,7 @@ export interface DesktopConfig {
 export type DesktopConfigPatch = Partial<
   Pick<
     DesktopConfig,
-    "backendUrl" | "discordEnabled" | "alwaysOnTop" | "fh6RadioEnabled" | "nowPlayingApiEnabled"
+    "backendUrl" | "discordEnabled" | "alwaysOnTop" | "nowPlayingApiEnabled"
   >
 > & {
   /** Only the options that changed; the desktop app merges them onto the saved card. */
@@ -181,12 +165,6 @@ export type DesktopConfigUpdateResult =
     };
 /** `url` is the server origin to save, after any redirect. */
 export type ServerTestResult = { ok: true; url: string } | { ok: false; error: string };
-export interface FH6InstallRequest {
-  gameDir?: string;
-  mediaSource?: string;
-  skipMedia?: boolean;
-}
-
 export interface ElectronApi {
   getSignOutIntent(): Promise<boolean>;
   setSignOutIntent(signedOut: boolean): Promise<void>;
@@ -198,21 +176,6 @@ export interface ElectronApi {
   testServer(url: string): Promise<ServerTestResult>;
   /** Replace the now-playing API's token; links with the old one stop working. */
   newNowPlayingApiToken(): Promise<DesktopConfig>;
-  getFH6Status(): Promise<FH6StatusPayload>;
-  chooseFH6GameDir(): Promise<{
-    ok: boolean;
-    gameDir?: string;
-    status?: FH6StatusPayload;
-  }>;
-  chooseFH6MediaSource(): Promise<{ ok: boolean; path?: string }>;
-  installFH6Radio(opts: FH6InstallRequest): Promise<{
-    ok: boolean;
-    error?: string;
-    copiedFiles?: number;
-    brandedFiles?: number;
-    status?: FH6StatusPayload;
-  }>;
-  syncFH6Session(): Promise<{ ok: boolean; error?: string }>;
   setTitleBarTheme(opts: {
     color: string;
     symbolColor: string;

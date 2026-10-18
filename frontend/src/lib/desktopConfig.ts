@@ -3,10 +3,10 @@ import type { DesktopConfig, DesktopConfigPatch, ServerTestResult } from "../ele
 import { electron } from "./platform";
 
 /**
- * The desktop app's own settings (server, Discord, window, FH6 radio), shared
- * by everything that shows or changes them, so a toggle in Settings is seen
- * at once by the sidebar and the FH6 page. Null on the web and until the
- * first load resolves.
+ * The desktop app's own settings (server, Discord, window, now-playing API),
+ * shared by everything that shows or changes them, so a change in Settings is
+ * seen at once everywhere else. Null on the web and until the first load
+ * resolves.
  */
 let config: DesktopConfig | null = null;
 let loading: Promise<void> | null = null;
@@ -31,8 +31,8 @@ function load() {
     });
 }
 
-// Start reading at boot, while auth resolves, so the sidebar's desktop-only
-// items are known by the time it first paints instead of popping in.
+// Start reading at boot, while auth resolves: the desktop app renders nothing
+// until it knows its server.
 load();
 
 function subscribe(listener: () => void) {

@@ -129,30 +129,6 @@ export async function openExternal(url: string, reservedWindow?: Window | null) 
   return { ok: true };
 }
 
-export function getFH6Status() {
-  return electron()?.getFH6Status?.();
-}
-
-export function chooseFH6GameDir() {
-  return electron()?.chooseFH6GameDir?.();
-}
-
-export function chooseFH6MediaSource() {
-  return electron()?.chooseFH6MediaSource?.();
-}
-
-export function installFH6Radio(opts: {
-  gameDir?: string;
-  mediaSource?: string;
-  skipMedia?: boolean;
-}) {
-  return electron()?.installFH6Radio?.(opts);
-}
-
-export function syncFH6Session() {
-  return electron()?.syncFH6Session?.();
-}
-
 export function exportTrackFiles(items: ExportTrackFileItem[]) {
   return electron()?.exportTrackFiles?.(items);
 }

@@ -1,4 +1,3 @@
-import { useEffect, useMemo, useRef } from "react";
 import RemoteControlIndicator from "./RemoteControlIndicator";
 import {
   Minimize2 as ArrowsPointingInIcon,
@@ -11,7 +10,6 @@ import { useFavorites } from "../context/Favorites";
 import { useLyricsPanel } from "../context/LyricsPanel";
 import { usePlayer } from "../context/Player";
 import { canSetMiniPlayer } from "../lib/platform";
-import type { ExternalQueue } from "./QueuePopover";
 import DevicePickerButton from "./player/DevicePickerButton";
 import MiniPlayerPanel from "./player/MiniPlayerPanel";
 import NowPlaying from "./player/NowPlaying";
@@ -25,8 +23,6 @@ export default function MiniPlayer() {
   const {
     commandPending,
     isRemoteMode,
-    isFH6Mode,
-    fh6Snapshot,
     displayCurrent,
     displayHasTrack,
     displayPlaying,
@@ -38,8 +34,6 @@ export default function MiniPlayer() {
     shownShuffle,
     shownRepeat,
     transportDisabled,
-    progressOverride,
-    fh6Transport,
   } = usePlayerDisplay();
   const { setVolume, toggleMute } = usePlayer();
   const { open: lyricsOpen, setOpen: setLyricsOpen } = useLyricsPanel();
@@ -58,25 +52,6 @@ export default function MiniPlayer() {
   } = useMiniPlayerMode();
   const canResizeWindow = canSetMiniPlayer();
   const lyricsToggle = miniPlayerMode ? panelToggle("lyrics") : null;
-  // Kept stable between bridge polls so the memoized queue list can skip them.
-  const fh6TransportRef = useRef(fh6Transport);
-  useEffect(() => {
-    fh6TransportRef.current = fh6Transport;
-  });
-  const fh6Queue = fh6Snapshot?.queue;
-  const fh6Index = fh6Snapshot?.currentIndex;
-  const externalQueue = useMemo<ExternalQueue | undefined>(
-    () =>
-      isFH6Mode
-        ? {
-            title: "Lumen Radio Queue",
-            tracks: fh6Queue ?? [],
-            currentIndex: fh6Index ?? 0,
-            onJump: (index) => void fh6TransportRef.current("jump", { index }),
-          }
-        : undefined,
-    [isFH6Mode, fh6Queue, fh6Index],
-  );
 
   return (
     <div className="player-shell">
@@ -99,7 +74,6 @@ export default function MiniPlayer() {
           title={displayTitle}
           artist={displayArtist}
           error={displayError}
-          isFH6Mode={isFH6Mode}
           onContextMenu={
             displayCurrent && !isRemoteMode
               ? bindCtx(displayCurrent)
@@ -113,12 +87,9 @@ export default function MiniPlayer() {
           playing={displayPlaying}
           muted={shownMuted}
           volume={shownVolume}
-          isFH6Mode={isFH6Mode}
           commandPending={commandPending}
           transportDisabled={transportDisabled}
           miniPlayerMode={miniPlayerMode}
-          progressOverride={progressOverride}
-          fh6Transport={fh6Transport}
         />
 
         <div className="utility">
@@ -151,7 +122,6 @@ export default function MiniPlayer() {
             <BookOpenIcon className="size-3.5" />
           </button>
           <QueueButton
-            externalQueue={externalQueue}
             panel={miniPlayerMode ? panelToggle("queue") : undefined}
           />
           <div className="mini-divider" aria-hidden="true" />
@@ -183,11 +153,7 @@ export default function MiniPlayer() {
         </div>
 
         {miniPlayerMode && panel && (
-          <MiniPlayerPanel
-            panel={panel}
-            enter={swapDirection}
-            externalQueue={externalQueue}
-          />
+          <MiniPlayerPanel panel={panel} enter={swapDirection} />
         )}
       </section>
       <RemoteControlIndicator />

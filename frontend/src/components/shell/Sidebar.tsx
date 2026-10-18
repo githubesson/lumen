@@ -12,7 +12,6 @@ import {
   House as HomeIcon,
   Moon as MoonIcon,
   Music as MusicalNoteIcon,
-  Radio as RadioIcon,
   Sparkles as SparklesIcon,
   Sun as SunIcon,
   UserRound as UserIcon,
@@ -70,7 +69,6 @@ export default function Sidebar({
   mobileOpen,
   playlists,
   pendingCount,
-  fh6RadioEnabled,
   onAddMusic,
   onOpenTweaks,
 }: {
@@ -78,7 +76,6 @@ export default function Sidebar({
   /** Null until loaded. */
   playlists: Playlist[] | null;
   pendingCount: number;
-  fh6RadioEnabled: boolean;
   onAddMusic: () => void;
   onOpenTweaks: () => void;
 }) {
@@ -115,13 +112,6 @@ export default function Sidebar({
             active={libraryView === i.view}
           />
         ))}
-        {fh6RadioEnabled && (
-          <NavItem
-            to="/fh6-radio"
-            icon={<RadioIcon className="nav-icon" />}
-            label="Lumen Radio"
-          />
-        )}
 
         <div className="nav-section-title">Library</div>
         {LIBRARY.map((i) => (

@@ -14,7 +14,6 @@ const LOCAL_SERVER = "http://localhost:8080";
 interface Prefs {
   discordEnabled: boolean;
   alwaysOnTop: boolean;
-  fh6RadioEnabled: boolean;
 }
 
 /**
@@ -38,7 +37,6 @@ export default function Welcome({
   const [prefs, setPrefs] = useState<Prefs>({
     discordEnabled: config?.discordEnabled ?? true,
     alwaysOnTop: config?.alwaysOnTop ?? false,
-    fh6RadioEnabled: config?.fh6RadioEnabled ?? false,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -228,12 +226,6 @@ export default function Welcome({
                 description="Keep Lumen above other windows."
                 checked={prefs.alwaysOnTop}
                 onChange={(v) => setPrefs((p) => ({ ...p, alwaysOnTop: v }))}
-              />
-              <PrefRow
-                label="Lumen Radio for FH6"
-                description="Adds the Forza Horizon 6 radio installer and controls to the sidebar."
-                checked={prefs.fh6RadioEnabled}
-                onChange={(v) => setPrefs((p) => ({ ...p, fh6RadioEnabled: v }))}
               />
             </div>
             <p className="welcome-note">You can change these any time in Settings.</p>

@@ -4,16 +4,13 @@ import { api, type Playlist } from "../api";
 import { useAuth } from "../context/Auth";
 import { usePlaylists } from "../context/Playlists";
 import { useKey } from "../lib/keybindings";
-import { useDesktopConfig } from "../lib/desktopConfig";
 import { useLyricsPanel } from "../context/LyricsPanel";
 import MiniPlayer from "./MiniPlayer";
 import LyricsSidebar from "./LyricsSidebar";
 import { isElectron } from "../lib/platform";
 
-import type { SectionId } from "./SettingsDialog";
 import Sidebar from "./shell/Sidebar";
 import Topbar from "./shell/Topbar";
-import { OpenSettingsContext } from "./shell/openSettings";
 import { useMobileNav } from "./shell/useMobileNav";
 import { useSidebarToggle } from "./shell/useSidebarToggle";
 import { claimResourceCache, clearResourceCache } from "../lib/resourceCache";
@@ -53,7 +50,6 @@ export default function Shell() {
   const [pendingCount, setPendingCount] = useState(() => readPendingCount(me?.id));
   const [uploadOpen, setUploadOpen] = useState(false);
   const [tweaksOpen, setTweaksOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<SectionId>();
   const [paletteOpen, setPaletteOpen] = useState(false);
   // Radix returns focus only to a Dialog.Trigger, and the palette opens from
   // several places without one. Note the opener while it still has focus
@@ -67,7 +63,6 @@ export default function Shell() {
       if (lost && opener instanceof HTMLElement && opener.isConnected) opener.focus();
     };
   }, [paletteOpen]);
-  const fh6RadioEnabled = useDesktopConfig()?.fh6RadioEnabled === true;
   const { mobileNavOpen, setMobileNavOpen } = useMobileNav();
 
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -124,10 +119,9 @@ export default function Shell() {
     return () => window.clearTimeout(timer);
   }, []);
 
-  const openSettings = useCallback((section?: SectionId) => {
+  const openSettings = useCallback(() => {
     openLazy("settings", settingsDialogChunk, () => {
       setSettingsLoaded(true);
-      setSettingsSection(section);
       setTweaksOpen(true);
     });
   }, [openLazy]);
@@ -188,7 +182,6 @@ export default function Shell() {
         mobileOpen={mobileNavOpen}
         playlists={playlistRows}
         pendingCount={pendingCount}
-        fh6RadioEnabled={fh6RadioEnabled}
         onAddMusic={() => {
           setMobileNavOpen(false);
           openUpload();
@@ -224,9 +217,7 @@ export default function Shell() {
         />
 
         <div className="content">
-          <OpenSettingsContext.Provider value={openSettings}>
-            <Outlet />
-          </OpenSettingsContext.Provider>
+          <Outlet />
         </div>
 
         {/* Update prompts only exist in the desktop app. */}
@@ -242,7 +233,6 @@ export default function Shell() {
       <Suspense fallback={null}>
         {settingsLoaded && <SettingsDialog
           open={tweaksOpen}
-          section={settingsSection}
           onClose={() => setTweaksOpen(false)}
         />}
 
