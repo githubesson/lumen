@@ -477,7 +477,7 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
         data-side={sideOpen || undefined}
         // Widening animates only while open: a column claimed as the dialog
         // opens (on the Discord section, say) is there before it fades in.
-        className="dialog settings relative transition-[opacity,transform,max-width,grid-template-columns] group-data-closed:transition-[opacity,transform] duration-200 ease-out group-data-closed:scale-95 group-data-closed:opacity-0 motion-reduce:transition-none motion-reduce:group-data-closed:scale-100"
+        className="dialog settings relative transition-[opacity,transform,max-width,grid-template-columns] group-data-closed:transition-[opacity,transform] duration-200 ease-out group-data-closed:scale-95 group-data-closed:opacity-0 motion-reduce:transition-none motion-reduce:group-data-closed:transition-none motion-reduce:group-data-closed:scale-100"
       >
         <nav className="settings-nav" aria-label="Settings sections">
           <div className="settings-nav-top">
