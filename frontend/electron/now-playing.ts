@@ -111,11 +111,14 @@ export function createNowPlayingServer(options: {
   appOrigin: () => string;
 }): NowPlayingServer {
   let server: http.Server | null = null;
+  let starting: { port: number; done: Promise<void> } | null = null;
+  // Bumped by close, so a listen that finishes after it isn't adopted.
+  let generation = 0;
   let port = 0;
   let error = "";
   let token = "";
   let current: { activity: DiscordActivityPayload; at: number } | null = null;
-  let cover: { source: string; load: Promise<Cover | null> } | null = null;
+  let cover: { identity: string; load: Promise<Cover | null> } | null = null;
   const streams = new Set<ServerResponse>();
 
   const origin = () => (port ? `http://127.0.0.1:${port}` : "");
@@ -131,9 +134,23 @@ export function createNowPlayingServer(options: {
   function isAuthorized(req: IncomingMessage, query: URLSearchParams): boolean {
     if (!token) return false;
     const bearer = req.headers.authorization?.match(/^Bearer\s+(\S+)$/i)?.[1];
-    const given = Buffer.from(query.get("token") ?? bearer ?? "");
+    const given = Buffer.from(query.get("token") || bearer || "");
     const expected = Buffer.from(token);
     return given.length === expected.length && timingSafeEqual(given, expected);
+  }
+
+  /** The app's signed cover path without its signature, which changes when
+   *  the renderer re-signs; any other source as it is. */
+  function coverIdentity(source: string): string {
+    try {
+      const url = new URL(source);
+      if (url.origin === options.appOrigin() && url.pathname.startsWith("/api/public/covers/")) {
+        return url.origin + url.pathname;
+      }
+    } catch {
+      // Not a URL: never fetched, so its identity doesn't matter.
+    }
+    return source;
   }
 
   function snapshot(now = Date.now()): NowPlayingSnapshot {
@@ -143,7 +160,7 @@ export function createNowPlayingServer(options: {
     let position = (activity.elapsedSec ?? 0) + (activity.isPlaying ? (now - at) / 1000 : 0);
     if (duration !== null) position = Math.min(position, duration);
     const version = activity.coverUrl
-      ? createHash("sha256").update(activity.coverUrl).digest("hex").slice(0, 12)
+      ? createHash("sha256").update(coverIdentity(activity.coverUrl)).digest("hex").slice(0, 12)
       : null;
     return {
       playing: activity.isPlaying,
@@ -182,6 +199,9 @@ export function createNowPlayingServer(options: {
     if (!coverAllowed(source)) return null;
     const response = await options.fetch(source, {
       credentials: "omit",
+      // A redirect could lead anywhere the rule above doesn't allow; neither
+      // TIDAL's CDN nor the server's cover paths redirect.
+      redirect: "error",
       signal: AbortSignal.timeout(COVER_TIMEOUT_MS),
     });
     const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
@@ -209,9 +229,10 @@ export function createNowPlayingServer(options: {
   function currentCover(): Promise<Cover | null> {
     const source = current?.activity.coverUrl;
     if (!source) return Promise.resolve(null);
-    if (cover?.source !== source) {
+    const identity = coverIdentity(source);
+    if (cover?.identity !== identity) {
       const load = fetchCover(source).catch(() => null);
-      cover = { source, load };
+      cover = { identity, load };
       // Try again on the next request rather than keeping a failure.
       void load.then((result) => {
         if (!result && cover?.load === load) cover = null;
@@ -241,7 +262,23 @@ export function createNowPlayingServer(options: {
     res.on("close", () => streams.delete(res));
   }
 
+  // Nothing a request does may throw out of the server: in the main process
+  // that's an error dialog.
   function handle(req: IncomingMessage, res: ServerResponse): void {
+    try {
+      route(req, res);
+    } catch (cause) {
+      fail(res, cause);
+    }
+  }
+
+  function fail(res: ServerResponse, cause: unknown): void {
+    console.warn("[now-playing]", (cause as Error).message);
+    if (res.headersSent) res.destroy();
+    else sendJson(res, 500, { error: "Internal error" });
+  }
+
+  function route(req: IncomingMessage, res: ServerResponse): void {
     if (!isAllowedHost(req)) {
       sendJson(res, 403, { error: "Forbidden" });
       return;
@@ -264,13 +301,21 @@ export function createNowPlayingServer(options: {
       sendJson(res, 405, { error: "Read only" });
       return;
     }
-    const { pathname: path, searchParams } = new URL(req.url ?? "/", "http://127.0.0.1");
+    let url: URL;
+    try {
+      // A path like "//" doesn't parse.
+      url = new URL(req.url ?? "/", "http://127.0.0.1");
+    } catch {
+      sendJson(res, 400, { error: "Bad request" });
+      return;
+    }
+    const { pathname: path, searchParams } = url;
     if (!isAuthorized(req, searchParams)) {
       sendJson(res, 401, { error: "Missing or wrong token" });
       return;
     }
     if (path === "/now-playing") sendJson(res, 200, snapshot());
-    else if (path === "/cover") void serveCover(res);
+    else if (path === "/cover") serveCover(res).catch((cause) => fail(res, cause));
     else if (path === "/events") serveEvents(req, res);
     else sendJson(res, 404, { error: "Not found" });
   }
@@ -281,6 +326,8 @@ export function createNowPlayingServer(options: {
   }
 
   function close(): void {
+    generation += 1;
+    starting = null;
     endStreams();
     if (server) {
       server.close();
@@ -308,14 +355,22 @@ export function createNowPlayingServer(options: {
     },
     start(wanted) {
       if (server && port === wanted) return Promise.resolve();
+      if (starting?.port === wanted) return starting.done;
       close();
-      return new Promise<void>((resolve, reject) => {
+      const id = generation;
+      const done: Promise<void> = new Promise<void>((resolve, reject) => {
         const next = http.createServer(handle);
         next.once("error", (cause: NodeJS.ErrnoException) => {
-          error = listenError(cause, wanted);
-          reject(new Error(error));
+          const message = listenError(cause, wanted);
+          if (id === generation) error = message;
+          reject(new Error(message));
         });
         next.listen(wanted, "127.0.0.1", () => {
+          if (id !== generation) {
+            next.close();
+            reject(new Error("It was turned off before it started."));
+            return;
+          }
           // Later socket errors aren't listen failures.
           next.removeAllListeners("error");
           next.on("error", (cause) => console.warn("[now-playing]", cause.message));
@@ -324,7 +379,11 @@ export function createNowPlayingServer(options: {
           error = "";
           resolve();
         });
+      }).finally(() => {
+        if (starting?.done === done) starting = null;
       });
+      starting = { port: wanted, done };
+      return done;
     },
     close,
     update(activity) {

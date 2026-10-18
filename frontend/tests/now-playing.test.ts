@@ -44,6 +44,21 @@ const at = (server: NowPlayingServer, path: string) => `${server.url}${path}?tok
 const nowPlaying = async (server: NowPlayingServer) =>
   (await (await fetch(at(server, "/now-playing"))).json()) as NowPlayingSnapshot;
 
+/** The raw status line for a request line fetch() won't send. */
+function rawStatus(server: NowPlayingServer, requestLine: string): Promise<string> {
+  const { port } = new URL(server.url);
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(Number(port), "127.0.0.1", () => {
+      socket.end(`${requestLine}\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`);
+    });
+    let reply = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => (reply += chunk));
+    socket.on("end", () => resolve(reply.split("\r\n")[0]));
+    socket.on("error", reject);
+  });
+}
+
 // fetch() won't send a forged Host header, so this goes through node:http.
 function statusFor(url: string, host: string): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -103,6 +118,11 @@ it("only answers loopback names, and only reads", async () => {
   expect(await statusFor(at(server, "/now-playing"), `attacker.example:${port}`)).toBe(403);
   expect((await fetch(at(server, "/now-playing"), { method: "POST" })).status).toBe(405);
   expect((await fetch(at(server, "/elsewhere"))).status).toBe(404);
+  // A path that doesn't parse as a URL is answered, not thrown out of the
+  // server (in the main process that's an error dialog).
+  expect(await rawStatus(server, `GET //?token=${TOKEN} HTTP/1.1`)).toBe("HTTP/1.1 400 Bad Request");
+  expect(await rawStatus(server, "GET // HTTP/1.1")).toBe("HTTP/1.1 400 Bad Request");
+  expect((await fetch(at(server, "/now-playing"))).status).toBe(200);
   const preflight = await fetch(`${server.url}/now-playing`, { method: "OPTIONS" });
   expect(preflight.status).toBe(204);
   expect(preflight.headers.get("access-control-allow-private-network")).toBe("true");
@@ -122,6 +142,9 @@ it("answers only requests carrying the token, in the query or as a bearer", asyn
   const bearer = await fetch(`${server.url}/now-playing`, { headers: { Authorization: `Bearer ${TOKEN}` } });
   expect(bearer.status).toBe(200);
   expect((await fetch(`${server.url}/now-playing`, { headers: { Authorization: "Bearer nope" } })).status).toBe(401);
+  // An empty ?token= (a tool appending an unset variable) leaves the bearer to decide.
+  const emptyQuery = await fetch(`${server.url}/now-playing?token=`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+  expect(emptyQuery.status).toBe(200);
   // With no token set, nothing gets in.
   server.token = "";
   expect((await fetch(`${server.url}/now-playing?token=`)).status).toBe(401);
@@ -141,7 +164,16 @@ it("serves the current cover, fetched once per cover", async () => {
     expect(Buffer.from(await cover.arrayBuffer())).toEqual(PNG);
   }
   expect(fetchCover).toHaveBeenCalledTimes(1);
-  expect(fetchCover.mock.calls[0]).toEqual([SIGNED_COVER, expect.objectContaining({ credentials: "omit" })]);
+  expect(fetchCover.mock.calls[0]).toEqual([
+    SIGNED_COVER,
+    expect.objectContaining({ credentials: "omit", redirect: "error" }),
+  ]);
+
+  // Re-signed, it's the same cover: same URL for overlays, no second fetch.
+  server.update({ title: "Song", coverUrl: SIGNED_COVER.replace("exp=1&sig=s", "exp=2&sig=t"), isPlaying: true });
+  expect((await nowPlaying(server)).track!.coverUrl).toBe(coverUrl);
+  await fetch(coverUrl!);
+  expect(fetchCover).toHaveBeenCalledTimes(1);
 });
 
 it("fetches covers only from https or the app's signed paths, and serves only raster images", async () => {
@@ -199,6 +231,24 @@ it("says which port is taken instead of moving to another", async () => {
   expect(server.url).toBe(`http://127.0.0.1:${port}`);
   server.close();
   expect(server.url).toBe("");
+});
+
+it("starts once for repeated calls, and a close before it listens wins", async () => {
+  const server = createNowPlayingServer({ fetch: vi.fn(), appOrigin: () => "" });
+  servers.push(server);
+  const port = await freePort();
+  await Promise.all([server.start(port), server.start(port)]);
+  expect(server.url).toBe(`http://127.0.0.1:${port}`);
+  expect(server.error).toBe("");
+
+  server.close();
+  const pending = server.start(port);
+  server.close();
+  await expect(pending).rejects.toThrow("turned off before it started");
+  expect(server.url).toBe("");
+  // The port was let go, so it can start again.
+  await server.start(port);
+  expect(server.url).toBe(`http://127.0.0.1:${port}`);
 });
 
 it("reads the port and token from config.json, falling back when they're unusable", () => {

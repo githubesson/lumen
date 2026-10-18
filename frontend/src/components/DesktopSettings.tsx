@@ -161,6 +161,8 @@ export function NowPlayingApiSetting({ desktop }: { desktop: DesktopSettingsStat
     desktop.config;
   const address =
     nowPlayingApiUrl && `${nowPlayingApiUrl}/now-playing?token=${encodeURIComponent(nowPlayingApiToken)}`;
+  // A failed new token stops mattering once the API is off.
+  if (!enabled && renewError) setRenewError("");
   const renew = async () => {
     setRenewing(true);
     setRenewError("");

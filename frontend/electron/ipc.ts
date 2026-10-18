@@ -30,7 +30,7 @@ import {
 } from "./discord-presence";
 import { normalizeDiscordCard } from "./discord-card";
 import type { LocalProxy } from "./local-proxy";
-import { newNowPlayingToken, type NowPlayingServer } from "./now-playing";
+import { newNowPlayingToken, nowPlayingToken, type NowPlayingServer } from "./now-playing";
 import type { WindowManager } from "./windows";
 import { downloadToFile, exportDownloadUrl, uniqueExportPath } from "./track-export";
 import { postJson } from "./fh6-bridge";
@@ -150,12 +150,25 @@ export function registerIpcHandlers(deps: {
     }
   });
 
+  // Runs the API as `written` says. Each toggle calls this after its own write,
+  // in write order, so the newest save decides even when an earlier one was
+  // still queued when it started.
+  async function followNowPlaying(written: Config): Promise<void> {
+    if (written.nowPlayingApiEnabled !== true) {
+      nowPlaying.close();
+      return;
+    }
+    nowPlaying.token = nowPlayingToken(written.nowPlayingApiToken) || nowPlaying.token;
+    // A failure shows as the error in the config this replies with.
+    await nowPlaying.start(deps.nowPlayingPort()).catch(() => undefined);
+  }
+
   // Validate a patch, persist it and apply its live side effects. Every field
   // is optional, so Settings can flip one toggle at a time.
   async function applyConfigPatch(
     patch: SavePatch | undefined,
   ): Promise<{ ok: false; error: string } | { ok: true; changed: boolean; written: Config }> {
-    const writePatch: SavePatch & Pick<Config, "nowPlayingApiToken"> = {};
+    const writePatch: SavePatch = {};
     let normalized: string | null = null;
     if (patch?.backendUrl !== undefined) {
       const result = normalizeBackendUrl(patch.backendUrl);
@@ -183,6 +196,7 @@ export function registerIpcHandlers(deps: {
     if (typeof patch?.fh6BridgePort === "number") {
       writePatch.fh6BridgePort = Math.max(1, Math.min(65535, Math.floor(patch.fh6BridgePort)));
     }
+    const listening = !!nowPlaying.url;
     if (typeof patch?.nowPlayingApiEnabled === "boolean") {
       // Only saved on once it listens, so a taken port leaves it off.
       if (patch.nowPlayingApiEnabled) {
@@ -193,14 +207,24 @@ export function registerIpcHandlers(deps: {
         }
       }
       writePatch.nowPlayingApiEnabled = patch.nowPlayingApiEnabled;
-      // Saved with it: the one made at launch, if config.json had none.
-      if (patch.nowPlayingApiEnabled) writePatch.nowPlayingApiToken = nowPlaying.token;
     }
-    const written = await saveConfigPatch((current) =>
-      cardChanges
-        ? { ...writePatch, discordCard: normalizeDiscordCard(cardChanges, normalizeDiscordCard(current.discordCard)) }
-        : writePatch,
-    );
+    let written: Config;
+    try {
+      written = await saveConfigPatch((current) => ({
+        ...writePatch,
+        ...(cardChanges
+          ? { discordCard: normalizeDiscordCard(cardChanges, normalizeDiscordCard(current.discordCard)) }
+          : {}),
+        // Turning it on keeps the saved token, or saves the one made at launch.
+        ...(writePatch.nowPlayingApiEnabled
+          ? { nowPlayingApiToken: nowPlayingToken(current.nowPlayingApiToken) || nowPlaying.token }
+          : {}),
+      }));
+    } catch (error) {
+      // Not saved on, so not left on.
+      if (writePatch.nowPlayingApiEnabled && !listening) nowPlaying.close();
+      throw error;
+    }
     if (writePatch.discordEnabled !== undefined) {
       configureDiscordPresence({ enabled: writePatch.discordEnabled });
     }
@@ -209,7 +233,7 @@ export function registerIpcHandlers(deps: {
       windows.alwaysOnTop = writePatch.alwaysOnTop;
       windows.mainWindow?.setAlwaysOnTop(windows.alwaysOnTop);
     }
-    if (writePatch.nowPlayingApiEnabled === false) nowPlaying.close();
+    if (writePatch.nowPlayingApiEnabled !== undefined) await followNowPlaying(written);
     const prev = deps.getBackendUrl();
     if (normalized === null) return { ok: true, changed: false, written };
     deps.setBackendUrl(normalized);
@@ -235,9 +259,12 @@ export function registerIpcHandlers(deps: {
     return { ok: true, changed: result.changed, config: desktopConfigOf(result.written, nowPlaying) };
   });
 
+  // Saved first: a token that didn't reach config.json would stop working at
+  // the next launch, and the old one would come back.
   ipcMain.handle("now-playing:new-token", async () => {
-    nowPlaying.token = newNowPlayingToken();
-    const written = await saveConfigPatch({ nowPlayingApiToken: nowPlaying.token });
+    const token = newNowPlayingToken();
+    const written = await saveConfigPatch({ nowPlayingApiToken: token });
+    nowPlaying.token = token;
     return desktopConfigOf(written, nowPlaying);
   });
 
