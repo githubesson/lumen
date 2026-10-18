@@ -38,9 +38,13 @@ async function desktopBridge(page: Page) {
         saves.push({ discordCard, ...patch });
         // Like the desktop app, merge the card options sent onto the saved card.
         Object.assign(config, patch, { discordCard: { ...config.discordCard, ...discordCard } });
+        if (patch.nowPlayingApiEnabled !== undefined) {
+          config.nowPlayingApiUrl = patch.nowPlayingApiEnabled ? "http://127.0.0.1:48638" : "";
+        }
         return { ok: true, config: { ...config }, changed: false };
       },
       getSignOutIntent: async () => false,
+      newNowPlayingApiToken: async () => ({ ...Object.assign(config, { nowPlayingApiToken: "second-token-0123456789" }) }),
       setDiscordActivity: async () => ({ ok: true }),
       clearDiscordActivity: async () => ({ ok: true }),
       // Optional methods an older desktop build lacks: absent, so the app
@@ -144,6 +148,27 @@ test("the side column shuts when the Discord options go", async ({ page }) => {
   await page.getByRole("switch", { name: "Discord status" }).click();
   await expect(dialog).not.toHaveAttribute("data-side");
   await expect(page.locator(".discord-popout")).toHaveCount(0);
+});
+
+test("now playing api settings", async ({ page }, testInfo) => {
+  await openSection(page, "Connections");
+  const address = page.getByRole("textbox", { name: "Now playing API address" });
+  await expect(address).toHaveCount(0);
+  await page.getByRole("switch", { name: "Now playing API" }).click();
+  await expect(address).toHaveValue("http://127.0.0.1:48638/now-playing?token=first-token-0123456789");
+  await page.getByRole("button", { name: "New token" }).click();
+  await expect(address).toHaveValue("http://127.0.0.1:48638/now-playing?token=second-token-0123456789");
+  await settle(page);
+  await checkUI(page, testInfo, {
+    exceptions: [
+      ...desktopExceptions,
+      {
+        selector: ".settings-nav-item",
+        rules: ["icon-button-tooltip"],
+        reason: "On phones the sections are a strip that scrolls sideways. With Connections picked, the next section sits past the strip's edge, so its label is clipped rather than missing.",
+      },
+    ],
+  });
 });
 
 // The suite runs with reduced motion. The closed state lists its own

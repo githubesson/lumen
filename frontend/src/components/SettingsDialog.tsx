@@ -20,7 +20,12 @@ import { openExternal } from "../lib/platform";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { useTransitionMount } from "../lib/useTransitionMount";
 import { Button } from "./Button";
-import { ServerSetting, ToggleSetting, useDesktopSettings } from "./DesktopSettings";
+import {
+  NowPlayingApiSetting,
+  ServerSetting,
+  ToggleSetting,
+  useDesktopSettings,
+} from "./DesktopSettings";
 import { DiscordCardSettings, DiscordIcon } from "./DiscordSettings";
 import DesktopUpdates, { useDesktopUpdates } from "./DesktopUpdates";
 import SearchInput from "./SearchInput";
@@ -381,6 +386,15 @@ export default function SettingsDialog({ open, section, onClose }: Props) {
             </SettingRow>
           ),
         },
+        ...(desktop
+          ? [
+              {
+                id: "now-playing-api",
+                keywords: "now playing api obs overlay stream widget local http server cover",
+                render: () => <NowPlayingApiSetting desktop={desktop} />,
+              },
+            ]
+          : []),
       ],
     },
     {

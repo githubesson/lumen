@@ -1,6 +1,14 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Check as CheckIcon, Clipboard as ClipboardIcon } from "lucide-react";
 import type { DesktopConfigPatch } from "../electron";
-import { testDesktopServer, updateDesktopConfig, useDesktopConfig } from "../lib/desktopConfig";
+import { copyText } from "../lib/clipboard";
+import {
+  newNowPlayingApiToken,
+  testDesktopServer,
+  updateDesktopConfig,
+  useDesktopConfig,
+} from "../lib/desktopConfig";
+import { useCopiedFlag } from "../lib/useCopiedFlag";
 import { Button } from "./Button";
 import SettingRow from "./SettingRow";
 import Switch from "./Switch";
@@ -110,15 +118,26 @@ export function ToggleSetting({
   setting,
   label,
   description,
+  error,
+  below,
 }: {
   desktop: DesktopSettingsState;
-  setting: "discordEnabled" | "alwaysOnTop" | "fh6RadioEnabled";
+  setting: "discordEnabled" | "alwaysOnTop" | "fh6RadioEnabled" | "nowPlayingApiEnabled";
   label: string;
   description: string;
+  /** Shown when the last save didn't fail. */
+  error?: string;
+  below?: ReactNode;
 }) {
   const id = useId();
   return (
-    <SettingRow id={id} label={label} description={description} error={desktop.errors[setting]}>
+    <SettingRow
+      id={id}
+      label={label}
+      description={description}
+      error={desktop.errors[setting] || error}
+      below={below}
+    >
       <Switch
         aria-labelledby={`${id}-label`}
         aria-describedby={`${id}-desc`}
@@ -127,5 +146,66 @@ export function ToggleSetting({
         onChange={(value) => void desktop.toggle(setting, value)}
       />
     </SettingRow>
+  );
+}
+
+/**
+ * The local now-playing API: on, it shows the address to give an overlay,
+ * token included. A port another app holds at launch shows as the row's error.
+ */
+export function NowPlayingApiSetting({ desktop }: { desktop: DesktopSettingsState }) {
+  const { copied, flash, reset } = useCopiedFlag(2000);
+  const [renewing, setRenewing] = useState(false);
+  const [renewError, setRenewError] = useState("");
+  const { nowPlayingApiEnabled: enabled, nowPlayingApiUrl, nowPlayingApiToken, nowPlayingApiError } =
+    desktop.config;
+  const address =
+    nowPlayingApiUrl && `${nowPlayingApiUrl}/now-playing?token=${encodeURIComponent(nowPlayingApiToken)}`;
+  const renew = async () => {
+    setRenewing(true);
+    setRenewError("");
+    try {
+      await newNowPlayingApiToken();
+      reset();
+    } catch {
+      setRenewError("Couldn't make a new token.");
+    } finally {
+      setRenewing(false);
+    }
+  };
+  return (
+    <ToggleSetting
+      desktop={desktop}
+      setting="nowPlayingApiEnabled"
+      label="Now playing API"
+      description="Lets stream overlays and other apps on this computer read what's playing. Only links with its token get in, and a new token cuts off the old ones."
+      error={renewError || (enabled && nowPlayingApiError) || undefined}
+      below={
+        enabled &&
+        address && (
+          <div className="settings-copy">
+            <input
+              className="input mono settings-input"
+              aria-label="Now playing API address"
+              readOnly
+              value={address}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <Button
+              size="sm"
+              onClick={async () => {
+                if (await copyText(address)) flash();
+              }}
+              leadingIcon={copied ? <CheckIcon className="size-3.5" /> : <ClipboardIcon className="size-3.5" />}
+            >
+              {copied ? "Copied" : "Copy"}
+            </Button>
+            <Button size="sm" disabled={renewing} onClick={() => void renew()}>
+              New token
+            </Button>
+          </div>
+        )
+      }
+    />
   );
 }
