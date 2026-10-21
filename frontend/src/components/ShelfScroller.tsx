@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon } from "lucide-react";
+import { useScrollEdges } from "../lib/useScrollEdges";
 
 /**
  * A horizontally scrolling `.shelf` of cards, without a scrollbar. The edges
@@ -18,48 +19,7 @@ export default function ShelfScroller({
   label: string;
   children: ReactNode;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [edges, setEdges] = useState({ back: false, forward: false });
-
-  const measure = useCallback(() => {
-    const el = ref.current;
-    if (!el) return;
-    // A pixel of slack: fractional widths can stop scrollLeft just short of
-    // either end.
-    const back = el.scrollLeft > 1;
-    const forward = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
-    setEdges((prev) =>
-      prev.back === back && prev.forward === forward ? prev : { back, forward },
-    );
-  }, []);
-
-  // A new width or new cards change how far the row scrolls. The resize
-  // observer also reports once on connect, which takes the first measurement.
-  useEffect(() => {
-    const el = ref.current;
-    // Without it (jsdom) the row keeps no fades or arrows, and still scrolls.
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const resize = new ResizeObserver(measure);
-    resize.observe(el);
-    const mutation = new MutationObserver(measure);
-    mutation.observe(el, { childList: true });
-    return () => {
-      resize.disconnect();
-      mutation.disconnect();
-    };
-  }, [measure]);
-
-  const page = (direction: 1 | -1) => {
-    const el = ref.current;
-    if (!el) return;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    // Most of a screen, so the card cut off at the edge comes fully into
-    // view; scroll snapping then lines the row up on a card.
-    el.scrollBy({
-      left: direction * el.clientWidth * 0.8,
-      behavior: reduce ? "auto" : "smooth",
-    });
-  };
+  const { ref, edges, measure, page } = useScrollEdges<HTMLDivElement>("x");
 
   return (
     <div
