@@ -168,6 +168,16 @@ it("finds an album's versions among the artist's releases", () => {
   expect(releaseVersionsOf(releases, "missing")).toBeNull();
 });
 
+it("lets a dropped duplicate copy switch versions in place of the copy kept", () => {
+  const releases = tidalArtistReleases([
+    roads("explicit", {}),
+    roads("explicit-again", {}),
+    roads("clean", { explicit: false }),
+  ]);
+  expect(releaseVersionsOf(releases, "explicit-again")?.map((v) => v.id)).toEqual(["explicit-again", "clean"]);
+  expect(releaseVersionsOf(releases, "clean")?.map((v) => v.id)).toEqual(["explicit", "clean"]);
+});
+
 it("names versions by what differs between them", () => {
   const labels = (albums: SearchAlbum[]) =>
     releaseVersionLabels(foldReleaseVersions(tidalArtistReleases(albums))[0].versions ?? []);

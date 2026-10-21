@@ -100,15 +100,10 @@ export function foldReleaseVersions(releases: ArtistRelease[]): ArtistRelease[] 
   const groups = new Map<string, ArtistRelease[]>();
   const copies = new Set<string>();
   for (const release of releases) {
-    const key = [
-      release.kind === "Single",
-      release.title.trim().toLowerCase(),
-      release.version?.trim().toLowerCase(),
-      release.release_year,
-    ].join("\n");
-    const copy = [key, !!release.explicit, !!release.dolby_atmos, release.track_count].join("\n");
+    const copy = copyKey(release);
     if (copies.has(copy)) continue;
     copies.add(copy);
+    const key = releaseKey(release);
     const group = groups.get(key);
     if (group) group.push(release);
     else groups.set(key, [release]);
@@ -122,13 +117,33 @@ export function foldReleaseVersions(releases: ArtistRelease[]): ArtistRelease[] 
     .sort(newestFirst);
 }
 
-/** The versions of the TIDAL album `sourceId` among an artist's releases, if it has others. */
+/** What a release's versions share (see `foldReleaseVersions`). */
+function releaseKey(release: ArtistRelease): string {
+  return [
+    release.kind === "Single",
+    release.title.trim().toLowerCase(),
+    release.version?.trim().toLowerCase(),
+    release.release_year,
+  ].join("\n");
+}
+
+/** What TIDAL's duplicate copies of one version share. */
+function copyKey(release: ArtistRelease): string {
+  return [releaseKey(release), !!release.explicit, !!release.dolby_atmos, release.track_count].join("\n");
+}
+
+/**
+ * The versions of the TIDAL album `sourceId` among an artist's releases, if
+ * it has others. A duplicate copy the fold dropped (opened from search,
+ * say) stands in for the copy kept, so its page can switch too.
+ */
 export function releaseVersionsOf(releases: ArtistRelease[], sourceId: string): ArtistRelease[] | null {
-  return (
-    foldReleaseVersions(releases).find((release) =>
-      release.versions?.some((version) => version.source_id === sourceId),
-    )?.versions ?? null
-  );
+  const album = releases.find((release) => release.source_id === sourceId);
+  if (!album) return null;
+  const versions = foldReleaseVersions(releases).find(
+    (release) => releaseKey(release) === releaseKey(album),
+  )?.versions;
+  return versions?.map((version) => (copyKey(version) === copyKey(album) ? album : version)) ?? null;
 }
 
 export interface ReleaseVersionLabel {
