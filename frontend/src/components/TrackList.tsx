@@ -169,6 +169,9 @@ export default function TrackList({
     return <>{emptyState}</>;
   }
 
+  // A headless table's labels are for screen readers only.
+  const heading = (label: string) => (showHeader ? label : <span className="sr-only">{label}</span>);
+
   // Column count kept in sync with the <thead> below — used for spacer
   // `colSpan` so the spacer row doesn't push the columns out of alignment.
   // The select column is always rendered (collapsed to zero width when
@@ -216,7 +219,8 @@ export default function TrackList({
             ref={tableRef}
           >
             {/* A headless table keeps its <thead> for fixed-layout column
-                widths; the class hides the row. */}
+                widths and screen readers; the class flattens the row and
+                `heading` hides its labels. */}
             <thead>
               <tr>
                 <SelectAllHeaderCell
@@ -225,16 +229,16 @@ export default function TrackList({
                   someSelected={someSelected}
                   onToggle={selectAll}
                 />
-                <th className="col-idx">#</th>
+                <th className="col-idx">{heading("#")}</th>
                 {showCover && <th className="col-art" aria-label="Cover" />}
-                <th>Title</th>
-                {showAlbum && <th className="col-album">Album</th>}
+                <th>{heading("Title")}</th>
+                {showAlbum && <th className="col-album">{heading("Album")}</th>}
                 {extraColumn && (
                   <th className={extraColumn.className ?? "col-extra"}>
-                    {extraColumn.header}
+                    {heading(extraColumn.header)}
                   </th>
                 )}
-                <th className="col-dur">Time</th>
+                <th className="col-dur">{heading("Time")}</th>
                 <th className="col-acts" aria-label="Actions" />
               </tr>
             </thead>

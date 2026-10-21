@@ -34,10 +34,12 @@ import {
   type AlbumSleeveAlbum,
   type AlbumSleeveSearch,
 } from "../../components/library/AlbumSleeve";
+import ReleaseVersionPicker from "../../components/library/ReleaseVersionPicker";
 import SearchInput from "../../components/SearchInput";
 import { useAuth } from "../../context/Auth";
 import { useKey } from "../../lib/keybindings";
 import { AlbumDownloadControl } from "./AlbumDownloadControl";
+import { useReleaseVersions } from "./useReleaseVersions";
 
 /** What "Saved" means on each kind of album page. */
 const LIBRARY_SAVED_HINT = "The rest of the release plays from TIDAL";
@@ -145,12 +147,18 @@ export function AlbumDetailView({
 
 export function TidalAlbumDetailView({
   id,
+  artistId,
   onBack,
   onOpenAlbum,
+  onOpenVersion,
 }: {
   id: string;
+  /** The TIDAL artist it was opened from, whose releases list its versions. */
+  artistId: string | null;
   onBack: () => void;
   onOpenAlbum: (target: EntityTarget) => void;
+  /** Swaps the page for another version of the release (a TIDAL album id). */
+  onOpenVersion: (id: string) => void;
 }) {
   const [album, setAlbum] = useState<TidalAlbum | null>(
     () => readCache<TidalAlbum>(`tidal-album:${id}`) ?? null,
@@ -179,6 +187,10 @@ export function TidalAlbumDetailView({
       .catch(() => {});
   }, [id]);
   const search = useDetailTrackSearch("album", album?.tracks ?? null);
+  const versions = useReleaseVersions(artistId, id);
+  const versionPicker = versions && (
+    <ReleaseVersionPicker versions={versions} current={id} onPick={onOpenVersion} />
+  );
   const sleeve = useMemo<AlbumSleeveAlbum | null>(
     () =>
       album
@@ -249,6 +261,7 @@ export function TidalAlbumDetailView({
         onBack={onBack}
         album={null}
         loadingLabel="Loading TIDAL album…"
+        versions={versionPicker}
         // An admin always gets one row: the album download, or the library
         // copy once all of it is saved. (A library album only has a row when
         // it copies a TIDAL release, which nothing says before it loads.)
@@ -273,6 +286,7 @@ export function TidalAlbumDetailView({
       onBack={onBack}
       album={sleeve}
       loadingLabel="Loading TIDAL album…"
+      versions={versionPicker}
       actions={
         canDownload ? (
           <AlbumDownloadControl

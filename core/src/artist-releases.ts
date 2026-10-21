@@ -28,6 +28,15 @@ export interface ArtistRelease {
   source_id?: string;
   /** Unknown for library albums, which are grouped from the artist's tracks. */
   kind?: ReleaseKind;
+  /** TIDAL releases, as on `SearchAlbum`. */
+  version?: string;
+  explicit?: boolean;
+  dolby_atmos?: boolean;
+  /**
+   * Set by `foldReleaseVersions` on a release TIDAL also lists in other
+   * versions: all of them, this one first.
+   */
+  versions?: ArtistRelease[];
 }
 
 /**
@@ -56,8 +65,114 @@ export function tidalArtistReleases(albums: SearchAlbum[]): ArtistRelease[] {
       source: "tidal" as const,
       source_id: album.source_id,
       kind: releaseKind(album.track_count, album.duration_ms),
+      version: album.version,
+      explicit: album.explicit,
+      dolby_atmos: album.dolby_atmos,
     }))
-    .sort((a, b) => (b.release_year ?? 0) - (a.release_year ?? 0));
+    .sort(newestFirst);
+}
+
+function newestFirst(a: ArtistRelease, b: ArtistRelease): number {
+  return (b.release_year ?? 0) - (a.release_year ?? 0);
+}
+
+/**
+ * Which version a folded tile opens: stereo before Dolby Atmos, then
+ * explicit before clean (the release as the artist made it), then TIDAL's
+ * order.
+ */
+function versionRank(release: ArtistRelease): number {
+  return (release.dolby_atmos ? 2 : 0) + (release.explicit ? 0 : 1);
+}
+
+/**
+ * One tile per release. TIDAL lists an album's explicit, clean and Dolby
+ * Atmos versions as separate albums under one title; they share a kind, a
+ * title and TIDAL's version name, so a deluxe edition keeps its own tile.
+ * A folded tile is its preferred version, with `versions` listing them all.
+ */
+export function foldReleaseVersions(releases: ArtistRelease[]): ArtistRelease[] {
+  const groups = new Map<string, ArtistRelease[]>();
+  for (const release of releases) {
+    const key = [
+      release.kind,
+      release.title.trim().toLowerCase(),
+      release.version?.trim().toLowerCase(),
+    ].join("\n");
+    const group = groups.get(key);
+    if (group) group.push(release);
+    else groups.set(key, [release]);
+  }
+  return [...groups.values()]
+    .map((group) => {
+      if (group.length === 1) return group[0];
+      const versions = [...group].sort((a, b) => versionRank(a) - versionRank(b));
+      return { ...versions[0], versions };
+    })
+    .sort(newestFirst);
+}
+
+/** The versions of the TIDAL album `sourceId` among an artist's releases, if it has others. */
+export function releaseVersionsOf(releases: ArtistRelease[], sourceId: string): ArtistRelease[] | null {
+  return (
+    foldReleaseVersions(releases).find((release) =>
+      release.versions?.some((version) => version.source_id === sourceId),
+    )?.versions ?? null
+  );
+}
+
+export interface ReleaseVersionLabel {
+  /** Short, for a segmented control: only what differs between the versions. */
+  label: string;
+  /** Everything, for a tooltip: "Dolby Atmos · Explicit · 7 tracks · 2026". */
+  description: string;
+}
+
+/**
+ * Names for a release's versions. Dolby Atmos versions say so; stereo ones
+ * are "Explicit" or "Clean" when that differs between them, and otherwise
+ * "Stereo" beside an Atmos version. Versions still alike add their track
+ * count or year where that tells them apart, or else a number.
+ */
+export function releaseVersionLabels(versions: ArtistRelease[]): ReleaseVersionLabel[] {
+  const mixed = (group: ArtistRelease[]) =>
+    group.some((v) => v.explicit) && group.some((v) => !v.explicit);
+  const content = (v: ArtistRelease) => (v.explicit ? "Explicit" : "Clean");
+  const atmos = versions.filter((v) => v.dolby_atmos);
+  const stereo = versions.filter((v) => !v.dolby_atmos);
+  const labels = versions.map((v) => {
+    if (v.dolby_atmos) return mixed(atmos) ? `Dolby Atmos · ${content(v)}` : "Dolby Atmos";
+    if (mixed(stereo)) return content(v);
+    return atmos.length > 0 ? "Stereo" : "";
+  });
+  const extras = [
+    (v: ArtistRelease) => pluralize(v.track_count, "track"),
+    (v: ArtistRelease) => String(v.release_year ?? ""),
+  ];
+  const alike = new Map<string, number[]>();
+  labels.forEach((label, i) => alike.set(label, [...(alike.get(label) ?? []), i]));
+  for (const [label, indexes] of alike) {
+    if (indexes.length < 2) continue;
+    const extra = extras.find(
+      (get) => new Set(indexes.map((i) => get(versions[i]))).size === indexes.length,
+    );
+    indexes.forEach((i, n) => {
+      const part = extra?.(versions[i]);
+      labels[i] = part ? [label, part].filter(Boolean).join(" · ") : `${label || "Version"} ${n + 1}`;
+    });
+  }
+  const anyExplicit = versions.some((v) => v.explicit);
+  return versions.map((v, i) => ({
+    label: labels[i],
+    description: [
+      v.dolby_atmos ? "Dolby Atmos" : "Stereo",
+      anyExplicit && content(v),
+      pluralize(v.track_count, "track"),
+      v.release_year,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  }));
 }
 
 /** Library albums in the order the artist's tracks list them. */
@@ -104,9 +219,16 @@ export function filterReleases(
     : releases.filter((release) => release.kind === "EP" || release.kind === "Single");
 }
 
-/** "2024 · Single", or "12 tracks" for library albums with no year or kind. */
+/**
+ * "2024 · Single", or "12 tracks" for library albums with no year or kind;
+ * a folded release adds "3 versions".
+ */
 export function releaseSubtitle(release: ArtistRelease): string {
-  return [release.release_year, release.kind ?? pluralize(release.track_count, "track")]
+  return [
+    release.release_year,
+    release.kind ?? pluralize(release.track_count, "track"),
+    release.versions && pluralize(release.versions.length, "version"),
+  ]
     .filter(Boolean)
     .join(" · ");
 }

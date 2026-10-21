@@ -123,17 +123,26 @@ export default function Library() {
 
   const openAlbum = (target: EntityTarget) => {
     const next = new URLSearchParams(params);
-    next.delete("tidalArtist");
     // Only one album param at a time: the library album view wins when both
-    // are set, which would strand a jump from it to its TIDAL release.
+    // are set, which would strand a jump from it to its TIDAL release. A
+    // TIDAL album keeps the TIDAL artist it was opened from, whose releases
+    // list its other versions.
     if (target.kind === "tidal") {
       next.delete("album");
       next.set("tidalAlbum", target.id);
     } else {
+      next.delete("tidalArtist");
       next.delete("tidalAlbum");
       next.set("album", target.id);
     }
     setParams(next);
+  };
+
+  // A version swaps the page in place, like a tab.
+  const openVersion = (id: string) => {
+    const next = new URLSearchParams(params);
+    next.set("tidalAlbum", id);
+    setParams(next, { replace: true });
   };
 
   const openArtist = (target: EntityTarget, name?: string) => {
@@ -160,8 +169,10 @@ export default function Library() {
       <TidalAlbumDetailView
         key={tidalAlbumID}
         id={tidalAlbumID}
+        artistId={tidalArtistID}
         onBack={clearDrill}
         onOpenAlbum={openAlbum}
+        onOpenVersion={openVersion}
       />
     );
   }

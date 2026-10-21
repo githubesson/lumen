@@ -8,6 +8,8 @@ import {
   tidalAlbum,
   tidalAlbumPartlySaved,
   tidalAlbumSaved,
+  tidalArtist,
+  tidalArtistId,
 } from "./fixtures";
 import { checkUI, go, ready, signedIn } from "./helpers";
 
@@ -92,6 +94,23 @@ test("TIDAL album detail", async ({ page }, testInfo) => {
   await go(page, `/library?tidalAlbum=${tidalAlbum.id}`);
   await ready(page, page.getByRole("heading", { name: tidalAlbum.title }));
   await ready(page, rows(page));
+  await checkUI(page, testInfo);
+});
+
+// TIDAL lists the album explicit, clean and in Dolby Atmos: one tile on the
+// artist's page, and a switcher on the album's when opened from there.
+test("TIDAL artist detail", async ({ page }, testInfo) => {
+  await go(page, `/library?tidalArtist=${tidalArtistId}`);
+  await ready(page, page.getByRole("heading", { name: tidalArtist.artist!.name }));
+  await ready(page, page.locator(".card").filter({ hasText: "3 versions" }));
+  await checkUI(page, testInfo);
+});
+
+test("TIDAL album detail, versions", async ({ page }, testInfo) => {
+  await go(page, `/library?tidalArtist=${tidalArtistId}&tidalAlbum=${tidalAlbum.id}`);
+  await ready(page, page.getByRole("heading", { name: tidalAlbum.title }));
+  await ready(page, rows(page));
+  await ready(page, page.getByRole("tablist", { name: "Version" }));
   await checkUI(page, testInfo);
 });
 

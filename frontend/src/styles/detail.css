@@ -257,6 +257,12 @@
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
+/* A release's versions (ReleaseVersionPicker): the column's full width,
+   like Play all under it. */
+.album-sleeve-versions > button {
+  flex: 1 1 auto;
+  justify-content: center;
+}
 .album-sleeve-play,
 .album-sleeve-more {
   display: flex;
@@ -408,6 +414,9 @@
 .album-sleeve[data-stacked] .album-sleeve-more > .btn {
   flex: 0 0 auto;
 }
+.album-sleeve[data-stacked] .album-sleeve-versions {
+  justify-self: start;
+}
 .album-sleeve[data-stacked] .album-sleeve-more > .album-sleeve-more-skeleton {
   flex: 0 0 160px;
 }
@@ -434,6 +443,9 @@
   .album-sleeve[data-stacked] .album-sleeve-more > .btn,
   .album-sleeve[data-stacked] .album-sleeve-more > .album-sleeve-more-skeleton {
     flex: 1 1 auto;
+  }
+  .album-sleeve[data-stacked] .album-sleeve-versions {
+    justify-self: stretch;
   }
   .search.album-sleeve-search {
     flex: 1 1 200px;

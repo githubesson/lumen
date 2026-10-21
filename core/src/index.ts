@@ -6,13 +6,17 @@ export * from "./api";
 export {
   ARTIST_POPULAR_PREVIEW_COUNT,
   filterReleases,
+  foldReleaseVersions,
   hasReleaseFilters,
   libraryArtistReleases,
   RELEASE_FILTER_OPTIONS,
   releaseSubtitle,
+  releaseVersionLabels,
+  releaseVersionsOf,
   tidalArtistReleases,
   type ArtistRelease,
   type ReleaseFilter,
+  type ReleaseVersionLabel,
 } from "./artist-releases";
 export * from "./audio-format";
 export * from "./entity-labels";

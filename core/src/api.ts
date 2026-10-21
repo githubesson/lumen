@@ -683,6 +683,15 @@ export interface SearchAlbum extends Album {
   source: TrackSource;
   source_id?: string;
   cover_url?: string;
+  /**
+   * TIDAL releases: what tells a release's versions apart, which TIDAL
+   * lists as separate albums under one title (see `foldReleaseVersions`).
+   * `version` names a variant ("Deluxe"); `dolby_atmos` marks an Atmos-only
+   * release.
+   */
+  version?: string;
+  explicit?: boolean;
+  dolby_atmos?: boolean;
 }
 export interface SearchArtist extends Artist {
   source: TrackSource;

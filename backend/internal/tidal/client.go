@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -183,8 +184,14 @@ type Track struct {
 }
 
 type Album struct {
-	ID          string
-	Title       string
+	ID    string
+	Title string
+	// TIDAL lists each version of a release as its own album under the same
+	// title: explicit and clean, stereo and Dolby Atmos. Version names the
+	// rest ("Deluxe", "Sped Up"). DolbyAtmos marks an Atmos-only release.
+	Version     string
+	Explicit    bool
+	DolbyAtmos  bool
 	Artist      string   // primary artist
 	Artists     []string // every main artist, primary first
 	ReleaseYear int
@@ -821,6 +828,9 @@ type apiArtist struct {
 type apiAlbum struct {
 	ID             tidalID        `json:"id"`
 	Title          string         `json:"title"`
+	Version        string         `json:"version"`
+	Explicit       bool           `json:"explicit"`
+	AudioModes     []string       `json:"audioModes"`
 	Cover          string         `json:"cover"`
 	ReleaseDate    string         `json:"releaseDate"`
 	Duration       int            `json:"duration"`
@@ -860,6 +870,9 @@ func (a apiAlbum) album() Album {
 	album := Album{
 		ID:          string(a.ID),
 		Title:       a.Title,
+		Version:     strings.TrimSpace(a.Version),
+		Explicit:    a.Explicit,
+		DolbyAtmos:  slices.Contains(a.AudioModes, "DOLBY_ATMOS") && !slices.Contains(a.AudioModes, "STEREO"),
 		Artist:      artist,
 		Artists:     albumArtists(artist, a.Artists),
 		ReleaseYear: year,
