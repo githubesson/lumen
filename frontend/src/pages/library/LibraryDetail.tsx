@@ -160,8 +160,11 @@ export function TidalAlbumDetailView({
   artistId: string | null;
   onBack: () => void;
   onOpenAlbum: (target: EntityTarget) => void;
-  /** Swaps the page for another version of the release (a TIDAL album id). */
-  onOpenVersion: (id: string) => void;
+  /**
+   * Swaps the page for another version of the release (a TIDAL album id),
+   * found among the releases of `artistId`.
+   */
+  onOpenVersion: (id: string, artistId: string) => void;
 }) {
   const [album, setAlbum] = useState<TidalAlbum | null>(
     () => readCache<TidalAlbum>(`tidal-album:${id}`) ?? null,
@@ -190,9 +193,14 @@ export function TidalAlbumDetailView({
       .catch(() => {});
   }, [id]);
   const search = useDetailTrackSearch("album", album?.tracks ?? null);
-  const versions = useReleaseVersions(artistId ?? album?.artist_id, id);
-  const versionPicker = versions && (
-    <ReleaseVersionPicker versions={versions} current={id} onPick={onOpenVersion} />
+  const versionsArtist = artistId ?? album?.artist_id;
+  const versions = useReleaseVersions(versionsArtist, id);
+  const versionPicker = versions && versionsArtist && (
+    <ReleaseVersionPicker
+      versions={versions}
+      current={id}
+      onPick={(version) => onOpenVersion(version, versionsArtist)}
+    />
   );
   const sleeve = useMemo<AlbumSleeveAlbum | null>(
     () =>

@@ -133,6 +133,30 @@ it("keeps same-titled albums from different years apart, and folds a clean copy 
   expect(releases[0].kind).toBe("Album");
 });
 
+it("drops TIDAL's exact duplicate copies instead of calling them versions", () => {
+  const releases = foldReleaseVersions(
+    tidalArtistReleases([
+      album("rumours", { title: "Rumours", release_year: 1977 }),
+      album("rumours-again", { title: "Rumours", release_year: 1977 }),
+      roads("explicit", {}),
+      roads("explicit-again", {}),
+      roads("clean", { explicit: false }),
+      roads("clean-again", { explicit: false }),
+      // Same flags, but more tracks: a version of its own.
+      roads("explicit-longer", { track_count: 12 }),
+    ]),
+  );
+  expect(releases.map((r) => [r.id, r.versions?.map((v) => v.id)])).toEqual([
+    ["explicit", ["explicit", "explicit-longer", "clean"]],
+    ["rumours", undefined],
+  ]);
+  expect(releaseVersionLabels(releases[0].versions!).map((l) => l.label)).toEqual([
+    "Explicit · 10 tracks",
+    "Explicit · 12 tracks",
+    "Clean",
+  ]);
+});
+
 it("finds an album's versions among the artist's releases", () => {
   const releases = tidalArtistReleases([
     roads("explicit", {}),
@@ -168,16 +192,9 @@ it("names versions by what differs between them", () => {
       roads("s", {}),
     ]).map((l) => l.label),
   ).toEqual(["Stereo", "Dolby Atmos · Explicit", "Dolby Atmos · Clean"]);
-  // Otherwise alike: the track count, or else a number, tells them apart.
+  // Otherwise alike: the track count tells them apart.
   expect(labels([roads("x", {}), roads("y", { track_count: 12 })]).map((l) => l.label)).toEqual([
     "10 tracks",
     "12 tracks",
   ]);
-  expect(labels([roads("x", {}), roads("y", {})]).map((l) => l.label)).toEqual([
-    "Version 1",
-    "Version 2",
-  ]);
-  expect(
-    labels([roads("x", {}), roads("y", {}), roads("c", { explicit: false })]).map((l) => l.label),
-  ).toEqual(["Explicit 1", "Explicit 2", "Clean"]);
 });

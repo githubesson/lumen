@@ -149,10 +149,15 @@ func (h *TIDAL) withLibrary(ctx context.Context, out *tidalAlbumResp, album tida
 }
 
 func makeTIDALAlbumResp(album tidal.Album) tidalAlbumResp {
+	artistID := album.ArtistID
+	// A compilation's artist lists no releases, so no versions either.
+	if strings.EqualFold(strings.TrimSpace(album.Artist), "Various Artists") {
+		artistID = ""
+	}
 	out := tidalAlbumResp{
 		ID:          album.ID,
 		Title:       album.Title,
-		ArtistID:    album.ArtistID,
+		ArtistID:    artistID,
 		Artist:      album.Artist,
 		Artists:     album.Artists,
 		ReleaseYear: album.ReleaseYear,

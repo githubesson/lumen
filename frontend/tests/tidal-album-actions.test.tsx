@@ -149,7 +149,7 @@ it("switches between the versions the artist it was opened from lists, and has n
   ]);
   expect(tabs[2].getAttribute("title")).toBe("Dolby Atmos · Explicit · 9 tracks");
   fireEvent.click(tabs[1]);
-  expect(onOpenVersion).toHaveBeenCalledWith("381245571");
+  expect(onOpenVersion).toHaveBeenCalledWith("381245571", "77");
   cleanup();
 
   await show(album([tidal(1)]));
@@ -163,4 +163,7 @@ it("asks the album's own artist for its versions when it wasn't opened from one"
   expect(mock.artist).toHaveBeenCalledWith("77", expect.anything());
   const tabs = within(screen.getByRole("tablist", { name: "Version" })).getAllByRole("tab");
   expect(tabs.map((tab) => tab.textContent)).toEqual(["Explicit", "Clean", "Dolby Atmos"]);
+  // The artist goes along, so the next version's page has the switcher at once.
+  fireEvent.click(tabs[2]);
+  expect(onOpenVersion).toHaveBeenCalledWith("381245572", "77");
 });

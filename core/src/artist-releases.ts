@@ -91,11 +91,14 @@ function versionRank(release: ArtistRelease): number {
  * TIDAL's version name (so a deluxe edition keeps its own tile) and the
  * release year (so do an artist's self-titled albums, years apart). A
  * single stays apart from an album of the same name, but an album and an
- * EP don't: a clean copy that drops a track can cross that line. A folded
- * tile is its preferred version, with `versions` listing them all.
+ * EP don't: a clean copy that drops a track can cross that line. TIDAL
+ * also lists exact duplicates (the same flags and track count); only the
+ * first of those is kept, so they don't pass for versions. A folded tile
+ * is its preferred version, with `versions` listing them all.
  */
 export function foldReleaseVersions(releases: ArtistRelease[]): ArtistRelease[] {
   const groups = new Map<string, ArtistRelease[]>();
+  const copies = new Set<string>();
   for (const release of releases) {
     const key = [
       release.kind === "Single",
@@ -103,6 +106,9 @@ export function foldReleaseVersions(releases: ArtistRelease[]): ArtistRelease[] 
       release.version?.trim().toLowerCase(),
       release.release_year,
     ].join("\n");
+    const copy = [key, !!release.explicit, !!release.dolby_atmos, release.track_count].join("\n");
+    if (copies.has(copy)) continue;
+    copies.add(copy);
     const group = groups.get(key);
     if (group) group.push(release);
     else groups.set(key, [release]);
@@ -133,11 +139,11 @@ export interface ReleaseVersionLabel {
 }
 
 /**
- * Names for a release's versions (from `foldReleaseVersions`, so they share
- * a year). Dolby Atmos versions say so; stereo ones are "Explicit" or
- * "Clean" when that differs between them, and otherwise "Stereo" beside an
- * Atmos version. Versions still alike add their track count where that
- * tells them apart, or else a number.
+ * Names for a release's versions (from `foldReleaseVersions`, so no two
+ * share their flags and track count). Dolby Atmos versions say so; stereo
+ * ones are "Explicit" or "Clean" when that differs between them, and
+ * otherwise "Stereo" beside an Atmos version. Versions still alike add
+ * their track count.
  */
 export function releaseVersionLabels(versions: ArtistRelease[]): ReleaseVersionLabel[] {
   const mixed = (group: ArtistRelease[]) =>
@@ -150,18 +156,12 @@ export function releaseVersionLabels(versions: ArtistRelease[]): ReleaseVersionL
     if (mixed(stereo)) return content(v);
     return atmos.length > 0 ? "Stereo" : "";
   });
-  const tracks = (v: ArtistRelease) => pluralize(v.track_count, "track");
-  const alike = new Map<string, number[]>();
-  labels.forEach((label, i) => alike.set(label, [...(alike.get(label) ?? []), i]));
-  for (const [label, indexes] of alike) {
-    if (indexes.length < 2) continue;
-    const byTracks = new Set(indexes.map((i) => tracks(versions[i]))).size === indexes.length;
-    indexes.forEach((i, n) => {
-      labels[i] = byTracks
-        ? [label, tracks(versions[i])].filter(Boolean).join(" · ")
-        : `${label || "Version"} ${n + 1}`;
-    });
-  }
+  const alike = labels.filter((label, i) => labels.indexOf(label) !== i);
+  labels.forEach((label, i) => {
+    if (alike.includes(label)) {
+      labels[i] = [label, pluralize(versions[i].track_count, "track")].filter(Boolean).join(" · ");
+    }
+  });
   const anyExplicit = versions.some((v) => v.explicit);
   return versions.map((v, i) => ({
     label: labels[i],

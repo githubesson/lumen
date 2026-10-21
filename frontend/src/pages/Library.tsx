@@ -138,10 +138,13 @@ export default function Library() {
     setParams(next);
   };
 
-  // A version swaps the page in place, like a tab.
-  const openVersion = (id: string) => {
+  // A version swaps the page in place, like a tab. The artist listing the
+  // versions goes into the URL, so the next version's page has them from
+  // its first frame even when this one only learned the artist on load.
+  const openVersion = (id: string, artistId: string) => {
     const next = new URLSearchParams(params);
     next.set("tidalAlbum", id);
+    next.set("tidalArtist", artistId);
     setParams(next, { replace: true });
   };
 

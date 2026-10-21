@@ -125,3 +125,14 @@ func TestTIDALAlbumPageListsWholeRelease(t *testing.T) {
 		}
 	}
 }
+
+// A compilation's "Various Artists" lists no releases, so the album page
+// isn't sent to look for versions there.
+func TestTIDALAlbumRespLeavesOutVariousArtists(t *testing.T) {
+	if got := makeTIDALAlbumResp(tidal.Album{ID: "7", ArtistID: "2935", Artist: "Various Artists"}).ArtistID; got != "" {
+		t.Fatalf("artist_id %q, want none", got)
+	}
+	if got := makeTIDALAlbumResp(tidal.Album{ID: "7", ArtistID: "42", Artist: "Band"}).ArtistID; got != "42" {
+		t.Fatalf("artist_id %q, want 42", got)
+	}
+}
