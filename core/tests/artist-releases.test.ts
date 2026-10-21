@@ -116,6 +116,23 @@ it("folds a release's versions into one tile that opens stereo explicit", () => 
   expect(releaseSubtitle(releases[1])).toBe("2026 · Album");
 });
 
+it("keeps same-titled albums from different years apart, and folds a clean copy that became an EP", () => {
+  const releases = foldReleaseVersions(
+    tidalArtistReleases([
+      album("weezer-1994", { title: "Weezer", release_year: 1994 }),
+      album("weezer-2001", { title: "Weezer", release_year: 2001 }),
+      roads("explicit", { track_count: 7, duration_ms: minutes(28) }),
+      roads("clean", { explicit: false, track_count: 6, duration_ms: minutes(24) }),
+    ]),
+  );
+  expect(releases.map((r) => [r.id, r.versions?.map((v) => v.id)])).toEqual([
+    ["explicit", ["explicit", "clean"]],
+    ["weezer-2001", undefined],
+    ["weezer-1994", undefined],
+  ]);
+  expect(releases[0].kind).toBe("Album");
+});
+
 it("finds an album's versions among the artist's releases", () => {
   const releases = tidalArtistReleases([
     roads("explicit", {}),
@@ -151,12 +168,12 @@ it("names versions by what differs between them", () => {
       roads("s", {}),
     ]).map((l) => l.label),
   ).toEqual(["Stereo", "Dolby Atmos · Explicit", "Dolby Atmos · Clean"]);
-  // Otherwise alike: the track count, the year, or a number tells them apart.
+  // Otherwise alike: the track count, or else a number, tells them apart.
   expect(labels([roads("x", {}), roads("y", { track_count: 12 })]).map((l) => l.label)).toEqual([
     "10 tracks",
     "12 tracks",
   ]);
-  expect(labels([roads("x", {}), roads("y", { release_year: 2026 })]).map((l) => l.label)).toEqual([
+  expect(labels([roads("x", {}), roads("y", {})]).map((l) => l.label)).toEqual([
     "Version 1",
     "Version 2",
   ]);

@@ -15,6 +15,8 @@ import { useTransitionMount } from "../lib/useTransitionMount";
 export interface SelectOption<V extends string = string> {
   value: V;
   label: string;
+  /** Tooltip, for more than the label says. */
+  title?: string;
   disabled?: boolean;
 }
 
@@ -261,6 +263,7 @@ export function Select<V extends string = string>({
                 role="option"
                 aria-selected={isSelected}
                 aria-disabled={o.disabled || undefined}
+                title={o.title}
                 data-index={i}
                 onMouseEnter={() => !o.disabled && setActive(i)}
                 onMouseDown={(e) => e.preventDefault()}

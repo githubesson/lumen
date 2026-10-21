@@ -153,7 +153,10 @@ export function TidalAlbumDetailView({
   onOpenVersion,
 }: {
   id: string;
-  /** The TIDAL artist it was opened from, whose releases list its versions. */
+  /**
+   * The TIDAL artist it was opened from, whose releases list its versions.
+   * Without one, the album's own artist is asked once it loads.
+   */
   artistId: string | null;
   onBack: () => void;
   onOpenAlbum: (target: EntityTarget) => void;
@@ -187,7 +190,7 @@ export function TidalAlbumDetailView({
       .catch(() => {});
   }, [id]);
   const search = useDetailTrackSearch("album", album?.tracks ?? null);
-  const versions = useReleaseVersions(artistId, id);
+  const versions = useReleaseVersions(artistId ?? album?.artist_id, id);
   const versionPicker = versions && (
     <ReleaseVersionPicker versions={versions} current={id} onPick={onOpenVersion} />
   );

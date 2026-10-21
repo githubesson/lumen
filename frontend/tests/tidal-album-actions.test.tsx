@@ -5,10 +5,10 @@ import type { SearchAlbum, TidalAlbum, TidalArtist, TrackListItem } from "../src
 import { TidalAlbumDetailView } from "../src/pages/library/LibraryDetail";
 import { clearResourceCache, writeCache } from "../src/lib/resourceCache";
 
-const mock = vi.hoisted(() => ({ album: vi.fn(), role: "admin" }));
+const mock = vi.hoisted(() => ({ album: vi.fn(), artist: vi.fn(), role: "admin" }));
 vi.mock("../../core/src/api", async (original) => ({
   ...(await original<typeof import("../../core/src/api")>()),
-  api: { getTidalAlbum: mock.album },
+  api: { getTidalAlbum: mock.album, getTidalArtist: mock.artist },
 }));
 vi.mock("../src/context/Auth", () => ({ useAuth: () => ({ me: { id: "u", username: "maya", role: mock.role } }) }));
 vi.mock("../src/components/TrackList", () => ({ default: () => null }));
@@ -117,26 +117,27 @@ it("gives a listener no actions row, which their loading frame doesn't hold, and
   expect(screen.queryByRole("button", { name: "Open in library" })).toBeNull();
 });
 
-it("switches between the versions its artist lists, and has no switcher without an artist", async () => {
-  const version = (id: string, extra: Partial<SearchAlbum>): SearchAlbum => ({
-    id: `tidal:${id}`,
-    source: "tidal",
-    source_id: id,
-    title: "Low Tide Radio",
-    is_compilation: false,
-    track_count: 9,
-    duration_ms: 2_400_000,
-    has_cover: true,
-    ...extra,
-  });
-  const artist: TidalArtist = {
-    albums: [
-      version("381245572", { explicit: true, dolby_atmos: true }),
-      version("381245571", {}),
-      version("381245570", { explicit: true }),
-    ],
-    tracks: [],
-  };
+const version = (id: string, extra: Partial<SearchAlbum>): SearchAlbum => ({
+  id: `tidal:${id}`,
+  source: "tidal",
+  source_id: id,
+  title: "Low Tide Radio",
+  is_compilation: false,
+  track_count: 9,
+  duration_ms: 2_400_000,
+  has_cover: true,
+  ...extra,
+});
+const artist: TidalArtist = {
+  albums: [
+    version("381245572", { explicit: true, dolby_atmos: true }),
+    version("381245571", {}),
+    version("381245570", { explicit: true }),
+  ],
+  tracks: [],
+};
+
+it("switches between the versions the artist it was opened from lists, and has no switcher without an artist", async () => {
   writeCache("tidal-artist:77", artist);
   await show(album([tidal(1)]), "77");
   const picker = screen.getByRole("tablist", { name: "Version" });
@@ -153,4 +154,13 @@ it("switches between the versions its artist lists, and has no switcher without 
 
   await show(album([tidal(1)]));
   expect(screen.queryByRole("tablist", { name: "Version" })).toBeNull();
+  expect(mock.artist).not.toHaveBeenCalled();
+});
+
+it("asks the album's own artist for its versions when it wasn't opened from one", async () => {
+  mock.artist.mockResolvedValue(artist);
+  await show(album([tidal(1)], { artist_id: "77" }));
+  expect(mock.artist).toHaveBeenCalledWith("77", expect.anything());
+  const tabs = within(screen.getByRole("tablist", { name: "Version" })).getAllByRole("tab");
+  expect(tabs.map((tab) => tab.textContent)).toEqual(["Explicit", "Clean", "Dolby Atmos"]);
 });

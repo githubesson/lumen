@@ -955,6 +955,8 @@ export interface TidalTrackInfo {
 export interface TidalAlbum {
   id: string;
   title: string;
+  /** The primary artist's TIDAL id, whose releases list this album's other versions. */
+  artist_id?: string;
   artist?: string;
   /** Every main artist, primary first. */
   artists?: string[];
