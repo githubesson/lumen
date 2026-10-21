@@ -96,7 +96,7 @@ func TestTIDALAlbumPageListsWholeRelease(t *testing.T) {
 			}
 			items += fmt.Sprintf(`{"type":"track","item":{"id":%d,"title":"Track %d","trackNumber":%d}}`, 1000+i, i+1, i+1)
 		}
-		_, _ = fmt.Fprintf(w, `{"data":{"id":7,"title":"Long","numberOfTracks":150,"items":[%s]}}`, items)
+		_, _ = fmt.Fprintf(w, `{"data":{"id":7,"title":"Long","artist":{"id":42,"name":"Band"},"numberOfTracks":150,"items":[%s]}}`, items)
 	}))
 	defer proxy.Close()
 	h := &TIDAL{TIDAL: tidal.NewClient(tidal.Config{HifiAPIURL: proxy.URL})}
@@ -119,5 +119,20 @@ func TestTIDALAlbumPageListsWholeRelease(t *testing.T) {
 		if len(got.Tracks) != want {
 			t.Fatalf("%s: %d tracks, want %d", path, len(got.Tracks), want)
 		}
+		// The album page finds the release's other versions through it.
+		if got.ArtistID != "42" {
+			t.Fatalf("%s: artist_id %q, want 42", path, got.ArtistID)
+		}
+	}
+}
+
+// A compilation's "Various Artists" lists no releases, so the album page
+// isn't sent to look for versions there.
+func TestTIDALAlbumRespLeavesOutVariousArtists(t *testing.T) {
+	if got := makeTIDALAlbumResp(tidal.Album{ID: "7", ArtistID: "2935", Artist: "Various Artists"}).ArtistID; got != "" {
+		t.Fatalf("artist_id %q, want none", got)
+	}
+	if got := makeTIDALAlbumResp(tidal.Album{ID: "7", ArtistID: "42", Artist: "Band"}).ArtistID; got != "42" {
+		t.Fatalf("artist_id %q, want 42", got)
 	}
 }

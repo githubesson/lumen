@@ -22,8 +22,11 @@ type TIDAL struct {
 }
 
 type tidalAlbumResp struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// ArtistID is the primary artist's TIDAL id, whose releases list this
+	// album's other versions (explicit, clean, Dolby Atmos).
+	ArtistID    string   `json:"artist_id,omitempty"`
 	Artist      string   `json:"artist,omitempty"`
 	Artists     []string `json:"artists,omitempty"`
 	ReleaseYear int      `json:"release_year,omitempty"`
@@ -89,6 +92,9 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 		if err != nil || (offset == 0 && (!partial || unpaged)) {
 			if cached, _, cerr := h.Library.TIDALAlbum(r.Context(), id); cerr == nil &&
 				(err != nil || !partial || len(cached.Tracks) >= len(album.Tracks)) {
+				// The stored record doesn't keep the artist id; the live
+				// fetch, when there was one, does.
+				cached.ArtistID = album.ArtistID
 				album, err = cached, nil
 				if !unpaged {
 					album.Tracks = pageOf(album.Tracks, offset, limit)
@@ -143,9 +149,15 @@ func (h *TIDAL) withLibrary(ctx context.Context, out *tidalAlbumResp, album tida
 }
 
 func makeTIDALAlbumResp(album tidal.Album) tidalAlbumResp {
+	artistID := album.ArtistID
+	// A compilation's artist lists no releases, so no versions either.
+	if strings.EqualFold(strings.TrimSpace(album.Artist), "Various Artists") {
+		artistID = ""
+	}
 	out := tidalAlbumResp{
 		ID:          album.ID,
 		Title:       album.Title,
+		ArtistID:    artistID,
 		Artist:      album.Artist,
 		Artists:     album.Artists,
 		ReleaseYear: album.ReleaseYear,

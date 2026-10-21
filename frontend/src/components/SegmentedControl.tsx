@@ -6,6 +6,8 @@ export interface SegmentedOption<V extends string> {
   label: ReactNode;
   /** Accessible name when `label` is icon-only. */
   ariaLabel?: string;
+  /** Tooltip, for more than the label says. */
+  title?: string;
 }
 
 /**
@@ -94,6 +96,7 @@ export default function SegmentedControl<V extends string>({
           role="tab"
           aria-selected={o.value === value}
           aria-label={o.ariaLabel}
+          title={o.title}
           className={o.value === value ? "active" : ""}
           onClick={() => onChange(o.value)}
         >

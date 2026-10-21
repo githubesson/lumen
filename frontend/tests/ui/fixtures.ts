@@ -27,6 +27,7 @@ import type {
   SearchResponse,
   TidalAutoDownloadStatus,
   TidalAlbum,
+  TidalArtist,
   TidalStatus,
   TrackDetail,
   TrackListItem,
@@ -283,7 +284,66 @@ export const tidalAlbumPartlySaved = savedTidalAlbum("310077120", "al-lanterns",
 /** All saved: an admin's actions row opens the library copy instead. */
 export const tidalAlbumSaved = savedTidalAlbum("298114503", "al-nordlys", []);
 
-export const tidalAlbums: TidalAlbum[] = [tidalAlbum, tidalAlbumPartlySaved, tidalAlbumSaved];
+/** TIDAL also lists `tidalAlbum` clean and in Dolby Atmos, as albums of their own. */
+const tidalAlbumClean: TidalAlbum = { ...tidalAlbum, id: "381245567" };
+const tidalAlbumAtmos: TidalAlbum = { ...tidalAlbum, id: "381245568" };
+
+export const tidalAlbums: TidalAlbum[] = [
+  tidalAlbum,
+  tidalAlbumClean,
+  tidalAlbumAtmos,
+  tidalAlbumPartlySaved,
+  tidalAlbumSaved,
+];
+
+const tidalRelease = (album: Pick<TidalAlbum, "id" | "title" | "release_year" | "track_count" | "duration_ms" | "cover_url">, extra: Partial<SearchAlbum> = {}): SearchAlbum => ({
+  id: `tidal:${album.id}`,
+  source: "tidal",
+  source_id: album.id,
+  title: album.title,
+  artist_name: tidalTrack.artist,
+  is_compilation: false,
+  release_year: album.release_year,
+  track_count: album.track_count,
+  duration_ms: album.duration_ms,
+  has_cover: true,
+  cover_url: album.cover_url,
+  ...extra,
+});
+
+/**
+ * The TIDAL artist of `tidalAlbum`. Its page folds the album's three
+ * versions into one tile, and the album's page switches between them.
+ */
+export const tidalArtistId = "4419021";
+export const tidalArtist: TidalArtist = {
+  artist: {
+    name: tidalTrack.artist!,
+    cover_url: "/api/covers/remote?url=https%3A%2F%2Fresources.tidal.com%2Fimages%2Fe4b2%2F750x750.jpg",
+  },
+  albums: [
+    tidalRelease(tidalAlbumAtmos, { explicit: true, dolby_atmos: true }),
+    tidalRelease(tidalAlbum, { explicit: true }),
+    tidalRelease(tidalAlbumClean),
+    tidalRelease({
+      id: "377020114",
+      title: "Paper Coast",
+      release_year: 2021,
+      track_count: 11,
+      duration_ms: 2_652_000,
+      cover_url: "/api/covers/remote?url=https%3A%2F%2Fresources.tidal.com%2Fimages%2Fa52e%2F640x640.jpg",
+    }),
+    tidalRelease({
+      id: "391730442",
+      title: "Harbour Lights",
+      release_year: 2024,
+      track_count: 1,
+      duration_ms: 231_000,
+      cover_url: "/api/covers/remote?url=https%3A%2F%2Fresources.tidal.com%2Fimages%2F9c03%2F640x640.jpg",
+    }),
+  ],
+  tracks: tidalAlbum.tracks,
+};
 
 export const albums: Album[] = albumRows.map((album) => ({
   id: album.id,

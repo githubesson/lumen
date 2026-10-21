@@ -68,6 +68,7 @@ export function AlbumSleeve({
   onBack,
   album,
   loadingLabel,
+  versions,
   actions,
   reserveActions = false,
   loadingFacts = LOADING_FACTS,
@@ -82,6 +83,11 @@ export function AlbumSleeve({
   album: AlbumSleeveAlbum | null;
   /** Announced while `album` is null. */
   loadingLabel: string;
+  /**
+   * Switches between the release's versions, under the credits. Shown
+   * while loading too, so it stays put as the version picked loads.
+   */
+  versions?: ReactNode;
   /**
    * A row under Play for one more action (an album download, or the library
    * copy of a release that's all saved). One control, so the row never wraps
@@ -161,6 +167,7 @@ export function AlbumSleeve({
               </div>
             )}
           </div>
+          {versions}
           <SleevePlay tracks={album?.tracks ?? NO_TRACKS} loading={!album} />
           {album
             ? actions != null && <div className="album-sleeve-more">{actions}</div>

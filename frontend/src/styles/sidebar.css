@@ -204,12 +204,80 @@
   border-radius: var(--radius-md);
 }
 
-.sidebar-playlists {
+/* SidebarPlaylists: no scrollbar, which would narrow the collapsed rail and
+   push its covers off centre. The ends fade where there's more, a row deep,
+   and scroll-padding keeps a focused playlist clear of the fade. */
+.sidebar-playlists-scroller {
+  --sidebar-fade: 32px;
   flex: 1 1 auto;
-  overflow-y: auto;
-  padding: 0 8px 12px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   position: relative;
   z-index: 1;
+}
+.sidebar-playlists {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 12px;
+  scroll-padding-block: var(--sidebar-fade);
+  scrollbar-width: none;
+}
+.sidebar-playlists::-webkit-scrollbar { display: none; }
+.sidebar-playlists-scroller[data-forward] > .sidebar-playlists {
+  mask-image: linear-gradient(black calc(100% - var(--sidebar-fade)), transparent);
+}
+.sidebar-playlists-scroller[data-back] > .sidebar-playlists {
+  mask-image: linear-gradient(transparent, black var(--sidebar-fade));
+}
+.sidebar-playlists-scroller[data-back][data-forward] > .sidebar-playlists {
+  mask-image: linear-gradient(
+    transparent,
+    black var(--sidebar-fade),
+    black calc(100% - var(--sidebar-fade)),
+    transparent
+  );
+}
+/* The shelf arrows (home.css), sized down for the rail and centred in it. */
+.sidebar-scroll-arrow {
+  position: absolute;
+  left: 50%;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) scale(0.9);
+  transition:
+    opacity 150ms ease,
+    transform 150ms var(--ease-out),
+    background 120ms;
+}
+.sidebar-scroll-arrow-up { top: 4px; }
+.sidebar-scroll-arrow-down { bottom: 4px; }
+.sidebar-scroll-arrow:hover { background: var(--accent); }
+.sidebar-playlists-scroller:hover > .sidebar-scroll-arrow:not(:disabled) {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%);
+}
+.sidebar-playlists-scroller:hover > .sidebar-scroll-arrow:not(:disabled):active {
+  transform: translateX(-50%) scale(0.95);
+}
+@media (hover: none) {
+  .sidebar-scroll-arrow { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-scroll-arrow { transition: opacity 150ms ease; }
 }
 .sidebar-playlist {
   display: flex;

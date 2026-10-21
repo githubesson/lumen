@@ -227,13 +227,12 @@
 
 /* Curated track lists (popular tracks): no column header, no row rules, and
    rounded hover rows. The header row stays in the DOM at zero height because
-   the fixed table layout sizes its columns from it, and so screen readers
-   still get the column names. */
+   the fixed table layout sizes its columns from it, and its labels are
+   sr-only, so screen readers still get the column names. */
 .table-headless thead th {
   height: 0;
   padding-block: 0;
   border-bottom: 0;
-  font-size: 0;
   line-height: 0;
 }
 .table-headless tbody td {

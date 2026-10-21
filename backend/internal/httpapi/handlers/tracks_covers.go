@@ -470,10 +470,24 @@ func proxyRemoteCoverURL(raw string, warmSize int) string {
 	return "/api/covers/remote?url=" + url.QueryEscape(raw)
 }
 
+// tidalArtistPictureSize is tidalCoverSize for artist pictures, which TIDAL
+// serves at 160, 320, 480 and 750 px only: the album sizes 80 and 640 answer
+// 403 for them.
+func tidalArtistPictureSize(maxSize int) int {
+	for _, size := range [...]int{160, 320, 480} {
+		if maxSize <= size {
+			return size
+		}
+	}
+	return tidal.ArtistPictureSize
+}
+
 // remoteCoverVariant returns the CDN URL serving a `size=maxSize` request:
 // TIDAL's CDN encodes square dimensions in the final path segment, so a
 // thumbnail is fetched rather than buffering the original art. maxSize 0
 // (no size requested), or a URL without that shape, keeps the original.
+// Artist pictures are the only art linked at 750 px, and pick from their
+// own sizes.
 func remoteCoverVariant(u *url.URL, maxSize int) *url.URL {
 	if maxSize <= 0 {
 		return u
@@ -488,7 +502,11 @@ func remoteCoverVariant(u *url.URL, maxSize int) *url.URL {
 	if widthErr != nil || heightErr != nil || width <= 0 || width != height {
 		return u
 	}
-	size := strconv.Itoa(tidalCoverSize(roundCoverSize(maxSize)))
+	sizeFor := tidalCoverSize
+	if width == tidal.ArtistPictureSize {
+		sizeFor = tidalArtistPictureSize
+	}
+	size := strconv.Itoa(sizeFor(roundCoverSize(maxSize)))
 	variant := *u
 	variant.Path = strings.TrimSuffix(u.Path, name) + size + "x" + size + ".jpg"
 	return &variant

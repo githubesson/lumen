@@ -18,6 +18,7 @@ import {
 import {
   ARTIST_POPULAR_PREVIEW_COUNT,
   filterReleases,
+  foldReleaseVersions,
   hasReleaseFilters,
   libraryArtistReleases,
   RELEASE_FILTER_OPTIONS,
@@ -174,7 +175,7 @@ export function TidalArtistDetailView({
   const warning = data?.warnings?.join(" ");
   const tracks = data?.tracks ?? NO_TRACKS;
   const releases = useMemo(
-    () => (data ? tidalArtistReleases(data.albums) : []),
+    () => (data ? foldReleaseVersions(tidalArtistReleases(data.albums)) : []),
     [data],
   );
   const profile = data?.artist;

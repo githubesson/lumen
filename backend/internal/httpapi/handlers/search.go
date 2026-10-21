@@ -35,6 +35,10 @@ type searchAlbumResp struct {
 	Source   string `json:"source"`
 	SourceID string `json:"source_id,omitempty"`
 	CoverURL string `json:"cover_url,omitempty"`
+	// TIDAL releases: what tells the versions of one apart (see tidal.Album).
+	Version    string `json:"version,omitempty"`
+	Explicit   bool   `json:"explicit,omitempty"`
+	DolbyAtmos bool   `json:"dolby_atmos,omitempty"`
 }
 
 type searchArtistResp struct {
@@ -251,7 +255,7 @@ func (h *Search) searchStream(ctx context.Context, viewer uuid.UUID, query strin
 }
 
 func makeSearchTIDALAlbumResp(item tidal.Album) searchAlbumResp {
-	return searchAlbumResp{albumListResp: albumListResp{ID: trackref.Remote(trackref.SourceTIDAL, item.ID), Title: item.Title, ArtistName: item.Artist, ReleaseYear: item.ReleaseYear, TrackCount: item.TrackCount, DurationMS: int64(item.DurationMS), HasCover: item.CoverURL != ""}, Source: trackref.SourceTIDAL, SourceID: item.ID, CoverURL: proxyRemoteCoverURL(item.CoverURL, remoteCoverWarmRow)}
+	return searchAlbumResp{albumListResp: albumListResp{ID: trackref.Remote(trackref.SourceTIDAL, item.ID), Title: item.Title, ArtistName: item.Artist, ReleaseYear: item.ReleaseYear, TrackCount: item.TrackCount, DurationMS: int64(item.DurationMS), HasCover: item.CoverURL != ""}, Source: trackref.SourceTIDAL, SourceID: item.ID, CoverURL: proxyRemoteCoverURL(item.CoverURL, remoteCoverWarmRow), Version: item.Version, Explicit: item.Explicit, DolbyAtmos: item.DolbyAtmos}
 }
 
 func makeTIDALTrackResp(it tidal.Track) trackListItemResp {

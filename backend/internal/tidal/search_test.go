@@ -59,6 +59,35 @@ func TestArtistReleasesUsesBoundedAggregation(t *testing.T) {
 	}
 }
 
+// TIDAL lists an album's explicit, clean and Dolby Atmos versions as separate
+// albums; these fields are what tell them apart.
+func TestArtistReleasesCarryVersionFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, `{"albums":{"items":[`+
+			`{"id":1,"title":"Record","explicit":true,"version":null,"audioModes":["STEREO"]},`+
+			`{"id":2,"title":"Record","explicit":false,"audioModes":["STEREO"]},`+
+			`{"id":3,"title":"Record","explicit":true,"audioModes":["DOLBY_ATMOS"]},`+
+			`{"id":4,"title":"Record","version":" Deluxe ","audioModes":["STEREO","DOLBY_ATMOS"]}`+
+			`]},"tracks":[],"failed_sections":[]}`)
+	}))
+	defer server.Close()
+	result, err := NewClient(Config{HifiAPIURL: server.URL}).ArtistReleases(context.Background(), "123")
+	if err != nil || len(result.Albums) != 4 {
+		t.Fatalf("%+v %v", result, err)
+	}
+	type fields struct {
+		version              string
+		explicit, dolbyAtmos bool
+	}
+	// An album also offered in stereo isn't an Atmos version.
+	for i, want := range []fields{{"", true, false}, {"", false, false}, {"", true, true}, {"Deluxe", false, false}} {
+		a := result.Albums[i]
+		if got := (fields{a.Version, a.Explicit, a.DolbyAtmos}); got != want {
+			t.Errorf("album %s: %+v, want %+v", a.ID, got, want)
+		}
+	}
+}
+
 func TestArtistReleasesToleratesMissingProfile(t *testing.T) {
 	for name, profile := range map[string]string{
 		"null profile":    `"artist":null,`,

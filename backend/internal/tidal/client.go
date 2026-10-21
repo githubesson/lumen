@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -183,8 +184,15 @@ type Track struct {
 }
 
 type Album struct {
-	ID          string
-	Title       string
+	ID    string
+	Title string
+	// TIDAL lists each version of a release as its own album under the same
+	// title: explicit and clean, stereo and Dolby Atmos. Version names the
+	// rest ("Deluxe", "Sped Up"). DolbyAtmos marks an Atmos-only release.
+	Version     string
+	Explicit    bool
+	DolbyAtmos  bool
+	ArtistID    string   // primary artist's TIDAL id, when the payload has it
 	Artist      string   // primary artist
 	Artists     []string // every main artist, primary first
 	ReleaseYear int
@@ -821,6 +829,9 @@ type apiArtist struct {
 type apiAlbum struct {
 	ID             tidalID        `json:"id"`
 	Title          string         `json:"title"`
+	Version        string         `json:"version"`
+	Explicit       bool           `json:"explicit"`
+	AudioModes     []string       `json:"audioModes"`
 	Cover          string         `json:"cover"`
 	ReleaseDate    string         `json:"releaseDate"`
 	Duration       int            `json:"duration"`
@@ -852,14 +863,18 @@ func (a apiAlbum) album() Album {
 	if len(a.ReleaseDate) >= 4 {
 		year, _ = strconv.Atoi(a.ReleaseDate[:4])
 	}
-	artist := strings.TrimSpace(a.Artist.Name)
+	artist, artistID := strings.TrimSpace(a.Artist.Name), string(a.Artist.ID)
 	if artist == "" && len(a.Artists) > 0 {
-		artist = strings.TrimSpace(a.Artists[0].Name)
+		artist, artistID = strings.TrimSpace(a.Artists[0].Name), string(a.Artists[0].ID)
 	}
 	coverID := strings.TrimSpace(a.Cover)
 	album := Album{
 		ID:          string(a.ID),
 		Title:       a.Title,
+		Version:     strings.TrimSpace(a.Version),
+		Explicit:    a.Explicit,
+		DolbyAtmos:  slices.Contains(a.AudioModes, "DOLBY_ATMOS") && !slices.Contains(a.AudioModes, "STEREO"),
+		ArtistID:    artistID,
 		Artist:      artist,
 		Artists:     albumArtists(artist, a.Artists),
 		ReleaseYear: year,
