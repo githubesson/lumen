@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -232,6 +233,24 @@ func TestServeRemoteCoverFetchesThumbnailVariant(t *testing.T) {
 	(&Tracks{}).serveRemoteCover(rec, req, "https://resources.tidal.com/images/aa/bb/1280x1280.jpg")
 	if rec.Code != http.StatusOK || fetchedPath != "/images/aa/bb/80x80.jpg" {
 		t.Fatalf("thumbnail status %d, fetched path %q", rec.Code, fetchedPath)
+	}
+}
+
+// Artist pictures (linked at 750 px) don't come at the album sizes 80 and
+// 640: those answer 403, which left the command palette's artist rows blank.
+func TestRemoteCoverVariantPicksArtistPictureSizes(t *testing.T) {
+	picture, _ := url.Parse("https://resources.tidal.com/images/aa/bb/750x750.jpg")
+	for maxSize, want := range map[int]string{
+		64:   "160x160",
+		128:  "160x160",
+		256:  "320x320",
+		384:  "480x480",
+		512:  "750x750",
+		1024: "750x750",
+	} {
+		if got := path.Base(remoteCoverVariant(picture, maxSize).Path); got != want+".jpg" {
+			t.Errorf("size %d: variant %q, want %s.jpg", maxSize, got, want)
+		}
 	}
 }
 
