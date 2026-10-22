@@ -172,9 +172,10 @@ it("puts the preview in the dialog's side column when there is one, and claims i
 
 // The dialog's side column as SettingsDialog wires it, with the section in it.
 function Dialog({ section, roomy = true }: { section: boolean; roomy?: boolean }) {
-  const { side, open, setTarget } = useSettingsSideColumn(roomy);
+  const { side, open, toggle, setTarget } = useSettingsSideColumn(roomy);
   return (
     <div data-testid="dialog" data-side={open || undefined}>
+      {toggle && <button type="button" onClick={toggle}>Preview</button>}
       <SettingsSideContext.Provider value={side}>
         {section && <DiscordCardSettings desktop={desktop(card)} />}
       </SettingsSideContext.Provider>
@@ -182,24 +183,34 @@ function Dialog({ section, roomy = true }: { section: boolean; roomy?: boolean }
     </div>
   );
 }
+const previewToggle = () => screen.queryByRole("button", { name: "Preview" });
 
-it("opens the side column while the section shows, and shuts it when it goes", () => {
+it("offers the side column while the section shows, shut until toggled open", () => {
   const view = render(<StrictMode><Dialog section={false} /></StrictMode>);
   const dialog = screen.getByTestId("dialog");
-  expect(dialog.dataset.side).toBeUndefined();
+  expect(previewToggle()).toBeNull();
   view.rerender(<StrictMode><Dialog section /></StrictMode>);
-  expect(dialog.dataset.side).toBe("true");
+  // Shut, the column already holds the preview, so opening slides it out.
+  expect(dialog.dataset.side).toBeUndefined();
   expect(screen.getByTestId("side").querySelector(".discord-popout")).toBeTruthy();
+  fireEvent.click(previewToggle()!);
+  expect(dialog.dataset.side).toBe("true");
+  fireEvent.click(previewToggle()!);
+  expect(dialog.dataset.side).toBeUndefined();
+  fireEvent.click(previewToggle()!);
   view.rerender(<StrictMode><Dialog section={false} /></StrictMode>);
   expect(dialog.dataset.side).toBeUndefined();
+  expect(previewToggle()).toBeNull();
   expect(screen.getByTestId("side").childElementCount).toBe(0);
+  // Coming back, it opens as it was left.
   view.rerender(<StrictMode><Dialog section /></StrictMode>);
   expect(dialog.dataset.side).toBe("true");
 });
 
-it("keeps the preview above the options, and the column shut, without room for it", () => {
+it("keeps the preview above the options, with no column to open, without room for it", () => {
   render(<Dialog section roomy={false} />);
   expect(screen.getByTestId("dialog").dataset.side).toBeUndefined();
+  expect(previewToggle()).toBeNull();
   expect(screen.getByTestId("side").childElementCount).toBe(0);
   expect(screen.getByTestId("dialog").querySelector(".settings-row .discord-popout")).toBeTruthy();
 });
