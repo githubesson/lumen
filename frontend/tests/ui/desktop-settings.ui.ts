@@ -160,6 +160,19 @@ test("the side column shuts when the Discord options go", async ({ page }) => {
   await expect(page.locator(".discord-popout")).toHaveCount(0);
 });
 
+test("a search that finds the card options offers the preview too", async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 1100, "Only wide windows have the side column.");
+  await openSection(page, "Appearance");
+  await page.getByRole("searchbox", { name: "Search settings" }).fill("preview");
+  await expect(page.locator(".settings-heading")).toHaveText("Search results");
+  const dialog = page.locator(".settings");
+  await expect(dialog).not.toHaveAttribute("data-side");
+  await page.getByRole("button", { name: "Show preview" }).click();
+  await expect(dialog).toHaveAttribute("data-side", "true");
+  await expect(page.locator(".settings-side .discord-popout")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Hide preview" })).toHaveAttribute("aria-expanded", "true");
+});
+
 test("now playing api settings", async ({ page }, testInfo) => {
   await openSection(page, "Connections");
   const address = page.getByRole("textbox", { name: "Now playing API address" });

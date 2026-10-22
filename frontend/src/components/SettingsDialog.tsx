@@ -541,6 +541,7 @@ export default function SettingsDialog({ open, onClose }: Props) {
                 type="button"
                 className="iconbtn"
                 aria-label={sideOpen ? "Hide preview" : "Show preview"}
+                aria-expanded={sideOpen}
                 aria-controls={sideId}
                 onClick={toggleSide}
               >
