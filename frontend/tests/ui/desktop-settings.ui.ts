@@ -96,9 +96,18 @@ test.beforeEach(async ({ page }) => {
 test("discord settings", async ({ page }, testInfo) => {
   await openSection(page, "Discord");
   await ready(page, page.locator(".discord-popout"));
-  // With room beside the dialog the preview opens a side column, so it stays
-  // in view while the options scroll; otherwise it heads the section.
+  // With room beside the dialog the preview goes in a side column, shut until
+  // the heading's toggle opens it, so it stays in view while the options
+  // scroll; otherwise it heads the section.
   const side = (page.viewportSize()?.width ?? 0) >= 1100;
+  const toggle = page.getByRole("button", { name: "Show preview" });
+  await expect(toggle).toHaveCount(side ? 1 : 0);
+  if (side) {
+    await expect(page.locator(".settings[data-side]")).toHaveCount(0);
+    await checkUI(page, testInfo, { exceptions: desktopExceptions });
+    await toggle.click();
+    await expect(page.getByRole("button", { name: "Hide preview" })).toBeVisible();
+  }
   await expect(page.locator(side ? ".settings-side .discord-popout" : ".settings-pane .discord-popout")).toBeVisible();
   await expect(page.locator(".settings[data-side]")).toHaveCount(side ? 1 : 0);
   await checkUI(page, testInfo, {
@@ -136,15 +145,32 @@ test("the side column shuts when the Discord options go", async ({ page }) => {
   test.skip((page.viewportSize()?.width ?? 0) < 1100, "Only wide windows have the side column.");
   await openSection(page, "Discord");
   const dialog = page.locator(".settings");
+  await expect(dialog).not.toHaveAttribute("data-side");
+  await page.getByRole("button", { name: "Show preview" }).click();
   await expect(dialog).toHaveAttribute("data-side", "true");
   await page.locator(".settings-nav-item", { hasText: "Appearance" }).click();
   await expect(dialog).not.toHaveAttribute("data-side");
+  await expect(page.getByRole("button", { name: /preview/ })).toHaveCount(0);
+  // Coming back, it's open as it was left.
   await page.locator(".settings-nav-item", { hasText: "Discord" }).click();
   await expect(dialog).toHaveAttribute("data-side", "true");
   // Turning the status off takes the card options, and the column, away.
   await page.getByRole("switch", { name: "Discord status" }).click();
   await expect(dialog).not.toHaveAttribute("data-side");
   await expect(page.locator(".discord-popout")).toHaveCount(0);
+});
+
+test("a search that finds the card options offers the preview too", async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 1100, "Only wide windows have the side column.");
+  await openSection(page, "Appearance");
+  await page.getByRole("searchbox", { name: "Search settings" }).fill("preview");
+  await expect(page.locator(".settings-heading")).toHaveText("Search results");
+  const dialog = page.locator(".settings");
+  await expect(dialog).not.toHaveAttribute("data-side");
+  await page.getByRole("button", { name: "Show preview" }).click();
+  await expect(dialog).toHaveAttribute("data-side", "true");
+  await expect(page.locator(".settings-side .discord-popout")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Hide preview" })).toHaveAttribute("aria-expanded", "true");
 });
 
 test("now playing api settings", async ({ page }, testInfo) => {

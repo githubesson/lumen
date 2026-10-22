@@ -4,6 +4,8 @@ import {
   Link2 as LinkIcon,
   Monitor as MonitorIcon,
   Palette as PaletteIcon,
+  PanelRightClose as PanelRightCloseIcon,
+  PanelRightOpen as PanelRightOpenIcon,
   Volume2 as SpeakerIcon,
   X as XMarkIcon,
 } from "lucide-react";
@@ -90,6 +92,7 @@ const SMOOTH_MIX: SelectOption[] = [
 export default function SettingsDialog({ open, onClose }: Props) {
   const { mounted, visible } = useTransitionMount(open, 200);
   const titleId = useId();
+  const sideId = useId();
   const layerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -131,8 +134,14 @@ export default function SettingsDialog({ open, onClose }: Props) {
   const updates = useDesktopUpdates(interactive);
   const desktop = useDesktopSettings(interactive);
 
-  // The side column opens while a section claims it and the window has room.
-  const { side, open: sideOpen, setTarget: setSideTarget } = useSettingsSideColumn(useMediaQuery(SIDE_ROOM));
+  // The side column can open while a section claims it and the window has
+  // room; the heading's toggle opens it.
+  const {
+    side,
+    open: sideOpen,
+    toggle: toggleSide,
+    setTarget: setSideTarget,
+  } = useSettingsSideColumn(useMediaQuery(SIDE_ROOM));
 
   // Shell passes a fresh arrow each render; the effect below must only run on
   // mount/unmount or it would yank focus back to the panel on every render.
@@ -521,40 +530,53 @@ export default function SettingsDialog({ open, onClose }: Props) {
         </nav>
 
         <div className="settings-pane dialog-scroll">
+          {/* The toggle sits beside the heading, not in it: the heading names
+              the dialog. */}
+          <div className="settings-head">
+            <h2 id={titleId} className="settings-heading">
+              {matches ? "Search results" : current.title}
+            </h2>
+            {toggleSide && (
+              <button
+                type="button"
+                className="iconbtn"
+                aria-label={sideOpen ? "Hide preview" : "Show preview"}
+                aria-expanded={sideOpen}
+                aria-controls={sideId}
+                onClick={toggleSide}
+              >
+                {sideOpen ? (
+                  <PanelRightCloseIcon className="size-4" aria-hidden="true" />
+                ) : (
+                  <PanelRightOpenIcon className="size-4" aria-hidden="true" />
+                )}
+              </button>
+            )}
+          </div>
           <SettingsSideContext.Provider value={side}>
             {matches ? (
-              <>
-                <h2 id={titleId} className="settings-heading">
-                  Search results
-                </h2>
-                {matches.length === 0 ? (
-                  <p className="settings-empty">No settings match “{query.trim()}”.</p>
-                ) : (
-                  matches.map((s) => (
-                    <section key={s.id} className="settings-group">
-                      <h3 className="settings-subheading">{s.title}</h3>
-                      {s.settings.map((st) => (
-                        <Fragment key={st.id}>{st.render()}</Fragment>
-                      ))}
-                    </section>
-                  ))
-                )}
-              </>
+              matches.length === 0 ? (
+                <p className="settings-empty">No settings match “{query.trim()}”.</p>
+              ) : (
+                matches.map((s) => (
+                  <section key={s.id} className="settings-group">
+                    <h3 className="settings-subheading">{s.title}</h3>
+                    {s.settings.map((st) => (
+                      <Fragment key={st.id}>{st.render()}</Fragment>
+                    ))}
+                  </section>
+                ))
+              )
             ) : (
-              <>
-                <h2 id={titleId} className="settings-heading">
-                  {current.title}
-                </h2>
-                {current.settings.map((st) => (
-                  <Fragment key={st.id}>{st.render()}</Fragment>
-                ))}
-              </>
+              current.settings.map((st) => (
+                <Fragment key={st.id}>{st.render()}</Fragment>
+              ))
             )}
           </SettingsSideContext.Provider>
         </div>
 
         {/* Filled by the section that claims it (see SettingsSide). */}
-        <div ref={setSideTarget} className="settings-side" />
+        <div ref={setSideTarget} id={sideId} className="settings-side" />
       </div>
     </div>
   );
