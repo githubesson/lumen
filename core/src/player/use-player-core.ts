@@ -349,9 +349,10 @@ export function usePlayerCore({
     [isTrackPlayable, notePick, resetClockForTrackChange, shuffle, startTrack],
   );
 
-  // What playNext reads when it's called. Through refs, so it keeps its
-  // identity while the queue moves (every swipeable list row holds it), and
-  // so a second call before React commits builds on the first.
+  // What playNext and advance read when they're called. Through refs, so
+  // playNext keeps its identity while the queue moves (every swipeable list
+  // row holds it), and so whatever lands before React commits (a second
+  // pick, a track ending) builds on the list as it now is. Both write it back.
   const queueStateRef = useRef({ current, queue, sourceQueue, index, shuffle });
   useEffect(() => {
     queueStateRef.current = { current, queue, sourceQueue, index, shuffle };
@@ -440,6 +441,11 @@ export function usePlayerCore({
       }
       return false;
     };
+    // The queue as playNext may have just left it, not as last committed:
+    // an ended event in between would otherwise apply the old list's next
+    // position to the new one.
+    const state = queueStateRef.current;
+    const { queue, index, sourceQueue, shuffle } = state;
     if (!queue.length) return false;
     // Guard the empty forward range explicitly: firstPlayableIndex infers
     // scan direction from from/to ordering, so (index+1, length-1) at the
@@ -519,6 +525,12 @@ export function usePlayerCore({
     if (nextQueue) setQueue(nextQueue);
     setIndex(nextIndex);
     setCurrent(nextTrack);
+    queueStateRef.current = {
+      ...state,
+      current: nextTrack,
+      queue: nextQueue ?? queue,
+      index: nextIndex,
+    };
     setIsPlaying(true);
     setCurrentTime(0);
     setDuration(activated || sameTrack ? adapter.duration() || 0 : 0);
@@ -529,13 +541,9 @@ export function usePlayerCore({
     adapter,
     clearPlaybackError,
     clearPreparedNext,
-    index,
     isTrackPlayable,
-    queue,
     repeat,
     resolvePlayableUri,
-    shuffle,
-    sourceQueue,
     startPlayback,
   ]);
 
