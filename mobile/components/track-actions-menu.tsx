@@ -477,42 +477,19 @@ export function useTrackActionModel(
     void toggleFav(track);
   }, [toggleFav, track]);
 
-  const openAlbum = useCallback(() => {
-    void (async () => {
-      try {
-        const target = await resolveTrackAlbumTarget(track);
-
-        if (target?.kind === "tidal") {
-          router.push({
-            pathname: "/(tabs)/(library)/tidal-albums/[id]" as never,
-            params: { id: target.id },
-          });
-          return;
-        }
-
-        if (target) {
-          router.push({
-            pathname: "/(tabs)/(library)/albums/[id]",
-            params: { id: target.id },
-          });
-          return;
-        }
-
-        Alert.alert("Album unavailable", "No album was found for this track.");
-      } catch (error) {
-        Alert.alert(
-          "Album unavailable",
-          errorMessage(error, "Please try again."),
-        );
-      }
-    })();
-  }, [router, track]);
-
-  // Track Info and the editors open in the current tab's stack, which
-  // carries them all, so the tab never changes; over the tabs (Now Playing)
-  // they open in the tab underneath, once the sheet closes.
+  // Track Info, the album and the editors open in the current tab's stack,
+  // which carries them all, so the tab never changes; over the tabs (Now
+  // Playing) they open in the tab underneath, once the sheet closes.
   const openInTab = useCallback(
-    (screen: "track/[id]" | "track/edit" | "albums/edit", id: string) => {
+    (
+      screen:
+        | "track/[id]"
+        | "track/edit"
+        | "albums/[id]"
+        | "tidal-albums/[id]"
+        | "albums/edit",
+      id: string,
+    ) => {
       const place = trackMenuTab(
         navigation.isReady() ? navigation.getRootState() : undefined,
       );
@@ -526,6 +503,25 @@ export function useTrackActionModel(
     },
     [navigation, router],
   );
+
+  const openAlbum = useCallback(() => {
+    void (async () => {
+      try {
+        const target = await resolveTrackAlbumTarget(track);
+        if (target) {
+          openInTab(target.kind === "tidal" ? "tidal-albums/[id]" : "albums/[id]", target.id);
+          return;
+        }
+
+        Alert.alert("Album unavailable", "No album was found for this track.");
+      } catch (error) {
+        Alert.alert(
+          "Album unavailable",
+          errorMessage(error, "Please try again."),
+        );
+      }
+    })();
+  }, [openInTab, track]);
 
   const openInfo = useCallback(() => {
     openInTab("track/[id]", track.id);

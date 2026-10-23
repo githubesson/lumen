@@ -15,6 +15,8 @@ interface Props {
    * (everything there is one).
    */
   inFavorites?: boolean;
+  /** May carry the first-run swipe peek (off for a hidden, mounted list). */
+  peekable?: boolean;
 }
 
 /**
@@ -23,10 +25,10 @@ interface Props {
  * Undo strip changes it, for a few seconds). Swipe right for Play Next, left
  * to favorite; press and hold for the track menu.
  */
-function TrackRowImpl({ track, onPress, inFavorites = false }: Props) {
+function TrackRowImpl({ track, onPress, inFavorites = false, peekable = true }: Props) {
   const presentation = useTrackRowPresentation(track);
   return (
-    <SwipeableTrackRow track={track} inFavorites={inFavorites}>
+    <SwipeableTrackRow track={track} inFavorites={inFavorites} peekable={peekable}>
       {(swipe) => (
         <ListRow
           style={presentation.dimmed ? { opacity: 0.4 } : undefined}

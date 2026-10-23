@@ -188,9 +188,14 @@ export function FavoritesList({
   const handlePress = usePlayQueue(tracks);
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<TrackListItem>) => (
-      <TrackRow track={item} onPress={handlePress} inFavorites={mode === "favorites"} />
+      <TrackRow
+        track={item}
+        onPress={handlePress}
+        inFavorites={mode === "favorites"}
+        peekable={active}
+      />
     ),
-    [handlePress, mode],
+    [active, handlePress, mode],
   );
   const keyExtractor = useCallback((t: TrackListItem) => t.id, []);
 

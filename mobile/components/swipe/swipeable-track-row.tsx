@@ -167,6 +167,7 @@ export function SwipeableTrackRow({
   height,
   backgroundColor,
   inFavorites = false,
+  peekable = true,
   children,
 }: {
   track: TrackListItem;
@@ -176,6 +177,11 @@ export function SwipeableTrackRow({
   backgroundColor?: string;
   /** The Favorites list: unfavoriting leaves an Undo strip in the row's slot. */
   inFavorites?: boolean;
+  /**
+   * May carry the first-run peek. Off for a list that's mounted but hidden
+   * (Favorites keeps its other list stacked underneath, faded out).
+   */
+  peekable?: boolean;
   children: (swipe: SwipeRowProps) => ReactElement;
 }) {
   const theme = useTheme();
@@ -553,7 +559,7 @@ export function SwipeableTrackRow({
   // still measures inside the window, and a cue there would be wasted.
   useFocusEffect(
     useCallback(() => {
-      if (!swipeable) return;
+      if (!swipeable || !peekable) return;
       return offerPeek({
         measure: (done) => {
           const node = containerRef.current;
@@ -565,7 +571,7 @@ export function SwipeableTrackRow({
         },
         peek: runPeek,
       });
-    }, [containerRef, runPeek, swipeable]),
+    }, [containerRef, peekable, runPeek, swipeable]),
   );
 
   const onUndo = useCallback(() => {
