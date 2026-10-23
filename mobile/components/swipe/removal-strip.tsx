@@ -8,7 +8,7 @@ import * as Haptics from "expo-haptics";
 import { displayText, type TrackListItem } from "@music-library/core";
 import { CoverArt } from "../cover-art";
 import type { ThemeTokens } from "../../theme/theme";
-import type { CometBox } from "../../lib/swipe-actions";
+import type { CometOutlineInset } from "../../lib/swipe-actions";
 
 /** The slot a favorite swiped away in the Favorites list shrinks to. */
 export const REMOVAL_SLOT_HEIGHT = 44;
@@ -16,16 +16,15 @@ const STRIP_INSET = 16;
 const STRIP_TOP = 6;
 const STRIP_HEIGHT = 32;
 
-/** The strip's outline, for the comet that traces it once. */
-export function removalStripBox(slotWidth: number): CometBox {
-  return {
-    x: STRIP_INSET,
-    y: STRIP_TOP,
-    width: Math.max(0, slotWidth - STRIP_INSET * 2),
-    height: STRIP_HEIGHT,
-    radius: STRIP_HEIGHT / 2,
-  };
-}
+/**
+ * The strip's outline inside a canvas the slot's full width and
+ * {@link REMOVAL_SLOT_HEIGHT} tall, for the comet that traces it once.
+ */
+export const REMOVAL_STRIP_OUTLINE: CometOutlineInset = {
+  insetX: STRIP_INSET,
+  insetY: STRIP_TOP,
+  radius: STRIP_HEIGHT / 2,
+};
 
 /**
  * "Removed · Undo" in the slot of a favorite swiped away in the Favorites

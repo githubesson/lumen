@@ -112,11 +112,19 @@ export interface CometBox {
   radius: number;
 }
 
+/** Where the comet's outline sits inside its canvas: inset on each side. */
+export interface CometOutlineInset {
+  insetX: number;
+  insetY: number;
+  radius: number;
+}
+
 /**
  * The rounded outline as an SVG path, clockwise from the middle of the side
  * the action was on: up the left side first, or down the right.
  */
 export function cometOutline(box: CometBox, from: "left" | "right"): string {
+  "worklet";
   const { x: x0, y: y0, width, height } = box;
   const x1 = x0 + width;
   const y1 = y0 + height;
@@ -156,7 +164,7 @@ export function cometHead(t: number, perimeter: number, longest: number): number
  */
 export function cometTrim(head: number, length: number, perimeter: number): [number, number] {
   "worklet";
-  const clamp = (v: number) => Math.min(1, Math.max(0, v / perimeter));
+  const clamp = (v: number) => (perimeter > 0 ? Math.min(1, Math.max(0, v / perimeter)) : 0);
   return [clamp(head - length), clamp(head)];
 }
 

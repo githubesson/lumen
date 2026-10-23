@@ -37,7 +37,7 @@ import Animated, {
   withTiming,
   type AnimatedRef,
 } from "react-native-reanimated";
-import { scheduleOnRN } from "react-native-worklets";
+import { scheduleOnRN, scheduleOnUI } from "react-native-worklets";
 import * as Haptics from "expo-haptics";
 import type { TrackListItem } from "@music-library/core";
 import {
@@ -57,14 +57,14 @@ import {
   commitDistance,
   resistedOffset,
   swipeRelease,
-  type CometBox,
+  type CometOutlineInset,
 } from "../../lib/swipe-actions";
 import { useTheme } from "../../theme/theme";
 import { TrackActionsContextMenu } from "../track-actions-menu";
 import { CometGlow } from "./comet-glow";
 import { FavoriteMark } from "./favorite-mark";
 import { notePeekTouch, offerPeek } from "../../lib/swipe-peek";
-import { REMOVAL_SLOT_HEIGHT, RemovalStrip, removalStripBox } from "./removal-strip";
+import { REMOVAL_SLOT_HEIGHT, REMOVAL_STRIP_OUTLINE, RemovalStrip } from "./removal-strip";
 import { SwipeAction, swipeActionStyle, type SwipeActionKind } from "./swipe-action";
 
 /** What a swipe row hands the row it wraps. */
@@ -123,8 +123,7 @@ const PEEK_HOLD_MS = 520;
 const PEEK_GAP_MS = 200;
 
 /** The outline the comet runs around: the row, just inside its slot. */
-const ROW_GLOW_INSET = 4;
-const ROW_GLOW_RADIUS = 14;
+const ROW_OUTLINE: CometOutlineInset = { insetX: 4, insetY: 4, radius: 14 };
 
 // One row rests open at a time: opening or touching another closes it.
 let openRowClose: (() => void) | null = null;
@@ -141,7 +140,6 @@ interface Glow {
   trackId: string;
   kind: SwipeActionKind;
   on: "row" | "strip";
-  box: CometBox;
   delayMs: number;
 }
 
@@ -211,7 +209,8 @@ export function SwipeableTrackRow({
   const slot = useSharedValue(rowHeight);
   const stripShown = useSharedValue(0);
   const markPop = useSharedValue(1);
-  // Set by a swipe that removes in place, so the strip animates in.
+  // Set by a swipe that removes in place, so the strip animates in. Read
+  // only on the UI thread (see moveRemoval), after the write has landed.
   const removalSwiped = useSharedValue(false);
   const containerRef = useAnimatedRef<Animated.View>();
 
@@ -281,26 +280,8 @@ export function SwipeableTrackRow({
   const perform = useCallback(
     (kind: SwipeActionKind, fromGesture: boolean) => {
       const glowOn = (on: Glow["on"], delayMs: number) => {
-        const width = rowWidth.get();
-        if (width <= 0) return;
         glowRuns += 1;
-        setGlow({
-          id: glowRuns,
-          trackId: track.id,
-          kind,
-          on,
-          delayMs,
-          box:
-            on === "strip"
-              ? removalStripBox(width)
-              : {
-                  x: ROW_GLOW_INSET,
-                  y: ROW_GLOW_INSET,
-                  width: width - ROW_GLOW_INSET * 2,
-                  height: rowHeight - ROW_GLOW_INSET * 2,
-                  radius: ROW_GLOW_RADIUS,
-                },
-        });
+        setGlow({ id: glowRuns, trackId: track.id, kind, on, delayMs });
       };
       if (kind === "next") {
         if (!playNext([track])) {
@@ -315,13 +296,19 @@ export function SwipeableTrackRow({
         void toggle(track);
         AccessibilityInfo.announceForAccessibility("Added to Favorites");
         markPop.set(0);
-        markPop.set(reducedMotion ? 1 : withDelay(MARK_DELAY_MS, withTiming(1, MARK_POP)));
+        markPop.set(
+          reducedMotion
+            ? 1
+            : withDelay(MARK_DELAY_MS, withTiming(1, MARK_POP), MARK_POP.reduceMotion),
+        );
         glowOn("row", COMET_DELAY_MS);
         return;
       }
       if (inFavorites) {
         setActionsMounted(true);
-        if (!fromGesture) slideOut();
+        // On the UI thread, which knows the row's width. The gesture has
+        // already started it.
+        if (!fromGesture) scheduleOnUI(slideOut);
         removalSwiped.set(true);
         removeWithUndo(track);
         AccessibilityInfo.announceForAccessibility("Removed from Favorites. Undo is available.");
@@ -339,8 +326,6 @@ export function SwipeableTrackRow({
       reducedMotion,
       removalSwiped,
       removeWithUndo,
-      rowHeight,
-      rowWidth,
       slideOut,
       toggle,
       track,
@@ -449,14 +434,91 @@ export function SwipeableTrackRow({
     };
   }, [closeRow, isOpen]);
 
-  // ...and the row it was open on goes back.
+  // ...and the row it was open on goes back. Where the row is, the UI thread
+  // knows for sure.
+  const closeLeadSide = useCallback(() => {
+    "worklet";
+    if (offset.get() > 0) settle(0);
+  }, [offset, settle]);
   useEffect(() => {
-    if (!canPlayNext && offset.get() > 0) settle(0);
-  }, [canPlayNext, offset, settle]);
+    if (!canPlayNext) scheduleOnUI(closeLeadSide);
+  }, [canPlayNext, closeLeadSide]);
 
   // The removal strip's motion follows the pending removal, which lives in
-  // context/favorites.ts so it outlasts this cell. A cell showing a
-  // different track starts from where that track is, without animating.
+  // context/favorites.ts so it outlasts this cell. The decisions run on the
+  // UI thread: the row's width and whether a swipe started it (both shared
+  // values) are only up to date there, and a JS write lands there first.
+
+  // A cell showing a different track (or mounting) starts from where that
+  // track is, without animating.
+  const restAt = useCallback(
+    (phase: PendingRemovalPhase | null, height: number) => {
+      "worklet";
+      removalSwiped.set(false);
+      cancelAnimation(offset);
+      cancelAnimation(markPop);
+      armed.set(false);
+      armProgress.set(0);
+      markPop.set(1);
+      offset.set(phase ? -(rowWidth.get() || 1000) : 0);
+      centered.set(phase ? 1 : 0);
+      actionsFade.set(phase ? 0 : 1);
+      slot.set(phase === "closing" ? 0 : phase ? REMOVAL_SLOT_HEIGHT : height);
+      stripShown.set(phase ? 1 : 0);
+    },
+    [actionsFade, armProgress, armed, centered, markPop, offset, removalSwiped, rowWidth, slot, stripShown],
+  );
+
+  // The pending removal moved on for the track this cell shows.
+  const moveRemoval = useCallback(
+    (phase: PendingRemovalPhase | null, height: number, animate: boolean) => {
+      "worklet";
+      const swiped = removalSwiped.get();
+      removalSwiped.set(false);
+      const system = ReduceMotion.System;
+      const slotTiming = { duration: SLOT_MS, easing: EASE_IN_OUT, reduceMotion: system };
+      if (phase === "holding") {
+        if (swiped && animate) {
+          slot.set(withDelay(STRIP_AFTER_MS, withTiming(REMOVAL_SLOT_HEIGHT, slotTiming), system));
+          actionsFade.set(
+            withDelay(STRIP_AFTER_MS, withTiming(0, { duration: 220, reduceMotion: system }), system),
+          );
+          stripShown.set(
+            withDelay(
+              STRIP_AFTER_MS + 60,
+              withTiming(1, { duration: 450, easing: EASE_OUT, reduceMotion: system }),
+              system,
+            ),
+          );
+        } else {
+          offset.set(-(rowWidth.get() || 1000));
+          centered.set(1);
+          slot.set(REMOVAL_SLOT_HEIGHT);
+          actionsFade.set(0);
+          stripShown.set(1);
+        }
+        return;
+      }
+      if (phase === "closing") {
+        slot.set(animate ? withTiming(0, slotTiming) : 0);
+        stripShown.set(animate ? withTiming(0, { duration: 200, reduceMotion: system }) : 0);
+        return;
+      }
+      // Undone, or the DELETE failed and the row is back: the slot opens up
+      // and the row slides back in over the strip.
+      armProgress.set(0);
+      centered.set(0);
+      actionsFade.set(0);
+      actionsFade.set(
+        withDelay(UNDO_SETTLE_MS, withTiming(1, { duration: 0, reduceMotion: system }), system),
+      );
+      slot.set(animate ? withTiming(height, slotTiming) : height);
+      stripShown.set(animate ? withTiming(0, { duration: 200, reduceMotion: system }) : 0);
+      offset.set(animate ? withSpring(0, SETTLE_SPRING) : 0);
+    },
+    [actionsFade, armProgress, centered, offset, removalSwiped, rowWidth, slot, stripShown],
+  );
+
   // Null until the first layout, which (like a recycled cell) starts still.
   const shown = useRef<{ trackId: string | null; removal: PendingRemovalPhase | null }>({
     trackId: null,
@@ -465,70 +527,13 @@ export function SwipeableTrackRow({
   useLayoutEffect(() => {
     const previous = shown.current;
     shown.current = { trackId, removal };
-    const swiped = removalSwiped.get();
-    removalSwiped.set(false);
     if (previous.trackId !== trackId) {
-      cancelAnimation(offset);
-      cancelAnimation(markPop);
-      armed.set(false);
-      armProgress.set(0);
-      markPop.set(1);
-      offset.set(removal ? -(rowWidth.get() || 1000) : 0);
-      centered.set(removal ? 1 : 0);
-      actionsFade.set(removal ? 0 : 1);
-      slot.set(removal === "closing" ? 0 : removal ? REMOVAL_SLOT_HEIGHT : rowHeight);
-      stripShown.set(removal ? 1 : 0);
+      scheduleOnUI(restAt, removal, rowHeight);
       return;
     }
     if (previous.removal === removal) return;
-    const animate = !reducedMotion;
-    const slotTiming = { duration: SLOT_MS, easing: EASE_IN_OUT, reduceMotion: ReduceMotion.System };
-    if (removal === "holding") {
-      if (swiped && animate) {
-        slot.set(withDelay(STRIP_AFTER_MS, withTiming(REMOVAL_SLOT_HEIGHT, slotTiming)));
-        actionsFade.set(withDelay(STRIP_AFTER_MS, withTiming(0, { duration: 220 })));
-        stripShown.set(
-          withDelay(STRIP_AFTER_MS + 60, withTiming(1, { duration: 450, easing: EASE_OUT })),
-        );
-      } else {
-        offset.set(-(rowWidth.get() || 1000));
-        centered.set(1);
-        slot.set(REMOVAL_SLOT_HEIGHT);
-        actionsFade.set(0);
-        stripShown.set(1);
-      }
-      return;
-    }
-    if (removal === "closing") {
-      slot.set(animate ? withTiming(0, slotTiming) : 0);
-      stripShown.set(animate ? withTiming(0, { duration: 200 }) : 0);
-      return;
-    }
-    // Undone, or the DELETE failed and the row is back: the slot opens up
-    // and the row slides back in over the strip.
-    armProgress.set(0);
-    centered.set(0);
-    actionsFade.set(0);
-    actionsFade.set(withDelay(UNDO_SETTLE_MS, withTiming(1, { duration: 0 })));
-    slot.set(animate ? withTiming(rowHeight, slotTiming) : rowHeight);
-    stripShown.set(animate ? withTiming(0, { duration: 200 }) : 0);
-    offset.set(animate ? withSpring(0, SETTLE_SPRING) : 0);
-  }, [
-    actionsFade,
-    armProgress,
-    armed,
-    centered,
-    markPop,
-    offset,
-    reducedMotion,
-    removal,
-    removalSwiped,
-    rowHeight,
-    rowWidth,
-    slot,
-    stripShown,
-    trackId,
-  ]);
+    scheduleOnUI(moveRemoval, removal, rowHeight, !reducedMotion);
+  }, [moveRemoval, reducedMotion, removal, restAt, rowHeight, trackId]);
 
   // After Undo the strip stays a moment, to fade out.
   useEffect(() => {
@@ -542,13 +547,14 @@ export function SwipeableTrackRow({
     setActionsMounted(true);
     const open = (to: number) =>
       withTiming(to, { duration: PEEK_OPEN_MS, easing: EASE_OUT, reduceMotion: ReduceMotion.Never });
-    const back = () => withDelay(PEEK_HOLD_MS, withSpring(0, SETTLE_SPRING));
+    const back = () =>
+      withDelay(PEEK_HOLD_MS, withSpring(0, SETTLE_SPRING), SETTLE_SPRING.reduceMotion);
     offset.set(
       canPlayNext
         ? withSequence(
             open(SWIPE_OPEN_DISTANCE),
             back(),
-            withDelay(PEEK_GAP_MS, open(-SWIPE_OPEN_DISTANCE)),
+            withDelay(PEEK_GAP_MS, open(-SWIPE_OPEN_DISTANCE), ReduceMotion.Never),
             back(),
           )
         : withSequence(open(-SWIPE_OPEN_DISTANCE), back()),
@@ -613,7 +619,7 @@ export function SwipeableTrackRow({
     shownGlow?.on === on ? (
       <CometGlow
         key={shownGlow.id}
-        box={shownGlow.box}
+        outline={on === "strip" ? REMOVAL_STRIP_OUTLINE : ROW_OUTLINE}
         from={shownGlow.kind === "next" ? "left" : "right"}
         color={swipeActionStyle(shownGlow.kind, theme).color}
         lapMs={on === "strip" ? COMET_STRIP_LAP_MS : COMET_LAP_MS}
