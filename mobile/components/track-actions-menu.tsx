@@ -13,7 +13,7 @@ import {
   View,
   type GestureResponderEvent,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useNavigationContainerRef, useRouter } from "expo-router";
 import { Directory, File } from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
@@ -34,6 +34,7 @@ import { usePlayTrack } from "../context/player";
 import { AdaptiveGlass } from "./adaptive-glass";
 import { useTheme } from "../theme/theme";
 import { downloadStreamToFile } from "../lib/track-download";
+import { focusedInTabs } from "../lib/track-info";
 import {
   getOptionalSwiftUI,
   swiftAccessibilityLabel,
@@ -412,6 +413,7 @@ function TrackActionItems({
 
 export function useTrackActionModel(track: TrackListItem) {
   const router = useRouter();
+  const navigation = useNavigationContainerRef();
   const playTrack = usePlayTrack();
   const favorite = useFavorite(track.id);
   const { toggle: toggleFav } = useFavoriteActions();
@@ -462,20 +464,35 @@ export function useTrackActionModel(track: TrackListItem) {
     })();
   }, [router, track]);
 
+  // Track Info and the editor open in the current tab's stack: every tab
+  // carries them, and a group-less href resolves into the tab in front. Over
+  // the tabs (Now Playing) there's no tab in front, so they open in Library.
+  // The state is read on press, so rows don't re-render on each navigation.
+  const inTabs = useCallback(
+    () => focusedInTabs(navigation.isReady() ? navigation.getRootState() : undefined),
+    [navigation],
+  );
+
   const openInfo = useCallback(() => {
+    // The menu on Track Info itself: it's already showing.
+    // The app declares no root param list, so the route is untyped here.
+    const current = (navigation.isReady() ? navigation.getCurrentRoute() : undefined) as
+      | { name: string; params?: { id?: string } }
+      | undefined;
+    if (current?.name === "track/[id]" && current.params?.id === track.id) return;
     router.push({
-      pathname: "/(tabs)/(library)/track/[id]",
+      pathname: inTabs() ? "/(tabs)/track/[id]" : "/(tabs)/(library)/track/[id]",
       params: { id: track.id },
     });
-  }, [router, track.id]);
+  }, [inTabs, navigation, router, track.id]);
 
   // Admin-only: jump to the metadata editor for this track.
   const openEditMetadata = useCallback(() => {
     router.push({
-      pathname: "/(tabs)/(library)/track/edit",
+      pathname: inTabs() ? "/(tabs)/track/edit" : "/(tabs)/(library)/track/edit",
       params: { id: track.id },
     });
-  }, [router, track.id]);
+  }, [inTabs, router, track.id]);
 
   // Admin-only: edit the album this track belongs to — that's where cover
   // art lives, since artwork is shared across an album.

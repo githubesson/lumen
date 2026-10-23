@@ -1,26 +1,62 @@
-import { Fragment } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Fragment, useCallback, useMemo, useState } from "react";
+import { Text, View, useWindowDimensions } from "react-native";
+import Animated, {
+  useAnimatedScrollHandler,
+  useReducedMotion,
+  useSharedValue,
+} from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { useHeaderHeight } from "expo-router/react-navigation";
 import {
   api,
   displayText,
   tidalTrackInfoResult,
+  trackInfoArtistAlbumId,
   trackInfoRows,
   trackInfoTidalId,
   useAuth,
+  type TrackInfoLink,
 } from "@music-library/core";
-import { CoverArt } from "../../../../components/cover-art";
+import { useBottomDockInset } from "../../../../components/dock/dock-context";
 import { EmptyState } from "../../../../components/empty-state";
-import { Card, SectionLabel } from "../../../../components/primitives";
+import { InfoGrid } from "../../../../components/track-info/info-grid";
+import {
+  AlbumLine,
+  CompactMeta,
+  FoldBackdrop,
+  FoldCover,
+  HeroActions,
+  HeroMeta,
+  InlineCover,
+  useMetaFrame,
+} from "../../../../components/track-info/player-hero";
 import { qk } from "../../../../lib/query-keys";
+import { trackInfoHref, trackInfoListItem } from "../../../../lib/track-info";
+import { FOLD, trackInfoFold } from "../../../../lib/track-info-fold";
 import { useTheme, type ThemeTokens } from "../../../../theme/theme";
 
+const FACTS_GAP = 20;
+
+/**
+ * Track Info: the track as Now Playing shows it, folding into the player's
+ * compact row as you scroll, then its credits, release and audio. Names with
+ * a page open it in this tab's stack. Also mounted in the Favorites,
+ * Playlists and Settings stacks, so opening it never changes the tab.
+ */
 export default function TrackInfoScreen() {
   const theme = useTheme();
+  const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { me } = useAuth();
   const userId = me?.id;
+  const headerHeight = useHeaderHeight();
+  const insets = useSafeAreaInsets();
+  const dockInset = useBottomDockInset();
+  const { width, height } = useWindowDimensions();
+  const reducedMotion = useReducedMotion();
 
   const trackQuery = useQuery({
     queryKey: qk.track(userId, id),
@@ -43,109 +79,167 @@ export default function TrackInfoScreen() {
     // Show the stored fields rather than wait on a second slow attempt.
     retry: false,
   });
+  // TIDAL's answer counts only when this visit's fetch got one: a failed
+  // fetch keeps the last answer beside its error, and a paused one (offline)
+  // has none.
+  const tidal = tidalTrackInfoResult(
+    tidalId,
+    tidalQuery.data,
+    tidalQuery.isError ? tidalQuery.error : null,
+  );
+  // An older server sends no TIDAL artist ids; the album's primary artist id
+  // can still link the primary artist. Asked only once TIDAL has answered.
+  const artistAlbumId = tidalQuery.isLoading
+    ? null
+    : trackInfoArtistAlbumId(trackQuery.data, tidal);
+  const albumQuery = useQuery({
+    queryKey: qk.tidalAlbum(userId, artistAlbumId ?? undefined),
+    queryFn: ({ signal }) => api.getTidalAlbum(artistAlbumId!, { signal }),
+    enabled: !!userId && !!artistAlbumId,
+  });
+
+  const [metaFrame, onMetaLayout] = useMetaFrame();
+  const fold = useMemo(
+    () => trackInfoFold(width, headerHeight, reducedMotion, metaFrame),
+    [width, headerHeight, reducedMotion, metaFrame],
+  );
+  const scrollY = useSharedValue(0);
+  const pinnedOnUI = useSharedValue(false);
+  // Which row is in use, for touches and VoiceOver; the motion itself stays
+  // on the UI thread.
+  const [pinned, setPinned] = useState(false);
+  const pinAt = fold.pin;
+  const onScroll = useAnimatedScrollHandler(
+    (event) => {
+      const y = event.contentOffset.y;
+      scrollY.set(y);
+      const next = y >= pinAt;
+      if (next !== pinnedOnUI.get()) {
+        pinnedOnUI.set(next);
+        scheduleOnRN(setPinned, next);
+      }
+    },
+    [pinAt],
+  );
+
+  const t = trackQuery.data;
+  const item = useMemo(() => (t ? trackInfoListItem(t) : null), [t]);
+  const openLink = useCallback(
+    (link: TrackInfoLink) => router.push(trackInfoHref(link)),
+    [router],
+  );
 
   if (trackQuery.isLoading || tidalQuery.isLoading) {
     return <EmptyState fill loading />;
   }
-  if (trackQuery.isError || !trackQuery.data) {
+  if (trackQuery.isError || !t || !item) {
     return <EmptyState fill message="Couldn't load track." />;
   }
 
-  const t = trackQuery.data;
-  // TIDAL's answer counts only when this visit's fetch got one: a failed
-  // fetch keeps the last answer beside its error, and a paused one (offline)
-  // has none.
   const view = trackInfoRows(
     t,
-    tidalTrackInfoResult(
-      tidalId,
-      tidalQuery.data,
-      tidalQuery.isError ? tidalQuery.error : null,
-    ),
+    tidal,
+    albumQuery.data?.id === artistAlbumId ? albumQuery.data : null,
   );
+  const hero = { item, title: displayText(t.title), artists: view.artists };
 
   return (
     <>
-      <Stack.Screen options={{ title: "Track Info" }} />
-      <ScrollView
-        style={{ flex: 1, backgroundColor: theme.color.bg }}
-        contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={{
-          paddingHorizontal: theme.space.lg,
-          paddingVertical: theme.space.xl,
-          alignItems: "center",
-          gap: theme.space.lg,
+      <Stack.Screen
+        options={{
+          title: "Track Info",
+          // The pinned compact row names the track; the bar keeps only back.
+          headerTitle: "",
+          headerShadowVisible: false,
         }}
-      >
-        <CoverArt
-          track={{ id: t.id, album_id: t.album_id, cover_url: t.cover_url, has_cover: t.has_cover }}
-          size={200}
-        />
-        <View style={{ alignItems: "center", gap: 4 }}>
-          <Text
-            style={{
-              fontSize: 20,
-              fontWeight: "700",
-              color: theme.color.fg,
-              textAlign: "center",
-            }}
-            numberOfLines={3}
-          >
-            {displayText(t.title)}
-          </Text>
-          {t.album_title ? (
-            <Text
-              style={{ fontSize: 15, color: theme.color.fgMuted }}
-              numberOfLines={2}
+      />
+      <View style={{ flex: 1, backgroundColor: theme.color.bg }}>
+        <Animated.ScrollView
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          // Offsets start at 0 under the nav bar, which the fold math reads.
+          contentInsetAdjustmentBehavior="never"
+          automaticallyAdjustsScrollIndicatorInsets={false}
+          scrollIndicatorInsets={{
+            top: headerHeight,
+            bottom: insets.bottom + dockInset,
+          }}
+          contentContainerStyle={{
+            paddingTop: headerHeight,
+            paddingBottom: insets.bottom + dockInset + 24,
+            // Room to fold all the way, however few rows there are.
+            minHeight: height + fold.stick,
+          }}
+        >
+          <View style={{ width: fold.column, alignSelf: "center" }}>
+            {fold.reducedMotion ? (
+              <View
+                style={{
+                  paddingTop: FOLD.coverTop,
+                  paddingBottom: FOLD.metaGap,
+                }}
+              >
+                <InlineCover track={item} fold={fold} />
+              </View>
+            ) : (
+              <View style={{ height: fold.spacer }} />
+            )}
+            <HeroMeta
+              track={hero}
+              fold={fold}
+              scrollY={scrollY}
+              hidden={pinned}
+              onOpen={openLink}
+              onLayout={onMetaLayout}
+            />
+            {view.album ? (
+              <AlbumLine
+                album={view.album}
+                year={view.year}
+                fold={fold}
+                scrollY={scrollY}
+                hidden={pinned}
+                onOpen={openLink}
+              />
+            ) : null}
+
+            <View
+              style={{
+                paddingHorizontal: theme.space.lg,
+                paddingTop: 26,
+                gap: FACTS_GAP,
+              }}
             >
-              {displayText(t.album_title)}
-            </Text>
-          ) : null}
-        </View>
+              {view.note ? <Note theme={theme}>{view.note}</Note> : null}
 
-        {view.note ? <Note theme={theme}>{view.note}</Note> : null}
+              {view.sections.map((section) => (
+                <Fragment key={section.key}>
+                  {section.rows.length > 0 ? (
+                    <InfoGrid section={section} onOpen={openLink} />
+                  ) : null}
+                  {section.note ? (
+                    <Note theme={theme} under={section.rows.length > 0}>
+                      {section.note}
+                    </Note>
+                  ) : null}
+                </Fragment>
+              ))}
+            </View>
+          </View>
+        </Animated.ScrollView>
 
-        {view.sections.map((section) => (
-          <Fragment key={section.key}>
-            {section.rows.length > 0 ? (
-              <InfoBlock title={section.label}>
-                {section.rows.map((row) => (
-                  <InfoRow
-                    key={row.label}
-                    label={row.label}
-                    value={row.value}
-                    empty={row.empty}
-                    // Credit lists, comments and copyright lines run long.
-                    lines={section.key === "credits" || row.wide ? 4 : 2}
-                    theme={theme}
-                  />
-                ))}
-              </InfoBlock>
-            ) : null}
-            {section.note ? (
-              <Note theme={theme} under={section.rows.length > 0}>
-                {section.note}
-              </Note>
-            ) : null}
-          </Fragment>
-        ))}
-      </ScrollView>
+        <FoldBackdrop fold={fold} scrollY={scrollY} pinned={pinned} />
+        <FoldCover track={item} fold={fold} scrollY={scrollY} />
+        <CompactMeta
+          track={hero}
+          fold={fold}
+          scrollY={scrollY}
+          pinned={pinned}
+          onOpen={openLink}
+        />
+        <HeroActions track={item} fold={fold} scrollY={scrollY} />
+      </View>
     </>
-  );
-}
-
-function InfoBlock({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <View style={{ width: "100%", gap: 6 }}>
-      <SectionLabel style={{ paddingHorizontal: 4 }}>{title}</SectionLabel>
-      <Card style={{ overflow: "hidden" }}>{children}</Card>
-    </View>
   );
 }
 
@@ -164,55 +258,12 @@ function Note({
       style={{
         alignSelf: "stretch",
         paddingHorizontal: 4,
-        marginTop: under ? -theme.space.sm : 0,
+        marginTop: under ? theme.space.sm - FACTS_GAP : 0,
         fontSize: 13,
         color: theme.color.fgMuted,
       }}
     >
       {children}
     </Text>
-  );
-}
-
-function InfoRow({
-  label,
-  value,
-  empty,
-  theme,
-  lines = 2,
-}: {
-  label: string;
-  value: string;
-  /** The value is a "—" for nothing to show; it's faded. */
-  empty?: boolean;
-  theme: ThemeTokens;
-  lines?: number;
-}) {
-  return (
-    <View
-      style={{
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: theme.color.separator,
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        gap: 10,
-      }}
-    >
-      <Text style={{ color: theme.color.fgMuted, fontSize: 14 }}>{label}</Text>
-      <Text
-        style={{
-          color: empty ? theme.color.fgMuted : theme.color.fg,
-          fontSize: 14,
-          flexShrink: 1,
-          textAlign: "right",
-        }}
-        numberOfLines={lines}
-      >
-        {value}
-      </Text>
-    </View>
   );
 }
