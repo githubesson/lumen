@@ -26,8 +26,10 @@ import {
   AuthProvider,
   libraryChanged,
   setBaseUrl,
+  setFormFetch,
   useAuth,
 } from "@music-library/core";
+import { fetch as reactNativeFetch } from "whatwg-fetch";
 import { PlayerProvider } from "../context/player";
 import { ThemeProvider, useTheme } from "../theme/theme";
 import { invalidateLibrary } from "../lib/query-keys";
@@ -65,6 +67,12 @@ const apiBaseUrl =
 // Point the shared API client at our backend before any React code fires
 // `api.me()`. Module side-effect is safe: imports resolve synchronously.
 setBaseUrl(apiBaseUrl);
+
+// Expo's fetch, the global one since SDK 57, refuses React Native's
+// `{ uri, name, type }` file parts ("Unsupported FormDataPart
+// implementation"). Uploads go through React Native's own fetch instead
+// (whatwg-fetch over its XMLHttpRequest), which reads the files natively.
+if (process.env.EXPO_OS !== "web") setFormFetch(reactNativeFetch);
 
 // How long a persisted page cache stays usable offline. Kept generous so the
 // app still renders after days without a launch; `gcTime` matches so restored
