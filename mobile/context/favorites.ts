@@ -185,9 +185,8 @@ export function usePendingFavoriteRemoval(
 ): PendingRemovalPhase | null {
   const { me } = useAuth();
   const key = favoriteKey(me?.id, trackId);
-  return useSyncExternalStore(subscribePendingRemovals, () =>
-    key ? (pendingRemovals.get(key)?.phase ?? null) : null,
-  );
+  const snapshot = () => (key ? (pendingRemovals.get(key)?.phase ?? null) : null);
+  return useSyncExternalStore(subscribePendingRemovals, snapshot, snapshot);
 }
 
 const NO_PENDING_IDS: ReadonlySet<string> = new Set();
@@ -276,6 +275,13 @@ async function commitPendingRemoval(
   removal.committing = true;
   if (removal.timer) clearTimeout(removal.timer);
   removal.timer = null;
+  // Sent early (the app went to the background, a sign-out): the strip
+  // folds away as when its window runs out, rather than offering an Undo
+  // that's too late.
+  if (removal.phase !== "closing") {
+    removal.phase = "closing";
+    emitPendingRemovals();
+  }
   const queryKey = qk.favorites(userId);
   let started = false;
   const send = () =>
@@ -325,16 +331,21 @@ export function useFavoriteActions() {
     });
   }, [queryClient, userId]);
 
+  /**
+   * Flips `track`'s favorite, optimistically. Resolves once it's settled,
+   * to whether it ran: not without a user, nor while the track's previous
+   * request is still out (see {@link canToggle}).
+   */
   const toggle = useCallback(
-    async (track: TrackListItem) => {
-      if (!userId) return;
+    async (track: TrackListItem): Promise<boolean> => {
+      if (!userId) return false;
       const queryKey = qk.favorites(userId);
       // A removal still waiting on Undo reads as not a favorite, so this
       // toggle means "keep it": cancel the removal, and it stays in place.
-      if (cancelPendingRemoval(favoriteKey(userId, track.id))) return;
+      if (cancelPendingRemoval(favoriteKey(userId, track.id))) return true;
       let started = false;
       try {
-        await runGuarded(`${userId}:${track.id}`, async () => {
+        return await runGuarded(`${userId}:${track.id}`, async () => {
           started = true;
           await queryClient.cancelQueries({ queryKey, exact: true });
           const current = queryClient.getQueryData<TrackListItem[]>(queryKey) ?? [];
@@ -364,15 +375,30 @@ export function useFavoriteActions() {
   );
 
   /**
+   * Whether {@link toggle} would run for `track` now, known at once: a swipe
+   * confirms on the spot, not after the request. False without a user or
+   * while the track's previous request is still out (the guard drops it).
+   */
+  const canToggle = useCallback(
+    (track: TrackListItem) => {
+      const key = favoriteKey(userId, track.id);
+      if (!key) return false;
+      return pendingRemovals.has(key) || !inFlight.has(key);
+    },
+    [userId],
+  );
+
+  /**
    * Removes a favorite with Undo (the Favorites list's swipe): it reads as
    * removed at once, holds for {@link FAVORITE_UNDO_MS}, folds away for
    * {@link FAVORITE_REMOVAL_CLOSE_MS}, and only then leaves the cache and the
-   * server. Leaving the app sends it straight away.
+   * server. Leaving the app sends it straight away. Returns whether it
+   * started one (not without a user, nor twice).
    */
   const removeWithUndo = useCallback(
-    (track: TrackListItem) => {
+    (track: TrackListItem): boolean => {
       const key = favoriteKey(userId, track.id);
-      if (!userId || !key || pendingRemovals.has(key)) return;
+      if (!userId || !key || pendingRemovals.has(key)) return false;
       let sending: Promise<void> | null = null;
       const removal: PendingRemoval = {
         phase: "holding",
@@ -391,6 +417,7 @@ export function useFavoriteActions() {
       pendingRemovals.set(key, removal);
       watchAppState();
       emitPendingRemovals();
+      return true;
     },
     [queryClient, userId],
   );
@@ -401,5 +428,5 @@ export function useFavoriteActions() {
     [userId],
   );
 
-  return { refresh, toggle, removeWithUndo, undoRemoval };
+  return { refresh, toggle, canToggle, removeWithUndo, undoRemoval };
 }
