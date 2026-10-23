@@ -482,8 +482,15 @@ export const api = {
       (response) => response.arrayBuffer(),
     ),
 
-  listPlaylists: (options: RequestOptions = {}) =>
-    request<Playlist[]>(`/api/playlists`, options),
+  /**
+   * Every playlist the user owns or collaborates on. With `trackId`, each
+   * also says whether it already holds that track (`contains_track`); an
+   * older server ignores it and leaves the field out.
+   */
+  listPlaylists: (options: RequestOptions & { trackId?: string } = {}) =>
+    request<Playlist[]>(`/api/playlists${buildQuery({ track_id: options.trackId })}`, {
+      signal: options.signal,
+    }),
   getPlaylist: (id: string, options: RequestOptions = {}) =>
     request<Playlist>(`/api/playlists/${pathID(id)}`, options),
   createPlaylist: (input: {
@@ -797,6 +804,9 @@ export interface Playlist {
   cover?: PlaylistCover;
   /** The owner's username. Only on `listPlaylists`. */
   owner_name?: string;
+  /** Whether it already holds the track `listPlaylists` was asked about.
+   *  Absent without `trackId`, and from servers that predate it. */
+  contains_track?: boolean;
 }
 
 /** Pass to `trackCoverUrl` as `{ id: track_id, album_id, cover_url }`. */

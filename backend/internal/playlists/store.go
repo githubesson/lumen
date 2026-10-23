@@ -124,6 +124,9 @@ type PlaylistForUser struct {
 	// Cover is the track whose art stands for the playlist, nil when it has
 	// no tracks the user can see.
 	Cover *PlaylistCover
+	// ContainsTrack reports whether the playlist holds the track ListForUser
+	// was asked about; false when it was asked about none.
+	ContainsTrack bool
 }
 
 // PlaylistCover picks the same track as the playlist page's header: the
@@ -136,13 +139,18 @@ type PlaylistCover struct {
 
 // ListForUser returns playlists and roles for the user who owns them or is an accepted collaborator on.
 // Private playlists are owner-only; collaborator access only applies while the
-// playlist is collaborative.
-func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]PlaylistForUser, error) {
+// playlist is collaborative. With containing set, each row also says whether
+// the playlist holds that track row (ContainsTrack), in the same query.
+func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID, containing *uuid.UUID) ([]PlaylistForUser, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT p.id, p.owner_id, p.name, COALESCE(p.description, ''), p.visibility, p.is_smart, p.tidal_auto_download, COALESCE(p.cover_art_path, ''), p.created_at, p.updated_at,
 		       CASE WHEN p.owner_id = $1 THEN 'owner' ELSE pc.role END,
 		       COALESCE(owner.username, ''),
-		       cover.id, cover.album_id, cover.cover_url
+		       cover.id, cover.album_id, cover.cover_url,
+		       $3::uuid IS NOT NULL AND EXISTS (
+		           SELECT 1 FROM playlist_tracks held
+		           WHERE held.playlist_id = p.id AND held.track_id = $3::uuid
+		       )
 		FROM playlists p
 		LEFT JOIN users owner ON owner.id = p.owner_id
 		LEFT JOIN playlist_collaborators pc
@@ -161,7 +169,7 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]PlaylistFo
 		) cover ON TRUE
 		WHERE p.owner_id = $1 OR pc.user_id IS NOT NULL
 		ORDER BY p.updated_at DESC
-		LIMIT $2`, userID, maxPlaylistRows)
+		LIMIT $2`, userID, maxPlaylistRows, containing)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +180,7 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]PlaylistFo
 		var coverID *uuid.UUID
 		var coverAlbumID *uuid.UUID
 		var coverURL *string
-		if err := rows.Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.TIDALAutoDownload, &p.CoverArtPath, &p.CreatedAt, &p.UpdatedAt, &p.EffectiveRole, &p.OwnerName, &coverID, &coverAlbumID, &coverURL); err != nil {
+		if err := rows.Scan(&p.ID, &p.OwnerID, &p.Name, &p.Description, &p.Visibility, &p.IsSmart, &p.TIDALAutoDownload, &p.CoverArtPath, &p.CreatedAt, &p.UpdatedAt, &p.EffectiveRole, &p.OwnerName, &coverID, &coverAlbumID, &coverURL, &p.ContainsTrack); err != nil {
 			return nil, err
 		}
 		if coverID != nil {

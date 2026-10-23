@@ -91,6 +91,32 @@ describe("complete favorites", () => {
   });
 });
 
+describe("playlist list", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("asks which playlists hold a track only when given one", async () => {
+    const fetchMock = vi.fn(async (_path: string) => Response.json([]));
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    await api.listPlaylists({ signal: controller.signal });
+    await api.listPlaylists({ trackId: "tidal:123" });
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+      "/api/playlists",
+      "/api/playlists?track_id=tidal%3A123",
+    ]);
+  });
+
+  it("passes contains_track through, and leaves it out when the server does", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json([
+      { id: "p1", name: "late night", contains_track: true },
+      { id: "p2", name: "gym", contains_track: false },
+      { id: "p3", name: "old server" },
+    ])));
+    const playlists = await api.listPlaylists({ trackId: "t1" });
+    expect(playlists.map((playlist) => playlist.contains_track)).toEqual([true, false, undefined]);
+  });
+});
+
 describe("share link parsing", () => {
   afterEach(() => setBaseUrl(""));
 

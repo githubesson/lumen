@@ -57,6 +57,10 @@ type playlistResp struct {
 	// OwnerName is the owner's username, also only on the list: the track
 	// menu names the owner of a playlist someone else shared.
 	OwnerName string `json:"owner_name,omitempty"`
+	// ContainsTrack is only on a list asked about a track (?track_id=):
+	// whether the playlist already holds it, so the add-to-playlist picker
+	// can mark those.
+	ContainsTrack *bool `json:"contains_track,omitempty"`
 }
 
 type playlistCoverResp struct {
@@ -130,7 +134,11 @@ func (h *Playlists) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ps, err := h.Store.ListForUser(r.Context(), u.ID)
+	containing, ok := h.listedTrack(w, r, u.ID)
+	if !ok {
+		return
+	}
+	ps, err := h.Store.ListForUser(r.Context(), u.ID, containing)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -140,9 +148,33 @@ func (h *Playlists) List(w http.ResponseWriter, r *http.Request) {
 		resp := toPlaylistResp(&p.Playlist, p.EffectiveRole)
 		resp.Cover = toPlaylistCoverResp(p.Cover)
 		resp.OwnerName = p.OwnerName
+		if containing != nil {
+			resp.ContainsTrack = &p.ContainsTrack
+		}
 		out = append(out, resp)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// listedTrack reads the list's optional track_id: the track row whose
+// playlists the response marks with contains_track, or nil when none was
+// asked about. It resolves the id the way AddTracks does, without creating a
+// row for a TIDAL track: one that isn't in the library yet, like a track the
+// viewer can't see, is in no playlist, so it resolves to uuid.Nil.
+func (h *Playlists) listedTrack(w http.ResponseWriter, r *http.Request, viewer uuid.UUID) (*uuid.UUID, bool) {
+	raw := r.URL.Query().Get("track_id")
+	if raw == "" {
+		return nil, true
+	}
+	id, _, err := resolveTrackEntry(r.Context(), h.Library, h.TIDAL, viewer, raw, false)
+	if errors.Is(err, library.ErrNotFound) {
+		id, err = uuid.Nil, nil
+	}
+	if err != nil {
+		writeTrackResolveError(w, err)
+		return nil, false
+	}
+	return &id, true
 }
 
 func (h *Playlists) Get(w http.ResponseWriter, r *http.Request) {
