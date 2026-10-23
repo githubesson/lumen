@@ -225,6 +225,24 @@ describe("auth transitions", () => {
     expect(result.current.status).toBe("guest");
   });
 
+  it("runs beforeLogout while the session still works, and signs out even if it fails", async () => {
+    const calls: string[] = [];
+    h.logout.mockImplementation(async () => { calls.push("logout"); });
+    const beforeLogout = vi.fn(async () => {
+      calls.push("before");
+      throw new Error("offline");
+    });
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <AuthProvider sessionCache={storage} beforeLogout={beforeLogout}>{children}</AuthProvider>
+      ),
+    });
+    await act(async () => {});
+    await act(async () => result.current.logout());
+    expect(calls).toEqual(["before", "logout"]);
+    expect(result.current.status).toBe("guest");
+  });
+
   it("keeps the current identity if neither storage nor server can complete logout", async () => {
     const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
     await act(async () => {});

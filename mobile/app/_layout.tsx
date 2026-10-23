@@ -30,6 +30,7 @@ import {
   useAuth,
 } from "@music-library/core";
 import { PlayerProvider } from "../context/player";
+import { flushPendingFavoriteRemovals } from "../context/favorites";
 import { ThemeProvider, useTheme } from "../theme/theme";
 import { invalidateLibrary } from "../lib/query-keys";
 import { DownloadsProvider } from "../lib/downloads";
@@ -143,7 +144,13 @@ export default function RootLayout() {
       >
         <ThemeProvider>
           <ThemedNavigation>
-            <AuthProvider sessionCache={asyncStorageAdapter} clearSession={clearSessionCookies}>
+            <AuthProvider
+              sessionCache={asyncStorageAdapter}
+              clearSession={clearSessionCookies}
+              // Favorites swiped away still wait on Undo: send them while the
+              // session lasts, before the account switch clears the cache.
+              beforeLogout={flushPendingFavoriteRemovals}
+            >
               <AccountScopedProviders>
                 <AuthGate />
                 <ThemedStatusBar />
