@@ -72,9 +72,10 @@ function DownloadsStack({
         : `On ${LOCAL_DEVICE_PHRASE}`
       : "Download a playlist to play it offline";
   const accessibilityLabel = subtitle ? `${title}, ${subtitle}` : title;
-  const content = (
+  // The fan's rings take the row's colour, which a press darkens.
+  const content = (background: string) => (
     <>
-      <DownloadCoverFan summary={summary} size={48} ringColor={theme.color.bgElev1} />
+      <DownloadCoverFan summary={summary} size={48} ringColor={background} />
       <View style={{ flex: 1, gap: 2 }}>
         <Text style={{ color: theme.color.fg, fontSize: 17, fontWeight: "600" }}>
           {title}
@@ -88,7 +89,7 @@ function DownloadsStack({
   if (!ready || count === 0) {
     return (
       <View accessible accessibilityLabel={accessibilityLabel} style={styles.stack}>
-        {content}
+        {content(theme.color.bgElev1)}
       </View>
     );
   }
@@ -106,8 +107,12 @@ function DownloadsStack({
         { backgroundColor: pressed ? theme.color.bgElev2 : "transparent" },
       ]}
     >
-      {content}
-      <SymbolView name="chevron.right" size={14} tintColor={theme.color.fgMuted} />
+      {({ pressed }) => (
+        <>
+          {content(pressed ? theme.color.bgElev2 : theme.color.bgElev1)}
+          <SymbolView name="chevron.right" size={14} tintColor={theme.color.fgMuted} />
+        </>
+      )}
     </Pressable>
   );
 }
