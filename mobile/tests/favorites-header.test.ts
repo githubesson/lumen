@@ -9,6 +9,7 @@ import {
   listSummary,
   maxScrollOffset,
   owedScrollStep,
+  planSwitchScroll,
   smoothstep,
   switchPlacement,
   switchScrollTarget,
@@ -217,5 +218,60 @@ describe("owed scrolls", () => {
   it("drop it for an empty or short list, which shows its header expanded", () => {
     expect(owedScrollStep(148, true, maxScrollOffset(400, 852, topInset))).toBe("drop");
     expect(owedScrollStep(148, true, 147)).toBe("drop");
+  });
+});
+
+describe("planSwitchScroll", () => {
+  const collapseAt = 148;
+  const base = { collapseAt, loaded: true, maxOffset: 5000 } as const;
+
+  it("scrolls a list that's ready straight to the collapsed header", () => {
+    expect(
+      planSwitchScroll({ ...base, next: "recent", fromOffset: 600, toOffset: 0 }),
+    ).toEqual({ scrollTo: collapseAt, owed: null });
+  });
+
+  it("owes the scroll to a list whose rows aren't there yet", () => {
+    expect(
+      planSwitchScroll({ ...base, next: "recent", fromOffset: 600, toOffset: 0, loaded: false }),
+    ).toEqual({ scrollTo: null, owed: { list: "recent", target: collapseAt } });
+    // not mounted yet: it mounts at rest
+    expect(
+      planSwitchScroll({ ...base, next: "recent", fromOffset: 600, toOffset: null, maxOffset: null }),
+    ).toEqual({ scrollTo: null, owed: { list: "recent", target: collapseAt } });
+  });
+
+  it("neither scrolls nor owes for a list too short to collapse", () => {
+    expect(
+      planSwitchScroll({ ...base, next: "favorites", fromOffset: 600, toOffset: 0, maxOffset: 59 }),
+    ).toEqual({ scrollTo: null, owed: null });
+  });
+
+  it("owes nothing switching back from a list still waiting on its rows", () => {
+    // Favorites collapsed; Recent opened before its rows landed, so it's owed
+    // the collapse. Back to Favorites: the plan owes nothing, and since the
+    // screen replaces its one owed scroll with the plan's, Recent's goes too
+    // and it can't move out of sight when its rows land.
+    const toRecent = planSwitchScroll({
+      ...base,
+      next: "recent",
+      fromOffset: 600,
+      toOffset: 0,
+      loaded: false,
+    });
+    expect(toRecent.owed).toEqual({ list: "recent", target: collapseAt });
+    const backToFavorites = planSwitchScroll({
+      ...base,
+      next: "favorites",
+      fromOffset: 0,
+      toOffset: 600,
+    });
+    expect(backToFavorites).toEqual({ scrollTo: null, owed: null });
+  });
+
+  it("leaves a list where it was when switching from the expanded header", () => {
+    expect(
+      planSwitchScroll({ ...base, next: "recent", fromOffset: 0, toOffset: 0, loaded: false }),
+    ).toEqual({ scrollTo: null, owed: null });
   });
 });

@@ -233,3 +233,40 @@ export function owedScrollStep(
   if (!loaded || maxOffset == null) return "wait";
   return maxOffset >= target ? "scroll" : "drop";
 }
+
+/** A scroll a switch owes the list it showed; only that list can owe one. */
+export interface OwedScroll {
+  list: FavoritesMode;
+  target: number;
+}
+
+/**
+ * What switching to `next` does with that list's scroll: scroll it now
+ * (`scrollTo`), owe it until its rows are there (`owed`), or neither. The
+ * owed scroll replaces any earlier one, which was owed to the list being left
+ * (or to this one, the last time it showed): a list out of sight keeps its
+ * own position.
+ */
+export function planSwitchScroll({
+  next,
+  fromOffset,
+  toOffset,
+  collapseAt,
+  loaded,
+  maxOffset,
+}: {
+  next: FavoritesMode;
+  fromOffset: number;
+  /** The list's offset, or null while it isn't mounted (it mounts at rest). */
+  toOffset: number | null;
+  collapseAt: number;
+  loaded: boolean;
+  maxOffset: number | null;
+}): { scrollTo: number | null; owed: OwedScroll | null } {
+  const target = switchScrollTarget(fromOffset, toOffset ?? 0, collapseAt);
+  if (target == null) return { scrollTo: null, owed: null };
+  const step = toOffset == null ? "wait" : owedScrollStep(target, loaded, maxOffset);
+  if (step === "scroll") return { scrollTo: target, owed: null };
+  if (step === "wait") return { scrollTo: null, owed: { list: next, target } };
+  return { scrollTo: null, owed: null };
+}
