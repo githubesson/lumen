@@ -9,6 +9,7 @@ import {
   probeStreamUrl,
   resolveCoverUrl,
   setBaseUrl,
+  setFormFetch,
   setUnauthorizedHandler,
   trackSharePreviewVideoUrl,
 } from "../src/api";
@@ -389,6 +390,31 @@ describe("request deadlines", () => {
   it("returns the Replay image bytes", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "image/png" } })));
     expect(new Uint8Array(await api.getReplayImage())).toEqual(new Uint8Array([1, 2, 3]));
+  });
+});
+
+describe("form upload fetch", () => {
+  afterEach(() => {
+    setFormFetch(null);
+    vi.unstubAllGlobals();
+  });
+
+  it("sends multipart uploads through the form fetch and the rest globally", async () => {
+    const globalFetch = vi.fn(async () => Response.json({}));
+    const formFetch = vi.fn(async () => Response.json({ id: "a1" }));
+    vi.stubGlobal("fetch", globalFetch);
+    setFormFetch(formFetch);
+
+    await api.setAlbumCover("a1", { uri: "file:///cover.jpg", name: "cover.jpg", type: "image/jpeg" });
+    expect(formFetch).toHaveBeenCalledWith(
+      "/api/albums/a1/cover",
+      expect.objectContaining({ method: "PUT", body: expect.any(FormData), credentials: "include" }),
+    );
+    expect(globalFetch).not.toHaveBeenCalled();
+
+    await api.removeAlbumCover("a1");
+    expect(globalFetch).toHaveBeenCalledTimes(1);
+    expect(formFetch).toHaveBeenCalledTimes(1);
   });
 });
 

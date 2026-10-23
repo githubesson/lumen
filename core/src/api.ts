@@ -33,6 +33,7 @@ export {
   getBaseUrl,
   isApiOrigin,
   setBaseUrl,
+  setFormFetch,
   setUnauthorizedHandler,
 } from "./api-transport";
 export * from "./api-media";
