@@ -12,7 +12,7 @@ export type OtaStatus =
   | { kind: "available" }
   | { kind: "error" }
   | { kind: "current"; checkedAt: Date }
-  /** Nothing checked since launch, so nothing to claim. */
+  /** Nothing checked since launch, so nothing to claim: the row offers a check. */
   | { kind: "unknown" };
 
 export interface OtaState {
@@ -37,7 +37,7 @@ export function otaStatus(state: OtaState): OtaStatus {
   return { kind: "unknown" };
 }
 
-/** The row's trailing text for a status; empty when there's nothing to say. */
+/** The row's trailing text for a status. */
 export function otaStatusLabel(status: OtaStatus): string {
   switch (status.kind) {
     case "ready":
@@ -53,6 +53,6 @@ export function otaStatusLabel(status: OtaStatus): string {
     case "current":
       return "Up to date";
     case "unknown":
-      return "";
+      return "Check for updates";
   }
 }

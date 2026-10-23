@@ -18,10 +18,10 @@ describe("otaStatus", () => {
     expect(otaStatusLabel(status)).toBe("Up to date");
   });
 
-  it("claims nothing before any check", () => {
+  it("claims nothing before any check, and offers one", () => {
     const status = otaStatus(idle);
     expect(status.kind).toBe("unknown");
-    expect(otaStatusLabel(status)).toBe("");
+    expect(otaStatusLabel(status)).toBe("Check for updates");
   });
 
   it("puts a downloaded update first, whatever else is going on", () => {

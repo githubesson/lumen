@@ -9,16 +9,19 @@ import {
 import Constants from "expo-constants";
 import * as Haptics from "expo-haptics";
 import * as Updates from "expo-updates";
+import { SymbolView } from "expo-symbols";
 import { SETTINGS_INSET } from "./settings/settings-card";
 import { otaStatus, otaStatusLabel, type OtaStatus } from "../lib/settings/ota-status";
 import { useTheme, type ThemeTokens } from "../theme/theme";
 
 /**
  * Rows for the settings Updates card: one "Lumen <version>" row with the
- * over-the-air status, which a tap opens onto the build details (which OTA
- * bundle is actually running) and the manual check that downloads one.
- * An update that's downloaded or waiting shows as the exception: a badge on
- * the row and its action below, without opening anything.
+ * over-the-air status and a disclosure chevron, which a tap opens onto the
+ * build details (which OTA bundle is actually running) and the manual check
+ * that downloads one. Before anything has been checked the status reads
+ * "Check for updates", and that tap runs the check as it opens. An update
+ * that's downloaded or waiting shows as the exception: a badge on the row
+ * and its action below, without opening anything.
  *
  * `expo-updates` is inert outside release builds (`Updates.isEnabled` is false
  * in the dev client), where every field below is undefined — so that case gets
@@ -88,17 +91,31 @@ export function OtaUpdateRows() {
   const statusLabel = otaStatusLabel(status);
   // A downloaded or announced update keeps its action in view.
   const waiting = isUpdatePending || isUpdateAvailable;
+  const checkOffered = status.kind === "unknown";
 
   return (
     <>
       <Pressable
         onPress={() => {
+          // Nothing checked yet: the row's "Check for updates" does just that
+          // (with its own haptic), and opens to show how it goes.
+          if (!expanded && checkOffered) {
+            setExpanded(true);
+            void check();
+            return;
+          }
           void Haptics.selectionAsync();
           setExpanded((open) => !open);
         }}
         accessibilityRole="button"
-        accessibilityLabel={statusLabel ? `${title}, ${statusLabel}` : title}
-        accessibilityHint={expanded ? "Hides the build details." : "Shows the build details."}
+        accessibilityLabel={`${title}, ${statusLabel}`}
+        accessibilityHint={
+          expanded
+            ? "Hides the build details."
+            : checkOffered
+              ? "Checks for an update and shows the build details."
+              : "Shows the build details."
+        }
         accessibilityState={{ expanded }}
         style={({ pressed }) => [
           styles.row,
@@ -110,7 +127,15 @@ export function OtaUpdateRows() {
         ]}
       >
         <Text style={{ color: theme.color.fg, fontSize: 16 }}>{title}</Text>
-        <StatusTrailing status={status} label={statusLabel} theme={theme} />
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1 }}>
+          <StatusTrailing status={status} label={statusLabel} theme={theme} />
+          <SymbolView
+            name={expanded ? "chevron.up" : "chevron.down"}
+            size={12}
+            weight="semibold"
+            tintColor={theme.color.fgMuted}
+          />
+        </View>
       </Pressable>
 
       {expanded ? (
@@ -210,7 +235,7 @@ export function OtaUpdateRows() {
   );
 }
 
-/** The row's status: a badge for a ready update, a spinner while busy, else a word. */
+/** The row's status: a badge for a ready update, a spinner while busy, else a word (an accent one for an action). */
 function StatusTrailing({
   status,
   label,
@@ -220,7 +245,6 @@ function StatusTrailing({
   label: string;
   theme: ThemeTokens;
 }) {
-  if (!label) return null;
   if (status.kind === "ready") {
     return (
       <View
@@ -240,7 +264,7 @@ function StatusTrailing({
   }
   const busy = status.kind === "checking" || status.kind === "downloading";
   const color =
-    status.kind === "available"
+    status.kind === "available" || status.kind === "unknown"
       ? theme.color.accent
       : status.kind === "error"
         ? theme.color.danger
