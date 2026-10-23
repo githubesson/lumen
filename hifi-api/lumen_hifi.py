@@ -771,6 +771,18 @@ async def get_lumen_artist(id: int):
     }
 
 
+def _tidal_artist_id(value: Any) -> str | None:
+    """A credit contributor's TIDAL artist id as a string, or None when it
+    has none (not a TIDAL artist) or one TIDAL could never have issued."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value) if value > 0 else None
+    if isinstance(value, str) and value.isascii() and value.isdigit() and value.strip("0"):
+        return value
+    return None
+
+
 @app.get("/lumen/track")
 async def get_lumen_track(id: int):
     """One track's catalog details for Lumen's track info view.
@@ -811,9 +823,21 @@ async def get_lumen_track(id: int):
             names = [c.get("name") if isinstance(c, dict) else None for c in contributors]
             if not all(isinstance(name, str) for name in names):
                 raise ValueError("Invalid TIDAL track credits")
-            names = [name.strip() for name in names if name.strip()]
-            if role.strip() and names:
-                credits.append({"type": role.strip(), "names": names})
+            # A contributor who is a TIDAL artist carries their artist id, so
+            # Lumen can link the name. `names` stays for older backends.
+            people = []
+            for contributor, name in zip(contributors, names):
+                if not name.strip():
+                    continue
+                person = {"name": name.strip()}
+                artist_id = _tidal_artist_id(contributor.get("id"))
+                if artist_id:
+                    person["id"] = artist_id
+                people.append(person)
+            if role.strip() and people:
+                credits.append(
+                    {"type": role.strip(), "names": [p["name"] for p in people], "contributors": people}
+                )
         return credits
 
     async def fetch_album(album_id):

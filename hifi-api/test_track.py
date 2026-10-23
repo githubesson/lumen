@@ -72,8 +72,15 @@ class TrackTests(unittest.IsolatedAsyncioTestCase):
             {
                 "track": self.responses[TRACK_URL],
                 "album": {"releaseDate": "2023-03-17"},
-                # Names are trimmed and roles without anyone are dropped.
-                "credits": [{"type": "Producer", "names": ["Maker", "Other"]}],
+                # Names are trimmed and roles without anyone are dropped; a
+                # contributor who is a TIDAL artist keeps their artist id.
+                "credits": [
+                    {
+                        "type": "Producer",
+                        "names": ["Maker", "Other"],
+                        "contributors": [{"name": "Maker", "id": "1"}, {"name": "Other"}],
+                    }
+                ],
                 "failed_sections": [],
                 "refused_sections": {},
             },
@@ -121,6 +128,48 @@ class TrackTests(unittest.IsolatedAsyncioTestCase):
                     self.responses[url] = original
                     self.assertEqual(response.status_code, 200)
                     self.assertEqual(response.json()["failed_sections"], [section])
+
+    async def test_contributor_ids_are_kept_only_when_tidal_could_have_issued_them(self):
+        self.responses[CREDITS_URL] = [
+            {
+                "type": "Producer",
+                "contributors": [
+                    {"id": 24419001, "name": "Number"},
+                    {"id": "18839152", "name": "Text"},
+                    {"id": 0, "name": "Zero"},
+                    {"id": -4, "name": "Negative"},
+                    {"id": True, "name": "Flag"},
+                    {"id": "12a", "name": "Letters"},
+                    {"id": "000", "name": "Zeros"},
+                    {"id": "١٢", "name": "Arabic digits"},
+                    {"id": None, "name": "Null"},
+                    {"id": 7, "name": "  "},
+                    {"name": "Missing"},
+                ],
+            }
+        ]
+        response = await self.client.get("/lumen/track?id=123")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        # A bad id is only a name without a link, never a failed section.
+        self.assertEqual(data["failed_sections"], [])
+        [credit] = data["credits"]
+        self.assertEqual(
+            credit["contributors"],
+            [
+                {"name": "Number", "id": "24419001"},
+                {"name": "Text", "id": "18839152"},
+                {"name": "Zero"},
+                {"name": "Negative"},
+                {"name": "Flag"},
+                {"name": "Letters"},
+                {"name": "Zeros"},
+                {"name": "Arabic digits"},
+                {"name": "Null"},
+                {"name": "Missing"},
+            ],
+        )
+        self.assertEqual(credit["names"], [c["name"] for c in credit["contributors"]])
 
     async def test_empty_credits_are_not_a_failure(self):
         self.responses[CREDITS_URL] = []
