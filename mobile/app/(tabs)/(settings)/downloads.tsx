@@ -1,12 +1,10 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import * as Haptics from "expo-haptics";
 import {
-  SORT_DEFAULT_ASC,
   compareSortableTracks,
   sortForDisplay,
-  type SortKey,
   type TrackListItem,
 } from "@music-library/core";
 import {
@@ -29,6 +27,7 @@ import { useDownloadedTracks } from "../../../lib/downloads/downloaded-tracks";
 import { LOCAL_DEVICE_PHRASE } from "../../../lib/device-name";
 import { formatBytes, pluralize } from "../../../lib/format";
 import { listPlaybackQueue, usePlayQueue } from "../../../lib/use-play-queue";
+import { useTrackSort } from "../../../lib/use-track-sort";
 import { useTheme } from "../../../theme/theme";
 
 /** Cap on one hero cover: four fanned out come to about 1.9 times this. */
@@ -58,8 +57,7 @@ export default function DownloadsScreen() {
   const { width } = useWindowDimensions();
   // The fan spans about as much as the playlist page's artwork.
   const heroCover = Math.min(Math.round(width * 0.4), HERO_COVER_MAX);
-  const [sortKey, setSortKey] = useState<SortKey>("custom");
-  const [sortAsc, setSortAsc] = useState(SORT_DEFAULT_ASC.custom);
+  const { sortKey, sortAsc, onSelectSort, onToggleSortDirection } = useTrackSort();
 
   // Display-only, like Favorites' sort; it resets when the screen closes.
   const tracks = useMemo(
@@ -70,15 +68,6 @@ export default function DownloadsScreen() {
     [downloaded.tracks, sortKey, sortAsc],
   );
   const onTrackPress = usePlayQueue(tracks);
-
-  const onSelectSort = useCallback((key: SortKey) => {
-    void Haptics.selectionAsync();
-    setSortKey((prevKey) => {
-      if (prevKey !== key) setSortAsc(SORT_DEFAULT_ASC[key]);
-      return key;
-    });
-  }, []);
-  const onToggleSortDirection = useCallback(() => setSortAsc((asc) => !asc), []);
 
   const onPlay = useCallback(() => {
     const startable = listPlaybackQueue(tracks);
