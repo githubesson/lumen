@@ -1034,6 +1034,14 @@ describe("usePlayerCore playNext", () => {
     expect(adapter.load).toHaveBeenCalledWith("test://stream/x");
   });
 
+  it("treats the rest of a first pick as a run when nothing was loaded", async () => {
+    const { result } = await setup();
+    act(() => result.current.controls.playNext([t("x"), t("y")]));
+    act(() => result.current.controls.playNext([t("z")]));
+    expect(ids(result.current.state.queue)).toEqual(["x", "y", "z"]);
+    expect(result.current.state.current?.id).toBe("x");
+  });
+
   it("stays next when shuffle is turned off", async () => {
     const { result } = await setup();
     act(() => result.current.controls.play(t("b"), queue4(), { shuffle: true }));

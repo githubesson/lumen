@@ -380,7 +380,13 @@ export function usePlayerCore({
       });
       if (!picked.length) return false;
       if (!playing || !state.queue.length) {
-        return playRef.current(picked[0], picked) !== false;
+        if (playRef.current(picked[0], picked) === false) return false;
+        // The rest are a run behind the first, so a later pick goes after them.
+        playNextRunRef.current = {
+          currentId: picked[0].id,
+          ids: new Set(picked.slice(1).map((track) => track.id)),
+        };
+        return true;
       }
       const previousRun = playNextRunRef.current;
       const run =

@@ -64,7 +64,8 @@ const ICON_POP_SPRING = {
  * offset, inset 8 pt from the edge and the row. Its icon and label sit by the
  * screen edge until the swipe passes the commit line, then jump to the row's
  * edge and the icon pops. Too narrow for the label, it shows the icon alone.
- * Left open, it's a button for the same action.
+ * Left open, it's a button for the same action. Faded out (behind the Undo
+ * strip, or until a restored row is back) or `disabled`, it takes no touches.
  */
 export function SwipeAction({
   side,
@@ -76,6 +77,7 @@ export function SwipeAction({
   armProgress,
   centered,
   fade,
+  disabled = false,
   onPress,
 }: {
   side: "lead" | "trail";
@@ -91,6 +93,7 @@ export function SwipeAction({
   /** 0 to 1 toward centred content, as a removed row leaves. */
   centered: SharedValue<number>;
   fade: SharedValue<number>;
+  disabled?: boolean;
   onPress: () => void;
 }) {
   const { label, icon, color } = swipeActionStyle(kind, theme);
@@ -118,7 +121,13 @@ export function SwipeAction({
   const capsuleStyle = useAnimatedStyle(() => {
     const dx = offset.get();
     const mine = side === "lead" ? dx > 0 : dx < 0;
-    return { width: mine ? actionWidth(dx) : 0, opacity: fade.get() };
+    const shown = fade.get();
+    return {
+      width: mine ? actionWidth(dx) : 0,
+      opacity: shown,
+      // Opacity alone leaves it pressable where it peeks out around the strip.
+      pointerEvents: shown < 1 ? "none" : "box-none",
+    };
   });
   const contentStyle = useAnimatedStyle(() => ({
     transform: [
@@ -140,7 +149,6 @@ export function SwipeAction({
 
   return (
     <Animated.View
-      pointerEvents="box-none"
       // The row's accessibility actions stand in for these.
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
@@ -154,7 +162,7 @@ export function SwipeAction({
         capsuleStyle,
       ]}
     >
-      <Pressable onPress={onPress} style={StyleSheet.absoluteFill}>
+      <Pressable onPress={onPress} disabled={disabled} style={StyleSheet.absoluteFill}>
         {({ pressed }) => (
           <>
             <Animated.View style={[styles.track, contentStyle]}>

@@ -639,6 +639,8 @@ export function SwipeableTrackRow({
     armProgress,
     centered,
     fade: actionsFade,
+    // Not while the Undo strip holds the slot.
+    disabled: !swipeable,
   };
 
   return (
