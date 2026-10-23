@@ -19,6 +19,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
+import { useFocusEffect } from "expo-router";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   cancelAnimation,
@@ -216,8 +217,17 @@ export function SwipeableTrackRow({
   if (openFor?.trackId === trackId && openFor.side === "lead" && !canPlayNext) {
     setOpenFor(null);
   }
-  const isOpen = openFor?.trackId === trackId;
   const [glow, setGlow] = useState<Glow | null>(null);
+  // A recycled cell starts clean. Keying alone isn't enough: a comet cut
+  // short by recycling never reports done, and a row left open had its
+  // offset reset, so either would come back with the track.
+  const [stateFor, setStateFor] = useState(trackId);
+  if (stateFor !== trackId) {
+    setStateFor(trackId);
+    setOpenFor(null);
+    setGlow(null);
+  }
+  const isOpen = openFor?.trackId === trackId;
   // The capsules mount on the row's first touch (or a peek, or an action
   // from VoiceOver), well before a swipe uncovers them: most rows are never
   // swiped and shouldn't carry them.
@@ -539,20 +549,24 @@ export function SwipeableTrackRow({
     );
   }, [canPlayNext, offset]);
 
-  useEffect(() => {
-    if (!swipeable) return;
-    return offerPeek({
-      measure: (done) => {
-        const node = containerRef.current;
-        if (!node) {
-          done(null);
-          return;
-        }
-        node.measureInWindow((_x, y, _width, frameHeight) => done({ y, height: frameHeight }));
-      },
-      peek: runPeek,
-    });
-  }, [containerRef, runPeek, swipeable, trackId]);
+  // Offered only while its screen is in front: a list under a pushed screen
+  // still measures inside the window, and a cue there would be wasted.
+  useFocusEffect(
+    useCallback(() => {
+      if (!swipeable) return;
+      return offerPeek({
+        measure: (done) => {
+          const node = containerRef.current;
+          if (!node) {
+            done(null);
+            return;
+          }
+          node.measureInWindow((_x, y, _width, frameHeight) => done({ y, height: frameHeight }));
+        },
+        peek: runPeek,
+      });
+    }, [containerRef, runPeek, swipeable]),
+  );
 
   const onUndo = useCallback(() => {
     undoRemoval(track);

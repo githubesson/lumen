@@ -67,7 +67,8 @@ interface PendingRemoval {
   /** The DELETE has started: Undo is too late, and toggles wait for it. */
   committing: boolean;
   timer: ReturnType<typeof setTimeout> | null;
-  commit: () => void;
+  /** Sends it now; the same promise however often it's asked. */
+  commit: () => Promise<void>;
 }
 
 /**
@@ -98,9 +99,7 @@ function subscribePendingRemovals(listener: () => void) {
 function watchAppState() {
   appStateSubscription ??= AppState.addEventListener("change", (status) => {
     if (status !== "background") return;
-    for (const removal of [...pendingRemovals.values()]) {
-      if (!removal.committing) removal.commit();
-    }
+    for (const removal of [...pendingRemovals.values()]) void removal.commit();
   });
 }
 
@@ -113,6 +112,29 @@ function settlePendingRemoval(key: string, removal: PendingRemoval) {
     appStateSubscription = null;
   }
   emitPendingRemovals();
+}
+
+/** How long signing out waits on removals it sends first. */
+const FLUSH_LIMIT_MS = 3000;
+
+/**
+ * Sends every removal still waiting on Undo, and waits for them (up to
+ * {@link FLUSH_LIMIT_MS}). For signing out: the session ends with it, and the
+ * account switch clears the cache, so anything left would never be sent and
+ * the server would keep the favorite. The root layout passes it to the
+ * AuthProvider's `beforeLogout`.
+ */
+export async function flushPendingFavoriteRemovals(): Promise<void> {
+  const sends = [...pendingRemovals.values()].map((removal) => removal.commit());
+  if (sends.length === 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.allSettled(sends),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, FLUSH_LIMIT_MS);
+    }),
+  ]);
+  clearTimeout(timer);
 }
 
 function favoriteKey(userId: string | undefined, trackId: string | null) {
@@ -282,17 +304,19 @@ export function useFavoriteActions() {
     (track: TrackListItem) => {
       const key = favoriteKey(userId, track.id);
       if (!userId || !key || pendingRemovals.has(key)) return;
+      let sending: Promise<void> | null = null;
       const removal: PendingRemoval = {
         phase: "holding",
         committing: false,
         timer: null,
         commit: () => {
-          void commitPendingRemoval(queryClient, userId, track, key, removal);
+          sending ??= commitPendingRemoval(queryClient, userId, track, key, removal);
+          return sending;
         },
       };
       removal.timer = setTimeout(() => {
         removal.phase = "closing";
-        removal.timer = setTimeout(removal.commit, FAVORITE_REMOVAL_CLOSE_MS);
+        removal.timer = setTimeout(() => void removal.commit(), FAVORITE_REMOVAL_CLOSE_MS);
         emitPendingRemovals();
       }, FAVORITE_UNDO_MS);
       pendingRemovals.set(key, removal);

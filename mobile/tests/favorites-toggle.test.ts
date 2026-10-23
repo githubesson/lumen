@@ -4,6 +4,7 @@ import type { TrackListItem } from "@music-library/core";
 import {
   FAVORITE_REMOVAL_CLOSE_MS,
   FAVORITE_UNDO_MS,
+  flushPendingFavoriteRemovals,
   useFavoriteActions,
 } from "../context/favorites";
 import { qk } from "../lib/query-keys";
@@ -121,6 +122,41 @@ describe("removing with Undo", () => {
     await settle();
     expect(state.unfavorite).toHaveBeenCalledOnce();
     expect(ids()).toEqual(["a", "t1", "b"]);
+  });
+
+  it("sends what's waiting before signing out, and waits for it", async () => {
+    let finish!: () => void;
+    state.unfavorite.mockReturnValueOnce(new Promise<void>((resolve) => (finish = resolve)));
+    const { removeWithUndo, undoRemoval } = useFavoriteActions();
+    removeWithUndo(track);
+    let flushed = false;
+    const flush = flushPendingFavoriteRemovals().then(() => (flushed = true));
+    await settle();
+    // Sent at once, inside the Undo window; the cache is cleared after this.
+    expect(state.unfavorite).toHaveBeenCalledExactlyOnceWith("t1");
+    expect(ids()).toEqual(["a", "b"]);
+    expect(undoRemoval(track)).toBe(false);
+    expect(flushed).toBe(false);
+    finish();
+    await flush;
+    await vi.advanceTimersByTimeAsync(FAVORITE_UNDO_MS + FAVORITE_REMOVAL_CLOSE_MS);
+    expect(state.unfavorite).toHaveBeenCalledOnce();
+    await expect(flushPendingFavoriteRemovals()).resolves.toBeUndefined();
+  });
+
+  it("doesn't hold sign-out for long on a slow DELETE", async () => {
+    let finish!: () => void;
+    state.unfavorite.mockReturnValueOnce(new Promise<void>((resolve) => (finish = resolve)));
+    const { removeWithUndo } = useFavoriteActions();
+    removeWithUndo(track);
+    let flushed = false;
+    void flushPendingFavoriteRemovals().then(() => (flushed = true));
+    await vi.advanceTimersByTimeAsync(2900);
+    expect(flushed).toBe(false);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(flushed).toBe(true);
+    finish();
+    await settle();
   });
 
   it("sends at once when the app goes to the background", async () => {

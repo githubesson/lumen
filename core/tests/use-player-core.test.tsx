@@ -1048,6 +1048,28 @@ describe("usePlayerCore playNext", () => {
     expect(result.current.state.current?.id).toBe("x");
   });
 
+  it("plays the picked track next when the current one ends before the pick commits", async () => {
+    const { result, emit } = await setup();
+    act(() => result.current.controls.play(t("a"), queue4()));
+    act(() => {
+      result.current.controls.playNext([t("x")]);
+      emit("ended");
+    });
+    expect(ids(result.current.state.queue)).toEqual(["a", "x", "b", "c", "d"]);
+    expect(result.current.state.current?.id).toBe("x");
+    expect(result.current.state.index).toBe(1);
+
+    // And a pick made before the advance commits goes after the new track.
+    act(() => {
+      emit("ended");
+      result.current.controls.playNext([t("y")]);
+    });
+    expect(result.current.state.current?.id).toBe("b");
+    expect(ids(result.current.state.queue)).toEqual(["a", "x", "b", "y", "c", "d"]);
+    act(() => result.current.controls.next());
+    expect(result.current.state.current?.id).toBe("y");
+  });
+
   it("keeps its identity while the queue moves", async () => {
     const { result } = await setup();
     const playNext = result.current.controls.playNext;
