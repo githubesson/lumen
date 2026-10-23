@@ -181,6 +181,11 @@ export function usePlayerCore({
     picksRef.current += 1;
     setPicks(picksRef.current);
   }, []);
+  // The tracks Play Next has put after the current one, so the next pick
+  // goes behind them. Anything that moves the position or reorders the queue
+  // (play, advance, a jump, prev, shuffle) ends the run; the same track
+  // coming round again, or played anew, starts a fresh one.
+  const playNextRunRef = useRef<{ currentId: string; ids: Set<string> } | null>(null);
   // Anchor used to interpolate currentTime against the wall clock between the
   // adapter's (infrequent) timeupdate pings.
   const anchorRef = useRef<{ audioTime: number; wallTime: number }>({
@@ -326,6 +331,7 @@ export function usePlayerCore({
     (track, q, options) => {
       if (!canStartTrack(track, isTrackPlayable)) return false;
       notePick();
+      playNextRunRef.current = null;
       const base = q && q.length ? q : [track];
       // Set here, with the queue, rather than through setShuffle: that
       // reorders the queue this render has, not the one starting now.
@@ -361,9 +367,6 @@ export function usePlayerCore({
   useEffect(() => {
     playRef.current = play;
   }, [play]);
-  // The tracks Play Next has put after the current one, so the next pick
-  // goes behind them. A different current track starts a new run.
-  const playNextRunRef = useRef<{ currentId: string; ids: Set<string> } | null>(null);
 
   const playNext = useCallback<PlayerControls["playNext"]>(
     (tracks) => {
@@ -525,6 +528,7 @@ export function usePlayerCore({
     if (nextQueue) setQueue(nextQueue);
     setIndex(nextIndex);
     setCurrent(nextTrack);
+    playNextRunRef.current = null;
     queueStateRef.current = {
       ...state,
       current: nextTrack,
@@ -579,6 +583,7 @@ export function usePlayerCore({
       return;
     }
     notePick();
+    playNextRunRef.current = null;
     clearPreparedNext();
     setIndex(ni);
     setCurrent(queue[ni]);
@@ -594,6 +599,7 @@ export function usePlayerCore({
       // downloaded while offline) — queue UIs dim them instead.
       if (!canStartTrack(queue[i], isTrackPlayable)) return;
       notePick();
+      playNextRunRef.current = null;
       clearPreparedNext();
       setIndex(i);
       setCurrent(queue[i]);
@@ -630,6 +636,7 @@ export function usePlayerCore({
   const setShuffle = useCallback<PlayerControls["setShuffle"]>((value) => {
     if (value === shuffle) return;
     notePick();
+    playNextRunRef.current = null;
     setShuffleState(value);
     if (!queue.length) return;
     if (value) {

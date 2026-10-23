@@ -973,6 +973,35 @@ describe("usePlayerCore playNext", () => {
     expect(ids(result.current.state.queue)).toEqual(["a", "x", "z", "y", "b", "c", "d"]);
   });
 
+  it("starts a new run when the queue comes round to the same track", async () => {
+    const { result } = await setup();
+    act(() => result.current.controls.play(t("a"), [t("a"), t("b")]));
+    act(() => result.current.controls.setRepeat("all"));
+    act(() => result.current.controls.playNext([t("x")]));
+    for (let i = 0; i < 3; i += 1) act(() => result.current.controls.next());
+    expect(result.current.state.current?.id).toBe("a");
+    act(() => result.current.controls.playNext([t("y")]));
+    expect(ids(result.current.state.queue)).toEqual(["a", "y", "x", "b"]);
+  });
+
+  it("starts a new run when the same track is played anew, or the queue moves", async () => {
+    const { result } = await setup();
+    act(() => result.current.controls.play(t("a"), queue4()));
+    act(() => result.current.controls.playNext([t("x")]));
+    act(() => result.current.controls.play(t("a"), [t("a"), t("x"), t("c")]));
+    act(() => result.current.controls.playNext([t("y")]));
+    expect(ids(result.current.state.queue)).toEqual(["a", "y", "x", "c"]);
+
+    // A jump back to the same track, and a shuffle change, end a run too.
+    act(() => result.current.controls.jumpTo(0));
+    act(() => result.current.controls.playNext([t("z")]));
+    expect(ids(result.current.state.queue)).toEqual(["a", "z", "y", "x", "c"]);
+    act(() => result.current.controls.setShuffle(true));
+    act(() => result.current.controls.setShuffle(false));
+    act(() => result.current.controls.playNext([t("w")]));
+    expect(ids(result.current.state.queue)).toEqual(["a", "w", "z", "y", "x", "c"]);
+  });
+
   it("moves a track that's already queued instead of adding it twice", async () => {
     const { result } = await setup();
     act(() => result.current.controls.play(t("b"), queue4()));
