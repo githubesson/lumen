@@ -28,18 +28,25 @@ export function watchMarksWait(onPhase: (phase: MarksWait) => void): () => void 
 }
 
 /**
- * The wait for the marks while `pending`. It only moves forward, so a
- * request that pauses (offline) and resumes doesn't hold the rows again.
+ * The wait for the marks while `pending`. The rows wait once: a request
+ * that pauses (offline, when the rows let go) and resumes comes back
+ * "given-up", so flapping connectivity can't hold them again and again.
  */
 export function useMarksWait(pending: boolean): MarksWait {
   const [phase, setPhase] = useState<MarksWait>("quiet");
   useEffect(() => {
     if (!pending) return;
-    return watchMarksWait((next) =>
+    const stop = watchMarksWait((next) =>
       setPhase((current) =>
         ORDER.indexOf(next) > ORDER.indexOf(current) ? next : current,
       ),
     );
+    return () => {
+      stop();
+      // The wait paused or ended. Restarting the clock on resume would make
+      // the 5 s cap a 5 s cap per pause.
+      setPhase("given-up");
+    };
   }, [pending]);
   return pending ? phase : "quiet";
 }
