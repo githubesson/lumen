@@ -95,6 +95,10 @@ export function FavoritesListHeader({
     y: DEFAULT_HEADER_GEOMETRY.titleRowY,
     height: DEFAULT_HEADER_GEOMETRY.titleRowHeight,
   });
+  // Bottom of the title's text within its row (the clip box fills the row).
+  const [titleTextBottom, setTitleTextBottom] = useState(
+    DEFAULT_HEADER_GEOMETRY.titleBottom - DEFAULT_HEADER_GEOMETRY.titleRowY,
+  );
   const [summaryBottom, setSummaryBottom] = useState(
     DEFAULT_HEADER_GEOMETRY.titleRowY +
       DEFAULT_HEADER_GEOMETRY.titleRowHeight +
@@ -107,9 +111,10 @@ export function FavoritesListHeader({
     () => ({
       titleRowY: titleRow.y,
       titleRowHeight: titleRow.height,
+      titleBottom: titleRow.y + titleTextBottom,
       controlsBottom: hasControls ? controlsBottom : summaryBottom,
     }),
-    [titleRow, hasControls, controlsBottom, summaryBottom],
+    [titleRow, titleTextBottom, hasControls, controlsBottom, summaryBottom],
   );
 
   useEffect(() => {
@@ -121,6 +126,10 @@ export function FavoritesListHeader({
     setTitleRow((prev) =>
       prev.y === y && prev.height === height ? prev : { y, height },
     );
+  };
+  const onTitleTextLayout = (e: LayoutChangeEvent) => {
+    const { y, height } = e.nativeEvent.layout;
+    setTitleTextBottom(y + height);
   };
 
   // Two transforms make a clip without a layout pass: the outer box moves
@@ -149,7 +158,7 @@ export function FavoritesListHeader({
     <View style={styles.header}>
       <View onLayout={onTitleRowLayout} style={styles.titleRow}>
         <Animated.View pointerEvents="none" style={[styles.titleClip, clipOuterStyle]}>
-          <Animated.View style={clipInnerStyle}>
+          <Animated.View onLayout={onTitleTextLayout} style={clipInnerStyle}>
             <Text
               accessibilityRole="header"
               numberOfLines={1}

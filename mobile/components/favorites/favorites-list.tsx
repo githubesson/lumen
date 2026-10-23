@@ -33,9 +33,11 @@ import {
   useDockScrollHandler,
 } from "../dock/dock-context";
 import { FavoritesListHeader } from "./favorites-list-header";
+import { usePendingFavoriteRemovalIds } from "../../context/favorites";
 import { usePlayerPlayback, usePlayTrack } from "../../context/player";
 import {
   FAVORITES_HEADER,
+  countedTracks,
   listSummary,
   type FavoritesMode,
   type HeaderGeometry,
@@ -48,8 +50,13 @@ const LIST_FADE_MS = 220;
 
 /** One list as shown: its sort, its count line, and its Play / Shuffle. */
 export interface FavoritesListModel {
-  /** In display order; Play, Shuffle and row taps queue this order. */
+  /** The rows, in display order. */
   tracks: TrackListItem[];
+  /**
+   * The rows that count, in the same order: what the count line sums and
+   * Play, Shuffle and row taps queue. A favorite waiting on Undo is left out.
+   */
+  queue: TrackListItem[];
   summary: string;
   sortKey: SortKey;
   sortAsc: boolean;
@@ -66,6 +73,7 @@ export function useFavoritesListModel(
 ): FavoritesListModel {
   const play = usePlayTrack();
   const { shuffle } = usePlayerPlayback();
+  const pendingRemovalIds = usePendingFavoriteRemovalIds();
   const [sortKey, setSortKey] = useState<SortKey>("custom");
   const [sortAsc, setSortAsc] = useState(SORT_DEFAULT_ASC.custom);
 
@@ -76,7 +84,11 @@ export function useFavoritesListModel(
       ),
     [data, sortKey, sortAsc],
   );
-  const summary = useMemo(() => listSummary(mode, tracks), [mode, tracks]);
+  const queue = useMemo(
+    () => countedTracks(mode, tracks, pendingRemovalIds),
+    [mode, tracks, pendingRemovalIds],
+  );
+  const summary = useMemo(() => listSummary(mode, queue), [mode, queue]);
 
   const onSelectSort = useCallback((key: SortKey) => {
     void Haptics.selectionAsync();
@@ -93,23 +105,24 @@ export function useFavoritesListModel(
   // With shuffle mode on, Play starts somewhere random like the playlist
   // page's; from the top, every shuffled play would open on the same song.
   const onPlay = useCallback(() => {
-    const queue = listPlaybackQueue(tracks);
-    if (queue.length === 0) return;
+    const startable = listPlaybackQueue(queue);
+    if (startable.length === 0) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    startListPlayback(play, queue, shuffle);
-  }, [play, shuffle, tracks]);
+    startListPlayback(play, startable, shuffle);
+  }, [play, shuffle, queue]);
 
   // Shuffle is queue-level: shuffle mode on, from a random track.
   const onShuffle = useCallback(() => {
-    const queue = listPlaybackQueue(tracks);
-    if (queue.length === 0) return;
+    const startable = listPlaybackQueue(queue);
+    if (startable.length === 0) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    startShuffledListPlayback(play, queue);
-  }, [play, tracks]);
+    startShuffledListPlayback(play, startable);
+  }, [play, queue]);
 
   return useMemo(
     () => ({
       tracks,
+      queue,
       summary,
       sortKey,
       sortAsc,
@@ -118,7 +131,7 @@ export function useFavoritesListModel(
       onPlay,
       onShuffle,
     }),
-    [tracks, summary, sortKey, sortAsc, onSelectSort, onToggleSortDirection, onPlay, onShuffle],
+    [tracks, queue, summary, sortKey, sortAsc, onSelectSort, onToggleSortDirection, onPlay, onShuffle],
   );
 }
 
@@ -170,7 +183,8 @@ export function FavoritesList({
     refetch: () => Promise<unknown>;
   };
   onGeometry: (mode: FavoritesMode, geometry: HeaderGeometry) => void;
-  onContentSizeChange: (mode: FavoritesMode) => void;
+  /** The list's content height, as laid out. */
+  onContentSizeChange: (mode: FavoritesMode, height: number) => void;
   onScrollBeginDrag: (mode: FavoritesMode) => void;
 }) {
   const dockInset = useBottomDockInset();
@@ -185,7 +199,7 @@ export function FavoritesList({
   const fadeStyle = useAnimatedStyle(() => ({ opacity: visibility.value }));
 
   const { tracks } = model;
-  const handlePress = usePlayQueue(tracks);
+  const handlePress = usePlayQueue(model.queue);
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<TrackListItem>) => (
       <TrackRow
@@ -206,6 +220,8 @@ export function FavoritesList({
       summary={model.summary}
       offset={offset}
       topInset={topInset}
+      // The rows, not the counted tracks: the buttons mustn't vanish (and
+      // the header shift) under a finger heading for an Undo strip.
       trackCount={tracks.length}
       sortKey={model.sortKey}
       sortAsc={model.sortAsc}
@@ -249,7 +265,7 @@ export function FavoritesList({
         scrollsToTop={active}
         scrollEventThrottle={dockScroll.scrollEventThrottle}
         onScroll={active ? dockScroll.onScroll : undefined}
-        onContentSizeChange={() => onContentSizeChange(mode)}
+        onContentSizeChange={(_, height) => onContentSizeChange(mode, height)}
         onScrollBeginDrag={() => onScrollBeginDrag(mode)}
         style={styles.list}
         contentContainerStyle={{ paddingBottom: dockInset + 24 }}

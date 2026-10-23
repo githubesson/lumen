@@ -29,8 +29,11 @@ export const FAVORITES_HEADER = {
   expandedScale: 1.2,
   /** Scroll over which the switch slides to the leading slot and shrinks. */
   morphDistance: 64,
-  /** Past this the large title is under the bar and the inline one shows. */
-  titleAt: 44,
+  /**
+   * The inline title shows once no more than this much of the large title's
+   * line box is left below the bar: the empty space under its glyphs.
+   */
+  titleSliver: 3,
   /** Past this content is under the bar and the scroll edge shows. */
   edgeAt: 6,
   /** The header buttons are gone this far below the bar... */
@@ -43,6 +46,8 @@ export const FAVORITES_HEADER = {
 export interface HeaderGeometry {
   titleRowY: number;
   titleRowHeight: number;
+  /** Bottom of the large title's text, which grows with the text size. */
+  titleBottom: number;
   /** Bottom of the Shuffle / Play / Sort row (of the count line without it). */
   controlsBottom: number;
 }
@@ -51,6 +56,9 @@ export interface HeaderGeometry {
 export const DEFAULT_HEADER_GEOMETRY: HeaderGeometry = {
   titleRowY: FAVORITES_HEADER.navBarHeight,
   titleRowHeight: FAVORITES_HEADER.titleRowMinHeight,
+  // a 41pt line centred in the row
+  titleBottom:
+    FAVORITES_HEADER.navBarHeight + (FAVORITES_HEADER.titleRowMinHeight + 41) / 2,
   // count line 20 + controls row 14 + 50 + 10
   controlsBottom:
     FAVORITES_HEADER.navBarHeight + FAVORITES_HEADER.titleRowMinHeight + 94,
@@ -60,6 +68,20 @@ export const DEFAULT_HEADER_GEOMETRY: HeaderGeometry = {
  * The count line under the title. Favorites is a collection, so it gets a
  * running time; Recent is a play history, where a total means nothing.
  */
+/**
+ * The tracks that count, in order: a favorite removed with Undo still shows
+ * (with its Undo strip) but already reads as removed, so the count line and
+ * the play queues leave it out. Recent isn't affected.
+ */
+export function countedTracks<T extends Pick<TrackListItem, "id">>(
+  mode: FavoritesMode,
+  tracks: T[],
+  pendingRemovalIds: ReadonlySet<string>,
+): T[] {
+  if (mode !== "favorites" || pendingRemovalIds.size === 0) return tracks;
+  return tracks.filter((track) => !pendingRemovalIds.has(track.id));
+}
+
 export function listSummary(
   mode: FavoritesMode,
   tracks: readonly Pick<TrackListItem, "duration_ms">[],
@@ -138,6 +160,17 @@ export function titleClip(s: number, geometry: HeaderGeometry): number {
 }
 
 /**
+ * The large title has gone under the bar (all but its last sliver, empty
+ * space under the glyphs), so the inline title takes over. Measured, so it
+ * holds at larger text sizes.
+ */
+export function titleCollapsed(s: number, geometry: HeaderGeometry): boolean {
+  "worklet";
+  const { navBarHeight, titleSliver } = FAVORITES_HEADER;
+  return s > geometry.titleBottom - navBarHeight - titleSliver;
+}
+
+/**
  * The header's Shuffle / Play / Sort fade out as they near the bar, gone
  * before they reach it, so the bright Play pill never smears under the edge.
  */
@@ -172,4 +205,31 @@ export function switchScrollTarget(
 ): number | null {
   if (fromOffset < collapseAt || toOffset >= collapseAt) return null;
   return collapseAt;
+}
+
+/**
+ * The furthest a list can be sent (as `s`). React Native's `scrollTo` clamps
+ * to the content less the viewport, ignoring the status-bar inset.
+ */
+export function maxScrollOffset(
+  contentHeight: number,
+  viewportHeight: number,
+  topInset: number,
+): number {
+  return Math.max(contentHeight - viewportHeight, 0) + topInset;
+}
+
+/**
+ * What to do with a scroll a switch owes a list: wait while its rows haven't
+ * loaded or been laid out, scroll now, or drop it when the list can't reach
+ * that far. An empty or short list shows its header expanded, so the bar must
+ * not be left collapsed over it.
+ */
+export function owedScrollStep(
+  target: number,
+  loaded: boolean,
+  maxOffset: number | null,
+): "wait" | "scroll" | "drop" {
+  if (!loaded || maxOffset == null) return "wait";
+  return maxOffset >= target ? "scroll" : "drop";
 }
