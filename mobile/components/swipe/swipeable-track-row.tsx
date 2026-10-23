@@ -187,7 +187,7 @@ export function SwipeableTrackRow({
   const reducedMotion = useReducedMotion();
   const favorite = useFavorite(track.id);
   const removal = usePendingFavoriteRemoval(inFavorites ? track.id : null);
-  const { toggle, removeWithUndo, undoRemoval } = useFavoriteActions();
+  const { toggle, canToggle, removeWithUndo, undoRemoval } = useFavoriteActions();
   const playNext = usePlayNext();
   const playNextHere = useCanPlayNext(track.id);
   const unavailableOffline = useTrackUnavailableOffline(track.id);
@@ -283,9 +283,13 @@ export function SwipeableTrackRow({
         glowRuns += 1;
         setGlow({ id: glowRuns, trackId: track.id, kind, on, delayMs });
       };
+      // Nothing happened (no session, or the track's last request is still
+      // out): say so, and confirm nothing.
+      const refuse = () =>
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       if (kind === "next") {
         if (!playNext([track])) {
-          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          refuse();
           return;
         }
         AccessibilityInfo.announceForAccessibility("Playing next");
@@ -293,6 +297,10 @@ export function SwipeableTrackRow({
         return;
       }
       if (kind === "favorite") {
+        if (!canToggle(track)) {
+          refuse();
+          return;
+        }
         void toggle(track);
         AccessibilityInfo.announceForAccessibility("Added to Favorites");
         markPop.set(0);
@@ -306,13 +314,24 @@ export function SwipeableTrackRow({
       }
       if (inFavorites) {
         setActionsMounted(true);
-        // On the UI thread, which knows the row's width. The gesture has
-        // already started it.
-        if (!fromGesture) scheduleOnUI(slideOut);
+        // Marked before the removal is announced to the row (see
+        // moveRemoval). The slide runs on the UI thread, which knows the
+        // row's width; the gesture has already started it.
         removalSwiped.set(true);
-        removeWithUndo(track);
+        if (!fromGesture) scheduleOnUI(slideOut);
+        if (!removeWithUndo(track)) {
+          removalSwiped.set(false);
+          settle(0);
+          centered.set(withTiming(0, ARM_TIMING));
+          refuse();
+          return;
+        }
         AccessibilityInfo.announceForAccessibility("Removed from Favorites. Undo is available.");
         glowOn("strip", STRIP_COMET_AFTER_MS);
+        return;
+      }
+      if (!canToggle(track)) {
+        refuse();
         return;
       }
       void toggle(track);
@@ -320,12 +339,15 @@ export function SwipeableTrackRow({
       glowOn("row", COMET_DELAY_MS);
     },
     [
+      canToggle,
+      centered,
       inFavorites,
       markPop,
       playNext,
       reducedMotion,
       removalSwiped,
       removeWithUndo,
+      settle,
       slideOut,
       toggle,
       track,

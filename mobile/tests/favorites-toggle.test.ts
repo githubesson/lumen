@@ -1,3 +1,5 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TrackListItem } from "@music-library/core";
@@ -6,6 +8,8 @@ import {
   FAVORITE_UNDO_MS,
   flushPendingFavoriteRemovals,
   useFavoriteActions,
+  usePendingFavoriteRemoval,
+  type PendingRemovalPhase,
 } from "../context/favorites";
 import { qk } from "../lib/query-keys";
 
@@ -41,6 +45,17 @@ vi.mock("@music-library/core", async (importOriginal) => ({
 const track: TrackListItem = { id: "t1", title: "Song", duration_ms: 1 };
 const rows = () => state.client.getQueryData<TrackListItem[]>(qk.favorites("user"));
 
+/** Where t1's removal is, as a row sees it. */
+function phase(): PendingRemovalPhase | null {
+  let seen: PendingRemovalPhase | null = null;
+  function Probe() {
+    seen = usePendingFavoriteRemoval(track.id);
+    return null;
+  }
+  renderToStaticMarkup(createElement(Probe));
+  return seen;
+}
+
 beforeEach(() => {
   state.client = new QueryClient();
   state.client.setQueryData(qk.favorites("user"), []);
@@ -60,6 +75,20 @@ it("drops a second toggle of a track while the first is in flight", async () => 
   finish();
   await first;
   expect(state.favorite).toHaveBeenCalledTimes(1);
+});
+
+it("says whether a toggle will run, and whether it did", async () => {
+  let finish!: () => void;
+  state.favorite.mockReturnValue(new Promise<void>((resolve) => (finish = resolve)));
+  const { toggle, canToggle } = useFavoriteActions();
+  expect(canToggle(track)).toBe(true);
+  const first = toggle(track);
+  // Out now: a second one would be dropped, so a swipe mustn't confirm it.
+  expect(canToggle(track)).toBe(false);
+  await expect(toggle(track)).resolves.toBe(false);
+  finish();
+  await expect(first).resolves.toBe(true);
+  expect(canToggle(track)).toBe(true);
 });
 
 it("rolls back a failed toggle and accepts the next one", async () => {
@@ -175,6 +204,27 @@ describe("removing with Undo", () => {
     expect(flushed).toBe(true);
     finish();
     await settle();
+  });
+
+  it("folds the strip away when it's sent early, with Undo no longer offered", async () => {
+    // The track's favorite is still out, so the early send has to wait.
+    state.client.setQueryData(qk.favorites("user"), others);
+    let finish!: () => void;
+    state.favorite.mockReturnValueOnce(new Promise<void>((resolve) => (finish = resolve)));
+    const { removeWithUndo, toggle, undoRemoval } = useFavoriteActions();
+    const favoriting = toggle(track);
+    await settle();
+    expect(removeWithUndo(track)).toBe(true);
+    expect(removeWithUndo(track)).toBe(false);
+    expect(phase()).toBe("holding");
+    state.appState?.("background");
+    expect(phase()).toBe("closing");
+    expect(undoRemoval(track)).toBe(false);
+    finish();
+    await favoriting;
+    await settle();
+    expect(state.unfavorite).toHaveBeenCalledExactlyOnceWith("t1");
+    expect(phase()).toBeNull();
   });
 
   it("sends at once when the app goes to the background", async () => {
