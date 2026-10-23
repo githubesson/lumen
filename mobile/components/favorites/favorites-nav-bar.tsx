@@ -25,6 +25,7 @@ import {
   FAVORITES_HEADER,
   controlsDocked,
   switchPlacement,
+  titleCollapsed,
   type FavoritesMode,
   type HeaderGeometry,
 } from "../../lib/favorites-header";
@@ -101,13 +102,13 @@ export function FavoritesNavBar({
     [offset, topInset],
   );
   useAnimatedReaction(
-    () => offset.value + topInset > FAVORITES_HEADER.titleAt,
+    () => titleCollapsed(offset.value + topInset, geometry),
     (on, previous) => {
       if (on === previous) return;
       titled.set(withTiming(on ? 1 : 0, FADE));
       scheduleOnRN(setCollapsed, on);
     },
-    [offset, topInset],
+    [offset, topInset, geometry],
   );
   useAnimatedReaction(
     () => controlsDocked(offset.value + topInset, geometry),

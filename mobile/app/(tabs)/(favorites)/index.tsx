@@ -15,6 +15,8 @@ import { useFavoritesQuery } from "../../../context/favorites";
 import {
   DEFAULT_HEADER_GEOMETRY,
   collapsedOffset,
+  maxScrollOffset,
+  owedScrollStep,
   switchScrollTarget,
   type FavoritesMode,
   type HeaderGeometry,
@@ -81,6 +83,7 @@ export default function FavoritesScreen() {
       if (
         current.titleRowY === next.titleRowY &&
         current.titleRowHeight === next.titleRowHeight &&
+        current.titleBottom === next.titleBottom &&
         current.controlsBottom === next.controlsBottom
       ) {
         return prev;
@@ -89,28 +92,49 @@ export default function FavoritesScreen() {
     });
   }, []);
 
-  // A scroll a list couldn't take yet (not mounted, or no rows), applied
-  // once it lays out its rows unless the user grabs it first.
+  // A scroll a list couldn't take yet (not mounted, rows not loaded or laid
+  // out), applied once they are unless the user grabs the list first.
   const pendingScroll = useRef<Partial<Record<FavoritesMode, number>>>({});
+  // What each list can scroll to: its content height, and the screen's.
+  const contentHeights = useRef<Partial<Record<FavoritesMode, number>>>({});
+  const viewportHeight = useRef(0);
+  const favoritesLoaded = favoritesQuery.data !== undefined;
+  const recentLoaded = recentQuery.data !== undefined;
+
+  const maxOffsetOf = useCallback(
+    (list: FavoritesMode) => {
+      const height = contentHeights.current[list];
+      if (height == null || viewportHeight.current === 0) return null;
+      return maxScrollOffset(height, viewportHeight.current, topInset);
+    },
+    [topInset],
+  );
 
   const scrollList = useCallback(
     (list: FavoritesMode, offset: number) => {
+      // Move the bar's state now rather than a frame later, when the list's
+      // scroll event lands, so the switch doesn't flicker. Only for a scroll
+      // the list can take: one it can't would leave the bar collapsed over
+      // a header shown at rest.
+      offsets[list].set(offset - topInset);
       const ref = list === "favorites" ? favoritesRef : recentRef;
       ref.current?.scrollToOffset({ offset: offset - topInset, animated: false });
     },
-    [favoritesRef, recentRef, topInset],
+    [offsets, favoritesRef, recentRef, topInset],
   );
 
   const onListContentSizeChange = useCallback(
-    (list: FavoritesMode) => {
+    (list: FavoritesMode, height: number) => {
+      contentHeights.current[list] = height;
       const target = pendingScroll.current[list];
       if (target == null) return;
-      const model = list === "favorites" ? favorites : recent;
-      if (model.tracks.length === 0) return;
+      const listLoaded = list === "favorites" ? favoritesLoaded : recentLoaded;
+      const step = owedScrollStep(target, listLoaded, maxOffsetOf(list));
+      if (step === "wait") return;
       delete pendingScroll.current[list];
-      scrollList(list, target);
+      if (step === "scroll") scrollList(list, target);
     },
-    [favorites, recent, scrollList],
+    [favoritesLoaded, recentLoaded, maxOffsetOf, scrollList],
   );
 
   const onListScrollBeginDrag = useCallback((list: FavoritesMode) => {
@@ -127,23 +151,38 @@ export default function FavoritesScreen() {
       const to = nextMounted ? offsets[next].get() + topInset : 0;
       const target = switchScrollTarget(from, to, collapsedOffset(geometry[mode]));
       if (target != null) {
-        // Move the bar's state now rather than a frame later, when the
-        // list's scroll event lands, so the switch doesn't flicker.
-        offsets[next].set(target - topInset);
-        const nextModel = next === "favorites" ? favorites : recent;
-        if (nextMounted && nextModel.tracks.length > 0) scrollList(next, target);
-        else pendingScroll.current[next] = target;
+        const nextLoaded = next === "favorites" ? favoritesLoaded : recentLoaded;
+        const step = nextMounted
+          ? owedScrollStep(target, nextLoaded, maxOffsetOf(next))
+          : "wait";
+        if (step === "scroll") scrollList(next, target);
+        else if (step === "wait") pendingScroll.current[next] = target;
       }
       if (next === "recent") setRecentMounted(true);
       setMode(next);
     },
-    [mode, recentMounted, offsets, topInset, geometry, favorites, recent, scrollList],
+    [
+      mode,
+      recentMounted,
+      offsets,
+      topInset,
+      geometry,
+      favoritesLoaded,
+      recentLoaded,
+      maxOffsetOf,
+      scrollList,
+    ],
   );
 
   const active = models[mode];
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.color.bg }}>
+    <View
+      onLayout={(e) => {
+        viewportHeight.current = e.nativeEvent.layout.height;
+      }}
+      style={{ flex: 1, backgroundColor: theme.color.bg }}
+    >
       <ModeWash
         theme={theme}
         mode={mode}

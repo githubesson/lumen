@@ -5,11 +5,15 @@ import {
   collapsedOffset,
   controlsDocked,
   controlsOpacity,
+  countedTracks,
   listSummary,
+  maxScrollOffset,
+  owedScrollStep,
   smoothstep,
   switchPlacement,
   switchScrollTarget,
   titleClip,
+  titleCollapsed,
   type HeaderGeometry,
 } from "../lib/favorites-header";
 
@@ -39,6 +43,22 @@ describe("listSummary", () => {
     ).toBe("3 songs, 10 min");
     expect(listSummary("favorites", [])).toBe("");
     expect(listSummary("recent", [])).toBe("");
+  });
+});
+
+describe("countedTracks", () => {
+  const tracks = [{ id: "a" }, { id: "b" }, { id: "c" }];
+
+  it("leaves out favorites waiting on Undo, keeping the order", () => {
+    expect(countedTracks("favorites", tracks, new Set(["b"]))).toEqual([
+      { id: "a" },
+      { id: "c" },
+    ]);
+  });
+
+  it("returns the same list when nothing is pending, and ignores Recent", () => {
+    expect(countedTracks("favorites", tracks, new Set())).toBe(tracks);
+    expect(countedTracks("recent", tracks, new Set(["b"]))).toBe(tracks);
   });
 });
 
@@ -112,6 +132,30 @@ describe("titleClip", () => {
   });
 });
 
+describe("titleCollapsed", () => {
+  it("hands over to the inline title as the large one goes under the bar", () => {
+    const g = DEFAULT_HEADER_GEOMETRY;
+    // a 41pt line centred in the 53pt row: its bottom is 47pt into the row
+    expect(g.titleBottom).toBe(44 + 47);
+    expect(titleCollapsed(44, g)).toBe(false);
+    expect(titleCollapsed(44.5, g)).toBe(true);
+  });
+
+  it("waits longer for a taller title (larger text)", () => {
+    // a 61pt line fills a 61pt row
+    const tall: HeaderGeometry = {
+      ...DEFAULT_HEADER_GEOMETRY,
+      titleRowHeight: 61,
+      titleBottom: 44 + 61,
+    };
+    expect(titleCollapsed(50, tall)).toBe(false);
+    expect(titleCollapsed(58, tall)).toBe(false);
+    expect(titleCollapsed(58.5, tall)).toBe(true);
+    // nothing but the empty sliver under the glyphs is left below the bar
+    expect(tall.titleBottom - 58.5 - 44).toBeLessThan(FAVORITES_HEADER.titleSliver);
+  });
+});
+
 describe("header controls", () => {
   const g = DEFAULT_HEADER_GEOMETRY;
   // controls bottom 191: 147 below the bar's bottom edge at rest
@@ -148,5 +192,30 @@ describe("switchScrollTarget", () => {
   it("keeps a list that was already scrolled deeper where it was", () => {
     expect(switchScrollTarget(600, 900, collapseAt)).toBeNull();
     expect(switchScrollTarget(600, collapseAt, collapseAt)).toBeNull();
+  });
+});
+
+describe("owed scrolls", () => {
+  const topInset = 59;
+
+  it("measure how far a list can go the way scrollTo clamps it", () => {
+    expect(maxScrollOffset(2000, 852, topInset)).toBe(2000 - 852 + 59);
+    // shorter than the screen: only its rest position
+    expect(maxScrollOffset(500, 852, topInset)).toBe(59);
+  });
+
+  it("wait for the list's rows to load and be laid out", () => {
+    expect(owedScrollStep(148, false, 5000)).toBe("wait");
+    expect(owedScrollStep(148, true, null)).toBe("wait");
+  });
+
+  it("scroll a list that can reach the collapsed header", () => {
+    expect(owedScrollStep(148, true, 148)).toBe("scroll");
+    expect(owedScrollStep(148, true, 900)).toBe("scroll");
+  });
+
+  it("drop it for an empty or short list, which shows its header expanded", () => {
+    expect(owedScrollStep(148, true, maxScrollOffset(400, 852, topInset))).toBe("drop");
+    expect(owedScrollStep(148, true, 147)).toBe("drop");
   });
 });

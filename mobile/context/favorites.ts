@@ -190,6 +190,42 @@ export function usePendingFavoriteRemoval(
   );
 }
 
+const NO_PENDING_IDS: ReadonlySet<string> = new Set();
+let pendingIdsSnapshot: { userId: string; ids: ReadonlySet<string> } | null = null;
+
+/** The user's track ids waiting on Undo; the same set while they don't change. */
+function pendingRemovalIds(userId: string | undefined): ReadonlySet<string> {
+  if (!userId) return NO_PENDING_IDS;
+  const prefix = `${userId}:`;
+  const ids: string[] = [];
+  for (const key of pendingRemovals.keys()) {
+    if (key.startsWith(prefix)) ids.push(key.slice(prefix.length));
+  }
+  if (ids.length === 0) return NO_PENDING_IDS;
+  const cached = pendingIdsSnapshot;
+  if (
+    cached?.userId === userId &&
+    cached.ids.size === ids.length &&
+    ids.every((id) => cached.ids.has(id))
+  ) {
+    return cached.ids;
+  }
+  pendingIdsSnapshot = { userId, ids: new Set(ids) };
+  return pendingIdsSnapshot.ids;
+}
+
+/**
+ * Ids of the favorites removed with Undo and not yet sent. Their rows stay
+ * listed (with the Undo strip), but they already read as removed, so counts
+ * and play queues leave them out.
+ */
+export function usePendingFavoriteRemovalIds(): ReadonlySet<string> {
+  const { me } = useAuth();
+  const userId = me?.id;
+  const snapshot = () => pendingRemovalIds(userId);
+  return useSyncExternalStore(subscribePendingRemovals, snapshot, snapshot);
+}
+
 /**
  * Select one boolean from the shared query. React Query only notifies this
  * observer when that track's result changes, rather than rerendering every row
