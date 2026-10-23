@@ -94,8 +94,11 @@ export default function PlaylistPickerScreen() {
   const playlists = playlistsQuery.data;
 
   const rows = useMemo(
-    () => (playlists ? playlistPickerRows(playlists, recentIds, search) : []),
-    [playlists, recentIds, search],
+    () =>
+      playlists && trackId
+        ? playlistPickerRows(playlists, recentIds, search)
+        : [],
+    [playlists, recentIds, search, trackId],
   );
 
   const close = useCallback(() => {
@@ -179,7 +182,10 @@ export default function PlaylistPickerScreen() {
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ paddingBottom: theme.space.xl }}
         ListEmptyComponent={
-          !playlists && playlistsQuery.isError ? (
+          // Only a link can open the sheet without a track.
+          !trackId ? (
+            <EmptyState selectable message="No track to add." />
+          ) : !playlists && playlistsQuery.isError ? (
             <EmptyState selectable message="Couldn't load playlists." />
           ) : !playlists ? (
             <EmptyState loading />

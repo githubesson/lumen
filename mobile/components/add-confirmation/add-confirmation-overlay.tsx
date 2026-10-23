@@ -178,13 +178,27 @@ function AddConfirmationHud({
 
     later(START_DELAY_MS, () => setGlassOn(true));
     if (reducedMotion) {
-      appear.value = withDelay(START_DELAY_MS, withTiming(1, fade(REDUCED_FADE_MS)));
+      // Never here too: a System delay is skipped under Reduce Motion, and
+      // the text would show before the glass behind it.
+      appear.value = withDelay(
+        START_DELAY_MS,
+        withTiming(1, fade(REDUCED_FADE_MS)),
+        ReduceMotion.Never,
+      );
       if (fills) {
-        fill.value = withDelay(START_DELAY_MS, withTiming(1, fade(REDUCED_FADE_MS)));
+        fill.value = withDelay(
+          START_DELAY_MS,
+          withTiming(1, fade(REDUCED_FADE_MS)),
+          ReduceMotion.Never,
+        );
       }
       later(START_DELAY_MS + REDUCED_FADE_MS, landed);
     } else {
-      appear.value = withDelay(START_DELAY_MS, withTiming(1, fade(FADE_IN_MS)));
+      appear.value = withDelay(
+        START_DELAY_MS,
+        withTiming(1, fade(FADE_IN_MS)),
+        ReduceMotion.Never,
+      );
       scale.value = withDelay(START_DELAY_MS, withSpring(1, HUD_SPRING));
       if (from) {
         flight.value = withDelay(

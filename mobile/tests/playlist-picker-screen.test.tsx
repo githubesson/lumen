@@ -8,6 +8,7 @@ import { setPlaylistPickerTrack } from "../components/playlist-picker/subject";
 type Item = { type: string; id: string };
 const mock = vi.hoisted(() => ({
   playlists: undefined as Playlist[] | undefined,
+  trackId: "t1" as string | undefined,
   renderItem: undefined as ((info: { item: Item }) => ReactElement) | undefined,
   data: [] as Item[],
   back: vi.fn(),
@@ -59,7 +60,7 @@ vi.mock("@shopify/flash-list", () => ({
   },
 }));
 vi.mock("expo-router", () => ({
-  useLocalSearchParams: () => ({ trackId: "t1" }),
+  useLocalSearchParams: () => ({ trackId: mock.trackId }),
   useRouter: () => ({ back: mock.back }),
 }));
 vi.mock("expo-glass-effect", () => ({ isLiquidGlassAvailable: () => false }));
@@ -132,6 +133,7 @@ function playlist(id: string, name: string, extra: Partial<Playlist> = {}): Play
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mock.trackId = "t1";
   mock.add.mockReturnValue(new Promise(() => {}));
   setPlaylistPickerTrack(track);
 });
@@ -166,6 +168,15 @@ describe("PlaylistPickerScreen", () => {
     const html = renderToStaticMarkup(<PlaylistPickerScreen />);
     expect(html).not.toContain(">Added<");
     expect(html).not.toContain("disabled");
+  });
+
+  it("says so when opened without a track, rather than listing playlists", () => {
+    mock.trackId = undefined;
+    mock.playlists = [playlist("p1", "late night")];
+    const html = renderToStaticMarkup(<PlaylistPickerScreen />);
+    expect(html).toContain("No track to add.");
+    expect(html).not.toContain("late night");
+    expect(html).not.toContain("loading");
   });
 
   it("closes on the first tap and hands the add to the confirmation", async () => {
