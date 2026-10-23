@@ -1,9 +1,11 @@
 import { advanceAuthGeneration } from "../src/api-transport";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ApiError,
   api,
   createTrackShareLink,
   downloadStreamUrl,
+  errorMessage,
   getPublicTrackShare,
   parseTrackShareUrl,
   probeStreamUrl,
@@ -415,6 +417,17 @@ describe("form upload fetch", () => {
     await api.removeAlbumCover("a1");
     expect(globalFetch).toHaveBeenCalledTimes(1);
     expect(formFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the caller's message when a failure has no body or status text", async () => {
+    setFormFetch(vi.fn(async () => new Response(null, { status: 502 })));
+
+    const err = await api
+      .setAlbumCover("a1", { uri: "file:///cover.jpg", name: "cover.jpg", type: "image/jpeg" })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(errorMessage(err, "Couldn't use that image.")).toBe("Couldn't use that image.");
+    expect(errorMessage(new ApiError(413, "too large"), "fallback")).toBe("too large");
   });
 });
 

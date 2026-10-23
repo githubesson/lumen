@@ -45,9 +45,11 @@ export type * from "./api-auth-types";
  * server's message for ApiError; otherwise returns the caller's fallback so
  * raw network/parse errors don't leak into the UI. Centralizes the
  * `err instanceof ApiError ? err.message : fallback` idiom used everywhere.
+ * A failure with no body and no status text (HTTP/2, React Native's XHR)
+ * has an empty message, and gets the fallback too.
  */
 export function errorMessage(err: unknown, fallback: string): string {
-  return err instanceof ApiError ? err.message : fallback;
+  return err instanceof ApiError && err.message ? err.message : fallback;
 }
 
 export type TrackSource = "local" | "tidal";
