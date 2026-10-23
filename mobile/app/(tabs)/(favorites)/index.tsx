@@ -17,9 +17,10 @@ import {
   collapsedOffset,
   maxScrollOffset,
   owedScrollStep,
-  switchScrollTarget,
+  planSwitchScroll,
   type FavoritesMode,
   type HeaderGeometry,
+  type OwedScroll,
 } from "../../../lib/favorites-header";
 import { qk } from "../../../lib/query-keys";
 import { useTheme } from "../../../theme/theme";
@@ -92,9 +93,11 @@ export default function FavoritesScreen() {
     });
   }, []);
 
-  // A scroll a list couldn't take yet (not mounted, rows not loaded or laid
-  // out), applied once they are unless the user grabs the list first.
-  const pendingScroll = useRef<Partial<Record<FavoritesMode, number>>>({});
+  // A scroll the shown list couldn't take yet (not mounted, rows not loaded
+  // or laid out), applied once they are unless the user moves the list
+  // first. One slot: each switch replaces it, so a list out of sight never
+  // moves on its own.
+  const owedScroll = useRef<OwedScroll | null>(null);
   // What each list can scroll to: its content height, and the screen's.
   const contentHeights = useRef<Partial<Record<FavoritesMode, number>>>({});
   const viewportHeight = useRef(0);
@@ -126,38 +129,36 @@ export default function FavoritesScreen() {
   const onListContentSizeChange = useCallback(
     (list: FavoritesMode, height: number) => {
       contentHeights.current[list] = height;
-      const target = pendingScroll.current[list];
-      if (target == null) return;
+      const owed = owedScroll.current;
+      if (owed?.list !== list) return;
       const listLoaded = list === "favorites" ? favoritesLoaded : recentLoaded;
-      const step = owedScrollStep(target, listLoaded, maxOffsetOf(list));
+      const step = owedScrollStep(owed.target, listLoaded, maxOffsetOf(list));
       if (step === "wait") return;
-      delete pendingScroll.current[list];
-      if (step === "scroll") scrollList(list, target);
+      owedScroll.current = null;
+      if (step === "scroll") scrollList(list, owed.target);
     },
     [favoritesLoaded, recentLoaded, maxOffsetOf, scrollList],
   );
 
-  const onListScrollBeginDrag = useCallback((list: FavoritesMode) => {
-    delete pendingScroll.current[list];
+  // A drag, a pull or a status-bar tap: the list goes where the user takes it.
+  const onListUserScroll = useCallback((list: FavoritesMode) => {
+    if (owedScroll.current?.list === list) owedScroll.current = null;
   }, []);
 
   const onSelectMode = useCallback(
     (next: FavoritesMode) => {
       if (next === mode) return;
-      // A scroll still owed from an earlier switch no longer applies.
-      delete pendingScroll.current[next];
       const nextMounted = next === "favorites" || recentMounted;
-      const from = offsets[mode].get() + topInset;
-      const to = nextMounted ? offsets[next].get() + topInset : 0;
-      const target = switchScrollTarget(from, to, collapsedOffset(geometry[mode]));
-      if (target != null) {
-        const nextLoaded = next === "favorites" ? favoritesLoaded : recentLoaded;
-        const step = nextMounted
-          ? owedScrollStep(target, nextLoaded, maxOffsetOf(next))
-          : "wait";
-        if (step === "scroll") scrollList(next, target);
-        else if (step === "wait") pendingScroll.current[next] = target;
-      }
+      const plan = planSwitchScroll({
+        next,
+        fromOffset: offsets[mode].get() + topInset,
+        toOffset: nextMounted ? offsets[next].get() + topInset : null,
+        collapseAt: collapsedOffset(geometry[mode]),
+        loaded: next === "favorites" ? favoritesLoaded : recentLoaded,
+        maxOffset: maxOffsetOf(next),
+      });
+      owedScroll.current = plan.owed;
+      if (plan.scrollTo != null) scrollList(next, plan.scrollTo);
       if (next === "recent") setRecentMounted(true);
       setMode(next);
     },
@@ -201,7 +202,7 @@ export default function FavoritesScreen() {
         query={favoritesQuery}
         onGeometry={onGeometry}
         onContentSizeChange={onListContentSizeChange}
-        onScrollBeginDrag={onListScrollBeginDrag}
+        onUserScroll={onListUserScroll}
       />
       {recentMounted ? (
         <FavoritesList
@@ -216,7 +217,7 @@ export default function FavoritesScreen() {
           query={recentQuery}
           onGeometry={onGeometry}
           onContentSizeChange={onListContentSizeChange}
-          onScrollBeginDrag={onListScrollBeginDrag}
+          onUserScroll={onListUserScroll}
         />
       ) : null}
       <FavoritesNavBar

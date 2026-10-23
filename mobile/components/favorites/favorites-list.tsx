@@ -164,7 +164,7 @@ export function FavoritesList({
   query,
   onGeometry,
   onContentSizeChange,
-  onScrollBeginDrag,
+  onUserScroll,
 }: {
   theme: ThemeTokens;
   mode: FavoritesMode;
@@ -185,7 +185,8 @@ export function FavoritesList({
   onGeometry: (mode: FavoritesMode, geometry: HeaderGeometry) => void;
   /** The list's content height, as laid out. */
   onContentSizeChange: (mode: FavoritesMode, height: number) => void;
-  onScrollBeginDrag: (mode: FavoritesMode) => void;
+  /** The user moved the list: a drag (or pull) or a status-bar tap. */
+  onUserScroll: (mode: FavoritesMode) => void;
 }) {
   const dockInset = useBottomDockInset();
   const dockScroll = useDockScrollHandler();
@@ -266,7 +267,8 @@ export function FavoritesList({
         scrollEventThrottle={dockScroll.scrollEventThrottle}
         onScroll={active ? dockScroll.onScroll : undefined}
         onContentSizeChange={(_, height) => onContentSizeChange(mode, height)}
-        onScrollBeginDrag={() => onScrollBeginDrag(mode)}
+        onScrollBeginDrag={() => onUserScroll(mode)}
+        onScrollToTop={() => onUserScroll(mode)}
         style={styles.list}
         contentContainerStyle={{ paddingBottom: dockInset + 24 }}
         refreshControl={
