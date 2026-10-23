@@ -6,6 +6,14 @@ import {
   screenOffsetOfPress,
 } from "../components/playlist-picker/measure";
 
+const sizes = vi.hoisted(() => ({
+  window: { width: 393, height: 852 },
+  screen: { width: 393, height: 852 },
+}));
+vi.mock("react-native", () => ({
+  Dimensions: { get: (which: "window" | "screen") => sizes[which] },
+}));
+
 type Measure = (x: number, y: number, width: number, height: number) => void;
 
 function view(rect: [number, number, number, number] | null): View {
@@ -20,7 +28,11 @@ function press(nativeEvent: Record<string, number>): GestureResponderEvent {
   return { nativeEvent } as unknown as GestureResponderEvent;
 }
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  sizes.window = { width: 393, height: 852 };
+  sizes.screen = { width: 393, height: 852 };
+});
 
 describe("screenOffsetOfPress", () => {
   it("finds where the sheet's layout sits on screen", async () => {
@@ -42,6 +54,18 @@ describe("screenOffsetOfPress", () => {
       press({ locationX: 100, locationY: 20, screenX: 100, screenY: 640 }),
     );
     expect(offset).toEqual({ x: 0, y: 0 });
+  });
+
+  it("gives up in a window smaller than the screen, where the two disagree", async () => {
+    // iPad Split View: screen points are off by the window's place on screen.
+    sizes.window = { width: 507, height: 1024 };
+    sizes.screen = { width: 1366, height: 1024 };
+    expect(
+      await screenOffsetOfPress(
+        view([0, 210, 507, 60]),
+        press({ locationX: 100, locationY: 20, screenX: 959, screenY: 640 }),
+      ),
+    ).toBeNull();
   });
 
   it("gives up without the touch's screen point", async () => {

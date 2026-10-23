@@ -29,6 +29,7 @@ import {
   PlaylistPickerRow,
   type PickHandler,
 } from "../components/playlist-picker/picker-row";
+import { useMarksWait } from "../components/playlist-picker/marks-wait";
 import { PickerSearchField } from "../components/playlist-picker/search-field";
 import { playlistPickerTrack } from "../components/playlist-picker/subject";
 import {
@@ -95,10 +96,13 @@ export default function PlaylistPickerScreen() {
   const playlists = playlistsQuery.data;
   // The stand-in has no "Added" marks, and the server adds duplicates, so
   // its rows wait for the answer. Not while offline: the request is paused
-  // then, and a pick still ends in the alert saying why it failed. A new
-  // playlist can't already hold the track, so its row never waits.
+  // then, and a pick still ends in the alert saying why it failed. Not for
+  // long either (see useMarksWait), and a slow answer shows a spinner. A
+  // new playlist can't already hold the track, so its row never waits.
   const marksPending =
     playlistsQuery.isPlaceholderData && playlistsQuery.fetchStatus === "fetching";
+  const marksWait = useMarksWait(marksPending);
+  const holdRows = marksPending && marksWait !== "given-up";
 
   const rows = useMemo(
     () =>
@@ -149,11 +153,11 @@ export default function PlaylistPickerScreen() {
       ) : (
         <PlaylistPickerRow
           playlist={item.playlist}
-          pending={marksPending}
+          pending={holdRows}
           onPick={pick}
         />
       ),
-    [marksPending, pick],
+    [holdRows, pick],
   );
   const keyExtractor = useCallback((item: Row) => item.id, []);
   const itemType = useCallback((item: Row) => item.type, []);
@@ -184,13 +188,16 @@ export default function PlaylistPickerScreen() {
           </AdaptiveGlass>
         </Pressable>
       </View>
-      <PickerSearchField onChangeText={setSearch} />
+      <PickerSearchField
+        busy={marksPending && marksWait !== "quiet"}
+        onChangeText={setSearch}
+      />
       <FlashList
         data={rows}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         getItemType={itemType}
-        extraData={marksPending}
+        extraData={holdRows}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         contentInsetAdjustmentBehavior="automatic"

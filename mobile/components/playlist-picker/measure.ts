@@ -1,7 +1,21 @@
-import type { GestureResponderEvent, View } from "react-native";
+import { Dimensions, type GestureResponderEvent, type View } from "react-native";
 import type { WindowRect } from "../add-confirmation/store";
 
 const MEASURE_TIMEOUT_MS = 100;
+
+/**
+ * Touches report screen points, and the confirmation draws in window
+ * points. They agree only while the window fills the screen: not in iPad
+ * Split View, Slide Over or Stage Manager, whose window sits somewhere on it.
+ */
+function windowFillsScreen(): boolean {
+  const window = Dimensions.get("window");
+  const screen = Dimensions.get("screen");
+  return (
+    Math.round(window.width) === Math.round(screen.width) &&
+    Math.round(window.height) === Math.round(screen.height)
+  );
+}
 
 /** `view`'s rect as layout measures it, or null if that fails or stalls. */
 export function measureRect(view: View | null): Promise<WindowRect | null> {
@@ -23,6 +37,8 @@ export function measureRect(view: View | null): Promise<WindowRect | null> {
  * measure from the sheet's corner, not the window's; a press on `view`
  * carries the touch both on screen and within the view, which pins the
  * view's corner on screen. Zero when layout already measures from the window.
+ * Null when it can't be placed, including in a window smaller than the
+ * screen: the confirmation then skips the flight.
  */
 export async function screenOffsetOfPress(
   view: View | null,
@@ -35,6 +51,7 @@ export async function screenOffsetOfPress(
       screenY?: number;
     };
   if (typeof screenX !== "number" || typeof screenY !== "number") return null;
+  if (!windowFillsScreen()) return null;
   const rect = await measureRect(view);
   if (!rect) return null;
   return { x: screenX - locationX - rect.x, y: screenY - locationY - rect.y };

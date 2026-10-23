@@ -9,6 +9,7 @@ type Item = { type: string; id: string; name?: string };
 const mock = vi.hoisted(() => ({
   playlists: undefined as Playlist[] | undefined,
   query: { isPlaceholderData: false, fetchStatus: "idle" },
+  marksWait: "quiet" as "quiet" | "busy" | "given-up",
   presses: {} as Record<string, () => void>,
   trackId: "t1" as string | undefined,
   renderItem: undefined as ((info: { item: Item }) => ReactElement) | undefined,
@@ -43,6 +44,9 @@ vi.mock("react-native", () => ({
       </button>
     );
   },
+  ActivityIndicator: ({ accessibilityLabel }: { accessibilityLabel?: string }) => (
+    <progress aria-label={accessibilityLabel} />
+  ),
   Keyboard: { dismiss: mock.dismiss },
   PixelRatio: { get: () => 2 },
   StyleSheet: { create: <T,>(styles: T) => styles, hairlineWidth: 1, absoluteFill: {} },
@@ -97,6 +101,9 @@ vi.mock("../components/playlist-artwork", () => ({ PlaylistArtwork: () => null }
 vi.mock("../lib/downloads", () => ({ downloadStore: { coverUriFor: () => undefined } }));
 vi.mock("../lib/recent-playlists", () => ({ loadRecentPlaylistIds: async () => [] }));
 vi.mock("../lib/add-to-playlist", () => ({ addTrackToPlaylist: mock.add }));
+vi.mock("../components/playlist-picker/marks-wait", () => ({
+  useMarksWait: () => mock.marksWait,
+}));
 vi.mock("../components/add-confirmation/store", () => ({ showAddConfirmation: mock.show }));
 vi.mock("../components/playlist-picker/measure", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/playlist-picker/measure")>()),
@@ -142,6 +149,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mock.trackId = "t1";
   mock.query = { isPlaceholderData: false, fetchStatus: "idle" };
+  mock.marksWait = "quiet";
   mock.presses = {};
   mock.add.mockReturnValue(new Promise(() => {}));
   setPlaylistPickerTrack(track);
@@ -187,12 +195,29 @@ describe("PlaylistPickerScreen", () => {
     expect(html).toContain(
       'aria-label="late night" title="Checking whether it already has this track." disabled=""',
     );
+    // The usual quick answer shows nothing.
+    expect(html).not.toContain("<progress");
     // A new playlist can't hold the track already, so it never waits.
     const newRow = renderToStaticMarkup(
       mock.renderItem!({ item: { type: "new", id: "new", name: "night drive" } }),
     );
     expect(newRow).toContain('aria-label="New playlist, night drive"');
     expect(newRow).not.toContain("disabled");
+  });
+
+  it("shows a slow answer, and stops holding the rows on a hung one", () => {
+    mock.query = { isPlaceholderData: true, fetchStatus: "fetching" };
+    mock.playlists = [playlist("p1", "late night")];
+    mock.marksWait = "busy";
+    let html = renderToStaticMarkup(<PlaylistPickerScreen />);
+    expect(html).toContain('<progress aria-label="Checking which playlists have this track">');
+    expect(html).toContain('aria-label="late night" title="Checking whether it already has this track." disabled=""');
+    // A possible duplicate beats a sheet that ignores every tap.
+    mock.marksWait = "given-up";
+    html = renderToStaticMarkup(<PlaylistPickerScreen />);
+    expect(html).toContain("<progress");
+    expect(html).toContain('aria-label="late night" title="Adds the track to this playlist."');
+    expect(html).not.toContain("disabled");
   });
 
   it("lets offline picks through, where the add's alert explains", () => {

@@ -1,16 +1,21 @@
-import { StyleSheet, TextInput, View } from "react-native";
+import { ActivityIndicator, StyleSheet, TextInput, View } from "react-native";
 import { SymbolView } from "expo-symbols";
 import { useTheme } from "../../theme/theme";
+import { PICKER_MAX_FONT_SCALE } from "./picker-row";
 
 const PLACEHOLDER = "Find or name a new playlist";
 
 /**
  * The picker's one field: it narrows the list, and a name no playlist has
- * becomes the "New Playlist" row. The placeholder says both.
+ * becomes the "New Playlist" row. The placeholder says both. `busy` shows
+ * a spinner at its end while the list is still finding out which playlists
+ * already hold the track.
  */
 export function PickerSearchField({
+  busy,
   onChangeText,
 }: {
+  busy: boolean;
   onChangeText: (text: string) => void;
 }) {
   const theme = useTheme();
@@ -42,8 +47,16 @@ export function PickerSearchField({
         autoCorrect={false}
         clearButtonMode="while-editing"
         returnKeyType="done"
+        maxFontSizeMultiplier={PICKER_MAX_FONT_SCALE}
         style={[styles.input, { color: theme.color.fg }]}
       />
+      {busy ? (
+        <ActivityIndicator
+          size="small"
+          color={theme.color.fgMuted}
+          accessibilityLabel="Checking which playlists have this track"
+        />
+      ) : null}
     </View>
   );
 }
