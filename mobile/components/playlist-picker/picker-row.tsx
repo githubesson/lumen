@@ -40,9 +40,15 @@ function collaborativeSubtitle(playlist: Playlist): string | null {
 
 export const PlaylistPickerRow = memo(function PlaylistPickerRow({
   playlist,
+  pending,
   onPick,
 }: {
   playlist: Playlist;
+  /**
+   * Whether it already holds the track isn't known yet. The row ignores
+   * taps without fading: the answer is usually one quick request away.
+   */
+  pending: boolean;
   onPick: PickHandler;
 }) {
   const theme = useTheme();
@@ -57,15 +63,19 @@ export const PlaylistPickerRow = memo(function PlaylistPickerRow({
       ref={ref}
       // The press lands on the row itself, so its location is in the row.
       pointerEvents="box-only"
-      disabled={added}
+      disabled={added || pending}
       onPress={(event) => onPick({ kind: "existing", playlist }, ref.current, event)}
       accessibilityRole="button"
       accessibilityLabel={subtitle ? `${playlist.name}, ${subtitle}` : playlist.name}
       accessibilityValue={added ? { text: "Added" } : undefined}
       accessibilityHint={
-        added ? "Already has this track." : "Adds the track to this playlist."
+        added
+          ? "Already has this track."
+          : pending
+            ? "Checking whether it already has this track."
+            : "Adds the track to this playlist."
       }
-      accessibilityState={{ disabled: added }}
+      accessibilityState={{ disabled: added || pending, busy: pending }}
       style={({ pressed }) => rowStyle(theme, pressed, added)}
     >
       <PlaylistArtwork

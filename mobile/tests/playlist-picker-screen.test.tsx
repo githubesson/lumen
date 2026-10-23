@@ -5,9 +5,11 @@ import type { Playlist, TrackListItem } from "@music-library/core";
 import PlaylistPickerScreen from "../app/playlist-picker";
 import { setPlaylistPickerTrack } from "../components/playlist-picker/subject";
 
-type Item = { type: string; id: string };
+type Item = { type: string; id: string; name?: string };
 const mock = vi.hoisted(() => ({
   playlists: undefined as Playlist[] | undefined,
+  query: { isPlaceholderData: false, fetchStatus: "idle" },
+  presses: {} as Record<string, () => void>,
   trackId: "t1" as string | undefined,
   renderItem: undefined as ((info: { item: Item }) => ReactElement) | undefined,
   data: [] as Item[],
@@ -26,16 +28,21 @@ vi.mock("react-native", () => ({
     accessibilityLabel,
     accessibilityHint,
     disabled,
+    onPress,
   }: {
     children?: ReactNode;
     accessibilityLabel?: string;
     accessibilityHint?: string;
     disabled?: boolean;
-  }) => (
-    <button aria-label={accessibilityLabel} title={accessibilityHint} disabled={disabled}>
-      {children}
-    </button>
-  ),
+    onPress?: () => void;
+  }) => {
+    if (accessibilityLabel && onPress) mock.presses[accessibilityLabel] = onPress;
+    return (
+      <button aria-label={accessibilityLabel} title={accessibilityHint} disabled={disabled}>
+        {children}
+      </button>
+    );
+  },
   Keyboard: { dismiss: mock.dismiss },
   PixelRatio: { get: () => 2 },
   StyleSheet: { create: <T,>(styles: T) => styles, hairlineWidth: 1, absoluteFill: {} },
@@ -70,7 +77,7 @@ vi.mock("expo-image", () => ({
   Image: ({ source }: { source: { uri: string } }) => <img src={source.uri} alt="" />,
 }));
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: mock.playlists, isError: false }),
+  useQuery: () => ({ data: mock.playlists, isError: false, ...mock.query }),
   useQueryClient: () => ({ getQueryData: () => undefined }),
 }));
 vi.mock("@music-library/core", async (importOriginal) => ({
@@ -134,6 +141,8 @@ function playlist(id: string, name: string, extra: Partial<Playlist> = {}): Play
 beforeEach(() => {
   vi.clearAllMocks();
   mock.trackId = "t1";
+  mock.query = { isPlaceholderData: false, fetchStatus: "idle" };
+  mock.presses = {};
   mock.add.mockReturnValue(new Promise(() => {}));
   setPlaylistPickerTrack(track);
 });
@@ -170,6 +179,28 @@ describe("PlaylistPickerScreen", () => {
     expect(html).not.toContain("disabled");
   });
 
+  it("holds the playlists until the server says which have the track", () => {
+    // The cached plain list stands in, without the marks, while they load.
+    mock.query = { isPlaceholderData: true, fetchStatus: "fetching" };
+    mock.playlists = [playlist("p1", "late night")];
+    const html = renderToStaticMarkup(<PlaylistPickerScreen />);
+    expect(html).toContain(
+      'aria-label="late night" title="Checking whether it already has this track." disabled=""',
+    );
+    // A new playlist can't hold the track already, so it never waits.
+    const newRow = renderToStaticMarkup(
+      mock.renderItem!({ item: { type: "new", id: "new", name: "night drive" } }),
+    );
+    expect(newRow).toContain('aria-label="New playlist, night drive"');
+    expect(newRow).not.toContain("disabled");
+  });
+
+  it("lets offline picks through, where the add's alert explains", () => {
+    mock.query = { isPlaceholderData: true, fetchStatus: "paused" };
+    mock.playlists = [playlist("p1", "late night")];
+    expect(renderToStaticMarkup(<PlaylistPickerScreen />)).not.toContain("disabled");
+  });
+
   it("says so when opened without a track, rather than listing playlists", () => {
     mock.trackId = undefined;
     mock.playlists = [playlist("p1", "late night")];
@@ -187,6 +218,8 @@ describe("PlaylistPickerScreen", () => {
     const onPick = (row.props as { onPick: (...args: unknown[]) => void }).onPick;
     onPick({ kind: "existing", playlist: gym }, null, { nativeEvent: {} });
     onPick({ kind: "existing", playlist: gym }, null, { nativeEvent: {} });
+    // The X while the pick is still measuring must not back out again.
+    mock.presses.Close();
     await vi.waitFor(() => expect(mock.back).toHaveBeenCalled());
 
     expect(mock.add).toHaveBeenCalledTimes(1);

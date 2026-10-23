@@ -65,8 +65,10 @@ export default function PlaylistPickerScreen() {
   const [search, setSearch] = useState("");
   const [recentIds, setRecentIds] = useState<string[]>([]);
   const [lifted, setLifted] = useState(false);
-  // One tap finishes: anything after it is the sheet already closing.
-  const picked = useRef(false);
+  // The sheet leaves once, by a pick or by the X, whichever comes first. A
+  // pick claims it at the tap, though it backs out only after measuring:
+  // a second back() would pop the screen under the sheet.
+  const leaving = useRef(false);
 
   useEffect(() => {
     if (!userId) return;
@@ -85,13 +87,18 @@ export default function PlaylistPickerScreen() {
     queryKey: qk.playlistsWithTrack(userId, trackId),
     queryFn: ({ signal }) => api.listPlaylists({ trackId, signal }),
     enabled: !!userId && !!trackId,
-    // The plain list, usually cached, stands in until this answers; it has
-    // no "Added" marks, so until then every playlist is pickable.
+    // The plain list, usually cached, stands in until this answers.
     placeholderData: () =>
       queryClient.getQueryData<Playlist[]>(qk.playlists(userId)),
     gcTime: PICKER_CACHE_MS,
   });
   const playlists = playlistsQuery.data;
+  // The stand-in has no "Added" marks, and the server adds duplicates, so
+  // its rows wait for the answer. Not while offline: the request is paused
+  // then, and a pick still ends in the alert saying why it failed. A new
+  // playlist can't already hold the track, so its row never waits.
+  const marksPending =
+    playlistsQuery.isPlaceholderData && playlistsQuery.fetchStatus === "fetching";
 
   const rows = useMemo(
     () =>
@@ -102,14 +109,16 @@ export default function PlaylistPickerScreen() {
   );
 
   const close = useCallback(() => {
+    if (leaving.current) return;
+    leaving.current = true;
     void Haptics.selectionAsync();
     router.back();
   }, [router]);
 
   const pick = useCallback<PickHandler>(
     (target, row, event: GestureResponderEvent) => {
-      if (picked.current || !userId || !trackId) return;
-      picked.current = true;
+      if (leaving.current || !userId || !trackId) return;
+      leaving.current = true;
       void Haptics.selectionAsync();
       Keyboard.dismiss();
       const done = addTrackToPlaylist({ queryClient, userId, trackId, target });
@@ -138,9 +147,13 @@ export default function PlaylistPickerScreen() {
       item.type === "new" ? (
         <NewPlaylistRow name={item.name} onPick={pick} />
       ) : (
-        <PlaylistPickerRow playlist={item.playlist} onPick={pick} />
+        <PlaylistPickerRow
+          playlist={item.playlist}
+          pending={marksPending}
+          onPick={pick}
+        />
       ),
-    [pick],
+    [marksPending, pick],
   );
   const keyExtractor = useCallback((item: Row) => item.id, []);
   const itemType = useCallback((item: Row) => item.type, []);
@@ -177,6 +190,7 @@ export default function PlaylistPickerScreen() {
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         getItemType={itemType}
+        extraData={marksPending}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         contentInsetAdjustmentBehavior="automatic"
