@@ -599,6 +599,7 @@ export function SwipeableTrackRow({
         lapMs={on === "strip" ? COMET_STRIP_LAP_MS : COMET_LAP_MS}
         delayMs={shownGlow.delayMs}
         reducedMotion={reducedMotion}
+        onLight={theme.scheme === "light"}
         onDone={clearGlow}
         style={on === "strip" ? styles.stripGlow : undefined}
       />

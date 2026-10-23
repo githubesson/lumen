@@ -67,7 +67,8 @@ function hotTone(color: string): string {
  * from the side the swipe came from; the outline breathes once as the loop
  * closes, then it all fades. Mount it for the animation only (keyed per run)
  * and unmount it on `onDone`: idle rows carry no canvas. Under reduced
- * motion the outline just glows once.
+ * motion the outline just glows once. On a light background a white-hot
+ * head would vanish, so there the head and neck keep the colour.
  */
 export function CometGlow({
   box,
@@ -76,6 +77,7 @@ export function CometGlow({
   lapMs,
   delayMs = 0,
   reducedMotion,
+  onLight = false,
   onDone,
   style,
 }: {
@@ -85,6 +87,7 @@ export function CometGlow({
   lapMs: number;
   delayMs?: number;
   reducedMotion: boolean;
+  onLight?: boolean;
   onDone: () => void;
   style?: StyleProp<ViewStyle>;
 }) {
@@ -132,7 +135,8 @@ export function CometGlow({
     reducedMotion ? 0.6 : cometRingOpacity(clock.get() - ringStartMs),
   );
   const head = useDerivedValue(() => cometHead(lap.get(), perimeter, LONGEST));
-  const hot = hotTone(color);
+  const hot = onLight ? color : hotTone(color);
+  const white = onLight ? color : "#FFFFFF";
 
   return (
     <Canvas pointerEvents="none" style={style ?? StyleSheet.absoluteFill}>
@@ -168,7 +172,7 @@ export function CometGlow({
                 width={layer.width}
                 opacity={layer.opacity}
                 blur={layer.blur}
-                color={layer.tone === "color" ? color : layer.tone === "hot" ? hot : "#FFFFFF"}
+                color={layer.tone === "color" ? color : layer.tone === "hot" ? hot : white}
               />
             ))}
       </Group>
