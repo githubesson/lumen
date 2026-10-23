@@ -35,6 +35,7 @@ import { invalidateLibrary } from "../lib/query-keys";
 import { DownloadsProvider } from "../lib/downloads";
 import { formFetch } from "../lib/form-fetch";
 import { RemoteControlIndicator } from "../components/remote-control-indicator";
+import { AddConfirmationOverlay } from "../components/add-confirmation/add-confirmation-overlay";
 import { CarPlayBridge } from "../components/carplay-bridge";
 import { SiriMediaBridge } from "../components/siri-media-bridge";
 import {
@@ -146,6 +147,9 @@ export default function RootLayout() {
               <AccountScopedProviders>
                 <AuthGate />
                 <ThemedStatusBar />
+                {/* Above every screen and sheet; plays after the playlist
+                    picker closes. */}
+                <AddConfirmationOverlay />
               </AccountScopedProviders>
             </AuthProvider>
           </ThemedNavigation>
@@ -266,9 +270,13 @@ function AuthGate() {
       <Stack.Screen
         name="playlist-picker"
         options={{
-          presentation: "modal",
-          headerShown: true,
-          headerLargeTitle: false,
+          // Half height, draggable to full; the screen draws its own top.
+          presentation: "formSheet",
+          sheetAllowedDetents: [0.5, 1],
+          sheetGrabberVisible: true,
+          headerShown: false,
+          // Clear, so iOS 26 can draw the half sheet in Liquid Glass.
+          contentStyle: { backgroundColor: "transparent" },
         }}
       />
       <Stack.Screen

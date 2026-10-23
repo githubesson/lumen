@@ -66,6 +66,9 @@ export function shouldPersistQuery(query: Query): boolean {
 
   const [root, scope, kind] = query.queryKey;
   if (root === "user") {
+    // Which playlists hold one track only matters while the picker is open;
+    // kept, there would be one copy of the list per track ever picked for.
+    if (kind === "playlists" && query.queryKey.length > 3) return false;
     return (
       typeof scope === "string" &&
       typeof kind === "string" &&
