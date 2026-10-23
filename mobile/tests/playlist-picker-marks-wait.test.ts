@@ -69,6 +69,21 @@ describe("useMarksWait", () => {
     expect(useMarksWait(false)).toBe("quiet");
   });
 
+  it("doesn't hold the rows again after a pause, however short of the cap", () => {
+    expect(useMarksWait(true)).toBe("quiet");
+    vi.advanceTimersByTime(4000);
+    expect(useMarksWait(true)).toBe("busy");
+    // Offline: the request pauses and the rows let go.
+    expect(useMarksWait(false)).toBe("quiet");
+    // Back online, the rows stay free rather than waiting another 5 s.
+    expect(useMarksWait(true)).toBe("given-up");
+    vi.advanceTimersByTime(MARKS_GIVE_UP_AFTER_MS);
+    expect(useMarksWait(true)).toBe("given-up");
+    // Every further flap stays released too.
+    expect(useMarksWait(false)).toBe("quiet");
+    expect(useMarksWait(true)).toBe("given-up");
+  });
+
   it("never holds the rows again once it has let go", () => {
     expect(useMarksWait(true)).toBe("quiet");
     vi.advanceTimersByTime(MARKS_BUSY_AFTER_MS);
