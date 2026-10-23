@@ -4,6 +4,7 @@ import { Image } from "expo-image";
 import { SymbolView } from "expo-symbols";
 import { displayText, type TrackListItem } from "@music-library/core";
 import { formatDurationMs } from "../../lib/format";
+import { PICKER_MAX_FONT_SCALE } from "./picker-row";
 import { useTheme, withAlpha } from "../../theme/theme";
 
 export const TRACK_CARD_COVER_SIZE = 48;
@@ -66,6 +67,7 @@ export function TrackCard({
       <View style={styles.text}>
         <Text
           numberOfLines={1}
+          maxFontSizeMultiplier={PICKER_MAX_FONT_SCALE}
           style={{ color: theme.color.fg, fontSize: 16, fontWeight: "600" }}
         >
           {title}
@@ -73,6 +75,7 @@ export function TrackCard({
         {names.length > 0 ? (
           <Text
             numberOfLines={1}
+            maxFontSizeMultiplier={PICKER_MAX_FONT_SCALE}
             style={{ color: theme.color.fgMuted, fontSize: 13 }}
           >
             {names.join(" · ")}
@@ -81,6 +84,7 @@ export function TrackCard({
       </View>
       {duration ? (
         <Text
+          maxFontSizeMultiplier={PICKER_MAX_FONT_SCALE}
           style={{
             color: theme.color.fgMuted,
             fontSize: 13,

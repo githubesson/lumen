@@ -14,6 +14,12 @@ import { useTheme, withAlpha, type ThemeTokens } from "../../theme/theme";
 
 /** Fixed, so the list never measures a row. */
 export const PICKER_ROW_HEIGHT = 60;
+/**
+ * Text in the picker grows with Dynamic Type up to this much. A row's two
+ * lines then take about 26 + 20 pt of its 60, and the badge's line fits its
+ * 24; the largest accessibility sizes would clip or overlap.
+ */
+export const PICKER_MAX_FONT_SCALE = 1.25;
 export const PICKER_ART_SIZE = 44;
 const ART_RADIUS = 8;
 
@@ -46,7 +52,9 @@ export const PlaylistPickerRow = memo(function PlaylistPickerRow({
   playlist: Playlist;
   /**
    * Whether it already holds the track isn't known yet. The row ignores
-   * taps without fading: the answer is usually one quick request away.
+   * taps without fading: the answer is usually one quick request away, the
+   * search field shows a spinner when it isn't, and the picker lets go of
+   * the rows after a few seconds.
    */
   pending: boolean;
   onPick: PickHandler;
@@ -86,12 +94,17 @@ export const PlaylistPickerRow = memo(function PlaylistPickerRow({
       />
       <View style={[styles.body, { borderBottomColor: theme.color.separator }]}>
         <View style={styles.text}>
-          <Text numberOfLines={1} style={[styles.name, { color: theme.color.fg }]}>
+          <Text
+            numberOfLines={1}
+            maxFontSizeMultiplier={PICKER_MAX_FONT_SCALE}
+            style={[styles.name, { color: theme.color.fg }]}
+          >
             {playlist.name}
           </Text>
           {subtitle ? (
             <Text
               numberOfLines={1}
+              maxFontSizeMultiplier={PICKER_MAX_FONT_SCALE}
               style={[styles.subtitle, { color: theme.color.fgMuted }]}
             >
               {subtitle}
@@ -135,11 +148,16 @@ export const NewPlaylistRow = memo(function NewPlaylistRow({
       </View>
       <View style={[styles.body, { borderBottomColor: theme.color.separator }]}>
         <View style={styles.text}>
-          <Text numberOfLines={1} style={[styles.name, { color: theme.color.fg }]}>
+          <Text
+            numberOfLines={1}
+            maxFontSizeMultiplier={PICKER_MAX_FONT_SCALE}
+            style={[styles.name, { color: theme.color.fg }]}
+          >
             {name}
           </Text>
           <Text
             numberOfLines={1}
+            maxFontSizeMultiplier={PICKER_MAX_FONT_SCALE}
             style={[styles.subtitle, { color: theme.color.accent }]}
           >
             New Playlist
@@ -170,7 +188,10 @@ function AddedBadge() {
         weight="semibold"
         tintColor={theme.color.fgMuted}
       />
-      <Text style={[styles.badgeText, { color: theme.color.fgMuted }]}>
+      <Text
+        maxFontSizeMultiplier={PICKER_MAX_FONT_SCALE}
+        style={[styles.badgeText, { color: theme.color.fgMuted }]}
+      >
         Added
       </Text>
     </View>
