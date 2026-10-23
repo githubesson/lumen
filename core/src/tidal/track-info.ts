@@ -1,11 +1,13 @@
 import {
   ApiError,
   trackCredits,
+  type TidalAlbum,
   type TidalStreamQuality,
   type TidalTrackInfo,
   type TrackArtist,
   type TrackDetail,
 } from "../api";
+import { trackAlbumTarget } from "../entity-target";
 import {
   displayText,
   formatBitrate,
@@ -14,6 +16,7 @@ import {
   formatDurationMs,
   formatSampleRate,
 } from "../format";
+import { isTidalTrack } from "../track";
 
 /**
  * The server's explanation when TIDAL refused a request ("TIDAL refused …:
@@ -27,40 +30,107 @@ export function tidalRefusalMessage(error: unknown): string | null {
 }
 
 /**
+ * A name in a track's info view that opens a page: an artist's or an
+ * album's, in the library (`id` is the library id) or on TIDAL (`id` is
+ * TIDAL's).
+ */
+export interface TrackInfoLink {
+  name: string;
+  kind: "artist" | "album";
+  source: "local" | "tidal";
+  id: string;
+}
+
+/** A name in a track's info view: a link when it has a page, else just the name. */
+export type TrackInfoName =
+  | TrackInfoLink
+  | { name: string; kind?: undefined; source?: undefined; id?: undefined };
+
+/** Whether a name in the view opens a page. */
+export function isTrackInfoLink(name: TrackInfoName): name is TrackInfoLink {
+  return name.kind !== undefined;
+}
+
+/** A credit row before the view cleans it: see `TrackInfoRow.names`. */
+export interface TrackInfoCredit {
+  label: string;
+  value: string;
+  names?: TrackInfoName[];
+}
+
+const tidalArtistName = (name: string, id: string | undefined): TrackInfoName =>
+  id ? { name, kind: "artist", source: "tidal", id } : { name };
+
+/** Names as one credit value, "—" for none. */
+const creditOf = (label: string, names: TrackInfoName[]): TrackInfoCredit =>
+  names.length > 0 ? { label, value: names.map((n) => n.name).join(", "), names } : { label, value: "—" };
+
+/**
+ * The track's own credit rows (`trackCredits`), with Primary artist and
+ * Featured name by name, `linked` to their library pages. Only a library
+ * track's artists have pages: a TIDAL track's stored artist ids are for the
+ * hidden rows behind it. Producers stay one plain value, since the server
+ * stores a composer tag ("A, B") as one credit.
+ */
+function ownTrackCredits(
+  track: { artists?: TrackArtist[]; composer?: string },
+  linked: boolean,
+): TrackInfoCredit[] {
+  const names = (role: string): TrackInfoName[] =>
+    (track.artists ?? [])
+      .filter((artist) => artist.role === role)
+      .map((artist): TrackInfoName =>
+        linked && artist.id
+          ? { name: artist.name, kind: "artist", source: "local", id: artist.id }
+          : { name: artist.name },
+      );
+  const [primary, featured, producers] = trackCredits(track);
+  return [creditOf(primary.label, names("primary")), creditOf(featured.label, names("featured")), producers];
+}
+
+/**
  * The credit rows of a TIDAL track's info view: Primary artist, Featured and
  * Producers as for any track, then each other role TIDAL credits, in its
- * order. TIDAL's values win; the track's own fill in what TIDAL lacks.
+ * order. TIDAL's values win; the track's own fill in what TIDAL lacks. Each
+ * name TIDAL gives an artist id links to its TIDAL artist page.
  */
 export function tidalTrackCredits(
   track: { artists?: TrackArtist[]; composer?: string },
   info: TidalTrackInfo,
-): { label: string; value: string }[] {
+): TrackInfoCredit[] {
   const artists = (role: "main" | "featured") =>
     info.artists
       .filter((artist) => artist.role === role)
-      .map((artist) => artist.name)
-      .join(", ");
-  const roles = new Map<string, { label: string; names: string[] }>();
+      .map((artist) => tidalArtistName(artist.name, artist.id));
+  const roles = new Map<string, { label: string; names: TrackInfoName[] }>();
   for (const credit of info.credits) {
     const key = credit.role.trim().toLowerCase();
     if (!key) continue;
     const entry = roles.get(key) ?? { label: roleLabel(credit.role), names: [] };
-    for (const name of credit.names) {
-      if (!entry.names.includes(name)) entry.names.push(name);
+    // An older server sends names alone.
+    const people: { id?: string; name: string }[] = credit.contributors ?? credit.names.map((name) => ({ name }));
+    for (const person of people) {
+      const name = tidalArtistName(person.name, person.id);
+      const seen = entry.names.findIndex((n) => n.name === name.name);
+      if (seen < 0) entry.names.push(name);
+      // The same person credited twice, with their id only the second time.
+      else if (!isTrackInfoLink(entry.names[seen]) && isTrackInfoLink(name)) entry.names[seen] = name;
     }
     roles.set(key, entry);
   }
-  const producers = roles.get("producer")?.names.join(", ");
+  const producers = roles.get("producer")?.names ?? [];
   roles.delete("producer");
-  const [primary, featured, ownProducers] = trackCredits(track);
+  const [primary, featured, ownProducers] = ownTrackCredits(track, false);
+  const main = artists("main");
+  const guests = artists("featured");
   return [
-    { label: primary.label, value: artists("main") || primary.value },
+    main.length > 0 ? creditOf(primary.label, main) : primary,
     // TIDAL's split is authoritative once it names a main artist.
-    { label: featured.label, value: artists("featured") || (artists("main") ? "—" : featured.value) },
-    { label: ownProducers.label, value: producers || ownProducers.value },
+    guests.length > 0 || main.length > 0 ? creditOf(featured.label, guests) : featured,
+    producers.length > 0 ? creditOf(ownProducers.label, producers) : ownProducers,
     ...[...roles.values()]
       .filter((role) => role.names.length > 0)
-      .map((role) => ({ label: role.label, value: role.names.join(", ") })),
+      .map((role) => creditOf(role.label, role.names)),
   ];
 }
 
@@ -166,6 +236,13 @@ export interface TrackInfoRow {
   empty?: boolean;
   /** Long text (comments, copyright, a file name, a quality ceiling): give it the full width or more lines. */
   wide?: boolean;
+  /**
+   * A list of artists or credited people name by name, each a link when it
+   * has a page; joined with ", " they read as `value`. Absent from other
+   * rows, and from Producers taken from a file's composer tag, which the
+   * server stores as one name.
+   */
+  names?: TrackInfoName[];
 }
 
 export interface TrackInfoSection {
@@ -180,13 +257,33 @@ export interface TrackInfoView {
   /** Above the sections: why a TIDAL track's details are missing. */
   note: string | null;
   sections: TrackInfoSection[];
+  /** The track's artists for a header line, main ones first: Primary artist, then Featured. */
+  artists: TrackInfoName[];
+  /** The album for a header line, a link when it has a page; null without one. */
+  album: TrackInfoName | null;
+  /** The release year for the album line ("" when unknown): TIDAL's, else the track's. */
+  year: string;
+}
+
+/**
+ * The TIDAL album whose primary artist id can link a TIDAL track's primary
+ * artist (see `trackInfoRows`), when TIDAL's details gave no artist ids: an
+ * older server, or no details at all. Null when there's nothing to ask.
+ */
+export function trackInfoArtistAlbumId(
+  track: Pick<TrackDetail, "source" | "source_album_id"> | null | undefined,
+  tidal: TidalTrackInfoResult | null,
+): string | null {
+  if (!track || !isTidalTrack(track) || !track.source_album_id) return null;
+  return tidal?.info?.artists.some((artist) => artist.id) ? null : track.source_album_id;
 }
 
 const isBlank = (value: string | null | undefined) => !value?.trim() || value === "—";
 
 /**
  * A track's info view, the same on both clients: Credits, Release and Audio,
- * with notes for what TIDAL couldn't supply.
+ * with notes for what TIDAL couldn't supply, and the artists, album and year
+ * for a header.
  *
  * - Credits: TIDAL's for a TIDAL track that has them (`tidalTrackCredits`),
  *   else the track's own (`trackCredits`). Primary artist, Featured and
@@ -201,10 +298,17 @@ const isBlank = (value: string | null | undefined) => !value?.trim() || value ==
  * Any other row shows only when the track has a value, Genre included (TIDAL
  * has no genres, and an empty one on a file says nothing either). A section
  * with no rows and no note is left out. Tag text is cleaned with `displayText`.
+ *
+ * Names link where a page exists: a library track's artists and album to
+ * their library pages; a TIDAL track's album, and the artists and credited
+ * people TIDAL gives ids for, to their TIDAL pages. When TIDAL gave no artist
+ * ids, `tidalAlbum` (see `trackInfoArtistAlbumId`) can still link the
+ * primary artist, when it's the album's.
  */
 export function trackInfoRows(
   track: TrackDetail,
   tidal: TidalTrackInfoResult | null,
+  tidalAlbum?: Pick<TidalAlbum, "id" | "artist" | "artist_id"> | null,
 ): TrackInfoView {
   const info = tidal?.info ?? null;
   const row = (label: string, value: string | null | undefined, wide?: boolean): TrackInfoRow | null =>
@@ -213,9 +317,16 @@ export function trackInfoRows(
     isBlank(value) ? { label, value: "—", empty: true, ...(wide ? { wide } : {}) } : row(label, value, wide)!;
   const count = (n: number | null | undefined) => (n ? String(n) : "");
 
-  const credits = (info ? tidalTrackCredits(track, info) : trackCredits(track)).map((credit) =>
-    kept(credit.label, displayText(credit.value)),
-  );
+  const ownCredits = info ? tidalTrackCredits(track, info) : ownTrackCredits(track, !isTidalTrack(track));
+  const albumArtist = tidalAlbumArtist(track, tidalAlbum);
+  if (albumArtist) ownCredits[0] = linkAlbumArtist(ownCredits[0], albumArtist);
+  const clean = (names: TrackInfoName[] | undefined) =>
+    names?.map((name) => ({ ...name, name: displayText(name.name) }));
+  const credits = ownCredits.map((credit) => {
+    const cleaned = kept(credit.label, displayText(credit.value));
+    const names = clean(credit.names);
+    return names && !cleaned.empty ? { ...cleaned, names } : cleaned;
+  });
 
   const released = info?.release_date ? formatCalendarDate(info.release_date) : "";
   const release = [
@@ -259,10 +370,40 @@ export function trackInfoRows(
     { key: "release", label: "Release", rows: release.filter((r) => r !== null), note: info?.release_failure || null },
     { key: "audio", label: "Audio", rows: audio.filter((r) => r !== null), note: null },
   ];
+  const albumTarget = trackAlbumTarget(track);
+  const albumTitle = displayText(track.album_title);
   return {
     note: tidal?.failed
       ? (tidal.refusal ?? "Couldn't load more from TIDAL, so some fields are missing.")
       : null,
     sections: sections.filter((section) => section.rows.length > 0 || section.note),
+    artists: [...(credits[0]?.names ?? []), ...(credits[1]?.names ?? [])],
+    album: albumTitle
+      ? albumTarget
+        ? { name: albumTitle, kind: "album", source: albumTarget.kind, id: albumTarget.id }
+        : { name: albumTitle }
+      : null,
+    year: info?.release_date?.match(/^(\d{4})-/)?.[1] ?? (track.year ? String(track.year) : ""),
   };
+}
+
+/** The TIDAL album's primary artist, when the album is this TIDAL track's and says who that is. */
+function tidalAlbumArtist(
+  track: TrackDetail,
+  album: Pick<TidalAlbum, "id" | "artist" | "artist_id"> | null | undefined,
+): { name: string; id: string } | null {
+  if (!isTidalTrack(track) || !album || album.id !== track.source_album_id) return null;
+  const name = album.artist?.trim();
+  return name && album.artist_id ? { name, id: album.artist_id } : null;
+}
+
+/** The Primary artist row, its plain name that's the album's primary artist linked to their TIDAL page. */
+function linkAlbumArtist(credit: TrackInfoCredit, artist: { name: string; id: string }): TrackInfoCredit {
+  if (!credit.names) return credit;
+  const names = credit.names.map((name) =>
+    !isTrackInfoLink(name) && name.name.trim().toLowerCase() === artist.name.toLowerCase()
+      ? tidalArtistName(name.name, artist.id)
+      : name,
+  );
+  return { ...credit, names };
 }

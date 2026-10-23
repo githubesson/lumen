@@ -931,8 +931,11 @@ export type TidalStreamQuality = "HI_RES_LOSSLESS" | "LOSSLESS" | "HIGH" | "LOW"
  */
 export interface TidalTrackInfo {
   id: string;
-  /** TIDAL's split of the track's artists, main ones first. */
-  artists: { name: string; role: "main" | "featured" }[];
+  /**
+   * TIDAL's split of the track's artists, main ones first. `id` is the
+   * artist's TIDAL id; older servers leave it out.
+   */
+  artists: { id?: string; name: string; role: "main" | "featured" }[];
   /** YYYY-MM-DD: the album's release, else when TIDAL started streaming it. */
   release_date?: string;
   copyright?: string;
@@ -945,8 +948,12 @@ export interface TidalTrackInfo {
   /** The best tier this server would ask for; playback can fall below it. */
   max_quality?: TidalStreamQuality;
   channels?: number;
-  /** Each role and who filled it, in TIDAL's order. */
-  credits: { role: string; names: string[] }[];
+  /**
+   * Each role and who filled it, in TIDAL's order. `contributors` are the
+   * same people as `names`, in order, with the TIDAL artist id of each who is
+   * one; older servers leave it out.
+   */
+  credits: { role: string; names: string[]; contributors?: { id?: string; name: string }[] }[];
   /** The credits couldn't be loaded, so an empty list doesn't mean none. */
   credits_failed?: boolean;
   /** Why, in the server's words, when TIDAL refused them. */
