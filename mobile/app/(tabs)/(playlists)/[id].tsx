@@ -63,7 +63,10 @@ import {
   useDockControls,
   useDockScrollHandler,
 } from "../../../components/dock/dock-context";
-import { TrackActionsContextMenu } from "../../../components/track-actions-menu";
+import {
+  SwipeableTrackRow,
+  type SwipeRowProps,
+} from "../../../components/swipe/swipeable-track-row";
 import { qk } from "../../../lib/query-keys";
 import { listPlaybackQueue, usePlayQueue } from "../../../lib/use-play-queue";
 import {
@@ -786,12 +789,15 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
     [entry.position, onRemove],
   );
 
-  const row = (
+  const row = (swipe?: SwipeRowProps) => (
     <Pressable
       onPress={handlePress}
       accessibilityRole="button"
       accessibilityLabel={presentation.accessibilityLabel}
       accessibilityHint={presentation.accessibilityHint}
+      accessibilityValue={swipe?.accessibilityValue}
+      accessibilityActions={swipe?.accessibilityActions}
+      onAccessibilityAction={swipe?.onAccessibilityAction}
       accessibilityState={removed ? { disabled: true } : undefined}
       style={({ pressed }) => [
         styles.row,
@@ -867,18 +873,22 @@ const PlaylistTrackRow = memo(function PlaylistTrackRow({
           ) : null}
         </>
       ) : (
-        <Text style={{ fontSize: 13, color: theme.color.fgMuted }}>
-          {formatDurationMs(track.duration_ms)}
-        </Text>
+        <View style={styles.detail}>
+          {swipe?.favoriteMark()}
+          <Text style={{ fontSize: 13, color: theme.color.fgMuted }}>
+            {formatDurationMs(track.duration_ms)}
+          </Text>
+        </View>
       )}
     </Pressable>
   );
 
-  // No context menu while reordering: long-press fights the drag gesture, and
-  // the SwiftUI hosting view it wraps rows in corrupts (stale solid-color
-  // layers, dropped artwork) when Fabric moves cells around during a reorder.
-  if (canReorder) return row;
-  return <TrackActionsContextMenu track={track}>{row}</TrackActionsContextMenu>;
+  // No context menu or swipes while reordering: the row has its own remove
+  // and drag controls, long-press fights the drag gesture, and the SwiftUI
+  // hosting view the menu wraps rows in corrupts (stale solid-color layers,
+  // dropped artwork) when Fabric moves cells around during a reorder.
+  if (canReorder) return row();
+  return <SwipeableTrackRow track={track}>{row}</SwipeableTrackRow>;
 });
 
 function PlaylistEmptyState() {
@@ -923,6 +933,10 @@ function playlistTrackKey(e: PlaylistTrackEntry): string {
 
 const styles = StyleSheet.create({
   row: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  detail: {
     flexDirection: "row",
     alignItems: "center",
   },

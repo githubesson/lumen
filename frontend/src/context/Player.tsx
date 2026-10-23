@@ -99,6 +99,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => { latestControls.current = routedControls; }, [routedControls]);
   const stableControls = useMemo<PlayerControls>(() => ({
     play: (...args) => latestControls.current.play(...args),
+    playNext: (...args) => latestControls.current.playNext(...args),
     resume: (...args) => latestControls.current.resume(...args),
     pause: (...args) => latestControls.current.pause(...args),
     toggle: (...args) => latestControls.current.toggle(...args),

@@ -13,7 +13,7 @@ import (
 const detailsTrack = `{"id":123,"title":"Song","isrc":" USX1 ","copyright":" (P) 2023 Label ","bpm":139.6,"key":"FSharp","keyScale":"MINOR",` +
 	`"audioQuality":"LOSSLESS","audioModes":["STEREO"],"mediaMetadata":{"tags":["LOSSLESS","HIRES_LOSSLESS"]},` +
 	`"streamStartDate":"2023-03-10T00:00:00.000+0000",` +
-	`"artists":[{"name":"Main","type":"MAIN"},{"name":"Guest","type":"FEATURED"},{"name":"Second","type":"MAIN"},{"name":"main","type":"FEATURED"}],` +
+	`"artists":[{"id":9,"name":"Main","type":"MAIN"},{"id":"8","name":"Guest","type":"FEATURED"},{"id":0,"name":"Second","type":"MAIN"},{"id":7,"name":"main","type":"FEATURED"}],` +
 	`"album":{"id":77,"title":"Album"}}`
 
 func detailsServer(t *testing.T, body string) *httptest.Server {
@@ -30,16 +30,18 @@ func detailsServer(t *testing.T, body string) *httptest.Server {
 
 func TestTrackDetails(t *testing.T) {
 	server := detailsServer(t, `{"track":`+detailsTrack+`,"album":{"releaseDate":"2023-03-17"},`+
-		`"credits":[{"type":"Producer","names":[" Maker ",""]},{"type":"Main Artist","names":["Main"]},{"type":"Mixer","names":[]},{"type":"Composer","names":["Writer"]}],`+
+		`"credits":[{"type":"Producer","names":["Maker","Other"],"contributors":[{"id":"5","name":" Maker "},{"name":""},{"id":"12a","name":"Other"}]},`+
+		`{"type":"Main Artist","names":["Main"]},{"type":"Mixer","names":[]},{"type":"Composer","names":[" Writer ",""]}],`+
 		`"failed_sections":[]}`)
 	d, err := NewClient(Config{HifiAPIURL: server.URL, Quality: "HI_RES_LOSSLESS"}).TrackDetails(context.Background(), "123")
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An artist id TIDAL couldn't have issued ("0") is dropped; the name stays.
 	want := TrackDetails{
 		ID:              "123",
-		MainArtists:     []string{"Main", "Second"},
-		FeaturedArtists: []string{"Guest"},
+		MainArtists:     []TrackArtist{{ID: "9", Name: "Main"}, {Name: "Second"}},
+		FeaturedArtists: []TrackArtist{{ID: "8", Name: "Guest"}},
 		ReleaseDate:     "2023-03-17",
 		Copyright:       "(P) 2023 Label",
 		ISRC:            "USX1",
@@ -47,7 +49,11 @@ func TestTrackDetails(t *testing.T) {
 		Key:             "F♯ minor",
 		MaxQuality:      "HI_RES_LOSSLESS",
 		Stereo:          true,
-		Credits:         []Credit{{Role: "Producer", Names: []string{"Maker"}}, {Role: "Composer", Names: []string{"Writer"}}},
+		Credits: []Credit{
+			{Role: "Producer", People: []TrackArtist{{ID: "5", Name: "Maker"}, {Name: "Other"}}},
+			// An older sidecar's credits have names only.
+			{Role: "Composer", People: []TrackArtist{{Name: "Writer"}}},
+		},
 	}
 	if !reflect.DeepEqual(d, want) {
 		t.Fatalf("details =\n%+v\nwant\n%+v", d, want)

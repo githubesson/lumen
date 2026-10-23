@@ -213,13 +213,23 @@ func (h *TIDAL) Artist(w http.ResponseWriter, r *http.Request) {
 }
 
 type tidalTrackArtistResp struct {
+	// ID is the artist's TIDAL id, absent when TIDAL gave none.
+	ID   string `json:"id,omitempty"`
 	Name string `json:"name"`
 	Role string `json:"role"` // "main" or "featured"
+}
+
+type tidalTrackContributorResp struct {
+	// ID is the person's TIDAL artist id, absent when they aren't one.
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name"`
 }
 
 type tidalTrackCreditResp struct {
 	Role  string   `json:"role"`
 	Names []string `json:"names"`
+	// Contributors are Names again, in order, with their TIDAL artist ids.
+	Contributors []tidalTrackContributorResp `json:"contributors"`
 }
 
 // tidalTrackResp is TIDAL's side of a track's info view, beyond what the
@@ -291,14 +301,23 @@ func (h *TIDAL) Track(w http.ResponseWriter, r *http.Request) {
 	if d.Stereo {
 		out.Channels = 2
 	}
-	for _, name := range d.MainArtists {
-		out.Artists = append(out.Artists, tidalTrackArtistResp{Name: name, Role: "main"})
+	for _, a := range d.MainArtists {
+		out.Artists = append(out.Artists, tidalTrackArtistResp{ID: a.ID, Name: a.Name, Role: "main"})
 	}
-	for _, name := range d.FeaturedArtists {
-		out.Artists = append(out.Artists, tidalTrackArtistResp{Name: name, Role: "featured"})
+	for _, a := range d.FeaturedArtists {
+		out.Artists = append(out.Artists, tidalTrackArtistResp{ID: a.ID, Name: a.Name, Role: "featured"})
 	}
 	for _, c := range d.Credits {
-		out.Credits = append(out.Credits, tidalTrackCreditResp{Role: c.Role, Names: c.Names})
+		credit := tidalTrackCreditResp{
+			Role:         c.Role,
+			Names:        make([]string, 0, len(c.People)),
+			Contributors: make([]tidalTrackContributorResp, 0, len(c.People)),
+		}
+		for _, p := range c.People {
+			credit.Names = append(credit.Names, p.Name)
+			credit.Contributors = append(credit.Contributors, tidalTrackContributorResp{ID: p.ID, Name: p.Name})
+		}
+		out.Credits = append(out.Credits, credit)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

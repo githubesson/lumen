@@ -17,21 +17,34 @@ import (
 
 func TestTIDALTrackResponse(t *testing.T) {
 	const track = `{"id":123,"title":"Song","copyright":"(P) 2023 Label","audioModes":["STEREO"],` +
-		`"mediaMetadata":{"tags":["LOSSLESS"]},"artists":[{"name":"Main","type":"MAIN"},{"name":"Guest","type":"FEATURED"}]}`
+		`"mediaMetadata":{"tags":["LOSSLESS"]},"artists":[{"id":9,"name":"Main","type":"MAIN"},{"name":"Guest","type":"FEATURED"}]}`
 	for _, tc := range []struct {
 		name, id, body string
 		proxyStatus    int
 		status         int
 		want           *tidalTrackResp
 	}{
-		{"details", "123", `{"track":` + track + `,"album":{"releaseDate":"2023-03-17"},"credits":[{"type":"Producer","names":["Maker"]}],"failed_sections":[]}`, 200, 200, &tidalTrackResp{
+		{"details", "123", `{"track":` + track + `,"album":{"releaseDate":"2023-03-17"},"credits":[{"type":"Producer","names":["Maker","Other"],"contributors":[{"id":"5","name":"Maker"},{"name":"Other"}]}],"failed_sections":[]}`, 200, 200, &tidalTrackResp{
 			ID:          "123",
-			Artists:     []tidalTrackArtistResp{{Name: "Main", Role: "main"}, {Name: "Guest", Role: "featured"}},
+			Artists:     []tidalTrackArtistResp{{ID: "9", Name: "Main", Role: "main"}, {Name: "Guest", Role: "featured"}},
 			ReleaseDate: "2023-03-17",
 			Copyright:   "(P) 2023 Label",
 			MaxQuality:  "LOSSLESS",
 			Channels:    2,
-			Credits:     []tidalTrackCreditResp{{Role: "Producer", Names: []string{"Maker"}}},
+			Credits: []tidalTrackCreditResp{{
+				Role:         "Producer",
+				Names:        []string{"Maker", "Other"},
+				Contributors: []tidalTrackContributorResp{{ID: "5", Name: "Maker"}, {Name: "Other"}},
+			}},
+		}},
+		{"older sidecar's credits", "123", `{"track":{"id":123,"title":"Song"},"album":null,"credits":[{"type":"Producer","names":["Maker"]}],"failed_sections":[]}`, 200, 200, &tidalTrackResp{
+			ID:      "123",
+			Artists: []tidalTrackArtistResp{},
+			Credits: []tidalTrackCreditResp{{
+				Role:         "Producer",
+				Names:        []string{"Maker"},
+				Contributors: []tidalTrackContributorResp{{Name: "Maker"}},
+			}},
 		}},
 		{"credits failed", "123", `{"track":{"id":123,"title":"Song"},"album":null,"credits":[],"failed_sections":["credits"]}`, 200, 200, &tidalTrackResp{
 			ID:            "123",

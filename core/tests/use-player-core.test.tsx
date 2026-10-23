@@ -101,6 +101,7 @@ async function setup(options: Partial<UsePlayerCoreOptions> = {}) {
 }
 
 const queue4 = () => [t("a"), t("b"), t("c"), t("d")];
+const ids = (tracks: TrackListItem[]) => tracks.map((track) => track.id);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -189,6 +190,34 @@ describe("usePlayerCore", () => {
     act(() => result.current.controls.next());
     expect(result.current.state.current?.id).toBe("a");
     expect(result.current.state.isPlaying).toBe(true);
+  });
+
+  it("keeps a new pick when the old track ends before it commits", async () => {
+    const { result, adapter, emit } = await setup();
+    act(() => result.current.controls.play(t("a"), queue4()));
+    act(() => result.current.controls.next());
+    act(() => {
+      result.current.controls.play(t("c"), [t("c"), t("d"), t("e")]);
+      emit("ended");
+    });
+    expect(result.current.state.current?.id).toBe("c");
+    expect(result.current.state.index).toBe(0);
+    expect(ids(result.current.state.queue)).toEqual(["c", "d", "e"]);
+    expect(adapter.load).toHaveBeenLastCalledWith("test://stream/c");
+
+    // A jump, too.
+    act(() => {
+      result.current.controls.jumpTo(2);
+      emit("ended");
+    });
+    expect(result.current.state.current?.id).toBe("e");
+    expect(result.current.state.index).toBe(2);
+    expect(adapter.load).toHaveBeenLastCalledWith("test://stream/e");
+
+    // Once it has committed, its own end advances as usual.
+    act(() => result.current.controls.prev());
+    act(() => emit("ended"));
+    expect(result.current.state.current?.id).toBe("e");
   });
 
   it("repeat=one restarts the same track on ended", async () => {
@@ -939,5 +968,193 @@ describe("usePlayerCore playback errors", () => {
     act(() => result.current.controls.next());
     expect(adapter.load).toHaveBeenCalledExactlyOnceWith("test://stream/a");
     expect(result.current.state.playbackError).toBeNull();
+  });
+});
+
+describe("usePlayerCore playNext", () => {
+
+  it("puts tracks after the current one, in the order they were picked", async () => {
+    const { result } = await setup();
+    act(() => result.current.controls.play(t("a"), queue4()));
+    act(() => {
+      expect(result.current.controls.playNext([t("x")])).toBe(true);
+    });
+    act(() => {
+      result.current.controls.playNext([t("y")]);
+      // Before React commits, the second pick still lands behind the first.
+      result.current.controls.playNext([t("z")]);
+    });
+    expect(ids(result.current.state.queue)).toEqual(["a", "x", "y", "z", "b", "c", "d"]);
+    expect(result.current.state.index).toBe(0);
+    expect(result.current.state.current?.id).toBe("a");
+
+    act(() => result.current.controls.next());
+    expect(result.current.state.current?.id).toBe("x");
+  });
+
+  it("starts a new run when the track changes", async () => {
+    const { result } = await setup();
+    act(() => result.current.controls.play(t("a"), queue4()));
+    act(() => result.current.controls.playNext([t("x"), t("y")]));
+    act(() => result.current.controls.next());
+    act(() => result.current.controls.playNext([t("z")]));
+    expect(ids(result.current.state.queue)).toEqual(["a", "x", "z", "y", "b", "c", "d"]);
+  });
+
+  it("starts a new run when the queue comes round to the same track", async () => {
+    const { result } = await setup();
+    act(() => result.current.controls.play(t("a"), [t("a"), t("b")]));
+    act(() => result.current.controls.setRepeat("all"));
+    act(() => result.current.controls.playNext([t("x")]));
+    for (let i = 0; i < 3; i += 1) act(() => result.current.controls.next());
+    expect(result.current.state.current?.id).toBe("a");
+    act(() => result.current.controls.playNext([t("y")]));
+    expect(ids(result.current.state.queue)).toEqual(["a", "y", "x", "b"]);
+  });
+
+  it("starts a new run when the same track is played anew, or the queue moves", async () => {
+    const { result } = await setup();
+    act(() => result.current.controls.play(t("a"), queue4()));
+    act(() => result.current.controls.playNext([t("x")]));
+    act(() => result.current.controls.play(t("a"), [t("a"), t("x"), t("c")]));
+    act(() => result.current.controls.playNext([t("y")]));
+    expect(ids(result.current.state.queue)).toEqual(["a", "y", "x", "c"]);
+
+    // A jump back to the same track, and a shuffle change, end a run too.
+    act(() => result.current.controls.jumpTo(0));
+    act(() => result.current.controls.playNext([t("z")]));
+    expect(ids(result.current.state.queue)).toEqual(["a", "z", "y", "x", "c"]);
+    act(() => result.current.controls.setShuffle(true));
+    act(() => result.current.controls.setShuffle(false));
+    act(() => result.current.controls.playNext([t("w")]));
+    expect(ids(result.current.state.queue)).toEqual(["a", "w", "z", "y", "x", "c"]);
+  });
+
+  it("moves a track that's already queued instead of adding it twice", async () => {
+    const { result } = await setup();
+    act(() => result.current.controls.play(t("b"), queue4()));
+    act(() => result.current.controls.playNext([t("d")]));
+    expect(ids(result.current.state.queue)).toEqual(["a", "b", "d", "c"]);
+    // One that already played moves up too, and the current track stays put.
+    act(() => result.current.controls.playNext([t("a")]));
+    expect(ids(result.current.state.queue)).toEqual(["b", "d", "a", "c"]);
+    expect(result.current.state.index).toBe(0);
+    expect(result.current.state.current?.id).toBe("b");
+  });
+
+  it("leaves out the current track and tracks that can't start", async () => {
+    const { result } = await setup({ isTrackPlayable: (id) => id !== "y" });
+    act(() => result.current.controls.play(t("a"), queue4()));
+    act(() => {
+      expect(result.current.controls.playNext([t("a"), { ...t("x"), unavailable: true }, t("y")])).toBe(false);
+    });
+    expect(ids(result.current.state.queue)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("plays the tracks when nothing is loaded", async () => {
+    const { result, adapter } = await setup();
+    act(() => {
+      expect(result.current.controls.playNext([t("x"), t("y")])).toBe(true);
+    });
+    expect(result.current.state.current?.id).toBe("x");
+    expect(ids(result.current.state.queue)).toEqual(["x", "y"]);
+    expect(result.current.state.isPlaying).toBe(true);
+    expect(adapter.load).toHaveBeenCalledWith("test://stream/x");
+  });
+
+  it("treats the rest of a first pick as a run when nothing was loaded", async () => {
+    const { result } = await setup();
+    act(() => result.current.controls.playNext([t("x"), t("y")]));
+    act(() => result.current.controls.playNext([t("z")]));
+    expect(ids(result.current.state.queue)).toEqual(["x", "y", "z"]);
+    expect(result.current.state.current?.id).toBe("x");
+  });
+
+  it("plays a first pick in its own order with shuffle on", async () => {
+    const { result } = await setup();
+    act(() => result.current.controls.setShuffle(true));
+    const picks = ["x", "y", "z", "w", "v"].map(t);
+    act(() => result.current.controls.playNext(picks));
+    expect(ids(result.current.state.queue)).toEqual(["x", "y", "z", "w", "v"]);
+    expect(result.current.state.index).toBe(0);
+    expect(result.current.state.shuffle).toBe(true);
+    act(() => result.current.controls.playNext([t("u")]));
+    expect(ids(result.current.state.queue)).toEqual(["x", "y", "z", "w", "v", "u"]);
+    act(() => result.current.controls.setShuffle(false));
+    expect(ids(result.current.state.queue)).toEqual(["x", "y", "z", "w", "v", "u"]);
+  });
+
+  it("stays next when shuffle is turned off", async () => {
+    const { result } = await setup();
+    act(() => result.current.controls.play(t("b"), queue4(), { shuffle: true }));
+    act(() => result.current.controls.playNext([t("x")]));
+    expect(result.current.state.queue[1]?.id).toBe("x");
+    expect(result.current.state.queue).toHaveLength(5);
+
+    act(() => result.current.controls.setShuffle(false));
+    expect(ids(result.current.state.queue)).toEqual(["a", "b", "x", "c", "d"]);
+    expect(result.current.state.index).toBe(1);
+    act(() => result.current.controls.next());
+    expect(result.current.state.current?.id).toBe("x");
+  });
+
+  it("swaps the prepared next track for the new one", async () => {
+    const { result, adapter, state, emit } = await setup({ crossfadeSeconds: 6 });
+    adapter.activatePrepared = vi.fn(() => true);
+    adapter.crossfadeToPrepared = vi.fn(() => true);
+    adapter.clearPrepared = vi.fn();
+    act(() => result.current.controls.play(t("a"), queue4()));
+    state.dur = 180;
+    state.time = 150;
+    act(() => emit("timeupdate"));
+    expect(adapter.prepareNext).toHaveBeenLastCalledWith("test://stream/b");
+
+    act(() => {
+      result.current.controls.playNext([t("x")]);
+      // A timeupdate before the queue commits mustn't fade into b.
+      state.time = 176;
+      emit("timeupdate");
+    });
+    expect(adapter.crossfadeToPrepared).not.toHaveBeenCalled();
+    expect(adapter.clearPrepared).toHaveBeenCalled();
+
+    state.time = 160;
+    act(() => emit("timeupdate"));
+    expect(adapter.prepareNext).toHaveBeenLastCalledWith("test://stream/x");
+    state.time = 176;
+    act(() => emit("timeupdate"));
+    expect(adapter.crossfadeToPrepared).toHaveBeenCalledWith("test://stream/x", 4);
+    expect(result.current.state.current?.id).toBe("x");
+  });
+
+  it("plays the picked track next when the current one ends before the pick commits", async () => {
+    const { result, emit } = await setup();
+    act(() => result.current.controls.play(t("a"), queue4()));
+    act(() => {
+      result.current.controls.playNext([t("x")]);
+      emit("ended");
+    });
+    expect(ids(result.current.state.queue)).toEqual(["a", "x", "b", "c", "d"]);
+    expect(result.current.state.current?.id).toBe("x");
+    expect(result.current.state.index).toBe(1);
+
+    // And a pick made before the advance commits goes after the new track.
+    act(() => {
+      emit("ended");
+      result.current.controls.playNext([t("y")]);
+    });
+    expect(result.current.state.current?.id).toBe("b");
+    expect(ids(result.current.state.queue)).toEqual(["a", "x", "b", "y", "c", "d"]);
+    act(() => result.current.controls.next());
+    expect(result.current.state.current?.id).toBe("y");
+  });
+
+  it("keeps its identity while the queue moves", async () => {
+    const { result } = await setup();
+    const playNext = result.current.controls.playNext;
+    act(() => result.current.controls.play(t("a"), queue4()));
+    act(() => result.current.controls.next());
+    act(() => result.current.controls.playNext([t("x")]));
+    expect(result.current.controls.playNext).toBe(playNext);
   });
 });

@@ -43,6 +43,7 @@ export const DOCK = {
   iconSize: 23,
   iconCompactScale: 0.85,
   miniHeight: 56,
+  miniRowHPadding: 12,
   gap: 10,
   bottomOffset: 6,
   minBottom: 16,
@@ -80,6 +81,8 @@ interface DockColors {
   inactive: string;
   capsule: string;
   muted: string;
+  /** The cover ring's hairline track, under the arc (`active`). */
+  ringTrack: string;
 }
 
 /** Dock chrome derived from the theme: bg-tinted translucent pills. */
@@ -97,6 +100,7 @@ export function useDockColors(): DockColors {
       inactive: theme.color.fgMuted,
       capsule: dark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.10)",
       muted: theme.color.fgMuted,
+      ringTrack: dark ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.14)",
     };
   }, [theme]);
 }

@@ -42,6 +42,7 @@ const applied: RemotePlaybackCommandResult = {
 function setup(targetDevice: PlaybackDevice | null = null) {
   const controls: PlayerControls = {
     play: vi.fn(),
+    playNext: vi.fn(() => true),
     resume: vi.fn(),
     pause: vi.fn(),
     toggle: vi.fn(),
@@ -153,6 +154,21 @@ describe("routed player controls", () => {
     expect(options.canPlayLocally).not.toHaveBeenCalled();
     for (const control of Object.values(controls))
       expect(control).not.toHaveBeenCalled();
+  });
+
+  it("plays next only on this device, with one callback until the target changes", () => {
+    const { result, rerender, options, controls } = setup();
+    const playNext = result.current.playNext;
+    expect(result.current.playNext([second])).toBe(true);
+    expect(controls.playNext).toHaveBeenCalledWith([second]);
+    rerender({ ...options, controlled: { ...options.controlled, volume: 0.9 } });
+    expect(result.current.playNext).toBe(playNext);
+
+    // No device takes a queue insert yet: nothing is sent or queued here.
+    rerender({ ...options, targetDevice: device });
+    expect(result.current.playNext([second])).toBe(false);
+    expect(controls.playNext).toHaveBeenCalledOnce();
+    expect(options.sendCommand).not.toHaveBeenCalled();
   });
 
   it("ignores jumps on a device that reports no queue", () => {

@@ -18,6 +18,7 @@ import type { BottomTabBarProps } from "expo-router/js-tabs";
 import { useCurrentTrack } from "../../context/player";
 import { FloatingTabBar } from "./floating-tab-bar";
 import { PhoneMiniPlayer, PadMiniPlayer } from "./dock-mini-player";
+import { DockCoverSlot } from "./dock-cover-slot";
 import {
   DOCK,
   DOCK_COLLAPSE_TIMING,
@@ -47,6 +48,17 @@ export function BottomDock(props: BottomTabBarProps) {
   const reducedMotion = useReducedMotion();
   const hidden = useSharedValue(0);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  // iPhone only: while a track is current, the compact tab pill opens a
+  // sixth slot that the mini player's cover flies into.
+  const hasCoverSlot = !tablet && current !== null;
+  const coverSlot = useSharedValue(hasCoverSlot ? 1 : 0);
+
+  useEffect(() => {
+    const target = hasCoverSlot ? 1 : 0;
+    coverSlot.value = reducedMotion
+      ? target
+      : withTiming(target, DOCK_COLLAPSE_TIMING);
+  }, [coverSlot, hasCoverSlot, reducedMotion]);
 
   // A floating bar would otherwise hover mid-screen above the keyboard, so
   // slide it off-screen while the keyboard is up.
@@ -80,9 +92,10 @@ export function BottomDock(props: BottomTabBarProps) {
   }));
 
   // The mini pill slips down behind the tab pill and fades out as the dock
-  // collapses. Only transforms here — the fade happens per-layer inside the
-  // pill (native glass cross-fade + plain-view opacity), because alpha on
-  // this wrapper would permanently kill the glass effect.
+  // collapses, while its cover flies into the tab pill (DockCoverSlot). Only
+  // transforms here — the fade happens per-layer inside the pill (native
+  // glass cross-fade + plain-view opacity), because alpha on this wrapper
+  // would permanently kill the glass effect.
   const phoneMiniStyle = useAnimatedStyle(() => {
     const p = collapseProgress.value;
     return {
@@ -123,10 +136,12 @@ export function BottomDock(props: BottomTabBarProps) {
           pointerEvents={collapsed ? "none" : "box-none"}
           style={[styles.phoneMini, phoneMiniStyle]}
         >
-          <PhoneMiniPlayer />
+          <PhoneMiniPlayer detachedCover={!reducedMotion} />
         </Animated.View>
       ) : null}
-      <FloatingTabBar {...props} />
+      <FloatingTabBar {...props} coverSlot={coverSlot} />
+      {/* Always mounted: it keeps the last cover while its slot closes. */}
+      <DockCoverSlot presence={coverSlot} dockHidden={keyboardVisible} />
     </Animated.View>
   );
 }

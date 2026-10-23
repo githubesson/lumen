@@ -247,6 +247,13 @@ describe("favorite toggle transitions", () => {
     expect(withFavorite(rows, { id: "z" }, false)).toBe(rows);
     expect(withFavorite(rows, { id: "a" }, false)).toEqual([]);
   });
+
+  it("puts a row back at a given index, clamped to the list", () => {
+    const rows = [{ id: "a" }, { id: "c" }];
+    expect(withFavorite(rows, { id: "b" }, true, 1).map((row) => row.id)).toEqual(["a", "b", "c"]);
+    expect(withFavorite(rows, { id: "z" }, true, 9).map((row) => row.id)).toEqual(["a", "c", "z"]);
+    expect(withFavorite(rows, { id: "c" }, true, 0)).toBe(rows);
+  });
 });
 
 describe("remote playback helpers", () => {

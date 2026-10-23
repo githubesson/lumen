@@ -482,8 +482,15 @@ export const api = {
       (response) => response.arrayBuffer(),
     ),
 
-  listPlaylists: (options: RequestOptions = {}) =>
-    request<Playlist[]>(`/api/playlists`, options),
+  /**
+   * Every playlist the user owns or collaborates on. With `trackId`, each
+   * also says whether it already holds that track (`contains_track`); an
+   * older server ignores it and leaves the field out.
+   */
+  listPlaylists: (options: RequestOptions & { trackId?: string } = {}) =>
+    request<Playlist[]>(`/api/playlists${buildQuery({ track_id: options.trackId })}`, {
+      signal: options.signal,
+    }),
   getPlaylist: (id: string, options: RequestOptions = {}) =>
     request<Playlist>(`/api/playlists/${pathID(id)}`, options),
   createPlaylist: (input: {
@@ -759,6 +766,10 @@ export interface TrackDetail {
   has_cover: boolean;
   cover_url?: string;
   favorited: boolean;
+  /** The viewer's own personal upload, which they can delete (as on `TrackListItem`). Older servers leave it out. */
+  owned?: boolean;
+  /** A TIDAL track TIDAL dropped from its release, with no library copy: it can't play. Older servers leave it out. */
+  unavailable?: boolean;
   /** The file the track plays; only on GET /api/tracks/:id for local tracks. */
   file_name?: string;
   /** Where the shown tags came from, when that's another copy's file. */
@@ -797,6 +808,9 @@ export interface Playlist {
   cover?: PlaylistCover;
   /** The owner's username. Only on `listPlaylists`. */
   owner_name?: string;
+  /** Whether it already holds the track `listPlaylists` was asked about.
+   *  Absent without `trackId`, and from servers that predate it. */
+  contains_track?: boolean;
 }
 
 /** Pass to `trackCoverUrl` as `{ id: track_id, album_id, cover_url }`. */
@@ -931,8 +945,11 @@ export type TidalStreamQuality = "HI_RES_LOSSLESS" | "LOSSLESS" | "HIGH" | "LOW"
  */
 export interface TidalTrackInfo {
   id: string;
-  /** TIDAL's split of the track's artists, main ones first. */
-  artists: { name: string; role: "main" | "featured" }[];
+  /**
+   * TIDAL's split of the track's artists, main ones first. `id` is the
+   * artist's TIDAL id; older servers leave it out.
+   */
+  artists: { id?: string; name: string; role: "main" | "featured" }[];
   /** YYYY-MM-DD: the album's release, else when TIDAL started streaming it. */
   release_date?: string;
   copyright?: string;
@@ -945,8 +962,12 @@ export interface TidalTrackInfo {
   /** The best tier this server would ask for; playback can fall below it. */
   max_quality?: TidalStreamQuality;
   channels?: number;
-  /** Each role and who filled it, in TIDAL's order. */
-  credits: { role: string; names: string[] }[];
+  /**
+   * Each role and who filled it, in TIDAL's order. `contributors` are the
+   * same people as `names`, in order, with the TIDAL artist id of each who is
+   * one; older servers leave it out.
+   */
+  credits: { role: string; names: string[]; contributors?: { id?: string; name: string }[] }[];
   /** The credits couldn't be loaded, so an empty list doesn't mean none. */
   credits_failed?: boolean;
   /** Why, in the server's words, when TIDAL refused them. */

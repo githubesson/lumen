@@ -15,8 +15,8 @@ import (
 // saved copy carries its own tags.
 type TrackDetails struct {
 	ID              string
-	MainArtists     []string
-	FeaturedArtists []string
+	MainArtists     []TrackArtist
+	FeaturedArtists []TrackArtist
 	// ReleaseDate is YYYY-MM-DD: the album's release date, else the day
 	// TIDAL started streaming the track.
 	ReleaseDate string
@@ -46,10 +46,18 @@ type TrackDetails struct {
 	AlbumRefusal string
 }
 
+// TrackArtist is one of a track's artists, or one person in a credit:
+// TIDAL's artist id ("" when TIDAL gives none, e.g. a credited person who
+// isn't a TIDAL artist) and their name.
+type TrackArtist struct {
+	ID   string
+	Name string
+}
+
 // Credit is one role on a track and who filled it, in TIDAL's order.
 type Credit struct {
-	Role  string
-	Names []string
+	Role   string
+	People []TrackArtist
 }
 
 type apiTrackDetails struct {
@@ -99,6 +107,12 @@ func (c *Client) TrackDetails(ctx context.Context, id string) (TrackDetails, err
 		Credits []struct {
 			Type  string   `json:"type"`
 			Names []string `json:"names"`
+			// Contributors are Names with TIDAL's artist ids; an older
+			// sidecar sends only Names.
+			Contributors []struct {
+				ID   tidalID `json:"id"`
+				Name string  `json:"name"`
+			} `json:"contributors"`
 		} `json:"credits"`
 		FailedSections []string `json:"failed_sections"`
 		// TIDAL's reason for each failed section it refused.
@@ -140,10 +154,11 @@ func (c *Client) TrackDetails(ctx context.Context, id string) (TrackDetails, err
 			continue
 		}
 		seen[strings.ToLower(name)] = true
+		artist := TrackArtist{ID: artistID(a.ID), Name: name}
 		if strings.EqualFold(a.Type, "FEATURED") {
-			d.FeaturedArtists = append(d.FeaturedArtists, name)
+			d.FeaturedArtists = append(d.FeaturedArtists, artist)
 		} else {
-			d.MainArtists = append(d.MainArtists, name)
+			d.MainArtists = append(d.MainArtists, artist)
 		}
 	}
 	if out.Album != nil {
@@ -176,17 +191,34 @@ func (c *Client) TrackDetails(ctx context.Context, id string) (TrackDetails, err
 		if role == "" || strings.EqualFold(role, "Main Artist") || strings.EqualFold(role, "Featured Artist") {
 			continue
 		}
-		names := []string{}
-		for _, name := range credit.Names {
-			if name = strings.TrimSpace(name); name != "" {
-				names = append(names, name)
+		people := []TrackArtist{}
+		if credit.Contributors != nil {
+			for _, c := range credit.Contributors {
+				if name := strings.TrimSpace(c.Name); name != "" {
+					people = append(people, TrackArtist{ID: artistID(c.ID), Name: name})
+				}
+			}
+		} else {
+			for _, name := range credit.Names {
+				if name = strings.TrimSpace(name); name != "" {
+					people = append(people, TrackArtist{Name: name})
+				}
 			}
 		}
-		if len(names) > 0 {
-			d.Credits = append(d.Credits, Credit{Role: role, Names: names})
+		if len(people) > 0 {
+			d.Credits = append(d.Credits, Credit{Role: role, People: people})
 		}
 	}
 	return d, nil
+}
+
+// artistID keeps an artist id TIDAL could have issued, else "", so a
+// client never builds a link from anything else.
+func artistID(id tidalID) string {
+	if s := strings.TrimSpace(string(id)); validID(s) {
+		return s
+	}
+	return ""
 }
 
 // isoDate keeps the YYYY-MM-DD of a TIDAL date ("2023-03-17" or

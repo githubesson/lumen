@@ -218,3 +218,8 @@ export function useThemeMode(): {
   if (!ctx) throw new Error("useThemeMode requires ThemeProvider");
   return { mode: ctx.mode, setMode: ctx.setMode };
 }
+
+/** A scheme's palette whatever the app's own is, for previews of the other appearance. */
+export function paletteFor(scheme: ColorScheme): ThemePalette {
+  return scheme === "dark" ? DARK : LIGHT;
+}

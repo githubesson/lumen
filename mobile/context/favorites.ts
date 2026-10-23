@@ -1,8 +1,10 @@
-import { useCallback } from "react";
+import { useCallback, useSyncExternalStore } from "react";
+import { AppState, type NativeEventSubscription } from "react-native";
 import {
   queryOptions,
   useQuery,
   useQueryClient,
+  type QueryClient,
 } from "@tanstack/react-query";
 import {
   api,
@@ -26,6 +28,32 @@ import { qk } from "../lib/query-keys";
 
 // Module-level, like the query cache it guards; keys carry the user id.
 const toggleGuard = createToggleGuard();
+// Each key's guarded request while it's out, so a removal whose Undo window
+// closes during a toggle of the same track (its favorite still being sent)
+// can wait for it instead of being dropped by the guard.
+const inFlight = new Map<string, Promise<boolean>>();
+
+/** `toggleGuard.run`, noting the request while it runs. */
+function runGuarded(key: string, task: () => Promise<void>): Promise<boolean> {
+  let started = false;
+  const run = toggleGuard.run(key, () => {
+    started = true;
+    return task();
+  });
+  // The guard starts the task at once, so this is known already.
+  if (started) {
+    inFlight.set(key, run);
+    void run
+      .catch(() => false)
+      .then(() => {
+        if (inFlight.get(key) === run) inFlight.delete(key);
+      });
+  }
+  return run;
+}
+
+/** A removal that finds its track's request still out tries this often after it. */
+const COMMIT_RETRIES = 3;
 
 /**
  * Id set per favorites snapshot. Every mounted row runs its own `select` when
@@ -49,6 +77,96 @@ function favoritesQueryOptions(userId: string | undefined) {
   });
 }
 
+/** How long a favorite swiped away in the Favorites list can be undone. */
+export const FAVORITE_UNDO_MS = 4000;
+/** The Undo strip's closing animation, before the track leaves the list. */
+export const FAVORITE_REMOVAL_CLOSE_MS = 320;
+
+/**
+ * A favorite removed with Undo: `holding` while the Undo strip shows,
+ * `closing` once it folds away and while the DELETE is out.
+ */
+export type PendingRemovalPhase = "holding" | "closing";
+
+interface PendingRemoval {
+  phase: PendingRemovalPhase;
+  /** The DELETE has started: Undo is too late, and toggles wait for it. */
+  committing: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+  /** Sends it now; the same promise however often it's asked. */
+  commit: () => Promise<void>;
+}
+
+/**
+ * Removals waiting out their Undo window, by `${userId}:${trackId}`. The
+ * track stays in the favorites cache (and on the server) until the window
+ * closes: favoriting it again would move it to the top, and Undo has to put
+ * the row back where it was. Module state rather than row state, so a row
+ * that scrolls away and is recycled finds its strip again, and the timer
+ * outlives it.
+ */
+const pendingRemovals = new Map<string, PendingRemoval>();
+const pendingListeners = new Set<() => void>();
+let appStateSubscription: NativeEventSubscription | null = null;
+
+function emitPendingRemovals() {
+  for (const listener of pendingListeners) listener();
+}
+
+function subscribePendingRemovals(listener: () => void) {
+  pendingListeners.add(listener);
+  return () => {
+    pendingListeners.delete(listener);
+  };
+}
+
+// The app may be suspended in the background, timers and all: send what's
+// waiting before that, rather than on some later launch or never.
+function watchAppState() {
+  appStateSubscription ??= AppState.addEventListener("change", (status) => {
+    if (status !== "background") return;
+    for (const removal of [...pendingRemovals.values()]) void removal.commit();
+  });
+}
+
+function settlePendingRemoval(key: string, removal: PendingRemoval) {
+  if (removal.timer) clearTimeout(removal.timer);
+  if (pendingRemovals.get(key) !== removal) return;
+  pendingRemovals.delete(key);
+  if (pendingRemovals.size === 0) {
+    appStateSubscription?.remove();
+    appStateSubscription = null;
+  }
+  emitPendingRemovals();
+}
+
+/** How long signing out waits on removals it sends first. */
+const FLUSH_LIMIT_MS = 3000;
+
+/**
+ * Sends every removal still waiting on Undo, and waits for them (up to
+ * {@link FLUSH_LIMIT_MS}). For signing out: the session ends with it, and the
+ * account switch clears the cache, so anything left would never be sent and
+ * the server would keep the favorite. The root layout passes it to the
+ * AuthProvider's `beforeLogout`.
+ */
+export async function flushPendingFavoriteRemovals(): Promise<void> {
+  const sends = [...pendingRemovals.values()].map((removal) => removal.commit());
+  if (sends.length === 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.allSettled(sends),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, FLUSH_LIMIT_MS);
+    }),
+  ]);
+  clearTimeout(timer);
+}
+
+function favoriteKey(userId: string | undefined, trackId: string | null) {
+  return userId && trackId ? `${userId}:${trackId}` : null;
+}
+
 /** The canonical favorites list shared by home, the tab and row actions. */
 export function useFavoritesQuery(enabled = true) {
   const { status, me } = useAuth();
@@ -59,9 +177,59 @@ export function useFavoritesQuery(enabled = true) {
 }
 
 /**
+ * Where a favorite removed with Undo is (see {@link PendingRemovalPhase}),
+ * or null. Pass null to skip the lookup.
+ */
+export function usePendingFavoriteRemoval(
+  trackId: string | null,
+): PendingRemovalPhase | null {
+  const { me } = useAuth();
+  const key = favoriteKey(me?.id, trackId);
+  const snapshot = () => (key ? (pendingRemovals.get(key)?.phase ?? null) : null);
+  return useSyncExternalStore(subscribePendingRemovals, snapshot, snapshot);
+}
+
+const NO_PENDING_IDS: ReadonlySet<string> = new Set();
+let pendingIdsSnapshot: { userId: string; ids: ReadonlySet<string> } | null = null;
+
+/** The user's track ids waiting on Undo; the same set while they don't change. */
+function pendingRemovalIds(userId: string | undefined): ReadonlySet<string> {
+  if (!userId) return NO_PENDING_IDS;
+  const prefix = `${userId}:`;
+  const ids: string[] = [];
+  for (const key of pendingRemovals.keys()) {
+    if (key.startsWith(prefix)) ids.push(key.slice(prefix.length));
+  }
+  if (ids.length === 0) return NO_PENDING_IDS;
+  const cached = pendingIdsSnapshot;
+  if (
+    cached?.userId === userId &&
+    cached.ids.size === ids.length &&
+    ids.every((id) => cached.ids.has(id))
+  ) {
+    return cached.ids;
+  }
+  pendingIdsSnapshot = { userId, ids: new Set(ids) };
+  return pendingIdsSnapshot.ids;
+}
+
+/**
+ * Ids of the favorites removed with Undo and not yet sent. Their rows stay
+ * listed (with the Undo strip), but they already read as removed, so counts
+ * and play queues leave them out.
+ */
+export function usePendingFavoriteRemovalIds(): ReadonlySet<string> {
+  const { me } = useAuth();
+  const userId = me?.id;
+  const snapshot = () => pendingRemovalIds(userId);
+  return useSyncExternalStore(subscribePendingRemovals, snapshot, snapshot);
+}
+
+/**
  * Select one boolean from the shared query. React Query only notifies this
  * observer when that track's result changes, rather than rerendering every row
- * after any favorite toggle.
+ * after any favorite toggle. A removal waiting out its Undo window already
+ * reads as not a favorite.
  */
 export function useFavorite(id: string): boolean {
   const { status, me } = useAuth();
@@ -74,7 +242,79 @@ export function useFavorite(id: string): boolean {
     enabled: status === "authed" && !!me?.id && !!id,
     select: selectFavorite,
   });
-  return query.data ?? false;
+  const key = favoriteKey(me?.id, id);
+  const removing = useSyncExternalStore(subscribePendingRemovals, () =>
+    key ? pendingRemovals.has(key) : false,
+  );
+  return (query.data ?? false) && !removing;
+}
+
+/** Cancels a removal still inside its Undo window. Returns whether it did. */
+function cancelPendingRemoval(key: string | null): boolean {
+  const removal = key ? pendingRemovals.get(key) : undefined;
+  if (!key || !removal || removal.committing) return false;
+  settlePendingRemoval(key, removal);
+  return true;
+}
+
+/**
+ * Sends a removal once its Undo window has closed: the track leaves the
+ * cache, then the server. It runs in the toggle guard, so a toggle while the
+ * DELETE is out is dropped like any in-flight one; if the track's own request
+ * is still out when the window closes, it goes after that one. A failure puts
+ * the row back at its old index; the server never moved it.
+ */
+async function commitPendingRemoval(
+  queryClient: QueryClient,
+  userId: string,
+  track: TrackListItem,
+  key: string,
+  removal: PendingRemoval,
+) {
+  if (removal.committing || pendingRemovals.get(key) !== removal) return;
+  removal.committing = true;
+  if (removal.timer) clearTimeout(removal.timer);
+  removal.timer = null;
+  // Sent early (the app went to the background, a sign-out): the strip
+  // folds away as when its window runs out, rather than offering an Undo
+  // that's too late.
+  if (removal.phase !== "closing") {
+    removal.phase = "closing";
+    emitPendingRemovals();
+  }
+  const queryKey = qk.favorites(userId);
+  let started = false;
+  const send = () =>
+    runGuarded(key, async () => {
+      started = true;
+      await queryClient.cancelQueries({ queryKey, exact: true });
+      const rows = queryClient.getQueryData<TrackListItem[]>(queryKey) ?? [];
+      const at = rows.findIndex((row) => row.id === track.id);
+      // Already gone (a refetch, another device): nothing to send.
+      if (at < 0) return;
+      queryClient.setQueryData<TrackListItem[]>(queryKey, (current = []) =>
+        withFavorite(current, track, false),
+      );
+      try {
+        await api.unfavorite(track.id);
+      } catch {
+        queryClient.setQueryData<TrackListItem[]>(queryKey, (current = []) =>
+          withFavorite(current, track, true, at),
+        );
+      }
+    });
+  try {
+    let sent = await send();
+    for (let tries = 0; !sent && tries < COMMIT_RETRIES; tries += 1) {
+      await inFlight.get(key)?.catch(() => false);
+      sent = await send();
+    }
+  } finally {
+    // Only now, after the cache has dropped the row: settling first would
+    // show it again for a moment.
+    settlePendingRemoval(key, removal);
+    if (started) await queryClient.invalidateQueries({ queryKey, exact: true });
+  }
 }
 
 /** Optimistic favorites actions that update the same cache all screens read. */
@@ -91,13 +331,21 @@ export function useFavoriteActions() {
     });
   }, [queryClient, userId]);
 
+  /**
+   * Flips `track`'s favorite, optimistically. Resolves once it's settled,
+   * to whether it ran: not without a user, nor while the track's previous
+   * request is still out (see {@link canToggle}).
+   */
   const toggle = useCallback(
-    async (track: TrackListItem) => {
-      if (!userId) return;
+    async (track: TrackListItem): Promise<boolean> => {
+      if (!userId) return false;
       const queryKey = qk.favorites(userId);
+      // A removal still waiting on Undo reads as not a favorite, so this
+      // toggle means "keep it": cancel the removal, and it stays in place.
+      if (cancelPendingRemoval(favoriteKey(userId, track.id))) return true;
       let started = false;
       try {
-        await toggleGuard.run(`${userId}:${track.id}`, async () => {
+        return await runGuarded(`${userId}:${track.id}`, async () => {
           started = true;
           await queryClient.cancelQueries({ queryKey, exact: true });
           const current = queryClient.getQueryData<TrackListItem[]>(queryKey) ?? [];
@@ -126,5 +374,59 @@ export function useFavoriteActions() {
     [queryClient, userId],
   );
 
-  return { refresh, toggle };
+  /**
+   * Whether {@link toggle} would run for `track` now, known at once: a swipe
+   * confirms on the spot, not after the request. False without a user or
+   * while the track's previous request is still out (the guard drops it).
+   */
+  const canToggle = useCallback(
+    (track: TrackListItem) => {
+      const key = favoriteKey(userId, track.id);
+      if (!key) return false;
+      return pendingRemovals.has(key) || !inFlight.has(key);
+    },
+    [userId],
+  );
+
+  /**
+   * Removes a favorite with Undo (the Favorites list's swipe): it reads as
+   * removed at once, holds for {@link FAVORITE_UNDO_MS}, folds away for
+   * {@link FAVORITE_REMOVAL_CLOSE_MS}, and only then leaves the cache and the
+   * server. Leaving the app sends it straight away. Returns whether it
+   * started one (not without a user, nor twice).
+   */
+  const removeWithUndo = useCallback(
+    (track: TrackListItem): boolean => {
+      const key = favoriteKey(userId, track.id);
+      if (!userId || !key || pendingRemovals.has(key)) return false;
+      let sending: Promise<void> | null = null;
+      const removal: PendingRemoval = {
+        phase: "holding",
+        committing: false,
+        timer: null,
+        commit: () => {
+          sending ??= commitPendingRemoval(queryClient, userId, track, key, removal);
+          return sending;
+        },
+      };
+      removal.timer = setTimeout(() => {
+        removal.phase = "closing";
+        removal.timer = setTimeout(() => void removal.commit(), FAVORITE_REMOVAL_CLOSE_MS);
+        emitPendingRemovals();
+      }, FAVORITE_UNDO_MS);
+      pendingRemovals.set(key, removal);
+      watchAppState();
+      emitPendingRemovals();
+      return true;
+    },
+    [queryClient, userId],
+  );
+
+  /** Undo for {@link removeWithUndo}, while there's still time. */
+  const undoRemoval = useCallback(
+    (track: TrackListItem) => cancelPendingRemoval(favoriteKey(userId, track.id)),
+    [userId],
+  );
+
+  return { refresh, toggle, canToggle, removeWithUndo, undoRemoval };
 }

@@ -38,6 +38,10 @@ export const qk = {
 
   // ---- user-scoped ----
   playlists: (userId: UserId) => ["user", userId, "playlists"] as const,
+  /** The playlists list asked which of them hold `trackId` (the add-to-playlist
+   *  picker's badges). Under `playlists`, so refreshing those refreshes it. */
+  playlistsWithTrack: (userId: UserId, trackId: Id) =>
+    ["user", userId, "playlists", "with-track", trackId] as const,
   playlist: (userId: UserId, id: Id) =>
     ["user", userId, "playlist", id] as const,
   playlistTracks: (userId: UserId, id: Id) =>

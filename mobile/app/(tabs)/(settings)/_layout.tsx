@@ -51,6 +51,22 @@ export default function SettingsStackLayout() {
           title: "Add Music Root",
         }}
       />
+      <Stack.Screen
+        name="track/[id]"
+        options={{ headerLargeTitle: false, title: "Track Info" }}
+      />
+      <Stack.Screen
+        name="track/edit"
+        options={{ headerLargeTitle: false, title: "Edit Track" }}
+      />
+      <Stack.Screen
+        name="tidal-artists/[id]"
+        options={{ headerLargeTitle: false, title: "" }}
+      />
+      <Stack.Screen
+        name="albums/edit"
+        options={{ headerLargeTitle: false, title: "Edit Album" }}
+      />
     </Stack>
   );
 }

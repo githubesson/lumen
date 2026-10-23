@@ -45,11 +45,18 @@ export function AuthProvider({
   sessionCache,
   intentStorage = sessionCache,
   clearSession,
+  beforeLogout,
 }: {
   children: ReactNode;
   sessionCache?: Storage;
   intentStorage?: Storage;
   clearSession?: () => Promise<unknown>;
+  /**
+   * Runs first when logout starts, while the session still works: the place
+   * to send what the app has held back (mobile's favorite removals waiting
+   * on Undo). A failure doesn't stop the logout.
+   */
+  beforeLogout?: () => Promise<unknown>;
 }) {
   const [me, setMeState] = useState<Me | null>(null);
   const [status, setStatus] = useState<AuthState["status"]>("loading");
@@ -214,6 +221,7 @@ export function AuthProvider({
     const token = invalidate();
     transitioning.current = true;
     const pending = mutations.current.then(async () => {
+      try { await beforeLogout?.(); } catch { /* Signing out matters more. */ }
       let durable = false;
       await writes.current;
       try {
@@ -241,7 +249,7 @@ export function AuthProvider({
     pendingLogout.current = pending;
     mutations.current = pending.catch(() => {});
     return pending;
-  }, [persistMe, intentStorage, clearSession, invalidate]);
+  }, [persistMe, intentStorage, clearSession, beforeLogout, invalidate]);
 
   // Adopt a user returned by a request that also established the session (for
   // example registration). Keep identity, status, and the offline cache atomic

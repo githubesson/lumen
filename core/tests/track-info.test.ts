@@ -7,9 +7,17 @@ import {
   tidalRefusalMessage,
   tidalTrackCredits,
   tidalTrackInfoResult,
+  trackInfoArtistAlbumId,
   trackInfoRows,
   trackInfoTidalId,
+  type TrackInfoName,
 } from "../src/tidal/track-info";
+
+// What a row reads as, leaving out its names.
+const values = (rows: { label: string; value: string }[] | undefined) =>
+  rows?.map(({ label, value }) => ({ label, value }));
+const tidalArtist = (name: string, id: string): TrackInfoName => ({ name, kind: "artist", source: "tidal", id });
+const libraryArtist = (name: string, id: string): TrackInfoName => ({ name, kind: "artist", source: "local", id });
 
 describe("track info formatters", () => {
   it("formats sample rates in kHz with at most one decimal", () => {
@@ -111,7 +119,7 @@ describe("tidalTrackCredits", () => {
   };
 
   it("uses TIDAL's artists and lists every role after the producers", () => {
-    expect(tidalTrackCredits(stored, info())).toEqual([
+    expect(values(tidalTrackCredits(stored, info()))).toEqual([
       { label: "Primary artist", value: "Main, Co" },
       { label: "Featured", value: "Guest" },
       { label: "Producers", value: "Maker, Second" },
@@ -127,11 +135,64 @@ describe("tidalTrackCredits", () => {
   });
 
   it("falls back to the stored track for what TIDAL lacks", () => {
-    expect(tidalTrackCredits(stored, info({ artists: [], credits: [] }))).toEqual([
+    const rows = tidalTrackCredits(stored, info({ artists: [], credits: [] }));
+    expect(values(rows)).toEqual([
       { label: "Primary artist", value: "Main" },
       { label: "Featured", value: "Co" },
       { label: "Producers", value: "—" },
     ]);
+    // The stored ids are the hidden rows', which have no page.
+    expect(rows[0].names).toEqual([{ name: "Main" }]);
+    expect(rows[1].names).toEqual([{ name: "Co" }]);
+  });
+
+  it("links each name TIDAL gives an artist id, and leaves the rest plain", () => {
+    const rows = tidalTrackCredits(
+      stored,
+      info({
+        artists: [
+          { id: "9", name: "Main", role: "main" },
+          { name: "Co", role: "main" },
+          { id: "7", name: "Guest", role: "featured" },
+        ],
+        credits: [
+          { role: "Producer", names: ["Maker", "Second"], contributors: [{ id: "24", name: "Maker" }, { name: "Second" }] },
+          // The same person again, with their id this time.
+          { role: "producer", names: ["Second"], contributors: [{ id: "18", name: "Second" }] },
+          { role: "Composer", names: ["Writer"] },
+        ],
+      }),
+    );
+    expect(rows.map((row) => row.names)).toEqual([
+      [tidalArtist("Main", "9"), { name: "Co" }],
+      [tidalArtist("Guest", "7")],
+      [tidalArtist("Maker", "24"), tidalArtist("Second", "18")],
+      // An older server's credits are names alone.
+      [{ name: "Writer" }],
+    ]);
+    expect(rows[2].value).toBe("Maker, Second");
+  });
+
+  it("keeps two people who share a name apart when TIDAL tells them apart", () => {
+    const rows = tidalTrackCredits(
+      stored,
+      info({
+        credits: [
+          {
+            role: "Engineer",
+            names: ["Sam Lee", "Sam Lee", "Sam Lee"],
+            contributors: [{ id: "1", name: "Sam Lee" }, { id: "2", name: "Sam Lee" }, { id: "1", name: "Sam Lee" }],
+          },
+          // Without an id, the name is either of them: no third entry.
+          { role: "engineer", names: ["Sam Lee"] },
+        ],
+      }),
+    );
+    expect(rows[3]).toEqual({
+      label: "Engineer",
+      value: "Sam Lee, Sam Lee",
+      names: [tidalArtist("Sam Lee", "1"), tidalArtist("Sam Lee", "2")],
+    });
   });
 });
 
@@ -239,7 +300,7 @@ describe("trackInfoRows", () => {
     expect(view.note).toBeNull();
     expect(view.sections.map((s) => s.label)).toEqual(["Credits", "Release", "Audio"]);
     expect(rowsOf(view, "credits")).toEqual([
-      { label: "Primary artist", value: "Main" },
+      { label: "Primary artist", value: "Main", names: [libraryArtist("Main", "a")] },
       { label: "Featured", value: "—", empty: true },
       { label: "Producers", value: "—", empty: true },
     ]);
@@ -293,9 +354,9 @@ describe("trackInfoRows", () => {
     const view = trackInfoRows(tidalTrack, tidalTrackInfoResult("77", info()));
     expect(view.note).toBeNull();
     expect(rowsOf(view, "credits")).toEqual([
-      { label: "Primary artist", value: "Main" },
+      { label: "Primary artist", value: "Main", names: [{ name: "Main" }] },
       { label: "Featured", value: "—", empty: true },
-      { label: "Producers", value: "Maker" },
+      { label: "Producers", value: "Maker", names: [{ name: "Maker" }] },
     ]);
     expect(rowsOf(view, "release")).toEqual([
       { label: "Released", value: formatCalendarDate("2020-03-17") },
@@ -332,5 +393,111 @@ describe("trackInfoRows", () => {
     ]);
     const refusal = "TIDAL refused this track: Not available in your region";
     expect(trackInfoRows(tidalTrack, tidalTrackInfoResult("77", null, new ApiError(502, refusal))).note).toBe(refusal);
+  });
+
+  it("links a file's artists and album to their library pages, leaving its producers plain", () => {
+    const view = trackInfoRows(
+      file({
+        album_id: "al1",
+        album_title: "Album",
+        year: 2024,
+        composer: "Clayco, Lukrative",
+        artists: [
+          { id: "a", name: "Main", role: "primary" },
+          { id: "f", name: "Guest", role: "featured" },
+          { id: "c", name: "Clayco, Lukrative", role: "composer" },
+        ],
+      }),
+      null,
+    );
+    expect(rowsOf(view, "credits")).toEqual([
+      { label: "Primary artist", value: "Main", names: [libraryArtist("Main", "a")] },
+      { label: "Featured", value: "Guest", names: [libraryArtist("Guest", "f")] },
+      // The composer tag is one name to the server, so it opens no page.
+      { label: "Producers", value: "Clayco, Lukrative" },
+    ]);
+    expect(view.artists).toEqual([libraryArtist("Main", "a"), libraryArtist("Guest", "f")]);
+    expect(view.album).toEqual({ name: "Album", kind: "album", source: "local", id: "al1" });
+    expect(view.year).toBe("2024");
+  });
+
+  it("leaves names plain when they have no page", () => {
+    const view = trackInfoRows(file({ artists: [{ id: "", name: "Main", role: "primary" }], album_title: "Loose" }), null);
+    expect(rowsOf(view, "credits")?.[0]).toEqual({ label: "Primary artist", value: "Main", names: [{ name: "Main" }] });
+    expect(view.album).toEqual({ name: "Loose" });
+    expect(view.year).toBe("");
+    expect(trackInfoRows(file(), null).album).toBeNull();
+  });
+
+  it("cleans the names it links", () => {
+    const view = trackInfoRows(file({ album_id: "al1", album_title: "A Â· B", artists: [{ id: "a", name: "C Â· D", role: "primary" }] }), null);
+    expect(view.artists).toEqual([libraryArtist("C · D", "a")]);
+    expect(view.album?.name).toBe("A · B");
+  });
+
+  it("links a TIDAL track's names to TIDAL pages, never to the hidden rows behind it", () => {
+    const track = { ...tidalTrack, album_id: "hidden", source_album_id: "500", album_title: "Album" };
+    const view = trackInfoRows(
+      track,
+      tidalTrackInfoResult(
+        "77",
+        info({
+          artists: [
+            { id: "9", name: "Main", role: "main" },
+            { id: "7", name: "Guest", role: "featured" },
+          ],
+          credits: [{ role: "Producer", names: ["Maker", "Other"], contributors: [{ id: "24", name: "Maker" }, { name: "Other" }] }],
+        }),
+      ),
+    );
+    expect(view.artists).toEqual([tidalArtist("Main", "9"), tidalArtist("Guest", "7")]);
+    expect(rowsOf(view, "credits")?.[2].names).toEqual([tidalArtist("Maker", "24"), { name: "Other" }]);
+    expect(view.album).toEqual({ name: "Album", kind: "album", source: "tidal", id: "500" });
+    // TIDAL's release date beats the row's year.
+    expect(view.year).toBe("2020");
+
+    // Without TIDAL's answer, the stored artists show, unlinked.
+    const failed = trackInfoRows(track, tidalTrackInfoResult("77", null, new Error("timeout")));
+    expect(failed.artists).toEqual([{ name: "Main" }]);
+    expect(failed.album).toEqual({ name: "Album", kind: "album", source: "tidal", id: "500" });
+    expect(failed.year).toBe("1999");
+  });
+
+  describe("without TIDAL artist ids (an older server)", () => {
+    const track = { ...tidalTrack, source_album_id: "500", artists: [{ id: "h", name: "Main", role: "primary" }] };
+    const old = tidalTrackInfoResult("77", info({ artists: [{ name: "Main", role: "main" }, { name: "Guest", role: "featured" }] }));
+    const album = { id: "500", artist: "main ", artist_id: "9" };
+
+    it("asks for the album only then", () => {
+      expect(trackInfoArtistAlbumId(track, old)).toBe("500");
+      // No answer says nothing about the server, and TIDAL just failed once.
+      expect(trackInfoArtistAlbumId(track, tidalTrackInfoResult("77", null, new Error("timeout")))).toBeNull();
+      expect(trackInfoArtistAlbumId(track, tidalTrackInfoResult("77", info({ artists: [] })))).toBeNull();
+      const current = tidalTrackInfoResult("77", info({ artists: [{ id: "9", name: "Main", role: "main" }] }));
+      expect(trackInfoArtistAlbumId(track, current)).toBeNull();
+      expect(trackInfoArtistAlbumId({ ...track, source_album_id: undefined }, old)).toBeNull();
+      expect(trackInfoArtistAlbumId({ source: "local", source_album_id: "500" }, null)).toBeNull();
+      expect(trackInfoArtistAlbumId(null, old)).toBeNull();
+    });
+
+    it("links only the primary artist, through the album's artist id", () => {
+      const view = trackInfoRows(track, old, album);
+      expect(view.artists).toEqual([tidalArtist("Main", "9"), { name: "Guest" }]);
+      expect(rowsOf(view, "credits")?.[0].names).toEqual([tidalArtist("Main", "9")]);
+      expect(rowsOf(view, "credits")?.[1].names).toEqual([{ name: "Guest" }]);
+    });
+
+    it("leaves the artist plain when the album isn't theirs or this track's", () => {
+      for (const other of [
+        { ...album, artist: "Various Artists" },
+        { ...album, artist_id: undefined },
+        { ...album, id: "501" },
+      ]) {
+        expect(trackInfoRows(track, old, other).artists).toEqual([{ name: "Main" }, { name: "Guest" }]);
+      }
+      // A library track's artists have their own pages.
+      const local = trackInfoRows(file({ source_album_id: "500" }), null, album);
+      expect(local.artists).toEqual([libraryArtist("Main", "a")]);
+    });
   });
 });

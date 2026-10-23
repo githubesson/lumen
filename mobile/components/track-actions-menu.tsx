@@ -13,7 +13,7 @@ import {
   View,
   type GestureResponderEvent,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useNavigationContainerRef, useRouter } from "expo-router";
 import { Directory, File } from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
@@ -30,10 +30,13 @@ import {
   type TrackListItem,
 } from "@music-library/core";
 import { useFavorite, useFavoriteActions } from "../context/favorites";
-import { usePlayTrack } from "../context/player";
+import { useCanPlayNext, usePlayNext, usePlayTrack } from "../context/player";
+import { useTrackUnavailableOffline } from "../lib/offline-mode";
 import { AdaptiveGlass } from "./adaptive-glass";
+import { setPlaylistPickerTrack } from "./playlist-picker/subject";
 import { useTheme } from "../theme/theme";
 import { downloadStreamToFile } from "../lib/track-download";
+import { trackMenuTab } from "../lib/track-info";
 import {
   getOptionalSwiftUI,
   swiftAccessibilityLabel,
@@ -50,13 +53,23 @@ import { TrackMenuPreview } from "./track-menu-preview";
 
 type TrackActionModel = ReturnType<typeof useTrackActionModel>;
 
+interface ContextMenuHostOptions {
+  /** The row's height; the theme's row height by default. */
+  height?: number;
+  /** What the row sits on, behind its press morph; the list background by default. */
+  backgroundColor?: string;
+  /** Play Next from the menu, when the row confirms it itself (swipe rows). */
+  onPlayNext?: () => void;
+}
+
 export function TrackActionsContextMenu({
   track,
   children,
+  ...options
 }: {
   track: TrackListItem;
   children: ReactElement;
-}) {
+} & ContextMenuHostOptions) {
   const swiftUI = getOptionalSwiftUI();
 
   if (!swiftUI) {
@@ -64,7 +77,7 @@ export function TrackActionsContextMenu({
   }
 
   return (
-    <TrackActionsContextMenuHost track={track} swiftUI={swiftUI}>
+    <TrackActionsContextMenuHost track={track} swiftUI={swiftUI} {...options}>
       {children}
     </TrackActionsContextMenuHost>
   );
@@ -74,20 +87,23 @@ function TrackActionsContextMenuHost({
   track,
   swiftUI,
   children,
+  height,
+  backgroundColor,
+  onPlayNext,
 }: {
   track: TrackListItem;
   swiftUI: SwiftUIComponents;
   children: ReactElement;
-}) {
+} & ContextMenuHostOptions) {
   const theme = useTheme();
-  const actions = useTrackActionModel(track);
+  const actions = useTrackActionModel(track, { onPlayNext });
   const preview = useHeldMenuPreview();
   const { ContextMenu, Group, Host, RNHostView } = swiftUI;
 
   return (
     <Host
       colorScheme={theme.scheme}
-      style={[styles.contextHost, { height: theme.row.height }]}
+      style={[styles.contextHost, { height: height ?? theme.row.height }]}
     >
       <ContextMenu>
         <ContextMenu.Items>
@@ -102,7 +118,10 @@ function TrackActionsContextMenuHost({
                 dimmed row's opacity doesn't thin it. */}
             <View
               collapsable={false}
-              style={[styles.rowBacking, { backgroundColor: theme.color.bg }]}
+              style={[
+                styles.rowBacking,
+                { backgroundColor: backgroundColor ?? theme.color.bg },
+              ]}
               {...preview.touchHandlers}
             >
               {children}
@@ -349,6 +368,14 @@ function TrackActionItems({
       </ControlGroup>
       <Divider />
       <Section title="Actions">
+        {actions.showPlayNext ? (
+          <Button
+            label="Play Next"
+            systemImage="text.line.first.and.arrowtriangle.forward"
+            modifiers={[swiftDisabled(!actions.canPlayNext)]}
+            onPress={actions.playNext}
+          />
+        ) : null}
         <Button
           label="Add to Playlist..."
           systemImage="plus.rectangle.on.folder"
@@ -410,9 +437,18 @@ function TrackActionItems({
   );
 }
 
-export function useTrackActionModel(track: TrackListItem) {
+export function useTrackActionModel(
+  track: TrackListItem,
+  { onPlayNext }: { onPlayNext?: () => void } = {},
+) {
   const router = useRouter();
+  const navigation = useNavigationContainerRef();
   const playTrack = usePlayTrack();
+  const playNextTrack = usePlayNext();
+  // Not while controlling another device (no command for it yet), and not
+  // for the track that's playing.
+  const showPlayNext = useCanPlayNext(track.id);
+  const unavailableOffline = useTrackUnavailableOffline(track.id);
   const favorite = useFavorite(track.id);
   const { toggle: toggleFav } = useFavoriteActions();
   const { me } = useAuth();
@@ -426,29 +462,54 @@ export function useTrackActionModel(track: TrackListItem) {
     playTrack(track);
   }, [playTrack, track]);
 
+  const playNext = useCallback(() => {
+    if (onPlayNext) {
+      onPlayNext();
+      return;
+    }
+    if (playNextTrack([track])) {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  }, [onPlayNext, playNextTrack, track]);
+
   const toggleFavorite = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     void toggleFav(track);
   }, [toggleFav, track]);
 
+  // Track Info, the album and the editors open in the current tab's stack,
+  // which carries them all, so the tab never changes; over the tabs (Now
+  // Playing) they open in the tab underneath, once the sheet closes.
+  const openInTab = useCallback(
+    (
+      screen:
+        | "track/[id]"
+        | "track/edit"
+        | "albums/[id]"
+        | "tidal-albums/[id]"
+        | "albums/edit",
+      id: string,
+    ) => {
+      const place = trackMenuTab(
+        navigation.isReady() ? navigation.getRootState() : undefined,
+      );
+      if (place?.cover) router.dismiss(place.cover);
+      // Already on top there (the menu on Track Info itself).
+      if (place?.top?.name === screen && place.top.params?.id === id) return;
+      router.push({
+        pathname: `/(tabs)/${place?.tab ?? "(library)"}/${screen}`,
+        params: { id },
+      });
+    },
+    [navigation, router],
+  );
+
   const openAlbum = useCallback(() => {
     void (async () => {
       try {
         const target = await resolveTrackAlbumTarget(track);
-
-        if (target?.kind === "tidal") {
-          router.push({
-            pathname: "/(tabs)/(library)/tidal-albums/[id]" as never,
-            params: { id: target.id },
-          });
-          return;
-        }
-
         if (target) {
-          router.push({
-            pathname: "/(tabs)/(library)/albums/[id]",
-            params: { id: target.id },
-          });
+          openInTab(target.kind === "tidal" ? "tidal-albums/[id]" : "albums/[id]", target.id);
           return;
         }
 
@@ -460,39 +521,31 @@ export function useTrackActionModel(track: TrackListItem) {
         );
       }
     })();
-  }, [router, track]);
+  }, [openInTab, track]);
 
   const openInfo = useCallback(() => {
-    router.push({
-      pathname: "/(tabs)/(library)/track/[id]",
-      params: { id: track.id },
-    });
-  }, [router, track.id]);
+    openInTab("track/[id]", track.id);
+  }, [openInTab, track.id]);
 
   // Admin-only: jump to the metadata editor for this track.
   const openEditMetadata = useCallback(() => {
-    router.push({
-      pathname: "/(tabs)/(library)/track/edit",
-      params: { id: track.id },
-    });
-  }, [router, track.id]);
+    openInTab("track/edit", track.id);
+  }, [openInTab, track.id]);
 
   // Admin-only: edit the album this track belongs to — that's where cover
   // art lives, since artwork is shared across an album.
   const openEditAlbum = useCallback(() => {
     if (!track.album_id) return;
-    router.push({
-      pathname: "/(tabs)/(library)/albums/edit",
-      params: { id: track.album_id },
-    });
-  }, [router, track.album_id]);
+    openInTab("albums/edit", track.album_id);
+  }, [openInTab, track.album_id]);
 
   const openPlaylistPicker = useCallback(() => {
+    setPlaylistPickerTrack(track);
     router.push({
       pathname: "/playlist-picker",
       params: { trackId: track.id },
     });
-  }, [router, track.id]);
+  }, [router, track]);
 
   const openShare = useCallback(() => {
     router.push({
@@ -593,6 +646,10 @@ export function useTrackActionModel(track: TrackListItem) {
     // Dropped from TIDAL with no library copy: no stream to play or save.
     available: actions.play,
     play,
+    // A track that can't play here can't be queued either.
+    canPlayNext: actions.play && !unavailableOffline,
+    playNext,
+    showPlayNext,
     toggleFavorite,
   };
 }
