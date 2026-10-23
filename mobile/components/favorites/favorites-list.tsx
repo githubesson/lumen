@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { RefreshControl, StyleSheet } from "react-native";
 import {
   FlashList,
@@ -15,7 +15,6 @@ import Animated, {
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import {
-  SORT_DEFAULT_ASC,
   compareSortableTracks,
   sortForDisplay,
   type SortKey,
@@ -43,6 +42,7 @@ import {
   type HeaderGeometry,
 } from "../../lib/favorites-header";
 import { listPlaybackQueue, usePlayQueue } from "../../lib/use-play-queue";
+import { useTrackSort } from "../../lib/use-track-sort";
 import { usePullToRefresh } from "../../lib/use-pull-to-refresh";
 import type { ThemeTokens } from "../../theme/theme";
 
@@ -74,8 +74,7 @@ export function useFavoritesListModel(
   const play = usePlayTrack();
   const { shuffle } = usePlayerPlayback();
   const pendingRemovalIds = usePendingFavoriteRemovalIds();
-  const [sortKey, setSortKey] = useState<SortKey>("custom");
-  const [sortAsc, setSortAsc] = useState(SORT_DEFAULT_ASC.custom);
+  const { sortKey, sortAsc, onSelectSort, onToggleSortDirection } = useTrackSort();
 
   const tracks = useMemo(
     () =>
@@ -89,18 +88,6 @@ export function useFavoritesListModel(
     [mode, tracks, pendingRemovalIds],
   );
   const summary = useMemo(() => listSummary(mode, queue), [mode, queue]);
-
-  const onSelectSort = useCallback((key: SortKey) => {
-    void Haptics.selectionAsync();
-    setSortKey((prevKey) => {
-      if (prevKey !== key) setSortAsc(SORT_DEFAULT_ASC[key]);
-      return key;
-    });
-  }, []);
-
-  const onToggleSortDirection = useCallback(() => {
-    setSortAsc((asc) => !asc);
-  }, []);
 
   // With shuffle mode on, Play starts somewhere random like the playlist
   // page's; from the top, every shuffled play would open on the same song.

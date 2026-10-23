@@ -18,7 +18,6 @@ import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  SORT_DEFAULT_ASC,
   api,
   compareSortableTracks,
   errorMessage,
@@ -34,7 +33,6 @@ import {
   type Playlist,
   type PlaylistTrackEntry,
   type PlaylistTracks,
-  type SortKey,
   type TrackListItem,
 } from "@music-library/core";
 import { CoverArt } from "../../../components/cover-art";
@@ -69,6 +67,7 @@ import {
 } from "../../../components/swipe/swipeable-track-row";
 import { qk } from "../../../lib/query-keys";
 import { listPlaybackQueue, usePlayQueue } from "../../../lib/use-play-queue";
+import { useTrackSort } from "../../../lib/use-track-sort";
 import {
   autoDownloadStore,
   downloadStore,
@@ -159,8 +158,8 @@ export default function PlaylistDetailScreen() {
   // next fetched snapshot replaces it without an effect having to reset it.
   const [override, setOverride] = useState<TracksOverride | null>(null);
   const [reorderMode, setReorderMode] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("custom");
-  const [sortAsc, setSortAsc] = useState(true);
+  const { sortKey, sortAsc, onSelectSort, onToggleSortDirection, resetSort } =
+    useTrackSort();
   const serverData = tracksQuery.data;
   const activeOverride =
     override && override.base === serverData ? override : null;
@@ -315,18 +314,6 @@ export default function PlaylistDetailScreen() {
     });
   }, [id, tracks, playlist?.name]);
 
-  const onSelectSort = useCallback((key: SortKey) => {
-    void Haptics.selectionAsync();
-    setSortKey((prevKey) => {
-      if (prevKey !== key) setSortAsc(SORT_DEFAULT_ASC[key]);
-      return key;
-    });
-  }, []);
-
-  const onToggleSortDirection = useCallback(() => {
-    setSortAsc((asc) => !asc);
-  }, []);
-
   // Shuffle is queue-level: start the visible tracks from a random one with
   // shuffle mode on, like CarPlay's and Siri's shuffle play, leaving the saved
   // playlist order untouched. A refused start (offline, say) changes nothing.
@@ -344,9 +331,9 @@ export default function PlaylistDetailScreen() {
     expandDock();
     // Drag indices map to the saved order, so a local sort can't stay active
     // while reordering.
-    setSortKey("custom");
+    resetSort();
     setReorderMode((value) => !value);
-  }, [expandDock]);
+  }, [expandDock, resetSort]);
 
   const { mutate: reorderTracks } = reorderMutation;
   const { mutate: removeTrack } = removeMutation;

@@ -1,11 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-  type LayoutChangeEvent,
-} from "react-native";
+import { StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   useAnimatedReaction,
   useAnimatedStyle,
@@ -14,11 +8,8 @@ import Animated, {
 import { scheduleOnRN } from "react-native-worklets";
 import { SymbolView } from "expo-symbols";
 import type { SortKey } from "@music-library/core";
-import {
-  PLAYLIST_CONTROL_SIZE as CONTROL_SIZE,
-  SortMenuButton,
-  type SortMenuOption,
-} from "../playlists/playlist-detail-header";
+import type { SortMenuOption } from "../playlists/playlist-detail-header";
+import { TrackListControls } from "../track-list-controls";
 import { FAVORITES_MODES, modeColor } from "./mode-switch";
 import {
   DEFAULT_HEADER_GEOMETRY,
@@ -201,44 +192,19 @@ export function FavoritesListHeader({
           pointerEvents={controlsLive ? "box-none" : "none"}
           style={[styles.controls, controlsStyle]}
         >
-          {trackCount > 1 ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Shuffle play"
-              onPress={onShuffle}
-              style={({ pressed }) => [
-                styles.circle,
-                { backgroundColor: theme.color.bgElev1, opacity: pressed ? 0.8 : 1 },
-              ]}
-            >
-              <SymbolView name="shuffle" size={16} tintColor={theme.color.fg} />
-            </Pressable>
-          ) : null}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Play ${meta.label}`}
-            onPress={onPlay}
-            style={({ pressed }) => [
-              styles.play,
-              { backgroundColor: theme.color.accent, opacity: pressed ? 0.85 : 1 },
-            ]}
-          >
-            <SymbolView name="play.fill" size={15} tintColor={theme.color.onAccent} />
-            <Text style={[styles.playText, { color: theme.color.onAccent }]}>
-              Play
-            </Text>
-          </Pressable>
-          {trackCount > 1 ? (
-            <SortMenuButton
-              theme={theme}
-              sortKey={sortKey}
-              sortAsc={sortAsc}
-              onSelect={onSelectSort}
-              onToggleDirection={onToggleSortDirection}
-              options={SORT_OPTIONS[mode]}
-              accessibilityLabel={`Sort ${meta.label}`}
-            />
-          ) : null}
+          <TrackListControls
+            theme={theme}
+            trackCount={trackCount}
+            playAccessibilityLabel={`Play ${meta.label}`}
+            sortKey={sortKey}
+            sortAsc={sortAsc}
+            sortOptions={SORT_OPTIONS[mode]}
+            sortAccessibilityLabel={`Sort ${meta.label}`}
+            onSelectSort={onSelectSort}
+            onToggleSortDirection={onToggleSortDirection}
+            onPlay={onPlay}
+            onShuffle={onShuffle}
+          />
         </Animated.View>
       ) : null}
     </View>
@@ -290,27 +256,5 @@ const styles = StyleSheet.create({
     paddingTop: 14,
     paddingBottom: 10,
     paddingHorizontal: FAVORITES_HEADER.sideInset,
-  },
-  circle: {
-    width: CONTROL_SIZE,
-    height: CONTROL_SIZE,
-    borderRadius: CONTROL_SIZE / 2,
-    borderCurve: "continuous",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  play: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    height: CONTROL_SIZE,
-    borderRadius: CONTROL_SIZE / 2,
-    borderCurve: "continuous",
-  },
-  playText: {
-    fontSize: 16,
-    fontWeight: "600",
   },
 });
