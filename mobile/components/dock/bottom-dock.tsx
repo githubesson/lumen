@@ -140,7 +140,8 @@ export function BottomDock(props: BottomTabBarProps) {
         </Animated.View>
       ) : null}
       <FloatingTabBar {...props} coverSlot={coverSlot} />
-      {current ? <DockCoverSlot presence={coverSlot} /> : null}
+      {/* Always mounted: it keeps the last cover while its slot closes. */}
+      <DockCoverSlot presence={coverSlot} dockHidden={keyboardVisible} />
     </Animated.View>
   );
 }
