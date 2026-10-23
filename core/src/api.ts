@@ -766,6 +766,10 @@ export interface TrackDetail {
   has_cover: boolean;
   cover_url?: string;
   favorited: boolean;
+  /** The viewer's own personal upload, which they can delete (as on `TrackListItem`). Older servers leave it out. */
+  owned?: boolean;
+  /** A TIDAL track TIDAL dropped from its release, with no library copy: it can't play. Older servers leave it out. */
+  unavailable?: boolean;
   /** The file the track plays; only on GET /api/tracks/:id for local tracks. */
   file_name?: string;
   /** Where the shown tags came from, when that's another copy's file. */

@@ -234,6 +234,23 @@ func (s *Store) TIDALAlbum(ctx context.Context, id string) (tidal.Album, time.Ti
 	return a, fetchedAt, nil
 }
 
+// TIDALTrackRemoved reports whether the stored release albumID marks its
+// track trackID removed: TIDAL stopped listing it. False when the release
+// isn't stored or doesn't list the track.
+func (s *Store) TIDALTrackRemoved(ctx context.Context, albumID, trackID string) (bool, error) {
+	albumID, trackID = strings.TrimSpace(albumID), strings.TrimSpace(trackID)
+	if albumID == "" || trackID == "" {
+		return false, nil
+	}
+	var removed bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tidal_albums, jsonb_array_elements(tracks) AS entry
+			WHERE tidal_id = $1 AND entry->>'id' = $2 AND entry->>'removed' = 'true')`,
+		albumID, trackID).Scan(&removed)
+	return removed, err
+}
+
 // TIDALAlbumFields is the release metadata a saved TIDAL track is filed by.
 type TIDALAlbumFields struct {
 	TIDALAlbumID string

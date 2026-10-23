@@ -40,6 +40,9 @@ export function trackInfoListItem(track: TrackDetail): TrackListItem {
     favorited: track.favorited,
     has_cover: track.has_cover,
     cover_url: track.cover_url,
+    // So the menu offers Delete for an upload, and nothing plays a dropped track.
+    owned: track.owned,
+    unavailable: track.unavailable,
   };
 }
 
@@ -75,28 +78,59 @@ export function trackInfoGridLines(rows: readonly TrackInfoRow[]): TrackInfoGrid
   return lines;
 }
 
-/** A navigation state, as far as `focusedInTabs` reads it. */
+/** A navigation state, as far as `trackMenuTab` reads it. */
 interface NavState {
   index?: number;
   type?: string;
-  routes: readonly { name: string; state?: NavState }[];
+  routes: readonly { name: string; params?: object; state?: NavState }[];
 }
 
+/** The tab groups, each a tab with its own stack. */
+export type TabGroup = "(library)" | "(browse)" | "(favorites)" | "(playlists)" | "(settings)";
+const TAB_GROUPS: readonly string[] = ["(library)", "(browse)", "(favorites)", "(playlists)", "(settings)"];
+
+/** Where the track menu opens a screen of a tab's stack (see `trackMenuTab`). */
+export interface TrackMenuTab {
+  /** The tab in front, or the one under the screens covering the tabs. */
+  tab: TabGroup;
+  /** How many screens cover the tabs (Now Playing), to close first. */
+  cover: number;
+  /** The screen on top of that tab's stack. */
+  top: { name: string; params?: { id?: string } } | null;
+}
+
+// A partial state (not rendered yet) without an index focuses the top of a
+// stack, and the first route of anything else.
+const focusedIndex = (node: NavState) =>
+  node.index ?? (node.type === "stack" ? node.routes.length - 1 : 0);
+
 /**
- * Whether the screen in front is in one of the tabs, rather than over them
- * (Now Playing). Read at press time from the root navigation state, so the
- * track menu in every row doesn't re-render on each navigation the way
- * `useSegments` would.
+ * Where the track menu opens Track Info or an editor: in the tab in front,
+ * so the tab never changes. Over the tabs (Now Playing) it's the tab
+ * underneath, once what covers it closes: pushed past the sheet, a tab
+ * route would stack a second set of tabs on top of it. Read at press time
+ * from the root navigation state, so the menu in every row doesn't
+ * re-render on each navigation the way `useSegments` would. Null when no
+ * tab is mounted.
  */
-export function focusedInTabs(state: NavState | undefined): boolean {
+export function trackMenuTab(state: NavState | undefined): TrackMenuTab | null {
   for (let node = state; node; ) {
-    // A partial state (not rendered yet) without an index focuses the top
-    // of a stack, and the first route of anything else.
-    const index = node.index ?? (node.type === "stack" ? node.routes.length - 1 : 0);
-    const route = node.routes[index];
-    if (!route) return false;
-    if (route.name === "(tabs)") return true;
-    node = route.state;
+    const index = focusedIndex(node);
+    const at = node.routes.findIndex((route) => route.name === "(tabs)");
+    if (at >= 0) {
+      const tabs = node.routes[at].state;
+      const tabRoute = tabs?.routes[focusedIndex(tabs)];
+      if (!tabRoute || !TAB_GROUPS.includes(tabRoute.name)) return null;
+      let top: TrackMenuTab["top"] = null;
+      for (let stack = tabRoute.state; stack; ) {
+        const route = stack.routes[focusedIndex(stack)];
+        if (!route) break;
+        top = { name: route.name, params: route.params as { id?: string } | undefined };
+        stack = route.state;
+      }
+      return { tab: tabRoute.name as TabGroup, cover: Math.max(0, index - at), top };
+    }
+    node = node.routes[index]?.state;
   }
-  return false;
+  return null;
 }

@@ -29,6 +29,10 @@ export default function FavoritesStackLayout() {
         name="tidal-artists/[id]"
         options={{ headerLargeTitle: false, title: "" }}
       />
+      <Stack.Screen
+        name="albums/edit"
+        options={{ headerLargeTitle: false, title: "Edit Album" }}
+      />
     </Stack>
   );
 }

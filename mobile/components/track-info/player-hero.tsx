@@ -33,6 +33,10 @@ import { LinkedNames } from "./linked-names";
 
 const COVER_SHADOW = "0 18px 40px rgba(0, 0, 0, 0.45)";
 const ACTIONS_WIDTH = FOLD.action * 2 + FOLD.actionGap;
+// The compact row is the 58 cover's height, and its two lines fill most of
+// it: at 1.25× they still fit (about 26 + 22 pt), where the largest
+// accessibility sizes would spill into the content.
+const COMPACT_MAX_FONT_SCALE = 1.25;
 
 /** What the hero shows: the track as Now Playing shows it. */
 export interface HeroTrack {
@@ -293,6 +297,7 @@ export function CompactMeta({
     >
       <Text
         numberOfLines={1}
+        maxFontSizeMultiplier={COMPACT_MAX_FONT_SCALE}
         style={{
           color: theme.color.fg,
           fontSize: 17,
@@ -306,6 +311,7 @@ export function CompactMeta({
         artists={track.artists}
         color={theme.color.fgMuted}
         fontSize={14}
+        maxFontSizeMultiplier={COMPACT_MAX_FONT_SCALE}
         onOpen={onOpen}
       />
     </Animated.View>
@@ -349,13 +355,16 @@ export function HeroActions({
         style,
       ]}
     >
-      <GlassIconButton
-        icon={play.playing ? "pause.fill" : "play.fill"}
-        iconSize={15}
-        weight="semibold"
-        accessibilityLabel={play.playing ? "Pause" : "Play"}
-        onPress={play.onPress}
-      />
+      {/* A track dropped from TIDAL can't play: no button to fail. */}
+      {track.unavailable ? null : (
+        <GlassIconButton
+          icon={play.playing ? "pause.fill" : "play.fill"}
+          iconSize={15}
+          weight="semibold"
+          accessibilityLabel={play.playing ? "Pause" : "Play"}
+          onPress={play.onPress}
+        />
+      )}
       <TrackActionsMenuButton
         track={track}
         size={FOLD.action}
@@ -414,16 +423,22 @@ function ArtistLine({
   artists,
   color,
   fontSize,
+  maxFontSizeMultiplier,
   onOpen,
 }: {
   artists: readonly TrackInfoName[];
   color: string;
   fontSize: number;
+  maxFontSizeMultiplier?: number;
   onOpen: (link: TrackInfoLink) => void;
 }) {
   if (artists.length === 0) return null;
   return (
-    <Text numberOfLines={1} style={{ color, fontSize }}>
+    <Text
+      numberOfLines={1}
+      maxFontSizeMultiplier={maxFontSizeMultiplier}
+      style={{ color, fontSize }}
+    >
       <LinkedNames names={artists} color={color} onOpen={onOpen} />
     </Text>
   );
@@ -480,7 +495,10 @@ const styles = StyleSheet.create({
     gap: 1,
   },
   actions: {
+    width: ACTIONS_WIDTH,
     flexDirection: "row",
+    // Without play, the menu keeps its place at the end.
+    justifyContent: "flex-end",
     gap: FOLD.actionGap,
   },
   backdrop: {

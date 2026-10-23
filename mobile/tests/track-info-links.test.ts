@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { TrackDetail, TrackInfoRow } from "@music-library/core";
 import {
-  focusedInTabs,
   trackInfoGridLines,
   trackInfoHref,
   trackInfoListItem,
+  trackMenuTab,
 } from "../lib/track-info";
 
 describe("trackInfoHref", () => {
@@ -40,6 +40,8 @@ describe("trackInfoListItem", () => {
       has_cover: true,
       cover_url: "https://example.test/c.jpg",
       favorited: true,
+      owned: false,
+      unavailable: true,
     };
     expect(trackInfoListItem(detail)).toEqual({
       id: "tidal:5",
@@ -56,6 +58,8 @@ describe("trackInfoListItem", () => {
       favorited: true,
       has_cover: true,
       cover_url: "https://example.test/c.jpg",
+      owned: false,
+      unavailable: true,
     });
   });
 });
@@ -80,31 +84,71 @@ describe("trackInfoGridLines", () => {
   });
 });
 
-describe("focusedInTabs", () => {
-  const tabs = (tab: string) => ({
+describe("trackMenuTab", () => {
+  // The root stack (under expo-router's root slot): the tabs, then whatever
+  // covers them.
+  type NavState = Parameters<typeof trackMenuTab>[0];
+  const root = (tabIndex: number, covers: string[] = [], favorites?: NavState): NavState => ({
     index: 0,
-    routes: [{ name: "__root", state: { index: 1, routes: [{ name: "(auth)" }, { name: "(tabs)", state: { index: 0, routes: [{ name: tab }] } }] } }],
+    routes: [
+      {
+        name: "__root",
+        state: {
+          type: "stack",
+          index: covers.length,
+          routes: [
+            {
+              name: "(tabs)",
+              state: {
+                type: "tab",
+                index: tabIndex,
+                routes: [
+                  { name: "(library)" },
+                  { name: "(playlists)" },
+                  { name: "(browse)" },
+                  { name: "(favorites)", state: favorites },
+                  { name: "(settings)" },
+                ],
+              },
+            },
+            ...covers.map((name) => ({ name })),
+          ],
+        },
+      },
+    ],
+  });
+  const favoritesStack: NavState = {
+    type: "stack",
+    index: 1,
+    routes: [{ name: "index" }, { name: "track/[id]", params: { id: "t1" } }],
+  };
+
+  it("opens in the tab in front, nothing to close", () => {
+    expect(trackMenuTab(root(3, [], favoritesStack))).toEqual({
+      tab: "(favorites)",
+      cover: 0,
+      top: { name: "track/[id]", params: { id: "t1" } },
+    });
+    expect(trackMenuTab(root(0))).toEqual({ tab: "(library)", cover: 0, top: null });
   });
 
-  it("finds a tab in front", () => {
-    expect(focusedInTabs(tabs("(favorites)"))).toBe(true);
+  it("opens under Now Playing in the tab beneath it, once it closes", () => {
+    expect(trackMenuTab(root(3, ["now-playing"], favoritesStack))).toMatchObject({ tab: "(favorites)", cover: 1 });
+    expect(trackMenuTab(root(4, ["now-playing", "playlist-picker"]))).toMatchObject({ tab: "(settings)", cover: 2 });
   });
 
-  it("finds none behind a screen over the tabs", () => {
-    expect(
-      focusedInTabs({
-        index: 0,
-        routes: [{ name: "__root", state: { index: 1, routes: [{ name: "(tabs)" }, { name: "now-playing" }] } }],
-      }),
-    ).toBe(false);
-    expect(focusedInTabs(undefined)).toBe(false);
-    expect(focusedInTabs({ index: 3, routes: [] })).toBe(false);
+  it("finds no tab before the tabs are mounted", () => {
+    expect(trackMenuTab(undefined)).toBeNull();
+    expect(trackMenuTab({ index: 0, routes: [{ name: "(auth)" }] })).toBeNull();
+    expect(trackMenuTab({ routes: [{ name: "(tabs)" }] })).toBeNull();
   });
 
   it("reads a partial state's focus the way the navigators do", () => {
-    // A stack's is its top route; anything else's, its first.
-    const partial = (type: string) => ({ type, routes: [{ name: "(tabs)" }, { name: "now-playing" }] });
-    expect(focusedInTabs(partial("stack"))).toBe(false);
-    expect(focusedInTabs(partial("tab"))).toBe(true);
+    // A stack's is its top route; a tab navigator's, its first.
+    const partial = {
+      type: "stack",
+      routes: [{ name: "(tabs)", state: { type: "tab", routes: [{ name: "(library)" }, { name: "(browse)" }] } }, { name: "now-playing" }],
+    };
+    expect(trackMenuTab(partial)).toEqual({ tab: "(library)", cover: 1, top: null });
   });
 });

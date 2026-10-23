@@ -172,6 +172,28 @@ describe("tidalTrackCredits", () => {
     ]);
     expect(rows[2].value).toBe("Maker, Second");
   });
+
+  it("keeps two people who share a name apart when TIDAL tells them apart", () => {
+    const rows = tidalTrackCredits(
+      stored,
+      info({
+        credits: [
+          {
+            role: "Engineer",
+            names: ["Sam Lee", "Sam Lee", "Sam Lee"],
+            contributors: [{ id: "1", name: "Sam Lee" }, { id: "2", name: "Sam Lee" }, { id: "1", name: "Sam Lee" }],
+          },
+          // Without an id, the name is either of them: no third entry.
+          { role: "engineer", names: ["Sam Lee"] },
+        ],
+      }),
+    );
+    expect(rows[3]).toEqual({
+      label: "Engineer",
+      value: "Sam Lee, Sam Lee",
+      names: [tidalArtist("Sam Lee", "1"), tidalArtist("Sam Lee", "2")],
+    });
+  });
 });
 
 describe("tidalAudioRows", () => {
@@ -448,7 +470,9 @@ describe("trackInfoRows", () => {
 
     it("asks for the album only then", () => {
       expect(trackInfoArtistAlbumId(track, old)).toBe("500");
-      expect(trackInfoArtistAlbumId(track, tidalTrackInfoResult("77", null, new Error("timeout")))).toBe("500");
+      // No answer says nothing about the server, and TIDAL just failed once.
+      expect(trackInfoArtistAlbumId(track, tidalTrackInfoResult("77", null, new Error("timeout")))).toBeNull();
+      expect(trackInfoArtistAlbumId(track, tidalTrackInfoResult("77", info({ artists: [] })))).toBeNull();
       const current = tidalTrackInfoResult("77", info({ artists: [{ id: "9", name: "Main", role: "main" }] }));
       expect(trackInfoArtistAlbumId(track, current)).toBeNull();
       expect(trackInfoArtistAlbumId({ ...track, source_album_id: undefined }, old)).toBeNull();
@@ -461,9 +485,6 @@ describe("trackInfoRows", () => {
       expect(view.artists).toEqual([tidalArtist("Main", "9"), { name: "Guest" }]);
       expect(rowsOf(view, "credits")?.[0].names).toEqual([tidalArtist("Main", "9")]);
       expect(rowsOf(view, "credits")?.[1].names).toEqual([{ name: "Guest" }]);
-      // Also when TIDAL didn't answer at all.
-      const failed = trackInfoRows(track, tidalTrackInfoResult("77", null, new Error("timeout")), album);
-      expect(failed.artists).toEqual([tidalArtist("Main", "9")]);
     });
 
     it("leaves the artist plain when the album isn't theirs or this track's", () => {

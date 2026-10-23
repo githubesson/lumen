@@ -96,6 +96,8 @@ export default function TrackInfoScreen() {
     queryKey: qk.tidalAlbum(userId, artistAlbumId ?? undefined),
     queryFn: ({ signal }) => api.getTidalAlbum(artistAlbumId!, { signal }),
     enabled: !!userId && !!artistAlbumId,
+    // Only a link at stake: no second try.
+    retry: false,
   });
 
   const [metaFrame, onMetaLayout] = useMetaFrame();
@@ -210,6 +212,11 @@ export default function TrackInfoScreen() {
                 gap: FACTS_GAP,
               }}
             >
+              {t.unavailable ? (
+                <Note theme={theme}>
+                  Removed from TIDAL, so it can&apos;t play.
+                </Note>
+              ) : null}
               {view.note ? <Note theme={theme}>{view.note}</Note> : null}
 
               {view.sections.map((section) => (

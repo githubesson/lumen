@@ -350,6 +350,23 @@ it("links a file's artist and album to their library pages, its producers plain"
   expect(mock.push).toHaveBeenLastCalledWith({ pathname: "/(tabs)/albums/[id]", params: { id: "al1" } });
 });
 
+it("offers no Play for a track dropped from TIDAL, and says why", () => {
+  mock.track = { data: { ...row, unavailable: true } };
+  const out = html();
+  expect(out).not.toContain("<button>Play</button>");
+  expect(out).toContain("<button>More actions</button>");
+  expect(out).toContain("Removed from TIDAL, so it can&#x27;t play.");
+});
+
+it("doesn't ask for the album after TIDAL failed, and never twice", () => {
+  mock.tidal = { isError: true, error: new Error("timeout") };
+  html();
+  expect(mock.albumOptions?.enabled).toBe(false);
+  mock.tidal = { data: { ...info, artists: [{ name: "BabyTron", role: "main" }] } };
+  html();
+  expect(mock.albumOptions).toMatchObject({ enabled: true, retry: false });
+});
+
 it("plays the track, and pauses it once it's the one playing", () => {
   html();
   mock.presses["Play"]();
