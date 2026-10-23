@@ -29,36 +29,52 @@ export interface DownloadedCover {
 export const RECENT_COVER_LIMIT = 4;
 
 /**
- * Count, size and a few recent covers of the stored downloads. Covers with a
- * file on the device come first, so the stack still shows art offline; a song
- * without one only fills a slot when there aren't enough of those. One cover
- * per album.
+ * Count, size and a few recent covers of the stored downloads, one per
+ * album, newest album first. Covers with a file on the device come first,
+ * so the stack still shows art offline: an album's slot goes to one of its
+ * songs with a stored cover when it has one, and an album without any only
+ * fills a slot when there aren't enough of those.
  */
 export function summarizeDownloads(
   records: readonly Readonly<DownloadRecord>[],
   { ready, coverLimit = RECENT_COVER_LIMIT }: { ready: boolean; coverLimit?: number },
 ): DownloadSummary {
   let bytes = 0;
+  // The album behind each stored cover file, from the records that know it,
+  // so a record older than the track snapshot still finds its album.
+  const albumByCover = new Map<string, string>();
   for (const record of records) {
     if (Number.isFinite(record.size) && record.size > 0) bytes += record.size;
+    if (record.coverFilename && record.track?.album_id) {
+      albumByCover.set(record.coverFilename, record.track.album_id);
+    }
   }
+  const albumKey = (record: Readonly<DownloadRecord>): string => {
+    const album =
+      record.track?.album_id ||
+      (record.coverFilename ? albumByCover.get(record.coverFilename) : undefined);
+    if (album) return `album:${album}`;
+    return record.coverFilename ? `cover:${record.coverFilename}` : `track:${record.trackId}`;
+  };
 
+  // Newest first, so each album is placed by its latest download.
   const newestFirst = [...records].sort((a, b) => b.downloadedAt - a.downloadedAt);
-  const seen = new Set<string>();
-  const stored: Readonly<DownloadRecord>[] = [];
-  const remote: Readonly<DownloadRecord>[] = [];
+  const albums = new Map<string, { record: Readonly<DownloadRecord>; latest: number }>();
   for (const record of newestFirst) {
-    if (stored.length >= coverLimit) break;
     if (!record.coverFilename && record.track?.has_cover === false) continue;
-    const key = record.coverFilename ?? record.track?.album_id ?? record.trackId;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    (record.coverFilename ? stored : remote).push(record);
+    const key = albumKey(record);
+    const album = albums.get(key);
+    if (!album) albums.set(key, { record, latest: record.downloadedAt });
+    else if (!album.record.coverFilename && record.coverFilename) album.record = record;
   }
-  const recent = [...stored, ...remote]
+  const candidates = [...albums.values()];
+  const recent = [
+    ...candidates.filter((album) => album.record.coverFilename),
+    ...candidates.filter((album) => !album.record.coverFilename),
+  ]
     .slice(0, coverLimit)
-    .sort((a, b) => b.downloadedAt - a.downloadedAt)
-    .map((record) => ({ trackId: record.trackId, track: record.track }));
+    .sort((a, b) => b.latest - a.latest)
+    .map(({ record }) => ({ trackId: record.trackId, track: record.track }));
 
   return { ready, count: records.length, bytes, recent };
 }

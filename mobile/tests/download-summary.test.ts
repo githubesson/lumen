@@ -94,6 +94,31 @@ describe("summarizeDownloads", () => {
     );
     expect(summary.recent.map((cover) => cover.trackId)).toEqual(["remote", "legacy", "stored"]);
   });
+  it("gives an album one slot, whichever of its songs has the cover file", () => {
+    const summary = summarizeDownloads(
+      [
+        // The album's newest song has no stored cover; an older one does.
+        record("newer", 5, { track: track("newer", "al") }),
+        record("older", 2, { coverFilename: "cover_al.jpg", track: track("older", "al") }),
+        record("other", 3, { coverFilename: "cover_o.jpg", track: track("other", "o") }),
+      ],
+      { ready: true },
+    );
+    // Shown with the stored cover, but placed by the album's latest download.
+    expect(summary.recent.map((cover) => cover.trackId)).toEqual(["older", "other"]);
+  });
+
+  it("finds the album of a record older than the track snapshot by its cover file", () => {
+    const summary = summarizeDownloads(
+      [
+        record("legacy", 4, { coverFilename: "cover_al.jpg" }),
+        record("known", 3, { coverFilename: "cover_al.jpg", track: track("known", "al") }),
+        record("unstored", 2, { track: track("unstored", "al") }),
+      ],
+      { ready: true },
+    );
+    expect(summary.recent.map((cover) => cover.trackId)).toEqual(["legacy"]);
+  });
 });
 
 describe("downloadSummarySnapshot", () => {
