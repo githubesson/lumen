@@ -8,6 +8,7 @@ import {
 import Animated, {
   Easing,
   Extrapolation,
+  ReduceMotion,
   interpolate,
   useAnimatedReaction,
   useAnimatedStyle,
@@ -61,10 +62,24 @@ const COVER_LANDED_AT = 0.97;
 const RING_RESET_BELOW = 0.5;
 
 const RING_DRAW_IN = { duration: 520, easing: Easing.out(Easing.cubic) } as const;
-const PAUSE_DIM = { duration: 250, easing: Easing.linear } as const;
-const PRESS = { duration: 160, easing: Easing.out(Easing.cubic) } as const;
+// Fades and the press dim also run with Reduce Motion on (Reanimated would
+// otherwise snap them), since they don't move anything.
+const PAUSE_DIM = {
+  duration: 250,
+  easing: Easing.linear,
+  reduceMotion: ReduceMotion.Never,
+} as const;
+const PRESS = {
+  duration: 160,
+  easing: Easing.out(Easing.cubic),
+  reduceMotion: ReduceMotion.Never,
+} as const;
 // Reduce Motion: the slot cross-fades in and out instead of flying.
-const SLOT_FADE = { duration: 200, easing: Easing.linear } as const;
+const SLOT_FADE = {
+  duration: 200,
+  easing: Easing.linear,
+  reduceMotion: ReduceMotion.Never,
+} as const;
 // Matches the mock's cover swap when the track changes.
 const COVER_SWAP_MS = 220;
 
