@@ -114,6 +114,24 @@ describe("removing with Undo", () => {
     expect(undoRemoval(track)).toBe(false);
   });
 
+  it("sends a removal whose window closes while the track's favorite is still going out", async () => {
+    state.client.setQueryData(qk.favorites("user"), others);
+    let finish!: () => void;
+    state.favorite.mockReturnValueOnce(new Promise<void>((resolve) => (finish = resolve)));
+    const { removeWithUndo, toggle } = useFavoriteActions();
+    const favoriting = toggle(track);
+    await settle();
+    expect(ids()).toEqual(["t1", "a", "b"]);
+    removeWithUndo(track);
+    await vi.advanceTimersByTimeAsync(FAVORITE_UNDO_MS + FAVORITE_REMOVAL_CLOSE_MS);
+    expect(state.unfavorite).not.toHaveBeenCalled();
+    finish();
+    await favoriting;
+    await settle();
+    expect(state.unfavorite).toHaveBeenCalledExactlyOnceWith("t1");
+    expect(ids()).toEqual(["a", "b"]);
+  });
+
   it("puts a failed removal back where it was", async () => {
     state.unfavorite.mockRejectedValueOnce(new Error("offline"));
     const { removeWithUndo } = useFavoriteActions();
