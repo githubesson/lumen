@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { StyleSheet, type StyleProp, type ViewStyle } from "react-native";
 import Animated, {
   interpolate,
@@ -7,6 +7,7 @@ import Animated, {
   useFrameCallback,
   useSharedValue,
   type AnimatedStyle,
+  type FrameInfo,
   type SharedValue,
 } from "react-native-reanimated";
 import { Canvas, Circle, Path, Skia } from "@shopify/react-native-skia";
@@ -26,11 +27,13 @@ const RADIUS = COVER_SLOT.ringRadius;
 
 // One full turn from 12 o'clock, clockwise, so trimming its end grows the arc
 // the way a clock hand turns.
-const RING_PATH = Skia.Path.Make().addArc(
-  Skia.XYWHRect(CENTER - RADIUS, CENTER - RADIUS, RADIUS * 2, RADIUS * 2),
-  -90,
-  360,
-);
+const RING_PATH = Skia.PathBuilder.Make()
+  .addArc(
+    Skia.XYWHRect(CENTER - RADIUS, CENTER - RADIUS, RADIUS * 2, RADIUS * 2),
+    -90,
+    360,
+  )
+  .detach();
 
 const ARC_ALPHA_PLAYING = 0.96;
 const ARC_ALPHA_PAUSED = 0.42;
@@ -53,7 +56,7 @@ export function CoverRing({
 }: {
   trackKey: string | null;
   playing: boolean;
-  /** Whether the ring is on screen. Off-screen it doesn't tick. */
+  /** Whether the ring can be seen. Hidden, it doesn't tick. */
   ticking: boolean;
   /** 0..1: how much of the played arc to draw (it draws in as the cover lands). */
   drawIn: SharedValue<number>;
@@ -72,18 +75,29 @@ export function CoverRing({
   const clock = useSharedValue(RING_CLOCK_START);
   const fraction = useSharedValue(0);
 
-  const advance = (dt: number) => {
-    "worklet";
-    const a = anchor.value;
-    const next = stepRingClock(clock.value, a, dt);
-    clock.value = next;
-    const f = ringFraction(next.shown, a.duration);
-    if (ringNeedsRedraw(fraction.value, f)) fraction.value = f;
-  };
+  // Stable worklets: a new frame callback each render would re-register
+  // with Reanimated every time.
+  const advance = useCallback(
+    (dt: number) => {
+      "worklet";
+      const a = anchor.get();
+      const next = stepRingClock(clock.get(), a, dt);
+      clock.set(next);
+      const f = ringFraction(next.shown, a.duration);
+      if (ringNeedsRedraw(fraction.get(), f)) fraction.set(f);
+    },
+    [anchor, clock, fraction],
+  );
 
-  const frame = useFrameCallback((info) => {
-    advance((info.timeSincePreviousFrame ?? 0) / 1000);
-  }, false);
+  const onFrame = useCallback(
+    (info: FrameInfo) => {
+      "worklet";
+      advance((info.timeSincePreviousFrame ?? 0) / 1000);
+    },
+    [advance],
+  );
+
+  const frame = useFrameCallback(onFrame, false);
 
   useEffect(() => {
     frame.setActive(ticking && playing);

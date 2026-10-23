@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -16,7 +16,9 @@ import Animated, {
   withTiming,
   type SharedValue,
 } from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
 import { SymbolView } from "expo-symbols";
+import { useIsFocused } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { displayText } from "@music-library/core";
 import {
@@ -53,9 +55,9 @@ const GLYPH_SIZE = 13;
 const RING_FADE_FROM = 0.8;
 const RING_FADE_TO = 0.98;
 const GLYPH_FADE_FROM = 0.85;
-// The arc draws in once the cover has landed, and is reset well after the
-// ring has faded on the way back.
-const RING_LANDED_AT = 0.97;
+// Once the cover has landed the arc draws in and the circle takes taps; the
+// arc is reset well after the ring has faded on the way back.
+const COVER_LANDED_AT = 0.97;
 const RING_RESET_BELOW = 0.5;
 
 const RING_DRAW_IN = { duration: 520, easing: Easing.out(Easing.cubic) } as const;
@@ -83,9 +85,12 @@ const ACTION_OPEN_PLAYER = "openPlayer";
  */
 export function DockCoverSlot({
   presence,
+  dockHidden,
 }: {
   /** 0..1, animated: whether the tab pill makes room for the cover slot. */
   presence: SharedValue<number>;
+  /** The dock has slid off-screen (for the keyboard). */
+  dockHidden: boolean;
 }) {
   const { width } = useWindowDimensions();
   const theme = useTheme();
@@ -97,6 +102,16 @@ export function DockCoverSlot({
   const { collapseProgress } = useDockControls();
   const collapsed = useDockCollapsed();
   const reducedMotion = useReducedMotion();
+  // False while a modal (Now Playing) covers the tabs.
+  const focused = useIsFocused();
+
+  // When the track goes away while collapsed, its slot takes a moment to
+  // close: the last cover stays in it until it has (`presence` reaches 0).
+  const [lastTrack, setLastTrack] = useState(current);
+  if (current !== null && current !== lastTrack) setLastTrack(current);
+  const track = current ?? lastTrack;
+  const live = current !== null;
+  const [landed, setLanded] = useState(false);
 
   const metrics = useMemo<CoverSlotMetrics>(
     () => ({ ...DOCK, tabCount: TAB_COUNT, coverRadius: theme.radius.sm }),
@@ -123,26 +138,42 @@ export function DockCoverSlot({
     if (!collapsed) pressed.value = withTiming(0, PRESS);
   }, [collapsed, pressed]);
 
+  // The press target waits for the landing: until then there's nothing
+  // under the finger to tap.
   useAnimatedReaction(
-    () => collapseProgress.value,
-    (p, previous) => {
-      if (reducedMotion) return;
-      if (p >= RING_LANDED_AT && (previous === null || previous < RING_LANDED_AT)) {
-        drawIn.value = withTiming(1, RING_DRAW_IN);
-      } else if (
-        p <= RING_RESET_BELOW &&
-        (previous === null || previous > RING_RESET_BELOW)
-      ) {
-        drawIn.value = 0;
-      }
+    () => collapseProgress.value >= COVER_LANDED_AT,
+    (isLanded, wasLanded) => {
+      if (isLanded === wasLanded) return;
+      scheduleOnRN(setLanded, isLanded);
+      if (isLanded && !reducedMotion) drawIn.set(withTiming(1, RING_DRAW_IN));
     },
   );
 
-  // A track that turns up while collapsed waits for its slot to open.
+  useAnimatedReaction(
+    () => collapseProgress.value <= RING_RESET_BELOW,
+    (reset, wasReset) => {
+      if (reset && wasReset !== true && !reducedMotion) drawIn.set(0);
+    },
+  );
+
+  useAnimatedReaction(
+    () => presence.value <= 0,
+    (closed, wasClosed) => {
+      if (closed && wasClosed === false) scheduleOnRN(setLastTrack, null);
+    },
+  );
+
+  // A track that turns up while collapsed waits for its slot to open, and
+  // one that goes away leaves with it. Expanded, the cover goes with the pill.
   const layerStyle = useAnimatedStyle(() => ({
     opacity:
       (reducedMotion ? slotFade.value : 1) *
-      interpolate(collapseProgress.value, [0, 1], [1, presence.value], Extrapolation.CLAMP),
+      interpolate(
+        collapseProgress.value,
+        [0, 1],
+        [live ? 1 : 0, presence.value],
+        Extrapolation.CLAMP,
+      ),
   }));
 
   const coverStyle = useAnimatedStyle(() => {
@@ -191,10 +222,13 @@ export function DockCoverSlot({
     };
   });
 
-  if (!current) return null;
-  const title = displayText(current.title);
-  const artist = displayText(current.artist);
+  if (!track) return null;
+  const title = displayText(track.title);
+  const artist = displayText(track.artist);
   const slot = slotCoverFrame(metrics, width);
+  // The ring's clock only runs while it can be seen: not behind the keyboard
+  // or a modal, and not for a track that has gone.
+  const ringVisible = live && collapsed && !dockHidden && focused;
 
   const togglePlayback = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -211,7 +245,7 @@ export function DockCoverSlot({
       <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, layerStyle]}>
         <Animated.View style={[styles.cover, coverStyle]}>
           <CoverArt
-            track={current}
+            track={track}
             size={COVER_SLOT.coverSize}
             radius={0}
             transitionMs={COVER_SWAP_MS}
@@ -226,15 +260,15 @@ export function DockCoverSlot({
           </Animated.View>
         </Animated.View>
         <CoverRing
-          trackKey={current.id}
+          trackKey={track.id}
           playing={isPlaying}
-          ticking={collapsed}
+          ticking={ringVisible}
           drawIn={drawIn}
           paused={paused}
           style={ringStyle}
         />
       </Animated.View>
-      {collapsed ? (
+      {live && collapsed && landed ? (
         <Pressable
           onPress={togglePlayback}
           onLongPress={() => openNowPlaying()}
