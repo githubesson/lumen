@@ -61,7 +61,11 @@ function DownloadsStack({ summary }: { summary: DownloadSummary }) {
   const subtitle = !ready
     ? null
     : count > 0
-      ? `${formatBytes(bytes)} on ${LOCAL_DEVICE_PHRASE}`
+      ? // Records without a known size add nothing, and formatBytes reads 0
+        // as "—".
+        bytes > 0
+        ? `${formatBytes(bytes)} on ${LOCAL_DEVICE_PHRASE}`
+        : `On ${LOCAL_DEVICE_PHRASE}`
       : "Download a playlist to play it offline";
   return (
     <View
