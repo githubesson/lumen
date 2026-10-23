@@ -35,7 +35,14 @@ import { useIsOffline } from "../../lib/offline-mode";
 import { useImageFailure } from "../../lib/use-image-failure";
 import type { ThemeTokens } from "../../theme/theme";
 
-const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+/** One entry of a sort menu; `symbol` overrides the key's default glyph. */
+export interface SortMenuOption {
+  key: SortKey;
+  label: string;
+  symbol?: string;
+}
+
+const SORT_OPTIONS: SortMenuOption[] = [
   { key: "custom", label: "Custom" },
   { key: "title", label: "Title" },
   { key: "duration", label: "Length" },
@@ -173,19 +180,26 @@ export function PlaylistHero({
   );
 }
 
-/** Local playlist sort menu and direction toggle. */
+/**
+ * Local playlist sort menu and direction toggle. Other track lists pass their
+ * own `options` (Favorites words "custom" as its saved order) and label.
+ */
 export function SortMenuButton({
   theme,
   sortKey,
   sortAsc,
   onSelect,
   onToggleDirection,
+  options = SORT_OPTIONS,
+  accessibilityLabel = "Sort playlist",
 }: {
   theme: ThemeTokens;
   sortKey: SortKey;
   sortAsc: boolean;
   onSelect: (key: SortKey) => void;
   onToggleDirection: () => void;
+  options?: SortMenuOption[];
+  accessibilityLabel?: string;
 }) {
   const swiftUI = getOptionalSwiftUI();
 
@@ -215,17 +229,19 @@ export function SortMenuButton({
       <swiftUI.Menu
         label={<swiftUI.RNHostView matchContents>{label}</swiftUI.RNHostView>}
         modifiers={[
-          swiftAccessibilityLabel("Sort playlist"),
+          swiftAccessibilityLabel(accessibilityLabel),
           swiftButtonStyle("plain"),
           swiftControlSize("regular"),
         ]}
       >
-        {SORT_OPTIONS.map((option) => (
+        {options.map((option) => (
           <swiftUI.Button
             key={option.key}
             label={option.label}
             systemImage={
-              option.key === sortKey ? "checkmark" : SORT_MENU_SYMBOLS[option.key]
+              option.key === sortKey
+                ? "checkmark"
+                : (option.symbol ?? SORT_MENU_SYMBOLS[option.key])
             }
             onPress={() => onSelect(option.key)}
           />
@@ -235,10 +251,10 @@ export function SortMenuButton({
   ) : (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Sort playlist"
+      accessibilityLabel={accessibilityLabel}
       onPress={() =>
         Alert.alert("Sort by", undefined, [
-          ...SORT_OPTIONS.map((option) => ({
+          ...options.map((option) => ({
             text: option.label,
             onPress: () => onSelect(option.key),
           })),

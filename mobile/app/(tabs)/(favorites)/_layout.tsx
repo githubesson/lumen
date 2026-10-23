@@ -4,7 +4,7 @@ import { stackScreenOptions } from "../../../theme/stack-options";
 export default function FavoritesStackLayout() {
   return (
     <Stack screenOptions={stackScreenOptions}>
-      <Stack.Screen name="index" options={{ title: "Favorites" }} />
+      <Stack.Screen name="index" options={{ title: "Favorites", headerShown: false }} />
       <Stack.Screen
         name="track/[id]"
         options={{ headerLargeTitle: false, title: "Track Info" }}
