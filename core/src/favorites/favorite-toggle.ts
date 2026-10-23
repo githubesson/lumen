@@ -28,7 +28,8 @@ export function withFavoriteId(
 /**
  * Row-list form, for the query-cache-backed provider. Newly favorited tracks
  * go to the front, matching the server's most-recent-first ordering, so the
- * optimistic row lands where the refetch will put it.
+ * optimistic row lands where the refetch will put it. `at` puts it back at
+ * that index instead, for a removal that failed: the server never moved it.
  *
  * Returns the original array reference when nothing changes, so React Query
  * can skip notifying subscribers.
@@ -37,9 +38,14 @@ export function withFavorite<T extends { id: string }>(
   rows: T[],
   track: T,
   favorited: boolean,
+  at = 0,
 ): T[] {
   const present = rows.some((row) => row.id === track.id);
-  if (favorited) return present ? rows : [track, ...rows];
+  if (favorited) {
+    if (present) return rows;
+    const index = Math.max(0, Math.min(at, rows.length));
+    return [...rows.slice(0, index), track, ...rows.slice(index)];
+  }
   return present ? rows.filter((row) => row.id !== track.id) : rows;
 }
 

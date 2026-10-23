@@ -8,6 +8,7 @@ import {
   nextRepeatMode,
   repeatModeLabel,
   shouldReportPlay,
+  withPlayNext,
 } from "../src/player/player-core";
 
 describe("fisherYatesWithAnchor", () => {
@@ -138,5 +139,28 @@ describe("continuesAlbum", () => {
     expect(continuesAlbum({ ...tidal(4), source: "local" as const }, tidal(5))).toBe(false);
     expect(continuesAlbum({ track_no: 1 }, { track_no: 2 })).toBe(false);
     expect(continuesAlbum(tidal(), tidal(1))).toBe(false);
+  });
+});
+
+describe("withPlayNext", () => {
+  const list = ["a", "b", "c", "d"].map((id) => ({ id }));
+  const ids = (result: { list: { id: string }[] }) => result.list.map((item) => item.id);
+
+  it("inserts after the current position, behind an earlier run", () => {
+    expect(ids(withPlayNext(list, 1, [{ id: "x" }]))).toEqual(["a", "b", "x", "c", "d"]);
+    const run = withPlayNext(list, 1, [{ id: "x" }]);
+    expect(ids(withPlayNext(run.list, run.at, [{ id: "y" }], new Set(["x"])))).toEqual([
+      "a", "b", "x", "y", "c", "d",
+    ]);
+  });
+
+  it("moves other copies, keeps the current one, and reports where it ended up", () => {
+    const moved = withPlayNext(list, 2, [{ id: "a" }, { id: "c" }, { id: "d" }]);
+    expect(ids(moved)).toEqual(["b", "c", "a", "d"]);
+    expect(moved.at).toBe(1);
+  });
+
+  it("puts them first when the current track isn't in the list", () => {
+    expect(ids(withPlayNext(list, -1, [{ id: "c" }]))).toEqual(["c", "a", "b", "d"]);
   });
 });

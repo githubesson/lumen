@@ -43,6 +43,15 @@ export interface PlayerControls {
     queue?: TrackListItem[],
     options?: PlayOptions,
   ) => false | void;
+  /**
+   * Put `tracks` right after the current one, in both the play order and
+   * the list order (so turning shuffle off keeps them next). Consecutive
+   * calls queue up in the order they were made until the track changes. A
+   * track already in the queue moves rather than appearing twice; the
+   * current track and tracks that can't start are left out. With nothing
+   * loaded it plays them. Returns whether anything was queued.
+   */
+  playNext: (tracks: TrackListItem[]) => boolean;
   resume: () => void;
   pause: () => void;
   toggle: () => void;
@@ -82,6 +91,43 @@ export function fisherYatesWithAnchor<T extends { id: string }>(
     [rest[i], rest[j]] = [rest[j], rest[i]];
   }
   return anchor ? [anchor, ...rest] : rest;
+}
+
+/**
+ * `list` with `tracks` placed right after position `at` (the current track),
+ * behind any leading run of ids in `run` (earlier Play Next picks), so a run
+ * keeps the order it was picked in. Other copies of `tracks` are taken out
+ * first, since the queue finds tracks by id, and the current track itself
+ * stays where it is. Returns the new list and the current track's new
+ * position. With `at` outside the list they go first.
+ */
+export function withPlayNext<T extends { id: string }>(
+  list: readonly T[],
+  at: number,
+  tracks: readonly T[],
+  run: ReadonlySet<string> = new Set(),
+): { list: T[]; at: number } {
+  if (at < 0 || at >= list.length) {
+    const ids = new Set(tracks.map((track) => track.id));
+    return { list: [...tracks, ...list.filter((track) => !ids.has(track.id))], at: -1 };
+  }
+  const picked = tracks.filter((track) => track.id !== list[at].id);
+  const ids = new Set(picked.map((track) => track.id));
+  const keep = (track: T) => !ids.has(track.id);
+  const before = list.slice(0, at).filter(keep);
+  const after = list.slice(at + 1).filter(keep);
+  let runEnd = 0;
+  while (runEnd < after.length && run.has(after[runEnd].id)) runEnd += 1;
+  return {
+    list: [
+      ...before,
+      list[at],
+      ...after.slice(0, runEnd),
+      ...picked,
+      ...after.slice(runEnd),
+    ],
+    at: before.length,
+  };
 }
 
 /**
