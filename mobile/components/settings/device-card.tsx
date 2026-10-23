@@ -7,6 +7,7 @@ import {
   useDownloadSummary,
   type DownloadSummary,
 } from "../../lib/downloads/download-summary";
+import { LOCAL_DEVICE_PHRASE } from "../../lib/device-name";
 import { formatBytes, pluralize } from "../../lib/format";
 import { offlineStore, useOfflineForced } from "../../lib/offline-mode";
 import { useTheme } from "../../theme/theme";
@@ -17,7 +18,7 @@ const FAN_TILT_DEG = 4;
 const FAN_HEIGHT = 54;
 
 /**
- * "This iPhone": what's downloaded here (a fan of recent covers, the song
+ * "This iPhone" (or iPad): what's downloaded here (a fan of recent covers, the song
  * count and the space they take), the Offline mode switch that plays only
  * those, and the download log with its problem count.
  */
@@ -60,7 +61,7 @@ function DownloadsStack({ summary }: { summary: DownloadSummary }) {
   const subtitle = !ready
     ? null
     : count > 0
-      ? `${formatBytes(bytes)} on this iPhone`
+      ? `${formatBytes(bytes)} on ${LOCAL_DEVICE_PHRASE}`
       : "Download a playlist to play it offline";
   return (
     <View

@@ -7,3 +7,7 @@ export const LOCAL_DEVICE_NAME =
 /** How the device picker names this device ("This iPhone", "This iPad"). */
 export const LOCAL_DEVICE_LABEL =
   Platform.OS === "ios" ? `This ${LOCAL_DEVICE_NAME}` : "This device";
+
+/** The same, mid-sentence ("3.1 GB on this iPhone"). */
+export const LOCAL_DEVICE_PHRASE =
+  Platform.OS === "ios" ? `this ${LOCAL_DEVICE_NAME}` : "this device";
