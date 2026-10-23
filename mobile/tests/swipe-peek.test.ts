@@ -123,3 +123,22 @@ it("forgets rows that unmount", async () => {
   expect(rows[0].peek).not.toHaveBeenCalled();
   expect(rows[1].peek).toHaveBeenCalledOnce();
 });
+
+it("doesn't spend the cue on a screen that blurs while it's checking", async () => {
+  const { offerPeek } = await load();
+  const rows = [row(100), row(156), row(212)];
+  let withdraw = rows.map((r) => offerPeek(r));
+  // The attempt has measured and is waiting to see the list hold still...
+  await vi.advanceTimersByTimeAsync(950);
+  // ...when an album page is pushed over it.
+  for (const w of withdraw) w();
+  await vi.advanceTimersByTimeAsync(2000);
+  for (const r of rows) expect(r.peek).not.toHaveBeenCalled();
+  expect(env.stored.has("swipe-actions.peek-shown.v1")).toBe(false);
+
+  // Back on it, it gets the cue.
+  withdraw = rows.map((r) => offerPeek(r));
+  await vi.advanceTimersByTimeAsync(1100);
+  expect(rows[0].peek).toHaveBeenCalledOnce();
+  expect(env.stored.get("swipe-actions.peek-shown.v1")).toBe("1");
+});
