@@ -1,10 +1,14 @@
+import { ApiError } from "@music-library/core";
+
 /**
  * Whether a rejected share-sheet or share-extension call was just the user
  * backing out. The native share APIs report that as an error whose message
  * mentions cancelling or dismissing, which must not surface as a failure.
+ * An ApiError never is one, whatever its text (a server message, or a
+ * picked file's name).
  */
 export function isShareDismissal(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
+  if (!(error instanceof Error) || error instanceof ApiError) return false;
   const message = error.message.toLowerCase();
   return (
     message.includes("cancel") ||

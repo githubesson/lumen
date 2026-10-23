@@ -70,6 +70,17 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): voi
   onUnauthorized = handler;
 }
 
+let formFetch: typeof fetch | null = null;
+
+/**
+ * Send multipart uploads through `impl` rather than the global fetch. On
+ * mobile the global fetch is Expo's, which can't send React Native's
+ * `{ uri, name, type }` file parts, so the app passes React Native's own.
+ */
+export function setFormFetch(impl: typeof fetch | null): void {
+  formFetch = impl;
+}
+
 /** Build a query string while preserving meaningful zero and false values. */
 export function buildQuery(
   params: Record<string, string | number | boolean | undefined | null>,
@@ -116,7 +127,8 @@ function untilAborted<T>(signal: AbortSignal, work: Promise<T>): Promise<T> {
  * and the caller's abort stay in force until `read` has consumed the
  * response, so a body that stalls after the headers arrive rejects with an
  * AbortError instead of hanging. Form uploads have no deadline (they can be
- * large), only the caller's abort.
+ * large), only the caller's abort, and go through `setFormFetch`'s fetch
+ * when one is set.
  */
 export async function fetchAndRead<T>(
   path: string,
@@ -136,8 +148,9 @@ export async function fetchAndRead<T>(
   callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
   if (callerSignal?.aborted) controller.abort();
 
+  const send = isForm && formFetch ? formFetch : fetch;
   try {
-    const response = await fetch(apiUrl(path), {
+    const response = await send(apiUrl(path), {
       ...init,
       signal: controller.signal,
       credentials: "include",

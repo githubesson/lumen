@@ -1,14 +1,17 @@
 import { advanceAuthGeneration } from "../src/api-transport";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ApiError,
   api,
   createTrackShareLink,
   downloadStreamUrl,
+  errorMessage,
   getPublicTrackShare,
   parseTrackShareUrl,
   probeStreamUrl,
   resolveCoverUrl,
   setBaseUrl,
+  setFormFetch,
   setUnauthorizedHandler,
   trackSharePreviewVideoUrl,
 } from "../src/api";
@@ -389,6 +392,42 @@ describe("request deadlines", () => {
   it("returns the Replay image bytes", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "image/png" } })));
     expect(new Uint8Array(await api.getReplayImage())).toEqual(new Uint8Array([1, 2, 3]));
+  });
+});
+
+describe("form upload fetch", () => {
+  afterEach(() => {
+    setFormFetch(null);
+    vi.unstubAllGlobals();
+  });
+
+  it("sends multipart uploads through the form fetch and the rest globally", async () => {
+    const globalFetch = vi.fn(async () => Response.json({}));
+    const formFetch = vi.fn(async () => Response.json({ id: "a1" }));
+    vi.stubGlobal("fetch", globalFetch);
+    setFormFetch(formFetch);
+
+    await api.setAlbumCover("a1", { uri: "file:///cover.jpg", name: "cover.jpg", type: "image/jpeg" });
+    expect(formFetch).toHaveBeenCalledWith(
+      "/api/albums/a1/cover",
+      expect.objectContaining({ method: "PUT", body: expect.any(FormData), credentials: "include" }),
+    );
+    expect(globalFetch).not.toHaveBeenCalled();
+
+    await api.removeAlbumCover("a1");
+    expect(globalFetch).toHaveBeenCalledTimes(1);
+    expect(formFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the caller's message when a failure has no body or status text", async () => {
+    setFormFetch(vi.fn(async () => new Response(null, { status: 502 })));
+
+    const err = await api
+      .setAlbumCover("a1", { uri: "file:///cover.jpg", name: "cover.jpg", type: "image/jpeg" })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(errorMessage(err, "Couldn't use that image.")).toBe("Couldn't use that image.");
+    expect(errorMessage(new ApiError(413, "too large"), "fallback")).toBe("too large");
   });
 });
 

@@ -26,12 +26,14 @@ import {
   AuthProvider,
   libraryChanged,
   setBaseUrl,
+  setFormFetch,
   useAuth,
 } from "@music-library/core";
 import { PlayerProvider } from "../context/player";
 import { ThemeProvider, useTheme } from "../theme/theme";
 import { invalidateLibrary } from "../lib/query-keys";
 import { DownloadsProvider } from "../lib/downloads";
+import { formFetch } from "../lib/form-fetch";
 import { RemoteControlIndicator } from "../components/remote-control-indicator";
 import { CarPlayBridge } from "../components/carplay-bridge";
 import { SiriMediaBridge } from "../components/siri-media-bridge";
@@ -65,6 +67,9 @@ const apiBaseUrl =
 // Point the shared API client at our backend before any React code fires
 // `api.me()`. Module side-effect is safe: imports resolve synchronously.
 setBaseUrl(apiBaseUrl);
+
+// Uploads skip Expo's global fetch, which can't send file parts (see formFetch).
+if (process.env.EXPO_OS !== "web") setFormFetch(formFetch);
 
 // How long a persisted page cache stays usable offline. Kept generous so the
 // app still renders after days without a launch; `gcTime` matches so restored
