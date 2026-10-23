@@ -30,7 +30,8 @@ import {
   type TrackListItem,
 } from "@music-library/core";
 import { useFavorite, useFavoriteActions } from "../context/favorites";
-import { usePlayTrack } from "../context/player";
+import { useCanPlayNext, usePlayNext, usePlayTrack } from "../context/player";
+import { useTrackUnavailableOffline } from "../lib/offline-mode";
 import { AdaptiveGlass } from "./adaptive-glass";
 import { useTheme } from "../theme/theme";
 import { downloadStreamToFile } from "../lib/track-download";
@@ -50,13 +51,23 @@ import { TrackMenuPreview } from "./track-menu-preview";
 
 type TrackActionModel = ReturnType<typeof useTrackActionModel>;
 
+interface ContextMenuHostOptions {
+  /** The row's height; the theme's row height by default. */
+  height?: number;
+  /** What the row sits on, behind its press morph; the list background by default. */
+  backgroundColor?: string;
+  /** Play Next from the menu, when the row confirms it itself (swipe rows). */
+  onPlayNext?: () => void;
+}
+
 export function TrackActionsContextMenu({
   track,
   children,
+  ...options
 }: {
   track: TrackListItem;
   children: ReactElement;
-}) {
+} & ContextMenuHostOptions) {
   const swiftUI = getOptionalSwiftUI();
 
   if (!swiftUI) {
@@ -64,7 +75,7 @@ export function TrackActionsContextMenu({
   }
 
   return (
-    <TrackActionsContextMenuHost track={track} swiftUI={swiftUI}>
+    <TrackActionsContextMenuHost track={track} swiftUI={swiftUI} {...options}>
       {children}
     </TrackActionsContextMenuHost>
   );
@@ -74,20 +85,23 @@ function TrackActionsContextMenuHost({
   track,
   swiftUI,
   children,
+  height,
+  backgroundColor,
+  onPlayNext,
 }: {
   track: TrackListItem;
   swiftUI: SwiftUIComponents;
   children: ReactElement;
-}) {
+} & ContextMenuHostOptions) {
   const theme = useTheme();
-  const actions = useTrackActionModel(track);
+  const actions = useTrackActionModel(track, { onPlayNext });
   const preview = useHeldMenuPreview();
   const { ContextMenu, Group, Host, RNHostView } = swiftUI;
 
   return (
     <Host
       colorScheme={theme.scheme}
-      style={[styles.contextHost, { height: theme.row.height }]}
+      style={[styles.contextHost, { height: height ?? theme.row.height }]}
     >
       <ContextMenu>
         <ContextMenu.Items>
@@ -102,7 +116,10 @@ function TrackActionsContextMenuHost({
                 dimmed row's opacity doesn't thin it. */}
             <View
               collapsable={false}
-              style={[styles.rowBacking, { backgroundColor: theme.color.bg }]}
+              style={[
+                styles.rowBacking,
+                { backgroundColor: backgroundColor ?? theme.color.bg },
+              ]}
               {...preview.touchHandlers}
             >
               {children}
@@ -349,6 +366,14 @@ function TrackActionItems({
       </ControlGroup>
       <Divider />
       <Section title="Actions">
+        {actions.showPlayNext ? (
+          <Button
+            label="Play Next"
+            systemImage="text.line.first.and.arrowtriangle.forward"
+            modifiers={[swiftDisabled(!actions.canPlayNext)]}
+            onPress={actions.playNext}
+          />
+        ) : null}
         <Button
           label="Add to Playlist..."
           systemImage="plus.rectangle.on.folder"
@@ -410,9 +435,17 @@ function TrackActionItems({
   );
 }
 
-export function useTrackActionModel(track: TrackListItem) {
+export function useTrackActionModel(
+  track: TrackListItem,
+  { onPlayNext }: { onPlayNext?: () => void } = {},
+) {
   const router = useRouter();
   const playTrack = usePlayTrack();
+  const playNextTrack = usePlayNext();
+  // Not while controlling another device (no command for it yet), and not
+  // for the track that's playing.
+  const showPlayNext = useCanPlayNext(track.id);
+  const unavailableOffline = useTrackUnavailableOffline(track.id);
   const favorite = useFavorite(track.id);
   const { toggle: toggleFav } = useFavoriteActions();
   const { me } = useAuth();
@@ -425,6 +458,16 @@ export function useTrackActionModel(track: TrackListItem) {
     if (track.unavailable) return;
     playTrack(track);
   }, [playTrack, track]);
+
+  const playNext = useCallback(() => {
+    if (onPlayNext) {
+      onPlayNext();
+      return;
+    }
+    if (playNextTrack([track])) {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  }, [onPlayNext, playNextTrack, track]);
 
   const toggleFavorite = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -593,6 +636,10 @@ export function useTrackActionModel(track: TrackListItem) {
     // Dropped from TIDAL with no library copy: no stream to play or save.
     available: actions.play,
     play,
+    // A track that can't play here can't be queued either.
+    canPlayNext: actions.play && !unavailableOffline,
+    playNext,
+    showPlayNext,
     toggleFavorite,
   };
 }

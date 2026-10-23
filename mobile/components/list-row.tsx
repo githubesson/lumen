@@ -4,6 +4,9 @@ import {
   StyleSheet,
   Text,
   View,
+  type AccessibilityActionEvent,
+  type AccessibilityActionInfo,
+  type AccessibilityValue,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
@@ -19,15 +22,23 @@ import { useTheme } from "../theme/theme";
  *
  * `disabled` rows ignore taps (no haptic) and read as dimmed to VoiceOver;
  * they stay pressable as an element so a wrapping long-press menu still works.
+ *
+ * `detailAccessory` goes just before a string `trailing` (a swipe row's
+ * favorite mark), and the accessibility actions and value are VoiceOver's
+ * way to what a wrapping swipe does.
  */
 export function ListRow({
   leading,
   title,
   subtitle,
   trailing,
+  detailAccessory,
   onPress,
   accessibilityLabel,
   accessibilityHint,
+  accessibilityValue,
+  accessibilityActions,
+  onAccessibilityAction,
   disabled = false,
   style,
 }: {
@@ -35,9 +46,13 @@ export function ListRow({
   title: string;
   subtitle?: string | null;
   trailing?: ReactNode;
+  detailAccessory?: ReactNode;
   onPress: () => void;
   accessibilityLabel?: string;
   accessibilityHint?: string;
+  accessibilityValue?: AccessibilityValue;
+  accessibilityActions?: readonly AccessibilityActionInfo[];
+  onAccessibilityAction?: (event: AccessibilityActionEvent) => void;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
@@ -52,6 +67,9 @@ export function ListRow({
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
+      accessibilityValue={accessibilityValue}
+      accessibilityActions={accessibilityActions}
+      onAccessibilityAction={onAccessibilityAction}
       accessibilityState={disabled ? { disabled } : undefined}
       style={({ pressed }) => [
         styles.row,
@@ -82,14 +100,23 @@ export function ListRow({
         ) : null}
       </View>
       {typeof trailing === "string" ? (
-        <Text style={{ fontSize: 13, color: theme.color.fgMuted }}>
-          {trailing}
-        </Text>
+        detailAccessory ? (
+          <View style={styles.detail}>
+            {detailAccessory}
+            {detailText(trailing, theme.color.fgMuted)}
+          </View>
+        ) : (
+          detailText(trailing, theme.color.fgMuted)
+        )
       ) : (
         (trailing ?? null)
       )}
     </Pressable>
   );
+}
+
+function detailText(text: string, color: string) {
+  return <Text style={{ fontSize: 13, color }}>{text}</Text>;
 }
 
 const styles = StyleSheet.create({
@@ -100,5 +127,9 @@ const styles = StyleSheet.create({
   body: {
     flex: 1,
     minWidth: 0,
+  },
+  detail: {
+    flexDirection: "row",
+    alignItems: "center",
   },
 });
