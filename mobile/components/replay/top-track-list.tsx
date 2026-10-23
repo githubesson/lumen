@@ -11,11 +11,14 @@ import { Card } from "../primitives";
 import { CoverArt } from "../cover-art";
 import { useTheme } from "../../theme/theme";
 import { HairlineSeparator } from "../hairline-separator";
+import { SwipeableTrackRow } from "../swipe/swipeable-track-row";
+import { useTrackRowPresentation } from "../../lib/use-track-row-presentation";
 
 /**
  * Card of ranked top-track rows (rank number, cover, title/artist, play
  * count) separated by inset hairlines. Tapping a row hands the track to the
- * caller's play handler.
+ * caller's play handler; rows swipe and open the track menu like any song
+ * list's, and the card clips the swipe actions to its corners.
  */
 export function TopTrackList({
   tracks,
@@ -59,61 +62,74 @@ function TopTrackRow({
   const theme = useTheme();
   const title = displayText(track.title);
   const artist = displayText(track.artist);
+  // For the hint and the swipe; the row itself keeps its own look.
+  const presentation = useTrackRowPresentation(track);
   const handlePress = () => {
     void Haptics.selectionAsync();
     onPress(track);
   };
   return (
-    <Pressable
-      onPress={handlePress}
-      accessibilityRole="button"
-      accessibilityLabel={artist ? `${title} by ${artist}` : title}
-      style={({ pressed }) => ({
-        flexDirection: "row",
-        alignItems: "center",
-        height: theme.row.height,
-        paddingHorizontal: theme.space.lg,
-        gap: theme.space.md,
-        backgroundColor: pressed ? theme.color.bgElev2 : "transparent",
-      })}
-    >
-      <Text
-        style={{
-          width: 22,
-          color: theme.color.fgMuted,
-          fontSize: 13,
-          fontVariant: ["tabular-nums"],
-          textAlign: "right",
-        }}
-      >
-        {rank}
-      </Text>
-      <CoverArt track={track} size={40} transitionMs={0} priority="low" />
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text
-          numberOfLines={1}
-          style={{ color: theme.color.fg, fontSize: 16, fontWeight: "500" }}
+    <SwipeableTrackRow track={track} backgroundColor={theme.color.bgElev1}>
+      {(swipe) => (
+        <Pressable
+          onPress={handlePress}
+          accessibilityRole="button"
+          accessibilityLabel={artist ? `${title} by ${artist}` : title}
+          accessibilityHint={presentation.accessibilityHint}
+          accessibilityValue={swipe.accessibilityValue}
+          accessibilityActions={swipe.accessibilityActions}
+          onAccessibilityAction={swipe.onAccessibilityAction}
+          style={({ pressed }) => ({
+            flexDirection: "row",
+            alignItems: "center",
+            height: theme.row.height,
+            paddingHorizontal: theme.space.lg,
+            gap: theme.space.md,
+            backgroundColor: pressed ? theme.color.bgElev2 : "transparent",
+          })}
         >
-          {title}
-        </Text>
-        {artist ? (
           <Text
-            numberOfLines={1}
-            style={{ color: theme.color.fgMuted, fontSize: 13 }}
+            style={{
+              width: 22,
+              color: theme.color.fgMuted,
+              fontSize: 13,
+              fontVariant: ["tabular-nums"],
+              textAlign: "right",
+            }}
           >
-            {artist}
+            {rank}
           </Text>
-        ) : null}
-      </View>
-      <Text
-        style={{
-          color: theme.color.fgMuted,
-          fontSize: 13,
-          fontVariant: ["tabular-nums"],
-        }}
-      >
-        {plays.toLocaleString()}
-      </Text>
-    </Pressable>
+          <CoverArt track={track} size={40} transitionMs={0} priority="low" />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text
+              numberOfLines={1}
+              style={{ color: theme.color.fg, fontSize: 16, fontWeight: "500" }}
+            >
+              {title}
+            </Text>
+            {artist ? (
+              <Text
+                numberOfLines={1}
+                style={{ color: theme.color.fgMuted, fontSize: 13 }}
+              >
+                {artist}
+              </Text>
+            ) : null}
+          </View>
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            {swipe.favoriteMark()}
+            <Text
+              style={{
+                color: theme.color.fgMuted,
+                fontSize: 13,
+                fontVariant: ["tabular-nums"],
+              }}
+            >
+              {plays.toLocaleString()}
+            </Text>
+          </View>
+        </Pressable>
+      )}
+    </SwipeableTrackRow>
   );
 }

@@ -1,9 +1,8 @@
 import { memo } from "react";
 import type { TrackListItem } from "@music-library/core";
 import { RankedTrackRow } from "../library/ranked-track-row";
-import { TrackActionsContextMenu } from "../track-actions-menu";
 
-/** Numbered chart row for an artist's popular tracks, with the track menu. */
+/** Numbered chart row for an artist's popular tracks (swipes and the track menu included). */
 function PopularTrackRowImpl({
   rank,
   track,
@@ -13,11 +12,7 @@ function PopularTrackRowImpl({
   track: TrackListItem;
   onPress: (track: TrackListItem) => void;
 }) {
-  return (
-    <TrackActionsContextMenu track={track}>
-      <RankedTrackRow rank={rank} track={track} onPress={onPress} menu />
-    </TrackActionsContextMenu>
-  );
+  return <RankedTrackRow rank={rank} track={track} onPress={onPress} />;
 }
 
 export const PopularTrackRow = memo(PopularTrackRowImpl);

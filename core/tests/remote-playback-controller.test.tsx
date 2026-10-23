@@ -62,6 +62,7 @@ const localTime: TimeState = { currentTime: 42, duration: 200 };
 function controls(): PlayerControls {
   return {
     play: vi.fn(),
+    playNext: vi.fn(() => true),
     resume: vi.fn(),
     pause: vi.fn(),
     toggle: vi.fn(),

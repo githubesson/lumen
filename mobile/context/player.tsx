@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import {
@@ -74,6 +75,10 @@ const [PlayerControlsCtx, usePlayerControlsCtx] =
   createRequiredContext<PlayerControls>("usePlayerControls");
 const [PlayerPlayCtx, usePlayTrackCtx] =
   createRequiredContext<PlayerControls["play"]>("usePlayTrack");
+// Its own slice, like play: swipeable rows hold it, and it only changes when
+// a remote target comes or goes.
+const [PlayerPlayNextCtx, usePlayNextCtx] =
+  createRequiredContext<PlayerControls["playNext"]>("usePlayNext");
 const [PlayerTimeCtx, usePlayerTimeCtx] =
   createRequiredContext<TimeState>("usePlayerTime");
 const [PlayerCurrentCtx, useCurrentTrackCtx] =
@@ -97,6 +102,7 @@ const [RemotePlaybackCtx, useRemotePlaybackCtx] =
 
 export const usePlayerControls = usePlayerControlsCtx;
 export const usePlayTrack = usePlayTrackCtx;
+export const usePlayNext = usePlayNextCtx;
 export const usePlayerTime = usePlayerTimeCtx;
 export const useCurrentTrack = useCurrentTrackCtx;
 export const useHasCurrentTrack = useHasCurrentTrackCtx;
@@ -121,6 +127,37 @@ let playingRemotely = false;
 /** Whether play commands go to another device right now. */
 export function isPlayingRemotely(): boolean {
   return playingRemotely;
+}
+
+// What Play Next depends on, as module state too: every swipeable row asks,
+// and only the rows whose answer changes should re-render (the old and new
+// current track), not every row on every track change.
+let playNextScope = { remote: false, currentId: null as string | null };
+const playNextScopeListeners = new Set<() => void>();
+
+function setPlayNextScope(remote: boolean, currentId: string | null) {
+  if (playNextScope.remote === remote && playNextScope.currentId === currentId) return;
+  playNextScope = { remote, currentId };
+  for (const listener of playNextScopeListeners) listener();
+}
+
+function subscribePlayNextScope(listener: () => void) {
+  playNextScopeListeners.add(listener);
+  return () => {
+    playNextScopeListeners.delete(listener);
+  };
+}
+
+/**
+ * Whether Play Next applies to `trackId` here: not while controlling another
+ * device (no device takes a queue insert yet), and not for the track that's
+ * playing. Rows also leave it out for tracks that can't play.
+ */
+export function useCanPlayNext(trackId: string): boolean {
+  return useSyncExternalStore(
+    subscribePlayNextScope,
+    () => !playNextScope.remote && playNextScope.currentId !== trackId,
+  );
 }
 
 function canPlayLocally(track: TrackListItem): boolean {
@@ -201,6 +238,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       playingRemotely = false;
     };
   }, [remoteTarget]);
+  useEffect(() => {
+    setPlayNextScope(remoteTarget, currentId ?? null);
+  }, [remoteTarget, currentId]);
+  useEffect(
+    () => () => {
+      setPlayNextScope(false, null);
+    },
+    [],
+  );
 
   const lockScreenActiveRef = useRef(false);
   const nowPlayingMetadata = useMemo(
@@ -323,13 +369,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               <PlayerPlaybackCtx.Provider value={playbackValue}>
                 <PlayerVolumeCtx.Provider value={volumeValue}>
                   <PlayerPlayCtx.Provider value={routedControls.play}>
-                    <PlayerControlsCtx.Provider value={routedControls}>
-                      <PlayerTimeCtx.Provider value={displayedTime}>
-                        <PlayerErrorCtx.Provider value={displayedState.playbackError}>
-                          {children}
-                        </PlayerErrorCtx.Provider>
-                      </PlayerTimeCtx.Provider>
-                    </PlayerControlsCtx.Provider>
+                    <PlayerPlayNextCtx.Provider value={routedControls.playNext}>
+                      <PlayerControlsCtx.Provider value={routedControls}>
+                        <PlayerTimeCtx.Provider value={displayedTime}>
+                          <PlayerErrorCtx.Provider value={displayedState.playbackError}>
+                            {children}
+                          </PlayerErrorCtx.Provider>
+                        </PlayerTimeCtx.Provider>
+                      </PlayerControlsCtx.Provider>
+                    </PlayerPlayNextCtx.Provider>
                   </PlayerPlayCtx.Provider>
                 </PlayerVolumeCtx.Provider>
               </PlayerPlaybackCtx.Provider>

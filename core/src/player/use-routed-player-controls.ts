@@ -123,10 +123,20 @@ export function useRoutedPlayerControls({
     [canPlayLocally, localPlay, sendCommand, targetDevice],
   );
   const sendVolume = useThrottledRemoteVolume(sendCommand);
+  // Local only: devices have no command to insert into their queue yet, so
+  // apps hide Play Next while controlling one. Its own callback, so list
+  // rows holding it only re-render when the target comes or goes.
+  const localPlayNext = controls.playNext;
+  const remoteTarget = targetDevice !== null;
+  const playNext = useCallback<PlayerControls["playNext"]>(
+    (tracks) => (remoteTarget ? false : localPlayNext(tracks)),
+    [localPlayNext, remoteTarget],
+  );
 
   return useMemo<PlayerControls>(
     () => ({
       play,
+      playNext,
       resume: () => {
         if (targetDevice) void sendCommand("set_playing", { playing: true });
         else controls.resume();
@@ -206,6 +216,7 @@ export function useRoutedPlayerControls({
       controlled.shuffle,
       controlled.repeat,
       play,
+      playNext,
       sendCommand,
       sendVolume,
       targetDevice,

@@ -18,6 +18,7 @@ import {
   fisherYatesWithAnchor,
   nextRepeatMode,
   shouldReportPlay,
+  withPlayNext,
   type PlaybackError,
   type PlayerControls,
   type PlayerState,
@@ -346,6 +347,70 @@ export function usePlayerCore({
       playbackReportedRef.current = null;
     },
     [isTrackPlayable, notePick, resetClockForTrackChange, shuffle, startTrack],
+  );
+
+  // What playNext reads when it's called. Through refs, so it keeps its
+  // identity while the queue moves (every swipeable list row holds it), and
+  // so a second call before React commits builds on the first.
+  const queueStateRef = useRef({ current, queue, sourceQueue, index, shuffle });
+  useEffect(() => {
+    queueStateRef.current = { current, queue, sourceQueue, index, shuffle };
+  }, [current, queue, sourceQueue, index, shuffle]);
+  const playRef = useRef(play);
+  useEffect(() => {
+    playRef.current = play;
+  }, [play]);
+  // The tracks Play Next has put after the current one, so the next pick
+  // goes behind them. A different current track starts a new run.
+  const playNextRunRef = useRef<{ currentId: string; ids: Set<string> } | null>(null);
+
+  const playNext = useCallback<PlayerControls["playNext"]>(
+    (tracks) => {
+      const state = queueStateRef.current;
+      const { current: playing } = state;
+      const seen = new Set<string>();
+      const picked = tracks.filter((track) => {
+        if (seen.has(track.id) || track.id === playing?.id) return false;
+        seen.add(track.id);
+        return canStartTrack(track, isTrackPlayable);
+      });
+      if (!picked.length) return false;
+      if (!playing || !state.queue.length) {
+        return playRef.current(picked[0], picked) !== false;
+      }
+      const previousRun = playNextRunRef.current;
+      const run =
+        previousRun?.currentId === playing.id ? previousRun.ids : new Set<string>();
+      const ordered = withPlayNext(state.queue, state.index, picked, run);
+      // With shuffle off the play order is the list order: keep them one list.
+      const source = state.shuffle
+        ? withPlayNext(
+            state.sourceQueue,
+            state.sourceQueue.findIndex((track) => track.id === playing.id),
+            picked,
+            run,
+          ).list
+        : ordered.list;
+      // The prepared next track is now the wrong one. The pick keeps smooth
+      // mix and gapless from using it until this commits, and the commit
+      // drops it (see the nextTrackToPrepare effect).
+      notePick();
+      setQueue(ordered.list);
+      setSourceQueue(source);
+      setIndex(ordered.at);
+      queueStateRef.current = {
+        ...state,
+        queue: ordered.list,
+        sourceQueue: source,
+        index: ordered.at,
+      };
+      playNextRunRef.current = {
+        currentId: playing.id,
+        ids: new Set([...run, ...picked.map((track) => track.id)]),
+      };
+      return true;
+    },
+    [isTrackPlayable, notePick],
   );
 
   const toggle = useCallback<PlayerControls["toggle"]>(() => {
@@ -914,6 +979,7 @@ export function usePlayerCore({
   const controls = useMemo<PlayerControls>(
     () => ({
       play,
+      playNext,
       resume,
       pause,
       toggle,
@@ -931,6 +997,7 @@ export function usePlayerCore({
     }),
     [
       play,
+      playNext,
       resume,
       pause,
       toggle,
