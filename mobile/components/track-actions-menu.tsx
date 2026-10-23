@@ -36,7 +36,7 @@ import { AdaptiveGlass } from "./adaptive-glass";
 import { setPlaylistPickerTrack } from "./playlist-picker/subject";
 import { useTheme } from "../theme/theme";
 import { downloadStreamToFile } from "../lib/track-download";
-import { focusedInTabs } from "../lib/track-info";
+import { trackMenuTab } from "../lib/track-info";
 import {
   getOptionalSwiftUI,
   swiftAccessibilityLabel,
@@ -508,45 +508,40 @@ export function useTrackActionModel(
     })();
   }, [router, track]);
 
-  // Track Info and the editor open in the current tab's stack: every tab
-  // carries them, and a group-less href resolves into the tab in front. Over
-  // the tabs (Now Playing) there's no tab in front, so they open in Library.
-  // The state is read on press, so rows don't re-render on each navigation.
-  const inTabs = useCallback(
-    () => focusedInTabs(navigation.isReady() ? navigation.getRootState() : undefined),
-    [navigation],
+  // Track Info and the editors open in the current tab's stack, which
+  // carries them all, so the tab never changes; over the tabs (Now Playing)
+  // they open in the tab underneath, once the sheet closes.
+  const openInTab = useCallback(
+    (screen: "track/[id]" | "track/edit" | "albums/edit", id: string) => {
+      const place = trackMenuTab(
+        navigation.isReady() ? navigation.getRootState() : undefined,
+      );
+      if (place?.cover) router.dismiss(place.cover);
+      // Already on top there (the menu on Track Info itself).
+      if (place?.top?.name === screen && place.top.params?.id === id) return;
+      router.push({
+        pathname: `/(tabs)/${place?.tab ?? "(library)"}/${screen}`,
+        params: { id },
+      });
+    },
+    [navigation, router],
   );
 
   const openInfo = useCallback(() => {
-    // The menu on Track Info itself: it's already showing.
-    // The app declares no root param list, so the route is untyped here.
-    const current = (navigation.isReady() ? navigation.getCurrentRoute() : undefined) as
-      | { name: string; params?: { id?: string } }
-      | undefined;
-    if (current?.name === "track/[id]" && current.params?.id === track.id) return;
-    router.push({
-      pathname: inTabs() ? "/(tabs)/track/[id]" : "/(tabs)/(library)/track/[id]",
-      params: { id: track.id },
-    });
-  }, [inTabs, navigation, router, track.id]);
+    openInTab("track/[id]", track.id);
+  }, [openInTab, track.id]);
 
   // Admin-only: jump to the metadata editor for this track.
   const openEditMetadata = useCallback(() => {
-    router.push({
-      pathname: inTabs() ? "/(tabs)/track/edit" : "/(tabs)/(library)/track/edit",
-      params: { id: track.id },
-    });
-  }, [inTabs, router, track.id]);
+    openInTab("track/edit", track.id);
+  }, [openInTab, track.id]);
 
   // Admin-only: edit the album this track belongs to — that's where cover
   // art lives, since artwork is shared across an album.
   const openEditAlbum = useCallback(() => {
     if (!track.album_id) return;
-    router.push({
-      pathname: "/(tabs)/(library)/albums/edit",
-      params: { id: track.album_id },
-    });
-  }, [router, track.album_id]);
+    openInTab("albums/edit", track.album_id);
+  }, [openInTab, track.album_id]);
 
   const openPlaylistPicker = useCallback(() => {
     setPlaylistPickerTrack(track);

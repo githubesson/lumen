@@ -58,6 +58,10 @@ export default function PlaylistsStackLayout() {
         name="tidal-artists/[id]"
         options={{ headerLargeTitle: false, title: "" }}
       />
+      <Stack.Screen
+        name="albums/edit"
+        options={{ headerLargeTitle: false, title: "Edit Album" }}
+      />
     </Stack>
   );
 }
