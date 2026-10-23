@@ -176,7 +176,10 @@ function AddConfirmationHud({
       confirm();
     };
 
-    later(START_DELAY_MS, () => setGlassOn(true));
+    // A request that failed before this point already started the exit.
+    later(START_DELAY_MS, () => {
+      if (!exiting) setGlassOn(true);
+    });
     if (reducedMotion) {
       // Never here too: a System delay is skipped under Reduce Motion, and
       // the text would show before the glass behind it.
