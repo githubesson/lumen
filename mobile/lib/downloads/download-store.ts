@@ -234,6 +234,12 @@ export class DownloadStore {
     return tracks;
   }
 
+  /** Every stored record, in insertion order. Returns a fresh array
+   *  (memoize by version); callers must treat the records as read-only. */
+  listRecords(): readonly Readonly<DownloadRecord>[] {
+    return [...this.records.values()];
+  }
+
   isActive(trackId: string): boolean {
     return this.active.has(trackId);
   }
