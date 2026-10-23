@@ -327,6 +327,17 @@ export function usePlayerCore({
     [clearPlaybackError, retryFailedTrack],
   );
 
+  // The queue as the latest selection left it, ahead of React's commit.
+  // playNext and advance read it, so playNext keeps its identity while the
+  // queue moves (every swipeable list row holds it), and whatever lands
+  // before a commit (a second pick, a track ending) builds on the list as it
+  // now is. Every control that changes the queue or the position writes it
+  // along with its state.
+  const queueStateRef = useRef({ current, queue, sourceQueue, index, shuffle });
+  useEffect(() => {
+    queueStateRef.current = { current, queue, sourceQueue, index, shuffle };
+  }, [current, queue, sourceQueue, index, shuffle]);
+
   const play = useCallback<PlayerControls["play"]>(
     (track, q, options) => {
       if (!canStartTrack(track, isTrackPlayable)) return false;
@@ -337,17 +348,21 @@ export function usePlayerCore({
       // reorders the queue this render has, not the one starting now.
       const shuffled = options?.shuffle ?? shuffle;
       if (shuffled !== shuffle) setShuffleState(shuffled);
+      // Shuffled, the clicked track is pinned at position 0 and the rest
+      // shuffled: every track plays exactly once before any wrap.
+      const nextQueue = shuffled ? fisherYatesWithAnchor(base, track.id) : base;
+      const nextIndex = shuffled ? 0 : Math.max(0, base.findIndex((t) => t.id === track.id));
       setSourceQueue(base);
-      if (shuffled) {
-        // Pin the clicked track at position 0, shuffle the rest. The user
-        // will play through every track exactly once before any wrap.
-        setQueue(fisherYatesWithAnchor(base, track.id));
-        setIndex(0);
-      } else {
-        setQueue(base);
-        setIndex(Math.max(0, base.findIndex((t) => t.id === track.id)));
-      }
+      setQueue(nextQueue);
+      setIndex(nextIndex);
       setCurrent(track);
+      queueStateRef.current = {
+        current: track,
+        queue: nextQueue,
+        sourceQueue: base,
+        index: nextIndex,
+        shuffle: shuffled,
+      };
       startTrack(track);
       resetClockForTrackChange(track.id);
       playbackReportedRef.current = null;
@@ -355,14 +370,6 @@ export function usePlayerCore({
     [isTrackPlayable, notePick, resetClockForTrackChange, shuffle, startTrack],
   );
 
-  // What playNext and advance read when they're called. Through refs, so
-  // playNext keeps its identity while the queue moves (every swipeable list
-  // row holds it), and so whatever lands before React commits (a second
-  // pick, a track ending) builds on the list as it now is. Both write it back.
-  const queueStateRef = useRef({ current, queue, sourceQueue, index, shuffle });
-  useEffect(() => {
-    queueStateRef.current = { current, queue, sourceQueue, index, shuffle };
-  }, [current, queue, sourceQueue, index, shuffle]);
   const playRef = useRef(play);
   useEffect(() => {
     playRef.current = play;
@@ -381,6 +388,13 @@ export function usePlayerCore({
       if (!picked.length) return false;
       if (!playing || !state.queue.length) {
         if (playRef.current(picked[0], picked) === false) return false;
+        // Picks play in the order they were made, shuffle or not: play()
+        // would have shuffled the rest.
+        if (queueStateRef.current.shuffle) {
+          setQueue(picked);
+          setIndex(0);
+          queueStateRef.current = { ...queueStateRef.current, queue: picked, index: 0 };
+        }
         // The rest are a run behind the first, so a later pick goes after them.
         playNextRunRef.current = {
           currentId: picked[0].id,
@@ -593,6 +607,7 @@ export function usePlayerCore({
     clearPreparedNext();
     setIndex(ni);
     setCurrent(queue[ni]);
+    queueStateRef.current = { ...queueStateRef.current, current: queue[ni], index: ni };
     startTrack(queue[ni]);
     resetClockForTrackChange(queue[ni].id);
     playbackReportedRef.current = null;
@@ -609,6 +624,7 @@ export function usePlayerCore({
       clearPreparedNext();
       setIndex(i);
       setCurrent(queue[i]);
+      queueStateRef.current = { ...queueStateRef.current, current: queue[i], index: i };
       startTrack(queue[i]);
       resetClockForTrackChange(queue[i].id);
       playbackReportedRef.current = null;
@@ -644,23 +660,24 @@ export function usePlayerCore({
     notePick();
     playNextRunRef.current = null;
     setShuffleState(value);
-    if (!queue.length) return;
-    if (value) {
-      // Reshuffle remaining queue; keep the currently playing track at 0 so
-      // playback doesn't jump.
-      const source = sourceQueue.length ? sourceQueue : queue;
-      const pinned = current?.id ?? null;
-      setQueue(fisherYatesWithAnchor(source, pinned));
-      setIndex(0);
-    } else {
-      // Restore the original order; keep the current track "playing" at its
-      // natural position.
-      const source = sourceQueue.length ? sourceQueue : queue;
-      setQueue(source);
-      setIndex(
-        current ? Math.max(0, source.findIndex((t) => t.id === current.id)) : 0,
-      );
+    if (!queue.length) {
+      queueStateRef.current = { ...queueStateRef.current, shuffle: value };
+      return;
     }
+    const source = sourceQueue.length ? sourceQueue : queue;
+    // On: reshuffle, keeping the playing track at 0 so playback doesn't
+    // jump. Off: back to the list order, at the playing track's place in it.
+    const nextQueue = value ? fisherYatesWithAnchor(source, current?.id ?? null) : source;
+    const nextIndex =
+      value || !current ? 0 : Math.max(0, source.findIndex((t) => t.id === current.id));
+    setQueue(nextQueue);
+    setIndex(nextIndex);
+    queueStateRef.current = {
+      ...queueStateRef.current,
+      queue: nextQueue,
+      index: nextIndex,
+      shuffle: value,
+    };
   }, [shuffle, queue, sourceQueue, current, notePick]);
 
   const toggleShuffle = useCallback<PlayerControls["toggleShuffle"]>(() => {
@@ -880,6 +897,12 @@ export function usePlayerCore({
       setCurrentTime(quantizeTime(adapter.currentTime(), adapter.duration()));
     });
     const offEnd = adapter.on("ended", () => {
+      // A selection React hasn't committed yet (play, a jump) replaced the
+      // track that ended; it loads and starts once it commits, so the old
+      // track's end moves nothing. playNext keeps the selection, so the
+      // playing track's end still advances past a fresh pick.
+      const selected = queueStateRef.current.current;
+      if (selected && loadedTrackIdRef.current !== selected.id) return;
       const { repeat: repeatMode, current: currentTrack } = eventStateRef.current;
       if (repeatMode === "one") {
         // Restart the same track. Re-arm play reporting so each loop counts
