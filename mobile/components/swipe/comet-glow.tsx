@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { StyleSheet, type StyleProp, type ViewStyle } from "react-native";
 import {
   BlurMask,
@@ -7,6 +7,7 @@ import {
   Path,
   Skia,
   type SkPath,
+  type SkSize,
 } from "@shopify/react-native-skia";
 import {
   cancelAnimation,
@@ -28,7 +29,7 @@ import {
   cometRingOpacity,
   cometRingStart,
   cometTrim,
-  type CometBox,
+  type CometOutlineInset,
 } from "../../lib/swipe-actions";
 import { withAlpha } from "../../theme/theme";
 
@@ -71,7 +72,7 @@ function hotTone(color: string): string {
  * head would vanish, so there the head and neck keep the colour.
  */
 export function CometGlow({
-  box,
+  outline,
   from,
   color,
   lapMs,
@@ -81,7 +82,8 @@ export function CometGlow({
   onDone,
   style,
 }: {
-  box: CometBox;
+  /** Where the outline sits inside the canvas, which fills `style`. */
+  outline: CometOutlineInset;
   from: "left" | "right";
   color: string;
   lapMs: number;
@@ -91,29 +93,44 @@ export function CometGlow({
   onDone: () => void;
   style?: StyleProp<ViewStyle>;
 }) {
-  const path = useMemo<SkPath>(
-    () => Skia.Path.MakeFromSVGString(cometOutline(box, from)) ?? Skia.Path.Make(),
-    [box, from],
-  );
-  const perimeter = cometPerimeter(box);
-  const ringStartMs = cometRingStart(perimeter, LONGEST) * lapMs;
+  // The outline follows the canvas's own size, on the UI thread: nothing on
+  // the JS side has to know how wide the row is.
+  const size = useSharedValue<SkSize>({ width: 0, height: 0 });
+  const box = useDerivedValue(() => {
+    const { width, height } = size.get();
+    return {
+      x: outline.insetX,
+      y: outline.insetY,
+      width: Math.max(0, width - outline.insetX * 2),
+      height: Math.max(0, height - outline.insetY * 2),
+      radius: outline.radius,
+    };
+  });
+  const path = useDerivedValue<SkPath>(() => {
+    const b = box.get();
+    if (b.width <= 0 || b.height <= 0) return Skia.Path.Make();
+    return Skia.Path.MakeFromSVGString(cometOutline(b, from)) ?? Skia.Path.Make();
+  });
+  const perimeter = useDerivedValue(() => cometPerimeter(box.get()));
   const totalMs = reducedMotion
     ? STATIC_GLOW.in + STATIC_GLOW.hold + STATIC_GLOW.out
     : lapMs + COMET_TAIL_MS;
   const clock = useSharedValue(0);
 
   useEffect(() => {
+    // Driven by hand below, reduced motion included: the delay must hold
+    // under Reduce Motion too, or the glow would start early.
     clock.set(
       withDelay(
         delayMs,
         withTiming(
           totalMs,
-          // Driven by hand below, reduced motion included.
           { duration: totalMs, easing: Easing.linear, reduceMotion: ReduceMotion.Never },
           (finished) => {
             if (finished) scheduleOnRN(onDone);
           },
         ),
+        ReduceMotion.Never,
       ),
     );
     // Unmounted early (a new run, a recycled row): no late onDone.
@@ -132,14 +149,16 @@ export function CometGlow({
     return Math.max(0, 1 - (t - STATIC_GLOW.in - STATIC_GLOW.hold) / STATIC_GLOW.out);
   });
   const ringOpacity = useDerivedValue(() =>
-    reducedMotion ? 0.6 : cometRingOpacity(clock.get() - ringStartMs),
+    reducedMotion
+      ? 0.6
+      : cometRingOpacity(clock.get() - cometRingStart(perimeter.get(), LONGEST) * lapMs),
   );
-  const head = useDerivedValue(() => cometHead(lap.get(), perimeter, LONGEST));
+  const head = useDerivedValue(() => cometHead(lap.get(), perimeter.get(), LONGEST));
   const hot = onLight ? color : hotTone(color);
   const white = onLight ? color : "#FFFFFF";
 
   return (
-    <Canvas pointerEvents="none" style={style ?? StyleSheet.absoluteFill}>
+    <Canvas pointerEvents="none" onSize={size} style={style ?? StyleSheet.absoluteFill}>
       <Group opacity={groupOpacity}>
         {reducedMotion ? (
           <Path
@@ -190,17 +209,17 @@ function CometLayer({
   blur,
   color,
 }: {
-  path: SkPath;
+  path: SharedValue<SkPath>;
   head: SharedValue<number>;
-  perimeter: number;
+  perimeter: SharedValue<number>;
   length: number;
   width: number;
   opacity: number;
   blur: number;
   color: string;
 }) {
-  const start = useDerivedValue(() => cometTrim(head.get(), length, perimeter)[0]);
-  const end = useDerivedValue(() => cometTrim(head.get(), length, perimeter)[1]);
+  const start = useDerivedValue(() => cometTrim(head.get(), length, perimeter.get())[0]);
+  const end = useDerivedValue(() => cometTrim(head.get(), length, perimeter.get())[1]);
   return (
     <Path
       path={path}

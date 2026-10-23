@@ -28,6 +28,32 @@ import { qk } from "../lib/query-keys";
 
 // Module-level, like the query cache it guards; keys carry the user id.
 const toggleGuard = createToggleGuard();
+// Each key's guarded request while it's out, so a removal whose Undo window
+// closes during a toggle of the same track (its favorite still being sent)
+// can wait for it instead of being dropped by the guard.
+const inFlight = new Map<string, Promise<boolean>>();
+
+/** `toggleGuard.run`, noting the request while it runs. */
+function runGuarded(key: string, task: () => Promise<void>): Promise<boolean> {
+  let started = false;
+  const run = toggleGuard.run(key, () => {
+    started = true;
+    return task();
+  });
+  // The guard starts the task at once, so this is known already.
+  if (started) {
+    inFlight.set(key, run);
+    void run
+      .catch(() => false)
+      .then(() => {
+        if (inFlight.get(key) === run) inFlight.delete(key);
+      });
+  }
+  return run;
+}
+
+/** A removal that finds its track's request still out tries this often after it. */
+const COMMIT_RETRIES = 3;
 
 /**
  * Id set per favorites snapshot. Every mounted row runs its own `select` when
@@ -199,8 +225,9 @@ function cancelPendingRemoval(key: string | null): boolean {
 /**
  * Sends a removal once its Undo window has closed: the track leaves the
  * cache, then the server. It runs in the toggle guard, so a toggle while the
- * DELETE is out is dropped like any in-flight one. A failure puts the row back
- * at its old index; the server never moved it.
+ * DELETE is out is dropped like any in-flight one; if the track's own request
+ * is still out when the window closes, it goes after that one. A failure puts
+ * the row back at its old index; the server never moved it.
  */
 async function commitPendingRemoval(
   queryClient: QueryClient,
@@ -215,8 +242,8 @@ async function commitPendingRemoval(
   removal.timer = null;
   const queryKey = qk.favorites(userId);
   let started = false;
-  try {
-    await toggleGuard.run(key, async () => {
+  const send = () =>
+    runGuarded(key, async () => {
       started = true;
       await queryClient.cancelQueries({ queryKey, exact: true });
       const rows = queryClient.getQueryData<TrackListItem[]>(queryKey) ?? [];
@@ -234,6 +261,12 @@ async function commitPendingRemoval(
         );
       }
     });
+  try {
+    let sent = await send();
+    for (let tries = 0; !sent && tries < COMMIT_RETRIES; tries += 1) {
+      await inFlight.get(key)?.catch(() => false);
+      sent = await send();
+    }
   } finally {
     // Only now, after the cache has dropped the row: settling first would
     // show it again for a moment.
@@ -265,7 +298,7 @@ export function useFavoriteActions() {
       if (cancelPendingRemoval(favoriteKey(userId, track.id))) return;
       let started = false;
       try {
-        await toggleGuard.run(`${userId}:${track.id}`, async () => {
+        await runGuarded(`${userId}:${track.id}`, async () => {
           started = true;
           await queryClient.cancelQueries({ queryKey, exact: true });
           const current = queryClient.getQueryData<TrackListItem[]>(queryKey) ?? [];
