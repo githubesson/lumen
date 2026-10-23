@@ -1,7 +1,7 @@
-import { StyleSheet, Switch, Text, View } from "react-native";
+import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
 import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
-import { CoverArt } from "../cover-art";
+import { DownloadCoverFan } from "../download-cover-fan";
 import { SETTINGS_INSET, SettingsCard, SettingsLinkRow } from "./settings-card";
 import {
   useDownloadSummary,
@@ -12,27 +12,24 @@ import { formatBytes, pluralize } from "../../lib/format";
 import { offlineStore, useOfflineForced } from "../../lib/offline-mode";
 import { useTheme } from "../../theme/theme";
 
-const COVER = 48;
-const FAN_STEP = 14;
-const FAN_TILT_DEG = 4;
-const FAN_HEIGHT = 54;
-
 /**
  * "This iPhone" (or iPad): what's downloaded here (a fan of recent covers, the song
- * count and the space they take), the Offline mode switch that plays only
- * those, and the download log with its problem count.
+ * count and the space they take, opening the list of them), the Offline mode
+ * switch that plays only those, and the download log with its problem count.
  */
 export function DeviceCard({
   logProblems,
+  onOpenDownloads,
   onOpenLog,
 }: {
   logProblems: number;
+  onOpenDownloads: () => void;
   onOpenLog: () => void;
 }) {
   const summary = useDownloadSummary();
   return (
     <SettingsCard>
-      <DownloadsStack summary={summary} />
+      <DownloadsStack summary={summary} onOpen={onOpenDownloads} />
       <OfflineModeRow hasDownloads={summary.count > 0} />
       <SettingsLinkRow
         label="Download log"
@@ -50,7 +47,14 @@ export function DeviceCard({
   );
 }
 
-function DownloadsStack({ summary }: { summary: DownloadSummary }) {
+/** Opens the downloaded songs once there are some; nothing to open before. */
+function DownloadsStack({
+  summary,
+  onOpen,
+}: {
+  summary: DownloadSummary;
+  onOpen: () => void;
+}) {
   const theme = useTheme();
   const { ready, count, bytes } = summary;
   const title = !ready
@@ -67,13 +71,10 @@ function DownloadsStack({ summary }: { summary: DownloadSummary }) {
         ? `${formatBytes(bytes)} on ${LOCAL_DEVICE_PHRASE}`
         : `On ${LOCAL_DEVICE_PHRASE}`
       : "Download a playlist to play it offline";
-  return (
-    <View
-      accessible
-      accessibilityLabel={subtitle ? `${title}, ${subtitle}` : title}
-      style={styles.stack}
-    >
-      <CoverFan summary={summary} />
+  const accessibilityLabel = subtitle ? `${title}, ${subtitle}` : title;
+  const content = (
+    <>
+      <DownloadCoverFan summary={summary} size={48} ringColor={theme.color.bgElev1} />
       <View style={{ flex: 1, gap: 2 }}>
         <Text style={{ color: theme.color.fg, fontSize: 17, fontWeight: "600" }}>
           {title}
@@ -82,65 +83,32 @@ function DownloadsStack({ summary }: { summary: DownloadSummary }) {
           <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>{subtitle}</Text>
         ) : null}
       </View>
-    </View>
+    </>
   );
-}
-
-/** Up to four covers fanned out, the newest on top; a download glyph when empty. */
-function CoverFan({ summary }: { summary: DownloadSummary }) {
-  const theme = useTheme();
-  // Drawn oldest first, so the newest lands on top.
-  const covers = [...summary.recent].reverse();
-  const count = Math.max(1, covers.length);
-  const middle = (count - 1) / 2;
-  const shadow =
-    theme.scheme === "dark"
-      ? "0 4px 10px rgba(0, 0, 0, 0.35)"
-      : "0 4px 10px rgba(0, 0, 0, 0.16)";
+  if (!ready || count === 0) {
+    return (
+      <View accessible accessibilityLabel={accessibilityLabel} style={styles.stack}>
+        {content}
+      </View>
+    );
+  }
   return (
-    <View style={{ width: COVER + (count - 1) * FAN_STEP, height: FAN_HEIGHT }}>
-      {covers.length === 0 ? (
-        <View
-          style={[
-            styles.fanCard,
-            styles.placeholder,
-            { left: 0, backgroundColor: theme.color.bgElev2 },
-          ]}
-        >
-          <SymbolView
-            name="arrow.down.circle"
-            size={22}
-            tintColor={theme.color.fgMuted}
-          />
-        </View>
-      ) : (
-        covers.map((cover, i) => (
-          <View
-            key={cover.trackId}
-            style={[
-              styles.fanCard,
-              {
-                left: i * FAN_STEP,
-                zIndex: i,
-                transform: [{ rotate: `${(i - middle) * FAN_TILT_DEG}deg` }],
-                // A ring in the card's colour parts each cover from the one under it.
-                outlineWidth: 1.5,
-                outlineColor: theme.color.bgElev1,
-                outlineStyle: "solid",
-                boxShadow: shadow,
-              },
-            ]}
-          >
-            <CoverArt
-              track={cover.track ?? { id: cover.trackId }}
-              size={COVER}
-              radius={8}
-              transitionMs={0}
-            />
-          </View>
-        ))
-      )}
-    </View>
+    <Pressable
+      onPress={() => {
+        void Haptics.selectionAsync();
+        onOpen();
+      }}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityHint="Lists the downloaded songs."
+      style={({ pressed }) => [
+        styles.stack,
+        { backgroundColor: pressed ? theme.color.bgElev2 : "transparent" },
+      ]}
+    >
+      {content}
+      <SymbolView name="chevron.right" size={14} tintColor={theme.color.fgMuted} />
+    </Pressable>
   );
 }
 
@@ -183,18 +151,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: SETTINGS_INSET,
     padding: SETTINGS_INSET,
-  },
-  fanCard: {
-    position: "absolute",
-    top: (FAN_HEIGHT - COVER) / 2,
-    width: COVER,
-    height: COVER,
-    borderRadius: 8,
-    borderCurve: "continuous",
-  },
-  placeholder: {
-    alignItems: "center",
-    justifyContent: "center",
   },
   row: {
     flexDirection: "row",

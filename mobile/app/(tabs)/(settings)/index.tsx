@@ -74,6 +74,7 @@ export default function SettingsScreen() {
 
       <DeviceCard
         logProblems={logProblems}
+        onOpenDownloads={() => router.push("/(tabs)/(settings)/downloads")}
         onOpenLog={() => router.push("/(tabs)/(settings)/download-log")}
       />
 
