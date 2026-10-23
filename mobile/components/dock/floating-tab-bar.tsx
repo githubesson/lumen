@@ -7,6 +7,7 @@ import Animated, {
   useReducedMotion,
   useSharedValue,
   withTiming,
+  type SharedValue,
 } from "react-native-reanimated";
 import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
@@ -18,6 +19,7 @@ import {
   useDockControls,
 } from "./dock-context";
 import { DockSurface } from "./dock-surface";
+import { coverSlotWidth, tabPillWidth } from "../../lib/dock-cover-slot";
 
 type SymbolName = Parameters<typeof SymbolView>[0]["name"];
 
@@ -29,7 +31,8 @@ const TAB_ICONS: Record<string, SymbolName> = {
   "(settings)": "gearshape",
 };
 
-const TAB_COUNT = Object.keys(TAB_ICONS).length;
+export const TAB_COUNT = Object.keys(TAB_ICONS).length;
+const TAB_PILL = { tabCount: TAB_COUNT, tabPillHPadding: DOCK.tabPillHPadding };
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -37,12 +40,19 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
  * Instagram-style icon-only pill tab bar. A lighter capsule highlights the
  * active tab and springs between fixed-width icon slots; the pill's height
  * tracks the dock's collapse progress (expanded 64 → compact 52).
+ *
+ * On iPhone, while a track is current, the compact pill makes room at its
+ * right end for the mini player's cover (`DockCoverSlot` draws it there).
  */
 export function FloatingTabBar({
   state,
   descriptors,
   navigation,
-}: BottomTabBarProps) {
+  coverSlot,
+}: BottomTabBarProps & {
+  /** 0..1, animated: whether the compact pill opens the cover slot. */
+  coverSlot?: SharedValue<number>;
+}) {
   const { collapseProgress, expand } = useDockControls();
   const colors = useDockColors();
   const reducedMotion = useReducedMotion();
@@ -68,12 +78,17 @@ export function FloatingTabBar({
       [DOCK.tabItemWidth, DOCK.tabItemWidthCompact],
       Extrapolation.CLAMP,
     );
+    const cover = coverSlot ? coverSlotWidth(p, coverSlot.value) : 0;
     return {
       height: h,
       borderRadius: h / 2,
-      width: slot * TAB_COUNT + DOCK.tabPillHPadding * 2,
+      width: tabPillWidth(TAB_PILL, slot, cover),
     };
   });
+
+  const coverSlotStyle = useAnimatedStyle(() => ({
+    width: coverSlot ? coverSlotWidth(collapseProgress.value, coverSlot.value) : 0,
+  }));
 
   const itemStyle = useAnimatedStyle(() => ({
     width: interpolate(
@@ -195,6 +210,7 @@ export function FloatingTabBar({
             </AnimatedPressable>
           );
         })}
+        {coverSlot ? <Animated.View style={coverSlotStyle} /> : null}
       </View>
     </Animated.View>
   );

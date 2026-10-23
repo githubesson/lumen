@@ -43,7 +43,8 @@ import { repeatModeIcon } from "../now-playing/repeat-mode";
 let nowPlayingNavigationLockedUntil = 0;
 const NOW_PLAYING_NAVIGATION_LOCK_MS = 700;
 
-function useOpenNowPlaying() {
+/** Opens Now Playing (optionally on the queue), ignoring repeat taps while it presents. */
+export function useOpenNowPlaying() {
   const router = useRouter();
 
   return useCallback(
@@ -92,8 +93,16 @@ const PAD_ICON_BUTTON_SIZE = 32;
  * iPhone mini-player: a glass pill that the dock stacks directly above the
  * floating tab bar. The row Pressable opens the now-playing modal; the
  * transport buttons act independently.
+ *
+ * With `detachedCover` the pill leaves its cover's spot empty: the dock's
+ * `DockCoverSlot` draws the cover there and flies it into the tab pill on
+ * collapse.
  */
-export function PhoneMiniPlayer() {
+export function PhoneMiniPlayer({
+  detachedCover = false,
+}: {
+  detachedCover?: boolean;
+}) {
   const openNowPlaying = useOpenNowPlaying();
   const theme = useTheme();
   const colors = useDockColors();
@@ -151,7 +160,11 @@ export function PhoneMiniPlayer() {
         accessibilityLabel={trackButtonLabel(title, artist, error)}
         style={styles.phoneRow}
       >
-        <CoverArt track={current} size={CONTROL_SIZE} />
+        {detachedCover ? (
+          <View style={styles.phoneCoverSpot} />
+        ) : (
+          <CoverArt track={current} size={CONTROL_SIZE} />
+        )}
         <View style={styles.phoneMeta}>
           <Text
             numberOfLines={1}
@@ -577,7 +590,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingHorizontal: 12,
+    paddingHorizontal: DOCK.miniRowHPadding,
+  },
+  phoneCoverSpot: {
+    width: CONTROL_SIZE,
+    height: CONTROL_SIZE,
   },
   phoneMeta: {
     flex: 1,
