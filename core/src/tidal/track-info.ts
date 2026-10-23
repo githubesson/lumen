@@ -111,9 +111,13 @@ export function tidalTrackCredits(
     const people: { id?: string; name: string }[] = credit.contributors ?? credit.names.map((name) => ({ name }));
     for (const person of people) {
       const name = tidalArtistName(person.name, person.id);
-      const seen = entry.names.findIndex((n) => n.name === name.name);
+      // The same name is the same person unless TIDAL gives each an id of
+      // their own.
+      const seen = entry.names.findIndex(
+        (n) => n.name === name.name && (!isTrackInfoLink(n) || !isTrackInfoLink(name) || n.id === name.id),
+      );
       if (seen < 0) entry.names.push(name);
-      // The same person credited twice, with their id only the second time.
+      // Credited twice, with their id only the second time.
       else if (!isTrackInfoLink(entry.names[seen]) && isTrackInfoLink(name)) entry.names[seen] = name;
     }
     roles.set(key, entry);
@@ -267,15 +271,18 @@ export interface TrackInfoView {
 
 /**
  * The TIDAL album whose primary artist id can link a TIDAL track's primary
- * artist (see `trackInfoRows`), when TIDAL's details gave no artist ids: an
- * older server, or no details at all. Null when there's nothing to ask.
+ * artist (see `trackInfoRows`), when TIDAL's details came without artist
+ * ids: an older server. Null when there's nothing to ask, including when no
+ * details came, which says nothing about the server and makes a second
+ * TIDAL lookup unlikely to fare better.
  */
 export function trackInfoArtistAlbumId(
   track: Pick<TrackDetail, "source" | "source_album_id"> | null | undefined,
   tidal: TidalTrackInfoResult | null,
 ): string | null {
-  if (!track || !isTidalTrack(track) || !track.source_album_id) return null;
-  return tidal?.info?.artists.some((artist) => artist.id) ? null : track.source_album_id;
+  const artists = tidal?.info?.artists ?? [];
+  if (!track || !isTidalTrack(track) || !track.source_album_id || artists.length === 0) return null;
+  return artists.some((artist) => artist.id) ? null : track.source_album_id;
 }
 
 const isBlank = (value: string | null | undefined) => !value?.trim() || value === "—";

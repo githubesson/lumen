@@ -75,6 +75,10 @@ type trackDetailResp struct {
 	HasCover      bool              `json:"has_cover"`
 	CoverURL      string            `json:"cover_url,omitempty"`
 	Favorited     bool              `json:"favorited"`
+	Owned         bool              `json:"owned,omitempty"` // true = the viewer's own personal upload (deletable)
+	// Unavailable marks a TIDAL track TIDAL no longer lists on its release;
+	// a library copy would have been served instead, so it can't play.
+	Unavailable bool `json:"unavailable,omitempty"`
 	// Only Get fills these: the file the track plays; where the shown tags
 	// came from when that's another file, or that they were edited on
 	// purpose; and the other metadata versions dedup folded into it, at most
@@ -312,7 +316,15 @@ func (h *Tracks) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, isFav := favs[t.ID]
-	resp := makeTrackDetailResp(t, isFav)
+	resp := makeTrackDetailResp(t, isFav, u.ID)
+	if resp.Source == trackref.SourceTIDAL {
+		// A TIDAL id with a saved copy resolves to that copy, so this row has none.
+		resp.Unavailable, err = h.Library.TIDALTrackRemoved(r.Context(), t.ExternalAlbumID, t.ExternalID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+	}
 	if resp.Source == trackref.SourceLocal {
 		versions, err := h.Library.TrackVersions(r.Context(), t.ID)
 		if err != nil {
@@ -352,7 +364,7 @@ func fileName(p string) string {
 	return p
 }
 
-func makeTrackDetailResp(t *library.TrackDetail, isFav bool) trackDetailResp {
+func makeTrackDetailResp(t *library.TrackDetail, isFav bool, viewerID uuid.UUID) trackDetailResp {
 	source := sourceOrLocal(t.Source)
 	id := t.ID.String()
 	sourceID := t.ExternalID
@@ -384,6 +396,7 @@ func makeTrackDetailResp(t *library.TrackDetail, isFav bool) trackDetailResp {
 		HasCover:      t.CoverArtPath != "" || t.CoverURL != "",
 		CoverURL:      proxyRemoteCoverURL(t.CoverURL, remoteCoverWarmFull),
 		Favorited:     isFav,
+		Owned:         t.OwnerID != nil && *t.OwnerID == viewerID,
 		Artists:       make([]trackArtistResp, 0, len(t.Artists)),
 	}
 	if t.AlbumID != nil {
@@ -468,7 +481,7 @@ func (h *Tracks) Patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, isFav := favs[t.ID]
-	writeJSON(w, http.StatusOK, makeTrackDetailResp(t, isFav))
+	writeJSON(w, http.StatusOK, makeTrackDetailResp(t, isFav, u.ID))
 }
 
 // Delete removes a track from the caller's personal library. It hard-deletes
