@@ -88,12 +88,21 @@ func TestReadOptimizations(t *testing.T) {
 			}
 		}
 		counter.queries.Store(0)
-		rows, err := pl.ListForUser(ctx, viewer)
+		rows, err := pl.ListForUser(ctx, viewer, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if n := counter.queries.Load(); n != 1 {
 			t.Fatalf("playlist list used %d queries", n)
+		}
+		// Asking which playlists hold a track stays the same one query.
+		counter.queries.Store(0)
+		containing := uuid.New()
+		if _, err := pl.ListForUser(ctx, viewer, &containing); err != nil {
+			t.Fatal(err)
+		}
+		if n := counter.queries.Load(); n != 1 {
+			t.Fatalf("playlist list with a track used %d queries", n)
 		}
 		got := map[uuid.UUID]string{}
 		for _, row := range rows {
@@ -236,7 +245,7 @@ func TestReadOptimizations(t *testing.T) {
 		exec(`INSERT INTO playlist_tracks(playlist_id,position,track_id) VALUES($1,0,$2)`, noAlbum.ID, tracks[0])
 
 		counter.queries.Store(0)
-		rows, err := pl.ListForUser(ctx, viewer)
+		rows, err := pl.ListForUser(ctx, viewer, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

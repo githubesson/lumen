@@ -1,42 +1,57 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
+  Keyboard,
   Pressable,
-  RefreshControl,
   StyleSheet,
-  Text,
   View,
+  type GestureResponderEvent,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
-import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { isLiquidGlassAvailable } from "expo-glass-effect";
 import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  api,
-  canAddToPlaylist,
-  errorMessage,
-  playlistSubtitle,
-  useAuth,
-  type Playlist,
-} from "@music-library/core";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, useAuth, type Playlist } from "@music-library/core";
+import { AdaptiveGlass } from "../components/adaptive-glass";
 import { EmptyState } from "../components/empty-state";
-import { PlaylistArtwork } from "../components/playlist-artwork";
-import { TRACK_FLASH_LIST_PERFORMANCE_PROPS } from "../components/list-performance";
+import { HUD } from "../components/add-confirmation/flight";
+import { showAddConfirmation } from "../components/add-confirmation/store";
+import { playlistArtUri, trackArtUri } from "../components/playlist-picker/art";
+import {
+  measureRect,
+  offsetRect,
+  screenOffsetOfPress,
+} from "../components/playlist-picker/measure";
+import {
+  NewPlaylistRow,
+  PICKER_ART_SIZE,
+  PlaylistPickerRow,
+  type PickHandler,
+} from "../components/playlist-picker/picker-row";
+import { PickerSearchField } from "../components/playlist-picker/search-field";
+import { playlistPickerTrack } from "../components/playlist-picker/subject";
+import {
+  TRACK_CARD_COVER_SIZE,
+  TrackCard,
+} from "../components/playlist-picker/track-card";
+import { addTrackToPlaylist, type AddTarget } from "../lib/add-to-playlist";
+import {
+  playlistPickerRows,
+  type PlaylistPickerRow as Row,
+} from "../lib/playlist-picker";
 import { qk } from "../lib/query-keys";
-import { usePullToRefresh } from "../lib/use-pull-to-refresh";
+import { loadRecentPlaylistIds } from "../lib/recent-playlists";
 import { useTheme } from "../theme/theme";
 
-type SortMode = "recent" | "name" | "created";
-type RowItem =
-  | { type: "section"; id: string; title: string }
-  | { type: "playlist"; id: string; playlist: Playlist };
+/** Reopened for the same track soon after, the "Added" marks show at once. */
+const PICKER_CACHE_MS = 5 * 60 * 1000;
 
-const RECENT_PLAYLISTS_KEY = "mlib-recent-add-playlists";
-const MAX_RECENT_PLAYLISTS = 6;
-
+/**
+ * Add to Playlist: a half-height sheet with the track on top, one field that
+ * finds a playlist or names a new one, and one list. One tap adds: the sheet
+ * closes at once and the root confirmation plays while the request runs.
+ */
 export default function PlaylistPickerScreen() {
   const theme = useTheme();
   const router = useRouter();
@@ -44,383 +59,180 @@ export default function PlaylistPickerScreen() {
   const { trackId } = useLocalSearchParams<{ trackId?: string }>();
   const { me } = useAuth();
   const userId = me?.id;
-  const playlistsQueryKey = qk.playlists(userId);
+  const track = useMemo(() => playlistPickerTrack(trackId), [trackId]);
+  const cardCoverUri = track ? trackArtUri(track, TRACK_CARD_COVER_SIZE) : null;
+  const coverRef = useRef<View>(null);
   const [search, setSearch] = useState("");
-  const [sortMode, setSortMode] = useState<SortMode>("recent");
   const [recentIds, setRecentIds] = useState<string[]>([]);
-  const recentPlaylistsKey = `${RECENT_PLAYLISTS_KEY}:${userId ?? "guest"}`;
+  const [lifted, setLifted] = useState(false);
+  // One tap finishes: anything after it is the sheet already closing.
+  const picked = useRef(false);
 
   useEffect(() => {
+    if (!userId) return;
     let cancelled = false;
-    if (!userId) {
-      // Losing the authenticated user invalidates the persisted recent list.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setRecentIds([]);
-      return;
-    }
-    setRecentIds([]);
-    void AsyncStorage.getItem(recentPlaylistsKey).then((raw) => {
-      if (cancelled || !raw) return;
-      try {
-        const ids = JSON.parse(raw);
-        if (Array.isArray(ids)) {
-          setRecentIds(ids.filter((id): id is string => typeof id === "string"));
-        }
-      } catch {
-        // Ignore malformed old state.
-      }
-    });
+    void loadRecentPlaylistIds(userId)
+      .then((ids) => {
+        if (!cancelled) setRecentIds(ids);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [recentPlaylistsKey, userId]);
+  }, [userId]);
 
-  const playlistsQuery = useQuery({
-    queryKey: playlistsQueryKey,
-    queryFn: ({ signal }) => api.listPlaylists({ signal }),
-    enabled: !!userId,
+  const playlistsQuery = useQuery<Playlist[]>({
+    queryKey: qk.playlistsWithTrack(userId, trackId),
+    queryFn: ({ signal }) => api.listPlaylists({ trackId, signal }),
+    enabled: !!userId && !!trackId,
+    // The plain list, usually cached, stands in until this answers; it has
+    // no "Added" marks, so until then every playlist is pickable.
+    placeholderData: () =>
+      queryClient.getQueryData<Playlist[]>(qk.playlists(userId)),
+    gcTime: PICKER_CACHE_MS,
   });
-  const { refreshing, onRefresh } = usePullToRefresh(playlistsQuery.refetch);
+  const playlists = playlistsQuery.data;
 
-  const addMutation = useMutation({
-    mutationFn: (playlist: Playlist) => {
-      if (!trackId) throw new Error("Missing track id.");
-      return api.addPlaylistTracks(playlist.id, [trackId]);
-    },
-    onSuccess: (_data, playlist) => {
-      const nextRecent = [
-        playlist.id,
-        ...recentIds.filter((id) => id !== playlist.id),
-      ].slice(0, MAX_RECENT_PLAYLISTS);
-      setRecentIds(nextRecent);
-      // The track is already added; a failed write only loses the ordering
-      // hint, so it must not turn into a "Couldn't add track" alert.
-      void AsyncStorage.setItem(
-        recentPlaylistsKey,
-        JSON.stringify(nextRecent),
-      ).catch(() => {});
-      void queryClient.invalidateQueries({
-        queryKey: qk.playlistTracks(userId, playlist.id),
-      });
-      // updated_at moved, which drives the "Recently Updated" ordering.
-      void queryClient.invalidateQueries({ queryKey: qk.playlists(userId) });
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.back();
-    },
-    onError: (error) => {
-      Alert.alert(
-        "Couldn't add track",
-        errorMessage(error, "Please try again."),
-      );
-    },
-  });
-
-  const editablePlaylists = useMemo(
-    () => (playlistsQuery.data ?? []).filter(canAddToPlaylist),
-    [playlistsQuery.data],
+  const rows = useMemo(
+    () => (playlists ? playlistPickerRows(playlists, recentIds, search) : []),
+    [playlists, recentIds, search],
   );
-
-  const filteredPlaylists = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase();
-    const filtered = query
-      ? editablePlaylists.filter((playlist) =>
-          playlist.name.toLocaleLowerCase().includes(query),
-        )
-      : editablePlaylists;
-    return sortPlaylists(filtered, sortMode);
-  }, [editablePlaylists, search, sortMode]);
-
-  const rows = useMemo<RowItem[]>(() => {
-    if (playlistsQuery.isLoading || playlistsQuery.isError) return [];
-
-    const byId = new Map(editablePlaylists.map((playlist) => [playlist.id, playlist]));
-    const query = search.trim();
-    const recent = query
-      ? []
-      : recentIds
-          .map((id) => byId.get(id))
-          .filter((playlist): playlist is Playlist => Boolean(playlist))
-          .slice(0, 3);
-
-    if (recent.length === 0 && filteredPlaylists.length === 0) return [];
-
-    const nextRows: RowItem[] = [];
-    if (recent.length > 0) {
-      nextRows.push({ type: "section", id: "recent", title: "Recent" });
-      for (const playlist of recent) {
-        nextRows.push({
-          type: "playlist",
-          id: `recent:${playlist.id}`,
-          playlist,
-        });
-      }
-    }
-
-    nextRows.push({
-      type: "section",
-      id: "all",
-      title: query ? "Results" : "All Playlists",
-    });
-    for (const playlist of filteredPlaylists) {
-      nextRows.push({
-        type: "playlist",
-        id: `all:${playlist.id}`,
-        playlist,
-      });
-    }
-    return nextRows;
-  }, [
-    editablePlaylists,
-    filteredPlaylists,
-    playlistsQuery.isError,
-    playlistsQuery.isLoading,
-    recentIds,
-    search,
-  ]);
 
   const close = useCallback(() => {
     void Haptics.selectionAsync();
     router.back();
   }, [router]);
 
-  const selectPlaylist = useCallback(
-    (playlist: Playlist) => {
+  const pick = useCallback<PickHandler>(
+    (target, row, event: GestureResponderEvent) => {
+      if (picked.current || !userId || !trackId) return;
+      picked.current = true;
       void Haptics.selectionAsync();
-      addMutation.mutate(playlist);
+      Keyboard.dismiss();
+      const done = addTrackToPlaylist({ queryClient, userId, trackId, target });
+      const offset = screenOffsetOfPress(row, event);
+      void Promise.all([offset, measureRect(coverRef.current)]).then(
+        ([screenOffset, cover]) => {
+          showAddConfirmation({
+            from: screenOffset && cover ? offsetRect(cover, screenOffset) : null,
+            trackArt: {
+              uri: track ? trackArtUri(track, HUD.playlistSize) : null,
+              placeholder: cardCoverUri,
+            },
+            ...confirmationTarget(target),
+            done,
+          });
+          setLifted(true);
+          router.back();
+        },
+      );
     },
-    [addMutation],
+    [cardCoverUri, queryClient, router, track, trackId, userId],
   );
 
   const renderItem = useCallback(
-    ({ item }: ListRenderItemInfo<RowItem>) => {
-      if (item.type === "section") {
-        return <SectionHeader title={item.title} />;
-      }
-      return (
-        <PlaylistPickerRow
-          playlist={item.playlist}
-          disabled={addMutation.isPending}
-          selected={
-            addMutation.isPending &&
-            addMutation.variables?.id === item.playlist.id
-          }
-          onPress={selectPlaylist}
-        />
-      );
-    },
-    [addMutation.isPending, addMutation.variables?.id, selectPlaylist],
+    ({ item }: ListRenderItemInfo<Row>) =>
+      item.type === "new" ? (
+        <NewPlaylistRow name={item.name} onPick={pick} />
+      ) : (
+        <PlaylistPickerRow playlist={item.playlist} onPick={pick} />
+      ),
+    [pick],
   );
-
-  const keyExtractor = useCallback((item: RowItem) => item.id, []);
-  const itemType = useCallback((item: RowItem) => item.type, []);
+  const keyExtractor = useCallback((item: Row) => item.id, []);
+  const itemType = useCallback((item: Row) => item.type, []);
 
   return (
-    <>
+    <View
+      style={[
+        styles.screen,
+        // iOS 26 draws the half sheet in Liquid Glass behind a clear screen.
+        { backgroundColor: isLiquidGlassAvailable() ? "transparent" : theme.color.bg },
+      ]}
+    >
+      <View style={styles.top}>
+        <TrackCard
+          track={track}
+          coverUri={cardCoverUri}
+          coverRef={coverRef}
+          lifted={lifted}
+        />
+        <Pressable
+          onPress={close}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          hitSlop={4}
+        >
+          <AdaptiveGlass interactive style={styles.close}>
+            <SymbolView name="xmark" size={17} weight="semibold" tintColor={theme.color.fg} />
+          </AdaptiveGlass>
+        </Pressable>
+      </View>
+      <PickerSearchField onChangeText={setSearch} />
       <FlashList
-        {...TRACK_FLASH_LIST_PERFORMANCE_PROPS}
         data={rows}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         getItemType={itemType}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         contentInsetAdjustmentBehavior="automatic"
-        style={{ backgroundColor: theme.color.bg }}
-        contentContainerStyle={{
-          paddingTop: theme.space.sm,
-          paddingBottom: theme.space.xl,
-        }}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={theme.color.fgMuted}
-          />
-        }
+        contentContainerStyle={{ paddingBottom: theme.space.xl }}
         ListEmptyComponent={
-          playlistsQuery.isLoading ? (
-            <EmptyState loading />
-          ) : playlistsQuery.isError ? (
+          !playlists && playlistsQuery.isError ? (
             <EmptyState selectable message="Couldn't load playlists." />
+          ) : !playlists ? (
+            <EmptyState loading />
           ) : (
-            <EmptyState
-              message={
-                search.trim()
-                  ? "No matching playlists."
-                  : "No editable playlists found."
-              }
-            />
+            <EmptyState message="No playlists you can add to." />
           )
         }
       />
-
-      <Stack.Screen.Title>Add to Playlist</Stack.Screen.Title>
-      <Stack.SearchBar
-        placeholder="Find Playlists"
-        autoCapitalize="none"
-        placement="stacked"
-        hideWhenScrolling={false}
-        hideNavigationBar={false}
-        obscureBackground={false}
-        onChangeText={(event) => setSearch(event.nativeEvent.text)}
-        onCancelButtonPress={() => setSearch("")}
-      />
-      <Stack.Toolbar placement="left">
-        <Stack.Toolbar.Button
-          icon="xmark"
-          accessibilityLabel="Close"
-          onPress={close}
-          separateBackground
-        />
-      </Stack.Toolbar>
-      <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Menu
-          icon="arrow.up.arrow.down"
-          accessibilityLabel="Sort playlists"
-          separateBackground
-        >
-          <Stack.Toolbar.MenuAction
-            isOn={sortMode === "recent"}
-            onPress={() => setSortMode("recent")}
-          >
-            Recently Updated
-          </Stack.Toolbar.MenuAction>
-          <Stack.Toolbar.MenuAction
-            isOn={sortMode === "name"}
-            onPress={() => setSortMode("name")}
-          >
-            Name
-          </Stack.Toolbar.MenuAction>
-          <Stack.Toolbar.MenuAction
-            isOn={sortMode === "created"}
-            onPress={() => setSortMode("created")}
-          >
-            Newest
-          </Stack.Toolbar.MenuAction>
-        </Stack.Toolbar.Menu>
-      </Stack.Toolbar>
-    </>
+    </View>
   );
 }
 
-function SectionHeader({ title }: { title: string }) {
-  const theme = useTheme();
-  return (
-    <Text
-      style={{
-        color: theme.color.fg,
-        fontSize: 20,
-        fontWeight: "700",
-        paddingHorizontal: theme.space.lg,
-        paddingTop: theme.space.lg,
-        paddingBottom: theme.space.xs,
-      }}
-    >
-      {title}
-    </Text>
-  );
-}
-
-function PlaylistPickerRow({
-  playlist,
-  disabled,
-  selected,
-  onPress,
-}: {
-  playlist: Playlist;
-  disabled: boolean;
-  selected: boolean;
-  onPress: (playlist: Playlist) => void;
-}) {
-  const theme = useTheme();
-  const collaborative = playlist.visibility === "collaborative";
-
-  return (
-    <Pressable
-      disabled={disabled}
-      onPress={() => onPress(playlist)}
-      accessibilityRole="button"
-      accessibilityLabel={`Add to ${playlist.name}`}
-      style={({ pressed }) => [
-        styles.row,
-        {
-          opacity: disabled && !selected ? 0.55 : 1,
-          paddingHorizontal: theme.space.lg,
-          gap: theme.space.md,
-          backgroundColor: pressed ? theme.color.bgElev1 : "transparent",
-        },
-      ]}
-    >
-      <PlaylistArtwork
-        playlist={playlist}
-        size={56}
-        glyphSize={24}
-        radius={theme.radius.md}
-        background={collaborative ? theme.color.bgElev2 : theme.color.bgElev1}
-      />
-      <View
-        style={[
-          styles.rowBody,
-          { borderBottomColor: theme.color.separator },
-        ]}
-      >
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text
-            numberOfLines={1}
-            style={{ color: theme.color.fg, fontSize: 18, fontWeight: "500" }}
-          >
-            {playlist.name}
-          </Text>
-          <Text
-            numberOfLines={1}
-            style={{ color: theme.color.fgMuted, fontSize: 13 }}
-          >
-            {playlistSubtitle(playlist)}
-          </Text>
-        </View>
-        {selected ? (
-          <ActivityIndicator color={theme.color.fgMuted} />
-        ) : collaborative ? (
-          <SymbolView
-            name="person.2.fill"
-            size={18}
-            tintColor={theme.color.fgMuted}
-          />
-        ) : null}
-      </View>
-    </Pressable>
-  );
-}
-
-function sortPlaylists(playlists: Playlist[], sortMode: SortMode) {
-  return [...playlists].sort((a, b) => {
-    if (sortMode === "name") {
-      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-    }
-    if (sortMode === "created") {
-      return dateValue(b.created_at) - dateValue(a.created_at);
-    }
-    return dateValue(b.updated_at) - dateValue(a.updated_at);
-  });
-}
-
-function dateValue(value?: string) {
-  if (!value) return 0;
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) ? ms : 0;
+/** What the confirmation shows for the playlist being added to. */
+function confirmationTarget(target: AddTarget) {
+  if (target.kind === "new") {
+    return {
+      playlistName: target.name,
+      playlistArt: null,
+      playlistGlyph: "music.note.list",
+      created: true,
+    } as const;
+  }
+  const { playlist } = target;
+  const uri = playlistArtUri(playlist, HUD.playlistSize);
+  return {
+    playlistName: playlist.name,
+    playlistArt: uri
+      ? { uri, placeholder: playlistArtUri(playlist, PICKER_ART_SIZE) }
+      : null,
+    playlistGlyph:
+      playlist.visibility === "collaborative" ? "person.2.fill" : "music.note.list",
+    created: false,
+  } as const;
 }
 
 const styles = StyleSheet.create({
-  row: {
-    minHeight: 74,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  rowBody: {
-    minHeight: 74,
+  screen: {
     flex: 1,
-    minWidth: 0,
+  },
+  // Clears the sheet's grabber.
+  top: {
     flexDirection: "row",
     alignItems: "center",
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    gap: 12,
+    gap: 10,
+    paddingTop: 24,
+    paddingHorizontal: 14,
+  },
+  close: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

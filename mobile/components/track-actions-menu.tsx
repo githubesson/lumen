@@ -32,6 +32,7 @@ import {
 import { useFavorite, useFavoriteActions } from "../context/favorites";
 import { usePlayTrack } from "../context/player";
 import { AdaptiveGlass } from "./adaptive-glass";
+import { setPlaylistPickerTrack } from "./playlist-picker/subject";
 import { useTheme } from "../theme/theme";
 import { downloadStreamToFile } from "../lib/track-download";
 import { focusedInTabs } from "../lib/track-info";
@@ -505,11 +506,12 @@ export function useTrackActionModel(track: TrackListItem) {
   }, [router, track.album_id]);
 
   const openPlaylistPicker = useCallback(() => {
+    setPlaylistPickerTrack(track);
     router.push({
       pathname: "/playlist-picker",
       params: { trackId: track.id },
     });
-  }, [router, track.id]);
+  }, [router, track]);
 
   const openShare = useCallback(() => {
     router.push({
