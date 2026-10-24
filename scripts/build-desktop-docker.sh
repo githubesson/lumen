@@ -19,8 +19,9 @@ docker info >/dev/null
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 builder_home="${XDG_CACHE_HOME:-$HOME/.cache}/lumen-desktop-builder"
 mkdir -p "$builder_home"
-# electronuserland/builder:wine, pinned so toolchain updates are intentional.
-builder_image='electronuserland/builder@sha256:41ae540902461b6cbc988987db79547fcc10cda04d2a6c6367504f59d4b37c64'
+# electronuserland/builder:wine (Node 24.22.1), pinned so toolchain updates
+# are intentional.
+builder_image='electronuserland/builder@sha256:f3a8d451994c881d0972e7b1846ee4d4fdc15eb41fc6b1f350b38cbf99ca90fe'
 publish_env=()
 if [[ $publish_mode == always ]]; then
   publish_env+=(--env GH_TOKEN)
