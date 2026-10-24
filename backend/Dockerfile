@@ -5,8 +5,11 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/server ./cmd/server
 
-FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
-RUN apk add --no-cache ca-certificates ffmpeg font-dejavu nodejs npm tzdata \
+FROM alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f
+# Alpine's nodejs decodes Brotli through the shared brotli-libs, so the floor
+# below is what keeps the Filen helper off decoders hit by CVE-2026-111497
+# (fixed upstream in 1.2.1, and in the 1.1.1 backport Alpine 3.22 ships).
+RUN apk add --no-cache ca-certificates ffmpeg font-dejavu nodejs npm tzdata 'brotli-libs>=1.1.1' \
     && addgroup -S app \
     && adduser -S -G app -h /app app
 WORKDIR /app

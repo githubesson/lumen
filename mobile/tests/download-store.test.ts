@@ -231,8 +231,8 @@ async function finishTask(
   h.dirs.add(`${h.DOC}/offline-audio-v2/https_3A_2F_2Fapi.test/alice`);
   h.files.set(partUri(id), bytes);
   task.cbs.begin?.({ headers: { "content-type": contentType } });
-  // Hand-rolled deferred rather than Promise.withResolvers, which needs
-  // Node 22 — CI and both Docker images run Node 20.
+  // Hand-rolled deferred rather than Promise.withResolvers, which Node 20
+  // (still allowed for local runs) lacks.
   let resolve!: () => void;
   const promise = new Promise<void>((res) => {
     resolve = res;
