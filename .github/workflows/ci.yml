@@ -74,10 +74,10 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
-      # The Filen helper ships in the backend image (Alpine's Node 20).
+      # The Filen helper ships in the backend image (Alpine's Node 22).
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: backend/filen-downloader/package-lock.json
       - name: Filen helper tests

@@ -48,7 +48,7 @@ internal/
   lastshare/ apitracker/ pinscan/
   musicroots/         admin-managed scan roots
 fonts/                fonts bundled for preview image rendering
-filen-downloader/     Node 20 helper the Docker image bundles for Filen links
+filen-downloader/     Node 22 helper the Docker image bundles for Filen links
 ```
 
 ## Run (local)
