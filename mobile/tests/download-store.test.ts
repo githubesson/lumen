@@ -232,7 +232,7 @@ async function finishTask(
   h.files.set(partUri(id), bytes);
   task.cbs.begin?.({ headers: { "content-type": contentType } });
   // Hand-rolled deferred rather than Promise.withResolvers, which needs
-  // Node 22 — CI and both Docker images run Node 20.
+  // Node 22 — the mobile CI job runs Node 20.
   let resolve!: () => void;
   const promise = new Promise<void>((res) => {
     resolve = res;
