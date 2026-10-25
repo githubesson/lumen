@@ -1124,9 +1124,10 @@ func (s *Store) DeletePersonalTrack(ctx context.Context, trackID, userID uuid.UU
 // every on-disk file that fed it: the canonical file_path plus any
 // track_aliases paths (duplicate files that were deduplicated into this track).
 // Tracks linked to it (other files of the same song) go too, with the files
-// of the live ones: a soft-deleted one's file may since have come back as
-// another track. The caller must remove those files from disk — otherwise
-// the watcher/rescan simply re-ingests them. Personal tracks (owner_id set) and
+// of the live ones. A path another live track still uses is left out: a
+// linked file that went and came back is filed as a new track. The caller
+// must remove the returned files from disk — otherwise the watcher/rescan
+// simply re-ingests them. Personal tracks (owner_id set) and
 // missing or soft-deleted rows report ErrNotFound: this is the admin path for
 // shared content; users remove their own uploads via DeletePersonalTrack.
 //
@@ -1180,6 +1181,21 @@ func (s *Store) DeleteGlobalTrack(ctx context.Context, trackID uuid.UUID) ([]str
 			return err
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM tracks WHERE id = $1`, trackID); err != nil {
+			return err
+		}
+		// Hand back only files no live track still plays from or keeps as a
+		// copy: a linked file that went and came back is another track now.
+		// A soft-deleted row at the same path doesn't count.
+		rows, err = tx.Query(ctx, `
+			SELECT p FROM unnest($1::text[]) WITH ORDINALITY AS u(p, n)
+			WHERE NOT EXISTS (SELECT 1 FROM tracks t WHERE t.file_path = u.p AND t.deleted_at IS NULL)
+			  AND NOT EXISTS (SELECT 1 FROM track_aliases al JOIN tracks t ON t.id = al.track_id
+			                  WHERE al.file_path = u.p AND t.deleted_at IS NULL)
+			ORDER BY n`, paths)
+		if err != nil {
+			return err
+		}
+		if paths, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `DELETE FROM ingest_errors WHERE file_path = ANY($1)`, paths)

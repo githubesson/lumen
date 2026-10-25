@@ -1007,6 +1007,119 @@ func TestAdminDeleteSparesAFileThatCameBack(t *testing.T) {
 	}
 }
 
+// A plain track's file still goes when a stale soft-deleted row shares its
+// path (the file was rewritten in place, or its root removed and re-added).
+func TestAdminDeleteRemovesAFileWithAStaleTwin(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	lib := library.NewStore(pool)
+	stale, current := redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil)
+	var path string
+	if err := pool.QueryRow(ctx, `SELECT file_path FROM tracks WHERE id = $1`, stale).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	if err := lib.SoftDeleteByPath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE tracks SET file_path = $2 WHERE id = $1`, current, path); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := lib.DeleteGlobalTrack(ctx, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(paths, []string{path}) {
+		t.Fatalf("deleted paths = %v, want %s", paths, path)
+	}
+}
+
+// Through the admin delete handler, with files on disk: a plain track's file
+// goes despite a stale soft-deleted twin at its path, and a linked file that
+// went and came back as a new track stays.
+func TestAdminDeleteHandlerRemovesTheRightFiles(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	lib := library.NewStore(pool)
+	root := t.TempDir()
+	sfx := uuid.NewString()[:8]
+	artist := "Removal " + sfx
+	t.Cleanup(func() {
+		bg := context.Background()
+		pool.Exec(bg, `DELETE FROM tracks WHERE starts_with(file_path, $1)`, root)
+		pool.Exec(bg, `DELETE FROM artists WHERE name = $1`, artist)
+	})
+	svc := &ingest.Service{
+		DB: pool, Library: lib, Storage: storage.NewLocal(root), MusicRoot: root,
+		Roots:  func(context.Context) []string { return []string{root} },
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	ingestNew := func(name string, tags ...string) (uuid.UUID, string) {
+		t.Helper()
+		p := filepath.Join(root, name)
+		if _, err := os.Stat(p); err != nil {
+			writeFLAC(t, p, "removal-"+name+"-"+sfx, tags...)
+		}
+		out := svc.IngestFileAs(ctx, p, nil)
+		if out.Err != nil || !out.Inserted {
+			t.Fatalf("ingest %s = %+v", p, out)
+		}
+		return out.TrackID, p
+	}
+	admin := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO users(id, username, password_hash, role) VALUES($1,$2,'test','admin')`,
+		admin, "admin-"+admin.String()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1`, admin) })
+	sessions := auth.NewSessionStore(pool, "session", false, time.Hour)
+	token, _, err := sessions.Create(ctx, admin, httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := chi.NewRouter()
+	router.Use(middleware.Authenticate(sessions), middleware.RequireUser)
+	router.Delete("/admin/tracks/{id}", (&handlers.Tracks{Library: lib, Ingest: svc}).AdminDelete)
+	adminDelete := func(id uuid.UUID) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodDelete, "/admin/tracks/"+id.String(), nil)
+		req.AddCookie(&http.Cookie{Name: "session", Value: token})
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("admin delete = %d %s", rec.Code, rec.Body)
+		}
+	}
+	exists := func(p string) bool {
+		_, err := os.Stat(p)
+		return err == nil
+	}
+
+	// A plain track whose file was rewritten in place: the watcher
+	// soft-deleted its row and ingest filed the file again.
+	_, plain := ingestNew("plain.flac")
+	if err := lib.SoftDeleteByPath(ctx, plain); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := ingestNew("plain.flac")
+	adminDelete(again)
+	if exists(plain) {
+		t.Fatal("the plain track's file survived its delete")
+	}
+
+	// A song whose hidden file went and came back as a track of its own.
+	shown, shownPath := ingestNew("shown.flac", "TITLE=Shown "+sfx, "ARTIST="+artist)
+	hidden, hiddenPath := ingestNew("hidden.flac")
+	if _, err := lib.LinkTracks(ctx, shown, hidden); err != nil {
+		t.Fatal(err)
+	}
+	if err := lib.SoftDeleteByPath(ctx, hiddenPath); err != nil {
+		t.Fatal(err)
+	}
+	ingestNew("hidden.flac")
+	adminDelete(shown)
+	if exists(shownPath) || !exists(hiddenPath) {
+		t.Fatalf("after deleting the song: its file exists %v, the returned track's %v", exists(shownPath), exists(hiddenPath))
+	}
+}
+
 // The watcher's soft delete of a shown track's file and a link of that track
 // don't deadlock, and the soft delete isn't lost.
 func TestWatcherSoftDeleteAndALinkDontDeadlock(t *testing.T) {
