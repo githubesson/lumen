@@ -297,6 +297,41 @@ func lockLinkGroups(ctx context.Context, tx pgx.Tx, groups, ids []uuid.UUID) ([]
 	return locked, nil
 }
 
+// lockTrackGroups locks the tracks ids with their linked groups (the track
+// each is linked to and the tracks linked to that one) in id order, as links
+// lock them, for a delete: deleting a linked track writes onto another in its
+// group (its references move there), and taking those locks in another order
+// could deadlock with a link or another delete. errLinkRaced if a group
+// changed while it waited.
+func lockTrackGroups(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) error {
+	const group = `
+		SELECT t.id FROM tracks t
+		WHERE t.id = ANY($1)
+		   OR t.id IN (SELECT x.linked_to FROM tracks x WHERE x.id = ANY($1))
+		   OR t.linked_to IN (SELECT COALESCE(x.linked_to, x.id) FROM tracks x WHERE x.id = ANY($1))
+		ORDER BY t.id`
+	rows, err := tx.Query(ctx, group+` FOR UPDATE OF t`, ids)
+	if err != nil {
+		return err
+	}
+	locked, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return err
+	}
+	rows, err = tx.Query(ctx, group, ids)
+	if err != nil {
+		return err
+	}
+	now, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return err
+	}
+	if !slices.Equal(now, locked) {
+		return errLinkRaced
+	}
+	return nil
+}
+
 // showLinked makes shown the track of the group made of the live tracks ids
 // that stays in the library, and hides the rest behind it. Tracks still
 // linked to one of formerly, the group's previous shown tracks, are linked

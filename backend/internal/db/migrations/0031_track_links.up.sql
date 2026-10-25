@@ -53,11 +53,11 @@ END $$;
 -- performers, then on a real album. The rest link to it, and the gone
 -- track's playlist entries, stats and history move over, so the song stays
 -- in the library and in playlists.
-CREATE FUNCTION linked_heir(gone UUID) RETURNS UUID
+CREATE FUNCTION linked_heir(gone UUID, besides UUID DEFAULT NULL) RETURNS UUID
 LANGUAGE sql AS $$
     SELECT t.id
     FROM tracks t
-    WHERE t.linked_to = gone AND t.deleted_at IS NULL
+    WHERE t.linked_to = gone AND t.deleted_at IS NULL AND t.id IS DISTINCT FROM besides
     ORDER BY t.metadata_edited_at IS NOT NULL DESC,
              EXISTS (SELECT 1 FROM track_artists fa WHERE fa.track_id = t.id AND fa.role <> 'composer') DESC,
              EXISTS (SELECT 1 FROM albums fal WHERE fal.id = t.album_id
@@ -68,13 +68,26 @@ LANGUAGE sql AS $$
     LIMIT 1
 $$;
 
+-- Where a hidden track's references go when it's deleted or soft-deleted:
+-- the track it's linked to while that one is live; else that track's heir,
+-- when the same statement took both and the heir isn't shown yet (never the
+-- hidden track itself, which a BEFORE DELETE trigger still sees); else the
+-- track it was re-pointed to, when the shown track's trigger ran first.
+CREATE FUNCTION linked_target(hidden UUID, shown UUID) RETURNS UUID
+LANGUAGE sql AS $$
+    SELECT COALESCE(
+        (SELECT id FROM tracks WHERE id = shown AND deleted_at IS NULL),
+        linked_heir(shown, hidden),
+        (SELECT h.id FROM tracks t JOIN tracks h ON h.id = t.linked_to
+         WHERE t.id = hidden AND h.id <> hidden AND h.deleted_at IS NULL))
+$$;
+
 -- A delete cascades the track's playlist entries and stats away, so they move
 -- before it, and before the TIDAL fallback of 0020 (triggers fire in name
 -- order), which then finds none left: a shown track's to its heir, a hidden
--- track's (a client that still held its id wrote them) to the track it's
--- linked to, unless that one went earlier in the same statement. Only other
--- tables change here: a statement deleting a linked track too would fail on
--- a row this changed.
+-- track's (a client that still held its id wrote them) to linked_target.
+-- The trigger writes only other tables; updating tracks rows here would fail
+-- a statement that deletes those rows too.
 CREATE FUNCTION tracks_move_linked_refs() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -83,7 +96,7 @@ BEGIN
     IF OLD.linked_to IS NULL THEN
         heir := linked_heir(OLD.id);
     ELSE
-        SELECT id INTO heir FROM tracks WHERE id = OLD.linked_to AND deleted_at IS NULL;
+        heir := linked_target(OLD.id, OLD.linked_to);
     END IF;
     IF heir IS NOT NULL THEN
         PERFORM move_track_refs(OLD.id, heir);
@@ -108,11 +121,13 @@ DECLARE
 BEGIN
     IF OLD.linked_to IS NOT NULL THEN
         UPDATE tracks SET linked_to = OLD.linked_to WHERE linked_to = OLD.id;
-        -- A soft-deleted hidden track's references go to the track it's
-        -- linked to, as a deleted one's do before the delete.
-        IF TG_OP = 'UPDATE' AND EXISTS (
-            SELECT 1 FROM tracks WHERE id = OLD.linked_to AND deleted_at IS NULL) THEN
-            PERFORM move_track_refs(OLD.id, OLD.linked_to);
+        -- A soft-deleted hidden track's references go where a deleted one's
+        -- do before the delete.
+        IF TG_OP = 'UPDATE' THEN
+            heir := linked_target(OLD.id, OLD.linked_to);
+            IF heir IS NOT NULL THEN
+                PERFORM move_track_refs(OLD.id, heir);
+            END IF;
         END IF;
         RETURN NULL;
     END IF;

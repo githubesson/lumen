@@ -1003,18 +1003,33 @@ func (s *Store) SoftDeleteByPath(ctx context.Context, path string) error {
 // HardDeleteByPath removes every DB trace of a file: the track row (cascading
 // to playlist_tracks, user_track_stats, play_history, track_artists) and any
 // ingest_errors for the path. Used when the file is missing from disk so it
-// can be cleanly re-ingested if it ever reappears.
+// can be cleanly re-ingested if it ever reappears. A linked track's
+// references move to its group first (migration 0031), so the group is
+// locked the way links lock it, and a race starts over (retryLink).
 func (s *Store) HardDeleteByPath(ctx context.Context, path string) error {
 	path = dbtext.Clean(path)
 	// One transaction: run as two independent pool statements, a cancelled
 	// rescan or a lock wait between them left the ingest-error row gone while
 	// the stale tracks row survived, and the only caller (pruneMissing) just
 	// logs a warning — so the inconsistency was permanent.
-	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+	return s.retryLink(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT id FROM tracks WHERE file_path = $1`, path)
+		if err != nil {
+			return err
+		}
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return err
+		}
+		if len(ids) > 0 {
+			if err := lockTrackGroups(ctx, tx, ids); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.Exec(ctx, `DELETE FROM ingest_errors WHERE file_path = $1`, path); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `DELETE FROM tracks WHERE file_path = $1`, path)
+		_, err = tx.Exec(ctx, `DELETE FROM tracks WHERE file_path = $1`, path)
 		return err
 	})
 }
@@ -1113,35 +1128,16 @@ func (s *Store) DeleteGlobalTrack(ctx context.Context, trackID uuid.UUID) ([]str
 			}
 			return err
 		}
-		// Lock the track and those linked to it in id order, as links do,
-		// before the deletes below take them in another order. A track a link
-		// added while this waited isn't locked: start over (retryLink) rather
-		// than delete it out of order.
-		const group = `SELECT id FROM tracks WHERE id = $1 OR linked_to = $1 ORDER BY id`
-		rows, err := tx.Query(ctx, group+` FOR UPDATE`, trackID)
-		if err != nil {
+		// Lock the track's linked group in id order, as links do, before the
+		// deletes below take its rows in another order.
+		if err := lockTrackGroups(ctx, tx, []uuid.UUID{trackID}); err != nil {
 			return err
-		}
-		locked, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-		if err != nil {
-			return err
-		}
-		rows, err = tx.Query(ctx, group, trackID)
-		if err != nil {
-			return err
-		}
-		members, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-		if err != nil {
-			return err
-		}
-		if !slices.Equal(members, locked) {
-			return errLinkRaced
 		}
 
 		// Collect alias paths before the cascade drops the track_aliases rows,
 		// for this track and the tracks linked to it.
 		paths = []string{filePath}
-		rows, err = tx.Query(ctx, `
+		rows, err := tx.Query(ctx, `
 			SELECT file_path FROM tracks WHERE linked_to = $1
 			UNION ALL
 			SELECT al.file_path FROM track_aliases al

@@ -742,3 +742,99 @@ func TestWritesForAHiddenTrackLandOnTheSong(t *testing.T) {
 		}
 	}
 }
+
+// One statement taking the shown track and a hidden file (a root purge, a
+// bulk delete) hands both files' plays and playlist entries to a linked
+// file that survives, whichever row the statement reaches first.
+func TestOneStatementDeleteHandsRefsToTheSurvivor(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	lib := library.NewStore(pool)
+	pls := playlists.NewStore(pool)
+	user := redteamUser(t, ctx, pool)
+	pl, err := pls.Create(ctx, user, "Survivor "+uuid.NewString()[:8], "", playlists.VisibilityPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM playlists WHERE id = $1`, pl.ID) })
+	for i := range 8 {
+		shown, hidden, third := redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil)
+		credit(t, ctx, pool, shown, pageArtist(t, ctx, pool, "Survivor"))
+		for _, id := range []uuid.UUID{hidden, third} {
+			if _, err := lib.LinkTracks(ctx, shown, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO user_track_stats(user_id, track_id, play_count) VALUES ($1, $2, 1), ($1, $3, 2)`,
+			user, shown, hidden); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM playlist_tracks WHERE playlist_id = $1`, pl.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := pls.AddEntries(ctx, pl.ID, []uuid.UUID{hidden}, nil, user); err != nil {
+			t.Fatal(err)
+		}
+		gone := []uuid.UUID{shown, hidden}
+		if i%2 == 0 {
+			_, err = pool.Exec(ctx, `UPDATE tracks SET deleted_at = NOW() WHERE id = ANY($1)`, gone)
+		} else {
+			_, err = pool.Exec(ctx, `DELETE FROM tracks WHERE id = ANY($1)`, gone)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		var plays int
+		var linkedTo *uuid.UUID
+		var visible bool
+		var entry uuid.UUID
+		if err := pool.QueryRow(ctx, `
+			SELECT COALESCE((SELECT play_count FROM user_track_stats WHERE user_id = $1 AND track_id = t.id), 0),
+			       t.linked_to, t.library_visible,
+			       (SELECT track_id FROM playlist_tracks WHERE playlist_id = $3)
+			FROM tracks t WHERE t.id = $2`, user, third, pl.ID).Scan(&plays, &linkedTo, &visible, &entry); err != nil {
+			t.Fatal(err)
+		}
+		if plays != 3 || linkedTo != nil || !visible || entry != third {
+			t.Fatalf("round %d: survivor has %d plays, linked to %v, visible %v; playlist entry on %s",
+				i, plays, linkedTo, visible, entry)
+		}
+	}
+}
+
+// A prune of the shown file and an admin delete of the hidden one don't
+// deadlock: both lock the group the way links do.
+func TestPruneAndAdminDeleteOfOneGroupBothSucceed(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	lib := library.NewStore(pool)
+	user := redteamUser(t, ctx, pool)
+	for range 30 {
+		shown, hidden := redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil)
+		if _, err := lib.LinkTracks(ctx, shown, hidden); err != nil {
+			t.Fatal(err)
+		}
+		// References on both, so each delete writes onto the other's row.
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO user_track_stats(user_id, track_id, play_count) VALUES ($1, $2, 1), ($1, $3, 1)`,
+			user, shown, hidden); err != nil {
+			t.Fatal(err)
+		}
+		var shownPath string
+		if err := pool.QueryRow(ctx, `SELECT file_path FROM tracks WHERE id = $1`, shown).Scan(&shownPath); err != nil {
+			t.Fatal(err)
+		}
+		var pruneErr, deleteErr error
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); pruneErr = lib.HardDeleteByPath(ctx, shownPath) }()
+		go func() { defer wg.Done(); _, deleteErr = lib.DeleteGlobalTrack(ctx, hidden) }()
+		wg.Wait()
+		if pruneErr != nil || deleteErr != nil {
+			t.Fatalf("prune = %v, admin delete = %v", pruneErr, deleteErr)
+		}
+		var left int
+		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM tracks WHERE id IN ($1, $2)`, shown, hidden).Scan(&left); err != nil || left != 0 {
+			t.Fatalf("%d of the group's tracks left, %v", left, err)
+		}
+	}
+}
