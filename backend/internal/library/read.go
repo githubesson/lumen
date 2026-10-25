@@ -728,6 +728,16 @@ const trackSearchAliases = `EXISTS (
 			    AND (
 			      lt.title ILIKE '%' || $2 || '%'
 			      OR lt.file_path ILIKE '%' || $2 || '%'
+			      OR EXISTS (
+			        SELECT 1 FROM track_aliases lal
+			        WHERE lal.track_id = lt.id
+			          AND (
+			            lal.title ILIKE '%' || $2 || '%'
+			            OR lal.artist_names ILIKE '%' || $2 || '%'
+			            OR lal.album_title ILIKE '%' || $2 || '%'
+			            OR lal.file_path ILIKE '%' || $2 || '%'
+			          )
+			      )
 			    )
 			)`
 

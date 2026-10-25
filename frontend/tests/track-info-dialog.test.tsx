@@ -393,7 +393,7 @@ it("compares linked files' tags and audio, marking the one that plays", async ()
   expect(field("File")).toBe("calm down gz.wav");
   // Only admins get to change the group.
   expect(screen.queryByRole("button", { name: "Link a file" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Unlink" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Unlink/ })).toBeNull();
 });
 
 it("links another library file found by the song's title", async () => {
@@ -425,9 +425,27 @@ it("unlinks a linked file", async () => {
   mock.getTrack.mockResolvedValueOnce(calmDown);
   mock.unlinkTrack.mockResolvedValue({ ...track("mp3", undefined), title: "Calm Down", file_name: "Calm Down.mp3" });
   render(<TrackInfoDialog open trackId="mp3" canManage onClose={() => {}} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Unlink" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Unlink calm down gz.wav" }));
   await waitFor(() => expect(screen.queryByText("Versions (2)")).toBeNull());
   expect(mock.unlinkTrack).toHaveBeenCalledWith("wav");
   expect(field("File")).toBe("Calm Down.mp3");
-  expect(screen.getByRole("button", { name: "Link a file" })).toBeTruthy();
+  // The Unlink button is gone; focus stays in the dialog.
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Link a file" })));
+});
+
+it("cancels the file search on Escape without closing the dialog", async () => {
+  const onClose = vi.fn();
+  mock.getTrack.mockResolvedValueOnce({ ...track("mp3", undefined), title: "Calm Down" });
+  mock.listTracks.mockResolvedValue([]);
+  render(<TrackInfoDialog open trackId="mp3" canManage onClose={onClose} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Link a file" }));
+  const search = screen.getByRole("searchbox", { name: "Find another file of this song" });
+  await waitFor(() => expect(document.activeElement).toBe(search));
+  fireEvent.keyDown(search, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
+  expect(onClose).not.toHaveBeenCalled();
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Link a file" })));
+  // Escape anywhere else still closes the dialog.
+  fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+  expect(onClose).toHaveBeenCalledTimes(1);
 });

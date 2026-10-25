@@ -84,12 +84,20 @@ CREATE TRIGGER tracks_linked_refs_on_delete
     EXECUTE FUNCTION tracks_move_linked_refs();
 
 -- After the statement, the heir is shown and the rest re-pointed; a soft
--- delete keeps its references, so they move now.
+-- delete keeps its references, so they move now. Links are one level deep
+-- (library.showLinked), but should a track linked to another still have
+-- tracks linked to it, deleting it moves them up rather than failing the
+-- foreign key.
 CREATE FUNCTION tracks_promote_linked() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
-    heir UUID := linked_heir(OLD.id);
+    heir UUID;
 BEGIN
+    IF OLD.linked_to IS NOT NULL THEN
+        UPDATE tracks SET linked_to = OLD.linked_to WHERE linked_to = OLD.id;
+        RETURN NULL;
+    END IF;
+    heir := linked_heir(OLD.id);
     IF heir IS NULL THEN
         -- Only deleted tracks are left linked to it.
         UPDATE tracks SET linked_to = NULL, library_visible = TRUE WHERE linked_to = OLD.id;
@@ -105,7 +113,7 @@ END $$;
 
 CREATE TRIGGER tracks_promote_linked_on_delete
     AFTER DELETE ON tracks
-    FOR EACH ROW WHEN (OLD.source = 'local' AND OLD.linked_to IS NULL)
+    FOR EACH ROW WHEN (OLD.source = 'local')
     EXECUTE FUNCTION tracks_promote_linked();
 
 CREATE TRIGGER tracks_promote_linked_on_soft_delete

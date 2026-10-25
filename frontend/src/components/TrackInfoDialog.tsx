@@ -16,7 +16,7 @@ import {
 } from "@music-library/core/tidal/track-info";
 import { formatBitrate, formatDurationMs } from "@music-library/core/format";
 import { useDebouncedValue } from "@music-library/core/use-debounced-value";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "./Button";
 import CoverArt from "./CoverArt";
 import { DialogShell } from "./DialogShell";
@@ -68,9 +68,11 @@ export function TrackInfoDialog({
   const [relinked, setRelinked] = useState<{
     openedAs: string;
     track: TrackDetail;
+    /** Counts links and unlinks, so focus can follow each. */
+    n: number;
   } | null>(null);
-  const track =
-    open && relinked?.openedAs === openedAs ? relinked.track : fetched;
+  const current = open && relinked?.openedAs === openedAs ? relinked : null;
+  const track = current ? current.track : fetched;
   const tidal = useTidalTrackInfo(open, trackInfoTidalId(track), requestNonce);
   const canLink = canManage && track?.source === "local" && !track.owned;
 
@@ -88,7 +90,10 @@ export function TrackInfoDialog({
               track={track}
               tidal={tidal}
               canLink={canLink}
-              onRelinked={(t) => setRelinked({ openedAs, track: t })}
+              relinks={current?.n ?? 0}
+              onRelinked={(t) =>
+                setRelinked((r) => ({ openedAs, track: t, n: (r?.n ?? 0) + 1 }))
+              }
             />
           )}
         </div>
@@ -133,6 +138,7 @@ function Details({
   track,
   tidal,
   canLink,
+  relinks,
   onRelinked,
 }: {
   track: TrackDetail;
@@ -140,6 +146,8 @@ function Details({
   tidal: TidalTrackInfoResult;
   /** The viewer may link and unlink files of this track. */
   canLink: boolean;
+  /** How many links and unlinks this opening has seen. */
+  relinks: number;
   onRelinked: (track: TrackDetail) => void;
 }) {
   const view = trackInfoRows(track, tidal);
@@ -164,6 +172,7 @@ function Details({
           key={track.id}
           track={track}
           canLink={canLink}
+          relinks={relinks}
           onRelinked={onRelinked}
         />
       )}
@@ -220,10 +229,12 @@ function fileFormat(fileName: string, format?: string): string {
 function Versions({
   track,
   canLink,
+  relinks,
   onRelinked,
 }: {
   track: TrackDetail;
   canLink: boolean;
+  relinks: number;
   onRelinked: (track: TrackDetail) => void;
 }) {
   const ownId = track.db_track_id ?? track.id;
@@ -278,6 +289,13 @@ function Versions({
   const [linking, setLinking] = useState(false);
   const [unlinking, setUnlinking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const linkButton = useRef<HTMLButtonElement>(null);
+  const [cancels, setCancels] = useState(0);
+  // A link, an unlink or a cancelled search removes the control that was
+  // used, so focus goes back to "Link a file" rather than out of the dialog.
+  useEffect(() => {
+    if (relinks || cancels) linkButton.current?.focus();
+  }, [relinks, cancels]);
 
   const relinked = (updated: TrackDetail) => {
     libraryChanged.emit();
@@ -321,7 +339,7 @@ function Versions({
             />
           )}
           {canLink && !linking && (
-            <Button size="sm" onClick={() => setLinking(true)}>
+            <Button ref={linkButton} size="sm" onClick={() => setLinking(true)}>
               Link a file
             </Button>
           )}
@@ -332,7 +350,10 @@ function Versions({
           track={track}
           exclude={new Set([ownId, ...(track.linked ?? []).map((l) => l.id)])}
           onLinked={relinked}
-          onCancel={() => setLinking(false)}
+          onCancel={() => {
+            setLinking(false);
+            setCancels((n) => n + 1);
+          }}
         />
       )}
       {error && <ErrorBanner message={error} />}
@@ -370,6 +391,7 @@ function Versions({
                             size="sm"
                             variant="ghost"
                             className="version-unlink"
+                            aria-label={`Unlink ${versionLabel(v, i)}`}
                             disabled={unlinking !== null}
                             onClick={() => void unlink(v.linkedId!)}
                           >
@@ -479,7 +501,7 @@ function VersionLinker({
   };
 
   return (
-    <div className="version-linker">
+    <div className="version-linker" data-owns-escape>
       <div className="version-linker-search">
         <SearchInput
           value={query}

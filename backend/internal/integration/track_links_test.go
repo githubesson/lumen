@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -185,6 +186,16 @@ func TestLinkedTracksShowTheFullestTagsAndPlayTheBestFile(t *testing.T) {
 		if err != nil || len(rows) != 1 || rows[0].ID != taggedID {
 			t.Fatalf("search %q = %+v, %v", q, rows, err)
 		}
+	}
+
+	// So is an alias of the hidden file.
+	if _, err := pool.Exec(ctx, `INSERT INTO track_aliases(track_id, file_path, title) VALUES ($1, $2, $3)`,
+		wavID, filepath.Join(root, "zebra.wav"), "Zebra "+sfx); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := lib.ListTracks(ctx, library.ListTracksParams{ViewerID: user, Query: "Zebra " + sfx, Limit: 5}); err != nil ||
+		len(rows) != 1 || rows[0].ID != taggedID {
+		t.Fatalf("search by the hidden file's alias = %+v, %v", rows, err)
 	}
 
 	// The playlist entry and stats moved onto the shown track.
@@ -366,5 +377,107 @@ func TestLinkedTrackGroups(t *testing.T) {
 	link(d, e)
 	if _, err := pool.Exec(ctx, `DELETE FROM tracks WHERE id IN ($1, $2)`, d, e); err != nil {
 		t.Fatalf("deleting a group in one statement: %v", err)
+	}
+}
+
+// A track soft-deleted with its root keeps its link. When its group is merged
+// under another track, or its shown track unlinked, it follows to the new
+// shown track, so deleting the old one doesn't trip the foreign key.
+func TestLinksStayOneLevelDeep(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	lib := library.NewStore(pool)
+	track := func(tagged bool) (uuid.UUID, string) {
+		t.Helper()
+		id := redteamTrack(t, ctx, pool, nil, nil)
+		if tagged {
+			credit(t, ctx, pool, id, pageArtist(t, ctx, pool, "Deep"))
+		}
+		var path string
+		if err := pool.QueryRow(ctx, `SELECT file_path FROM tracks WHERE id = $1`, id).Scan(&path); err != nil {
+			t.Fatal(err)
+		}
+		return id, path
+	}
+	link := func(x, y uuid.UUID) uuid.UUID {
+		t.Helper()
+		shown, err := lib.LinkTracks(ctx, x, y)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return shown
+	}
+	linkedTo := func(id uuid.UUID) *uuid.UUID {
+		t.Helper()
+		var to *uuid.UUID
+		if err := pool.QueryRow(ctx, `SELECT linked_to FROM tracks WHERE id = $1`, id).Scan(&to); err != nil {
+			t.Fatal(err)
+		}
+		return to
+	}
+
+	s, sPath := track(false)
+	l, lPath := track(false)
+	s2, _ := track(true)
+	link(s, l)
+	if err := lib.SoftDeleteByPath(ctx, lPath); err != nil {
+		t.Fatal(err)
+	}
+	if shown := link(s, s2); shown != s2 {
+		t.Fatalf("merged group shows %s, want the credited %s", shown, s2)
+	}
+	if to := linkedTo(l); to == nil || *to != s2 {
+		t.Fatalf("soft-deleted track linked to %v, want %s", to, s2)
+	}
+	if err := lib.HardDeleteByPath(ctx, sPath); err != nil {
+		t.Fatalf("deleting the formerly shown track: %v", err)
+	}
+	if _, err := lib.DeleteGlobalTrack(ctx, s2); err != nil {
+		t.Fatalf("deleting the group: %v", err)
+	}
+
+	p, pPath := track(true)
+	m1, m1Path := track(false)
+	m2, m2Path := track(false)
+	link(p, m1)
+	link(p, m2)
+	if err := lib.SoftDeleteByPath(ctx, m2Path); err != nil {
+		t.Fatal(err)
+	}
+	if shown, err := lib.UnlinkTrack(ctx, p); err != nil || shown != m1 {
+		t.Fatalf("unlinking the shown track = %s, %v; want %s", shown, err, m1)
+	}
+	if to := linkedTo(m2); to == nil || *to != m1 {
+		t.Fatalf("soft-deleted track linked to %v, want %s", to, m1)
+	}
+	for _, path := range []string{pPath, m1Path} {
+		if err := lib.HardDeleteByPath(ctx, path); err != nil {
+			t.Fatalf("deleting %s: %v", path, err)
+		}
+	}
+	if to := linkedTo(m2); to != nil {
+		t.Fatalf("soft-deleted track still linked to %s after its group went", to)
+	}
+}
+
+// Two admins linking the same pair from either side both succeed.
+func TestConcurrentLinksOfOnePairBothSucceed(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	lib := library.NewStore(pool)
+	for range 15 {
+		a, b := redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil)
+		var shown [2]uuid.UUID
+		var errs [2]error
+		var wg sync.WaitGroup
+		for i, pair := range [2][2]uuid.UUID{{a, b}, {b, a}} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				shown[i], errs[i] = lib.LinkTracks(ctx, pair[0], pair[1])
+			}()
+		}
+		wg.Wait()
+		if errs[0] != nil || errs[1] != nil || shown[0] != shown[1] {
+			t.Fatalf("concurrent links = %s %v, %s %v", shown[0], errs[0], shown[1], errs[1])
+		}
 	}
 }

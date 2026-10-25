@@ -82,8 +82,12 @@ export function DialogShell({
         trapTab(event, panel);
         return;
       }
-      // An open Select owns Escape until it closes.
-      if (event.target instanceof Element && event.target.closest('[role="listbox"]')) {
+      // An open Select owns Escape until it closes, as does a control that
+      // cancels something of its own with it (data-owns-escape).
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[role="listbox"], [data-owns-escape]')
+      ) {
         return;
       }
       if (event.key !== "Escape") return;

@@ -175,6 +175,10 @@ const linkShownOrder = `t.metadata_edited_at IS NOT NULL DESC, ` + trackHasArtis
 // errLinkRaced reports that a group changed between reading and locking it.
 var errLinkRaced = fmt.Errorf("%w: the tracks changed while linking; try again", ErrInvalidInput)
 
+// linkRetries bounds how often LinkTracks and UnlinkTrack read groups again
+// after another link changed them between reading and locking.
+const linkRetries = 3
+
 // linkGroup is the shown track of the group id belongs to, which must be a
 // live shared library track.
 func linkGroup(ctx context.Context, tx pgx.Tx, id uuid.UUID) (uuid.UUID, error) {
@@ -201,8 +205,22 @@ func linkGroup(ctx context.Context, tx pgx.Tx, id uuid.UUID) (uuid.UUID, error) 
 	return id, nil
 }
 
+// linkGroups is linkGroup for each of ids.
+func linkGroups(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) ([]uuid.UUID, error) {
+	groups := make([]uuid.UUID, len(ids))
+	for i, id := range ids {
+		g, err := linkGroup(ctx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		groups[i] = g
+	}
+	return groups, nil
+}
+
 // lockLinkGroups locks every live track of the given groups, in id order,
-// and checks each of ids still belongs to the group it was read in.
+// and checks each of ids still belongs to the group it was read in:
+// errLinkRaced when one doesn't.
 func lockLinkGroups(ctx context.Context, tx pgx.Tx, groups, ids []uuid.UUID) ([]uuid.UUID, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT id FROM tracks
@@ -216,28 +234,34 @@ func lockLinkGroups(ctx context.Context, tx pgx.Tx, groups, ids []uuid.UUID) ([]
 	if err != nil {
 		return nil, err
 	}
-	for i, id := range ids {
-		g, err := linkGroup(ctx, tx, id)
-		if err != nil {
-			return nil, err
-		}
-		if g != groups[i] {
-			return nil, errLinkRaced
-		}
+	now, err := linkGroups(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Equal(now, groups) {
+		return nil, errLinkRaced
 	}
 	return locked, nil
 }
 
-// showLinked makes shown the track of the group made of ids that stays in
-// the library, and hides the rest behind it.
-func showLinked(ctx context.Context, tx pgx.Tx, shown uuid.UUID, ids []uuid.UUID) error {
-	_, err := tx.Exec(ctx, `
+// showLinked makes shown the track of the group made of the live tracks ids
+// that stays in the library, and hides the rest behind it. Tracks still
+// linked to one of formerly, the group's previous shown tracks, are linked
+// to shown too, the soft-deleted ones included: a link is always one level
+// deep, so a hidden track never has others linked to it and deleting it
+// can't strand them.
+func showLinked(ctx context.Context, tx pgx.Tx, shown uuid.UUID, ids, formerly []uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `
 		UPDATE tracks SET
 			linked_to = CASE WHEN id = $1 THEN NULL ELSE $1::uuid END,
 			library_visible = (id = $1),
 			updated_at = NOW()
 		WHERE id = ANY($2) AND linked_to IS DISTINCT FROM CASE WHEN id = $1 THEN NULL ELSE $1::uuid END`,
-		shown, ids)
+		shown, ids); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `
+		UPDATE tracks SET linked_to = $1 WHERE linked_to = ANY($2) AND id <> $1`, shown, formerly)
 	return err
 }
 
@@ -253,34 +277,36 @@ func (s *Store) LinkTracks(ctx context.Context, targetID, otherID uuid.UUID) (uu
 	var shown uuid.UUID
 	err := dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
 		ids := []uuid.UUID{targetID, otherID}
-		groups := make([]uuid.UUID, len(ids))
-		for i, id := range ids {
-			g, err := linkGroup(ctx, tx, id)
+		for attempt := 1; ; attempt++ {
+			groups, err := linkGroups(ctx, tx, ids)
 			if err != nil {
 				return err
 			}
-			groups[i] = g
-		}
-		if groups[0] == groups[1] {
-			shown = groups[0]
-			return nil
-		}
-		members, err := lockLinkGroups(ctx, tx, groups, ids)
-		if err != nil {
+			if groups[0] == groups[1] {
+				// Already linked, perhaps by a request racing this one.
+				shown = groups[0]
+				return nil
+			}
+			members, err := lockLinkGroups(ctx, tx, groups, ids)
+			if errors.Is(err, errLinkRaced) && attempt < linkRetries {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if err := tx.QueryRow(ctx, `
+				SELECT t.id FROM tracks t WHERE t.id = ANY($1)
+				ORDER BY `+linkShownOrder+`, t.id = $2 DESC, t.created_at, t.id
+				LIMIT 1`, members, groups[0]).Scan(&shown); err != nil {
+				return err
+			}
+			if err := showLinked(ctx, tx, shown, members, groups); err != nil {
+				return err
+			}
+			_, err = tx.Exec(ctx, `
+				SELECT move_track_refs(m, $1) FROM unnest($2::uuid[]) AS m WHERE m <> $1`, shown, members)
 			return err
 		}
-		if err := tx.QueryRow(ctx, `
-			SELECT t.id FROM tracks t WHERE t.id = ANY($1)
-			ORDER BY `+linkShownOrder+`, t.id = $2 DESC, t.created_at, t.id
-			LIMIT 1`, members, groups[0]).Scan(&shown); err != nil {
-			return err
-		}
-		if err := showLinked(ctx, tx, shown, members); err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `
-			SELECT move_track_refs(m, $1) FROM unnest($2::uuid[]) AS m WHERE m <> $1`, shown, members)
-		return err
 	})
 	return shown, err
 }
@@ -293,29 +319,34 @@ func (s *Store) LinkTracks(ctx context.Context, targetID, otherID uuid.UUID) (uu
 func (s *Store) UnlinkTrack(ctx context.Context, trackID uuid.UUID) (uuid.UUID, error) {
 	shown := trackID
 	err := dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
-		group, err := linkGroup(ctx, tx, trackID)
-		if err != nil {
-			return err
+		for attempt := 1; ; attempt++ {
+			group, err := linkGroup(ctx, tx, trackID)
+			if err != nil {
+				return err
+			}
+			members, err := lockLinkGroups(ctx, tx, []uuid.UUID{group}, []uuid.UUID{trackID})
+			if errors.Is(err, errLinkRaced) && attempt < linkRetries {
+				continue
+			}
+			if err != nil || len(members) < 2 {
+				return err
+			}
+			if trackID != group {
+				shown = group
+				_, err := tx.Exec(ctx, `
+					UPDATE tracks SET linked_to = NULL, library_visible = TRUE, updated_at = NOW()
+					WHERE id = $1`, trackID)
+				return err
+			}
+			rest := slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == trackID })
+			if err := tx.QueryRow(ctx, `
+				SELECT t.id FROM tracks t WHERE t.id = ANY($1)
+				ORDER BY `+linkShownOrder+`, t.created_at, t.id
+				LIMIT 1`, rest).Scan(&shown); err != nil {
+				return err
+			}
+			return showLinked(ctx, tx, shown, rest, []uuid.UUID{trackID})
 		}
-		members, err := lockLinkGroups(ctx, tx, []uuid.UUID{group}, []uuid.UUID{trackID})
-		if err != nil || len(members) < 2 {
-			return err
-		}
-		if trackID != group {
-			shown = group
-			_, err := tx.Exec(ctx, `
-				UPDATE tracks SET linked_to = NULL, library_visible = TRUE, updated_at = NOW()
-				WHERE id = $1`, trackID)
-			return err
-		}
-		rest := slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == trackID })
-		if err := tx.QueryRow(ctx, `
-			SELECT t.id FROM tracks t WHERE t.id = ANY($1)
-			ORDER BY `+linkShownOrder+`, t.created_at, t.id
-			LIMIT 1`, rest).Scan(&shown); err != nil {
-			return err
-		}
-		return showLinked(ctx, tx, shown, rest)
 	})
 	return shown, err
 }

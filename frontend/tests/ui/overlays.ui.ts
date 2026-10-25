@@ -52,7 +52,7 @@ test("track info dialog with linked files", async ({ page }, testInfo) => {
   const menu = await openContextMenu(page, linkedTrack);
   await menu.getByRole("menuitem", { name: "Song info" }).click();
   const dialog = page.getByRole("dialog");
-  await ready(page, dialog.getByRole("button", { name: "Unlink" }));
+  await ready(page, dialog.getByRole("button", { name: /^Unlink / }));
   await expect(dialog.getByRole("columnheader")).toHaveText([/Shown/, /Plays/]);
   await checkUI(page, testInfo);
 });
