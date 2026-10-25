@@ -26,12 +26,26 @@ export function rowKeyOrIndex(row: { key: string } | undefined, index: number): 
 }
 
 /**
+ * `keys` with each repeat numbered in list order ("k", "k#1", "k#2"), so rows
+ * that share a key still get distinct ones.
+ */
+export function numberRepeatedKeys(keys: readonly string[]): string[] {
+  const seen = new Map<string, number>();
+  return keys.map((key) => {
+    const count = seen.get(key) ?? 0;
+    seen.set(key, count + 1);
+    return count === 0 ? key : `${key}#${count}`;
+  });
+}
+
+/**
  * The move a drop makes on `current`, where `from` and `to` index `dragged`
  * (the row keys the drag began on). The dragged row goes under the row it
  * was dropped under; when that row is gone, or the drop was at the top, it
  * goes above the row it was dropped above. Null when there's nothing to
  * move: an index outside `dragged`, a dragged row that's gone, no neighbour
- * left to place it by, or a row already where the drop puts it.
+ * left to place it by, or a row already where the drop puts it. Keys must
+ * be unique (see `numberRepeatedKeys`).
  */
 export function rebaseDrop(
   dragged: readonly string[],

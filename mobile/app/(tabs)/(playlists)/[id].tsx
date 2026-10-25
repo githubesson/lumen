@@ -66,7 +66,11 @@ import {
 } from "../../../components/swipe/swipeable-track-row";
 import { SteadyReorderableList } from "../../../components/steady-reorderable-list";
 import { qk } from "../../../lib/query-keys";
-import { playlistAfterDrop, rowKeyOrIndex } from "../../../lib/reorder-drop";
+import {
+  numberRepeatedKeys,
+  playlistAfterDrop,
+  rowKeyOrIndex,
+} from "../../../lib/reorder-drop";
 import { listPlaybackQueue, usePlayQueue } from "../../../lib/use-play-queue";
 import { useTrackSort } from "../../../lib/use-track-sort";
 import {
@@ -282,15 +286,16 @@ export default function PlaylistDetailScreen() {
     if (!canEdit && reorderMode) setReorderMode(false);
   }, [canEdit, reorderMode]);
 
-  const rowModels = useMemo<PlaylistTrackRowModel[]>(
-    () =>
-      localTracks.map((entry) => ({
-        key: playlistTrackKey(entry),
-        entry,
-        track: entryToTrack(entry),
-      })),
-    [localTracks],
-  );
+  const rowModels = useMemo<PlaylistTrackRowModel[]>(() => {
+    // One add can save a track twice with the same timestamp and adder, and
+    // a drop is matched to its row by key.
+    const keys = numberRepeatedKeys(localTracks.map(playlistTrackKey));
+    return localTracks.map((entry, i) => ({
+      key: keys[i],
+      entry,
+      track: entryToTrack(entry),
+    }));
+  }, [localTracks]);
   // What the list actually shows; the play queue follows this order too.
   const displayModels = useMemo<PlaylistTrackRowModel[]>(
     () =>

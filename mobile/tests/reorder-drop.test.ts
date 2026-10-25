@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isIndexIn,
+  numberRepeatedKeys,
   playlistAfterDrop,
   rebaseDrop,
   rowKeyOrIndex,
@@ -88,6 +89,27 @@ describe("rebaseDrop", () => {
         }
       }
     }
+  });
+});
+
+describe("numberRepeatedKeys", () => {
+  it("numbers repeats in list order and leaves unique keys alone", () => {
+    expect(numberRepeatedKeys(["a", "b", "a", "c", "a"])).toEqual([
+      "a",
+      "b",
+      "a#1",
+      "c",
+      "a#2",
+    ]);
+    expect(numberRepeatedKeys([])).toEqual([]);
+  });
+
+  it("lets a drop move the copy that was dragged, not the first one", () => {
+    // The same track saved twice by one add: equal keys before numbering.
+    const keys = numberRepeatedKeys(["a", "b", "a"]);
+    const move = rebaseDrop(keys, keys, 2, 0);
+    expect(move).toEqual({ from: 2, to: 0 });
+    expect(applyMove(["a1", "b", "a2"], move!)).toEqual(["a2", "a1", "b"]);
   });
 });
 

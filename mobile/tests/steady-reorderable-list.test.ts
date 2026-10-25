@@ -4,11 +4,15 @@ import type {
   ReorderableListDragStartEvent,
   ReorderableListReorderEvent,
 } from "react-native-reorderable-list";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SteadyReorderableList } from "../components/steady-reorderable-list";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  LET_GO_AFTER_DROP_MS,
+  SteadyReorderableList,
+} from "../components/steady-reorderable-list";
 
 // Just enough React to render the list outside a renderer: hook cells kept by
 // call order across renders, and layout effects run once a render is done.
+// Mount effects only clean up, so they're skipped.
 const hooks = vi.hoisted(() => ({
   cells: [] as unknown[],
   cursor: 0,
@@ -27,6 +31,7 @@ vi.mock("react", async (importOriginal) => ({
     return hooks.cells[cell];
   },
   useCallback: <T>(fn: T) => fn,
+  useEffect: () => {},
   useLayoutEffect: (effect: () => void) => {
     hooks.layoutEffects.push(effect);
   },
@@ -74,11 +79,16 @@ function landDrop(list: ListProps, from: number, to: number) {
   list.onReorder({ from, to });
 }
 
+/** How long after a lift the list lets go if no drop arrives. */
+const LET_GO_MS = 200 + LET_GO_AFTER_DROP_MS;
+
 beforeEach(() => {
+  vi.useFakeTimers();
   hooks.cells = [];
   hooks.layoutEffects = [];
   onReorder.mockReset();
 });
+afterEach(() => vi.useRealTimers());
 
 describe("SteadyReorderableList", () => {
   it("shows its data while nothing is dragged", () => {
@@ -128,14 +138,51 @@ describe("SteadyReorderableList", () => {
     expect(render(left).data).toBe(left);
   });
 
-  it("lets go when a row is put back where it was, which never reaches onReorder", () => {
+  it("lets go once a row put back where it was has settled, which never reaches onReorder", () => {
     render(rows("a", "b", "c")).onDragStart({ index: 1 });
     const fresh = rows("a", "b", "c", "d");
     const list = render(fresh);
     expect(list.data).not.toBe(fresh);
     list.onDragEnd({ from: 1, to: 1 });
+    // Not while the row is still sliding back into its slot.
+    vi.advanceTimersByTime(LET_GO_MS - 1);
+    expect(render(fresh).data).not.toBe(fresh);
+    vi.advanceTimersByTime(1);
     expect(render(fresh).data).toBe(fresh);
     expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  it("lets go when the library drops a real move without calling onReorder", () => {
+    // ReorderableListCore skips `reorder` when the finger lifts exactly on
+    // the new slot; the hold mustn't outlive that drag.
+    render(rows("a", "b", "c")).onDragStart({ index: 0 });
+    const fresh = rows("a", "b", "c", "d");
+    render(fresh).onDragEnd({ from: 0, to: 2 });
+    vi.advanceTimersByTime(LET_GO_MS);
+    expect(render(fresh).data).toBe(fresh);
+  });
+
+  it("doesn't let go of the next drag on the last one's timer", () => {
+    const first = rows("a", "b", "c");
+    render(first).onDragStart({ index: 1 });
+    render(rows("a", "b", "c", "d")).onDragEnd({ from: 1, to: 1 });
+    vi.advanceTimersByTime(LET_GO_MS - 100);
+    // A new drag on the still-held rows, before the first one let go.
+    render(rows("a", "b", "c", "d")).onDragStart({ index: 0 });
+    vi.advanceTimersByTime(LET_GO_MS);
+    expect(render(rows("a", "b", "c", "d")).data).toBe(first);
+  });
+
+  it("replays a drop that arrives after the hold let go onto the rows the drag began on", () => {
+    const list = render(rows("a", "b", "c"));
+    list.onDragStart({ index: 0 });
+    const fresh = rows("x", "a", "b", "c");
+    render(fresh).onDragEnd({ from: 0, to: 2 });
+    vi.advanceTimersByTime(LET_GO_MS);
+    expect(render(fresh).data).toBe(fresh);
+    // A busy JS thread delivers the drop late: indices still refer to a, b, c.
+    list.onReorder({ from: 0, to: 2 });
+    expect(onReorder).toHaveBeenCalledExactlyOnceWith({ from: 1, to: 3 });
   });
 
   it("calls the latest onReorder with the latest rows", () => {
