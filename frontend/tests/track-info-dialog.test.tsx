@@ -3,10 +3,22 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TrackInfoDialog } from "../src/components/TrackInfoDialog";
 import { ApiError, type TidalTrackInfo, type TrackDetail } from "../src/api";
 
-const mock = vi.hoisted(() => ({ getTrack: vi.fn(), getTidalTrack: vi.fn() }));
+const mock = vi.hoisted(() => ({
+  getTrack: vi.fn(),
+  getTidalTrack: vi.fn(),
+  listTracks: vi.fn(),
+  linkTrack: vi.fn(),
+  unlinkTrack: vi.fn(),
+}));
 vi.mock("../../core/src/api", async (original) => ({
   ...await original<typeof import("../../core/src/api")>(),
-  api: { getTrack: mock.getTrack, getTidalTrack: mock.getTidalTrack },
+  api: {
+    getTrack: mock.getTrack,
+    getTidalTrack: mock.getTidalTrack,
+    listTracks: mock.listTracks,
+    linkTrack: mock.linkTrack,
+    unlinkTrack: mock.unlinkTrack,
+  },
 }));
 
 const track = (id: string, aliases: TrackDetail["aliases"]): TrackDetail => ({
@@ -345,4 +357,77 @@ it("cleans the heading's text and leaves out fields the track has no value for",
   }
   expect(field("File")).toBe("Sanfran.flac");
   expect(screen.getByText("File", { selector: "dt" }).parentElement?.hasAttribute("data-wide")).toBe(true);
+});
+
+// The tagged MP3 and the studio WAV it was encoded from, linked: the MP3's
+// tags show and the WAV plays.
+const calmDown: TrackDetail = {
+  ...track("mp3", undefined),
+  title: "Calm Down",
+  album_title: "Outsiders (Sessions)",
+  artists: [{ id: "jw", name: "Juice WRLD", role: "primary" }],
+  format: "WAV",
+  bitrate: 2116800,
+  file_name: "calm down gz.wav",
+  tags_file_name: "Calm Down.mp3",
+  linked: [
+    { id: "mp3", file_name: "Calm Down.mp3", title: "Calm Down", artist_names: "Juice WRLD",
+      album_title: "Outsiders (Sessions)", format: "ID3v2.3", bitrate: 320000, duration_ms: 224052,
+      file_size: 9600000, shown: true },
+    { id: "wav", file_name: "calm down gz.wav", title: "Juice Wrld - calm down gz", album_title: "Others",
+      format: "WAV", bitrate: 2116800, duration_ms: 224000, file_size: 59585858, plays: true },
+  ],
+};
+
+it("compares linked files' tags and audio, marking the one that plays", async () => {
+  mock.getTrack.mockResolvedValueOnce(calmDown);
+  render(<TrackInfoDialog open trackId="mp3" onClose={() => {}} />);
+  await screen.findByText("Versions (2)");
+  expect(columns()).toEqual(["1Version 1: Calm Down.mp3Shown", "2Version 2: calm down gz.wavPlays"]);
+  const row = (label: string) =>
+    within(screen.getByRole("rowheader", { name: label }).closest("tr")!).getAllByRole("cell").map((c) => c.textContent);
+  expect(row("Format")).toEqual(["MP3", "WAV"]);
+  expect(row("Bitrate")).toEqual(["320 kbps", "2117 kbps"]);
+  // The Audio section describes the file that plays.
+  expect(field("Format")).toBe("WAV");
+  expect(field("File")).toBe("calm down gz.wav");
+  // Only admins get to change the group.
+  expect(screen.queryByRole("button", { name: "Link a file" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Unlink" })).toBeNull();
+});
+
+it("links another library file found by the song's title", async () => {
+  mock.getTrack.mockResolvedValueOnce({ ...track("mp3", undefined), title: "Calm Down (v2)" });
+  mock.listTracks.mockResolvedValue([
+    { id: "mp3", title: "Calm Down (v2)", duration_ms: 224052 },
+    { id: "mine", title: "Calm Down", duration_ms: 224000, owned: true },
+    { id: "wav", title: "Juice Wrld - calm down gz", album_title: "Others", duration_ms: 224000 },
+  ]);
+  mock.linkTrack.mockResolvedValue(calmDown);
+  render(<TrackInfoDialog open trackId="mp3" canManage onClose={() => {}} />);
+  // A track without other versions still offers to link one.
+  fireEvent.click(await screen.findByRole("button", { name: "Link a file" }));
+  const search = screen.getByRole("searchbox", { name: "Find another file of this song" });
+  expect((search as HTMLInputElement).value).toBe("Calm Down");
+  await waitFor(() => expect(mock.listTracks).toHaveBeenCalledWith(expect.objectContaining({ q: "Calm Down" })));
+  // The track itself and personal uploads aren't offered.
+  const result = await screen.findByRole("button", { name: /Juice Wrld - calm down gz/ });
+  expect(screen.queryByRole("button", { name: /^Calm Down/ })).toBeNull();
+
+  fireEvent.click(result);
+  await screen.findByText("Versions (2)");
+  expect(mock.linkTrack).toHaveBeenCalledWith("mp3", "wav");
+  expect(screen.queryByRole("searchbox")).toBeNull();
+  expect(columns()).toEqual(["1Version 1: Calm Down.mp3Shown", "2Version 2: calm down gz.wavPlaysUnlink"]);
+});
+
+it("unlinks a linked file", async () => {
+  mock.getTrack.mockResolvedValueOnce(calmDown);
+  mock.unlinkTrack.mockResolvedValue({ ...track("mp3", undefined), title: "Calm Down", file_name: "Calm Down.mp3" });
+  render(<TrackInfoDialog open trackId="mp3" canManage onClose={() => {}} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Unlink" }));
+  await waitFor(() => expect(screen.queryByText("Versions (2)")).toBeNull());
+  expect(mock.unlinkTrack).toHaveBeenCalledWith("wav");
+  expect(field("File")).toBe("Calm Down.mp3");
+  expect(screen.getByRole("button", { name: "Link a file" })).toBeTruthy();
 });

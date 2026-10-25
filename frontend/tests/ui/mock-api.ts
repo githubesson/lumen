@@ -159,7 +159,11 @@ function apiRoutes(signedIn: boolean): [string, RegExp, Handler][] {
     ["POST", /^\/api\/auth\/logout$/, () => noContent],
 
     // Library
-    ["GET", /^\/api\/tracks$/, (_m, url) => paged(sortedTracks(url.searchParams.get("sort")), url)],
+    ["GET", /^\/api\/tracks$/, (_m, url) => {
+      const q = url.searchParams.get("q")?.trim().toLowerCase();
+      const rows = sortedTracks(url.searchParams.get("sort"));
+      return paged(q ? rows.filter((t) => t.title.toLowerCase().includes(q)) : rows, url);
+    }],
     ["GET", new RegExp(`^/api/tracks/${id}/cover$`), (m) => cover(m[1])],
     ["GET", new RegExp(`^/api/tracks/${id}/stream$`), (m) => {
       const t = track(m[1]);
@@ -241,6 +245,15 @@ function apiRoutes(signedIn: boolean): [string, RegExp, Handler][] {
     }],
 
     // Admin
+    // Linking answers with the shown track; the fixtures keep one group.
+    ["POST", new RegExp(`^/api/admin/tracks/${id}/links$`), (m) => {
+      const t = track(m[1]);
+      return t ? { json: data.trackDetail(t) } : notFound;
+    }],
+    ["DELETE", new RegExp(`^/api/admin/tracks/${id}/links$`), (m) => {
+      const t = track(m[1].replace(/-wav$/, ""));
+      return t ? { json: { ...data.trackDetail(t), linked: undefined } } : notFound;
+    }],
     ["GET", /^\/api\/admin\/users$/, () => ({ json: data.adminUsers })],
     ["GET", /^\/api\/admin\/invites$/, () => ({ json: data.invites })],
     ["GET", /^\/api\/admin\/library\/roots$/, () => ({ json: data.musicRoots })],

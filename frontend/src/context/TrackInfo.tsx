@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useAuth } from "./Auth";
 
 const TrackInfoDialog = lazy(() =>
   import("../components/TrackInfoDialog").then((module) => ({
@@ -29,6 +30,7 @@ const TrackInfoContext = createContext<TrackInfoCtxValue | null>(null);
  * entrypoints don't each need to manage their own copy.
  */
 export function TrackInfoProvider({ children }: { children: ReactNode }) {
+  const { me } = useAuth();
   const [dialogLoaded, setDialogLoaded] = useState(false);
   const [request, setRequest] = useState<{ id: string; nonce: number } | null>(
     null,
@@ -54,6 +56,7 @@ export function TrackInfoProvider({ children }: { children: ReactNode }) {
             open={request !== null}
             trackId={request?.id ?? null}
             requestNonce={request?.nonce ?? 0}
+            canManage={me?.role === "admin"}
             onClose={close}
           />
         </Suspense>

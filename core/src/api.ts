@@ -367,6 +367,17 @@ export const api = {
   // `deleteTrack` for those.
   deleteGlobalTrack: (id: string) =>
     requestVoid(`/api/admin/tracks/${trackPathID(id)}`, { method: "DELETE" }),
+  // Admin-only: link another library track with this one as a file of the
+  // same song. Answers with the group's shown track, which may be the other.
+  linkTrack: (id: string, otherId: string) =>
+    request<TrackDetail>(`/api/admin/tracks/${trackPathID(id)}/links`, {
+      method: "POST",
+      body: JSON.stringify({ track_id: otherId }),
+    }),
+  // Admin-only: take a track out of its linked group. Answers with the
+  // group's shown track afterwards.
+  unlinkTrack: (id: string) =>
+    request<TrackDetail>(`/api/admin/tracks/${trackPathID(id)}/links`, { method: "DELETE" }),
   updateAlbum: (id: string, patch: AlbumPatch) =>
     request<Album>(`/api/albums/${pathID(id)}`, {
       method: "PATCH",
@@ -741,6 +752,26 @@ export interface TrackAlias {
   album_title?: string;
 }
 
+/**
+ * A track linked with others as another file of the same song, with its own
+ * tags and audio. The group shows the fullest tags (`shown`) and plays the
+ * best file (`plays`).
+ */
+export interface TrackLinkedFile {
+  id: string;
+  file_name: string;
+  title: string;
+  artist_names?: string;
+  album_title?: string;
+  format?: string;
+  bitrate?: number;
+  sample_rate?: number;
+  duration_ms: number;
+  file_size: number;
+  shown?: boolean;
+  plays?: boolean;
+}
+
 export interface TrackDetail {
   id: string;
   db_track_id?: string;
@@ -780,6 +811,14 @@ export interface TrackDetail {
   aliases?: TrackAlias[];
   /** How many other versions there are in all, `aliases` being the first few. */
   alias_count?: number;
+  /**
+   * The tracks linked with this one as other files of the same song, its own
+   * included and the shown one first; only on GET /api/tracks/:id. The audio
+   * fields above then describe the file that plays.
+   */
+  linked?: TrackLinkedFile[];
+  /** The track this one is hidden behind, when it's linked to another. */
+  linked_to?: string;
 }
 
 export type Visibility = "private" | "collaborative";
