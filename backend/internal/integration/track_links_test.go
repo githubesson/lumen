@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/githubesson/lumen/internal/auth"
@@ -624,5 +626,119 @@ func TestPlayRecordedDuringALinkIsKept(t *testing.T) {
 	}
 	if onShown != 6 || onHidden != 0 {
 		t.Fatalf("plays after the link: %d on the shown track, %d on the hidden one; want 6 and 0", onShown, onHidden)
+	}
+}
+
+// A client that still holds a hidden track's id writes for the song: plays,
+// favorites and playlist entries land on the shown track. Any that reached
+// the hidden row anyway follow the song when the hidden file goes.
+func TestWritesForAHiddenTrackLandOnTheSong(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	lib := library.NewStore(pool)
+	pls := playlists.NewStore(pool)
+	user := redteamUser(t, ctx, pool)
+	shown, hidden, other := redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil)
+	credit(t, ctx, pool, shown, pageArtist(t, ctx, pool, "Song"))
+	for _, id := range []uuid.UUID{hidden, other} {
+		if s, err := lib.LinkTracks(ctx, shown, id); err != nil || s != shown {
+			t.Fatalf("link = %s, %v", s, err)
+		}
+	}
+	pl, err := pls.Create(ctx, user, "Hidden ids "+uuid.NewString()[:8], "", playlists.VisibilityPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM playlists WHERE id = $1`, pl.ID) })
+
+	sessions := auth.NewSessionStore(pool, "session", false, time.Hour)
+	token, _, err := sessions.Create(ctx, user, httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := chi.NewRouter()
+	router.Use(middleware.Authenticate(sessions), middleware.RequireUser)
+	tracksH := &handlers.Tracks{Library: lib}
+	router.Post("/tracks/{id}/favorite", tracksH.Favorite)
+	router.Delete("/tracks/{id}/favorite", tracksH.Unfavorite)
+	router.Post("/tracks/{id}/play", tracksH.RecordPlay)
+	router.Post("/playlists/{id}/tracks", (&handlers.Playlists{Store: pls, Library: lib}).AddTracks)
+	call := func(method, path, body string) {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: "session", Value: token})
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code >= 300 {
+			t.Fatalf("%s %s = %d %s", method, path, rec.Code, rec.Body)
+		}
+	}
+	stats := func(id uuid.UUID) (plays int, favorited bool) {
+		t.Helper()
+		err := pool.QueryRow(ctx, `SELECT play_count, favorited FROM user_track_stats WHERE user_id = $1 AND track_id = $2`,
+			user, id).Scan(&plays, &favorited)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatal(err)
+		}
+		return plays, favorited
+	}
+	entries := func() []uuid.UUID {
+		t.Helper()
+		rows, err := pool.Query(ctx, `SELECT track_id FROM playlist_tracks WHERE playlist_id = $1 ORDER BY position`, pl.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ids
+	}
+
+	call(http.MethodPost, "/tracks/"+hidden.String()+"/favorite", "")
+	call(http.MethodPost, "/tracks/"+hidden.String()+"/play", "")
+	call(http.MethodPost, "/playlists/"+pl.ID.String()+"/tracks", `{"track_ids":["`+hidden.String()+`"]}`)
+	if plays, fav := stats(shown); plays != 1 || !fav {
+		t.Fatalf("shown track: %d plays, favorited %v", plays, fav)
+	}
+	if plays, fav := stats(hidden); plays != 0 || fav {
+		t.Fatalf("hidden track: %d plays, favorited %v", plays, fav)
+	}
+	if got := entries(); len(got) != 1 || got[0] != shown {
+		t.Fatalf("playlist entries = %v, want the shown track", got)
+	}
+	call(http.MethodDelete, "/tracks/"+hidden.String()+"/favorite", "")
+	if _, fav := stats(shown); fav {
+		t.Fatal("unfavoriting the hidden id left the song favorited")
+	}
+
+	// References that reached hidden rows anyway follow the song when the
+	// files go: one pruned, one soft-deleted with its root.
+	for i, id := range []uuid.UUID{hidden, other} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO user_track_stats(user_id, track_id, play_count) VALUES ($1, $2, 2)`, user, id); err != nil {
+			t.Fatal(err)
+		}
+		if err := pls.AddEntries(ctx, pl.ID, []uuid.UUID{id}, nil, user); err != nil {
+			t.Fatal(err)
+		}
+		var path string
+		if err := pool.QueryRow(ctx, `SELECT file_path FROM tracks WHERE id = $1`, id).Scan(&path); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			err = lib.HardDeleteByPath(ctx, path)
+		} else {
+			err = lib.SoftDeleteByPath(ctx, path)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plays, _ := stats(shown); plays != 1+2*(i+1) {
+			t.Fatalf("after %s went: %d plays on the shown track", path, plays)
+		}
+		if got := entries(); len(got) != 2+i || slices.ContainsFunc(got, func(e uuid.UUID) bool { return e != shown }) {
+			t.Fatalf("after %s went: playlist entries %v", path, got)
+		}
 	}
 }

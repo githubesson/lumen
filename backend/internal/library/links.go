@@ -167,6 +167,20 @@ func (s *Store) LinkedTracks(ctx context.Context, trackID uuid.UUID) ([]LinkedTr
 	return tracks, nil
 }
 
+// ShownTrack is the track a play, favorite or playlist entry for id belongs
+// to: the track id is linked to and hidden behind, while that one is live,
+// otherwise id itself.
+func (s *Store) ShownTrack(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	var shown uuid.UUID
+	err := s.db.QueryRow(ctx, `
+		SELECT COALESCE((SELECT h.id FROM tracks h WHERE h.id = t.linked_to AND h.deleted_at IS NULL), t.id)
+		FROM tracks t WHERE t.id = $1`, id).Scan(&shown)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return id, nil
+	}
+	return shown, err
+}
+
 // linkShownOrder ranks a group's tracks t for which one shows, fullest
 // first: metadata edited on purpose, then with performers, then on a real
 // album (Fullness). Migration 0031's linked_heir ranks the same.

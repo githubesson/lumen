@@ -112,6 +112,19 @@ func resolveTrackRowID(ctx context.Context, lib *library.Store, tidalClient *tid
 	return id, err
 }
 
+// resolveSongRowID is resolveTrackRowID for writes that belong to the song
+// rather than to one of its files: plays, favorites, playlist entries. A
+// track hidden behind a linked track (a client may still hold its id) resolves
+// to that track, where the library shows the song, so the write isn't lost
+// with the hidden file.
+func resolveSongRowID(ctx context.Context, lib *library.Store, tidalClient *tidal.Client, viewer uuid.UUID, raw string, createRemote bool) (uuid.UUID, error) {
+	id, err := resolveTrackRowID(ctx, lib, tidalClient, viewer, raw, createRemote)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return lib.ShownTrack(ctx, id)
+}
+
 // resolveTrackEntry is resolveTrackRowID that also reports the TIDAL id the
 // reference stands for ("" for local tracks), which a playlist entry keeps so
 // it can fall back to TIDAL if the saved copy it resolved to is deleted.

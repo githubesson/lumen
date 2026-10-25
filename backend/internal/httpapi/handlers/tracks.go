@@ -227,7 +227,7 @@ func (h *Tracks) Favorite(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
+	id, err := resolveSongRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
 	if err != nil {
 		writeTrackResolveError(w, err)
 		return
@@ -246,6 +246,10 @@ func (h *Tracks) Unfavorite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := resolveTrackRowIDForRemoval(r.Context(), h.Library, h.TIDAL, chi.URLParam(r, "id"))
+	if err == nil {
+		// The favorite sits on the song's shown track (resolveSongRowID).
+		id, err = h.Library.ShownTrack(r.Context(), id)
+	}
 	if err != nil {
 		if errors.Is(err, library.ErrNotFound) {
 			w.WriteHeader(http.StatusNoContent)
@@ -666,7 +670,7 @@ func (h *Tracks) NowPlaying(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
+	id, err := resolveSongRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
 	if err != nil {
 		writeTrackResolveError(w, err)
 		return
@@ -694,7 +698,7 @@ func (h *Tracks) RecordPlay(w http.ResponseWriter, r *http.Request) {
 	if req.Completion > 1 {
 		req.Completion = 1
 	}
-	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
+	id, err := resolveSongRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
 	if err != nil {
 		writeTrackResolveError(w, err)
 		return
@@ -720,7 +724,7 @@ func (h *Tracks) Scrobble(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid started_at", http.StatusBadRequest)
 		return
 	}
-	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
+	id, err := resolveSongRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
 	if err != nil {
 		writeTrackResolveError(w, err)
 		return

@@ -70,13 +70,21 @@ $$;
 
 -- A delete cascades the track's playlist entries and stats away, so they move
 -- before it, and before the TIDAL fallback of 0020 (triggers fire in name
--- order), which then finds none left. Only other tables change here: a
--- statement deleting a linked track too would fail on a row this changed.
+-- order), which then finds none left: a shown track's to its heir, a hidden
+-- track's (a client that still held its id wrote them) to the track it's
+-- linked to, unless that one went earlier in the same statement. Only other
+-- tables change here: a statement deleting a linked track too would fail on
+-- a row this changed.
 CREATE FUNCTION tracks_move_linked_refs() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
-    heir UUID := linked_heir(OLD.id);
+    heir UUID;
 BEGIN
+    IF OLD.linked_to IS NULL THEN
+        heir := linked_heir(OLD.id);
+    ELSE
+        SELECT id INTO heir FROM tracks WHERE id = OLD.linked_to AND deleted_at IS NULL;
+    END IF;
     IF heir IS NOT NULL THEN
         PERFORM move_track_refs(OLD.id, heir);
     END IF;
@@ -85,7 +93,7 @@ END $$;
 
 CREATE TRIGGER tracks_linked_refs_on_delete
     BEFORE DELETE ON tracks
-    FOR EACH ROW WHEN (OLD.source = 'local' AND OLD.linked_to IS NULL)
+    FOR EACH ROW WHEN (OLD.source = 'local')
     EXECUTE FUNCTION tracks_move_linked_refs();
 
 -- After the statement, the heir is shown and the rest re-pointed; a soft
@@ -100,6 +108,12 @@ DECLARE
 BEGIN
     IF OLD.linked_to IS NOT NULL THEN
         UPDATE tracks SET linked_to = OLD.linked_to WHERE linked_to = OLD.id;
+        -- A soft-deleted hidden track's references go to the track it's
+        -- linked to, as a deleted one's do before the delete.
+        IF TG_OP = 'UPDATE' AND EXISTS (
+            SELECT 1 FROM tracks WHERE id = OLD.linked_to AND deleted_at IS NULL) THEN
+            PERFORM move_track_refs(OLD.id, OLD.linked_to);
+        END IF;
         RETURN NULL;
     END IF;
     heir := linked_heir(OLD.id);
@@ -124,5 +138,5 @@ CREATE TRIGGER tracks_promote_linked_on_delete
 CREATE TRIGGER tracks_promote_linked_on_soft_delete
     AFTER UPDATE OF deleted_at ON tracks
     FOR EACH ROW WHEN (OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL
-                       AND NEW.source = 'local' AND NEW.linked_to IS NULL)
+                       AND NEW.source = 'local')
     EXECUTE FUNCTION tracks_promote_linked();
