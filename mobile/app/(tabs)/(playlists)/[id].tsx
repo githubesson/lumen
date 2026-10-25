@@ -7,7 +7,7 @@ import {
   View,
 } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
-import ReorderableList, {
+import {
   useIsActive,
   useReorderableDrag,
   type ReorderableListReorderEvent,
@@ -21,7 +21,6 @@ import {
   api,
   compareSortableTracks,
   errorMessage,
-  movePlaylistEntry,
   playlistEntryToTrack as entryToTrack,
   playlistAutoDownloadRefetchMs,
   playlistPermissions,
@@ -65,7 +64,9 @@ import {
   SwipeableTrackRow,
   type SwipeRowProps,
 } from "../../../components/swipe/swipeable-track-row";
+import { SteadyReorderableList } from "../../../components/steady-reorderable-list";
 import { qk } from "../../../lib/query-keys";
+import { playlistAfterDrop, rowKeyOrIndex } from "../../../lib/reorder-drop";
 import { listPlaybackQueue, usePlayQueue } from "../../../lib/use-play-queue";
 import { useTrackSort } from "../../../lib/use-track-sort";
 import {
@@ -127,14 +128,16 @@ export default function PlaylistDetailScreen() {
     enabled: !!userId && !!id,
   });
 
+  const [reorderMode, setReorderMode] = useState(false);
   const tracksQuery = useQuery({
     queryKey: playlistTracksQueryKey,
     queryFn: ({ signal }) => api.listPlaylistTracks(id!, { signal }),
     enabled: !!userId && !!id,
     // While auto-download saves tracks, refetch so rows flip to their
     // library copies; after a failure, look again when its retry is due.
+    // Not while reordering: rows swapped under a drag move the wrong one.
     refetchInterval: (query) =>
-      playlistQuery.data?.tidal_auto_download
+      playlistQuery.data?.tidal_auto_download && !reorderMode
         ? playlistAutoDownloadRefetchMs(query.state.data)
         : false,
   });
@@ -157,7 +160,6 @@ export default function PlaylistDetailScreen() {
   // server list. The override is tied to the snapshot it was made from, so the
   // next fetched snapshot replaces it without an effect having to reset it.
   const [override, setOverride] = useState<TracksOverride | null>(null);
-  const [reorderMode, setReorderMode] = useState(false);
   const { sortKey, sortAsc, onSelectSort, onToggleSortDirection, resetSort } =
     useTrackSort();
   const serverData = tracksQuery.data;
@@ -340,9 +342,11 @@ export default function PlaylistDetailScreen() {
 
   const onReorder = useCallback(
     ({ from, to }: ReorderableListReorderEvent) => {
-      if (!serverData) return;
+      // The list replays a drop onto `rowModels`, which mirror `localTracks`;
+      // an index outside them is ignored rather than saved.
+      const next = playlistAfterDrop(localTracks, from, to);
+      if (!serverData || !next) return;
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      const next = movePlaylistEntry(localTracks, from, to);
       const edit = { base: serverData, tracks: next };
       setOverride(edit);
       reorderTracks(
@@ -566,11 +570,6 @@ export default function PlaylistDetailScreen() {
     queuedForServer,
   ]);
 
-  const keyExtractor = useCallback(
-    (item: PlaylistTrackRowModel) => item.key,
-    [],
-  );
-
   const renderDraggableItem = useCallback(
     ({ item }: { item: PlaylistTrackRowModel }) => (
       <DraggablePlaylistRow
@@ -665,11 +664,11 @@ export default function PlaylistDetailScreen() {
         }}
       />
       {showReorderMode ? (
-        <ReorderableList<PlaylistTrackRowModel>
+        <SteadyReorderableList<PlaylistTrackRowModel>
           {...TRACK_LIST_PERFORMANCE_PROPS}
           data={rowModels}
           onReorder={onReorder}
-          keyExtractor={keyExtractor}
+          keyExtractor={rowKeyOrIndex}
           renderItem={renderDraggableItem}
           ListHeaderComponent={header}
           // No automatic inset here: the drag math reads the raw scroll
@@ -690,7 +689,7 @@ export default function PlaylistDetailScreen() {
           {...dockScroll}
           data={displayModels}
           renderItem={renderReadOnlyItem}
-          keyExtractor={keyExtractor}
+          keyExtractor={rowKeyOrIndex}
           ListHeaderComponent={header}
           contentInsetAdjustmentBehavior="automatic"
           style={{ backgroundColor: theme.color.bg }}
