@@ -88,6 +88,11 @@ type trackDetailResp struct {
 	MetadataEdited bool             `json:"metadata_edited,omitempty"`
 	Aliases        []trackAliasResp `json:"aliases,omitempty"`
 	AliasCount     int              `json:"alias_count,omitempty"`
+	// Also only Get's: the tracks linked with this one as other files of the
+	// same song, its own included and the shown one first; and the track
+	// this one is hidden behind, when it's one of the others.
+	Linked   []trackLinkedResp `json:"linked,omitempty"`
+	LinkedTo string            `json:"linked_to,omitempty"`
 }
 
 type trackListItemResp struct {
@@ -116,6 +121,22 @@ type trackAliasResp struct {
 	Title       string `json:"title,omitempty"`
 	ArtistNames string `json:"artist_names,omitempty"`
 	AlbumTitle  string `json:"album_title,omitempty"`
+}
+
+// trackLinkedResp is one track of a linked group, with its own tags and file.
+type trackLinkedResp struct {
+	ID          string `json:"id"`
+	FileName    string `json:"file_name"` // base name only; server paths stay private
+	Title       string `json:"title"`
+	ArtistNames string `json:"artist_names,omitempty"`
+	AlbumTitle  string `json:"album_title,omitempty"`
+	Format      string `json:"format,omitempty"`
+	Bitrate     int    `json:"bitrate,omitempty"`
+	SampleRate  int    `json:"sample_rate,omitempty"`
+	DurationMS  int    `json:"duration_ms"`
+	FileSize    int64  `json:"file_size"`
+	Shown       bool   `json:"shown,omitempty"` // in the library, its tags shown for the group
+	Plays       bool   `json:"plays,omitempty"` // its file plays for the group
 }
 
 func makeTrackListItemResp(it library.TrackListItem, favorited, canonical bool) trackListItemResp {
@@ -206,7 +227,7 @@ func (h *Tracks) Favorite(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
+	id, err := resolveSongRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
 	if err != nil {
 		writeTrackResolveError(w, err)
 		return
@@ -225,6 +246,10 @@ func (h *Tracks) Unfavorite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := resolveTrackRowIDForRemoval(r.Context(), h.Library, h.TIDAL, chi.URLParam(r, "id"))
+	if err == nil {
+		// The favorite sits on the song's shown track (resolveSongRowID).
+		id, err = h.Library.ShownTrack(r.Context(), id)
+	}
 	if err != nil {
 		if errors.Is(err, library.ErrNotFound) {
 			w.WriteHeader(http.StatusNoContent)
@@ -302,56 +327,98 @@ func (h *Tracks) Get(w http.ResponseWriter, r *http.Request) {
 		writeTrackResolveError(w, err)
 		return
 	}
-	t, err := h.Library.GetTrack(r.Context(), id, u.ID)
+	h.writeTrackDetail(w, r, id, u.ID)
+}
+
+// writeTrackDetail writes Get's response for the track row id.
+func (h *Tracks) writeTrackDetail(w http.ResponseWriter, r *http.Request, id, viewerID uuid.UUID) {
+	resp, err := h.trackDetail(r.Context(), id, viewerID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// trackDetail is Get's response for the track row id.
+func (h *Tracks) trackDetail(ctx context.Context, id, viewerID uuid.UUID) (trackDetailResp, error) {
+	t, err := h.Library.GetTrack(ctx, id, viewerID)
+	if err != nil {
+		return trackDetailResp{}, err
 	}
 	// Not discarded: on error every `_, ok := favs[id]` is false, so every
 	// track would serialize favorited:false with a 200 and the user's next
 	// click would toggle against stale state, unfavoriting a real favorite.
-	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID, []uuid.UUID{t.ID})
+	favs, err := h.Library.FavoriteIDs(ctx, viewerID, []uuid.UUID{t.ID})
 	if err != nil {
-		writeStoreError(w, err)
-		return
+		return trackDetailResp{}, err
 	}
 	_, isFav := favs[t.ID]
-	resp := makeTrackDetailResp(t, isFav, u.ID)
+	resp := makeTrackDetailResp(t, isFav, viewerID)
 	if resp.Source == trackref.SourceTIDAL {
 		// A TIDAL id with a saved copy resolves to that copy, so this row has none.
-		resp.Unavailable, err = h.Library.TIDALTrackRemoved(r.Context(), t.ExternalAlbumID, t.ExternalID)
+		resp.Unavailable, err = h.Library.TIDALTrackRemoved(ctx, t.ExternalAlbumID, t.ExternalID)
 		if err != nil {
-			writeStoreError(w, err)
-			return
+			return trackDetailResp{}, err
 		}
 	}
-	if resp.Source == trackref.SourceLocal {
-		versions, err := h.Library.TrackVersions(r.Context(), t.ID)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		playing := fileName(t.FilePath)
-		resp.FileName, resp.AliasCount, resp.MetadataEdited = playing, versions.Total, versions.Edited
-		for _, al := range versions.Aliases {
-			name := fileName(al.FilePath)
-			if al.TagsSwapped {
-				// Name each version after the file its tags came from. An
-				// edit since then means the shown tags came from no file.
-				name = playing
-				if !versions.Edited {
-					resp.TagsFileName = fileName(al.FilePath)
-				}
+	if resp.Source != trackref.SourceLocal {
+		return resp, nil
+	}
+	versions, err := h.Library.TrackVersions(ctx, t.ID)
+	if err != nil {
+		return trackDetailResp{}, err
+	}
+	// A linked track may play another track's file; its tags are its own
+	// file's.
+	playing, own := fileName(t.FilePath), fileName(t.RowFilePath)
+	resp.FileName, resp.AliasCount, resp.MetadataEdited = playing, versions.Total, versions.Edited
+	if t.RowFilePath != t.FilePath && !versions.Edited {
+		resp.TagsFileName = own
+	}
+	for _, al := range versions.Aliases {
+		name := fileName(al.FilePath)
+		if al.TagsSwapped {
+			// Name each version after the file its tags came from. An
+			// edit since then means the shown tags came from no file.
+			name = own
+			if !versions.Edited {
+				resp.TagsFileName = fileName(al.FilePath)
 			}
-			resp.Aliases = append(resp.Aliases, trackAliasResp{
-				FileName:    name,
-				Title:       al.Title,
-				ArtistNames: al.ArtistNames,
-				AlbumTitle:  al.AlbumTitle,
+		}
+		resp.Aliases = append(resp.Aliases, trackAliasResp{
+			FileName:    name,
+			Title:       al.Title,
+			ArtistNames: al.ArtistNames,
+			AlbumTitle:  al.AlbumTitle,
+		})
+	}
+	if t.LinkedTo != nil {
+		resp.LinkedTo = t.LinkedTo.String()
+	}
+	if t.Linked {
+		linked, err := h.Library.LinkedTracks(ctx, t.ID)
+		if err != nil {
+			return trackDetailResp{}, err
+		}
+		for _, l := range linked {
+			resp.Linked = append(resp.Linked, trackLinkedResp{
+				ID:          l.TrackID.String(),
+				FileName:    fileName(l.FilePath),
+				Title:       l.Title,
+				ArtistNames: l.ArtistNames,
+				AlbumTitle:  l.AlbumTitle,
+				Format:      l.Format,
+				Bitrate:     l.Bitrate,
+				SampleRate:  l.SampleRate,
+				DurationMS:  l.DurationMS,
+				FileSize:    l.FileSize,
+				Shown:       l.Shown,
+				Plays:       l.Plays,
 			})
 		}
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return resp, nil
 }
 
 // fileName is the last element of a stored file path, split on either slash
@@ -603,7 +670,7 @@ func (h *Tracks) NowPlaying(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
+	id, err := resolveSongRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
 	if err != nil {
 		writeTrackResolveError(w, err)
 		return
@@ -631,7 +698,7 @@ func (h *Tracks) RecordPlay(w http.ResponseWriter, r *http.Request) {
 	if req.Completion > 1 {
 		req.Completion = 1
 	}
-	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
+	id, err := resolveSongRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
 	if err != nil {
 		writeTrackResolveError(w, err)
 		return
@@ -657,7 +724,7 @@ func (h *Tracks) Scrobble(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid started_at", http.StatusBadRequest)
 		return
 	}
-	id, err := resolveTrackRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
+	id, err := resolveSongRowID(r.Context(), h.Library, h.TIDAL, u.ID, chi.URLParam(r, "id"), true)
 	if err != nil {
 		writeTrackResolveError(w, err)
 		return

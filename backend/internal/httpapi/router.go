@@ -348,6 +348,8 @@ func NewRouter(d Deps) http.Handler {
 
 			ordinary.Patch("/tracks/{id}", tracksH.Patch)
 			ordinary.Delete("/admin/tracks/{id}", tracksH.AdminDelete)
+			ordinary.Post("/admin/tracks/{id}/links", tracksH.Link)
+			ordinary.Delete("/admin/tracks/{id}/links", tracksH.Unlink)
 			ordinary.Patch("/albums/{id}", browseH.PatchAlbum)
 			r.With(appmw.Timeout(imageRequestTimeout)).Put("/albums/{id}/cover", tracksH.PutAlbumCover)
 			ordinary.Delete("/albums/{id}/cover", tracksH.DeleteAlbumCover)

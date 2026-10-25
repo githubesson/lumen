@@ -35,6 +35,14 @@ type TrackDetail struct {
 	CoverArtPath    string
 	OwnerID         *uuid.UUID // nil for global tracks
 	CreatedAt       time.Time
+	// LinkedTo is the track this one is linked to and hidden behind.
+	LinkedTo *uuid.UUID
+	// Linked: other tracks are linked with this one. FilePath and the audio
+	// fields (Format, Bitrate, SampleRate, Channels, DurationMS, FileSize)
+	// then describe the group's best file, the one that plays.
+	Linked bool
+	// RowFilePath is the track's own file, FilePath unless Linked.
+	RowFilePath string
 }
 
 type TrackArtist struct {
@@ -50,23 +58,48 @@ type TrackPlayback struct {
 	Format     string
 	Source     string
 	ExternalID string
+	// Others are a linked group's other files, best first, for when FilePath
+	// (the best) can't be opened.
+	Others []PlaybackFile
+}
+
+// PlaybackFile is a local file a track can play from.
+type PlaybackFile struct {
+	FilePath string
+	Format   string
 }
 
 // GetTrackPlayback applies the same access checks as GetTrack without loading
-// album or artist metadata. Hidden remote tracks remain playable.
+// album or artist metadata. Hidden remote tracks remain playable, as do
+// tracks hidden behind a linked track. A linked track plays its group's best
+// file.
 func (s *Store) GetTrackPlayback(ctx context.Context, id, viewerID uuid.UUID) (*TrackPlayback, error) {
 	t := &TrackPlayback{}
+	var linked bool
 	err := s.db.QueryRow(ctx, `
-		SELECT t.file_path, t.format, t.source, t.external_id
+		SELECT t.file_path, t.format, t.source, t.external_id, `+hasLinkedSQL+`
 		FROM tracks t
 		WHERE t.id = $1 AND t.deleted_at IS NULL
 		  AND `+trackVisibleP2, id, viewerID).
-		Scan(&t.FilePath, &t.Format, &t.Source, &t.ExternalID)
+		Scan(&t.FilePath, &t.Format, &t.Source, &t.ExternalID, &linked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if linked && t.Source == "local" {
+		files, err := s.linkedFiles(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		for i, f := range files {
+			if i == 0 {
+				t.FilePath, t.Format = f.FilePath, f.Format
+			} else {
+				t.Others = append(t.Others, PlaybackFile{FilePath: f.FilePath, Format: f.Format})
+			}
+		}
 	}
 	return t, nil
 }
@@ -158,7 +191,7 @@ func trackDetailSelect(coverUser string) string {
 		t.file_path, t.file_size,
 		t.source, t.external_id, COALESCE(t.external_meta->>'album_id', ''),
 		COALESCE(t.external_meta->>'cover_url', ''),
-		t.created_at, t.owner_id
+		t.created_at, t.owner_id, t.linked_to, ` + hasLinkedSQL + `
 	FROM tracks t
 	LEFT JOIN albums a ON a.id = t.album_id
 	WHERE t.id = $1 AND t.deleted_at IS NULL`
@@ -213,13 +246,29 @@ func (s *Store) getTrackDetail(ctx context.Context, query string, args ...any) (
 		&t.Bitrate, &t.SampleRate, &t.Channels,
 		&t.FilePath, &t.FileSize,
 		&t.Source, &t.ExternalID, &t.ExternalAlbumID, &t.CoverURL,
-		&t.CreatedAt, &t.OwnerID,
+		&t.CreatedAt, &t.OwnerID, &t.LinkedTo, &t.Linked,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	t.RowFilePath = t.FilePath
+	if t.Linked && t.Source == "local" {
+		files, err := s.linkedFiles(ctx, t.ID)
+		if err != nil {
+			return nil, err
+		}
+		t.Linked = len(files) > 1
+		if len(files) > 0 {
+			best := files[0]
+			t.FilePath, t.FileSize, t.Format = best.FilePath, best.FileSize, best.Format
+			t.Bitrate, t.SampleRate, t.Channels = best.Bitrate, best.SampleRate, best.Channels
+			t.DurationMS = best.DurationMS
+		}
+	} else {
+		t.Linked = false
 	}
 	t.AlbumID = albumID
 	if albTitle != nil {
@@ -644,16 +693,18 @@ func clampListPage(limit, offset, def int) (int, int) {
 	return limit, offset
 }
 
-// akaSubquery aggregates alternate titles from track_aliases into a single
-// display string for a track list row. Kept as a package-level constant so
-// the SQL stays in one place even though it's inlined into several queries.
+// akaSubquery aggregates alternate titles from track_aliases, and from the
+// tracks linked to it, into a single display string for a track list row.
+// Kept as a package-level constant so the SQL stays in one place even though
+// it's inlined into several queries.
 const akaSubquery = `
 	COALESCE(
-		(SELECT STRING_AGG(DISTINCT al.title, ' • ')
-		 FROM track_aliases al
-		 WHERE al.track_id = t.id
-		   AND al.title IS NOT NULL
-		   AND al.title <> t.title),
+		(SELECT STRING_AGG(DISTINCT v.title, ' • ')
+		 FROM (SELECT al.title FROM track_aliases al WHERE al.track_id = t.id
+		       UNION ALL
+		       SELECT lt.title FROM tracks lt WHERE lt.linked_to = t.id AND lt.deleted_at IS NULL) v
+		 WHERE v.title IS NOT NULL
+		   AND v.title <> t.title),
 		''
 	)`
 
@@ -670,6 +721,23 @@ const trackSearchAliases = `EXISTS (
 			      OR al.artist_names ILIKE '%' || $2 || '%'
 			      OR al.album_title ILIKE '%' || $2 || '%'
 			      OR al.file_path ILIKE '%' || $2 || '%'
+			    )
+			) OR EXISTS (
+			  SELECT 1 FROM tracks lt
+			  WHERE lt.linked_to = t.id AND lt.deleted_at IS NULL
+			    AND (
+			      lt.title ILIKE '%' || $2 || '%'
+			      OR lt.file_path ILIKE '%' || $2 || '%'
+			      OR EXISTS (
+			        SELECT 1 FROM track_aliases lal
+			        WHERE lal.track_id = lt.id
+			          AND (
+			            lal.title ILIKE '%' || $2 || '%'
+			            OR lal.artist_names ILIKE '%' || $2 || '%'
+			            OR lal.album_title ILIKE '%' || $2 || '%'
+			            OR lal.file_path ILIKE '%' || $2 || '%'
+			          )
+			      )
 			    )
 			)`
 

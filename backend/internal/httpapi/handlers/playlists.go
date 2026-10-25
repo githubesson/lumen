@@ -167,6 +167,10 @@ func (h *Playlists) listedTrack(w http.ResponseWriter, r *http.Request, viewer u
 		return nil, true
 	}
 	id, _, err := resolveTrackEntry(r.Context(), h.Library, h.TIDAL, viewer, raw, false)
+	if err == nil {
+		// Entries for a linked song sit on its shown track, as AddTracks puts them.
+		id, err = h.Library.ShownTrack(r.Context(), id)
+	}
 	if errors.Is(err, library.ErrNotFound) {
 		id, err = uuid.Nil, nil
 	}
@@ -496,6 +500,10 @@ func (h *Playlists) AddTracks(w http.ResponseWriter, r *http.Request) {
 	addsTIDAL := false
 	for _, s := range req.TrackIDs {
 		id, origin, err := resolveTrackEntry(r.Context(), h.Library, h.TIDAL, u.ID, s, true)
+		if err == nil {
+			// A track hidden behind a linked track adds the song's shown one.
+			id, err = h.Library.ShownTrack(r.Context(), id)
+		}
 		if err != nil {
 			writeTrackResolveError(w, err)
 			return

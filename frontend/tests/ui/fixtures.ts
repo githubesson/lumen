@@ -368,6 +368,29 @@ export function artistTracks(id: string): TrackRow[] {
   return tracks.filter((t) => t.artist_id === id || t.featured_id === id);
 }
 
+/** A track linked with the studio WAV of the same song: its tags show and the WAV plays. */
+export const linkedTrackId = "t-al-weather-2";
+
+function linkedStudioBounce(track: TrackRow, base: string): Partial<TrackDetail> {
+  const flac = `${String(track.track_no).padStart(2, "0")} - ${base}.flac`;
+  const wav = `${track.artist} - ${base.toLowerCase()} (bounce 24-02).wav`;
+  return {
+    format: "WAV",
+    bitrate: 2_116_800,
+    file_size: Math.round((track.duration_ms / 1000) * 264_600),
+    file_name: wav,
+    tags_file_name: flac,
+    linked: [
+      { id: track.id, file_name: flac, title: track.title, artist_names: track.artist, album_title: track.album_title,
+        format: "flac", bitrate: 1_024_000, sample_rate: 44_100, duration_ms: track.duration_ms,
+        file_size: Math.round((track.duration_ms / 1000) * 128_000), shown: true },
+      { id: `${track.id}-wav`, file_name: wav, title: `${track.artist} - ${base.toLowerCase()}`, album_title: "Others",
+        format: "WAV", bitrate: 2_116_800, sample_rate: 44_100, duration_ms: track.duration_ms - 412,
+        file_size: Math.round((track.duration_ms / 1000) * 264_600), plays: true },
+    ],
+  };
+}
+
 export function trackDetail(track: TrackRow): TrackDetail {
   const album = albums.find((a) => a.id === track.album_id)!;
   const base = track.title.replace(/[/:?]/g, "-");
@@ -395,6 +418,7 @@ export function trackDetail(track: TrackRow): TrackDetail {
     has_cover: true,
     favorited: Boolean(track.favorited),
     file_name: `/music/${album.artist_name}/${album.title}/${String(track.track_no).padStart(2, "0")} - ${base}.flac`,
+    ...(track.id === linkedTrackId ? linkedStudioBounce(track, base) : {}),
     ...(track.aka
       ? {
           aliases: [{ file_name: "/mnt/nas/uploads/lossless/Halden Marsh - Low Country Weather (Demo).flac", title: track.aka, artist_names: "Halden Marsh", album_title: "Demos 2022" }],

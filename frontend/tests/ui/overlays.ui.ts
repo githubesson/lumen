@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "playwright/test";
-import { tracks } from "./fixtures";
+import { linkedTrackId, tracks } from "./fixtures";
 import { checkUI, loadedTrack, ready, settle, signedIn } from "./helpers";
 
 // Overlays open over the library's track list (where `signedIn` leaves the
@@ -11,9 +11,10 @@ test.beforeEach(async ({ page }) => {
 });
 
 const menuTrack = tracks.find((t) => t.id === "t-al-weather-4")!;
+const linkedTrack = tracks.find((t) => t.id === linkedTrackId)!;
 
-async function openContextMenu(page: Page) {
-  await page.locator("tbody tr").filter({ has: page.getByTitle(menuTrack.title, { exact: true }) }).click({ button: "right" });
+async function openContextMenu(page: Page, track = menuTrack) {
+  await page.locator("tbody tr").filter({ has: page.getByTitle(track.title, { exact: true }) }).click({ button: "right" });
   const menu = page.getByRole("menu");
   await menu.waitFor();
   return menu;
@@ -42,6 +43,28 @@ test("track info dialog", async ({ page }, testInfo) => {
   const dialog = page.getByRole("dialog");
   await ready(page, dialog.getByText("flac", { exact: false }));
   await expect(dialog).toContainText(menuTrack.title);
+  await checkUI(page, testInfo);
+});
+
+// The track and the studio WAV linked with it: the WAV plays, and the two
+// files' tags and audio sit side by side.
+test("track info dialog with linked files", async ({ page }, testInfo) => {
+  const menu = await openContextMenu(page, linkedTrack);
+  await menu.getByRole("menuitem", { name: "Song info" }).click();
+  const dialog = page.getByRole("dialog");
+  await ready(page, dialog.getByRole("button", { name: /^Unlink / }));
+  await expect(dialog.getByRole("columnheader")).toHaveText([/Shown/, /Plays/]);
+  await checkUI(page, testInfo);
+});
+
+// An admin looks for another file of the song in the library.
+test("track info link search", async ({ page }, testInfo) => {
+  const menu = await openContextMenu(page);
+  await menu.getByRole("menuitem", { name: "Song info" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Link a file" }).click();
+  await dialog.getByRole("searchbox", { name: "Find another file of this song" }).fill("a");
+  await ready(page, dialog.locator(".version-linker-item").first());
   await checkUI(page, testInfo);
 });
 

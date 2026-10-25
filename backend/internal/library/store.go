@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -993,27 +994,59 @@ func (s *Store) TrackHasFilePath(ctx context.Context, trackID uuid.UUID, path st
 	return ok, err
 }
 
+// SoftDeleteByPath marks the live tracks of a file deleted, for the watcher
+// when the file goes. A linked track's group changes with it (migration
+// 0031), so the group is locked the way links lock it first, and a race
+// starts over (retryLink).
 func (s *Store) SoftDeleteByPath(ctx context.Context, path string) error {
 	path = dbtext.Clean(path)
-	_, err := s.db.Exec(ctx, `UPDATE tracks SET deleted_at = NOW() WHERE file_path = $1 AND deleted_at IS NULL`, path)
-	return err
+	return s.retryLink(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT id FROM tracks WHERE file_path = $1 AND deleted_at IS NULL`, path)
+		if err != nil {
+			return err
+		}
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil || len(ids) == 0 {
+			return err
+		}
+		if err := lockTrackGroups(ctx, tx, ids); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE tracks SET deleted_at = NOW() WHERE file_path = $1 AND deleted_at IS NULL`, path)
+		return err
+	})
 }
 
 // HardDeleteByPath removes every DB trace of a file: the track row (cascading
 // to playlist_tracks, user_track_stats, play_history, track_artists) and any
 // ingest_errors for the path. Used when the file is missing from disk so it
-// can be cleanly re-ingested if it ever reappears.
+// can be cleanly re-ingested if it ever reappears. A linked track's
+// references move to its group first (migration 0031), so the group is
+// locked the way links lock it, and a race starts over (retryLink).
 func (s *Store) HardDeleteByPath(ctx context.Context, path string) error {
 	path = dbtext.Clean(path)
 	// One transaction: run as two independent pool statements, a cancelled
 	// rescan or a lock wait between them left the ingest-error row gone while
 	// the stale tracks row survived, and the only caller (pruneMissing) just
 	// logs a warning — so the inconsistency was permanent.
-	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+	return s.retryLink(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT id FROM tracks WHERE file_path = $1`, path)
+		if err != nil {
+			return err
+		}
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return err
+		}
+		if len(ids) > 0 {
+			if err := lockTrackGroups(ctx, tx, ids); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.Exec(ctx, `DELETE FROM ingest_errors WHERE file_path = $1`, path); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `DELETE FROM tracks WHERE file_path = $1`, path)
+		_, err = tx.Exec(ctx, `DELETE FROM tracks WHERE file_path = $1`, path)
 		return err
 	})
 }
@@ -1090,61 +1123,69 @@ func (s *Store) DeletePersonalTrack(ctx context.Context, trackID, userID uuid.UU
 // DeleteGlobalTrack hard-deletes a global track (owner_id IS NULL) and returns
 // every on-disk file that fed it: the canonical file_path plus any
 // track_aliases paths (duplicate files that were deduplicated into this track).
-// The caller must remove those files from disk — otherwise the watcher/rescan
-// simply re-ingests them. Personal tracks (owner_id set) and missing or
-// soft-deleted rows report ErrNotFound: this is the admin path for shared
-// content; users remove their own uploads via DeletePersonalTrack.
+// Tracks linked to it (other files of the same song) go too, with the files
+// of the live ones: a soft-deleted one's file may have come back since, and
+// ingest files it as a new track. The caller must remove the returned files
+// from disk — otherwise the watcher/rescan simply re-ingests them. Personal tracks (owner_id set) and
+// missing or soft-deleted rows report ErrNotFound: this is the admin path for
+// shared content; users remove their own uploads via DeletePersonalTrack.
 //
 // The row delete cascades to playlist_tracks, user_track_stats, play_history,
 // track_artists, and track_aliases; stale ingest_errors for the same paths are
 // cleared so the errors list doesn't keep referencing a removed file.
 func (s *Store) DeleteGlobalTrack(ctx context.Context, trackID uuid.UUID) ([]string, error) {
-	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-
-	var filePath string
-	err = tx.QueryRow(ctx, `
-		SELECT file_path FROM tracks
-		WHERE id = $1 AND owner_id IS NULL AND deleted_at IS NULL`, trackID).Scan(&filePath)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
+	var paths []string
+	err := s.retryLink(ctx, func(tx pgx.Tx) error {
+		var filePath string
+		err := tx.QueryRow(ctx, `
+			SELECT file_path FROM tracks
+			WHERE id = $1 AND owner_id IS NULL AND deleted_at IS NULL`, trackID).Scan(&filePath)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
 		}
-		return nil, err
-	}
+		// Lock the track's linked group in id order, as links do, before the
+		// deletes below take its rows in another order.
+		if err := lockTrackGroups(ctx, tx, []uuid.UUID{trackID}); err != nil {
+			return err
+		}
 
-	// Collect alias paths before the cascade drops the track_aliases rows.
-	paths := []string{filePath}
-	rows, err := tx.Query(ctx, `SELECT file_path FROM track_aliases WHERE track_id = $1`, trackID)
+		// Collect alias paths before the cascade drops the track_aliases rows,
+		// for this track and the live tracks linked to it.
+		paths = []string{filePath}
+		rows, err := tx.Query(ctx, `
+			SELECT file_path FROM tracks WHERE linked_to = $1 AND deleted_at IS NULL
+			UNION ALL
+			SELECT al.file_path FROM track_aliases al
+			WHERE al.track_id = $1
+			   OR al.track_id IN (SELECT id FROM tracks WHERE linked_to = $1 AND deleted_at IS NULL)`, trackID)
+		if err != nil {
+			return err
+		}
+		more, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		for _, p := range more {
+			if p != "" && !slices.Contains(paths, p) {
+				paths = append(paths, p)
+			}
+		}
+
+		// Linked tracks first: deleting the track they're linked to would hand
+		// its place to one of them (tracks_promote_linked).
+		if _, err := tx.Exec(ctx, `DELETE FROM tracks WHERE linked_to = $1`, trackID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM tracks WHERE id = $1`, trackID); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `DELETE FROM ingest_errors WHERE file_path = ANY($1)`, paths)
+		return err
+	})
 	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		if p != "" && p != filePath {
-			paths = append(paths, p)
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	if _, err := tx.Exec(ctx, `DELETE FROM tracks WHERE id = $1`, trackID); err != nil {
-		return nil, err
-	}
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM ingest_errors WHERE file_path = ANY($1)`, paths); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return paths, nil
