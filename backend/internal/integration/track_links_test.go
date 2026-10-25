@@ -26,6 +26,7 @@ import (
 	"github.com/githubesson/lumen/internal/httpapi/middleware"
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/playlists"
 	"github.com/githubesson/lumen/internal/storage"
 )
 
@@ -525,5 +526,35 @@ func TestConcurrentLinkingKeepsGroupsConsistent(t *testing.T) {
 	}
 	if chained != 0 || misplaced != 0 {
 		t.Fatalf("%d tracks linked to a linked track, %d hidden or shown wrongly", chained, misplaced)
+	}
+}
+
+// Adding a track to a playlist while an admin links it never fails: the
+// link's row locks leave room for the entry's foreign-key check.
+func TestPlaylistAddsDuringALinkSucceed(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	lib := library.NewStore(pool)
+	pls := playlists.NewStore(pool)
+	user := redteamUser(t, ctx, pool)
+	pl, err := pls.Create(ctx, user, "Racing "+uuid.NewString()[:8], "", playlists.VisibilityPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM playlists WHERE id = $1`, pl.ID) })
+	for range 60 {
+		mp3, wav := redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil)
+		// The playlist already holds the WAV, so the link moves that entry.
+		if err := pls.AddEntries(ctx, pl.ID, []uuid.UUID{wav}, nil, user); err != nil {
+			t.Fatal(err)
+		}
+		var linkErr, addErr error
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _, linkErr = lib.LinkTracks(ctx, mp3, wav) }()
+		go func() { defer wg.Done(); addErr = pls.AddEntries(ctx, pl.ID, []uuid.UUID{mp3}, nil, user) }()
+		wg.Wait()
+		if linkErr != nil || addErr != nil {
+			t.Fatalf("link = %v, playlist add = %v", linkErr, addErr)
+		}
 	}
 }

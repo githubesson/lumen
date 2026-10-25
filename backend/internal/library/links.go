@@ -243,14 +243,18 @@ const linkMembersSQL = `
 	ORDER BY id`
 
 // lockLinkGroups locks every live track of the given groups, in id order and
-// in one statement, so links waiting on each other can't deadlock. It checks
+// in one statement, so links waiting on each other can't deadlock. FOR NO KEY
+// UPDATE excludes other links and deletes but not the key-share lock a new
+// playlist entry, play or stat takes on its track: FOR UPDATE would block
+// those inserts, which hold their playlist's lock that move_track_refs needs
+// next, and deadlock them with the link. It checks
 // each of ids still belongs to the group it was read in, and that no track
 // joined the groups after the lock's snapshot (it wouldn't be locked, and
 // updating it later would take its lock out of order): errLinkRaced if
 // either changed. Joining a group takes a lock on its shown track, held here
 // now, so the members read next are final.
 func lockLinkGroups(ctx context.Context, tx pgx.Tx, groups, ids []uuid.UUID) ([]uuid.UUID, error) {
-	rows, err := tx.Query(ctx, linkMembersSQL+` FOR UPDATE`, groups)
+	rows, err := tx.Query(ctx, linkMembersSQL+` FOR NO KEY UPDATE`, groups)
 	if err != nil {
 		return nil, err
 	}

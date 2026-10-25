@@ -509,7 +509,8 @@ function VersionLinker({
       onKeyDown={(e) => {
         if (e.key !== "Escape" || e.defaultPrevented) return;
         e.preventDefault();
-        onCancel();
+        // Like Cancel, which is disabled until a link request settles.
+        if (linkingId === null) onCancel();
       }}
     >
       <div className="version-linker-search">

@@ -1117,6 +1117,12 @@ func (s *Store) DeleteGlobalTrack(ctx context.Context, trackID uuid.UUID) ([]str
 		}
 		return nil, err
 	}
+	// Lock the track and those linked to it in id order, as links do, before
+	// the deletes below take them in another order.
+	if _, err := tx.Exec(ctx, `
+		SELECT id FROM tracks WHERE id = $1 OR linked_to = $1 ORDER BY id FOR UPDATE`, trackID); err != nil {
+		return nil, err
+	}
 
 	// Collect alias paths before the cascade drops the track_aliases rows,
 	// for this track and the tracks linked to it.
