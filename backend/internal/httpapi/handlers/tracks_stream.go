@@ -81,26 +81,44 @@ func (h *Tracks) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	roots := h.Ingest.AllRoots(r.Context())
-	if !pathsafe.WithinAnyRoot(roots, t.FilePath) {
-		// The file_path in the DB sits outside every configured music root.
-		// Almost always a stale path: the track was ingested under an old
-		// MUSIC_PATH (or a now-removed root) that no longer matches.
-		h.log().Warn("stream: track file path is outside every configured music root — stale file_path, likely predates a MUSIC_PATH/root change",
-			"track", id, "user", u.ID, "path", t.FilePath, "roots", roots)
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
-	f, err := os.Open(t.FilePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			h.log().Warn("stream: track file is missing on disk",
-				"track", id, "user", u.ID, "path", t.FilePath)
-			http.Error(w, "file missing on disk", http.StatusGone)
+	// A linked track plays its group's best file, falling back to the next
+	// best when that one can't be read: a file deleted from disk keeps its
+	// row until the next rescan prunes it.
+	var f *os.File
+	status := 0
+	for _, c := range append([]library.PlaybackFile{{FilePath: t.FilePath, Format: t.Format}}, t.Others...) {
+		if !pathsafe.WithinAnyRoot(roots, c.FilePath) {
+			// The file_path in the DB sits outside every configured music root.
+			// Almost always a stale path: the track was ingested under an old
+			// MUSIC_PATH (or a now-removed root) that no longer matches.
+			h.log().Warn("stream: track file path is outside every configured music root — stale file_path, likely predates a MUSIC_PATH/root change",
+				"track", id, "user", u.ID, "path", c.FilePath, "roots", roots)
+			status = max(status, http.StatusForbidden)
+			continue
+		}
+		opened, err := os.Open(c.FilePath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				h.log().Warn("stream: track file is missing on disk",
+					"track", id, "user", u.ID, "path", c.FilePath)
+				status = max(status, http.StatusGone)
+				continue
+			}
+			h.log().Error("stream: could not open track file — check filesystem permissions on the music volume",
+				"track", id, "user", u.ID, "path", c.FilePath, "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		h.log().Error("stream: could not open track file — check filesystem permissions on the music volume",
-			"track", id, "user", u.ID, "path", t.FilePath, "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		f, t.FilePath, t.Format = opened, c.FilePath, c.Format
+		break
+	}
+	switch {
+	case f != nil:
+	case status == http.StatusGone:
+		http.Error(w, "file missing on disk", http.StatusGone)
+		return
+	default:
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	defer f.Close()
