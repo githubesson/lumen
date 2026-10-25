@@ -558,3 +558,71 @@ func TestPlaylistAddsDuringALinkSucceed(t *testing.T) {
 		}
 	}
 }
+
+// A play recorded on a track while a link hides it still counts: the link
+// waits for the play's stats row and carries its count over.
+func TestPlayRecordedDuringALinkIsKept(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	lib := library.NewStore(pool)
+	user := redteamUser(t, ctx, pool)
+	shown, hidden := redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil)
+	credit(t, ctx, pool, shown, pageArtist(t, ctx, pool, "Kept"))
+	if _, err := pool.Exec(ctx, `INSERT INTO user_track_stats(user_id, track_id, play_count) VALUES ($1, $2, 5)`, user, hidden); err != nil {
+		t.Fatal(err)
+	}
+
+	// A play of the hidden-to-be track, written as RecordPlay writes it, is
+	// under way: its stats row is bumped and locked.
+	play, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer play.Rollback(ctx)
+	if _, err := play.Exec(ctx, `
+		INSERT INTO user_track_stats(user_id, track_id, play_count, last_played_at) VALUES ($1, $2, 1, NOW())
+		ON CONFLICT (user_id, track_id) DO UPDATE SET play_count = user_track_stats.play_count + 1, last_played_at = NOW()`,
+		user, hidden); err != nil {
+		t.Fatal(err)
+	}
+	linked := make(chan error, 1)
+	go func() {
+		_, err := lib.LinkTracks(ctx, shown, hidden)
+		linked <- err
+	}()
+	// The link waits on that row; then the play finishes.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var waiting int
+		if err := pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the link never waited on the play")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := play.Exec(ctx, `INSERT INTO play_history(user_id, track_id) VALUES ($1, $2)`, user, hidden); err != nil {
+		t.Fatal(err)
+	}
+	if err := play.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-linked; err != nil {
+		t.Fatal(err)
+	}
+	var onShown, onHidden int
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(play_count) FILTER (WHERE track_id = $2), 0),
+		       COALESCE(SUM(play_count) FILTER (WHERE track_id = $3), 0)
+		FROM user_track_stats WHERE user_id = $1`, user, shown, hidden).Scan(&onShown, &onHidden); err != nil {
+		t.Fatal(err)
+	}
+	if onShown != 6 || onHidden != 0 {
+		t.Fatalf("plays after the link: %d on the shown track, %d on the hidden one; want 6 and 0", onShown, onHidden)
+	}
+}

@@ -25,10 +25,16 @@ BEGIN
     FOR UPDATE;
     UPDATE playlist_tracks SET track_id = to_id WHERE track_id = from_id;
 
+    -- One statement: the DELETE waits for a play being recorded on from_id
+    -- and returns its count. Reading, then deleting in a second statement,
+    -- copied the count before that play and deleted the row after it.
+    WITH moved AS (
+        DELETE FROM user_track_stats WHERE track_id = from_id RETURNING *
+    )
     INSERT INTO user_track_stats
         (user_id, track_id, play_count, last_played_at, rating, favorited, favorited_at)
     SELECT user_id, to_id, play_count, last_played_at, rating, favorited, favorited_at
-    FROM user_track_stats WHERE track_id = from_id
+    FROM moved
     ON CONFLICT (user_id, track_id) DO UPDATE SET
         play_count     = user_track_stats.play_count + EXCLUDED.play_count,
         last_played_at = GREATEST(user_track_stats.last_played_at, EXCLUDED.last_played_at),
@@ -37,7 +43,6 @@ BEGIN
                               THEN user_track_stats.favorited_at
                               ELSE EXCLUDED.favorited_at END,
         favorited      = user_track_stats.favorited OR EXCLUDED.favorited;
-    DELETE FROM user_track_stats WHERE track_id = from_id;
 
     UPDATE play_history SET track_id = to_id WHERE track_id = from_id;
 END $$;

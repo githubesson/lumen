@@ -1101,68 +1101,76 @@ func (s *Store) DeletePersonalTrack(ctx context.Context, trackID, userID uuid.UU
 // track_artists, and track_aliases; stale ingest_errors for the same paths are
 // cleared so the errors list doesn't keep referencing a removed file.
 func (s *Store) DeleteGlobalTrack(ctx context.Context, trackID uuid.UUID) ([]string, error) {
-	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-
-	var filePath string
-	err = tx.QueryRow(ctx, `
-		SELECT file_path FROM tracks
-		WHERE id = $1 AND owner_id IS NULL AND deleted_at IS NULL`, trackID).Scan(&filePath)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
+	var paths []string
+	err := s.retryLink(ctx, func(tx pgx.Tx) error {
+		var filePath string
+		err := tx.QueryRow(ctx, `
+			SELECT file_path FROM tracks
+			WHERE id = $1 AND owner_id IS NULL AND deleted_at IS NULL`, trackID).Scan(&filePath)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
 		}
-		return nil, err
-	}
-	// Lock the track and those linked to it in id order, as links do, before
-	// the deletes below take them in another order.
-	if _, err := tx.Exec(ctx, `
-		SELECT id FROM tracks WHERE id = $1 OR linked_to = $1 ORDER BY id FOR UPDATE`, trackID); err != nil {
-		return nil, err
-	}
+		// Lock the track and those linked to it in id order, as links do,
+		// before the deletes below take them in another order. A track a link
+		// added while this waited isn't locked: start over (retryLink) rather
+		// than delete it out of order.
+		const group = `SELECT id FROM tracks WHERE id = $1 OR linked_to = $1 ORDER BY id`
+		rows, err := tx.Query(ctx, group+` FOR UPDATE`, trackID)
+		if err != nil {
+			return err
+		}
+		locked, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return err
+		}
+		rows, err = tx.Query(ctx, group, trackID)
+		if err != nil {
+			return err
+		}
+		members, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(members, locked) {
+			return errLinkRaced
+		}
 
-	// Collect alias paths before the cascade drops the track_aliases rows,
-	// for this track and the tracks linked to it.
-	paths := []string{filePath}
-	rows, err := tx.Query(ctx, `
-		SELECT file_path FROM tracks WHERE linked_to = $1
-		UNION ALL
-		SELECT al.file_path FROM track_aliases al
-		WHERE al.track_id = $1 OR al.track_id IN (SELECT id FROM tracks WHERE linked_to = $1)`, trackID)
+		// Collect alias paths before the cascade drops the track_aliases rows,
+		// for this track and the tracks linked to it.
+		paths = []string{filePath}
+		rows, err = tx.Query(ctx, `
+			SELECT file_path FROM tracks WHERE linked_to = $1
+			UNION ALL
+			SELECT al.file_path FROM track_aliases al
+			WHERE al.track_id = $1 OR al.track_id IN (SELECT id FROM tracks WHERE linked_to = $1)`, trackID)
+		if err != nil {
+			return err
+		}
+		more, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		for _, p := range more {
+			if p != "" && !slices.Contains(paths, p) {
+				paths = append(paths, p)
+			}
+		}
+
+		// Linked tracks first: deleting the track they're linked to would hand
+		// its place to one of them (tracks_promote_linked).
+		if _, err := tx.Exec(ctx, `DELETE FROM tracks WHERE linked_to = $1`, trackID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM tracks WHERE id = $1`, trackID); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `DELETE FROM ingest_errors WHERE file_path = ANY($1)`, paths)
+		return err
+	})
 	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		if p != "" && !slices.Contains(paths, p) {
-			paths = append(paths, p)
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	// Linked tracks first: deleting the track they're linked to would hand
-	// its place to one of them (tracks_promote_linked).
-	if _, err := tx.Exec(ctx, `DELETE FROM tracks WHERE linked_to = $1`, trackID); err != nil {
-		return nil, err
-	}
-	if _, err := tx.Exec(ctx, `DELETE FROM tracks WHERE id = $1`, trackID); err != nil {
-		return nil, err
-	}
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM ingest_errors WHERE file_path = ANY($1)`, paths); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return paths, nil
