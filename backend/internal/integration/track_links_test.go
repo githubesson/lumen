@@ -973,3 +973,72 @@ func TestLinkAndPruneOfASoftDeletedFile(t *testing.T) {
 		t.Fatalf("%d deadlocks", deadlocks)
 	}
 }
+
+// A linked file that went (its row soft-deleted) and came back is a new
+// track: deleting the song doesn't hand its path out for removal.
+func TestAdminDeleteSparesAFileThatCameBack(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	lib := library.NewStore(pool)
+	shown, hidden, back := redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil)
+	if _, err := lib.LinkTracks(ctx, shown, hidden); err != nil {
+		t.Fatal(err)
+	}
+	var path string
+	if err := pool.QueryRow(ctx, `SELECT file_path FROM tracks WHERE id = $1`, hidden).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	if err := lib.SoftDeleteByPath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	// The file reappears and ingest files it as a track of its own.
+	if _, err := pool.Exec(ctx, `UPDATE tracks SET file_path = $2 WHERE id = $1`, back, path); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := lib.DeleteGlobalTrack(ctx, shown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(paths, path) {
+		t.Fatalf("deleting the song hands out %s, which another track plays from", path)
+	}
+	var live bool
+	if err := pool.QueryRow(ctx, `SELECT deleted_at IS NULL FROM tracks WHERE id = $1`, back).Scan(&live); err != nil || !live {
+		t.Fatalf("the returned file's track: live %v, %v", live, err)
+	}
+}
+
+// The watcher's soft delete of a shown track's file and a link of that track
+// don't deadlock, and the soft delete isn't lost.
+func TestWatcherSoftDeleteAndALinkDontDeadlock(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	deadlocks := deadlocksDuring(t, ctx, pool, func(lib *library.Store, _ *playlists.Store) {
+		for i := range 40 {
+			shown, hidden, fuller := redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil)
+			credit(t, ctx, pool, fuller, pageArtist(t, ctx, pool, "Watcher"))
+			if _, err := lib.LinkTracks(ctx, shown, hidden); err != nil {
+				t.Fatal(err)
+			}
+			var path string
+			if err := pool.QueryRow(ctx, `SELECT file_path FROM tracks WHERE id = $1`, shown).Scan(&path); err != nil {
+				t.Fatal(err)
+			}
+			var linkErr, softErr error
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() { defer wg.Done(); _, linkErr = lib.LinkTracks(ctx, fuller, shown) }()
+			go func() { defer wg.Done(); softErr = lib.SoftDeleteByPath(ctx, path) }()
+			wg.Wait()
+			// The link finds the track gone if the soft delete went first.
+			if softErr != nil || (linkErr != nil && !errors.Is(linkErr, library.ErrNotFound)) {
+				t.Fatalf("round %d: link = %v, soft delete = %v", i, linkErr, softErr)
+			}
+			var live bool
+			if err := pool.QueryRow(ctx, `SELECT deleted_at IS NULL FROM tracks WHERE id = $1`, shown).Scan(&live); err != nil || live {
+				t.Fatalf("round %d: the soft-deleted track is live %v, %v", i, live, err)
+			}
+		}
+	})
+	if deadlocks != 0 {
+		t.Fatalf("%d deadlocks", deadlocks)
+	}
+}

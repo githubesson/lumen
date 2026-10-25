@@ -644,6 +644,13 @@ func (h *Tracks) AdminDelete(w http.ResponseWriter, r *http.Request) {
 				"path", p, "track", id, "user", u.ID)
 			continue
 		}
+		if inUse, err := h.Library.FilePathInUse(r.Context(), p); err != nil || inUse {
+			// Another track still plays from this path: a linked file that went
+			// and came back is a new track.
+			h.log().Warn("admin delete: track file is still another track's; left in place",
+				"path", p, "track", id, "user", u.ID, "err", err)
+			continue
+		}
 		if rmErr := os.Remove(p); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
 			h.log().Warn("admin delete: removing the track file failed",
 				"path", p, "track", id, "user", u.ID, "err", rmErr)

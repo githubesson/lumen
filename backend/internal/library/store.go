@@ -994,10 +994,27 @@ func (s *Store) TrackHasFilePath(ctx context.Context, trackID uuid.UUID, path st
 	return ok, err
 }
 
+// SoftDeleteByPath marks the live tracks of a file deleted, for the watcher
+// when the file goes. A linked track's group changes with it (migration
+// 0031), so the group is locked the way links lock it first, and a race
+// starts over (retryLink).
 func (s *Store) SoftDeleteByPath(ctx context.Context, path string) error {
 	path = dbtext.Clean(path)
-	_, err := s.db.Exec(ctx, `UPDATE tracks SET deleted_at = NOW() WHERE file_path = $1 AND deleted_at IS NULL`, path)
-	return err
+	return s.retryLink(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT id FROM tracks WHERE file_path = $1 AND deleted_at IS NULL`, path)
+		if err != nil {
+			return err
+		}
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil || len(ids) == 0 {
+			return err
+		}
+		if err := lockTrackGroups(ctx, tx, ids); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE tracks SET deleted_at = NOW() WHERE file_path = $1 AND deleted_at IS NULL`, path)
+		return err
+	})
 }
 
 // HardDeleteByPath removes every DB trace of a file: the track row (cascading
@@ -1106,9 +1123,10 @@ func (s *Store) DeletePersonalTrack(ctx context.Context, trackID, userID uuid.UU
 // DeleteGlobalTrack hard-deletes a global track (owner_id IS NULL) and returns
 // every on-disk file that fed it: the canonical file_path plus any
 // track_aliases paths (duplicate files that were deduplicated into this track).
-// Tracks linked to it (other files of the same song) go too, with their
-// files. The caller must remove those files from disk — otherwise the
-// watcher/rescan simply re-ingests them. Personal tracks (owner_id set) and
+// Tracks linked to it (other files of the same song) go too, with the files
+// of the live ones: a soft-deleted one's file may since have come back as
+// another track. The caller must remove those files from disk — otherwise
+// the watcher/rescan simply re-ingests them. Personal tracks (owner_id set) and
 // missing or soft-deleted rows report ErrNotFound: this is the admin path for
 // shared content; users remove their own uploads via DeletePersonalTrack.
 //
@@ -1135,13 +1153,14 @@ func (s *Store) DeleteGlobalTrack(ctx context.Context, trackID uuid.UUID) ([]str
 		}
 
 		// Collect alias paths before the cascade drops the track_aliases rows,
-		// for this track and the tracks linked to it.
+		// for this track and the live tracks linked to it.
 		paths = []string{filePath}
 		rows, err := tx.Query(ctx, `
-			SELECT file_path FROM tracks WHERE linked_to = $1
+			SELECT file_path FROM tracks WHERE linked_to = $1 AND deleted_at IS NULL
 			UNION ALL
 			SELECT al.file_path FROM track_aliases al
-			WHERE al.track_id = $1 OR al.track_id IN (SELECT id FROM tracks WHERE linked_to = $1)`, trackID)
+			WHERE al.track_id = $1
+			   OR al.track_id IN (SELECT id FROM tracks WHERE linked_to = $1 AND deleted_at IS NULL)`, trackID)
 		if err != nil {
 			return err
 		}
