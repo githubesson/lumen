@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/githubesson/lumen/internal/auth"
+	"github.com/githubesson/lumen/internal/db"
 	"github.com/githubesson/lumen/internal/httpapi/handlers"
 	"github.com/githubesson/lumen/internal/httpapi/middleware"
 	"github.com/githubesson/lumen/internal/ingest"
@@ -491,11 +492,30 @@ func TestConcurrentLinksOfOnePairBothSucceed(t *testing.T) {
 // and the groups stay one level deep, hidden exactly when linked.
 func TestConcurrentLinkingKeepsGroupsConsistent(t *testing.T) {
 	ctx, pool := openRedteamDB(t)
-	lib := library.NewStore(pool)
 	ids := make([]uuid.UUID, 8)
 	for i := range ids {
 		ids[i] = redteamTrack(t, ctx, pool, nil, nil)
 	}
+	deadlocks := deadlocksDuring(t, ctx, pool, func(lib *library.Store, _ *playlists.Store) { raceLinks(t, ctx, lib, ids) })
+	if deadlocks != 0 {
+		t.Fatalf("%d deadlocks, retried or not", deadlocks)
+	}
+	var chained, misplaced int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FILTER (WHERE h.linked_to IS NOT NULL),
+		       COUNT(*) FILTER (WHERE t.library_visible <> (t.linked_to IS NULL))
+		FROM tracks t LEFT JOIN tracks h ON h.id = t.linked_to
+		WHERE t.id = ANY($1)`, ids).Scan(&chained, &misplaced); err != nil {
+		t.Fatal(err)
+	}
+	if chained != 0 || misplaced != 0 {
+		t.Fatalf("%d tracks linked to a linked track, %d hidden or shown wrongly", chained, misplaced)
+	}
+}
+
+// raceLinks runs three waves of 40 links and unlinks over ids.
+func raceLinks(t *testing.T, ctx context.Context, lib *library.Store, ids []uuid.UUID) {
+	t.Helper()
 	for range 3 {
 		var wg sync.WaitGroup
 		errs := make([]error, 40)
@@ -517,17 +537,6 @@ func TestConcurrentLinkingKeepsGroupsConsistent(t *testing.T) {
 				t.Fatalf("a racing link failed outright: %v", err)
 			}
 		}
-	}
-	var chained, misplaced int
-	if err := pool.QueryRow(ctx, `
-		SELECT COUNT(*) FILTER (WHERE h.linked_to IS NOT NULL),
-		       COUNT(*) FILTER (WHERE t.library_visible <> (t.linked_to IS NULL))
-		FROM tracks t LEFT JOIN tracks h ON h.id = t.linked_to
-		WHERE t.id = ANY($1)`, ids).Scan(&chained, &misplaced); err != nil {
-		t.Fatal(err)
-	}
-	if chained != 0 || misplaced != 0 {
-		t.Fatalf("%d tracks linked to a linked track, %d hidden or shown wrongly", chained, misplaced)
 	}
 }
 
@@ -806,8 +815,15 @@ func TestOneStatementDeleteHandsRefsToTheSurvivor(t *testing.T) {
 // deadlock: both lock the group the way links do.
 func TestPruneAndAdminDeleteOfOneGroupBothSucceed(t *testing.T) {
 	ctx, pool := openRedteamDB(t)
-	lib := library.NewStore(pool)
 	user := redteamUser(t, ctx, pool)
+	deadlocks := deadlocksDuring(t, ctx, pool, func(lib *library.Store, _ *playlists.Store) { pruneAndAdminDelete(t, ctx, pool, lib, user) })
+	if deadlocks != 0 {
+		t.Fatalf("%d deadlocks", deadlocks)
+	}
+}
+
+func pruneAndAdminDelete(t *testing.T, ctx context.Context, pool *pgxpool.Pool, lib *library.Store, user uuid.UUID) {
+	t.Helper()
 	for range 30 {
 		shown, hidden := redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil)
 		if _, err := lib.LinkTracks(ctx, shown, hidden); err != nil {
@@ -836,5 +852,124 @@ func TestPruneAndAdminDeleteOfOneGroupBothSucceed(t *testing.T) {
 		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM tracks WHERE id IN ($1, $2)`, shown, hidden).Scan(&left); err != nil || left != 0 {
 			t.Fatalf("%d of the group's tracks left, %v", left, err)
 		}
+	}
+}
+
+// deadlocksDuring runs race on connections of its own and returns how many
+// deadlocks Postgres broke in the test database meanwhile, retried ones
+// included. Closing those connections flushes their statistics.
+func deadlocksDuring(t *testing.T, ctx context.Context, pool *pgxpool.Pool, race func(lib *library.Store, pls *playlists.Store)) int64 {
+	t.Helper()
+	count := func() int64 {
+		t.Helper()
+		var n int64
+		if err := pool.QueryRow(ctx, `SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	before := count()
+	own, err := db.Open(ctx, os.Getenv("LUMEN_REVIEW_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	race(library.NewStore(own), playlists.NewStore(own))
+	own.Close()
+	// The closed sessions report their statistics as they exit.
+	after := count()
+	for range 10 {
+		time.Sleep(300 * time.Millisecond)
+		n := count()
+		if n == after {
+			break
+		}
+		after = n
+	}
+	return after - before
+}
+
+// Deleting a hidden file leaves room for a playlist add or a play on the
+// track it's linked to, even with a stale entry for the hidden file in the
+// same playlist that the delete has to move.
+func TestHiddenDeletesLeaveRoomForPlaylistAdds(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	user := redteamUser(t, ctx, pool)
+	plStore := playlists.NewStore(pool)
+	pl, err := plStore.Create(ctx, user, "Room "+uuid.NewString()[:8], "", playlists.VisibilityPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM playlists WHERE id = $1`, pl.ID) })
+	deadlocks := deadlocksDuring(t, ctx, pool, func(lib *library.Store, pls *playlists.Store) {
+		for i := range 40 {
+			shown, hidden := redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil)
+			if _, err := lib.LinkTracks(ctx, shown, hidden); err != nil {
+				t.Fatal(err)
+			}
+			// A stale entry the delete moves, as a TIDAL adoption leaves one.
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO playlist_tracks(playlist_id, position, track_id)
+				VALUES ($1, (SELECT COALESCE(MAX(position) + 1, 0) FROM playlist_tracks WHERE playlist_id = $1), $2)`,
+				pl.ID, hidden); err != nil {
+				t.Fatal(err)
+			}
+			var path string
+			if err := pool.QueryRow(ctx, `SELECT file_path FROM tracks WHERE id = $1`, hidden).Scan(&path); err != nil {
+				t.Fatal(err)
+			}
+			var deleteErr, addErr error
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				if i%2 == 0 {
+					_, deleteErr = lib.DeleteGlobalTrack(ctx, hidden)
+				} else {
+					deleteErr = lib.HardDeleteByPath(ctx, path)
+				}
+			}()
+			go func() { defer wg.Done(); addErr = pls.AddEntries(ctx, pl.ID, []uuid.UUID{shown}, nil, user) }()
+			wg.Wait()
+			if deleteErr != nil || addErr != nil {
+				t.Fatalf("round %d: delete = %v, playlist add = %v", i, deleteErr, addErr)
+			}
+		}
+	})
+	if deadlocks != 0 {
+		t.Fatalf("%d deadlocks", deadlocks)
+	}
+}
+
+// A link re-pointing a soft-deleted file and a prune of that file don't
+// deadlock: the link locks soft-deleted files too, in the same order.
+func TestLinkAndPruneOfASoftDeletedFile(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	deadlocks := deadlocksDuring(t, ctx, pool, func(lib *library.Store, _ *playlists.Store) {
+		for i := range 40 {
+			oldShown, gone, fuller := redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil)
+			credit(t, ctx, pool, fuller, pageArtist(t, ctx, pool, "Fuller"))
+			if _, err := lib.LinkTracks(ctx, oldShown, gone); err != nil {
+				t.Fatal(err)
+			}
+			var path string
+			if err := pool.QueryRow(ctx, `SELECT file_path FROM tracks WHERE id = $1`, gone).Scan(&path); err != nil {
+				t.Fatal(err)
+			}
+			if err := lib.SoftDeleteByPath(ctx, path); err != nil {
+				t.Fatal(err)
+			}
+			var linkErr, pruneErr error
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() { defer wg.Done(); _, linkErr = lib.LinkTracks(ctx, fuller, oldShown) }()
+			go func() { defer wg.Done(); pruneErr = lib.HardDeleteByPath(ctx, path) }()
+			wg.Wait()
+			if linkErr != nil || pruneErr != nil {
+				t.Fatalf("round %d: link = %v, prune = %v", i, linkErr, pruneErr)
+			}
+		}
+	})
+	if deadlocks != 0 {
+		t.Fatalf("%d deadlocks", deadlocks)
 	}
 }

@@ -249,30 +249,45 @@ func linkGroups(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) ([]uuid.UUID, e
 	return groups, nil
 }
 
-// linkMembersSQL selects the live tracks of the groups shown by $1, in id
-// order: the order every link locks them in.
-const linkMembersSQL = `
-	SELECT id FROM tracks
-	WHERE (id = ANY($1) OR linked_to = ANY($1)) AND deleted_at IS NULL
+// linkGroupSQL selects every track of the groups shown by $1, the
+// soft-deleted ones included, with whether each is live, in id order: the
+// order every link and delete locks them in.
+const linkGroupSQL = `
+	SELECT id, deleted_at IS NULL FROM tracks
+	WHERE id = ANY($1) OR linked_to = ANY($1)
 	ORDER BY id`
 
-// lockLinkGroups locks every live track of the given groups, in id order and
-// in one statement, so links waiting on each other can't deadlock. FOR NO KEY
-// UPDATE excludes other links and deletes but not the key-share lock a new
-// playlist entry, play or stat takes on its track: FOR UPDATE would block
-// those inserts, which hold their playlist's lock that move_track_refs needs
-// next, and deadlock them with the link. It checks
-// each of ids still belongs to the group it was read in, and that no track
-// joined the groups after the lock's snapshot (it wouldn't be locked, and
-// updating it later would take its lock out of order): errLinkRaced if
-// either changed. Joining a group takes a lock on its shown track, held here
-// now, so the members read next are final.
+type groupRow struct {
+	ID   uuid.UUID
+	Live bool
+}
+
+func scanGroupRows(rows pgx.Rows) ([]groupRow, error) {
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (groupRow, error) {
+		var g groupRow
+		err := row.Scan(&g.ID, &g.Live)
+		return g, err
+	})
+}
+
+// lockLinkGroups locks every track of the given groups, in id order and in
+// one statement, so links waiting on each other can't deadlock, and returns
+// the live ones. The soft-deleted ones are locked too: showLinked re-points
+// them, and a prune deleting one locks it first. FOR NO KEY UPDATE excludes
+// other links and deletes but not the key-share lock a new playlist entry,
+// play or stat takes on its track: FOR UPDATE would block those inserts,
+// which hold their playlist's lock that move_track_refs needs next, and
+// deadlock them with the link. It checks each of ids still belongs to the
+// group it was read in, and that no track joined the groups after the lock's
+// snapshot (it wouldn't be locked, and updating it later would take its lock
+// out of order): errLinkRaced if either changed. Joining a group takes a
+// lock on its shown track, held here now, so the tracks read next are final.
 func lockLinkGroups(ctx context.Context, tx pgx.Tx, groups, ids []uuid.UUID) ([]uuid.UUID, error) {
-	rows, err := tx.Query(ctx, linkMembersSQL+` FOR NO KEY UPDATE`, groups)
+	rows, err := tx.Query(ctx, linkGroupSQL+` FOR NO KEY UPDATE`, groups)
 	if err != nil {
 		return nil, err
 	}
-	locked, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	locked, err := scanGroupRows(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -283,26 +298,34 @@ func lockLinkGroups(ctx context.Context, tx pgx.Tx, groups, ids []uuid.UUID) ([]
 	if !slices.Equal(now, groups) {
 		return nil, errLinkRaced
 	}
-	rows, err = tx.Query(ctx, linkMembersSQL, groups)
+	rows, err = tx.Query(ctx, linkGroupSQL, groups)
 	if err != nil {
 		return nil, err
 	}
-	members, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	current, err := scanGroupRows(rows)
 	if err != nil {
 		return nil, err
 	}
-	if !slices.Equal(members, locked) {
+	if !slices.Equal(current, locked) {
 		return nil, errLinkRaced
 	}
-	return locked, nil
+	var members []uuid.UUID
+	for _, g := range locked {
+		if g.Live {
+			members = append(members, g.ID)
+		}
+	}
+	return members, nil
 }
 
 // lockTrackGroups locks the tracks ids with their linked groups (the track
 // each is linked to and the tracks linked to that one) in id order, as links
 // lock them, for a delete: deleting a linked track writes onto another in its
 // group (its references move there), and taking those locks in another order
-// could deadlock with a link or another delete. errLinkRaced if a group
-// changed while it waited.
+// could deadlock with a link or another delete. FOR NO KEY UPDATE, as in
+// lockLinkGroups, leaves room for a playlist add or a play on the track that
+// survives; the DELETEs that follow take the stronger lock on the rows they
+// remove. errLinkRaced if a group changed while it waited.
 func lockTrackGroups(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) error {
 	const group = `
 		SELECT t.id FROM tracks t
@@ -310,7 +333,7 @@ func lockTrackGroups(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) error {
 		   OR t.id IN (SELECT x.linked_to FROM tracks x WHERE x.id = ANY($1))
 		   OR t.linked_to IN (SELECT COALESCE(x.linked_to, x.id) FROM tracks x WHERE x.id = ANY($1))
 		ORDER BY t.id`
-	rows, err := tx.Query(ctx, group+` FOR UPDATE OF t`, ids)
+	rows, err := tx.Query(ctx, group+` FOR NO KEY UPDATE OF t`, ids)
 	if err != nil {
 		return err
 	}
