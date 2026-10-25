@@ -1030,6 +1030,20 @@ func TestAdminDeleteRemovesAFileWithAStaleTwin(t *testing.T) {
 	if !slices.Equal(paths, []string{path}) {
 		t.Fatalf("deleted paths = %v, want %s", paths, path)
 	}
+
+	// So does one whose stale twin is still live (the file was rewritten
+	// with other audio and ingested again), as before linking existed.
+	older, newer := redteamTrack(t, ctx, pool, nil, nil), redteamTrack(t, ctx, pool, nil, nil)
+	if _, err := pool.Exec(ctx, `UPDATE tracks SET file_path = (SELECT file_path FROM tracks WHERE id = $1) WHERE id = $2`,
+		older, newer); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT file_path FROM tracks WHERE id = $1`, older).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	if paths, err = lib.DeleteGlobalTrack(ctx, newer); err != nil || !slices.Equal(paths, []string{path}) {
+		t.Fatalf("deleted paths = %v, %v; want %s", paths, err, path)
+	}
 }
 
 // Through the admin delete handler, with files on disk: a plain track's file
