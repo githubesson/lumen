@@ -449,3 +449,21 @@ it("cancels the file search on Escape without closing the dialog", async () => {
   fireEvent.keyDown(document.activeElement!, { key: "Escape" });
   expect(onClose).toHaveBeenCalledTimes(1);
 });
+
+it("cancels the file search on Escape from its buttons too", async () => {
+  const onClose = vi.fn();
+  mock.getTrack.mockResolvedValueOnce({ ...track("mp3", undefined), title: "Calm Down" });
+  mock.listTracks.mockResolvedValue([{ id: "wav", title: "Calm Down (studio)", duration_ms: 224000 }]);
+  render(<TrackInfoDialog open trackId="mp3" canManage onClose={onClose} />);
+  for (const target of [
+    () => screen.getByRole("button", { name: "Cancel" }),
+    () => screen.findByRole("button", { name: /Calm Down \(studio\)/ }),
+  ]) {
+    fireEvent.click(await screen.findByRole("button", { name: "Link a file" }));
+    const control = await target();
+    control.focus();
+    fireEvent.keyDown(control, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
+  }
+  expect(onClose).not.toHaveBeenCalled();
+});

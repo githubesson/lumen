@@ -501,7 +501,17 @@ function VersionLinker({
   };
 
   return (
-    <div className="version-linker" data-owns-escape>
+    // Escape anywhere in here cancels the search; DialogShell leaves it to
+    // this (data-owns-escape) instead of closing the dialog.
+    <div
+      className="version-linker"
+      data-owns-escape
+      onKeyDown={(e) => {
+        if (e.key !== "Escape" || e.defaultPrevented) return;
+        e.preventDefault();
+        onCancel();
+      }}
+    >
       <div className="version-linker-search">
         <SearchInput
           value={query}
@@ -509,7 +519,6 @@ function VersionLinker({
             setQuery(e.target.value);
             setError(null);
           }}
-          onClear={onCancel}
           onFocus={(e) => e.currentTarget.select()}
           placeholder="Find another file of this song"
           aria-label="Find another file of this song"

@@ -175,9 +175,26 @@ const linkShownOrder = `t.metadata_edited_at IS NOT NULL DESC, ` + trackHasArtis
 // errLinkRaced reports that a group changed between reading and locking it.
 var errLinkRaced = fmt.Errorf("%w: the tracks changed while linking; try again", ErrInvalidInput)
 
-// linkRetries bounds how often LinkTracks and UnlinkTrack read groups again
-// after another link changed them between reading and locking.
+// linkRetries bounds how often LinkTracks and UnlinkTrack start over after
+// another link changed the groups between reading and locking them, or
+// Postgres broke a deadlock with another link.
 const linkRetries = 3
+
+// retryLink runs fn in a transaction, and again in a fresh one when another
+// link raced it. Retrying inside the same transaction would keep the first
+// attempt's locks while taking others, out of the id order every link locks
+// in, and deadlock. A race outlasting the retries reports errLinkRaced, the
+// caller's to try again.
+func (s *Store) retryLink(ctx context.Context, fn func(pgx.Tx) error) error {
+	var err error
+	for range linkRetries {
+		err = dbutil.WithTx(ctx, s.db, fn)
+		if !errors.Is(err, errLinkRaced) && !dbutil.IsDeadlock(err) {
+			return err
+		}
+	}
+	return errLinkRaced
+}
 
 // linkGroup is the shown track of the group id belongs to, which must be a
 // live shared library track.
@@ -218,15 +235,22 @@ func linkGroups(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) ([]uuid.UUID, e
 	return groups, nil
 }
 
-// lockLinkGroups locks every live track of the given groups, in id order,
-// and checks each of ids still belongs to the group it was read in:
-// errLinkRaced when one doesn't.
+// linkMembersSQL selects the live tracks of the groups shown by $1, in id
+// order: the order every link locks them in.
+const linkMembersSQL = `
+	SELECT id FROM tracks
+	WHERE (id = ANY($1) OR linked_to = ANY($1)) AND deleted_at IS NULL
+	ORDER BY id`
+
+// lockLinkGroups locks every live track of the given groups, in id order and
+// in one statement, so links waiting on each other can't deadlock. It checks
+// each of ids still belongs to the group it was read in, and that no track
+// joined the groups after the lock's snapshot (it wouldn't be locked, and
+// updating it later would take its lock out of order): errLinkRaced if
+// either changed. Joining a group takes a lock on its shown track, held here
+// now, so the members read next are final.
 func lockLinkGroups(ctx context.Context, tx pgx.Tx, groups, ids []uuid.UUID) ([]uuid.UUID, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT id FROM tracks
-		WHERE (id = ANY($1) OR linked_to = ANY($1)) AND deleted_at IS NULL
-		ORDER BY id
-		FOR UPDATE`, groups)
+	rows, err := tx.Query(ctx, linkMembersSQL+` FOR UPDATE`, groups)
 	if err != nil {
 		return nil, err
 	}
@@ -239,6 +263,17 @@ func lockLinkGroups(ctx context.Context, tx pgx.Tx, groups, ids []uuid.UUID) ([]
 		return nil, err
 	}
 	if !slices.Equal(now, groups) {
+		return nil, errLinkRaced
+	}
+	rows, err = tx.Query(ctx, linkMembersSQL, groups)
+	if err != nil {
+		return nil, err
+	}
+	members, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Equal(members, locked) {
 		return nil, errLinkRaced
 	}
 	return locked, nil
@@ -275,38 +310,33 @@ func (s *Store) LinkTracks(ctx context.Context, targetID, otherID uuid.UUID) (uu
 		return uuid.Nil, fmt.Errorf("%w: a track can't be linked to itself", ErrInvalidInput)
 	}
 	var shown uuid.UUID
-	err := dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
+	err := s.retryLink(ctx, func(tx pgx.Tx) error {
 		ids := []uuid.UUID{targetID, otherID}
-		for attempt := 1; ; attempt++ {
-			groups, err := linkGroups(ctx, tx, ids)
-			if err != nil {
-				return err
-			}
-			if groups[0] == groups[1] {
-				// Already linked, perhaps by a request racing this one.
-				shown = groups[0]
-				return nil
-			}
-			members, err := lockLinkGroups(ctx, tx, groups, ids)
-			if errors.Is(err, errLinkRaced) && attempt < linkRetries {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			if err := tx.QueryRow(ctx, `
-				SELECT t.id FROM tracks t WHERE t.id = ANY($1)
-				ORDER BY `+linkShownOrder+`, t.id = $2 DESC, t.created_at, t.id
-				LIMIT 1`, members, groups[0]).Scan(&shown); err != nil {
-				return err
-			}
-			if err := showLinked(ctx, tx, shown, members, groups); err != nil {
-				return err
-			}
-			_, err = tx.Exec(ctx, `
-				SELECT move_track_refs(m, $1) FROM unnest($2::uuid[]) AS m WHERE m <> $1`, shown, members)
+		groups, err := linkGroups(ctx, tx, ids)
+		if err != nil {
 			return err
 		}
+		if groups[0] == groups[1] {
+			// Already linked, perhaps by a request racing this one.
+			shown = groups[0]
+			return nil
+		}
+		members, err := lockLinkGroups(ctx, tx, groups, ids)
+		if err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `
+			SELECT t.id FROM tracks t WHERE t.id = ANY($1)
+			ORDER BY `+linkShownOrder+`, t.id = $2 DESC, t.created_at, t.id
+			LIMIT 1`, members, groups[0]).Scan(&shown); err != nil {
+			return err
+		}
+		if err := showLinked(ctx, tx, shown, members, groups); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			SELECT move_track_refs(m, $1) FROM unnest($2::uuid[]) AS m WHERE m <> $1`, shown, members)
+		return err
 	})
 	return shown, err
 }
@@ -317,36 +347,32 @@ func (s *Store) LinkTracks(ctx context.Context, targetID, otherID uuid.UUID) (uu
 // the fullest of the rest. Returns the group's shown track afterwards, or
 // trackID itself when it wasn't linked.
 func (s *Store) UnlinkTrack(ctx context.Context, trackID uuid.UUID) (uuid.UUID, error) {
-	shown := trackID
-	err := dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
-		for attempt := 1; ; attempt++ {
-			group, err := linkGroup(ctx, tx, trackID)
-			if err != nil {
-				return err
-			}
-			members, err := lockLinkGroups(ctx, tx, []uuid.UUID{group}, []uuid.UUID{trackID})
-			if errors.Is(err, errLinkRaced) && attempt < linkRetries {
-				continue
-			}
-			if err != nil || len(members) < 2 {
-				return err
-			}
-			if trackID != group {
-				shown = group
-				_, err := tx.Exec(ctx, `
-					UPDATE tracks SET linked_to = NULL, library_visible = TRUE, updated_at = NOW()
-					WHERE id = $1`, trackID)
-				return err
-			}
-			rest := slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == trackID })
-			if err := tx.QueryRow(ctx, `
-				SELECT t.id FROM tracks t WHERE t.id = ANY($1)
-				ORDER BY `+linkShownOrder+`, t.created_at, t.id
-				LIMIT 1`, rest).Scan(&shown); err != nil {
-				return err
-			}
-			return showLinked(ctx, tx, shown, rest, []uuid.UUID{trackID})
+	var shown uuid.UUID
+	err := s.retryLink(ctx, func(tx pgx.Tx) error {
+		shown = trackID
+		group, err := linkGroup(ctx, tx, trackID)
+		if err != nil {
+			return err
 		}
+		members, err := lockLinkGroups(ctx, tx, []uuid.UUID{group}, []uuid.UUID{trackID})
+		if err != nil || len(members) < 2 {
+			return err
+		}
+		if trackID != group {
+			shown = group
+			_, err := tx.Exec(ctx, `
+				UPDATE tracks SET linked_to = NULL, library_visible = TRUE, updated_at = NOW()
+				WHERE id = $1`, trackID)
+			return err
+		}
+		rest := slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == trackID })
+		if err := tx.QueryRow(ctx, `
+			SELECT t.id FROM tracks t WHERE t.id = ANY($1)
+			ORDER BY `+linkShownOrder+`, t.created_at, t.id
+			LIMIT 1`, rest).Scan(&shown); err != nil {
+			return err
+		}
+		return showLinked(ctx, tx, shown, rest, []uuid.UUID{trackID})
 	})
 	return shown, err
 }

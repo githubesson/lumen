@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -479,5 +480,50 @@ func TestConcurrentLinksOfOnePairBothSucceed(t *testing.T) {
 		if errs[0] != nil || errs[1] != nil || shown[0] != shown[1] {
 			t.Fatalf("concurrent links = %s %v, %s %v", shown[0], errs[0], shown[1], errs[1])
 		}
+	}
+}
+
+// Links and unlinks racing over a few tracks either succeed or ask the
+// caller to try again; none fails outright (a deadlock surfaced as a 500),
+// and the groups stay one level deep, hidden exactly when linked.
+func TestConcurrentLinkingKeepsGroupsConsistent(t *testing.T) {
+	ctx, pool := openRedteamDB(t)
+	lib := library.NewStore(pool)
+	ids := make([]uuid.UUID, 8)
+	for i := range ids {
+		ids[i] = redteamTrack(t, ctx, pool, nil, nil)
+	}
+	for range 3 {
+		var wg sync.WaitGroup
+		errs := make([]error, 40)
+		for i := range errs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				a, b := ids[rand.IntN(len(ids))], ids[rand.IntN(len(ids))]
+				if i%3 == 0 {
+					_, errs[i] = lib.UnlinkTrack(ctx, a)
+				} else {
+					_, errs[i] = lib.LinkTracks(ctx, a, b)
+				}
+			}()
+		}
+		wg.Wait()
+		for _, err := range errs {
+			if err != nil && !errors.Is(err, library.ErrInvalidInput) {
+				t.Fatalf("a racing link failed outright: %v", err)
+			}
+		}
+	}
+	var chained, misplaced int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FILTER (WHERE h.linked_to IS NOT NULL),
+		       COUNT(*) FILTER (WHERE t.library_visible <> (t.linked_to IS NULL))
+		FROM tracks t LEFT JOIN tracks h ON h.id = t.linked_to
+		WHERE t.id = ANY($1)`, ids).Scan(&chained, &misplaced); err != nil {
+		t.Fatal(err)
+	}
+	if chained != 0 || misplaced != 0 {
+		t.Fatalf("%d tracks linked to a linked track, %d hidden or shown wrongly", chained, misplaced)
 	}
 }

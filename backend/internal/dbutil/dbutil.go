@@ -21,6 +21,10 @@ import (
 // uniqueViolation is the Postgres SQLSTATE for a unique-constraint violation.
 const uniqueViolation = "23505"
 
+// deadlockDetected is the Postgres SQLSTATE for a transaction aborted to
+// break a deadlock.
+const deadlockDetected = "40P01"
+
 // WithTx runs fn inside a transaction. It commits when fn returns nil and rolls
 // back otherwise; the deferred rollback is a no-op once Commit has succeeded.
 // The pgx.Tx passed to fn is only valid for the duration of the call.
@@ -42,6 +46,13 @@ func WithTx(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error) erro
 func IsUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == uniqueViolation
+}
+
+// IsDeadlock reports whether err (or anything it wraps) is Postgres aborting
+// a transaction to break a deadlock. A fresh transaction can retry the work.
+func IsDeadlock(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == deadlockDetected
 }
 
 // SetBuilder accumulates "column = $N" assignments and their argument values
