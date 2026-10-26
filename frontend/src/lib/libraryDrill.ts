@@ -1,8 +1,9 @@
 /** The search params that open an album or artist page over the library list. */
 const DRILL_PARAMS = ["album", "artist", "tidalAlbum", "tidalArtist"] as const;
 
+/** An empty value (`?album=`) opens nothing, as on the Library page. */
 export function hasLibraryDrill(params: URLSearchParams): boolean {
-  return DRILL_PARAMS.some((key) => params.has(key));
+  return DRILL_PARAMS.some((key) => Boolean(params.get(key)));
 }
 
 /** The library list (tab and search) the album or artist page was opened from. */
