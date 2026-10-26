@@ -7,7 +7,6 @@ import {
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
-  ArrowLeft as ArrowLeftIcon,
   Pencil as PencilIcon,
   Play as PlayIcon,
   Shuffle as ShuffleIcon,
@@ -17,6 +16,7 @@ import { startListPlayback } from "@music-library/core/player/play-list";
 import type { TrackListItem } from "../../api";
 import { usePlayer, useRemotePlayback } from "../../context/Player";
 import { displayText } from "../../lib/format";
+import { withoutLibraryDrill } from "../../lib/libraryDrill";
 import { Button } from "../Button";
 import CoverArt from "../CoverArt";
 import SearchInput from "../SearchInput";
@@ -65,7 +65,6 @@ export interface AlbumSleeveSearch {
  */
 export function AlbumSleeve({
   kind,
-  onBack,
   album,
   loadingLabel,
   versions,
@@ -79,7 +78,6 @@ export function AlbumSleeve({
   children,
 }: {
   kind: ReactNode;
-  onBack: () => void;
   album: AlbumSleeveAlbum | null;
   /** Announced while `album` is null. */
   loadingLabel: string;
@@ -127,15 +125,6 @@ export function AlbumSleeve({
   return (
     <div ref={viewRef} className="view album-sleeve" aria-busy={album ? undefined : true}>
       <header ref={sideRef} className="album-sleeve-side">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="album-sleeve-back"
-          onClick={onBack}
-          leadingIcon={<ArrowLeftIcon className="size-3.5" />}
-        >
-          Library
-        </Button>
         {album ? (
           <CoverArt
             className="album-sleeve-art"
@@ -271,14 +260,13 @@ function SleevePlay({ tracks, loading }: { tracks: TrackListItem[]; loading: boo
 
 /**
  * The artists under the title. One with a library page links to it; the
- * link keeps the rest of the library's state (tab, search) so its Back
- * returns there.
+ * link keeps the rest of the library's state (tab, search) so the Library
+ * crumb returns there.
  */
 function AlbumCredits({ credits }: { credits: AlbumCredit[] }) {
   const [params] = useSearchParams();
   const artistLink = (artistId: string) => {
-    const next = new URLSearchParams(params);
-    for (const key of ["album", "tidalAlbum", "tidalArtist", "artistName"]) next.delete(key);
+    const next = withoutLibraryDrill(params);
     next.set("artist", artistId);
     return { pathname: "/library", search: `?${next}` };
   };

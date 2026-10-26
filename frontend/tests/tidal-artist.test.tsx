@@ -43,7 +43,6 @@ const show = async () => {
     <TidalArtistDetailView
       id="123"
       name="Artist"
-      onBack={() => {}}
       onOpenAlbum={() => {}}
     />,
   );
@@ -217,7 +216,7 @@ it("opens a release's TIDAL page by its TIDAL id", async () => {
     ],
   });
   const onOpenAlbum = vi.fn();
-  render(<TidalArtistDetailView id="123" name="Artist" onBack={() => {}} onOpenAlbum={onOpenAlbum} />);
+  render(<TidalArtistDetailView id="123" name="Artist" onOpenAlbum={onOpenAlbum} />);
   await act(async () => {});
   fireEvent.click(screen.getByRole("button", { name: /^LP/ }));
   fireEvent.click(screen.getByRole("button", { name: /^EP/ }));

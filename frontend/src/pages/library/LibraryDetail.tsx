@@ -89,13 +89,11 @@ export function AlbumDetailView({
     return <NotFound kind="Album" onBack={onBack} />;
   }
   if (!sleeve || !album || !tracks) {
-    // A failed first load: the way back and the error, not a frame that
-    // would never fill.
-    if (error) return <DetailLoadError error={error} onBack={onBack} />;
+    // A failed first load: the error, not a frame that would never fill.
+    if (error) return <DetailLoadError error={error} />;
     return (
       <AlbumSleeve
         kind="Album"
-        onBack={onBack}
         album={null}
         loadingLabel="Loading album…"
         search={sleeveSearch(search, 0)}
@@ -106,7 +104,6 @@ export function AlbumDetailView({
   return (
     <AlbumSleeve
       kind="Album"
-      onBack={onBack}
       album={sleeve}
       loadingLabel="Loading album…"
       onEdit={isAdmin ? () => setEditing(true) : undefined}
@@ -148,7 +145,6 @@ export function AlbumDetailView({
 export function TidalAlbumDetailView({
   id,
   artistId,
-  onBack,
   onOpenAlbum,
   onOpenVersion,
 }: {
@@ -158,7 +154,6 @@ export function TidalAlbumDetailView({
    * Without one, the album's own artist is asked once it loads.
    */
   artistId: string | null;
-  onBack: () => void;
   onOpenAlbum: (target: EntityTarget) => void;
   /**
    * Swaps the page for another version of the release (a TIDAL album id),
@@ -248,8 +243,7 @@ export function TidalAlbumDetailView({
   if (!album || !sleeve) {
     if (error) {
       return (
-        <div className="view" style={{ display: "grid", gap: 18 }}>
-          <DetailBackRow onBack={onBack} />
+        <div className="view">
           <div
             style={{
               padding: 40,
@@ -269,7 +263,6 @@ export function TidalAlbumDetailView({
     return (
       <AlbumSleeve
         kind="TIDAL Album"
-        onBack={onBack}
         album={null}
         loadingLabel="Loading TIDAL album…"
         versions={versionPicker}
@@ -294,7 +287,6 @@ export function TidalAlbumDetailView({
   return (
     <AlbumSleeve
       kind="TIDAL Album"
-      onBack={onBack}
       album={sleeve}
       loadingLabel="Loading TIDAL album…"
       versions={versionPicker}
@@ -480,27 +472,11 @@ export function DetailTrackSearchBar({
   );
 }
 
-/** A failed first load: the way back and the error. */
-function DetailLoadError({ error, onBack }: { error: string; onBack: () => void }) {
+/** A failed first load. The Library crumb is the way back. */
+function DetailLoadError({ error }: { error: string }) {
   return (
-    <div className="view" style={{ display: "grid", gap: 18 }}>
-      <DetailBackRow onBack={onBack} />
+    <div className="view">
       <ErrorBanner message={error} />
-    </div>
-  );
-}
-
-function DetailBackRow({ onBack }: { onBack: () => void }) {
-  return (
-    <div>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onBack}
-        leadingIcon={<ArrowLeftIcon className="size-3.5" />}
-      >
-        Library
-      </Button>
     </div>
   );
 }

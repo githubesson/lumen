@@ -13,6 +13,7 @@ import {
   type TrackListItem,
 } from "../api";
 import { displayText } from "../lib/format";
+import { withoutLibraryDrill } from "../lib/libraryDrill";
 import type { EntityTarget } from "@music-library/core/entity-target";
 import TrackList from "../components/TrackList";
 import CoverArt from "../components/CoverArt";
@@ -158,11 +159,7 @@ export default function Library() {
     setParams(next);
   };
 
-  const clearDrill = () => {
-    const next = new URLSearchParams(params);
-    for (const key of ["album", "artist", "tidalAlbum", "tidalArtist", "artistName"]) next.delete(key);
-    setParams(next, { replace: true });
-  };
+  const clearDrill = () => setParams(withoutLibraryDrill(params), { replace: true });
 
   if (albumID) {
     return <AlbumDetailView key={albumID} id={albumID} onBack={clearDrill} />;
@@ -173,14 +170,13 @@ export default function Library() {
         key={tidalAlbumID}
         id={tidalAlbumID}
         artistId={tidalArtistID}
-        onBack={clearDrill}
         onOpenAlbum={openAlbum}
         onOpenVersion={openVersion}
       />
     );
   }
   if (tidalArtistID) {
-    return <TidalArtistDetailView key={tidalArtistID} id={tidalArtistID} name={params.get("artistName") ?? "TIDAL artist"} onBack={clearDrill} onOpenAlbum={openAlbum} />;
+    return <TidalArtistDetailView key={tidalArtistID} id={tidalArtistID} name={params.get("artistName") ?? "TIDAL artist"} onOpenAlbum={openAlbum} />;
   }
   if (artistID) {
     return <ArtistDetailView key={artistID} id={artistID} onBack={clearDrill} onOpenAlbum={openAlbum} />;

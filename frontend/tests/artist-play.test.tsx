@@ -47,7 +47,7 @@ afterEach(() => {
 async function show(tracks: TrackListItem[]) {
   mock.artist.mockResolvedValueOnce({ albums: [], tracks });
   render(
-    <TidalArtistDetailView id="123" name="Artist" onBack={() => {}} onOpenAlbum={() => {}} />,
+    <TidalArtistDetailView id="123" name="Artist" onOpenAlbum={() => {}} />,
   );
   await act(async () => {});
 }

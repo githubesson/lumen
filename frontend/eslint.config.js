@@ -30,7 +30,7 @@ export default tseslint.config(
           allow: ["layout"],
           // Existing CSS treatments are allowed only on their owning components.
           contracts: [
-            { pattern: "^Button$", allow: ["layout", "artist-hero-back"] },
+            { pattern: "^Button$", allow: ["layout"] },
             {
               pattern: "^CoverArt$",
               allow: ["layout", "card-art", "mini-art", "detail-art", "hero-art", "share-preview-art", "artist-hero-avatar"],

@@ -2,13 +2,16 @@ import { useMemo } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { ChevronRight as ChevronRightIcon } from "lucide-react";
 import type { Playlist } from "../../api";
+import { hasLibraryDrill, withoutLibraryDrill } from "../../lib/libraryDrill";
+
+type Crumb = { label: string; to?: string; replace?: boolean; current?: boolean };
 
 export default function Breadcrumbs({ playlists }: { playlists: Playlist[] }) {
   const location = useLocation();
   const params = useParams();
   const crumbs = useMemo(
-    () => buildCrumbs(location.pathname, params, playlists),
-    [location.pathname, params, playlists],
+    () => buildCrumbs(location.pathname, location.search, params, playlists),
+    [location.pathname, location.search, params, playlists],
   );
 
   return (
@@ -19,7 +22,9 @@ export default function Breadcrumbs({ playlists }: { playlists: Playlist[] }) {
           {c.current ? (
             <b>{c.label}</b>
           ) : c.to ? (
-            <Link to={c.to}>{c.label}</Link>
+            <Link to={c.to} replace={c.replace}>
+              {c.label}
+            </Link>
           ) : (
             <span>{c.label}</span>
           )}
@@ -31,11 +36,19 @@ export default function Breadcrumbs({ playlists }: { playlists: Playlist[] }) {
 
 function buildCrumbs(
   pathname: string,
+  search: string,
   params: Record<string, string | undefined>,
   playlists: Playlist[],
-): { label: string; to?: string; current?: boolean }[] {
+): Crumb[] {
   if (pathname === "/") return [{ label: "Home", current: true }];
   if (pathname.startsWith("/library")) {
+    // On an album or artist page it's the way back to the list (and the
+    // search) the page was opened from, like Library's own back step.
+    const query = new URLSearchParams(search);
+    if (hasLibraryDrill(query)) {
+      const rest = withoutLibraryDrill(query).toString();
+      return [{ label: "Library", to: rest ? `/library?${rest}` : "/library", replace: true }];
+    }
     return [{ label: "Library", current: true }];
   }
   if (pathname.startsWith("/favorites")) {

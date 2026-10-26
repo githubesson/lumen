@@ -198,15 +198,9 @@
   top: var(--sleeve-top, var(--pad));
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "back" "art" "head" "details";
+  grid-template-areas: "art" "head" "details";
   gap: 16px;
   min-width: 0;
-}
-.album-sleeve-back {
-  grid-area: back;
-  justify-self: start;
-  /* The arrow lines up with the cover's edge. */
-  margin: 0 0 -4px -10px;
 }
 .album-sleeve-art {
   grid-area: art;
@@ -399,7 +393,6 @@
   position: static;
   grid-template-columns: 176px minmax(0, 1fr);
   grid-template-areas:
-    "back back"
     "art head"
     "details details";
   column-gap: 24px;
@@ -428,7 +421,7 @@
 @media (max-width: 760px) {
   .album-sleeve[data-stacked] .album-sleeve-side {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "back" "art" "head" "details";
+    grid-template-areas: "art" "head" "details";
     align-items: stretch;
   }
   .album-sleeve[data-stacked] .album-sleeve-art {
