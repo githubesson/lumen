@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { MemoryRouter, useLocation, useNavigationType } from "react-router-dom";
 import Breadcrumbs from "../src/components/shell/Breadcrumbs";
@@ -27,15 +27,17 @@ it.each([
   ["/library?tidalArtist=ta-1&tidalAlbum=tal-1", "/library"],
 ])("on %s the Library crumb links back to %s", (entry, href) => {
   show([entry]);
-  expect(screen.getByRole("link", { name: "Library" }).getAttribute("href")).toBe(href);
+  const trail = screen.getByRole("navigation", { name: "Breadcrumb" });
+  expect(within(trail).getByRole("link", { name: "Library" }).getAttribute("href")).toBe(href);
 });
 
 it.each(["/library", "/library?view=albums&q=rec", "/library?view=albums&album="])(
   "on the list (%s) Library is the current crumb, not a link",
   (entry) => {
     show([entry]);
-    expect(screen.queryByRole("link", { name: "Library" })).toBeNull();
-    expect(screen.getByText("Library")).toBeTruthy();
+    const trail = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(trail).queryByRole("link", { name: "Library" })).toBeNull();
+    expect(within(trail).getByText("Library").getAttribute("aria-current")).toBe("page");
   },
 );
 

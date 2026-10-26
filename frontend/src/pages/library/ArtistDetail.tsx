@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  ArrowLeft as ArrowLeftIcon,
   Shuffle as ArrowsRightLeftIcon,
   Pause as PauseIcon,
   Play as PlayIcon,
@@ -75,21 +74,13 @@ export function ArtistDetailView({
     return <NotFound kind="Artist" onBack={onBack} />;
   }
   // A failed load leaves both artist and tracks empty; without this the page
-  // would sit on the loading state with no way back. A failed refresh of a
-  // cached artist keeps the page and shows the error in it.
+  // would sit on the loading state for good. The Library crumb is the way
+  // back. A failed refresh of a cached artist keeps the page and shows the
+  // error in it.
   if (error && (!artist || !tracks)) {
     return (
       <div className="view artist-status">
         <ErrorBanner message={error} />
-        <div>
-          <Button
-            variant="ghost"
-            onClick={onBack}
-            leadingIcon={<ArrowLeftIcon className="size-3.5" />}
-          >
-            Back to library
-          </Button>
-        </div>
       </div>
     );
   }

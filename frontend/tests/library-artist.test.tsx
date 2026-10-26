@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ArtistDetailView } from "../src/pages/library/ArtistDetail";
 
@@ -15,14 +15,11 @@ vi.mock("../src/context/Player", () => ({
 
 afterEach(cleanup);
 
-it("shows a failed load with a way back instead of loading forever", async () => {
+it("shows a failed load instead of loading forever", async () => {
   mock.getArtist.mockRejectedValueOnce(new Error("upstream"));
   mock.listArtistTracks.mockResolvedValueOnce([]);
-  const onBack = vi.fn();
-  render(<ArtistDetailView id="artist-1" onBack={onBack} onOpenAlbum={() => {}} />);
+  render(<ArtistDetailView id="artist-1" onBack={() => {}} onOpenAlbum={() => {}} />);
   await act(async () => {});
   expect(screen.getByRole("alert")).toBeTruthy();
   expect(screen.queryByText("Loading library…")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Back to library" }));
-  expect(onBack).toHaveBeenCalledOnce();
 });
