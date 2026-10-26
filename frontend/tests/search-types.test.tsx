@@ -8,6 +8,7 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import type { Page, SearchResult } from "../src/api";
+import Breadcrumbs from "../src/components/shell/Breadcrumbs";
 import Library from "../src/pages/Library";
 
 const mock = vi.hoisted(() => ({
@@ -35,18 +36,7 @@ vi.mock("../src/pages/library/LibraryDetail", () => ({
     <button onClick={onBack}>Back to results</button>
   ),
   ArtistDetailView: () => null,
-  TidalAlbumDetailView: ({
-    id,
-    onBack,
-  }: {
-    id: string;
-    onBack: () => void;
-  }) => (
-    <>
-      <span>Remote album {id}</span>
-      <button onClick={onBack}>Back to results</button>
-    </>
-  ),
+  TidalAlbumDetailView: ({ id }: { id: string }) => <span>Remote album {id}</span>,
 }));
 
 beforeEach(() => {
@@ -150,16 +140,19 @@ it("opens remote albums and keeps the query and filter when returning", async ()
   mock.search.mockResolvedValue(page([album]));
   render(
     <MemoryRouter initialEntries={["/library?q=hello&type=album"]}>
+      <Breadcrumbs playlists={[]} />
       <Library />
     </MemoryRouter>,
   );
   await act(async () => {});
+  // The list itself is the current crumb, not a link.
+  expect(screen.queryByRole("link", { name: "Library" })).toBeNull();
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name: /Found album/ }));
   });
   expect(screen.getByText("Remote album 42")).toBeTruthy();
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Back to results" }));
+    fireEvent.click(screen.getByRole("link", { name: "Library" }));
   });
   expect(screen.getByRole("searchbox").getAttribute("value")).toBe("hello");
   expect(

@@ -46,7 +46,6 @@ async function show(data: TidalAlbum, artistId: string | null = null) {
       <TidalAlbumDetailView
         id={data.id}
         artistId={artistId}
-        onBack={() => {}}
         onOpenAlbum={onOpenAlbum}
         onOpenVersion={onOpenVersion}
       />

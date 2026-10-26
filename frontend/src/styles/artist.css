@@ -16,24 +16,15 @@
   container-type: inline-size;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 24px;
+  justify-content: center;
   min-height: 280px;
-  padding: 12px 24px 24px;
+  padding: 24px;
   border-radius: var(--radius-xl);
   border: 1px solid var(--border);
   background: var(--card);
   overflow: hidden;
 }
 
-.btn.artist-hero-back {
-  color: var(--foreground);
-  background: transparent;
-  border-color: transparent;
-}
-.btn.artist-hero-back:hover {
-  background: var(--ghost-hover);
-}
 .artist-hero-main {
   display: flex;
   align-items: flex-end;

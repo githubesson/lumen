@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  ArrowLeft as ArrowLeftIcon,
   Shuffle as ArrowsRightLeftIcon,
   Pause as PauseIcon,
   Play as PlayIcon,
@@ -75,21 +74,13 @@ export function ArtistDetailView({
     return <NotFound kind="Artist" onBack={onBack} />;
   }
   // A failed load leaves both artist and tracks empty; without this the page
-  // would sit on the loading state with no way back. A failed refresh of a
-  // cached artist keeps the page and shows the error in it.
+  // would sit on the loading state for good. The Library crumb is the way
+  // back. A failed refresh of a cached artist keeps the page and shows the
+  // error in it.
   if (error && (!artist || !tracks)) {
     return (
       <div className="view artist-status">
         <ErrorBanner message={error} />
-        <div>
-          <Button
-            variant="ghost"
-            onClick={onBack}
-            leadingIcon={<ArrowLeftIcon className="size-3.5" />}
-          >
-            Back to library
-          </Button>
-        </div>
       </div>
     );
   }
@@ -102,8 +93,6 @@ export function ArtistDetailView({
           imageUrl={null}
           kind="Artist"
           meta={["Loading artist…"]}
-          backLabel="Library"
-          onBack={onBack}
         />
         <ArtistActions name="" tracks={NO_TRACKS} />
       </div>
@@ -116,8 +105,6 @@ export function ArtistDetailView({
         imageUrl={artistImageUrl(artist, tracks)}
         kind="Artist"
         meta={artistMetaParts(artist)}
-        backLabel="Library"
-        onBack={onBack}
       />
       <ArtistActions name={artist.name} tracks={tracks}>
         <DetailTrackSearchBar
@@ -155,13 +142,11 @@ export function ArtistDetailView({
 export function TidalArtistDetailView({
   id,
   name,
-  onBack,
   onOpenAlbum,
 }: {
   id: string;
   /** Name from the link, shown until the loaded profile replaces it. */
   name: string;
-  onBack: () => void;
   onOpenAlbum: (target: EntityTarget) => void;
 }) {
   // Keyed on the id by the caller, so this only has to seed a revisit.
@@ -217,8 +202,6 @@ export function TidalArtistDetailView({
           </>
         }
         meta={data ? tidalArtistMetaParts(releases.length, tracks.length) : undefined}
-        backLabel="Back to search"
-        onBack={onBack}
       />
       <ArtistActions name={artistName} tracks={tracks} />
       {(error || warning) && (
@@ -261,8 +244,6 @@ function ArtistHero({
   imageUrl,
   kind,
   meta,
-  backLabel,
-  onBack,
 }: {
   /** Null while loading: a bar in place of the name. */
   name: string | null;
@@ -270,23 +251,10 @@ function ArtistHero({
   kind: ReactNode;
   /** Undefined while loading; the row keeps its height either way. */
   meta?: (string | false)[];
-  backLabel: string;
-  onBack: () => void;
 }) {
   const metaItems = meta?.filter((item): item is string => Boolean(item));
   return (
     <header className="artist-hero">
-      <div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="artist-hero-back"
-          onClick={onBack}
-          leadingIcon={<ArrowLeftIcon className="size-3.5" />}
-        >
-          {backLabel}
-        </Button>
-      </div>
       <div className="artist-hero-main">
         {name === null ? (
           // No initial to show yet; a "?" would flash before the real one.

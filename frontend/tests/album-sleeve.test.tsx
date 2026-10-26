@@ -43,7 +43,6 @@ function sleeve(props: SleeveProps = {}) {
       <div className="content" style={{ overflowY: "auto" }}>
         <AlbumSleeve
           kind="Album"
-          onBack={() => {}}
           album={album}
           loadingLabel="Loading album…"
           search={search}
