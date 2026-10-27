@@ -226,6 +226,21 @@ it("shows the error with the picker when the picked version fails", () => {
   expect(mock.segments?.value).toBe("2");
 });
 
+it("lists versions in a menu when their labels are too long for segments", () => {
+  mock.params = { id: "2", artist: "77" };
+  // Stereo | Dolby Atmos · Explicit | Dolby Atmos · Clean
+  mock.artists["77"].albums.splice(0, 1, single("4", true, true), single("5", false, true));
+  markup();
+  expect(mock.segments).toBeUndefined();
+  mock.presses["Version: Stereo"]();
+  const [{ items }] = mock.showActionMenu.mock.calls[0] as [{ items: { label: string }[] }];
+  expect(items.map((item) => item.label)).toEqual([
+    "Stereo · Clean · 1 track · 2026",
+    "Dolby Atmos · Explicit · 1 track · 2026",
+    "Dolby Atmos · Clean · 1 track · 2026",
+  ]);
+});
+
 it("lists four or more versions in a menu", () => {
   mock.params = { id: "2", artist: "77" };
   mock.artists["77"].albums.push(single("4", true, true), single("5", false, true));

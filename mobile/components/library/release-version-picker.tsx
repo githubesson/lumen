@@ -17,10 +17,13 @@ import {
 } from "../optional-swift-ui";
 
 const MENU_HEIGHT = 36;
+// What a third of a 375 pt phone's segmented control shows in full. Longer
+// labels ("Dolby Atmos · Explicit") would cut to the same "Dolby Atmos…".
+const SEGMENT_LABEL_MAX = 12;
 
 /**
- * Switches between a release's versions: segments up to three, a menu past
- * that, which lists each version's full description.
+ * Switches between a release's versions: segments for up to three short
+ * labels, else a menu listing each version's full description.
  */
 export function ReleaseVersionPicker({
   versions,
@@ -39,7 +42,10 @@ export function ReleaseVersionPicker({
     label: labels[i].label,
     description: labels[i].description,
   }));
-  if (options.length <= 3) {
+  if (
+    options.length <= 3 &&
+    options.every((option) => option.label.length <= SEGMENT_LABEL_MAX)
+  ) {
     return (
       <GlassSegmentedControl options={options} value={current} onChange={onPick} />
     );
