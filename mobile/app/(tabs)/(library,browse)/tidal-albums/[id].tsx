@@ -160,10 +160,12 @@ export default function TidalAlbumDetailScreen() {
   if (albumQuery.isLoading) return <EmptyState fill loading />;
   // A version that can't load (failed, or waiting offline) shows the error,
   // with the picker kept above it so the other versions stay a tap away.
+  // Retrying one that failed stays on the error rather than flashing the
+  // previous version back up.
   const failed =
     albumQuery.isError ||
     !albumQuery.data ||
-    (switching && albumQuery.isPaused);
+    (switching && (albumQuery.isPaused || albumQuery.errorUpdateCount > 0));
   const failure = (
     <EmptyState
       fill={!versionPicker}

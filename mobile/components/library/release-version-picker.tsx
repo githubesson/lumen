@@ -14,6 +14,7 @@ import {
   swiftAccessibilityLabel,
   swiftButtonStyle,
   swiftControlSize,
+  swiftDisabled,
 } from "../optional-swift-ui";
 
 const MENU_HEIGHT = 36;
@@ -102,6 +103,7 @@ export function ReleaseVersionPicker({
                 key={`${option.value}:${option.value === current}`}
                 label={option.description}
                 systemImage={option.value === current ? "checkmark" : undefined}
+                modifiers={[swiftDisabled(option.value === current)]}
                 onPress={() => pick(option.value)}
               />
             ))}

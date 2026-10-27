@@ -6,7 +6,13 @@ import TidalAlbumDetailScreen from "../app/(tabs)/(library,browse)/tidal-albums/
 type Album = { id: string; title: string; artist_id?: string; tracks: { id: string; title: string }[] };
 const mock = vi.hoisted(() => ({
   params: {} as { id: string; artist?: string },
-  album: {} as { data?: Album; isPlaceholderData?: boolean; isPaused?: boolean; isError?: boolean },
+  album: {} as {
+    data?: Album;
+    isPlaceholderData?: boolean;
+    isPaused?: boolean;
+    isError?: boolean;
+    errorUpdateCount?: number;
+  },
   albumOptions: undefined as Record<string, unknown> | undefined,
   keepPreviousData: vi.fn(),
   // What each labelled button does when pressed.
@@ -51,7 +57,7 @@ vi.mock("@tanstack/react-query", () => ({
     const { queryKey, enabled } = options;
     if (queryKey[2] === "tidal-album") {
       mock.albumOptions = options;
-      return { ...mock.album, isFetching: false, refetch: vi.fn() };
+      return { errorUpdateCount: 0, isFetching: false, ...mock.album, refetch: vi.fn() };
     }
     const id = queryKey[3] as string | undefined;
     mock.artistQueries.push({ id, enabled });
@@ -223,6 +229,15 @@ it("shows the error with the picker when the picked version fails", () => {
   mock.album = { data: undefined, isError: true };
   const html = markup();
   expect(html).toContain("Couldn&#x27;t load TIDAL album.");
+  expect(mock.segments?.value).toBe("2");
+});
+
+it("stays on the error while a failed version is retried", () => {
+  mock.params = { id: "2", artist: "77" };
+  Object.assign(mock.album, { isPlaceholderData: true, errorUpdateCount: 1 });
+  const html = markup();
+  expect(html).toContain("Couldn&#x27;t load TIDAL album.");
+  expect(html).not.toContain("<span>Powiedz To</span>");
   expect(mock.segments?.value).toBe("2");
 });
 
