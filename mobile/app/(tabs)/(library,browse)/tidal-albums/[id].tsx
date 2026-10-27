@@ -104,16 +104,19 @@ export default function TidalAlbumDetailScreen() {
     onQueuedChanged,
   );
 
-  // The previous version's tracks stay dimmed until the picked one loads.
+  // The previous version's tracks stay dimmed, out of reach of touch and
+  // VoiceOver, until the picked one loads.
   const renderItem = useCallback(
-    ({ item }: ListRenderItemInfo<TrackListItem>) =>
-      switching ? (
-        <View pointerEvents="none" style={{ opacity: 0.4 }}>
-          <TrackRow track={item} onPress={onTrackPress} />
-        </View>
-      ) : (
+    ({ item }: ListRenderItemInfo<TrackListItem>) => (
+      <View
+        pointerEvents={switching ? "none" : "auto"}
+        accessibilityElementsHidden={switching}
+        importantForAccessibility={switching ? "no-hide-descendants" : "auto"}
+        style={switching ? { opacity: 0.4 } : undefined}
+      >
         <TrackRow track={item} onPress={onTrackPress} />
-      ),
+      </View>
+    ),
     [onTrackPress, switching],
   );
 
@@ -155,33 +158,54 @@ export default function TidalAlbumDetailScreen() {
   ]);
 
   if (albumQuery.isLoading) return <EmptyState fill loading />;
-  if (albumQuery.isError || !albumQuery.data) {
-    return (
-      <EmptyState
-        fill
-        selectable
-        message="Couldn't load TIDAL album."
-        action={retryAction(albumQuery)}
-      />
-    );
-  }
+  // A version that can't load (failed, or waiting offline) shows the error,
+  // with the picker kept above it so the other versions stay a tap away.
+  const failed =
+    albumQuery.isError ||
+    !albumQuery.data ||
+    (switching && albumQuery.isPaused);
+  const failure = (
+    <EmptyState
+      fill={!versionPicker}
+      selectable
+      message="Couldn't load TIDAL album."
+      action={retryAction(albumQuery)}
+    />
+  );
+  if (failed && !versionPicker) return failure;
 
   return (
     <>
       <Stack.Screen
         options={{
-          title: displayText(albumQuery.data.title),
+          title: failed
+            ? "TIDAL album"
+            : displayText(albumQuery.data?.title ?? ""),
           headerLargeTitle: false,
         }}
       />
       <FlashList
         {...TRACK_FLASH_LIST_PERFORMANCE_PROPS}
         {...dockScroll}
-        data={tracks}
+        data={failed ? [] : tracks}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         extraData={switching}
-        ListHeaderComponent={header}
+        ListHeaderComponent={
+          failed ? (
+            <View
+              style={{
+                paddingHorizontal: theme.space.lg,
+                paddingTop: theme.space.md,
+              }}
+            >
+              {versionPicker}
+            </View>
+          ) : (
+            header
+          )
+        }
+        ListEmptyComponent={failed ? failure : undefined}
         contentInsetAdjustmentBehavior="automatic"
         style={{ backgroundColor: theme.color.bg }}
         contentContainerStyle={{ paddingBottom: dockInset + 24 }}

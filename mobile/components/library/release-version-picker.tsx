@@ -90,8 +90,10 @@ export function ReleaseVersionPicker({
             ]}
           >
             {options.map((option) => (
+              // Keyed by whether it's ticked, so the tick moves by remounting
+              // the two items rather than clearing a native prop.
               <swiftUI.Button
-                key={option.value}
+                key={`${option.value}:${option.value === current}`}
                 label={option.description}
                 systemImage={option.value === current ? "checkmark" : undefined}
                 onPress={() => pick(option.value)}
