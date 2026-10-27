@@ -92,6 +92,9 @@ export function GlassSegmentedControl<T extends string>({
               style={styles.item}
             >
               <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.8}
                 style={{
                   color: active ? colors.active : colors.inactive,
                   fontSize: 15,
@@ -135,5 +138,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 6,
   },
 });

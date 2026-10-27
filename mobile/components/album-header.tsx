@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Image } from "expo-image";
 import { SymbolView } from "expo-symbols";
@@ -16,6 +17,10 @@ interface Props {
   onPlay?: () => void;
   /** A second, quieter button under Play (e.g. an admin album download). */
   secondaryAction?: { label: string; onPress: () => void; disabled?: boolean };
+  /** Switches between the release's versions, above Play. */
+  versions?: ReactNode;
+  /** Another version is loading: the buttons wait for it. */
+  pending?: boolean;
 }
 
 export function AlbumHeader({
@@ -26,6 +31,8 @@ export function AlbumHeader({
   metadata,
   onPlay,
   secondaryAction,
+  versions,
+  pending = false,
 }: Props) {
   const theme = useTheme();
   return (
@@ -93,8 +100,14 @@ export function AlbumHeader({
           </Text>
         </View>
       </View>
+      {versions ? (
+        <View style={{ marginBottom: theme.space.md }}>{versions}</View>
+      ) : null}
       {!!onPlay ? (
         <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ disabled: pending }}
+          disabled={pending}
           onPress={() => {
             void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
             onPlay();
@@ -107,7 +120,7 @@ export function AlbumHeader({
             backgroundColor: theme.color.accent,
             borderRadius: theme.radius.md,
             paddingVertical: 12,
-            opacity: pressed ? 0.85 : 1,
+            opacity: pending ? 0.5 : pressed ? 0.85 : 1,
             borderCurve: "continuous",
           })}
         >
@@ -131,8 +144,8 @@ export function AlbumHeader({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={secondaryAction.label}
-          accessibilityState={{ disabled: !!secondaryAction.disabled }}
-          disabled={secondaryAction.disabled}
+          accessibilityState={{ disabled: pending || !!secondaryAction.disabled }}
+          disabled={pending || secondaryAction.disabled}
           onPress={() => {
             void Haptics.selectionAsync();
             secondaryAction.onPress();
@@ -144,7 +157,7 @@ export function AlbumHeader({
             backgroundColor: theme.color.bgElev1,
             borderRadius: theme.radius.md,
             paddingVertical: 12,
-            opacity: secondaryAction.disabled ? 0.5 : pressed ? 0.85 : 1,
+            opacity: pending || secondaryAction.disabled ? 0.5 : pressed ? 0.85 : 1,
             borderCurve: "continuous",
           })}
         >
