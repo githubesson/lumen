@@ -18,6 +18,9 @@ const mock = vi.hoisted(() => ({
   // What each labelled button does when pressed.
   presses: {} as Record<string, () => void>,
   showActionMenu: vi.fn(),
+  // Album query states by TIDAL id, and the calls that change the cache.
+  albumStates: {} as Record<string, { status: string; data?: unknown }>,
+  cache: [] as unknown[],
   // TIDAL artist responses by id; the artist queries asked for, by id.
   artists: {} as Record<string, { albums: unknown[] }>,
   artistQueries: [] as { id?: string; enabled?: boolean }[],
@@ -52,7 +55,11 @@ vi.mock("react-native", () => ({
 }));
 vi.mock("@tanstack/react-query", () => ({
   keepPreviousData: mock.keepPreviousData,
-  useQueryClient: () => ({ setQueryData: vi.fn() }),
+  useQueryClient: () => ({
+    setQueryData: vi.fn(),
+    getQueryState: (queryKey: unknown[]) => mock.albumStates[queryKey[3] as string],
+    removeQueries: (filters: unknown) => mock.cache.push(["remove", filters]),
+  }),
   useQuery: (options: { queryKey: unknown[]; enabled?: boolean }) => {
     const { queryKey, enabled } = options;
     if (queryKey[2] === "tidal-album") {
@@ -67,7 +74,12 @@ vi.mock("@tanstack/react-query", () => ({
 vi.mock("expo-router", () => ({
   Stack: { Screen: () => null },
   useLocalSearchParams: () => mock.params,
-  useRouter: () => ({ setParams: mock.setParams }),
+  useRouter: () => ({
+    setParams: (params: unknown) => {
+      mock.cache.push(["setParams", params]);
+      mock.setParams(params);
+    },
+  }),
 }));
 vi.mock("expo-symbols", () => ({ SymbolView: () => null }));
 vi.mock("expo-haptics", () => ({ selectionAsync: vi.fn() }));
@@ -164,6 +176,8 @@ beforeEach(() => {
   };
   mock.artistQueries = [];
   mock.albumOptions = undefined;
+  mock.albumStates = {};
+  mock.cache = [];
   mock.presses = {};
   mock.showActionMenu.mockReset();
   mock.setParams.mockReset();
@@ -239,6 +253,22 @@ it("stays on the error while a failed version is retried", () => {
   expect(html).toContain("Couldn&#x27;t load TIDAL album.");
   expect(html).not.toContain("<span>Powiedz To</span>");
   expect(mock.segments?.value).toBe("2");
+});
+
+it("starts a version that failed earlier over when it's picked again", () => {
+  mock.params = { id: "2", artist: "77" };
+  mock.albumStates = { "1": { status: "error" }, "2": { status: "success", data: {} } };
+  markup();
+  mock.segments?.onChange("1");
+  expect(mock.cache).toEqual([
+    ["remove", { queryKey: ["user", "user", "tidal-album", "1"], exact: true }],
+    ["setParams", { id: "1", artist: "77" }],
+  ]);
+  mock.cache = [];
+  mock.params = { id: "1", artist: "77" };
+  markup();
+  mock.segments?.onChange("2");
+  expect(mock.cache).toEqual([["setParams", { id: "2", artist: "77" }]]);
 });
 
 it("lists versions in a menu when their labels are too long for segments", () => {

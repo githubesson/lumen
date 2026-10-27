@@ -68,25 +68,32 @@ export default function TidalAlbumDetailScreen() {
   const switching = albumQuery.isPlaceholderData;
   const versionsArtist = artist || albumQuery.data?.artist_id || undefined;
   const versions = useReleaseVersions(versionsArtist, id);
+  const queryClient = useQueryClient();
   // Like a tab: picking a version replaces this page rather than pushing one.
   // The artist listing the versions goes along, so the next version's page
   // has them from its first frame even when this one only learned it on load.
+  // A version that failed earlier starts over, so its load isn't taken for a
+  // retry of the failure (see `failed`).
   const versionPicker = useMemo(
     () =>
       versions && id && versionsArtist ? (
         <ReleaseVersionPicker
           versions={versions}
           current={id}
-          onPick={(version) =>
-            router.setParams({ id: version, artist: versionsArtist })
-          }
+          onPick={(version) => {
+            const queryKey = qk.tidalAlbum(userId, version);
+            const state = queryClient.getQueryState(queryKey);
+            if (state?.status === "error" && state.data === undefined) {
+              queryClient.removeQueries({ queryKey, exact: true });
+            }
+            router.setParams({ id: version, artist: versionsArtist });
+          }}
         />
       ) : undefined,
-    [versions, id, versionsArtist, router],
+    [versions, id, versionsArtist, router, queryClient, userId],
   );
   const play = usePlayTrack();
   const { shuffle } = usePlayerPlayback();
-  const queryClient = useQueryClient();
   const { refetch } = albumQuery;
   const onQueuedChanged = useCallback(
     (queued: number) => {
@@ -161,7 +168,8 @@ export default function TidalAlbumDetailScreen() {
   // A version that can't load (failed, or waiting offline) shows the error,
   // with the picker kept above it so the other versions stay a tap away.
   // Retrying one that failed stays on the error rather than flashing the
-  // previous version back up.
+  // previous version back up: its query keeps the error count, which a pick
+  // clears.
   const failed =
     albumQuery.isError ||
     !albumQuery.data ||
