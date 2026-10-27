@@ -16,6 +16,8 @@ const mock = vi.hoisted(() => ({
             release_year?: number;
             track_count?: number;
             duration_ms?: number;
+            source_id?: string;
+            explicit?: boolean;
           }[];
           tracks: { id: string; title: string }[];
           warnings?: string[];
@@ -289,6 +291,21 @@ it("shows each search warning once across loaded pages", () => {
   expect(html).toContain("Local search is rebuilding.");
 });
 
+it("folds a release's explicit and clean copies into one tile", () => {
+  mock.query.data = {
+    albums: [
+      { id: "tidal:1", source_id: "1", title: "Powiedz To", release_year: 2026, track_count: 1, duration_ms: 180_000, explicit: true },
+      { id: "tidal:2", source_id: "2", title: "Powiedz To", release_year: 2026, track_count: 1, duration_ms: 180_000 },
+      { id: "tidal:3", source_id: "3", title: "LP", release_year: 2025, track_count: 12, duration_ms: 2_700_000 },
+    ],
+    tracks: [],
+  };
+  const html = markup();
+  expect(html.split("Powiedz To (Single)")).toHaveLength(2);
+  expect(html).toContain("LP (Album)");
+  expect(html).toContain("2 releases");
+});
+
 it("opens a TIDAL release by its TIDAL id", () => {
   mock.query.data = {
     albums: [{ id: "tidal:9", title: "LP", track_count: 12, duration_ms: 2_700_000 }],
@@ -298,5 +315,8 @@ it("opens a TIDAL release by its TIDAL id", () => {
   markup();
   mock.openRelease?.({ id: "tidal:9", source: "tidal", source_id: "9" });
   mock.openRelease?.({ id: "tidal:10", source: "tidal" });
-  expect(mock.push.mock.calls.map(([route]) => route.params)).toEqual([{ id: "9" }, { id: "10" }]);
+  expect(mock.push.mock.calls.map(([route]) => route.params)).toEqual([
+    { id: "9", artist: "123" },
+    { id: "10", artist: "123" },
+  ]);
 });

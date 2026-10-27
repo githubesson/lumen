@@ -1,8 +1,12 @@
 import { useCallback, useMemo } from "react";
-import { PixelRatio } from "react-native";
+import { PixelRatio, View } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Stack, useLocalSearchParams } from "expo-router";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import {
   ALBUM_DOWNLOAD_REFRESH_MS,
   albumArtists,
@@ -22,11 +26,13 @@ import {
   useBottomDockInset,
   useDockScrollHandler,
 } from "../../../../components/dock/dock-context";
+import { ReleaseVersionPicker } from "../../../../components/library/release-version-picker";
 import { TrackRow } from "../../../../components/track-row";
 import { usePlayerPlayback, usePlayTrack } from "../../../../context/player";
 import { qk } from "../../../../lib/query-keys";
 import { listPlaybackQueue, usePlayQueue } from "../../../../lib/use-play-queue";
 import { useAlbumDownloadAction } from "../../../../lib/album-download";
+import { useReleaseVersions } from "../../../../lib/release-versions";
 import { useTheme } from "../../../../theme/theme";
 import { AlbumHeader, ALBUM_ART_SIZE } from "../../../../components/album-header";
 import { EmptyState, retryAction } from "../../../../components/empty-state";
@@ -35,7 +41,10 @@ export default function TidalAlbumDetailScreen() {
   const theme = useTheme();
   const dockInset = useBottomDockInset();
   const dockScroll = useDockScrollHandler();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
+  // `artist`: the TIDAL artist the album was opened from, whose releases list
+  // its versions. Without one, the album's own artist is asked once it loads.
+  const { id, artist } = useLocalSearchParams<{ id: string; artist?: string }>();
   const { me } = useAuth();
   const userId = me?.id;
 
@@ -43,6 +52,9 @@ export default function TidalAlbumDetailScreen() {
     queryKey: qk.tidalAlbum(userId, id),
     queryFn: ({ signal }) => api.getTidalAlbum(id!, { signal }),
     enabled: !!userId && !!id,
+    // A version swaps the id in place, and the page stays up until the next
+    // version has loaded.
+    placeholderData: keepPreviousData,
     // While an album download runs, refetch so saved tracks show up.
     refetchInterval: (query) =>
       query.state.data?.queued_count ? ALBUM_DOWNLOAD_REFRESH_MS : false,
@@ -53,6 +65,25 @@ export default function TidalAlbumDetailScreen() {
     [albumQuery.data?.tracks],
   );
   const onTrackPress = usePlayQueue(tracks);
+  const switching = albumQuery.isPlaceholderData;
+  const versionsArtist = artist || albumQuery.data?.artist_id || undefined;
+  const versions = useReleaseVersions(versionsArtist, id);
+  // Like a tab: picking a version replaces this page rather than pushing one.
+  // The artist listing the versions goes along, so the next version's page
+  // has them from its first frame even when this one only learned it on load.
+  const versionPicker = useMemo(
+    () =>
+      versions && id && versionsArtist ? (
+        <ReleaseVersionPicker
+          versions={versions}
+          current={id}
+          onPick={(version) =>
+            router.setParams({ id: version, artist: versionsArtist })
+          }
+        />
+      ) : undefined,
+    [versions, id, versionsArtist, router],
+  );
   const play = usePlayTrack();
   const { shuffle } = usePlayerPlayback();
   const queryClient = useQueryClient();
@@ -73,11 +104,17 @@ export default function TidalAlbumDetailScreen() {
     onQueuedChanged,
   );
 
+  // The previous version's tracks stay dimmed until the picked one loads.
   const renderItem = useCallback(
-    ({ item }: ListRenderItemInfo<TrackListItem>) => (
-      <TrackRow track={item} onPress={onTrackPress} />
-    ),
-    [onTrackPress],
+    ({ item }: ListRenderItemInfo<TrackListItem>) =>
+      switching ? (
+        <View pointerEvents="none" style={{ opacity: 0.4 }}>
+          <TrackRow track={item} onPress={onTrackPress} />
+        </View>
+      ) : (
+        <TrackRow track={item} onPress={onTrackPress} />
+      ),
+    [onTrackPress, switching],
   );
 
   const keyExtractor = useCallback((track: TrackListItem) => track.id, []);
@@ -103,9 +140,19 @@ export default function TidalAlbumDetailScreen() {
             : undefined
         }
         secondaryAction={downloadAction}
+        versions={versionPicker}
+        pending={switching}
       />
     );
-  }, [albumQuery.data, play, shuffle, tracks, downloadAction]);
+  }, [
+    albumQuery.data,
+    play,
+    shuffle,
+    tracks,
+    downloadAction,
+    versionPicker,
+    switching,
+  ]);
 
   if (albumQuery.isLoading) return <EmptyState fill loading />;
   if (albumQuery.isError || !albumQuery.data) {
@@ -133,6 +180,7 @@ export default function TidalAlbumDetailScreen() {
         data={tracks}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
+        extraData={switching}
         ListHeaderComponent={header}
         contentInsetAdjustmentBehavior="automatic"
         style={{ backgroundColor: theme.color.bg }}

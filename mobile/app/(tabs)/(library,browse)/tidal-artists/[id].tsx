@@ -15,6 +15,7 @@ import {
 } from "@music-library/core";
 import {
   ARTIST_POPULAR_PREVIEW_COUNT,
+  foldReleaseVersions,
   tidalArtistReleases,
   type ArtistRelease,
 } from "@music-library/core/artist-releases";
@@ -52,7 +53,7 @@ export default function TidalArtistScreen() {
   const data = query.data;
   const tracks = useMemo(() => data?.tracks ?? [], [data]);
   const releases = useMemo(
-    () => (data ? tidalArtistReleases(data.albums) : []),
+    () => (data ? foldReleaseVersions(tidalArtistReleases(data.albums)) : []),
     [data],
   );
   const shownTracks = useMemo(
@@ -74,13 +75,15 @@ export default function TidalArtistScreen() {
     ? metaLine(tidalArtistMetaParts(releases.length, tracks.length))
     : undefined;
 
+  // The album keeps the artist it was opened from, whose releases list its
+  // other versions.
   const openRelease = useCallback(
     (release: ArtistRelease) =>
       router.push({
         pathname: "/(tabs)/tidal-albums/[id]",
-        params: { id: searchEntityTarget(release).id },
+        params: { id: searchEntityTarget(release).id, artist: id },
       }),
-    [router],
+    [router, id],
   );
   const renderItem = useCallback(
     ({ item, index }: ListRenderItemInfo<TrackListItem>) => (
