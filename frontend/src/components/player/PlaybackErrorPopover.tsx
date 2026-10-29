@@ -34,8 +34,9 @@ export default function PlaybackErrorPopover({
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
-  // Closing from inside (its button, Escape) sends focus back to the line
-  // it came from, rather than dropping it with the popover.
+  // Closing while focus is inside sends it back to the line the popover came
+  // from, rather than dropping it with the popover. A click elsewhere closes
+  // it too, and that click's own focus then wins.
   const close = () => {
     if (ref.current?.contains(document.activeElement)) toggle?.focus();
     onClose();

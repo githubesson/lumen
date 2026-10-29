@@ -256,6 +256,23 @@ it("shows the details in the mini player's error panel", () => {
   expect(within(region).getByRole("button", { name: "Copy details" })).toBeTruthy();
 });
 
+it("keeps the mini player's error panel on its failure while it closes", () => {
+  const message = "Couldn't play this track.";
+  mock.remote = { targetDevice: null, commandPending: false };
+  mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
+  const { rerender } = render(<MiniPlayerPanel panel="error" />);
+
+  mock.player = {
+    ...mock.player,
+    current: { ...track, id: "t2" },
+    playbackError: { trackId: "t2", message, details: { ...details, server: "HTTP 404 · not found" } },
+  };
+  rerender(<MiniPlayerPanel panel="error" closing />);
+  const region = screen.getByRole("region", { name: "Playback error" });
+  expect(region.textContent).toContain("HTTP 200 · audio/flac");
+  expect(region.textContent).not.toContain("HTTP 404");
+});
+
 it("opens the mini player's panel instead of a popover", () => {
   const message = "Couldn't play this track.";
   const onToggle = vi.fn();

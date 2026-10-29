@@ -33,9 +33,12 @@ const LABELS: Record<MiniPanel, string> = {
 export default function MiniPlayerPanel({
   panel,
   enter,
+  closing = false,
 }: {
   panel: MiniPanel;
   enter?: "forward" | "back";
+  /** Asked to go: the panel keeps what it showed while it morphs away. */
+  closing?: boolean;
 }) {
   const position = useQueuePosition();
 
@@ -64,7 +67,7 @@ export default function MiniPlayerPanel({
           ) : panel === "lyrics" ? (
             <MiniLyrics />
           ) : panel === "error" ? (
-            <PlaybackErrorDetails />
+            <PlaybackErrorDetails frozen={closing} />
           ) : (
             <DeviceList />
           )}

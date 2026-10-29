@@ -154,7 +154,11 @@ export default function MiniPlayer() {
         </div>
 
         {miniPlayerMode && panel && (
-          <MiniPlayerPanel panel={panel} enter={swapDirection} />
+          <MiniPlayerPanel
+            panel={panel}
+            enter={swapDirection}
+            closing={!panelToggle(panel).open}
+          />
         )}
       </section>
       <RemoteControlIndicator />
