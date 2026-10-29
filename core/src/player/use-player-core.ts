@@ -212,6 +212,10 @@ export function usePlayerCore({
   const listenedSecondsRef = useRef(0);
   const listeningTickRef = useRef<number | null>(null);
   const loadedTrackIdRef = useRef<string | null>(null);
+  // The source the adapter was last given, as loaded or activated. A failure
+  // is about it, whatever the track would resolve to now (a download removed
+  // while it plays still played from the file).
+  const loadedUriRef = useRef<string | null>(null);
   const preparedNextRef = useRef<{ trackId: string; uri: string } | null>(null);
   const playbackAttemptRef = useRef(0);
   const handoffRef = useRef<{ track: TrackListItem; attempt: number } | null>(null);
@@ -352,7 +356,8 @@ export function usePlayerCore({
       setDuration(0);
       anchorRef.current = { audioTime: 0, wallTime: performance.now() };
       loadedTrackIdRef.current = track.id;
-      adapter.load(resolvePlayableUri(track.id));
+      loadedUriRef.current = resolvePlayableUri(track.id);
+      adapter.load(loadedUriRef.current);
       startPlayback();
       handoffRef.current = { track, attempt: playbackAttemptRef.current };
       setIsPlaying(true);
@@ -565,6 +570,7 @@ export function usePlayerCore({
       crossfade || (isPrepared && adapter.activatePrepared?.(nextUri) === true);
     if (activated) {
       loadedTrackIdRef.current = nextTrack.id;
+      loadedUriRef.current = nextUri;
     } else {
       adapter.clearPrepared?.();
     }
@@ -579,6 +585,7 @@ export function usePlayerCore({
         adapter.seek(0);
       } else {
         loadedTrackIdRef.current = nextTrack.id;
+        loadedUriRef.current = nextUri;
         adapter.load(nextUri);
       }
       startPlayback();
@@ -772,7 +779,8 @@ export function usePlayerCore({
     if (!current) return;
     if (loadedTrackIdRef.current === current.id) return;
     loadedTrackIdRef.current = current.id;
-    adapter.load(resolvePlayableUri(current.id));
+    loadedUriRef.current = resolvePlayableUri(current.id);
+    adapter.load(loadedUriRef.current);
   }, [adapter, current, resolvePlayableUri]);
 
   const currentId = current?.id;
@@ -1011,7 +1019,7 @@ export function usePlayerCore({
       if (!track) return;
       const failure = { trackId: track.id };
       failureRef.current = failure;
-      const uri = resolveUri(track.id);
+      const uri = loadedUriRef.current ?? resolveUri(track.id);
       const url = streamUrl(track.id);
       // A downloaded copy just didn't play; only a stream can be asked again.
       const streamed = uri === url;

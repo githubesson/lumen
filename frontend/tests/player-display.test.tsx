@@ -211,6 +211,15 @@ it("keeps the closing details on the failure they opened for", () => {
   expect(container.textContent).not.toContain("HTTP 404");
 });
 
+it("moves focus into the details as they open", async () => {
+  const message = "Couldn't play this track.";
+  mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
+  render(<NowPlaying track={track} title="Song" artist="Artist · Album" error={message} />);
+  fireEvent.click(screen.getByRole("button", { name: message }));
+  const dialog = await screen.findByRole("dialog", { name: "Playback error" });
+  await waitFor(() => expect(document.activeElement).toBe(dialog));
+});
+
 it.each(["its button", "Escape"])("sends focus back to the error line when closed with %s", async (how) => {
   const message = "Couldn't play this track.";
   mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
@@ -237,7 +246,8 @@ it("leaves focus alone when the details close from outside", async () => {
     </>,
   );
   fireEvent.click(screen.getByRole("button", { name: message }));
-  await screen.findByRole("dialog", { name: "Playback error" });
+  const dialog = await screen.findByRole("dialog", { name: "Playback error" });
+  await waitFor(() => expect(document.activeElement).toBe(dialog));
   const search = screen.getByRole("textbox", { name: "Search" });
   search.focus();
 
@@ -282,7 +292,7 @@ it("keeps the mini player's error panel on its failure while it closes", () => {
   expect(region.textContent).not.toContain("HTTP 404");
 });
 
-it("opens the mini player's panel instead of a popover", () => {
+it("asks the mini player for its error panel instead of opening a popover", () => {
   const message = "Couldn't play this track.";
   const onToggle = vi.fn();
   render(

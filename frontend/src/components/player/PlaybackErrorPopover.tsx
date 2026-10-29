@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Check as CheckIcon,
@@ -51,22 +51,31 @@ export default function PlaybackErrorPopover({
 
   const { mounted, visible } = useTransitionMount(open, 180);
 
+  // Portaled to the end of the page, it would be the last thing Tab reaches:
+  // focus moves in as it opens, and goes back to the line when it closes.
+  useEffect(() => {
+    if (visible) ref.current?.focus();
+  }, [visible]);
+
   if (!mounted || !anchor) return null;
 
   const rect = anchor.getBoundingClientRect();
   const width = Math.min(440, window.innerWidth - 24);
   const bottom = Math.max(12, window.innerHeight - rect.top + 8);
   const left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
+  // In a short window the details scroll under the heading, which stays put.
+  const maxHeight = Math.max(120, window.innerHeight - bottom - 12);
 
   return createPortal(
     <div
       ref={ref}
       className="device-pop error-pop"
+      tabIndex={-1}
       data-closed={!visible || undefined}
       inert={visible ? undefined : ""}
       role="dialog"
       aria-label="Playback error"
-      style={{ bottom, left, width }}
+      style={{ bottom, left, width, maxHeight }}
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
     >

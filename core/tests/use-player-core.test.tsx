@@ -903,6 +903,26 @@ describe("usePlayerCore playback errors", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("describes the source that was loaded, even if the track resolves elsewhere now", async () => {
+    const fetchMock = vi.fn(async () => new Response(refusal, { status: 502 }));
+    vi.stubGlobal("fetch", fetchMock);
+    let downloaded = true;
+    const { result, emit } = await setup({
+      resolveTrackUri: () => (downloaded ? "file:///offline.flac" : undefined),
+    });
+    act(() => result.current.controls.play(t("a")));
+
+    // The download is removed while its file plays; then the file fails.
+    downloaded = false;
+    act(() => emit("error"));
+    await settle();
+    expect(result.current.state.playbackError?.details).toMatchObject({
+      source: "Downloaded copy · offline.flac",
+      server: null,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("keeps what the audio player said about the failure", async () => {
     const fake = createFakeAdapter();
     fake.adapter.errorDetail = () => "MEDIA_ERR_DECODE: PIPELINE_ERROR_DECODE";

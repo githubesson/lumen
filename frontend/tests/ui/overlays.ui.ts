@@ -143,7 +143,8 @@ test("playback error details", async ({ page }, testInfo) => {
     route.fulfill({ status: 410, contentType: "text/plain", body: "file missing on disk" }),
   );
   await page.locator(".track-title").and(page.getByTitle(menuTrack.title, { exact: true })).dispatchEvent("click");
-  await page.locator(".player-bar").getByRole("button", { name: "Couldn't play this track." }).dispatchEvent("click");
+  // A real click: the line must take the pointer, not just the event.
+  await page.locator(".player-bar").getByRole("button", { name: "Couldn't play this track." }).click();
   const dialog = page.getByRole("dialog", { name: "Playback error" });
   await ready(page, dialog.getByText("HTTP 410 · file missing on disk"));
   await checkUI(page, testInfo, {
