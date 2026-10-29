@@ -254,11 +254,6 @@
   flex-direction: column;
   transform-origin: bottom left;
 }
-/* Focus lands on the popover itself as it opens; its controls show focus as
-   Tab reaches them. */
-.error-pop:focus-visible {
-  outline: none;
-}
 .error-pop > .device-pop-head {
   flex: none;
 }

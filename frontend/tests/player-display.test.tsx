@@ -211,13 +211,30 @@ it("keeps the closing details on the failure they opened for", () => {
   expect(container.textContent).not.toContain("HTTP 404");
 });
 
-it("moves focus into the details as they open", async () => {
+it("moves focus to the details' action as they open", async () => {
   const message = "Couldn't play this track.";
   mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
   render(<NowPlaying track={track} title="Song" artist="Artist · Album" error={message} />);
   fireEvent.click(screen.getByRole("button", { name: message }));
   const dialog = await screen.findByRole("dialog", { name: "Playback error" });
-  await waitFor(() => expect(document.activeElement).toBe(dialog));
+  const copy = within(dialog).getByRole("button", { name: "Copy details" });
+  await waitFor(() => expect(document.activeElement).toBe(copy));
+});
+
+it("sends focus back to the error line when the line closes the details", async () => {
+  const message = "Couldn't play this track.";
+  mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
+  render(<NowPlaying track={track} title="Song" artist="Artist · Album" error={message} />);
+  const line = screen.getByRole("button", { name: message });
+  fireEvent.click(line);
+  const dialog = await screen.findByRole("dialog", { name: "Playback error" });
+  const copy = within(dialog).getByRole("button", { name: "Copy details" });
+  await waitFor(() => expect(document.activeElement).toBe(copy));
+
+  // As in Safari, the click itself doesn't move focus to the line.
+  fireEvent.click(line);
+  expect(line.getAttribute("aria-expanded")).toBe("false");
+  expect(document.activeElement).toBe(line);
 });
 
 it.each(["its button", "Escape"])("sends focus back to the error line when closed with %s", async (how) => {
@@ -247,7 +264,8 @@ it("leaves focus alone when the details close from outside", async () => {
   );
   fireEvent.click(screen.getByRole("button", { name: message }));
   const dialog = await screen.findByRole("dialog", { name: "Playback error" });
-  await waitFor(() => expect(document.activeElement).toBe(dialog));
+  const copy = within(dialog).getByRole("button", { name: "Copy details" });
+  await waitFor(() => expect(document.activeElement).toBe(copy));
   const search = screen.getByRole("textbox", { name: "Search" });
   search.focus();
 

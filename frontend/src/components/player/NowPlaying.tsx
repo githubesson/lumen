@@ -69,7 +69,16 @@ export default function NowPlaying({
                   aria-haspopup="dialog"
                   aria-expanded={open}
                   aria-controls={errorPanel?.controls}
-                  onClick={errorPanel ? errorPanel.onToggle : () => setDetailsOpen((v) => !v)}
+                  onClick={
+                    errorPanel
+                      ? errorPanel.onToggle
+                      : (event) => {
+                          // Closing: focus may be inside the popover, and not
+                          // every browser moves it to a clicked button.
+                          if (detailsOpen) event.currentTarget.focus();
+                          setDetailsOpen((v) => !v);
+                        }
+                  }
                 >
                   {error}
                 </button>

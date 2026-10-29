@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import { createPortal } from "react-dom";
 import {
   Check as CheckIcon,
@@ -33,6 +33,7 @@ export default function PlaybackErrorPopover({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const copyRef = useRef<HTMLButtonElement>(null);
 
   // Closing while focus is inside sends it back to the line the popover came
   // from, rather than dropping it with the popover. A click elsewhere closes
@@ -52,9 +53,11 @@ export default function PlaybackErrorPopover({
   const { mounted, visible } = useTransitionMount(open, 180);
 
   // Portaled to the end of the page, it would be the last thing Tab reaches:
-  // focus moves in as it opens, and goes back to the line when it closes.
+  // focus moves in as it opens, to its action, so Space and Enter stay there
+  // rather than reaching the player's own keys. It goes back to the line
+  // when the popover closes.
   useEffect(() => {
-    if (visible) ref.current?.focus();
+    if (visible) copyRef.current?.focus();
   }, [visible]);
 
   if (!mounted || !anchor) return null;
@@ -70,7 +73,6 @@ export default function PlaybackErrorPopover({
     <div
       ref={ref}
       className="device-pop error-pop"
-      tabIndex={-1}
       data-closed={!visible || undefined}
       inert={visible ? undefined : ""}
       role="dialog"
@@ -91,7 +93,7 @@ export default function PlaybackErrorPopover({
           <XMarkIcon className="size-3.5" />
         </button>
       </div>
-      <PlaybackErrorDetails frozen={!open} />
+      <PlaybackErrorDetails frozen={!open} copyRef={copyRef} />
     </div>,
     document.body,
   );
@@ -103,9 +105,11 @@ export default function PlaybackErrorPopover({
  */
 export function PlaybackErrorDetails({
   frozen = false,
+  copyRef,
 }: {
   /** Closing: keep what was shown, even if another failure comes in. */
   frozen?: boolean;
+  copyRef?: Ref<HTMLButtonElement>;
 }) {
   const { playbackError, current } = usePlayer();
   // Keeps the last failure, and the track it was on, on screen while the
@@ -135,6 +139,7 @@ export function PlaybackErrorDetails({
       </dl>
       <div className="error-pop-actions">
         <Button
+          ref={copyRef}
           size="sm"
           onClick={async () => {
             if (await copyText(playbackErrorText(lines))) flash();
