@@ -129,6 +129,19 @@ async function probeStream(url: string): Promise<StreamProbe> {
   }
 }
 
+/**
+ * What the audio player said, fit for a bug report: on one line, capped, and
+ * without addresses (hls.js quotes a failed key's URI, which may be signed).
+ */
+function playerDetail(text: string | null | undefined): string | null {
+  const plain = text
+    ?.replace(/[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, "<address>")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!plain) return null;
+  return plain.length > 300 ? `${plain.slice(0, 299)}…` : plain;
+}
+
 /** A failed source as the details show it: a server address without its origin. */
 function failedSource(uri: string): string {
   if (!/^https?:\/\//i.test(uri)) return uri;
@@ -995,7 +1008,7 @@ export function usePlayerCore({
       const details: PlaybackErrorDetails = {
         at: Date.now(),
         source: failedSource(uri),
-        player: adapter.errorDetail?.() ?? null,
+        player: playerDetail(adapter.errorDetail?.()),
         server: streamed ? undefined : null,
       };
       const report = (message: string, server = details.server) => {

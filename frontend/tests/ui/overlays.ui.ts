@@ -152,7 +152,7 @@ test("playback error details", async ({ page }, testInfo) => {
         // axe compares the stack under each line of text, the page beneath
         // the popover included. The track's two lines sit over the sidebar
         // and the list's rows, so it gives up.
-        selector: ".error-pop-line:nth-child(2) dd",
+        selector: '.error-pop-line[data-label="Track"] dd',
         rules: ["text-contrast"],
         reason: "A wrapped line of popover text over the sidebar and the track list, which axe can't resolve. The popover's other lines, in the same style, are measured.",
       },

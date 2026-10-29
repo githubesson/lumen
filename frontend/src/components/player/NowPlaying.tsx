@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { TrackListItem } from "@music-library/core";
 import { trackCoverUrl } from "../../api";
 import { displayText } from "../../lib/format";
@@ -32,8 +32,14 @@ export default function NowPlaying({
   const [block, setBlock] = useState<HTMLDivElement | null>(null);
   const [errorButton, setErrorButton] = useState<HTMLButtonElement | null>(null);
   const [detailsOpen, setDetailsOpen] = usePopoverOpen(!!errorPanel);
-  // A cleared failure closes its details, so the next one doesn't open them.
+  // The details go with the failure: playing again, or another track, shuts
+  // them, so the next failure doesn't open them by itself.
   if (!error && detailsOpen) setDetailsOpen(false);
+  const panelShowsGoneError = !error && !!errorPanel?.open;
+  const closePanel = errorPanel?.close;
+  useEffect(() => {
+    if (panelShowsGoneError) closePanel?.();
+  }, [panelShowsGoneError, closePanel]);
   const open = errorPanel ? errorPanel.open : detailsOpen;
 
   return (

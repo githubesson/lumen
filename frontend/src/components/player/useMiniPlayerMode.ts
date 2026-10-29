@@ -23,6 +23,8 @@ export interface MiniPanelToggle {
   open: boolean;
   controls: string;
   onToggle: () => void;
+  /** Shuts the panel if it's this one, as when what it shows goes. */
+  close: () => void;
 }
 
 /**
@@ -171,18 +173,13 @@ export function useMiniPlayerMode() {
     [requestPanel],
   );
 
-  // Shuts `which` if it's the panel asked for, as when what it shows goes.
-  const closePanel = useCallback(
-    (which: MiniPanel) => {
-      if (wanted.current === which) requestPanel(null);
-    },
-    [requestPanel],
-  );
-
   const panelToggle = (which: MiniPanel): MiniPanelToggle => ({
     open: requested === which,
     controls: MINI_PANEL_ID,
     onToggle: () => togglePanel(which),
+    close: () => {
+      if (wanted.current === which) requestPanel(null);
+    },
   });
 
   // Escape closes the panel, without the morph: a keyboard dismissal should
@@ -226,7 +223,6 @@ export function useMiniPlayerMode() {
     anchor,
     barHeight,
     panelToggle,
-    closePanel,
   };
 }
 

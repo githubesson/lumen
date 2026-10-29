@@ -5,7 +5,12 @@ import {
   Clipboard as ClipboardIcon,
   X as XMarkIcon,
 } from "lucide-react";
-import { playbackErrorLines, playbackErrorText } from "@music-library/core";
+import {
+  playbackErrorLines,
+  playbackErrorText,
+  type PlaybackError,
+  type TrackListItem,
+} from "@music-library/core";
 import { usePlayer } from "../../context/Player";
 import { copyText } from "../../lib/clipboard";
 import { useCopiedFlag } from "../../lib/useCopiedFlag";
@@ -81,20 +86,25 @@ export default function PlaybackErrorPopover({
  */
 export function PlaybackErrorDetails() {
   const { playbackError, current } = usePlayer();
-  // Keeps the last failure on screen while the popover or panel closes after
-  // it clears.
-  const [last, setLast] = useState(playbackError);
-  if (playbackError && playbackError !== last) setLast(playbackError);
-  const error = playbackError ?? last;
+  // Keeps the last failure, and the track it was on, on screen while the
+  // popover or panel closes after it clears (another track may be loaded).
+  const [last, setLast] = useState<{
+    error: PlaybackError;
+    track: TrackListItem | null;
+  } | null>(null);
+  if (playbackError && playbackError !== last?.error) {
+    setLast({ error: playbackError, track: current });
+  }
+  const shown = playbackError ? { error: playbackError, track: current } : last;
   const { copied, flash } = useCopiedFlag(2000);
-  if (!error) return null;
+  if (!shown) return null;
 
-  const lines = playbackErrorLines(error, current);
+  const lines = playbackErrorLines(shown.error, shown.track);
   return (
     <div className="error-pop-body">
       <dl className="error-pop-lines">
         {lines.map(({ label, value }) => (
-          <div key={label} className="error-pop-line">
+          <div key={label} className="error-pop-line" data-label={label}>
             <dt>{label}</dt>
             <dd>{value}</dd>
           </div>

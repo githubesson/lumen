@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, renderHook, screen, waitFor, within } from 
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PlaybackDevice, PlayerState, TrackListItem } from "@music-library/core";
 import NowPlaying from "../src/components/player/NowPlaying";
+import { PlaybackErrorDetails } from "../src/components/player/PlaybackErrorPopover";
 import { usePlayerDisplay } from "../src/components/player/usePlayerDisplay";
 
 const mock = vi.hoisted(() => ({
@@ -145,6 +146,57 @@ it("shows what happened when the error is clicked, and copies it", async () => {
   expect(await within(dialog).findByRole("button", { name: "Copied" })).toBeTruthy();
 });
 
+it("closes the details on Escape or a click outside", async () => {
+  const message = "Couldn't play this track.";
+  mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
+  render(<NowPlaying track={track} title="Song" artist="Artist · Album" error={message} />);
+  const line = screen.getByRole("button", { name: message });
+
+  fireEvent.click(line);
+  await screen.findByRole("dialog", { name: "Playback error" });
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(line.getAttribute("aria-expanded")).toBe("false");
+
+  fireEvent.click(line);
+  expect(line.getAttribute("aria-expanded")).toBe("true");
+  fireEvent.mouseDown(document.body);
+  expect(line.getAttribute("aria-expanded")).toBe("false");
+});
+
+it("shuts the details when the failure clears, and doesn't reopen them for the next", async () => {
+  const message = "Couldn't play this track.";
+  mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
+  const { rerender } = render(
+    <NowPlaying track={track} title="Song" artist="Artist · Album" error={message} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: message }));
+  await screen.findByRole("dialog", { name: "Playback error" });
+
+  // Played again: the failure is gone, and so are its details.
+  mock.player = { ...mock.player, playbackError: null };
+  rerender(<NowPlaying track={track} title="Song" artist="Artist · Album" error={null} />);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+  mock.player = { ...mock.player, playbackError: { trackId: "t1", message, details: { ...details } } };
+  rerender(<NowPlaying track={track} title="Song" artist="Artist · Album" error={message} />);
+  expect(screen.getByRole("button", { name: message }).getAttribute("aria-expanded")).toBe("false");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("keeps the failed track in the details while they close over the next one", () => {
+  const message = "Couldn't play this track.";
+  const next: TrackListItem = { ...track, id: "t2", title: "Next song" };
+  mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
+  const { container, rerender } = render(<PlaybackErrorDetails />);
+  expect(container.textContent).toContain("Song — Artist");
+
+  mock.player = { ...mock.player, current: next, playbackError: null };
+  rerender(<PlaybackErrorDetails />);
+  expect(container.textContent).toContain("Song — Artist");
+  expect(container.textContent).toContain(message);
+});
+
 it("opens the mini player's panel instead of a popover", () => {
   const message = "Couldn't play this track.";
   const onToggle = vi.fn();
@@ -154,10 +206,28 @@ it("opens the mini player's panel instead of a popover", () => {
       title="Song"
       artist="Artist · Album"
       error={message}
-      errorPanel={{ open: false, controls: "mini-player-panel", onToggle }}
+      errorPanel={{ open: false, controls: "mini-player-panel", onToggle, close: vi.fn() }}
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: message }));
   expect(onToggle).toHaveBeenCalledOnce();
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("shuts the mini player's error panel when the failure clears", () => {
+  const message = "Couldn't play this track.";
+  const close = vi.fn();
+  const panel = (open: boolean) => ({ open, controls: "mini-player-panel", onToggle: vi.fn(), close });
+  const { rerender } = render(
+    <NowPlaying track={track} title="Song" artist="Artist · Album" error={message} errorPanel={panel(true)} />,
+  );
+  expect(close).not.toHaveBeenCalled();
+
+  // Another panel is up: nothing to shut.
+  rerender(<NowPlaying track={track} title="Song" artist="Artist · Album" error={null} errorPanel={panel(false)} />);
+  expect(close).not.toHaveBeenCalled();
+
+  rerender(<NowPlaying track={track} title="Song" artist="Artist · Album" error={message} errorPanel={panel(true)} />);
+  rerender(<NowPlaying track={track} title="Song" artist="Artist · Album" error={null} errorPanel={panel(true)} />);
+  expect(close).toHaveBeenCalled();
 });

@@ -887,6 +887,33 @@ describe("usePlayerCore playback errors", () => {
     );
   });
 
+  it("keeps no address from what the audio player said, and caps it", async () => {
+    const fake = createFakeAdapter();
+    let said = 'hls.js keyLoadError: Invalid key URI: "https://cdn.example/key?token=secret"';
+    fake.adapter.errorDetail = () => said;
+    const { result } = renderHook(() =>
+      usePlayerCore({
+        adapter: fake.adapter,
+        storage: createMemoryStorage(),
+        interpolateProgress: false,
+      }),
+    );
+    act(() => result.current.controls.play(t("a")));
+
+    act(() => fake.emit("error"));
+    expect(result.current.state.playbackError?.details.player).toBe(
+      'hls.js keyLoadError: Invalid key URI: "<address>"',
+    );
+
+    said = `MEDIA_ERR_DECODE:\n${"x".repeat(400)}`;
+    act(() => result.current.controls.toggle());
+    act(() => fake.emit("error"));
+    const player = result.current.state.playbackError?.details.player ?? "";
+    expect(player).toHaveLength(300);
+    expect(player.startsWith("MEDIA_ERR_DECODE: xxx")).toBe(true);
+    expect(player.endsWith("…")).toBe(true);
+  });
+
   it("shows a server address without its origin", async () => {
     const { result, emit } = await setup({
       resolveTrackUri: (id) => `https://music.example/api/tracks/${id}/stream`,
