@@ -121,6 +121,32 @@ it("gives up on a playlist or segment the server refused", async () => {
   expect(error).toHaveBeenCalledOnce();
 });
 
+it("says what the element or hls.js reported about the failure", async () => {
+  const { adapter, active, error } = setup();
+  act(() => adapter.load("/api/tracks/one/stream"));
+  Object.defineProperty(active, "error", {
+    configurable: true,
+    value: { code: 4, message: "DEMUXER_ERROR_COULD_NOT_OPEN: FFmpegDemuxer: open context failed" },
+  });
+  active.dispatchEvent(new Event("error"));
+  expect(error).toHaveBeenCalledOnce();
+  expect(adapter.errorDetail?.()).toBe(
+    "MEDIA_ERR_SRC_NOT_SUPPORTED: DEMUXER_ERROR_COULD_NOT_OPEN: FFmpegDemuxer: open context failed",
+  );
+
+  act(() => adapter.load("/api/tracks/tidal%3Atwo/stream"));
+  await vi.waitFor(() => expect(mock.instances).toHaveLength(1));
+  mock.instances[0].fail({
+    ...manifestFailed,
+    url: "https://cdn.example/signed?token=secret",
+    error: new Error("A network error (status 502) occurred while loading manifest"),
+  });
+  expect(error).toHaveBeenCalledTimes(2);
+  expect(adapter.errorDetail?.()).toBe(
+    "hls.js manifestLoadError: A network error (status 502) occurred while loading manifest",
+  );
+});
+
 // jsdom never plays an element; mark it playing for a crossfade to start.
 function playing(audio: HTMLAudioElement) {
   Object.defineProperty(audio, "paused", { configurable: true, get: () => false });

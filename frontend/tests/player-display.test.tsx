@@ -1,5 +1,5 @@
-import { render, renderHook, screen } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PlaybackDevice, PlayerState, TrackListItem } from "@music-library/core";
 import NowPlaying from "../src/components/player/NowPlaying";
 import { usePlayerDisplay } from "../src/components/player/usePlayerDisplay";
@@ -44,6 +44,7 @@ beforeEach(() => {
   };
   mock.remote = { targetDevice: desktop, commandPending: false };
 });
+afterEach(cleanup);
 
 it("shows the provider's displayed state while controlling another device", () => {
   const { result } = renderHook(() => usePlayerDisplay());
@@ -75,15 +76,22 @@ it("keeps transport enabled while a remote command is pending", () => {
   expect(result.current.transportDisabled).toBe(false);
 });
 
+const details = {
+  at: Date.UTC(2026, 9, 29, 12, 0, 0),
+  source: "/api/tracks/t1/stream",
+  player: "MEDIA_ERR_SRC_NOT_SUPPORTED: DEMUXER_ERROR_COULD_NOT_OPEN",
+  server: "HTTP 200 · audio/flac",
+};
+
 it("shows the current track's playback error in place of its artist", () => {
   const message = "TIDAL refused to stream this track: Not available in your region";
   mock.remote = { targetDevice: null, commandPending: false };
-  mock.player = { ...mock.player, isPlaying: false, playbackError: { trackId: "t1", message } };
+  mock.player = { ...mock.player, isPlaying: false, playbackError: { trackId: "t1", message, details } };
   const { result, rerender } = renderHook(() => usePlayerDisplay());
   expect(result.current.displayError).toBe(message);
   expect(result.current.displayArtist).toBe("Artist · Album");
 
-  mock.player = { ...mock.player, playbackError: { trackId: "t0", message } };
+  mock.player = { ...mock.player, playbackError: { trackId: "t0", message, details } };
   rerender();
   expect(result.current.displayError).toBeNull();
 });
@@ -101,7 +109,55 @@ it("renders the error as the artist line and announces it", () => {
     <NowPlaying track={track} title="Song" artist="Artist · Album" error={message} />,
   );
   expect(line.textContent).toBe(message);
-  expect(line.getAttribute("title")).toBe(message);
+  expect(screen.getByRole("button", { name: message }).getAttribute("title")).toBe(message);
   expect(line.classList.contains("np-error")).toBe(true);
   expect(screen.getByRole("status").textContent).toBe(message);
+});
+
+it("shows what happened when the error is clicked, and copies it", async () => {
+  const message = "Couldn't play this track.";
+  mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
+  const writeText = vi.fn(async () => {});
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  render(<NowPlaying track={track} title="Song" artist="Artist · Album" error={message} />);
+
+  const line = screen.getByRole("button", { name: message });
+  expect(line.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(line);
+  expect(line.getAttribute("aria-expanded")).toBe("true");
+  const dialog = await screen.findByRole("dialog", { name: "Playback error" });
+  expect(dialog.textContent).toContain("DEMUXER_ERROR_COULD_NOT_OPEN");
+  expect(dialog.textContent).toContain("HTTP 200 · audio/flac");
+
+  fireEvent.click(within(dialog).getByRole("button", { name: "Copy details" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+  expect(writeText.mock.calls[0]).toEqual([
+    [
+      "Error: Couldn't play this track.",
+      "Track: Song — Artist",
+      "Track ID: t1",
+      "Source: /api/tracks/t1/stream",
+      "Player: MEDIA_ERR_SRC_NOT_SUPPORTED: DEMUXER_ERROR_COULD_NOT_OPEN",
+      "Server: HTTP 200 · audio/flac",
+      "Time: 2026-10-29T12:00:00.000Z",
+    ].join("\n"),
+  ]);
+  expect(await within(dialog).findByRole("button", { name: "Copied" })).toBeTruthy();
+});
+
+it("opens the mini player's panel instead of a popover", () => {
+  const message = "Couldn't play this track.";
+  const onToggle = vi.fn();
+  render(
+    <NowPlaying
+      track={track}
+      title="Song"
+      artist="Artist · Album"
+      error={message}
+      errorPanel={{ open: false, controls: "mini-player-panel", onToggle }}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: message }));
+  expect(onToggle).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("dialog")).toBeNull();
 });

@@ -9,8 +9,11 @@ import {
   setMiniPlayerPanel,
 } from "../../lib/platform";
 
-/** What the mini player's side panel can show, in utility-row order. */
-export const MINI_PANELS = ["devices", "lyrics", "queue"] as const;
+/**
+ * What the mini player's side panel can show, in the order their controls
+ * sit in the bar: the playback error line, then the utility row.
+ */
+export const MINI_PANELS = ["error", "devices", "lyrics", "queue"] as const;
 export type MiniPanel = (typeof MINI_PANELS)[number];
 
 export const MINI_PANEL_ID = "mini-player-panel";
@@ -168,6 +171,14 @@ export function useMiniPlayerMode() {
     [requestPanel],
   );
 
+  // Shuts `which` if it's the panel asked for, as when what it shows goes.
+  const closePanel = useCallback(
+    (which: MiniPanel) => {
+      if (wanted.current === which) requestPanel(null);
+    },
+    [requestPanel],
+  );
+
   const panelToggle = (which: MiniPanel): MiniPanelToggle => ({
     open: requested === which,
     controls: MINI_PANEL_ID,
@@ -215,6 +226,7 @@ export function useMiniPlayerMode() {
     anchor,
     barHeight,
     panelToggle,
+    closePanel,
   };
 }
 

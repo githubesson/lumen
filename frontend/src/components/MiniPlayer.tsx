@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import RemoteControlIndicator from "./RemoteControlIndicator";
 import {
   Minimize2 as ArrowsPointingInIcon,
@@ -49,9 +50,17 @@ export default function MiniPlayer() {
     anchor,
     barHeight,
     panelToggle,
+    closePanel,
   } = useMiniPlayerMode();
   const canResizeWindow = canSetMiniPlayer();
   const lyricsToggle = miniPlayerMode ? panelToggle("lyrics") : null;
+  const errorToggle = miniPlayerMode ? panelToggle("error") : undefined;
+  // The details go with the failure: playing again, or another track, shuts
+  // them.
+  const errorPanelOpen = !!errorToggle?.open;
+  useEffect(() => {
+    if (errorPanelOpen && !displayError) closePanel("error");
+  }, [errorPanelOpen, displayError, closePanel]);
 
   return (
     <div className="player-shell">
@@ -74,6 +83,7 @@ export default function MiniPlayer() {
           title={displayTitle}
           artist={displayArtist}
           error={displayError}
+          errorPanel={errorToggle}
           onContextMenu={
             displayCurrent && !isRemoteMode
               ? bindCtx(displayCurrent)
