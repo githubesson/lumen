@@ -20,6 +20,7 @@ import {
   shouldReportPlay,
   withPlayNext,
   type PlaybackError,
+  type PlaybackErrorDetails,
   type PlayerControls,
   type PlayerState,
   type RepeatMode,
@@ -91,29 +92,52 @@ function firstPlayableIndex(
 
 const PLAYBACK_ERROR_FALLBACK = "Couldn't play this track.";
 
+/** What asking for a failed stream again found. */
+interface StreamProbe {
+  /** The server's reason it can't serve the stream, when it gave one. */
+  reason: string | null;
+  /** The answer, for the failure's details. */
+  answer: string;
+}
+
 /**
  * Why a stream failed, in the server's words: request it once more. The
  * backend answers a TIDAL stream it can't serve with a 502 or 503 and a short
  * plain-text reason (and remembers TIDAL's refusal, so this doesn't ask TIDAL
- * again). Anything else, such as a stream that works now, a network failure,
- * another error or a reverse proxy's HTML error page, gets the generic
- * message.
+ * again). Any other answer, such as a stream that works now, a network
+ * failure, another error or a reverse proxy's HTML error page, gives no
+ * reason; it is only described.
  */
-async function streamFailureMessage(url: string): Promise<string> {
+async function probeStream(url: string): Promise<StreamProbe> {
   try {
     const response = await rawFetch(url);
-    // Nothing to explain; don't download the playlist.
+    // Nothing to explain; don't download the stream.
     void response.body?.cancel().catch(() => {});
+    const type = response.headers.get("content-type");
+    return { reason: null, answer: `HTTP ${response.status}${type ? ` · ${type}` : ""}` };
   } catch (error) {
-    const text =
-      error instanceof ApiError && (error.status === 502 || error.status === 503)
-        ? error.message
-        : "";
-    if (text && text.length <= 300 && !text.startsWith("<") && !text.includes("\n")) {
-      return text;
+    if (!(error instanceof ApiError)) {
+      return { reason: null, answer: `No answer: ${String(error)}` };
     }
+    const text = error.message;
+    const readable =
+      text.length <= 300 && !text.startsWith("<") && !text.includes("\n") ? text : "";
+    return {
+      reason: readable && (error.status === 502 || error.status === 503) ? readable : null,
+      answer: `HTTP ${error.status}${readable ? ` · ${readable}` : ""}`,
+    };
   }
-  return PLAYBACK_ERROR_FALLBACK;
+}
+
+/** A failed source as the details show it: a server address without its origin. */
+function failedSource(uri: string): string {
+  if (!/^https?:\/\//i.test(uri)) return uri;
+  try {
+    const { pathname, search } = new URL(uri);
+    return pathname + search;
+  } catch {
+    return uri;
+  }
 }
 
 /**
@@ -964,16 +988,28 @@ export function usePlayerCore({
       if (!track) return;
       const failure = { trackId: track.id };
       failureRef.current = failure;
-      const report = (message: string) => {
-        if (failureRef.current === failure) setPlaybackError({ trackId: track.id, message });
+      const uri = resolveUri(track.id);
+      const url = streamUrl(track.id);
+      // A downloaded copy just didn't play; only a stream can be asked again.
+      const streamed = uri === url;
+      const details: PlaybackErrorDetails = {
+        at: Date.now(),
+        source: failedSource(uri),
+        player: adapter.errorDetail?.() ?? null,
+        server: streamed ? undefined : null,
+      };
+      const report = (message: string, server = details.server) => {
+        if (failureRef.current === failure) {
+          setPlaybackError({ trackId: track.id, message, details: { ...details, server } });
+        }
       };
       // Say so right away; the server's reason, if any, replaces it.
       report(PLAYBACK_ERROR_FALLBACK);
-      // Only the server can say why its TIDAL stream failed. A downloaded
-      // copy or a library file just didn't play.
-      const url = streamUrl(track.id);
-      if (isTidalTrack(track) && resolveUri(track.id) === url) {
-        void streamFailureMessage(url).then(report);
+      if (streamed) {
+        void probeStream(url).then(({ reason, answer }) =>
+          // Only TIDAL streams fail for a reason worth showing on the bar.
+          report(isTidalTrack(track) && reason ? reason : PLAYBACK_ERROR_FALLBACK, answer),
+        );
       }
     });
     return () => {

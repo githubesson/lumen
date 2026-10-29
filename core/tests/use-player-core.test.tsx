@@ -105,6 +105,12 @@ const ids = (tracks: TrackListItem[]) => tracks.map((track) => track.id);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // A failed stream is asked for again; unless a test answers, it never is.
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("usePlayerCore", () => {
@@ -802,10 +808,6 @@ describe("usePlayerCore playback errors", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   it("stops on the failed track and shows the server's reason for a TIDAL stream", async () => {
     const fetchMock = vi.fn(async () => new Response(refusal, { status: 502 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -815,30 +817,41 @@ describe("usePlayerCore playback errors", () => {
     act(() => emit("error"));
     expect(result.current.state.isPlaying).toBe(false);
     await settle();
-    expect(result.current.state.playbackError).toEqual({ trackId: "tidal:1", message: refusal });
+    expect(result.current.state.playbackError).toEqual({
+      trackId: "tidal:1",
+      message: refusal,
+      details: {
+        at: expect.any(Number),
+        source: "test://stream/tidal:1",
+        player: null,
+        server: `HTTP 502 · ${refusal}`,
+      },
+    });
     expect(result.current.state.current?.id).toBe("tidal:1");
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith("test://stream/tidal:1", expect.anything());
   });
 
   it.each([
-    ["a library track", t("a"), undefined],
-    ["a reverse proxy's HTML page", tidal("1"), () => new Response("<html><body>502 Bad Gateway</body></html>", { status: 502 })],
-    ["a stream that answers now", tidal("1"), () => new Response("#EXTM3U\n", { status: 200 })],
-    ["an error that isn't TIDAL's", tidal("1"), () => new Response("internal error", { status: 500 })],
-    ["an unreachable server", tidal("1"), () => Promise.reject(new TypeError("Failed to fetch"))],
-  ])("shows a generic message for %s", async (_case, track, respond) => {
-    const fetchMock = vi.fn(async () => respond ? respond() : new Response(refusal, { status: 502 }));
+    ["a library track's refusal", t("a"), () => new Response(refusal, { status: 502 }), `HTTP 502 · ${refusal}`],
+    ["a library file gone from disk", t("a"), () => new Response("file missing on disk", { status: 410 }), "HTTP 410 · file missing on disk"],
+    ["a reverse proxy's HTML page", tidal("1"), () => new Response("<html><body>502 Bad Gateway</body></html>", { status: 502 }), "HTTP 502"],
+    ["a stream that answers now", tidal("1"), () => new Response("#EXTM3U\n", { status: 200, headers: { "Content-Type": "application/vnd.apple.mpegurl" } }), "HTTP 200 · application/vnd.apple.mpegurl"],
+    ["an error that isn't TIDAL's", tidal("1"), () => new Response("internal error", { status: 500 }), "HTTP 500 · internal error"],
+    ["an unreachable server", tidal("1"), () => Promise.reject(new TypeError("Failed to fetch")), "No answer: TypeError: Failed to fetch"],
+  ])("shows a generic message for %s, and the answer in the details", async (_case, track, respond, server) => {
+    const fetchMock = vi.fn(async () => respond());
     vi.stubGlobal("fetch", fetchMock);
     const { result, emit } = await setup();
     act(() => result.current.controls.play(track));
 
     act(() => emit("error"));
     await settle();
-    expect(result.current.state.playbackError).toEqual({
+    expect(result.current.state.playbackError).toMatchObject({
       trackId: track.id,
       message: "Couldn't play this track.",
+      details: { server },
     });
-    expect(fetchMock).toHaveBeenCalledTimes(respond ? 1 : 0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not ask the server about a downloaded TIDAL track", async () => {
@@ -849,8 +862,39 @@ describe("usePlayerCore playback errors", () => {
 
     act(() => emit("error"));
     await settle();
-    expect(result.current.state.playbackError?.message).toBe("Couldn't play this track.");
+    expect(result.current.state.playbackError).toMatchObject({
+      message: "Couldn't play this track.",
+      details: { source: "file:///offline.flac", server: null },
+    });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps what the audio player said about the failure", async () => {
+    const fake = createFakeAdapter();
+    fake.adapter.errorDetail = () => "MEDIA_ERR_DECODE: PIPELINE_ERROR_DECODE";
+    const { result } = renderHook(() =>
+      usePlayerCore({
+        adapter: fake.adapter,
+        storage: createMemoryStorage(),
+        interpolateProgress: false,
+      }),
+    );
+    act(() => result.current.controls.play(t("a")));
+
+    act(() => fake.emit("error"));
+    expect(result.current.state.playbackError?.details.player).toBe(
+      "MEDIA_ERR_DECODE: PIPELINE_ERROR_DECODE",
+    );
+  });
+
+  it("shows a server address without its origin", async () => {
+    const { result, emit } = await setup({
+      resolveTrackUri: (id) => `https://music.example/api/tracks/${id}/stream`,
+    });
+    act(() => result.current.controls.play(t("a")));
+
+    act(() => emit("error"));
+    expect(result.current.state.playbackError?.details.source).toBe("/api/tracks/a/stream");
   });
 
   it("ignores a probe that answers after another track started", async () => {
@@ -903,6 +947,7 @@ describe("usePlayerCore playback errors", () => {
 
     act(() => emit("error"));
     expect(result.current.state.playbackError?.message).toBe("Couldn't play this track.");
+    expect(result.current.state.playbackError?.details.server).toBeUndefined();
     answer(new Response(refusal, { status: 502 }));
     await settle();
     expect(result.current.state.playbackError?.message).toBe(refusal);
