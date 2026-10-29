@@ -116,7 +116,10 @@ async function probeStream(url: string, { firstByte }: { firstByte: boolean }): 
     // Nothing to explain; don't download the stream.
     void response.body?.cancel().catch(() => {});
     const type = response.headers.get("content-type");
-    return { reason: null, answer: `HTTP ${response.status}${type ? ` · ${type}` : ""}` };
+    return {
+      reason: null,
+      answer: detailLine(`HTTP ${response.status}${type ? ` · ${type}` : ""}`) ?? "",
+    };
   } catch (error) {
     if (!(error instanceof ApiError)) {
       return { reason: null, answer: detailLine(`No answer: ${String(error)}`) ?? "No answer" };
@@ -145,8 +148,12 @@ function detailLine(text: string | null | undefined): string | null {
   return plain.length > 300 ? `${plain.slice(0, 299)}…` : plain;
 }
 
-/** A failed source as the details show it: a server address without its origin. */
+/**
+ * A failed source as the details show it: a server address without its
+ * origin, or a downloaded copy by its file name (its folder is the device's).
+ */
 function failedSource(uri: string): string {
+  if (/^file:/i.test(uri)) return `Downloaded copy · ${uri.slice(uri.lastIndexOf("/") + 1)}`;
   if (!/^https?:\/\//i.test(uri)) return uri;
   try {
     const { pathname, search } = new URL(uri);

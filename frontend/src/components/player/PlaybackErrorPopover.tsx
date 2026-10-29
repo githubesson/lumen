@@ -34,8 +34,15 @@ export default function PlaybackErrorPopover({
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
+  // Closing from inside (its button, Escape) sends focus back to the line
+  // it came from, rather than dropping it with the popover.
+  const close = () => {
+    if (ref.current?.contains(document.activeElement)) toggle?.focus();
+    onClose();
+  };
+
   useDismiss(ref, {
-    onDismiss: onClose,
+    onDismiss: close,
     enabled: open,
     capture: true,
     ignore: (target) => !!toggle?.contains(target),
@@ -69,11 +76,7 @@ export default function PlaybackErrorPopover({
           type="button"
           className="iconbtn device-pop-close"
           aria-label="Close playback error"
-          onClick={() => {
-            onClose();
-            // This button is going; focus goes back to the line it came from.
-            toggle?.focus();
-          }}
+          onClick={close}
         >
           <XMarkIcon className="size-3.5" />
         </button>

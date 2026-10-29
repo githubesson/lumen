@@ -873,14 +873,19 @@ describe("usePlayerCore playback errors", () => {
     expect(range(1)).toBeUndefined();
   });
 
-  it("keeps no address from the server's answer", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("upstream http://10.0.0.5:8080/x unreachable", { status: 502 })));
+  it.each([
+    ["an error", () => new Response("upstream http://10.0.0.5:8080/x unreachable", { status: 502 }), "HTTP 502 · upstream <address> unreachable"],
+    ["a success", () => new Response("x", { status: 200, headers: { "Content-Type": `audio/flac; see=https://proxy.example/why ${"x".repeat(400)}` } }), "HTTP 200 · audio/flac; see=<address> x"],
+  ])("keeps no address from the server's answer to %s, and caps it", async (_case, respond, start) => {
+    vi.stubGlobal("fetch", vi.fn(async () => respond()));
     const { result, emit } = await setup();
     act(() => result.current.controls.play(t("a")));
 
     act(() => emit("error"));
     await settle();
-    expect(result.current.state.playbackError?.details.server).toBe("HTTP 502 · upstream <address> unreachable");
+    const server = result.current.state.playbackError?.details.server ?? "";
+    expect(server.startsWith(start)).toBe(true);
+    expect(server.length).toBeLessThanOrEqual(300);
   });
 
   it("does not ask the server about a downloaded TIDAL track", async () => {
@@ -893,7 +898,7 @@ describe("usePlayerCore playback errors", () => {
     await settle();
     expect(result.current.state.playbackError).toMatchObject({
       message: "Couldn't play this track.",
-      details: { source: "file:///offline.flac", server: null },
+      details: { source: "Downloaded copy · offline.flac", server: null },
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });

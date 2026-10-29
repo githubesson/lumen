@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PlaybackDevice, PlayerState, TrackListItem } from "@music-library/core";
+import MiniPlayerPanel from "../src/components/player/MiniPlayerPanel";
 import NowPlaying from "../src/components/player/NowPlaying";
 import { PlaybackErrorDetails } from "../src/components/player/PlaybackErrorPopover";
 import { usePlayerDisplay } from "../src/components/player/usePlayerDisplay";
@@ -210,17 +211,49 @@ it("keeps the closing details on the failure they opened for", () => {
   expect(container.textContent).not.toContain("HTTP 404");
 });
 
-it("sends focus back to the error line when closed with its button", async () => {
+it.each(["its button", "Escape"])("sends focus back to the error line when closed with %s", async (how) => {
   const message = "Couldn't play this track.";
   mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
   render(<NowPlaying track={track} title="Song" artist="Artist · Album" error={message} />);
   const line = screen.getByRole("button", { name: message });
   fireEvent.click(line);
   const dialog = await screen.findByRole("dialog", { name: "Playback error" });
+  const copy = within(dialog).getByRole("button", { name: "Copy details" });
+  copy.focus();
 
-  fireEvent.click(within(dialog).getByRole("button", { name: "Close playback error" }));
+  if (how === "Escape") fireEvent.keyDown(copy, { key: "Escape" });
+  else fireEvent.click(within(dialog).getByRole("button", { name: "Close playback error" }));
   expect(line.getAttribute("aria-expanded")).toBe("false");
   expect(document.activeElement).toBe(line);
+});
+
+it("leaves focus alone when the details close from outside", async () => {
+  const message = "Couldn't play this track.";
+  mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
+  render(
+    <>
+      <input aria-label="Search" />
+      <NowPlaying track={track} title="Song" artist="Artist · Album" error={message} />
+    </>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: message }));
+  await screen.findByRole("dialog", { name: "Playback error" });
+  const search = screen.getByRole("textbox", { name: "Search" });
+  search.focus();
+
+  fireEvent.keyDown(search, { key: "Escape" });
+  expect(document.activeElement).toBe(search);
+});
+
+it("shows the details in the mini player's error panel", () => {
+  const message = "Couldn't play this track.";
+  mock.remote = { targetDevice: null, commandPending: false };
+  mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
+  render(<MiniPlayerPanel panel="error" />);
+  expect(screen.getByText("Playback error", { selector: ".mini-panel-title" })).toBeTruthy();
+  const region = screen.getByRole("region", { name: "Playback error" });
+  expect(region.textContent).toContain("HTTP 200 · audio/flac");
+  expect(within(region).getByRole("button", { name: "Copy details" })).toBeTruthy();
 });
 
 it("opens the mini player's panel instead of a popover", () => {
