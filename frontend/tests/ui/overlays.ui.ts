@@ -137,6 +137,30 @@ test("settings playback section", async ({ page }, testInfo) => {
   await checkUI(page, testInfo);
 });
 
+test("playback error details", async ({ page }, testInfo) => {
+  // A library file the server no longer has.
+  await page.route(`**/api/tracks/${menuTrack.id}/stream`, (route) =>
+    route.fulfill({ status: 410, contentType: "text/plain", body: "file missing on disk" }),
+  );
+  await page.locator(".track-title").and(page.getByTitle(menuTrack.title, { exact: true })).dispatchEvent("click");
+  // A real click: the line must take the pointer, not just the event.
+  await page.locator(".player-bar").getByRole("button", { name: "Couldn't play this track." }).click();
+  const dialog = page.getByRole("dialog", { name: "Playback error" });
+  await ready(page, dialog.getByText("HTTP 410 · file missing on disk"));
+  await checkUI(page, testInfo, {
+    exceptions: [
+      {
+        // axe compares the stack under each line of text, the page beneath
+        // the popover included. The track's two lines sit over the sidebar
+        // and the list's rows, so it gives up.
+        selector: '.error-pop-line[data-label="Track"] dd',
+        rules: ["text-contrast"],
+        reason: "A wrapped line of popover text over the sidebar and the track list, which axe can't resolve. The popover's other lines, in the same style, are measured.",
+      },
+    ],
+  });
+});
+
 test("queue popover", async ({ page }, testInfo) => {
   await page.locator(".player-bar").getByRole("button", { name: "Queue", exact: true }).dispatchEvent("click");
   await ready(page, page.locator(".queue-pop").getByText(loadedTrack.title).first());

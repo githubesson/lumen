@@ -8,6 +8,8 @@ export {
   fisherYatesWithAnchor,
   repeatModeLabel,
   SMOOTH_MIX_SECONDS,
+  type PlaybackError,
+  type PlaybackErrorDetails,
   type PlayerControls,
   type PlayerState,
   type PlayOptions,
@@ -20,6 +22,11 @@ export {
   type AudioAdapterEvent,
 } from "./audio-adapter";
 export { usePlayerCore } from "./use-player-core";
+export {
+  playbackErrorLines,
+  playbackErrorText,
+  type PlaybackErrorLine,
+} from "./playback-error";
 export {
   activityTrack,
   playbackDeviceButtonLabel,

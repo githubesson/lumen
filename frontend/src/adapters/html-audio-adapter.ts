@@ -51,6 +51,9 @@ export function useHtmlAudioAdapter(): {
   // One registry for the adapter's lifetime: useState never replaces it, so
   // listing it as a dependency below re-runs nothing.
   const [listeners] = useState(createAudioAdapterEmitter);
+  // What the element or hls.js said about the latest failure; set right
+  // before each "error" is emitted.
+  const errorDetailRef = useRef<string | null>(null);
 
   // Wire native events → listener registry once the element mounts.
   useEffect(() => {
@@ -75,7 +78,9 @@ export function useHtmlAudioAdapter(): {
         // (it may still report the missing src), and hls.js reports and
         // recovers the media it drives itself.
         error: () => {
-          if (a.getAttribute("src") && !hlsRef.current) dispatchError();
+          if (!a.getAttribute("src") || hlsRef.current) return;
+          errorDetailRef.current = describeMediaError(a.error);
+          dispatchError();
         },
       };
       for (const [event, handler] of Object.entries(handlers)) {
@@ -237,6 +242,7 @@ export function useHtmlAudioAdapter(): {
                   if (!data.fatal || !giveUpOnFatalHlsError(HlsRuntime, hls, data)) return;
                   if (hlsRef.current === hls) {
                     hlsRef.current = null;
+                    errorDetailRef.current = describeHlsError(data);
                     listeners.emit("error");
                   }
                 });
@@ -318,6 +324,7 @@ export function useHtmlAudioAdapter(): {
                     preparedUrlRef.current = null;
                   } else if (hlsRef.current === hls) {
                     hlsRef.current = null;
+                    errorDetailRef.current = describeHlsError(data);
                     listeners.emit("error");
                   }
                 });
@@ -409,6 +416,9 @@ export function useHtmlAudioAdapter(): {
         return activeAudioRef.current?.duration ?? 0;
       },
       on: listeners.on,
+      errorDetail() {
+        return errorDetailRef.current;
+      },
       dispose() {
         finishFade();
         loadGenerationRef.current += 1;
@@ -438,6 +448,34 @@ export function useHtmlAudioAdapter(): {
   );
 
   return { adapter, audioRefs };
+}
+
+const MEDIA_ERROR_NAMES: Record<number, string> = {
+  1: "MEDIA_ERR_ABORTED",
+  2: "MEDIA_ERR_NETWORK",
+  3: "MEDIA_ERR_DECODE",
+  4: "MEDIA_ERR_SRC_NOT_SUPPORTED",
+};
+
+/**
+ * The element's own account of a failure, e.g. "MEDIA_ERR_SRC_NOT_SUPPORTED:
+ * DEMUXER_ERROR_COULD_NOT_OPEN: FFmpegDemuxer: open context failed".
+ */
+function describeMediaError(error: MediaError | null): string | null {
+  if (!error) return null;
+  const name = MEDIA_ERROR_NAMES[error.code] ?? `MediaError ${error.code}`;
+  return error.message ? `${name}: ${error.message}` : name;
+}
+
+/**
+ * hls.js's account of the error it gave up on, e.g. "hls.js manifestLoadError:
+ * A network error (status 502) occurred while loading manifest". Not its
+ * `url`: a segment's carries TIDAL's signed address. The few messages that
+ * quote one lose it in core, which replaces every address in the detail.
+ */
+function describeHlsError(data: ErrorData): string {
+  const message = data.error?.message;
+  return `hls.js ${data.details}${message ? `: ${message}` : ""}`;
 }
 
 /**

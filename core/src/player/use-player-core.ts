@@ -20,6 +20,7 @@ import {
   shouldReportPlay,
   withPlayNext,
   type PlaybackError,
+  type PlaybackErrorDetails,
   type PlayerControls,
   type PlayerState,
   type RepeatMode,
@@ -91,29 +92,82 @@ function firstPlayableIndex(
 
 const PLAYBACK_ERROR_FALLBACK = "Couldn't play this track.";
 
+/** What asking for a failed stream again found. */
+interface StreamProbe {
+  /** The server's reason it can't serve the stream, when it gave one. */
+  reason: string | null;
+  /** The answer, for the failure's details. */
+  answer: string;
+}
+
 /**
  * Why a stream failed, in the server's words: request it once more. The
  * backend answers a TIDAL stream it can't serve with a 502 or 503 and a short
  * plain-text reason (and remembers TIDAL's refusal, so this doesn't ask TIDAL
- * again). Anything else, such as a stream that works now, a network failure,
- * another error or a reverse proxy's HTML error page, gets the generic
- * message.
+ * again). Any other answer, such as a stream that works now, a network
+ * failure, another error or a reverse proxy's HTML error page, gives no
+ * reason; it is only described.
  */
-async function streamFailureMessage(url: string): Promise<string> {
+async function probeStream(
+  url: string,
+  { firstByte, signal }: { firstByte: boolean; signal: AbortSignal },
+): Promise<StreamProbe> {
   try {
-    const response = await rawFetch(url);
-    // Nothing to explain; don't download the playlist.
+    // A library file is served with ranges, so one byte answers as well as
+    // the whole file. A TIDAL stream is asked exactly as the player asks it.
+    const response = await rawFetch(url, {
+      signal,
+      ...(firstByte ? { headers: { Range: "bytes=0-0" } } : {}),
+    });
+    // Nothing to explain; don't download the stream.
     void response.body?.cancel().catch(() => {});
+    const type = response.headers.get("content-type");
+    return {
+      reason: null,
+      answer: detailLine(`HTTP ${response.status}${type ? ` · ${type}` : ""}`) ?? "",
+    };
   } catch (error) {
-    const text =
-      error instanceof ApiError && (error.status === 502 || error.status === 503)
-        ? error.message
-        : "";
-    if (text && text.length <= 300 && !text.startsWith("<") && !text.includes("\n")) {
-      return text;
+    if (!(error instanceof ApiError)) {
+      return { reason: null, answer: detailLine(`No answer: ${String(error)}`) ?? "No answer" };
     }
+    const text = error.message;
+    const readable =
+      text.length <= 300 && !text.startsWith("<") && !text.includes("\n") ? text : "";
+    return {
+      reason:
+        readable && (error.status === 502 || error.status === 503) ? detailLine(readable) : null,
+      answer: detailLine(`HTTP ${error.status}${readable ? ` · ${readable}` : ""}`) ?? "",
+    };
   }
-  return PLAYBACK_ERROR_FALLBACK;
+}
+
+/**
+ * A failure's account fit for a bug report: on one line, capped, and without
+ * addresses (hls.js quotes a failed key's URI, which may be signed, and a
+ * proxy's error page may name its upstream).
+ */
+function detailLine(text: string | null | undefined): string | null {
+  const plain = text
+    ?.replace(/[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, "<address>")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!plain) return null;
+  return plain.length > 300 ? `${plain.slice(0, 299)}…` : plain;
+}
+
+/**
+ * A failed source as the details show it: a server address without its
+ * origin, or a downloaded copy by its file name (its folder is the device's).
+ */
+function failedSource(uri: string): string {
+  if (/^file:/i.test(uri)) return `Downloaded copy · ${uri.slice(uri.lastIndexOf("/") + 1)}`;
+  if (!/^https?:\/\//i.test(uri)) return uri;
+  try {
+    const { pathname, search } = new URL(uri);
+    return pathname + search;
+  } catch {
+    return uri;
+  }
 }
 
 /**
@@ -155,6 +209,8 @@ export function usePlayerCore({
   // message may still be on the way): playing that track again retries it,
   // and a message only lands while this is still the same failure.
   const failureRef = useRef<{ trackId: string } | null>(null);
+  // The server being asked why the current failure happened.
+  const probeRef = useRef<AbortController | null>(null);
   const playbackReportedRef = useRef<string | null>(null);
   const lastFMScrobbledRef = useRef<string | null>(null);
   // Lazily seeded (see the track-change effect below) rather than
@@ -165,6 +221,10 @@ export function usePlayerCore({
   const listenedSecondsRef = useRef(0);
   const listeningTickRef = useRef<number | null>(null);
   const loadedTrackIdRef = useRef<string | null>(null);
+  // The source the adapter was last given, as loaded or activated. A failure
+  // is about it, whatever the track would resolve to now (a download removed
+  // while it plays still played from the file).
+  const loadedUriRef = useRef<string | null>(null);
   const preparedNextRef = useRef<{ trackId: string; uri: string } | null>(null);
   const playbackAttemptRef = useRef(0);
   const handoffRef = useRef<{ track: TrackListItem; attempt: number } | null>(null);
@@ -282,6 +342,9 @@ export function usePlayerCore({
   }, [adapter]);
 
   const clearPlaybackError = useCallback(() => {
+    // A failure that's gone has nothing left to ask about.
+    probeRef.current?.abort();
+    probeRef.current = null;
     if (!failureRef.current) return;
     failureRef.current = null;
     setPlaybackError(null);
@@ -305,7 +368,8 @@ export function usePlayerCore({
       setDuration(0);
       anchorRef.current = { audioTime: 0, wallTime: performance.now() };
       loadedTrackIdRef.current = track.id;
-      adapter.load(resolvePlayableUri(track.id));
+      loadedUriRef.current = resolvePlayableUri(track.id);
+      adapter.load(loadedUriRef.current);
       startPlayback();
       handoffRef.current = { track, attempt: playbackAttemptRef.current };
       setIsPlaying(true);
@@ -518,6 +582,7 @@ export function usePlayerCore({
       crossfade || (isPrepared && adapter.activatePrepared?.(nextUri) === true);
     if (activated) {
       loadedTrackIdRef.current = nextTrack.id;
+      loadedUriRef.current = nextUri;
     } else {
       adapter.clearPrepared?.();
     }
@@ -532,6 +597,7 @@ export function usePlayerCore({
         adapter.seek(0);
       } else {
         loadedTrackIdRef.current = nextTrack.id;
+        loadedUriRef.current = nextUri;
         adapter.load(nextUri);
       }
       startPlayback();
@@ -725,7 +791,8 @@ export function usePlayerCore({
     if (!current) return;
     if (loadedTrackIdRef.current === current.id) return;
     loadedTrackIdRef.current = current.id;
-    adapter.load(resolvePlayableUri(current.id));
+    loadedUriRef.current = resolvePlayableUri(current.id);
+    adapter.load(loadedUriRef.current);
   }, [adapter, current, resolvePlayableUri]);
 
   const currentId = current?.id;
@@ -964,16 +1031,39 @@ export function usePlayerCore({
       if (!track) return;
       const failure = { trackId: track.id };
       failureRef.current = failure;
-      const report = (message: string) => {
-        if (failureRef.current === failure) setPlaybackError({ trackId: track.id, message });
+      // The source loaded for this track. Until a track change commits, the
+      // next track's may be loaded already; this one is resolved again then.
+      const uri =
+        (loadedTrackIdRef.current === track.id && loadedUriRef.current) || resolveUri(track.id);
+      const url = streamUrl(track.id);
+      // A downloaded copy just didn't play; only a stream can be asked again.
+      const streamed = uri === url;
+      const details: PlaybackErrorDetails = {
+        at: Date.now(),
+        source: failedSource(uri),
+        player: detailLine(adapter.errorDetail?.()),
+        server: streamed ? undefined : null,
+      };
+      const report = (message: string, server = details.server) => {
+        if (failureRef.current === failure) {
+          setPlaybackError({ trackId: track.id, message, details: { ...details, server } });
+        }
       };
       // Say so right away; the server's reason, if any, replaces it.
       report(PLAYBACK_ERROR_FALLBACK);
-      // Only the server can say why its TIDAL stream failed. A downloaded
-      // copy or a library file just didn't play.
-      const url = streamUrl(track.id);
-      if (isTidalTrack(track) && resolveUri(track.id) === url) {
-        void streamFailureMessage(url).then(report);
+      probeRef.current?.abort();
+      probeRef.current = null;
+      if (streamed) {
+        const probe = new AbortController();
+        probeRef.current = probe;
+        void probeStream(url, { firstByte: !isTidalTrack(track), signal: probe.signal }).then(
+          ({ reason, answer }) => {
+            if (probe.signal.aborted) return;
+            if (probeRef.current === probe) probeRef.current = null;
+            // Only TIDAL streams fail for a reason worth showing on the bar.
+            report(isTidalTrack(track) && reason ? reason : PLAYBACK_ERROR_FALLBACK, answer);
+          },
+        );
       }
     });
     return () => {
@@ -988,6 +1078,7 @@ export function usePlayerCore({
   }, [adapter, startPlayback]);
 
   useEffect(() => () => adapter.clearPrepared?.(), [adapter]);
+  useEffect(() => () => probeRef.current?.abort(), []);
 
   // The exposed clock is quantized to 250 ms. Sample at that cadence while
   // retaining the audio/wall-clock anchor between native updates.

@@ -68,6 +68,11 @@ export interface AudioAdapter {
   duration(): number;
   /** Subscribe to an event. Returns an unsubscribe function. */
   on(event: AudioAdapterEvent, handler: () => void): () => void;
+  /**
+   * What the platform said about the latest `error`, for the failure's
+   * details; null when it said nothing.
+   */
+  errorDetail?(): string | null;
   /** Release any resources held by this adapter. */
   dispose(): void;
 }

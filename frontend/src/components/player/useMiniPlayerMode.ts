@@ -9,8 +9,11 @@ import {
   setMiniPlayerPanel,
 } from "../../lib/platform";
 
-/** What the mini player's side panel can show, in utility-row order. */
-export const MINI_PANELS = ["devices", "lyrics", "queue"] as const;
+/**
+ * What the mini player's side panel can show, in the order their controls
+ * sit in the bar: the playback error line, then the utility row.
+ */
+export const MINI_PANELS = ["error", "devices", "lyrics", "queue"] as const;
 export type MiniPanel = (typeof MINI_PANELS)[number];
 
 export const MINI_PANEL_ID = "mini-player-panel";
@@ -20,6 +23,8 @@ export interface MiniPanelToggle {
   open: boolean;
   controls: string;
   onToggle: () => void;
+  /** Shuts the panel if it's this one, as when what it shows goes. */
+  close: () => void;
 }
 
 /**
@@ -172,6 +177,9 @@ export function useMiniPlayerMode() {
     open: requested === which,
     controls: MINI_PANEL_ID,
     onToggle: () => togglePanel(which),
+    close: () => {
+      if (wanted.current === which) requestPanel(null);
+    },
   });
 
   // Escape closes the panel, without the morph: a keyboard dismissal should

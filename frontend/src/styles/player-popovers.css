@@ -246,6 +246,59 @@
   z-index: 1;
 }
 
+/* The playback error's details (PlaybackErrorPopover.tsx): above the
+   now-playing block, so it grows from the left. The body is shared with the
+   mini player's error panel. */
+.error-pop {
+  display: flex;
+  flex-direction: column;
+  transform-origin: bottom left;
+}
+.error-pop > .device-pop-head {
+  flex: none;
+}
+.error-pop > .error-pop-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+.error-pop-body {
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.error-pop-lines {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 14px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.error-pop-line {
+  display: contents;
+}
+.error-pop-line dt {
+  color: var(--muted-foreground);
+}
+/* Selectable, though the desktop app turns selection off: a part is worth
+   copying on its own. */
+.error-pop-line dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.error-pop-line:first-child dd {
+  color: var(--destructive);
+}
+.error-pop-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .queue-pop[data-closed],
 .device-pop[data-closed] {
   opacity: 0;

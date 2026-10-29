@@ -7,6 +7,23 @@ export interface PlaybackError {
   trackId: string;
   /** Short and user-facing: the server's reason, or a generic one. */
   message: string;
+  /** What happened, for a closer look or a bug report. */
+  details: PlaybackErrorDetails;
+}
+
+/** The facts behind a `PlaybackError`. */
+export interface PlaybackErrorDetails {
+  /** When it failed, in ms since the epoch. */
+  at: number;
+  /** What the player was given: a server path, or a downloaded copy's URI. */
+  source: string;
+  /** What the audio player said about it; null when it said nothing. */
+  player: string | null;
+  /**
+   * What the server answered when asked for the stream again. Undefined
+   * while it's being asked; null when it wasn't (a downloaded copy).
+   */
+  server?: string | null;
 }
 
 export interface PlayerState {

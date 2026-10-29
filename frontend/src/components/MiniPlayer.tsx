@@ -74,6 +74,7 @@ export default function MiniPlayer() {
           title={displayTitle}
           artist={displayArtist}
           error={displayError}
+          errorPanel={miniPlayerMode ? panelToggle("error") : undefined}
           onContextMenu={
             displayCurrent && !isRemoteMode
               ? bindCtx(displayCurrent)
@@ -153,7 +154,11 @@ export default function MiniPlayer() {
         </div>
 
         {miniPlayerMode && panel && (
-          <MiniPlayerPanel panel={panel} enter={swapDirection} />
+          <MiniPlayerPanel
+            panel={panel}
+            enter={swapDirection}
+            closing={!panelToggle(panel).open}
+          />
         )}
       </section>
       <RemoteControlIndicator />

@@ -1,6 +1,7 @@
 import { usePlayer, usePlayerTime, useRemotePlayback } from "../../context/Player";
 import { lyricsDurationSeconds, useTrackLyrics } from "../../lib/useTrackLyrics";
 import { DeviceConnectionStatus, DeviceList } from "../PlaybackDevicePopover";
+import { PlaybackErrorDetails } from "./PlaybackErrorPopover";
 import PlayerLyricsLine from "../PlayerLyricsLine";
 import { QueueList, useQueuePosition } from "../QueuePopover";
 import {
@@ -10,29 +11,34 @@ import {
 import { MINI_PANEL_ID, type MiniPanel } from "./useMiniPlayerMode";
 
 const TITLES: Record<MiniPanel, string> = {
+  error: "Playback error",
   devices: "Play on",
   lyrics: "Lyrics",
   queue: "Queue",
 };
 
 const LABELS: Record<MiniPanel, string> = {
+  error: "Playback error",
   devices: "Playback device",
   lyrics: "Lyrics",
   queue: "Play queue",
 };
 
 /**
- * The mini player's side panel: the queue, lyrics or device list the utility
- * buttons used to open as popovers. Renders two items of the player grid, a
+ * The mini player's side panel: the queue, lyrics, device list or playback
+ * error details that open as popovers outside mini mode. Renders two items of the player grid, a
  * heading beside the utility row and the body under it. `enter` slides a
  * panel swapped in for another from the side its button sits on.
  */
 export default function MiniPlayerPanel({
   panel,
   enter,
+  closing = false,
 }: {
   panel: MiniPanel;
   enter?: "forward" | "back";
+  /** Asked to go: the panel keeps what it showed while it morphs away. */
+  closing?: boolean;
 }) {
   const position = useQueuePosition();
 
@@ -60,6 +66,8 @@ export default function MiniPlayerPanel({
             <MiniQueue />
           ) : panel === "lyrics" ? (
             <MiniLyrics />
+          ) : panel === "error" ? (
+            <PlaybackErrorDetails frozen={closing} />
           ) : (
             <DeviceList />
           )}
