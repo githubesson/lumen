@@ -219,6 +219,10 @@ it("moves focus to the details' action as they open", async () => {
   const dialog = await screen.findByRole("dialog", { name: "Playback error" });
   const copy = within(dialog).getByRole("button", { name: "Copy details" });
   await waitFor(() => expect(document.activeElement).toBe(copy));
+  // Focus skips the lines, so they describe the dialog for screen readers.
+  const lines = document.getElementById(dialog.getAttribute("aria-describedby") ?? "");
+  expect(lines?.tagName).toBe("DL");
+  expect(lines?.textContent).toContain("HTTP 200 · audio/flac");
 });
 
 it("sends focus back to the error line when the line closes the details", async () => {

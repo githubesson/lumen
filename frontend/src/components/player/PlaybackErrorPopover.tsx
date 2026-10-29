@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type Ref } from "react";
+import { useEffect, useId, useRef, useState, type Ref } from "react";
 import { createPortal } from "react-dom";
 import {
   Check as CheckIcon,
@@ -34,6 +34,9 @@ export default function PlaybackErrorPopover({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const copyRef = useRef<HTMLButtonElement>(null);
+  // Focus lands on Copy, past the lines: they describe the dialog, so a
+  // screen reader reads them as focus enters.
+  const linesId = useId();
 
   // Closing while focus is inside sends it back to the line the popover came
   // from, rather than dropping it with the popover. A click elsewhere closes
@@ -77,6 +80,7 @@ export default function PlaybackErrorPopover({
       inert={visible ? undefined : ""}
       role="dialog"
       aria-label="Playback error"
+      aria-describedby={linesId}
       style={{ bottom, left, width, maxHeight }}
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
@@ -93,7 +97,7 @@ export default function PlaybackErrorPopover({
           <XMarkIcon className="size-3.5" />
         </button>
       </div>
-      <PlaybackErrorDetails frozen={!open} copyRef={copyRef} />
+      <PlaybackErrorDetails frozen={!open} copyRef={copyRef} linesId={linesId} />
     </div>,
     document.body,
   );
@@ -106,10 +110,13 @@ export default function PlaybackErrorPopover({
 export function PlaybackErrorDetails({
   frozen = false,
   copyRef,
+  linesId,
 }: {
   /** Closing: keep what was shown, even if another failure comes in. */
   frozen?: boolean;
   copyRef?: Ref<HTMLButtonElement>;
+  /** An id for the lines, for whatever they describe. */
+  linesId?: string;
 }) {
   const { playbackError, current } = usePlayer();
   // Keeps the last failure, and the track it was on, on screen while the
@@ -129,7 +136,7 @@ export function PlaybackErrorDetails({
   const lines = playbackErrorLines(shown.error, shown.track);
   return (
     <div className="error-pop-body">
-      <dl className="error-pop-lines">
+      <dl className="error-pop-lines" id={linesId}>
         {lines.map(({ label, value }) => (
           <div key={label} className="error-pop-line" data-label={label}>
             <dt>{label}</dt>
