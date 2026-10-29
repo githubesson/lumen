@@ -108,32 +108,35 @@ interface StreamProbe {
  * failure, another error or a reverse proxy's HTML error page, gives no
  * reason; it is only described.
  */
-async function probeStream(url: string): Promise<StreamProbe> {
+async function probeStream(url: string, { firstByte }: { firstByte: boolean }): Promise<StreamProbe> {
   try {
-    const response = await rawFetch(url);
+    // A library file is served with ranges, so one byte answers as well as
+    // the whole file. A TIDAL stream is asked exactly as the player asks it.
+    const response = await rawFetch(url, firstByte ? { headers: { Range: "bytes=0-0" } } : {});
     // Nothing to explain; don't download the stream.
     void response.body?.cancel().catch(() => {});
     const type = response.headers.get("content-type");
     return { reason: null, answer: `HTTP ${response.status}${type ? ` · ${type}` : ""}` };
   } catch (error) {
     if (!(error instanceof ApiError)) {
-      return { reason: null, answer: `No answer: ${String(error)}` };
+      return { reason: null, answer: detailLine(`No answer: ${String(error)}`) ?? "No answer" };
     }
     const text = error.message;
     const readable =
       text.length <= 300 && !text.startsWith("<") && !text.includes("\n") ? text : "";
     return {
       reason: readable && (error.status === 502 || error.status === 503) ? readable : null,
-      answer: `HTTP ${error.status}${readable ? ` · ${readable}` : ""}`,
+      answer: detailLine(`HTTP ${error.status}${readable ? ` · ${readable}` : ""}`) ?? "",
     };
   }
 }
 
 /**
- * What the audio player said, fit for a bug report: on one line, capped, and
- * without addresses (hls.js quotes a failed key's URI, which may be signed).
+ * A failure's account fit for a bug report: on one line, capped, and without
+ * addresses (hls.js quotes a failed key's URI, which may be signed, and a
+ * proxy's error page may name its upstream).
  */
-function playerDetail(text: string | null | undefined): string | null {
+function detailLine(text: string | null | undefined): string | null {
   const plain = text
     ?.replace(/[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, "<address>")
     .replace(/\s+/g, " ")
@@ -1008,7 +1011,7 @@ export function usePlayerCore({
       const details: PlaybackErrorDetails = {
         at: Date.now(),
         source: failedSource(uri),
-        player: playerDetail(adapter.errorDetail?.()),
+        player: detailLine(adapter.errorDetail?.()),
         server: streamed ? undefined : null,
       };
       const report = (message: string, server = details.server) => {
@@ -1019,7 +1022,7 @@ export function usePlayerCore({
       // Say so right away; the server's reason, if any, replaces it.
       report(PLAYBACK_ERROR_FALLBACK);
       if (streamed) {
-        void probeStream(url).then(({ reason, answer }) =>
+        void probeStream(url, { firstByte: !isTidalTrack(track) }).then(({ reason, answer }) =>
           // Only TIDAL streams fail for a reason worth showing on the bar.
           report(isTidalTrack(track) && reason ? reason : PLAYBACK_ERROR_FALLBACK, answer),
         );

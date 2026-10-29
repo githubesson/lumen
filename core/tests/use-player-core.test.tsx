@@ -854,6 +854,35 @@ describe("usePlayerCore playback errors", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("asks for a library file's first byte, and a TIDAL stream as the player does", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response("x", { status: 206 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result, emit } = await setup();
+    const range = (call: number) =>
+      (fetchMock.mock.calls[call][1]?.headers as Record<string, string> | undefined)?.Range;
+
+    act(() => result.current.controls.play(t("a"), [t("a"), tidal("1")]));
+    act(() => emit("error"));
+    await settle();
+    expect(range(0)).toBe("bytes=0-0");
+
+    act(() => result.current.controls.next());
+    act(() => emit("error"));
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(range(1)).toBeUndefined();
+  });
+
+  it("keeps no address from the server's answer", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("upstream http://10.0.0.5:8080/x unreachable", { status: 502 })));
+    const { result, emit } = await setup();
+    act(() => result.current.controls.play(t("a")));
+
+    act(() => emit("error"));
+    await settle();
+    expect(result.current.state.playbackError?.details.server).toBe("HTTP 502 · upstream <address> unreachable");
+  });
+
   it("does not ask the server about a downloaded TIDAL track", async () => {
     const fetchMock = vi.fn(async () => new Response(refusal, { status: 502 }));
     vi.stubGlobal("fetch", fetchMock);

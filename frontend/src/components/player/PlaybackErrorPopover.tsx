@@ -69,12 +69,16 @@ export default function PlaybackErrorPopover({
           type="button"
           className="iconbtn device-pop-close"
           aria-label="Close playback error"
-          onClick={onClose}
+          onClick={() => {
+            onClose();
+            // This button is going; focus goes back to the line it came from.
+            toggle?.focus();
+          }}
         >
           <XMarkIcon className="size-3.5" />
         </button>
       </div>
-      <PlaybackErrorDetails />
+      <PlaybackErrorDetails frozen={!open} />
     </div>,
     document.body,
   );
@@ -84,7 +88,12 @@ export default function PlaybackErrorPopover({
  * What happened to the current track, line by line, and a button that copies
  * it for a bug report. Shared by the popover and the mini player's panel.
  */
-export function PlaybackErrorDetails() {
+export function PlaybackErrorDetails({
+  frozen = false,
+}: {
+  /** Closing: keep what was shown, even if another failure comes in. */
+  frozen?: boolean;
+}) {
   const { playbackError, current } = usePlayer();
   // Keeps the last failure, and the track it was on, on screen while the
   // popover or panel closes after it clears (another track may be loaded).
@@ -92,10 +101,9 @@ export function PlaybackErrorDetails() {
     error: PlaybackError;
     track: TrackListItem | null;
   } | null>(null);
-  if (playbackError && playbackError !== last?.error) {
-    setLast({ error: playbackError, track: current });
-  }
-  const shown = playbackError ? { error: playbackError, track: current } : last;
+  const live = frozen ? null : playbackError;
+  if (live && live !== last?.error) setLast({ error: live, track: current });
+  const shown = live ? { error: live, track: current } : last;
   const { copied, flash } = useCopiedFlag(2000);
   if (!shown) return null;
 

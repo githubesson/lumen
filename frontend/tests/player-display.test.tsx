@@ -197,6 +197,32 @@ it("keeps the failed track in the details while they close over the next one", (
   expect(container.textContent).toContain(message);
 });
 
+it("keeps the closing details on the failure they opened for", () => {
+  const first = { trackId: "t1", message: "Couldn't play this track.", details };
+  const second = { trackId: "t2", message: "Couldn't play this track.", details: { ...details, server: "HTTP 404 · not found" } };
+  mock.player = { ...mock.player, current: track, playbackError: first };
+  const { container, rerender } = render(<PlaybackErrorDetails />);
+
+  // The next track failed while the popover fades out.
+  mock.player = { ...mock.player, current: { ...track, id: "t2" }, playbackError: second };
+  rerender(<PlaybackErrorDetails frozen />);
+  expect(container.textContent).toContain("HTTP 200 · audio/flac");
+  expect(container.textContent).not.toContain("HTTP 404");
+});
+
+it("sends focus back to the error line when closed with its button", async () => {
+  const message = "Couldn't play this track.";
+  mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
+  render(<NowPlaying track={track} title="Song" artist="Artist · Album" error={message} />);
+  const line = screen.getByRole("button", { name: message });
+  fireEvent.click(line);
+  const dialog = await screen.findByRole("dialog", { name: "Playback error" });
+
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close playback error" }));
+  expect(line.getAttribute("aria-expanded")).toBe("false");
+  expect(document.activeElement).toBe(line);
+});
+
 it("opens the mini player's panel instead of a popover", () => {
   const message = "Couldn't play this track.";
   const onToggle = vi.fn();
