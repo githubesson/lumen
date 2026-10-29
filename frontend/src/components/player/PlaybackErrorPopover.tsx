@@ -105,7 +105,9 @@ export function PlaybackErrorDetails({
     error: PlaybackError;
     track: TrackListItem | null;
   } | null>(null);
-  const live = frozen ? null : playbackError;
+  // Frozen only once there's something to keep: a panel that opens already
+  // on its way out still shows the failure.
+  const live = frozen && last ? null : playbackError;
   if (live && live !== last?.error) setLast({ error: live, track: current });
   const shown = live ? { error: live, track: current } : last;
   const { copied, flash } = useCopiedFlag(2000);

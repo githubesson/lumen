@@ -256,6 +256,15 @@ it("shows the details in the mini player's error panel", () => {
   expect(within(region).getByRole("button", { name: "Copy details" })).toBeTruthy();
 });
 
+it("shows the failure in a mini panel that opens already on its way out", () => {
+  const message = "Couldn't play this track.";
+  mock.remote = { targetDevice: null, commandPending: false };
+  mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
+  render(<MiniPlayerPanel panel="error" closing />);
+  const region = screen.getByRole("region", { name: "Playback error" });
+  expect(region.textContent).toContain("HTTP 200 · audio/flac");
+});
+
 it("keeps the mini player's error panel on its failure while it closes", () => {
   const message = "Couldn't play this track.";
   mock.remote = { targetDevice: null, commandPending: false };

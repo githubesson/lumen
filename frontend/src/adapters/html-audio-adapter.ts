@@ -469,8 +469,9 @@ function describeMediaError(error: MediaError | null): string | null {
 
 /**
  * hls.js's account of the error it gave up on, e.g. "hls.js manifestLoadError:
- * A network error (status 502) occurred while loading manifest". Never the
- * URL: a segment's carries TIDAL's signed address.
+ * A network error (status 502) occurred while loading manifest". Not its
+ * `url`: a segment's carries TIDAL's signed address. The few messages that
+ * quote one lose it in core, which replaces every address in the detail.
  */
 function describeHlsError(data: ErrorData): string {
   const message = data.error?.message;
