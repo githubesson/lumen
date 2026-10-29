@@ -923,6 +923,49 @@ describe("usePlayerCore playback errors", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("stops asking the server once the failure is gone", async () => {
+    const fetchMock = vi.fn((_url: string, _init?: RequestInit) => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result, emit } = await setup();
+    act(() => result.current.controls.play(t("a"), [t("a"), t("b")]));
+    act(() => emit("error"));
+    const signal = fetchMock.mock.calls[0][1]?.signal;
+    expect(signal?.aborted).toBe(false);
+
+    act(() => result.current.controls.next());
+    expect(signal?.aborted).toBe(true);
+    expect(result.current.state.playbackError).toBeNull();
+  });
+
+  it("keeps no address from TIDAL's reason either", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response("TIDAL refused to stream this track: see https://cdn.example/x?sig=abc", { status: 502 }),
+    ));
+    const { result, emit } = await setup();
+    act(() => result.current.controls.play(tidal("1")));
+
+    act(() => emit("error"));
+    await settle();
+    const message = result.current.state.playbackError?.message ?? "";
+    expect(message).toBe("TIDAL refused to stream this track: see <address>");
+  });
+
+  it("describes the failed track's own source while the next one is loading", async () => {
+    const { result, emit } = await setup();
+    act(() => result.current.controls.play(t("a"), [t("a"), t("b")]));
+
+    // The next track's source is loaded before its change commits; a failure
+    // reported then is still the playing track's.
+    act(() => {
+      result.current.controls.next();
+      emit("error");
+    });
+    expect(result.current.state.playbackError).toMatchObject({
+      trackId: "a",
+      details: { source: "test://stream/a" },
+    });
+  });
+
   it("keeps what the audio player said about the failure", async () => {
     const fake = createFakeAdapter();
     fake.adapter.errorDetail = () => "MEDIA_ERR_DECODE: PIPELINE_ERROR_DECODE";

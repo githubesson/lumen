@@ -66,7 +66,8 @@ export default function NowPlaying({
                   type="button"
                   className="np-error-btn"
                   title={error}
-                  aria-haspopup="dialog"
+                  // The mini player's panel is a region, not a dialog.
+                  aria-haspopup={errorPanel ? undefined : "dialog"}
                   aria-expanded={open}
                   aria-controls={errorPanel?.controls}
                   onClick={

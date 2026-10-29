@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PlaybackDevice, PlayerState, TrackListItem } from "@music-library/core";
 import MiniPlayerPanel from "../src/components/player/MiniPlayerPanel";
@@ -326,9 +326,30 @@ it("asks the mini player for its error panel instead of opening a popover", () =
       errorPanel={{ open: false, controls: "mini-player-panel", onToggle, close: vi.fn() }}
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: message }));
+  const line = screen.getByRole("button", { name: message });
+  expect(line.hasAttribute("aria-haspopup")).toBe(false);
+  fireEvent.click(line);
   expect(onToggle).toHaveBeenCalledOnce();
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("places the details again when the window is resized", async () => {
+  const message = "Couldn't play this track.";
+  mock.player = { ...mock.player, current: track, playbackError: { trackId: "t1", message, details } };
+  const { container } = render(<NowPlaying track={track} title="Song" artist="Artist · Album" error={message} />);
+  const block = container.querySelector<HTMLElement>(".np")!;
+  let top = 700;
+  vi.spyOn(block, "getBoundingClientRect").mockImplementation(() => ({ top, left: 20 }) as DOMRect);
+  fireEvent.click(screen.getByRole("button", { name: message }));
+  const dialog = await screen.findByRole("dialog", { name: "Playback error" });
+  const bottom = () => dialog.style.bottom;
+  const before = bottom();
+
+  top = 500;
+  act(() => {
+    window.dispatchEvent(new Event("resize"));
+  });
+  expect(bottom()).not.toBe(before);
 });
 
 it("shuts the mini player's error panel when the failure clears", () => {

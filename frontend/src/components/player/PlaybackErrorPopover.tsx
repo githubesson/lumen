@@ -63,6 +63,16 @@ export default function PlaybackErrorPopover({
     if (visible) copyRef.current?.focus();
   }, [visible]);
 
+  // Placed from the line's position at render; a window resize places it
+  // again.
+  const [, setResized] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    const onResize = () => setResized((n) => n + 1);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [open]);
+
   if (!mounted || !anchor) return null;
 
   const rect = anchor.getBoundingClientRect();

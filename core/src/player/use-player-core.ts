@@ -108,11 +108,17 @@ interface StreamProbe {
  * failure, another error or a reverse proxy's HTML error page, gives no
  * reason; it is only described.
  */
-async function probeStream(url: string, { firstByte }: { firstByte: boolean }): Promise<StreamProbe> {
+async function probeStream(
+  url: string,
+  { firstByte, signal }: { firstByte: boolean; signal: AbortSignal },
+): Promise<StreamProbe> {
   try {
     // A library file is served with ranges, so one byte answers as well as
     // the whole file. A TIDAL stream is asked exactly as the player asks it.
-    const response = await rawFetch(url, firstByte ? { headers: { Range: "bytes=0-0" } } : {});
+    const response = await rawFetch(url, {
+      signal,
+      ...(firstByte ? { headers: { Range: "bytes=0-0" } } : {}),
+    });
     // Nothing to explain; don't download the stream.
     void response.body?.cancel().catch(() => {});
     const type = response.headers.get("content-type");
@@ -128,7 +134,8 @@ async function probeStream(url: string, { firstByte }: { firstByte: boolean }): 
     const readable =
       text.length <= 300 && !text.startsWith("<") && !text.includes("\n") ? text : "";
     return {
-      reason: readable && (error.status === 502 || error.status === 503) ? readable : null,
+      reason:
+        readable && (error.status === 502 || error.status === 503) ? detailLine(readable) : null,
       answer: detailLine(`HTTP ${error.status}${readable ? ` · ${readable}` : ""}`) ?? "",
     };
   }
@@ -202,6 +209,8 @@ export function usePlayerCore({
   // message may still be on the way): playing that track again retries it,
   // and a message only lands while this is still the same failure.
   const failureRef = useRef<{ trackId: string } | null>(null);
+  // The server being asked why the current failure happened.
+  const probeRef = useRef<AbortController | null>(null);
   const playbackReportedRef = useRef<string | null>(null);
   const lastFMScrobbledRef = useRef<string | null>(null);
   // Lazily seeded (see the track-change effect below) rather than
@@ -333,6 +342,9 @@ export function usePlayerCore({
   }, [adapter]);
 
   const clearPlaybackError = useCallback(() => {
+    // A failure that's gone has nothing left to ask about.
+    probeRef.current?.abort();
+    probeRef.current = null;
     if (!failureRef.current) return;
     failureRef.current = null;
     setPlaybackError(null);
@@ -1019,7 +1031,10 @@ export function usePlayerCore({
       if (!track) return;
       const failure = { trackId: track.id };
       failureRef.current = failure;
-      const uri = loadedUriRef.current ?? resolveUri(track.id);
+      // The source loaded for this track. Until a track change commits, the
+      // next track's may be loaded already; this one is resolved again then.
+      const uri =
+        (loadedTrackIdRef.current === track.id && loadedUriRef.current) || resolveUri(track.id);
       const url = streamUrl(track.id);
       // A downloaded copy just didn't play; only a stream can be asked again.
       const streamed = uri === url;
@@ -1036,10 +1051,18 @@ export function usePlayerCore({
       };
       // Say so right away; the server's reason, if any, replaces it.
       report(PLAYBACK_ERROR_FALLBACK);
+      probeRef.current?.abort();
+      probeRef.current = null;
       if (streamed) {
-        void probeStream(url, { firstByte: !isTidalTrack(track) }).then(({ reason, answer }) =>
-          // Only TIDAL streams fail for a reason worth showing on the bar.
-          report(isTidalTrack(track) && reason ? reason : PLAYBACK_ERROR_FALLBACK, answer),
+        const probe = new AbortController();
+        probeRef.current = probe;
+        void probeStream(url, { firstByte: !isTidalTrack(track), signal: probe.signal }).then(
+          ({ reason, answer }) => {
+            if (probe.signal.aborted) return;
+            if (probeRef.current === probe) probeRef.current = null;
+            // Only TIDAL streams fail for a reason worth showing on the bar.
+            report(isTidalTrack(track) && reason ? reason : PLAYBACK_ERROR_FALLBACK, answer);
+          },
         );
       }
     });
@@ -1055,6 +1078,7 @@ export function usePlayerCore({
   }, [adapter, startPlayback]);
 
   useEffect(() => () => adapter.clearPrepared?.(), [adapter]);
+  useEffect(() => () => probeRef.current?.abort(), []);
 
   // The exposed clock is quantized to 250 ms. Sample at that cadence while
   // retaining the audio/wall-clock anchor between native updates.
