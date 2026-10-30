@@ -21,8 +21,8 @@ function Tile({ title, line, children, stagger }: { title: string; line: string;
 
   useEffect(() => {
     if (!autoplay) return;
-    // First step lands once the scroll reveal has settled; the stagger keeps
-    // neighbouring tiles from flipping in lockstep.
+    // First step lands a moment after the tile scrolls into view; the stagger
+    // keeps neighbouring tiles from flipping in lockstep.
     let id = 0;
     const flip = () => {
       setPlaying((p) => !p);

@@ -14,7 +14,8 @@ export function FinalCta({ repo }: { repo: RepoInfo }) {
           <h2 className="mt-8 max-w-2xl text-balance text-4xl font-medium tracking-[-0.02em] sm:text-5xl">
             Own your music again
           </h2>
-          <div className="mt-10 flex flex-col items-center gap-3 sm:flex-row">
+          {/* Stacked on phones at one shared width, as in the hero. */}
+          <div className="mt-10 flex w-full max-w-xs flex-col gap-3 sm:w-auto sm:max-w-none sm:flex-row">
             <ButtonLink href="#self-host" size="lg">
               Get started <ArrowRight />
             </ButtonLink>
