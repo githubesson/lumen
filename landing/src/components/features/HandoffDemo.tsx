@@ -22,8 +22,7 @@ export default function HandoffDemo() {
   return (
     <div
       ref={ref}
-      // The active card scales up 2%; gap-2.5 keeps 8px between cards anyway.
-      className="flex w-full max-w-xs flex-col gap-2.5"
+      className="flex w-full max-w-xs flex-col gap-2"
       onPointerEnter={() => setPaused(true)}
       onPointerLeave={() => setPaused(false)}
     >
@@ -36,7 +35,7 @@ export default function HandoffDemo() {
             onClick={() => setActive(i)}
             className={clsx(
               "flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-[border-color,background-color,scale] duration-300 ease-[var(--ease-out)]",
-              on ? "scale-[1.02] border-foreground/25 bg-brand-soft active:scale-100" : "border-border bg-background/60 hover:bg-accent/60 active:scale-[0.97]",
+              on ? "border-foreground/25 bg-brand-soft" : "border-border bg-background/60 hover:bg-accent/60 active:scale-[0.97]",
             )}
           >
             <span

@@ -18,7 +18,7 @@ export default function App() {
     <>
       <Nav repo={repo} theme={theme} onToggleTheme={toggle} />
       <main>
-        <Hero repo={repo} />
+        <Hero />
         <Platforms />
         <Features />
         <SelfHost />

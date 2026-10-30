@@ -1,22 +1,21 @@
 import { ArrowRight, Star } from "lucide-react";
 import type { RepoInfo } from "../lib/github";
-import { INSTALL_STEPS, ISSUES_URL, README_URL, RELEASES_URL, REPO_URL } from "../lib/site";
+import { ISSUES_URL, README_URL, RELEASES_URL, REPO_URL } from "../lib/site";
 import { GitHubIcon } from "./icons";
 import Logo, { LogoMark } from "./Logo";
-import { ButtonLink, CommandPill } from "./ui";
+import { ButtonLink } from "./ui";
 
 export function FinalCta({ repo }: { repo: RepoInfo }) {
   return (
-    <section className="relative overflow-hidden px-5 pb-28">
-      <div className="card-surface reveal relative mx-auto max-w-6xl overflow-hidden rounded-3xl px-6 py-20 text-center">
-        <div className="bg-grid pointer-events-none absolute inset-0" />
-        <div className="glow pointer-events-none absolute left-1/2 top-full h-[420px] w-[900px] -translate-x-1/2 -translate-y-1/2" />
-        <div className="relative flex flex-col items-center">
-          <LogoMark className="size-14 shadow-lg" />
-          <h2 className="text-gradient mt-8 max-w-2xl text-balance text-4xl font-semibold tracking-[-0.035em] sm:text-5xl">
-            Own your music again.
+    <section className="px-5 pb-28">
+      <div className="card-surface reveal mx-auto max-w-6xl rounded-3xl px-6 py-20 text-center">
+        <div className="flex flex-col items-center">
+          <LogoMark className="size-14" />
+          <h2 className="mt-8 max-w-2xl text-balance text-4xl font-medium tracking-[-0.02em] sm:text-5xl">
+            Own your music again
           </h2>
-          <div className="mt-10 flex flex-col items-center gap-3 sm:flex-row">
+          {/* Stacked on phones at one shared width, as in the hero. */}
+          <div className="mt-10 flex w-full max-w-xs flex-col gap-3 sm:w-auto sm:max-w-none sm:flex-row">
             <ButtonLink href="#self-host" size="lg">
               Get started <ArrowRight />
             </ButtonLink>
@@ -30,7 +29,6 @@ export function FinalCta({ repo }: { repo: RepoInfo }) {
               )}
             </ButtonLink>
           </div>
-          <CommandPill command={INSTALL_STEPS[2].cmd} className="mt-4" />
         </div>
       </div>
     </section>
@@ -68,10 +66,7 @@ export default function Footer() {
       <div className="mx-auto grid max-w-6xl gap-10 px-5 py-14 sm:grid-cols-[1.5fr_repeat(3,1fr)]">
         <div className="flex flex-col gap-4">
           <Logo />
-          <span className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="size-1.5 rounded-full bg-success" />
-            Self-hosted. No accounts with us, no ads.
-          </span>
+          <span className="text-xs text-muted-foreground">Self-hosted, no accounts with us, no ads</span>
         </div>
         {COLUMNS.map((c) => (
           <div key={c.title} className="flex flex-col gap-3">
@@ -90,9 +85,9 @@ export default function Footer() {
         ))}
       </div>
       <div className="border-t border-border">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-5 py-6 font-mono text-[11px] text-muted-foreground">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-5 py-6 text-xs text-muted-foreground">
           <span>© {new Date().getFullYear()} Lumen</span>
-          <span>Made for people who still keep their music in folders.</span>
+          <span>Made for people who still keep their music in folders</span>
         </div>
       </div>
     </footer>

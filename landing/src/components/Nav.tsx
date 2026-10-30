@@ -71,12 +71,12 @@ export default function Nav({
               href={REPO_URL}
               target="_blank"
               rel="noreferrer"
-              className="press hidden h-8 items-center gap-2 rounded-lg border border-border px-2.5 text-[13px] hover:bg-accent sm:inline-flex"
+              className="press hidden h-8 items-center gap-2 rounded-lg px-2.5 text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground sm:inline-flex"
             >
               <GitHubIcon className="size-4" />
-              <span className="font-medium">GitHub</span>
+              GitHub
               {repo.stars !== null && (
-                <span className="flex items-center gap-1 border-l border-border pl-2 font-mono text-xs text-muted-foreground">
+                <span className="flex items-center gap-1 font-mono text-xs">
                   <Star className="size-3" />
                   {repo.stars}
                 </span>

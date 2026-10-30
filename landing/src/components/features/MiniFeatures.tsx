@@ -1,11 +1,10 @@
 import clsx from "clsx";
-import { Check, FileAudio, Search, UploadCloud } from "lucide-react";
+import { Check, Search, UploadCloud } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { spotlight, useAutoplay, useInView } from "../../lib/hooks";
+import { useAutoplay, useInView } from "../../lib/hooks";
 import { byId } from "../../lib/music";
 import CoverImg from "../CoverImg";
 import { DiscordIcon } from "../icons";
-import { delay } from "../ui";
 
 // Small tiles are still by default, and each one plays a single small step of
 // its feature on hover, via the `play:` variant. Touch screens can't hover, so
@@ -22,8 +21,8 @@ function Tile({ title, line, children, stagger }: { title: string; line: string;
 
   useEffect(() => {
     if (!autoplay) return;
-    // First step lands once the scroll reveal has settled; the stagger keeps
-    // neighbouring tiles from flipping in lockstep.
+    // First step lands a moment after the tile scrolls into view; the stagger
+    // keeps neighbouring tiles from flipping in lockstep.
     let id = 0;
     const flip = () => {
       setPlaying((p) => !p);
@@ -37,15 +36,13 @@ function Tile({ title, line, children, stagger }: { title: string; line: string;
     <article
       ref={ref}
       data-play={autoplay && playing ? "" : undefined}
-      onPointerMove={spotlight}
-      style={delay(stagger)}
-      className="card-surface spotlight reveal group flex flex-col overflow-hidden rounded-2xl"
+      className="card-surface group flex flex-col overflow-hidden rounded-2xl"
     >
       <div className="relative flex h-36 items-center justify-center overflow-hidden px-6 pt-5" aria-hidden>
         {children}
       </div>
       <div className="px-6 pb-5 pt-4">
-        <h3 className="text-sm font-semibold tracking-tight">{title}</h3>
+        <h3 className="text-sm font-medium">{title}</h3>
         <p className="mt-1 text-sm text-muted-foreground">{line}</p>
       </div>
     </article>
@@ -60,10 +57,9 @@ function Formats() {
       {FORMATS.map((f, i) => (
         <span
           key={f}
-          className="flex h-9 flex-col items-center justify-center rounded-md border border-border bg-background/70 font-mono text-[11px] font-medium transition-[translate,border-color] duration-200 ease-[var(--ease-out)] play:-translate-y-0.5 play:border-foreground/20 motion-reduce:play:translate-y-0"
+          className="flex h-8 items-center justify-center rounded-md border border-border bg-background/70 font-mono text-[11px] font-medium transition-[translate,border-color] duration-200 ease-[var(--ease-out)] play:-translate-y-0.5 play:border-foreground/20 motion-reduce:play:translate-y-0"
           style={{ transitionDelay: `${i * 25}ms` }}
         >
-          <FileAudio className="mb-0.5 size-3 text-muted-foreground" />
           {f}
         </span>
       ))}
@@ -149,7 +145,7 @@ function Presence() {
   const t = byId("everywhere");
   return (
     <div className="w-full max-w-64 rounded-lg bg-muted/60 p-3 dark:bg-black/25">
-      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
         <DiscordIcon className="size-3" /> Listening to Lumen
       </div>
       <div className="mt-2 flex items-center gap-3">
@@ -232,12 +228,12 @@ function Upload() {
 }
 
 const TILES = [
-  { title: "Plays what you have", line: "FLAC, MP3, AAC, Opus, Ogg and WAV, served as-is.", body: <Formats /> },
-  { title: "Lyrics", line: "Time-synced when available, in a side panel.", body: <Lyrics /> },
-  { title: "Last.fm scrobbling", line: "Per user, now-playing and scrobbles.", body: <Scrobble /> },
-  { title: "Discord Rich Presence", line: "“Listening to Lumen”, with cover art.", body: <Presence /> },
-  { title: "Command palette", line: "⌘K to jump to any track, album, or artist.", body: <Palette /> },
-  { title: "Uploads & tag editing", line: "From the browser or your phone.", body: <Upload /> },
+  { title: "Plays what you have", line: "FLAC, MP3, AAC, Opus, Ogg and WAV, served as-is", body: <Formats /> },
+  { title: "Lyrics", line: "Time-synced when available, in a side panel", body: <Lyrics /> },
+  { title: "Last.fm scrobbling", line: "Per user, now-playing and scrobbles", body: <Scrobble /> },
+  { title: "Discord Rich Presence", line: "“Listening to Lumen”, with cover art", body: <Presence /> },
+  { title: "Command palette", line: "⌘K to jump to any track, album, or artist", body: <Palette /> },
+  { title: "Uploads & tag editing", line: "From the browser or your phone", body: <Upload /> },
 ];
 
 export default function MiniFeatures() {

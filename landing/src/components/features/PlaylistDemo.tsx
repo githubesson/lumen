@@ -22,7 +22,7 @@ function Avatar({ person, className }: { person: number; className?: string }) {
   return (
     <span
       className={clsx(
-        "grid place-items-center rounded-full bg-muted font-semibold text-foreground/80 ring-2 ring-card",
+        "grid place-items-center rounded-full bg-muted font-medium text-foreground/80 ring-2 ring-card",
         className,
       )}
       title={PEOPLE[person].name}
@@ -51,8 +51,8 @@ export default function PlaylistDemo() {
           ))}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Collaborative</div>
-          <div className="truncate text-base font-semibold tracking-tight">Late drives</div>
+          <div className="text-xs text-muted-foreground">Collaborative</div>
+          <div className="truncate text-base font-medium">Late drives</div>
           <div className="text-xs tabular-nums text-muted-foreground">{20 + rows[0].key} tracks</div>
         </div>
         <div className="flex items-center gap-2">

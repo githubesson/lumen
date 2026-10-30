@@ -20,7 +20,7 @@ export default function Logo({ className }: { className?: string }) {
   return (
     <span className={clsx("inline-flex items-center gap-2", className)}>
       <LogoMark />
-      <span className="text-base font-semibold tracking-tight">Lumen</span>
+      <span className="text-base font-semibold">Lumen</span>
     </span>
   );
 }

@@ -56,10 +56,10 @@ export default function ReplayDemo() {
     <div ref={ref} className="flex w-full max-w-xs flex-col gap-4">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+          <div className="text-xs text-muted-foreground">
             {active === null ? "Replay 2026" : `${MONTH_NAMES[active]} 2026`}
           </div>
-          <div className="mt-1 text-3xl font-semibold tabular-nums tracking-tight">
+          <div className="mt-1 text-3xl font-medium tabular-nums">
             {value.toLocaleString("en-US")}
             <span className="ml-1 text-sm font-normal text-muted-foreground">min</span>
           </div>
@@ -116,8 +116,8 @@ export default function ReplayDemo() {
         })}
       </div>
       <div className="flex justify-between font-mono text-[11px] text-muted-foreground">
-        <span>JAN</span>
-        <span>DEC</span>
+        <span>Jan</span>
+        <span>Dec</span>
       </div>
     </div>
   );

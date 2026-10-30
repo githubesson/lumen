@@ -3,7 +3,7 @@ import { expectUI } from "lintapple/playwright";
 
 test.beforeEach(async ({ page }) => {
   // Fixed GitHub data keeps the run offline and renders the stars and the
-  // release pill.
+  // release tag.
   await page.route("https://api.github.com/repos/**", (route) => {
     const releases = new URL(route.request().url()).pathname.endsWith("/releases");
     return route.fulfill({
