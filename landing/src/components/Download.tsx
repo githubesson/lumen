@@ -7,10 +7,11 @@ import { SectionHeading } from "./ui";
 
 type Icon = ComponentType<SVGProps<SVGSVGElement>>;
 
-const ROW = "flex items-center gap-3 rounded-lg border border-border bg-background/60 px-3 py-2.5";
+const ROW = "flex items-center gap-3 rounded-lg border px-3 py-2.5";
 
-/** A platform and what you get for it. With `href` it links out to the
- *  download; without, it's a plain row with nothing to fetch. */
+/** A platform and what you get for it. With `href` it's a bordered link to
+ *  the download; without, a borderless row in the same grid, so it doesn't
+ *  read as one of the links. */
 function PlatformRow({ icon: I, name, formats, href }: { icon: Icon; name: string; formats: string; href?: string }) {
   const body = (
     <>
@@ -19,9 +20,14 @@ function PlatformRow({ icon: I, name, formats, href }: { icon: Icon; name: strin
       <span className="ml-auto font-mono text-[11px] text-muted-foreground">{formats}</span>
     </>
   );
-  if (!href) return <div className={ROW}>{body}</div>;
+  if (!href) return <div className={`${ROW} border-transparent`}>{body}</div>;
   return (
-    <a href={href} target="_blank" rel="noreferrer" className={`press group ${ROW} hover:border-ring/60 hover:bg-accent/50`}>
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className={`press group ${ROW} border-border bg-background/60 hover:border-ring/60 hover:bg-accent/50`}
+    >
       {body}
       <ArrowUpRight className="size-3.5 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
     </a>
