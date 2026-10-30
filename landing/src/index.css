@@ -77,10 +77,7 @@
     to { background-color: transparent; }
   }
   @keyframes enter {
-    from { opacity: 0; transform: translateY(12px); filter: blur(4px); }
-  }
-  @keyframes enter-plain {
-    from { opacity: 0; transform: translateY(24px); }
+    from { opacity: 0; transform: translateY(12px); }
   }
   @keyframes fade-in {
     from { opacity: 0; }
@@ -145,7 +142,7 @@
   --brand: oklch(0.205 0 0);
   --brand-soft: oklch(0 0 0 / 0.05);
   --success: oklch(0.6 0.13 155);
-  --grid-line: oklch(0 0 0 / 0.05);
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.05);
   --shadow-float: 0 1px 2px oklch(0 0 0 / 0.06), 0 12px 40px -12px oklch(0 0 0 / 0.18);
   color-scheme: light;
 }
@@ -170,7 +167,8 @@
   --brand: oklch(0.985 0 0);
   --brand-soft: oklch(1 0 0 / 0.07);
   --success: oklch(0.72 0.13 155);
-  --grid-line: oklch(1 0 0 / 0.045);
+  /* Depth on dark comes from the surface step and the hairline. */
+  --shadow-card: none;
   --shadow-float: 0 1px 2px oklch(0 0 0 / 0.4), 0 24px 60px -20px oklch(0 0 0 / 0.7);
   color-scheme: dark;
 }
@@ -199,83 +197,21 @@ body {
 
 /* ---------- Page-level treatments ---------- */
 
-/* Blueprint grid behind the hero, faded out at the edges. */
-.bg-grid {
-  background-image:
-    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, black 30%, transparent 75%);
-}
-
-.glow {
-  background:
-    radial-gradient(40% 50% at 50% 50%, color-mix(in oklch, var(--foreground) 10%, transparent), transparent 70%),
-    radial-gradient(30% 40% at 30% 60%, color-mix(in oklch, var(--foreground) 5%, transparent), transparent 70%);
-  filter: blur(40px);
-}
-
-.text-gradient {
-  background: linear-gradient(180deg, var(--foreground) 30%, color-mix(in oklch, var(--foreground) 55%, transparent));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-.text-brand-gradient {
-  background: linear-gradient(100deg, var(--foreground) 10%, var(--muted-foreground) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-/* Card with a hairline highlight on the top edge, like a lit bezel. */
+/* Raised card: one surface step up and a hairline. */
 .card-surface {
   background: var(--card);
   border: 1px solid var(--border);
-  box-shadow:
-    inset 0 1px 0 0 oklch(1 0 0 / 0.04),
-    var(--shadow-float);
+  box-shadow: var(--shadow-card);
 }
 
-/* Pointer spotlight on feature cards; --mx/--my are set from JS. */
-.spotlight {
-  position: relative;
-  isolation: isolate;
-}
-.spotlight::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: radial-gradient(360px circle at var(--mx, 50%) var(--my, -40%), var(--brand-soft), transparent 60%);
-  opacity: 0;
-  /* Hidden, not just transparent, while idle, so contrast checkers can see
-     the card behind the text. visibility flips at the right end of the fade
-     in both directions. */
-  visibility: hidden;
-  transition:
-    opacity 200ms ease,
-    visibility 200ms;
-  pointer-events: none;
-  z-index: -1;
-}
-@media (hover: hover) and (pointer: fine) {
-  .spotlight:hover::before {
-    opacity: 1;
-    visibility: visible;
-  }
-}
-
-/* Scroll reveal. JS adds data-shown once the element enters the viewport.
-   Marketing entrance, so it may run longer than UI motion. */
+/* Scroll reveal, once per section. JS adds data-shown once the section
+   enters the viewport. */
 .reveal {
   opacity: 0;
-  transform: translateY(16px);
+  transform: translateY(12px);
   transition:
-    opacity 600ms var(--ease-out),
-    transform 600ms var(--ease-out);
-  transition-delay: var(--delay, 0ms);
+    opacity 500ms var(--ease-out),
+    transform 500ms var(--ease-out);
 }
 .reveal[data-shown] {
   opacity: 1;
@@ -286,12 +222,7 @@ body {
    JS reveal, so it starts without waiting for React and the observer, and
    stays smooth while the page is still loading. */
 .enter {
-  animation: enter 800ms var(--ease-out) both;
-  animation-delay: var(--delay, 0ms);
-}
-/* Same, without the blur: filters are expensive on large layers. */
-.enter-plain {
-  animation: enter-plain 900ms var(--ease-out) both;
+  animation: enter 500ms var(--ease-out) both;
   animation-delay: var(--delay, 0ms);
 }
 
@@ -323,8 +254,7 @@ body {
     transform: none;
     transition: opacity 400ms ease;
   }
-  .enter,
-  .enter-plain {
+  .enter {
     animation: fade-in 400ms ease both;
     animation-delay: var(--delay, 0ms);
   }

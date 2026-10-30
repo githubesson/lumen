@@ -93,11 +93,11 @@ export default function Faq() {
   const [open, setOpen] = useState<number | null>(0);
   return (
     <section id="faq" className="py-28">
-      <div className="mx-auto grid max-w-6xl gap-12 px-5 lg:grid-cols-[1fr_1.6fr]">
+      <div className="reveal mx-auto grid max-w-6xl gap-12 px-5 lg:grid-cols-[1fr_1.6fr]">
         <SectionHeading eyebrow="FAQ" align="left">
-          Questions, answered.
+          Before you set it up
         </SectionHeading>
-        <div className="reveal border-t border-border">
+        <div className="border-t border-border">
           {QUESTIONS.map((item, i) => (
             <Item key={item.q} {...item} open={open === i} onToggle={() => setOpen(open === i ? null : i)} />
           ))}

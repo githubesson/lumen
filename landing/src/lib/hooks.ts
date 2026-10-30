@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 export type Theme = "light" | "dark";
 const THEME_KEY = "lumen-landing-theme";
@@ -65,7 +65,9 @@ export function usePrefersReducedMotion(onReduce?: () => void) {
   return reduced;
 }
 
-/** Marks every `.reveal` element with data-shown once it scrolls into view. */
+/** Marks every `.reveal` element with data-shown once its top edge scrolls
+ *  into view. Threshold 0, since a whole section can be taller than the
+ *  viewport. */
 export function useRevealOnScroll() {
   useEffect(() => {
     const els = document.querySelectorAll<HTMLElement>(".reveal:not([data-shown])");
@@ -78,7 +80,7 @@ export function useRevealOnScroll() {
           }
         }
       },
-      { rootMargin: "0px 0px -10% 0px", threshold: 0.1 },
+      { rootMargin: "0px 0px -10% 0px", threshold: 0 },
     );
     els.forEach((el) => io.observe(el));
     return () => io.disconnect();
@@ -110,14 +112,6 @@ export function useInterval(tick: () => void, ms: number, active = true) {
     const id = window.setInterval(() => saved.current(), ms);
     return () => window.clearInterval(id);
   }, [ms, active]);
-}
-
-/** Feeds pointer position to the `.spotlight` gradient. */
-export function spotlight(e: PointerEvent<HTMLElement>) {
-  const el = e.currentTarget;
-  const r = el.getBoundingClientRect();
-  el.style.setProperty("--mx", `${e.clientX - r.left}px`);
-  el.style.setProperty("--my", `${e.clientY - r.top}px`);
 }
 
 /** Clipboard API where available; otherwise the legacy execCommand path.

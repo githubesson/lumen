@@ -18,7 +18,7 @@ import { useEffect, useId, useState } from "react";
 import { useCopy, useInView, usePrefersReducedMotion } from "../lib/hooks";
 import { INSTALL_STEPS, README_URL } from "../lib/site";
 import IconSwap from "./IconSwap";
-import { ButtonLink, SectionHeading, delay } from "./ui";
+import { ButtonLink, SectionHeading } from "./ui";
 
 const OUTPUT = [
   { name: "postgres", detail: "healthy" },
@@ -156,11 +156,10 @@ function Node({
 /** Clients → server → storage. Requests travel in; audio comes back out. */
 function Architecture() {
   return (
-    <div className="card-surface relative flex items-center overflow-hidden rounded-2xl p-5">
-      <div className="bg-grid absolute inset-0 opacity-70 [mask-image:none]" />
+    <div className="card-surface flex items-center overflow-hidden rounded-2xl p-5">
       <svg
         viewBox="0 0 520 300"
-        className="relative h-auto w-full"
+        className="h-auto w-full"
         fill="none"
         role="img"
         aria-label="Web, desktop and mobile apps talk to the Lumen server, which reads Postgres and your music folder"
@@ -296,13 +295,6 @@ function Architecture() {
             Go · :8080
           </text>
           <circle cx={SERVER.x + SERVER.w / 2 - 22} cy={SERVER.y + 97} r="3" className="fill-success" />
-          <circle
-            cx={SERVER.x + SERVER.w / 2 - 22}
-            cy={SERVER.y + 97}
-            r="3"
-            className="fill-success motion-safe:animate-ping"
-            style={{ transformBox: "fill-box", transformOrigin: "center" }}
-          />
           <text
             x={SERVER.x + SERVER.w / 2 - 14}
             y={SERVER.y + 100.5}
@@ -325,11 +317,7 @@ const SECURITY = [
 ];
 
 function SecurityIcon({ icon: I }: { icon: typeof Globe }) {
-  return (
-    <span className="grid size-7 shrink-0 place-items-center rounded-md bg-muted">
-      <I className="size-3.5" />
-    </span>
-  );
+  return <I className="size-4 shrink-0 text-muted-foreground" />;
 }
 
 /** Phones get the security list folded into one card; four stacked cards
@@ -344,7 +332,7 @@ function SecurityDisclosure() {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls={id}
-        className="flex w-full items-center gap-3 px-4 py-3.5 text-left text-[13px] font-medium"
+        className="flex h-12 w-full items-center gap-3 px-4 text-left text-[13px] font-medium"
       >
         <SecurityIcon icon={ShieldCheck} />
         <span className="flex-1">Secure by default</span>
@@ -370,7 +358,7 @@ function SecurityDisclosure() {
             )}
           >
             {SECURITY.map(({ icon, text }) => (
-              <li key={text} className="flex items-center gap-3 py-1.5 text-[13px]">
+              <li key={text} className="flex items-center gap-3 py-2 text-[13px]">
                 <SecurityIcon icon={icon} />
                 {text}
               </li>
@@ -385,21 +373,21 @@ function SecurityDisclosure() {
 export default function SelfHost() {
   return (
     <section id="self-host" className="relative border-t border-border bg-sidebar/40 py-28">
-      <div className="mx-auto max-w-6xl px-5">
-        <SectionHeading eyebrow="Self-host">Up and running in three commands.</SectionHeading>
+      <div className="reveal mx-auto max-w-6xl px-5">
+        <SectionHeading eyebrow="Self-host">Up and running in three commands</SectionHeading>
 
         <div className="mt-16 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <div className="reveal min-w-0">
+          <div className="min-w-0">
             <Terminal />
           </div>
-          <div className="reveal grid min-w-0" style={delay(100)}>
+          <div className="grid min-w-0">
             <Architecture />
           </div>
-          <div className="reveal lg:col-span-2" style={delay(160)}>
+          <div className="lg:col-span-2">
             <SecurityDisclosure />
             <ul className="hidden gap-4 sm:grid sm:grid-cols-2 lg:grid-cols-4">
               {SECURITY.map(({ icon, text }) => (
-                <li key={text} className="card-surface flex items-center gap-3 rounded-xl px-4 py-3.5 text-[13px]">
+                <li key={text} className="card-surface flex h-12 items-center gap-3 rounded-xl px-4 text-[13px]">
                   <SecurityIcon icon={icon} />
                   {text}
                 </li>
@@ -408,7 +396,7 @@ export default function SelfHost() {
           </div>
         </div>
 
-        <div className="reveal mt-10 flex justify-center">
+        <div className="mt-10 flex justify-center">
           <ButtonLink href={README_URL} variant="outline">
             Read the setup guide
           </ButtonLink>

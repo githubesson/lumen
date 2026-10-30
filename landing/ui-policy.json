@@ -23,16 +23,6 @@
       "reason": "Text drawn inside an SVG illustration: the self-host diagram and the MacBook's macOS menu bar. It is sized in viewBox units and axe cannot measure its background. Pixel sampling measured the diagram labels at 5.1:1 or more."
     },
     {
-      "selector": ".text-gradient, .text-gradient *, .text-brand-gradient, .text-brand-gradient *",
-      "rules": ["text-contrast"],
-      "reason": "Gradient-filled headings (background-clip: text), which axe cannot measure. Pixel sampling measured the lightest end of the gradient at 4.1:1 or more; these are large text, which needs 3:1."
-    },
-    {
-      "selector": ".card-surface > .bg-grid ~ * *",
-      "rules": ["text-contrast"],
-      "reason": "Buttons in the closing call to action sit on translucent surfaces over the decorative grid and glow layers, which axe cannot see through. Pixel sampling measured 5.4:1 or more."
-    },
-    {
       "selector": ".truncate, .truncate *",
       "rules": ["content-clipping"],
       "reason": "Titles, artists and paths in the demos truncate to one line with an ellipsis on purpose, as in the app's track lists."
