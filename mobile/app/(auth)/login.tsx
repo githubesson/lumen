@@ -141,8 +141,8 @@ export default function LoginScreen() {
             opacity: pressed ? 0.6 : 1,
           })}
         >
-          <Text style={{ color: theme.color.accent, fontSize: 15 }}>
-            Have an invite? Create an account
+          <Text style={{ color: theme.color.fgSubtle, fontSize: 15 }}>
+            I have an invite
           </Text>
         </Pressable>
       </ScrollView>
@@ -156,6 +156,7 @@ export default function LoginScreen() {
       >
         <PrimaryButton
           label="Sign in"
+          tone="inverse"
           onPress={onSubmit}
           loading={pending}
           disabled={!username || !password}
