@@ -2,20 +2,28 @@ import { type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 
+const NIGHT = 1;
+const MORNING = 2;
+
 const mock = vi.hoisted(() => ({
   make: vi.fn(),
   // Stands in for the effect that decodes the art, which a server render skips.
-  art: null as null | { width: () => number; height: () => number },
+  loaded: null as null | {
+    source: number;
+    art: { width: () => number; height: () => number } | null;
+  },
   shader: undefined as undefined | Record<string, unknown>,
   image: undefined as undefined | Record<string, unknown>,
 }));
 
+// The hero's only state is the decoded art, so this is all of its state. A second
+// useState in the hero would need this mock to tell them apart.
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return {
     ...actual,
     useState: <T,>(initial: T) =>
-      mock.art ? [{ art: mock.art, failed: false }, () => {}] : actual.useState(initial),
+      mock.loaded ? [mock.loaded, () => {}] : actual.useState(initial),
   };
 });
 
@@ -61,7 +69,7 @@ vi.mock("../theme/theme", () => ({
 beforeEach(() => {
   vi.resetModules();
   mock.make.mockReset();
-  mock.art = null;
+  mock.loaded = null;
   mock.shader = undefined;
   mock.image = undefined;
 });
@@ -95,11 +103,27 @@ it("compiles the mesh once, however many times the hero renders", async () => {
 it("draws the art through the mesh, clamped so cut-off edge cells stay opaque", async () => {
   const effect = {};
   mock.make.mockReturnValue(effect);
-  mock.art = { width: () => 660, height: () => 960 };
+  const art = { width: () => 660, height: () => 960 };
+  mock.loaded = { source: NIGHT, art };
   expect(await render()).toContain("<canvas");
   expect(mock.shader).toEqual({
     source: effect,
     uniforms: { density: 3, pitch: 9, gap: 2, lineLight: 0.6 },
   });
-  expect(mock.image).toMatchObject({ image: mock.art, tx: "clamp", ty: "clamp", fit: "fill" });
+  expect(mock.image).toMatchObject({ image: art, tx: "clamp", ty: "clamp", fit: "fill" });
+});
+
+it("drops the old scene when the appearance changes, until the new one loads", async () => {
+  mock.make.mockReturnValue({});
+  // The theme is dark, and what's decoded is still the morning file.
+  mock.loaded = { source: MORNING, art: { width: () => 660, height: () => 960 } };
+  const html = await render();
+  expect(html).not.toContain("<canvas");
+  expect(html).not.toContain("plain art");
+});
+
+it("falls back to the plain art when this scene can't load", async () => {
+  mock.make.mockReturnValue({});
+  mock.loaded = { source: NIGHT, art: null };
+  expect(await render()).toContain('alt="plain art"');
 });

@@ -47,20 +47,22 @@ function getMeshEffect(): SkRuntimeEffect | null {
 
 /** The decoded art for Skia: null while loading, and `failed` if it never will. */
 function useWelcomeArt(source: number): { art: SkImage | null; failed: boolean } {
-  const [state, setState] = useState<{ art: SkImage | null; failed: boolean }>({
-    art: null,
-    failed: false,
-  });
+  const [loaded, setLoaded] = useState<{ source: number; art: SkImage | null } | null>(
+    null,
+  );
   useEffect(() => {
     let live = true;
     void loadWelcomeArt(NativeImage.resolveAssetSource(source).uri, Skia).then((art) => {
-      if (live) setState({ art, failed: art === null });
+      if (live) setLoaded({ source, art });
     });
     return () => {
       live = false;
     };
   }, [source]);
-  return state;
+  // After a switch between light and dark, the old scene belongs to the old
+  // scheme. Drawing nothing lets the new one fade in on its own.
+  if (loaded?.source !== source) return { art: null, failed: false };
+  return { art: loaded.art, failed: loaded.art === null };
 }
 
 /**
