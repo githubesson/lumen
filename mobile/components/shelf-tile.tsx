@@ -34,14 +34,16 @@ export function ShelfTile({
   subtitleAccessory?: ReactNode;
   width: number;
   accessibilityLabel: string;
-  onPress: () => void;
+  /** Omitted when the tile has nothing to open or play. */
+  onPress?: () => void;
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
-      accessibilityRole="button"
+      disabled={!onPress}
+      accessibilityRole={onPress ? "button" : undefined}
       accessibilityLabel={accessibilityLabel}
       style={({ pressed }) => [{ width, opacity: pressed ? 0.7 : 1 }, style]}
     >
