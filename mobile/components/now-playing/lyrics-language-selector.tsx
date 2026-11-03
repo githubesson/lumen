@@ -213,7 +213,7 @@ function SelectorRow({
         <Text
           style={[
             styles.selectorTitle,
-            { color: theme.color.fg, fontWeight: expanded ? "700" : "500" },
+            { color: theme.color.fg, fontWeight: expanded ? "600" : "500" },
           ]}
         >
           {title}

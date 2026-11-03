@@ -23,7 +23,7 @@ export type SwipeActionKind = "next" | "favorite" | "unfavorite";
 
 /**
  * What each swipe does, and its colour: Play Next in the accent, Favorite in
- * systemPink, Unfavorite in systemGray2. Unfavorite is gray rather than red:
+ * Favorites' purple, Unfavorite in systemGray2. Unfavorite is gray rather than red:
  * it can be undone and isn't Delete, and the same motion never looks the same
  * while doing the opposite thing.
  */
@@ -40,7 +40,6 @@ export function swipeActionStyle(kind: SwipeActionKind, theme: ThemeTokens) {
       return {
         label: "Favorite",
         icon: "heart.fill" as SFSymbol,
-        // Favorites' own color, as on its tab.
         color: theme.color.brand,
       };
     case "unfavorite":

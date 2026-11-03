@@ -11,9 +11,7 @@ import Animated, { FadeIn } from "react-native-reanimated";
 import {
   Canvas,
   Fill,
-  FilterMode,
   ImageShader,
-  MipmapMode,
   Shader,
   Skia,
   type SkImage,
@@ -101,15 +99,14 @@ export function WelcomeHero({ height }: { height: number }) {
                 >
                   <ImageShader
                     image={art}
+                    // Cells cut off by the screen's edge sample past the art.
+                    tx="clamp"
+                    ty="clamp"
                     fit="fill"
                     rect={welcomeArtRect(view, {
                       width: art.width(),
                       height: art.height(),
                     })}
-                    sampling={{
-                      filter: FilterMode.Linear,
-                      mipmap: MipmapMode.None,
-                    }}
                   />
                 </Shader>
               </Fill>

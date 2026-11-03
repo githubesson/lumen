@@ -160,7 +160,7 @@ export const NewPlaylistRow = memo(function NewPlaylistRow({
             maxFontSizeMultiplier={PICKER_MAX_FONT_SCALE}
             style={[styles.subtitle, { color: theme.color.accent }]}
           >
-            New Playlist
+            New playlist
           </Text>
         </View>
       </View>

@@ -42,10 +42,10 @@ export function ShelfTile({
   return (
     <Pressable
       onPress={onPress}
-      disabled={!onPress}
+      // Not `disabled`: VoiceOver would read a tile with nothing to do as dimmed.
       accessibilityRole={onPress ? "button" : undefined}
       accessibilityLabel={accessibilityLabel}
-      style={({ pressed }) => [{ width, opacity: pressed ? 0.7 : 1 }, style]}
+      style={({ pressed }) => [{ width, opacity: pressed && onPress ? 0.7 : 1 }, style]}
     >
       {artwork}
       <Text

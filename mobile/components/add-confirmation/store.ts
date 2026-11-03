@@ -32,7 +32,7 @@ export interface AddConfirmationRequest {
   playlistArt: { uri: string; placeholder: string | null } | null;
   /** Glyph for the empty tile. */
   playlistGlyph: "music.note.list" | "person.2.fill";
-  /** Made for this add: the HUD says "New Playlist" rather than "Added". */
+  /** Made for this add: the HUD says "New playlist" rather than "Added". */
   created: boolean;
   /** The add itself, already running. */
   done: Promise<AddConfirmationResult>;

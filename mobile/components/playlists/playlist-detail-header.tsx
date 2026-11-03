@@ -492,7 +492,7 @@ export function PlaylistMoreMenu({
                   {
                     text: autoEnabled
                       ? "Turn off auto-download"
-                      : "Auto-Download New Tracks",
+                      : "Auto-download new tracks",
                     onPress: onAutoPress,
                   },
                 ]
@@ -561,7 +561,7 @@ export function PlaylistMoreMenu({
           onPress={onDownloadPress}
         />
         <swiftUI.Button
-          label="Auto-Download New Tracks"
+          label="Auto-download new tracks"
           systemImage={autoEnabled ? "checkmark" : "arrow.clockwise"}
           modifiers={[swiftDisabled(autoDisabled)]}
           onPress={onAutoPress}

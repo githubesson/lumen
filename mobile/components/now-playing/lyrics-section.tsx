@@ -599,7 +599,7 @@ const SyncedLyricLine = memo(function SyncedLyricLine({
 
   const baseLineText: TextStyle = {
     fontSize: line.section ? 13 : state === "active" ? 19 : 18,
-    fontWeight: line.section ? "700" : state === "active" ? "500" : "400",
+    fontWeight: line.section ? "600" : state === "active" ? "500" : "400",
     lineHeight: line.section ? 18 : 27,
     // Body lines keep the frontend's -0.01em; section labels stay untracked.
     letterSpacing: line.section ? 0 : -0.19,
