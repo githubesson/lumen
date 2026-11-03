@@ -104,8 +104,8 @@ const styles = StyleSheet.create({
   cell: {
     flex: 1,
     minWidth: 0,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingTop: 10,
-    paddingBottom: 11,
+    paddingBottom: 12,
   },
 });

@@ -193,8 +193,8 @@ const markup = () => renderToStaticMarkup(<TidalArtistScreen />);
 it("shows a total failure with a working retry control", () => {
   mock.query.isError = true;
   const html = markup();
-  expect(html).toContain("Couldn&#x27;t load artist.");
-  expect(html).not.toContain("No releases found.");
+  expect(html).toContain("Couldn&#x27;t load artist");
+  expect(html).not.toContain("No releases found");
   mock.retry?.onPress();
   expect(mock.query.refetch).toHaveBeenCalledOnce();
 });
@@ -208,7 +208,7 @@ it("keeps available releases visible with partial failure warnings and during a 
   expect(markup()).toContain("Couldn&#x27;t load singles and EPs.");
   expect(markup()).toContain("Available album (Album)");
   mock.query.isError = true;
-  expect(markup()).toContain("Couldn&#x27;t load artist.");
+  expect(markup()).toContain("Couldn&#x27;t load artist");
   expect(markup()).toContain("Available album");
   expect(mock.retry).toBeDefined();
 });
@@ -219,14 +219,14 @@ it("distinguishes incomplete empty results from confirmed empty results and clea
     tracks: [],
     warnings: ["Couldn't load albums."],
   };
-  expect(markup()).not.toContain("No releases found.");
+  expect(markup()).not.toContain("No releases found");
   mock.query.isFetching = true;
   expect(markup()).toContain("Retrying…");
   expect(mock.retry?.disabled).toBe(true);
   mock.query.isFetching = false;
   mock.query.data = { albums: [], tracks: [] };
   const html = markup();
-  expect(html).toContain("No releases found.");
+  expect(html).toContain("No releases found");
   expect(html).not.toContain("Retry artist");
   expect(html).not.toContain("Couldn");
 });
@@ -261,7 +261,7 @@ it("ranks the first five popular tracks and files releases by kind", () => {
   expect(collapsed).not.toContain("Track 6");
   expect(collapsed).toContain("2 releases · 7 popular tracks");
   expect(collapsed).toMatch(/Newer single \(Single\).*Older \(Album\)/);
-  expect(collapsed).not.toContain("No releases found.");
+  expect(collapsed).not.toContain("No releases found");
 });
 
 it("does not confirm an empty search while a stream failed, and offers retry", () => {

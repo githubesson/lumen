@@ -10,7 +10,6 @@ import {
   useFavoritesListModel,
 } from "../../../components/favorites/favorites-list";
 import { FavoritesNavBar } from "../../../components/favorites/favorites-nav-bar";
-import { ModeWash } from "../../../components/favorites/mode-wash";
 import { useFavoritesQuery } from "../../../context/favorites";
 import {
   DEFAULT_HEADER_GEOMETRY,
@@ -184,12 +183,6 @@ export default function FavoritesScreen() {
       }}
       style={{ flex: 1, backgroundColor: theme.color.bg }}
     >
-      <ModeWash
-        theme={theme}
-        mode={mode}
-        offset={offsets[mode]}
-        topInset={topInset}
-      />
       <FavoritesList
         theme={theme}
         mode="favorites"

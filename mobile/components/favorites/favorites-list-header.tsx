@@ -25,12 +25,12 @@ import type { ThemeTokens } from "../../theme/theme";
 // order, newest first.
 const SORT_OPTIONS: Record<FavoritesMode, SortMenuOption[]> = {
   favorites: [
-    { key: "custom", label: "Recently Added", symbol: "heart" },
+    { key: "custom", label: "Recently added", symbol: "heart" },
     { key: "title", label: "Title" },
     { key: "duration", label: "Length" },
   ],
   recent: [
-    { key: "custom", label: "Last Played", symbol: "clock" },
+    { key: "custom", label: "Last played", symbol: "clock" },
     { key: "title", label: "Title" },
     { key: "duration", label: "Length" },
   ],

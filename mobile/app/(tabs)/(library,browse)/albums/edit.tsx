@@ -66,7 +66,7 @@ export default function AlbumEditScreen() {
       <EmptyState
         fill
         selectable
-        message="Couldn't load album."
+        message="Couldn't load album"
         action={retryAction(albumQuery)}
       />
     );
@@ -123,7 +123,7 @@ function AlbumEditor({ id, album }: { id: string; album: Album }) {
         quality: 0.9,
       });
     } catch {
-      setError("Couldn't open the photo library.");
+      setError("Couldn't open the photo library");
       return;
     }
     if (result.canceled || result.assets.length === 0) return;
@@ -205,7 +205,7 @@ function AlbumEditor({ id, album }: { id: string; album: Album }) {
     <>
       <Stack.Screen
         options={{
-          title: "Edit Album",
+          title: "Edit album",
           headerRight: () => (
             <HeaderSaveButton saving={saving} onPress={() => void onSave()} />
           ),
@@ -296,7 +296,7 @@ function AlbumEditor({ id, album }: { id: string; album: Album }) {
         </FormField>
         <FormField
           label="Album artist"
-          hint="Leave blank and turn on Compilation for Various Artists."
+          hint="Leave blank and turn on Compilation for Various Artists"
         >
           <FormTextInput
             value={draft.albumArtist}
@@ -323,7 +323,7 @@ function AlbumEditor({ id, album }: { id: string; album: Album }) {
               alignItems: "center",
               justifyContent: "space-between",
               gap: theme.space.sm,
-              paddingHorizontal: 14,
+              paddingHorizontal: 16,
               alignSelf: "flex-end",
               height: 46,
             }}

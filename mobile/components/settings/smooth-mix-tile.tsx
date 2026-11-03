@@ -461,8 +461,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "flex-end",
     gap: LANE_GAP,
-    paddingLeft: 9,
-    paddingRight: 3,
+    paddingLeft: 8,
+    paddingRight: 4,
   },
   laneTitle: {
     fontSize: 12,

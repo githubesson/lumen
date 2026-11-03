@@ -65,7 +65,7 @@ function QueueRowImpl({
           transitionMs={120}
           priority="normal"
         />
-        <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
           <View style={styles.titleLine}>
             <Text
               numberOfLines={1}

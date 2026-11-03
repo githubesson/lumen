@@ -32,7 +32,7 @@ export function swipeActionStyle(kind: SwipeActionKind, theme: ThemeTokens) {
   switch (kind) {
     case "next":
       return {
-        label: "Play Next",
+        label: "Play next",
         icon: "text.line.first.and.arrowtriangle.forward" as SFSymbol,
         color: theme.color.accent,
       };
@@ -40,7 +40,8 @@ export function swipeActionStyle(kind: SwipeActionKind, theme: ThemeTokens) {
       return {
         label: "Favorite",
         icon: "heart.fill" as SFSymbol,
-        color: dark ? "#FF375F" : "#FF2D55",
+        // Favorites' own color, as on its tab.
+        color: theme.color.brand,
       };
     case "unfavorite":
       return {
@@ -223,7 +224,6 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 15,
     fontWeight: "600",
-    letterSpacing: -0.15,
   },
   // The mock darkens a pressed capsule (brightness .8).
   pressed: {

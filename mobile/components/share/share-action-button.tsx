@@ -63,7 +63,7 @@ export function ShareActionButton({
         style={{
           color: primary ? theme.color.onAccent : theme.color.fg,
           fontSize: 17,
-          fontWeight: "700",
+          fontWeight: "600",
         }}
       >
         {label}
@@ -74,9 +74,9 @@ export function ShareActionButton({
 
 const styles = StyleSheet.create({
   button: {
-    minHeight: 52,
+    minHeight: 48,
     width: "100%",
-    borderRadius: 14,
+    borderRadius: 10,
     borderCurve: "continuous",
     borderWidth: StyleSheet.hairlineWidth,
     flexDirection: "row",

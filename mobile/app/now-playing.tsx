@@ -153,9 +153,9 @@ export default function NowPlayingScreen() {
     completedTranslation.targetLanguage === targetLanguage;
   const translationActionLabel = selectedPairMatches
     ? completedTranslation.visible
-      ? "Hide Translation"
-      : "Show Translation"
-    : "Translate Lyrics";
+      ? "Hide translation"
+      : "Show translation"
+    : "Translate lyrics";
   const previousTrackIdRef = useRef<string | null>(null);
   const previousTrackIndexRef = useRef(index);
   // These refs hold the last committed track solely to choose the direction of
@@ -402,7 +402,7 @@ export default function NowPlayingScreen() {
           alignItems: "center",
         }}
       >
-        <Text style={{ color: theme.color.fgMuted }}>No track loaded.</Text>
+        <Text style={{ color: theme.color.fgMuted }}>No track loaded</Text>
       </View>
     );
   }

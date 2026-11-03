@@ -90,7 +90,7 @@ export default function UploadScreen() {
       setResults(null);
       setError(unsupported.length ? unsupportedFilesMessage(unsupported) : null);
     } catch {
-      setError("Couldn't open the file picker.");
+      setError("Couldn't open the file picker");
     }
   };
 
@@ -222,8 +222,10 @@ export default function UploadScreen() {
                   flex: 1,
                   backgroundColor: theme.color.bgElev1,
                   borderRadius: theme.radius.md,
-                  paddingVertical: 14,
+                  minHeight: 48,
+                  paddingVertical: 12,
                   alignItems: "center",
+                  justifyContent: "center",
                   opacity: uploading ? 0.5 : pressed ? 0.8 : 1,
                   borderCurve: "continuous",
                 })}

@@ -72,7 +72,7 @@ export function SnippetPanel({
           selectable
           style={{
             color: theme.color.fg,
-            fontWeight: "700",
+            fontWeight: "600",
             fontVariant: ["tabular-nums"],
           }}
         >
@@ -121,8 +121,8 @@ export function SnippetPanel({
           weight="semibold"
           tintColor={theme.color.fg}
         />
-        <Text style={{ color: theme.color.fg, fontWeight: "700" }}>
-          {playing ? "Pause Preview" : "Preview Snippet"}
+        <Text style={{ color: theme.color.fg, fontWeight: "600" }}>
+          {playing ? "Pause preview" : "Preview snippet"}
         </Text>
       </Pressable>
 

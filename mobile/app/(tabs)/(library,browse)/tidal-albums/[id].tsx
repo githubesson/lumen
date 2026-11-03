@@ -178,7 +178,7 @@ export default function TidalAlbumDetailScreen() {
     <EmptyState
       fill={!versionPicker}
       selectable
-      message="Couldn't load TIDAL album."
+      message="Couldn't load TIDAL album"
       action={retryAction(albumQuery)}
     />
   );

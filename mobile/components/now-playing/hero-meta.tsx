@@ -42,7 +42,7 @@ export function HeroMeta({
             style={{
               color: theme.color.fg,
               fontSize: 22,
-              fontWeight: "700",
+              fontWeight: "600",
               letterSpacing: -0.3,
               flexShrink: 1,
             }}

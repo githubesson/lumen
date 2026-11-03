@@ -217,7 +217,7 @@ function InviteRow({
   return (
     <View
       style={{
-        paddingHorizontal: 14,
+        paddingHorizontal: 16,
         paddingVertical: 10,
         borderTopWidth: firstRow ? 0 : StyleSheet.hairlineWidth,
         borderTopColor: theme.color.separator,

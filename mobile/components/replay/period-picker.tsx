@@ -153,7 +153,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   pill: {
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 8,
   },
 });

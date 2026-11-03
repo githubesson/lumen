@@ -11,8 +11,8 @@ import { useTheme } from "../../theme/theme";
 
 /**
  * Quiet full-width action row for the bottom of the Replay screen (generate
- * playlist, share image): accent icon + label on an elevated surface, with
- * a spinner while the action is in flight.
+ * playlist, share image): icon + label on an elevated surface, with a spinner
+ * while the action is in flight.
  */
 export function ReplayActionButton({
   icon,
@@ -41,11 +41,12 @@ export function ReplayActionButton({
           backgroundColor: theme.color.bgElev1,
           borderRadius: theme.radius.md,
           borderCurve: "continuous",
-          paddingVertical: 14,
+          minHeight: 48,
+          paddingVertical: 12,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
-          gap: 10,
+          gap: 8,
           opacity: pressed || busy ? 0.6 : 1,
         },
         style,
@@ -54,11 +55,11 @@ export function ReplayActionButton({
       {busy ? (
         <ActivityIndicator color={theme.color.fgMuted} />
       ) : (
-        <SymbolView name={icon} size={18} tintColor={theme.color.accent} />
+        <SymbolView name={icon} size={18} tintColor={theme.color.fg} />
       )}
       <Text
         style={{
-          color: theme.color.accent,
+          color: theme.color.fg,
           fontSize: 16,
           fontWeight: "500",
         }}

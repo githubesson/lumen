@@ -337,7 +337,7 @@ export function PlaylistStatusGlyphs({
     <View
       accessible
       accessibilityLabel={a11y}
-      style={{ flexDirection: "row", alignItems: "center", gap: 5 }}
+      style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
     >
       {status === "downloading" ? (
         <>
@@ -459,8 +459,8 @@ export function PlaylistMoreMenu({
   const downloadLabel = isDownloading
     ? `Downloading ${downloaded}/${total}…`
     : isDownloaded
-      ? "Remove Download…"
-      : "Download Playlist";
+      ? "Remove download…"
+      : "Download playlist";
   const downloadDisabled =
     !hasTracks || isDownloading || (offline && !isDownloaded);
   const autoDisabled = !hasTracks || (offline && !autoEnabled);
@@ -474,12 +474,12 @@ export function PlaylistMoreMenu({
         onPress={() =>
           Alert.alert(playlistName, undefined, [
             ...(canEditDetails
-              ? [{ text: "Edit Playlist", onPress: onEdit }]
+              ? [{ text: "Edit playlist", onPress: onEdit }]
               : []),
             ...(canEdit
               ? [
                   {
-                    text: reorderActive ? "Done Reordering" : "Reorder Tracks",
+                    text: reorderActive ? "Done reordering" : "Reorder tracks",
                     onPress: onToggleReorder,
                   },
                 ]
@@ -491,7 +491,7 @@ export function PlaylistMoreMenu({
               ? [
                   {
                     text: autoEnabled
-                      ? "Turn Off Auto-Download"
+                      ? "Turn off auto-download"
                       : "Auto-Download New Tracks",
                     onPress: onAutoPress,
                   },
@@ -504,8 +504,8 @@ export function PlaylistMoreMenu({
               ? [
                   {
                     text: serverSave.enabled
-                      ? "Stop Saving TIDAL to Server"
-                      : "Save TIDAL to Server",
+                      ? "Stop saving TIDAL to server"
+                      : "Save TIDAL to server",
                     onPress: serverSave.onToggle,
                   },
                 ]
@@ -513,7 +513,7 @@ export function PlaylistMoreMenu({
             ...(canDelete
               ? [
                   {
-                    text: "Delete Playlist",
+                    text: "Delete playlist",
                     style: "destructive" as const,
                     onPress: onDelete,
                   },
@@ -541,14 +541,14 @@ export function PlaylistMoreMenu({
       >
         {canEditDetails ? (
           <swiftUI.Button
-            label="Edit Playlist"
+            label="Edit playlist"
             systemImage="pencil"
             onPress={onEdit}
           />
         ) : null}
         {canEdit ? (
           <swiftUI.Button
-            label={reorderActive ? "Done Reordering" : "Reorder Tracks"}
+            label={reorderActive ? "Done reordering" : "Reorder tracks"}
             systemImage={reorderActive ? "checkmark" : "line.3.horizontal"}
             onPress={onToggleReorder}
           />
@@ -575,7 +575,7 @@ export function PlaylistMoreMenu({
         ) : null}
         {serverSave ? (
           <swiftUI.Button
-            label="Save TIDAL to Server"
+            label="Save TIDAL to server"
             systemImage={serverSave.enabled ? "checkmark" : "externaldrive"}
             modifiers={[swiftDisabled(serverSave.pending)]}
             onPress={serverSave.onToggle}
@@ -585,7 +585,7 @@ export function PlaylistMoreMenu({
           <>
             <swiftUI.Divider />
             <swiftUI.Button
-              label="Delete Playlist"
+              label="Delete playlist"
               systemImage="trash"
               role="destructive"
               modifiers={[swiftDisabled(deletePending)]}

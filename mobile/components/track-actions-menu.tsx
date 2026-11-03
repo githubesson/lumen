@@ -348,19 +348,19 @@ function TrackActionItems({
         />
         <Button
           label={
-            actions.favorite ? "Remove from Favorites" : "Add to Favorites"
+            actions.favorite ? "Remove from favorites" : "Add to favorites"
           }
           systemImage={actions.favorite ? "heart.slash" : "heart"}
           onPress={actions.toggleFavorite}
         />
         <Button
-          label="Track Info"
+          label="Track info"
           systemImage="info.circle"
           onPress={actions.openInfo}
         />
         {actions.canShare ? (
           <Button
-            label="Share..."
+            label="Share…"
             systemImage="square.and.arrow.up"
             onPress={actions.openShare}
           />
@@ -370,19 +370,19 @@ function TrackActionItems({
       <Section title="Actions">
         {actions.showPlayNext ? (
           <Button
-            label="Play Next"
+            label="Play next"
             systemImage="text.line.first.and.arrowtriangle.forward"
             modifiers={[swiftDisabled(!actions.canPlayNext)]}
             onPress={actions.playNext}
           />
         ) : null}
         <Button
-          label="Add to Playlist..."
+          label="Add to playlist…"
           systemImage="plus.rectangle.on.folder"
           onPress={actions.openPlaylistPicker}
         />
         <Button
-          label={actions.downloading ? "Downloading..." : "Download File..."}
+          label={actions.downloading ? "Downloading…" : "Download file…"}
           systemImage="arrow.down.doc"
           modifiers={[swiftDisabled(actions.downloading || !actions.available)]}
           onPress={actions.download}
@@ -393,7 +393,7 @@ function TrackActionItems({
           <Divider />
           <Section title="Library">
             <Button
-              label="View Album"
+              label="View album"
               systemImage="square.stack"
               onPress={actions.openAlbum}
             />
@@ -406,14 +406,14 @@ function TrackActionItems({
           <Section title="Edit">
             {actions.canEditMetadata ? (
               <Button
-                label="Edit Metadata"
+                label="Edit metadata"
                 systemImage="pencil"
                 onPress={actions.openEditMetadata}
               />
             ) : null}
             {actions.hasEditableAlbum ? (
               <Button
-                label="Edit Album & Cover"
+                label="Edit album & cover"
                 systemImage="photo"
                 onPress={actions.openEditAlbum}
               />
@@ -425,7 +425,7 @@ function TrackActionItems({
         <>
           <Divider />
           <Button
-            label={actions.deleting ? "Deleting..." : "Delete from My Library"}
+            label={actions.deleting ? "Deleting…" : "Delete from my library"}
             systemImage="trash"
             role="destructive"
             modifiers={[swiftDisabled(actions.deleting)]}
@@ -591,7 +591,7 @@ export function useTrackActionModel(
   // DB row and the uploaded file, so confirm before firing.
   const deleteTrack = useCallback(() => {
     Alert.alert(
-      "Delete Track",
+      "Delete track",
       deleteOwnUploadMessage(track),
       [
         { text: "Cancel", style: "cancel" },

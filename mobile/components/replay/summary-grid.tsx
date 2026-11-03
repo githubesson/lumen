@@ -8,11 +8,10 @@ import {
 import { displayText, type ReplayData } from "@music-library/core";
 import { Card } from "../primitives";
 import { useTheme } from "../../theme/theme";
-import { formatListeningTime } from "./format";
 
 /**
- * 2×2 stat grid card (listening time, unique tracks/artists, top artist)
- * with hairline dividers between the cells.
+ * Stat card (unique tracks and artists side by side, the top artist below)
+ * with hairline dividers between the cells. Listening time is in the hero.
  */
 export function SummaryGrid({
   summary,
@@ -23,10 +22,6 @@ export function SummaryGrid({
 }) {
   const theme = useTheme();
   const items: { label: string; value: string }[] = [
-    {
-      label: "Listening",
-      value: formatListeningTime(summary.total_ms),
-    },
     {
       label: "Tracks",
       value: summary.unique_tracks.toLocaleString(),
@@ -52,14 +47,14 @@ export function SummaryGrid({
       ]}
     >
       {items.map((item, i) => {
-        const isRight = i % 2 === 1;
-        const isBottom = i >= 2;
+        const isRight = i === 1;
+        const isBottom = i === 2;
         return (
           <View
             key={item.label}
             style={{
-              width: "50%",
-              padding: 14,
+              width: isBottom ? "100%" : "50%",
+              padding: 16,
               borderLeftWidth: isRight ? StyleSheet.hairlineWidth : 0,
               borderTopWidth: isBottom ? StyleSheet.hairlineWidth : 0,
               borderColor: theme.color.separator,
@@ -69,9 +64,7 @@ export function SummaryGrid({
               numberOfLines={1}
               style={{
                 color: theme.color.fgMuted,
-                fontSize: 11,
-                letterSpacing: 0.6,
-                textTransform: "uppercase",
+                fontSize: 13,
               }}
             >
               {item.label}

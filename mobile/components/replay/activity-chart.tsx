@@ -7,11 +7,12 @@ import {
   type ReplayData,
 } from "@music-library/core";
 import { Card } from "../primitives";
-import { useTheme } from "../../theme/theme";
+import { useTheme, withAlpha } from "../../theme/theme";
 
 /**
  * Bar chart card of plays per time bucket, with a sparse axis-label row
- * underneath (~6 ticks max so labels don't overlap).
+ * underneath (~6 ticks max so labels don't overlap). Only the busiest bucket
+ * takes the accent; the rest sit back in a neutral.
  */
 export function ActivityChart({
   buckets,
@@ -26,13 +27,13 @@ export function ActivityChart({
   const { max, labelStep } = useMemo(() => activityChartScale(buckets), [buckets]);
 
   return (
-    <Card style={[{ padding: 14 }, style]}>
+    <Card style={[{ padding: 16 }, style]}>
       <View
         style={{
           flexDirection: "row",
           alignItems: "flex-end",
-          height: 120,
-          gap: 3,
+          height: 160,
+          gap: 2,
         }}
       >
         {buckets.map((b) => {
@@ -50,7 +51,10 @@ export function ActivityChart({
                 style={{
                   height: `${pct}%`,
                   minHeight: 2,
-                  backgroundColor: theme.color.accent,
+                  backgroundColor:
+                    max > 0 && b.plays === max
+                      ? theme.color.accent
+                      : withAlpha(theme.color.fgMuted, 0.45),
                   borderRadius: 2,
                   borderTopLeftRadius: 3,
                   borderTopRightRadius: 3,
@@ -63,8 +67,8 @@ export function ActivityChart({
       <View
         style={{
           flexDirection: "row",
-          marginTop: 6,
-          gap: 3,
+          marginTop: 8,
+          gap: 2,
         }}
       >
         {buckets.map((b, i) => {
@@ -78,7 +82,7 @@ export function ActivityChart({
                 <Text
                   style={{
                     color: theme.color.fgMuted,
-                    fontSize: 10,
+                    fontSize: 11,
                     fontVariant: ["tabular-nums"],
                   }}
                 >

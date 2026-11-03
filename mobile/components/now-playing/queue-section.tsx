@@ -320,7 +320,7 @@ export const QueueSection = memo(function QueueSection({
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <Text style={{ color: theme.color.fgMuted }}>
-              Nothing else queued.
+              Nothing else queued
             </Text>
           </View>
         }

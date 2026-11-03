@@ -81,7 +81,7 @@ export function FormTextInput(
           color: theme.color.fg,
           borderRadius: theme.radius.md,
           borderCurve: "continuous",
-          paddingHorizontal: 14,
+          paddingHorizontal: 16,
           paddingVertical: 12,
           fontSize: 17,
         },

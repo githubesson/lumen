@@ -496,38 +496,38 @@ function PadTrackActionsButton({ track }: { track: TrackListItem }) {
       { label: "Play", onPress: actions.play },
       {
         label: actions.favorite
-          ? "Remove from Favorites"
-          : "Add to Favorites",
+          ? "Remove from favorites"
+          : "Add to favorites",
         onPress: actions.toggleFavorite,
       },
-      { label: "Track Info", onPress: actions.openInfo },
-      ...(actions.canShare ? [{ label: "Share...", onPress: actions.openShare }] : []),
-      { label: "Add to Playlist...", onPress: actions.openPlaylistPicker },
+      { label: "Track info", onPress: actions.openInfo },
+      ...(actions.canShare ? [{ label: "Share…", onPress: actions.openShare }] : []),
+      { label: "Add to playlist…", onPress: actions.openPlaylistPicker },
       {
-        label: actions.downloading ? "Downloading..." : "Download File...",
+        label: actions.downloading ? "Downloading…" : "Download file…",
         onPress: actions.download,
         disabled: actions.downloading,
       },
     ];
 
     if (actions.hasAlbum) {
-      items.push({ label: "View Album", onPress: actions.openAlbum });
+      items.push({ label: "View album", onPress: actions.openAlbum });
     }
     if (actions.canEditMetadata) {
       items.push({
-        label: "Edit Metadata",
+        label: "Edit metadata",
         onPress: actions.openEditMetadata,
       });
     }
     if (actions.hasEditableAlbum) {
       items.push({
-        label: "Edit Album & Cover",
+        label: "Edit album & cover",
         onPress: actions.openEditAlbum,
       });
     }
     if (actions.owned) {
       items.push({
-        label: actions.deleting ? "Deleting..." : "Delete from My Library",
+        label: actions.deleting ? "Deleting…" : "Delete from my library",
         onPress: actions.deleteTrack,
         destructive: true,
         disabled: actions.deleting,
@@ -622,7 +622,7 @@ const styles = StyleSheet.create({
   },
   padSideClusterWide: {
     width: 250,
-    gap: 14,
+    gap: 12,
   },
   padSideClusterCompact: {
     width: 154,
@@ -654,7 +654,7 @@ const styles = StyleSheet.create({
   },
   padTitle: {
     fontSize: 15,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   padArtist: {
     marginTop: 2,
@@ -666,7 +666,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
-    gap: 14,
+    gap: 12,
   },
   padActionClusterCompact: {
     width: 72,

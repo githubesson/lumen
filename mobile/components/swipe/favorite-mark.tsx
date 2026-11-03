@@ -51,7 +51,7 @@ export function FavoriteMark({
 
 const styles = StyleSheet.create({
   mark: {
-    marginRight: 7,
+    marginRight: 8,
     // The mock sets it a hair under the text's centre line.
     marginTop: 1,
   },

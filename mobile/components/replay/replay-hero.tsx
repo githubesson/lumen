@@ -4,8 +4,8 @@ import { useTheme } from "../../theme/theme";
 import { formatListeningTime, pluralize } from "./format";
 
 /**
- * Headline block for the Replay screen: eyebrow with the period title, a
- * huge total-plays figure, and the listening-time subline.
+ * Headline block for the Replay screen: a huge total-plays figure and the
+ * listening-time subline. The period is on the picker right above it.
  */
 export function ReplayHero({
   periodTitle,
@@ -31,21 +31,10 @@ export function ReplayHero({
     >
       <Text
         style={{
-          color: theme.color.fgMuted,
-          fontSize: 12,
-          letterSpacing: 0.8,
-          textTransform: "uppercase",
-          fontVariant: ["tabular-nums"],
-        }}
-      >
-        Replay · {periodTitle}
-      </Text>
-      <Text
-        style={{
           color: theme.color.fg,
           fontSize: 40,
-          fontWeight: "700",
-          letterSpacing: -1,
+          fontWeight: "600",
+          letterSpacing: -0.8,
           fontVariant: ["tabular-nums"],
         }}
       >

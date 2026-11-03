@@ -31,24 +31,24 @@ export function StoryShareMenuButton({
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
-  const label = loading ? "Rendering Story..." : "Instagram Story";
+  const label = loading ? "Rendering story…" : "Instagram Story";
 
   const openStoryOptions = useCallback(() => {
     if (disabled || loading) return;
     void Haptics.selectionAsync();
 
     const customLabel = hasCustomBackground
-      ? "Use Custom Image"
-      : "Choose Custom Image";
+      ? "Use custom image"
+      : "Choose custom image";
 
     showActionMenu({
       // The Alert fallback needs a title; the iOS sheet reads fine without.
       title: process.env.EXPO_OS === "ios" ? undefined : "Instagram Story Background",
       items: [
-        { label: "Use Generated Colors", onPress: onGenerated },
+        { label: "Use generated colors", onPress: onGenerated },
         { label: customLabel, onPress: onCustom },
         ...(hasCustomBackground
-          ? [{ label: "Choose Different Image", onPress: onPickCustom }]
+          ? [{ label: "Choose different image", onPress: onPickCustom }]
           : []),
       ],
       tintColor: theme.color.accent,

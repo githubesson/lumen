@@ -214,7 +214,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
   },
   body: {
     flex: 1,
@@ -249,8 +249,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    paddingLeft: 7,
-    paddingRight: 9,
+    paddingLeft: 8,
+    paddingRight: 8,
     borderRadius: 12,
   },
   badgeText: {

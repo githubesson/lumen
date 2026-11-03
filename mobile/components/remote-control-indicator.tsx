@@ -59,12 +59,12 @@ const styles = StyleSheet.create({
   },
   pill: {
     minHeight: 30,
-    paddingHorizontal: 13,
+    paddingHorizontal: 12,
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
+    gap: 8,
   },
   text: {
     fontSize: 12,

@@ -186,7 +186,7 @@ export function OtaUpdateRows() {
             styles.row,
             {
               paddingHorizontal: SETTINGS_INSET,
-              paddingVertical: 14,
+              paddingVertical: 12,
               borderTopWidth: StyleSheet.hairlineWidth,
               borderTopColor: theme.color.separator,
               backgroundColor: pressed ? theme.color.bgElev2 : "transparent",
@@ -251,7 +251,7 @@ function StatusTrailing({
         style={{
           backgroundColor: theme.color.accent,
           borderRadius: 11,
-          paddingHorizontal: 9,
+          paddingHorizontal: 8,
           height: 22,
           justifyContent: "center",
         }}

@@ -135,7 +135,7 @@ export default function TrackInfoScreen() {
     return <EmptyState fill loading />;
   }
   if (trackQuery.isError || !t || !item) {
-    return <EmptyState fill message="Couldn't load track." />;
+    return <EmptyState fill message="Couldn't load track" />;
   }
 
   const view = trackInfoRows(
@@ -149,7 +149,7 @@ export default function TrackInfoScreen() {
     <>
       <Stack.Screen
         options={{
-          title: "Track Info",
+          title: "Track info",
           // The pinned compact row names the track; the bar keeps only back.
           headerTitle: "",
           headerShadowVisible: false,
@@ -214,7 +214,7 @@ export default function TrackInfoScreen() {
             >
               {t.unavailable ? (
                 <Note theme={theme}>
-                  Removed from TIDAL, so it can&apos;t play.
+                  Removed from TIDAL, so it can&apos;t play
                 </Note>
               ) : null}
               {view.note ? <Note theme={theme}>{view.note}</Note> : null}

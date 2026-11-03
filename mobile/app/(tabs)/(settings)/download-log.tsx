@@ -383,7 +383,7 @@ function ActionRow({
         alignItems: "center",
         gap: 12,
         paddingHorizontal: theme.space.md,
-        paddingVertical: 14,
+        paddingVertical: 12,
         borderTopWidth: border ? StyleSheet.hairlineWidth : 0,
         borderTopColor: theme.color.separator,
         backgroundColor: pressed ? theme.color.bgElev2 : "transparent",

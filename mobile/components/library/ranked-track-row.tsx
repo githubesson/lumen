@@ -74,8 +74,7 @@ export function RankedTrackRow({
               width: 30,
               color: rank === 1 ? theme.color.accent : theme.color.fgMuted,
               fontSize: 22,
-              fontWeight: "700",
-              letterSpacing: -0.5,
+              fontWeight: "600",
               fontVariant: ["tabular-nums"],
               textAlign: "center",
             }}

@@ -133,7 +133,7 @@ function PlaylistEditor({ id, playlist }: { id: string; playlist: Playlist }) {
       <EditPlaylistHeader canSubmit={canSubmit} onSave={onSave} />
       <FormScreen>
         {forbidden ? (
-          <EmptyState message="Only the playlist's owner can edit its details." />
+          <EmptyState message="Only the playlist's owner can edit its details" />
         ) : (
           <>
             {permissions.canChangeCover ? (

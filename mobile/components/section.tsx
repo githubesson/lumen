@@ -11,8 +11,8 @@ import { useTheme } from "../theme/theme";
 import { Eyebrow } from "./eyebrow";
 
 /**
- * Section shell for scrolling feature pages (home, replay): eyebrow + large
- * title on the left, optional accent action (label with an optional SF
+ * Section shell for scrolling feature pages (home, replay): optional eyebrow +
+ * large title on the left, optional accent action (label with an optional SF
  * Symbol) on the right, then the section body. Horizontal padding applies to
  * the header only, so full-bleed shelves can manage their own edge insets.
  */
@@ -67,7 +67,7 @@ export function Section({
             style={({ pressed }) => ({
               flexDirection: "row",
               alignItems: "center",
-              gap: 5,
+              gap: 4,
               paddingBottom: 2,
               opacity: pressed ? 0.6 : 1,
             })}

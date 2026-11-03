@@ -302,7 +302,7 @@ export function SwipeableTrackRow({
           return;
         }
         void toggle(track);
-        AccessibilityInfo.announceForAccessibility("Added to Favorites");
+        AccessibilityInfo.announceForAccessibility("Added to favorites");
         markPop.set(0);
         markPop.set(
           reducedMotion
@@ -335,7 +335,7 @@ export function SwipeableTrackRow({
         return;
       }
       void toggle(track);
-      AccessibilityInfo.announceForAccessibility("Removed from Favorites");
+      AccessibilityInfo.announceForAccessibility("Removed from favorites");
       glowOn("row", COMET_DELAY_MS);
     },
     [
@@ -610,8 +610,8 @@ export function SwipeableTrackRow({
 
   const accessibilityActions = useMemo<AccessibilityActionInfo[]>(
     () => [
-      ...(canPlayNext ? [{ name: "playNext", label: "Play Next" }] : []),
-      { name: "favorite", label: favorite ? "Remove from Favorites" : "Add to Favorites" },
+      ...(canPlayNext ? [{ name: "playNext", label: "Play next" }] : []),
+      { name: "favorite", label: favorite ? "Remove from favorites" : "Add to favorites" },
     ],
     [canPlayNext, favorite],
   );
