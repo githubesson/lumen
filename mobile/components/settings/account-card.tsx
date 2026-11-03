@@ -73,12 +73,12 @@ export function AccountCard() {
           <View
             style={[
               styles.avatar,
-              {
-                experimental_backgroundImage: `linear-gradient(140deg, #B47CFF 0%, ${theme.color.brand} 45%, #5B2BD9 100%)`,
-              },
+              { backgroundColor: theme.color.bgElev2 },
             ]}
           >
-            <Text style={styles.initials}>{accountInitials(me?.username)}</Text>
+            <Text style={[styles.initials, { color: theme.color.fg }]}>
+              {accountInitials(me?.username)}
+            </Text>
           </View>
           <View style={{ flex: 1, gap: 1 }}>
             <Text
@@ -107,7 +107,7 @@ export function AccountCard() {
               ]}
             >
               <swiftUI.Button
-                label="Sign Out"
+                label="Sign out"
                 systemImage="rectangle.portrait.and.arrow.right"
                 role="destructive"
                 onPress={() => void onSignOut()}
@@ -125,7 +125,7 @@ export function AccountCard() {
                 title: username,
                 items: [
                   {
-                    label: "Sign Out",
+                    label: "Sign out",
                     destructive: true,
                     onPress: () => void onSignOut(),
                   },
@@ -168,10 +168,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   initials: {
-    color: "#FFFFFF",
     fontSize: 16,
     fontWeight: "600",
-    letterSpacing: 0.2,
   },
   moreTarget: {
     width: MORE_TARGET,

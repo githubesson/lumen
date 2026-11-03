@@ -175,7 +175,7 @@ export function HeroMeta({
         style={{
           color: theme.color.fg,
           fontSize: 22,
-          fontWeight: "700",
+          fontWeight: "600",
           letterSpacing: -0.3,
         }}
       >
@@ -301,7 +301,7 @@ export function CompactMeta({
         style={{
           color: theme.color.fg,
           fontSize: 17,
-          fontWeight: "700",
+          fontWeight: "600",
           letterSpacing: -0.2,
         }}
       >

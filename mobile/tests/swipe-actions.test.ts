@@ -51,7 +51,7 @@ describe("swipe release", () => {
 });
 
 describe("action capsule", () => {
-  // "Play Next": a 20 pt icon, a 6 pt gap and the label.
+  // "Play next": a 20 pt icon, a 6 pt gap and the label.
   const content = 96;
 
   it("grows with the row, 8 pt off the screen edge and the row", () => {

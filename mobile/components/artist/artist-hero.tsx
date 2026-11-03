@@ -111,8 +111,8 @@ export function ArtistHero({
           style={{
             color: theme.color.fg,
             fontSize: 34,
-            fontWeight: "800",
-            letterSpacing: -0.8,
+            fontWeight: "600",
+            letterSpacing: -0.4,
             textAlign: "center",
           }}
         >

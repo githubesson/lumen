@@ -3,8 +3,8 @@ import { SymbolView } from "expo-symbols";
 import { useTheme } from "../../theme/theme";
 
 /**
- * Friendly zero-plays placeholder for a Replay window: sparkles glyph,
- * headline, and a nudge toward the Library tab.
+ * Zero-plays placeholder for a Replay period: waveform glyph, headline, and a
+ * nudge toward the Library tab.
  */
 export function ReplayEmptyState({
   style,
@@ -24,7 +24,7 @@ export function ReplayEmptyState({
         style,
       ]}
     >
-      <SymbolView name="sparkles" size={48} tintColor={theme.color.fgMuted} />
+      <SymbolView name="waveform" size={48} tintColor={theme.color.fgMuted} />
       <Text
         style={{
           color: theme.color.fg,
@@ -33,7 +33,7 @@ export function ReplayEmptyState({
           textAlign: "center",
         }}
       >
-        No plays in this window yet
+        No plays in this period
       </Text>
       <Text
         style={{
@@ -43,8 +43,7 @@ export function ReplayEmptyState({
           maxWidth: 280,
         }}
       >
-        Listen to some music from the Library tab and your stats will show up
-        here.
+        Music you play from the Library tab shows up here
       </Text>
     </View>
   );

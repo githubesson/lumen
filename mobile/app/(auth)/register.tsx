@@ -196,7 +196,7 @@ export default function RegisterScreen() {
           accessibilityRole="header"
           style={{
             fontSize: 34,
-            fontWeight: "700",
+            fontWeight: "600",
             color: theme.color.fg,
             letterSpacing: -0.4,
           }}
@@ -236,7 +236,7 @@ export default function RegisterScreen() {
             accessibilityLiveRegion="assertive"
             style={{ fontSize: 16, color: theme.color.danger }}
           >
-            This invite is invalid, expired, revoked, or has no uses remaining.
+            This invite is invalid, expired, revoked, or has no uses remaining
           </Text>
         ) : (
           <Text
@@ -252,7 +252,7 @@ export default function RegisterScreen() {
         <>
           <FormField
             label="Invite token or link"
-            hint="Paste the token or Lumen invite link you received."
+            hint="Paste the token or Lumen invite link you received"
           >
             <FormTextInput
               accessibilityLabel="Invite token or link"
@@ -271,7 +271,7 @@ export default function RegisterScreen() {
           <View accessibilityLiveRegion="assertive">
             <FormError message={inviteInputError} />
           </View>
-          <PrimaryButton
+          <PrimaryButton tone="inverse"
             label="Continue"
             onPress={onContinue}
             disabled={!inviteInput.trim()}
@@ -280,12 +280,12 @@ export default function RegisterScreen() {
       ) : null}
 
       {activeInviteState.status === "invalid" ? (
-        <PrimaryButton label="Enter another invite" onPress={enterAnotherInvite} />
+        <PrimaryButton tone="inverse" label="Enter another invite" onPress={enterAnotherInvite} />
       ) : null}
 
       {activeInviteState.status === "verification-error" ? (
         <>
-          <PrimaryButton
+          <PrimaryButton tone="inverse"
             label="Try again"
             onPress={() => void verifyInvite(activeInviteState.token)}
           />
@@ -296,7 +296,7 @@ export default function RegisterScreen() {
       {activeInviteState.status === "valid" ? (
         <>
           <View style={{ gap: theme.space.md }}>
-            <FormField label="Username" hint="2 characters or more.">
+            <FormField label="Username" hint="2 characters or more">
               <FormTextInput
                 accessibilityLabel="Username"
                 placeholder="Username"
@@ -313,7 +313,7 @@ export default function RegisterScreen() {
                 message={username ? validation.usernameError : null}
               />
             </FormField>
-            <FormField label="Password" hint="At least 8 characters, up to 256 bytes.">
+            <FormField label="Password" hint="At least 8 characters, up to 256 bytes">
               <FormTextInput
                 accessibilityLabel="Password"
                 placeholder="Password"
@@ -338,7 +338,7 @@ export default function RegisterScreen() {
             <FormError message={error} />
           </View>
 
-          <PrimaryButton
+          <PrimaryButton tone="inverse"
             label="Create account"
             onPress={onSubmit}
             loading={pending}

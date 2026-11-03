@@ -76,7 +76,7 @@ export function AlbumHeader({
           <Text
             style={{
               fontSize: 22,
-              fontWeight: "700",
+              fontWeight: "600",
               color: theme.color.fg,
               letterSpacing: -0.2,
               textAlign: "center",

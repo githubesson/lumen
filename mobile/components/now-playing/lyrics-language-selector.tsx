@@ -45,7 +45,7 @@ const TRANSLATION_LANGUAGES: readonly TranslationLanguage[] = [
 type ExpandedSelector = "source" | "target" | null;
 
 function languageLabel(code: string | null): string {
-  if (code === null) return "Auto Detect";
+  if (code === null) return "Auto detect";
   return (
     TRANSLATION_LANGUAGES.find((language) => language.code === code)?.label ??
     code
@@ -121,7 +121,7 @@ export function LyricsLanguageSelector({
             title="To"
             value={
               targetLanguage === null
-                ? "Select Language"
+                ? "Select language"
                 : languageLabel(targetLanguage)
             }
             expanded={expanded === "target"}
@@ -213,7 +213,7 @@ function SelectorRow({
         <Text
           style={[
             styles.selectorTitle,
-            { color: theme.color.fg, fontWeight: expanded ? "700" : "500" },
+            { color: theme.color.fg, fontWeight: expanded ? "600" : "500" },
           ]}
         >
           {title}
@@ -245,7 +245,7 @@ function LanguageOptions({
   const options: readonly (
     TranslationLanguage | { code: null; label: string }
   )[] = includeAutoDetect
-    ? [{ code: null, label: "Auto Detect" }, ...TRANSLATION_LANGUAGES]
+    ? [{ code: null, label: "Auto detect" }, ...TRANSLATION_LANGUAGES]
     : TRANSLATION_LANGUAGES;
 
   return (
@@ -360,11 +360,11 @@ const styles = StyleSheet.create({
     minHeight: 42,
     borderRadius: 21,
     marginTop: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 7,
+    gap: 8,
   },
   actionLabel: {
     fontSize: 14,

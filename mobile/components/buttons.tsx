@@ -1,6 +1,8 @@
 import { ActivityIndicator, Pressable, Text } from "react-native";
 import { useTheme } from "../theme/theme";
 
+const BUTTON_HEIGHT = 48;
+
 /**
  * Full-width filled accent button used for primary form actions (sign in,
  * create account, upload, save). Previously hand-rolled in six screens with
@@ -14,15 +16,21 @@ export function PrimaryButton({
   loading = false,
   disabled = false,
   accessibilityLabel,
+  tone = "accent",
 }: {
   label: string;
   onPress: () => void;
   loading?: boolean;
   disabled?: boolean;
   accessibilityLabel?: string;
+  /** `inverse` fills with the text color, for the signed-out screens. */
+  tone?: "accent" | "inverse";
 }) {
   const theme = useTheme();
   const isDisabled = disabled || loading;
+  const inverse = tone === "inverse";
+  const background = inverse ? theme.color.fg : theme.color.accent;
+  const foreground = inverse ? theme.color.bg : theme.color.onAccent;
   return (
     <Pressable
       onPress={onPress}
@@ -31,9 +39,10 @@ export function PrimaryButton({
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityState={{ disabled: isDisabled, busy: loading }}
       style={({ pressed }) => ({
-        backgroundColor: theme.color.accent,
+        backgroundColor: background,
         borderRadius: theme.radius.md,
-        paddingVertical: 14,
+        minHeight: BUTTON_HEIGHT,
+        paddingVertical: 12,
         alignItems: "center",
         justifyContent: "center",
         borderCurve: "continuous",
@@ -41,11 +50,9 @@ export function PrimaryButton({
       })}
     >
       {loading ? (
-        <ActivityIndicator color={theme.color.onAccent} />
+        <ActivityIndicator color={foreground} />
       ) : (
-        <Text
-          style={{ color: theme.color.onAccent, fontSize: 17, fontWeight: "600" }}
-        >
+        <Text style={{ color: foreground, fontSize: 17, fontWeight: "600" }}>
           {label}
         </Text>
       )}
@@ -81,8 +88,10 @@ export function SecondaryButton({
         backgroundColor: theme.color.bgElev1,
         borderRadius: theme.radius.md,
         borderCurve: "continuous",
-        paddingVertical: 11,
+        minHeight: BUTTON_HEIGHT,
+        paddingVertical: 12,
         alignItems: "center",
+        justifyContent: "center",
         opacity: disabled ? 0.5 : pressed ? 0.8 : 1,
       })}
     >

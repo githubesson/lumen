@@ -152,7 +152,7 @@ export default function AlbumDetailScreen() {
       <EmptyState
         fill
         selectable
-        message="Couldn't load album."
+        message="Couldn't load album"
         action={retryAction(albumQuery, tracksQuery)}
       />
     );

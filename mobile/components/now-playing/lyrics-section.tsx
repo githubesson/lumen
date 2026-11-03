@@ -428,11 +428,9 @@ export const LyricsSection = forwardRef<
                     line.section
                       ? {
                           color: theme.color.accent,
-                          fontSize: 12,
-                          fontWeight: "700",
-                          letterSpacing: 0.66,
-                          lineHeight: 17,
-                          textTransform: "uppercase",
+                          fontSize: 13,
+                          fontWeight: "600",
+                          lineHeight: 18,
                         }
                       : {
                           color: theme.color.fgSubtle,
@@ -453,7 +451,7 @@ export const LyricsSection = forwardRef<
                       color: theme.color.fgMuted,
                       fontSize: 14,
                       lineHeight: 20,
-                      paddingTop: 3,
+                      paddingTop: 4,
                     }}
                   >
                     {activeTranslation.lines[index]}
@@ -600,12 +598,11 @@ const SyncedLyricLine = memo(function SyncedLyricLine({
   );
 
   const baseLineText: TextStyle = {
-    fontSize: line.section ? 12 : state === "active" ? 19 : 18,
-    fontWeight: line.section ? "700" : state === "active" ? "500" : "400",
+    fontSize: line.section ? 13 : state === "active" ? 19 : 18,
+    fontWeight: line.section ? "600" : state === "active" ? "500" : "400",
     lineHeight: line.section ? 18 : 27,
-    // Frontend section letter-spacing 0.055em ≈ 0.66 at 12px; body -0.01em.
-    letterSpacing: line.section ? 0.66 : -0.19,
-    textTransform: line.section ? "uppercase" : "none",
+    // Body lines keep the frontend's -0.01em; section labels stay untracked.
+    letterSpacing: line.section ? 0 : -0.19,
   };
 
   return (
@@ -645,9 +642,8 @@ const SyncedLyricLine = memo(function SyncedLyricLine({
             color: theme.color.fgMuted,
             fontSize: 14,
             fontWeight: "400",
-            letterSpacing: -0.08,
             lineHeight: 20,
-            paddingTop: 3,
+            paddingTop: 4,
           }}
         >
           {translatedText}

@@ -124,11 +124,11 @@ export function useFavoritesListModel(
 
 const EMPTY_MESSAGES: Record<FavoritesMode, { error: string; empty: string }> = {
   favorites: {
-    error: "Couldn't load favorites.",
+    error: "Couldn't load favorites",
     empty: "No favorites yet. Tap the heart on a track to save it here.",
   },
   recent: {
-    error: "Couldn't load recent plays.",
+    error: "Couldn't load recent plays",
     empty: "No recent plays.",
   },
 };

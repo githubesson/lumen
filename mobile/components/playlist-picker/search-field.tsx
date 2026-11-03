@@ -7,7 +7,7 @@ const PLACEHOLDER = "Find or name a new playlist";
 
 /**
  * The picker's one field: it narrows the list, and a name no playlist has
- * becomes the "New Playlist" row. The placeholder says both. `busy` shows
+ * becomes the "New playlist" row. The placeholder says both. `busy` shows
  * a spinner at its end while the list is still finding out which playlists
  * already hold the track.
  */
@@ -65,7 +65,7 @@ const styles = StyleSheet.create({
   field: {
     height: 40,
     marginTop: 12,
-    marginHorizontal: 14,
+    marginHorizontal: 16,
     marginBottom: 4,
     paddingLeft: 12,
     paddingRight: 6,
@@ -73,7 +73,7 @@ const styles = StyleSheet.create({
     borderCurve: "continuous",
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
+    gap: 8,
   },
   input: {
     flex: 1,

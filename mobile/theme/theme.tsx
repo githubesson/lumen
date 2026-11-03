@@ -32,8 +32,8 @@ export interface ThemePalette {
   /** Foreground (text/icon/spinner) on top of `accent`. */
   onAccent: string;
   /**
-   * The app icon's purple, for brand moments like the welcome screen's hero.
-   * Controls and links keep using `accent`. Lifted in dark so it reads on black.
+   * The app icon's purple, which in the interface means Favorites and nothing
+   * else. Controls and links use `accent`. Lifted in dark so it reads on black.
    */
   brand: string;
   /** Destructive / error (iOS systemRed, per scheme). */

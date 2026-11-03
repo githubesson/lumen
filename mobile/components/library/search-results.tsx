@@ -154,7 +154,7 @@ export function SearchResults({ search }: { search: string }) {
       }
       ListEmptyComponent={
         !search ? (
-          <EmptyState message="Search for songs, albums, and artists." />
+          <EmptyState message="Search for songs, albums, and artists" />
         ) : query.isLoading ? (
           <EmptyState loading />
         ) : query.isError || warnings.length === 0 ? (

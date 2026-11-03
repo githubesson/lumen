@@ -31,7 +31,7 @@ export function TrackHeader({
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text
           numberOfLines={2}
-          style={{ color: theme.color.fg, fontSize: 22, fontWeight: "700" }}
+          style={{ color: theme.color.fg, fontSize: 22, fontWeight: "600" }}
         >
           {track.title}
         </Text>

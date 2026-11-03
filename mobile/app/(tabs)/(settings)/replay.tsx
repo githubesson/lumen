@@ -10,9 +10,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Directory, File, Paths } from "expo-file-system";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
+import { startListPlayback } from "@music-library/core/player/play-list";
 import {
   ApiError,
   api,
+  artistImageUrl,
   displayText,
   errorMessage,
   playsById as playsByIdFor,
@@ -22,6 +24,8 @@ import {
   replayImageRequest,
   replayPlaylistRequest,
   replayRequest,
+  topArtistAction,
+  topArtistTracks,
   useAuth,
   useLocalDay,
   type ReplayAlbum,
@@ -52,7 +56,8 @@ import { SummaryGrid } from "../../../components/replay/summary-grid";
 import { TopTrackList } from "../../../components/replay/top-track-list";
 import { qk } from "../../../lib/query-keys";
 import { QUERY_STALE_TIME } from "../../../lib/query-policy";
-import { usePlayQueue } from "../../../lib/use-play-queue";
+import { listPlaybackQueue, usePlayQueue } from "../../../lib/use-play-queue";
+import { usePlayTrack } from "../../../context/player";
 import { usePullToRefresh } from "../../../lib/use-pull-to-refresh";
 import { useTheme } from "../../../theme/theme";
 import { isShareDismissal } from "../../../lib/share-dismissal";
@@ -98,6 +103,13 @@ export default function ReplayScreen() {
   );
   const playsById = useMemo(() => playsByIdFor(data?.top_tracks), [data?.top_tracks]);
   const onTrackPress = usePlayQueue(topTracks);
+  const play = usePlayTrack();
+  // Their tracks among the top tracks: the artist tile's cover, and what it plays
+  // when they have no library page to open.
+  const artistTracks = useMemo(
+    () => topArtistTracks(data?.top_artists ?? [], topTracks),
+    [data?.top_artists, topTracks],
+  );
 
   const onAlbumPress = useCallback(
     (album: ReplayAlbum) => {
@@ -198,7 +210,7 @@ export default function ReplayScreen() {
       {replayQuery.isLoading && !data ? (
         <EmptyState loading />
       ) : replayQuery.isError ? (
-        <EmptyState message="Couldn't load Replay." />
+        <EmptyState message="Couldn't load Replay" />
       ) : !hasData ? (
         <ReplayEmptyState />
       ) : data && summary ? (
@@ -211,7 +223,7 @@ export default function ReplayScreen() {
           />
 
           {topTracks.length > 0 && (
-            <Section eyebrow="On repeat" title="Top tracks">
+            <Section title="Top tracks">
               <TopTrackList
                 tracks={topTracks.slice(0, 10)}
                 playsById={playsById}
@@ -222,34 +234,50 @@ export default function ReplayScreen() {
           )}
 
           {data.top_artists.length > 0 && (
-            <Section eyebrow="On the marquee" title="Top artists">
+            <Section title="Top artists">
               <HorizontalShelf>
-                {data.top_artists.map((a, i) => (
-                  <RankedShelfTile
-                    key={a.id}
-                    rank={i + 1}
-                    title={displayText(a.name)}
-                    subtitle={pluralize(a.plays, "play")}
-                    subtitleTabular
-                    accessibilityLabel={`View artist ${displayText(a.name)}`}
-                    art={{ kind: "gradient", seed: a.id }}
-                    onPress={() =>
-                      router.push({
-                        pathname: "/(tabs)/(settings)/artists/[id]",
-                        params: { id: a.id },
-                      })
-                    }
-                  />
-                ))}
+                {data.top_artists.map((a, i) => {
+                  const own = artistTracks.get(a.id) ?? [];
+                  const action = topArtistAction(a, own);
+                  const name = displayText(a.name);
+                  return (
+                    <RankedShelfTile
+                      key={a.id}
+                      rank={i + 1}
+                      title={name}
+                      subtitle={pluralize(a.plays, "play")}
+                      subtitleTabular
+                      accessibilityLabel={
+                        action === "open"
+                          ? `View artist ${name}`
+                          : action === "play"
+                            ? `Play ${name}`
+                            : name
+                      }
+                      art={{
+                        kind: "artist",
+                        imageUrl: artistImageUrl({ name: a.name }, own, 256),
+                      }}
+                      onPress={
+                        action === "open"
+                          ? () =>
+                              router.push({
+                                pathname: "/(tabs)/(settings)/artists/[id]",
+                                params: { id: a.id },
+                              })
+                          : action === "play"
+                            ? () => startListPlayback(play, listPlaybackQueue(own), false)
+                            : undefined
+                      }
+                    />
+                  );
+                })}
               </HorizontalShelf>
             </Section>
           )}
 
           {data.top_albums.length > 0 && (
-            <Section
-              eyebrow="Played front to back"
-              title="Top albums"
-            >
+            <Section title="Top albums">
               <HorizontalShelf>
                 {data.top_albums.map((a, i) => (
                   <RankedShelfTile
@@ -267,10 +295,7 @@ export default function ReplayScreen() {
           )}
 
           {data.activity.length > 0 && (
-            <Section
-              eyebrow="When you listened"
-              title="Listening activity"
-            >
+            <Section title="Listening activity">
               <ActivityChart
                 buckets={data.activity}
                 bucket={data.bucket}
@@ -280,10 +305,7 @@ export default function ReplayScreen() {
           )}
 
           {data.top_genres.length > 0 && (
-            <Section
-              eyebrow="What filled the room"
-              title="Top genres"
-            >
+            <Section title="Top genres">
               <GenreList
                 genres={data.top_genres}
                 style={{ marginHorizontal: theme.space.lg }}

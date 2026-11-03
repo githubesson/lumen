@@ -1,12 +1,12 @@
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { displayText, genreShares, type ReplayData } from "@music-library/core";
 import { Card } from "../primitives";
-import { useTheme } from "../../theme/theme";
+import { useTheme, withAlpha } from "../../theme/theme";
 import { HairlineSeparator } from "../hairline-separator";
 
 /**
- * Card of genre rows with a proportional accent bar and percent-of-plays
- * figure per genre.
+ * Card of genre rows with a proportional bar and percent-of-plays figure per
+ * genre. Only the top genre's bar takes the accent.
  */
 export function GenreList({
   genres,
@@ -22,10 +22,10 @@ export function GenreList({
         const pct = g.share;
         return (
           <View key={g.genre}>
-            {i > 0 && <HairlineSeparator inset={14} />}
+            {i > 0 && <HairlineSeparator inset={16} />}
             <View
               style={{
-                paddingHorizontal: 14,
+                paddingHorizontal: 16,
                 paddingVertical: 12,
                 flexDirection: "row",
                 alignItems: "center",
@@ -56,7 +56,10 @@ export function GenreList({
                   style={{
                     width: `${pct}%`,
                     height: "100%",
-                    backgroundColor: theme.color.accent,
+                    backgroundColor:
+                      i === 0
+                        ? theme.color.accent
+                        : withAlpha(theme.color.fgMuted, 0.45),
                     borderRadius: 999,
                   }}
                 />

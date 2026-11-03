@@ -204,12 +204,12 @@ export default function AdminTidalScreen() {
           <Card style={{ padding: theme.space.lg, gap: theme.space.md }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: theme.space.sm }}>
               <ActivityIndicator color={theme.color.accent} />
-              <View style={{ flex: 1, gap: 3 }}>
+              <View style={{ flex: 1, gap: 2 }}>
                 <Text style={{ color: theme.color.fg, fontSize: 16, fontWeight: "600" }}>
                   Waiting for TIDAL
                 </Text>
                 <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>
-                  This page updates automatically after approval.
+                  This page updates automatically after approval
                 </Text>
               </View>
             </View>
@@ -314,12 +314,12 @@ function StatusCard({
             />
           )}
         </View>
-        <View style={{ flex: 1, gap: 3 }}>
+        <View style={{ flex: 1, gap: 2 }}>
           <Text style={{ color: theme.color.fg, fontSize: 17, fontWeight: "600" }}>
             {PROXY_STATE_LABELS[state]}
           </Text>
           <Text style={{ color: theme.color.fgMuted, fontSize: 13 }}>
-            TIDAL credentials stay on the server.
+            TIDAL credentials stay on the server
           </Text>
         </View>
       </View>
@@ -401,10 +401,10 @@ function StatusValue({
         borderRadius: theme.radius.sm,
         borderCurve: "continuous",
         padding: theme.space.sm,
-        gap: 3,
+        gap: 4,
       }}
     >
-      <Text style={{ color: theme.color.fgMuted, fontSize: 10, textTransform: "uppercase" }}>
+      <Text style={{ color: theme.color.fgMuted, fontSize: 11 }}>
         {label}
       </Text>
       <Text selectable numberOfLines={1} style={{ color: theme.color.fg, fontSize: 12 }}>
@@ -437,7 +437,7 @@ function AccountCard({
       }}
     >
       <SymbolView name="person.crop.circle.fill" size={30} tintColor={theme.color.fgMuted} />
-      <View style={{ flex: 1, gap: 3 }}>
+      <View style={{ flex: 1, gap: 2 }}>
         <Text selectable style={{ color: theme.color.fg, fontSize: 15, fontWeight: "600" }}>
           {tidalAccountLabel(account)}
         </Text>

@@ -137,7 +137,7 @@ describe("queue first render", () => {
   it("shows the empty state immediately at the end of the queue", () => {
     const html = render({ startIndex: queue.length });
     expect(observed.data).toEqual([]);
-    expect(html).toContain("Nothing else queued.");
+    expect(html).toContain("Nothing else queued");
     expect(html).toContain("0 songs");
   });
 

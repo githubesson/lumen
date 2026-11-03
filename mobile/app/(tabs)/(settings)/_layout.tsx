@@ -45,23 +45,23 @@ export default function SettingsStackLayout() {
         name="admin-new-invite"
         options={{
           headerLargeTitle: false,
-          title: "New Invitation",
+          title: "New invitation",
         }}
       />
       <Stack.Screen
         name="admin-add-root"
         options={{
           headerLargeTitle: false,
-          title: "Add Music Root",
+          title: "Add music root",
         }}
       />
       <Stack.Screen
         name="track/[id]"
-        options={{ headerLargeTitle: false, title: "Track Info" }}
+        options={{ headerLargeTitle: false, title: "Track info" }}
       />
       <Stack.Screen
         name="track/edit"
-        options={{ headerLargeTitle: false, title: "Edit Track" }}
+        options={{ headerLargeTitle: false, title: "Edit track" }}
       />
       <Stack.Screen
         name="tidal-artists/[id]"
@@ -69,7 +69,7 @@ export default function SettingsStackLayout() {
       />
       <Stack.Screen
         name="albums/edit"
-        options={{ headerLargeTitle: false, title: "Edit Album" }}
+        options={{ headerLargeTitle: false, title: "Edit album" }}
       />
     </Stack>
   );

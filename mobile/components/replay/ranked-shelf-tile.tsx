@@ -1,5 +1,4 @@
 import {
-  StyleSheet,
   Text,
   View,
   type StyleProp,
@@ -7,6 +6,7 @@ import {
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
+import { SymbolView } from "expo-symbols";
 import { albumCoverUrl } from "@music-library/core";
 import { ShelfTile } from "../shelf-tile";
 import { useTheme } from "../../theme/theme";
@@ -14,20 +14,12 @@ import { useTheme } from "../../theme/theme";
 const TILE_SIZE = 128;
 
 /**
- * Artwork for a shelf tile: either a real album cover or a deterministic
- * two-tone gradient seeded by a string (for artists without cover art).
+ * Artwork for a shelf tile: an album's cover, or for an artist a cover from
+ * their top tracks, falling back to a person glyph.
  */
 type ShelfTileArt =
   | { kind: "album"; albumId: string }
-  | { kind: "gradient"; seed: string };
-
-// Deterministic hue seeded by a string, used for artist tiles that have
-// no real cover art.
-function hueFor(seed: string): number {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) | 0;
-  return Math.abs(hash) % 360;
-}
+  | { kind: "artist"; imageUrl: string | null };
 
 /**
  * Ranked 128pt tile for the top-artists / top-albums shelves: artwork with
@@ -51,14 +43,15 @@ export function RankedShelfTile({
   subtitleTabular?: boolean;
   accessibilityLabel: string;
   art: ShelfTileArt;
-  onPress: () => void;
+  /** Omitted when the tile has nothing to open or play. */
+  onPress?: () => void;
   style?: StyleProp<ViewStyle>;
 }) {
   return (
     <ShelfTile
       artwork={
-        art.kind === "gradient" ? (
-          <GradientArt seed={art.seed} rank={rank} />
+        art.kind === "artist" ? (
+          <ArtistArt imageUrl={art.imageUrl} rank={rank} />
         ) : (
           <AlbumArt albumId={art.albumId} rank={rank} />
         )
@@ -68,18 +61,21 @@ export function RankedShelfTile({
       subtitleTabular={subtitleTabular}
       width={TILE_SIZE}
       accessibilityLabel={accessibilityLabel}
-      onPress={() => {
-        void Haptics.selectionAsync();
-        onPress();
-      }}
+      onPress={
+        onPress
+          ? () => {
+              void Haptics.selectionAsync();
+              onPress();
+            }
+          : undefined
+      }
       style={style}
     />
   );
 }
 
-function GradientArt({ seed, rank }: { seed: string; rank: number }) {
+function ArtistArt({ imageUrl, rank }: { imageUrl: string | null; rank: number }) {
   const theme = useTheme();
-  const hue = hueFor(seed);
   return (
     <View
       style={{
@@ -88,16 +84,22 @@ function GradientArt({ seed, rank }: { seed: string; rank: number }) {
         borderRadius: theme.radius.md,
         borderCurve: "continuous",
         overflow: "hidden",
-        backgroundColor: `hsl(${hue}, 50%, 50%)`,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: theme.color.bgElev1,
       }}
     >
-      <View
-        style={{
-          ...StyleSheet.absoluteFill,
-          backgroundColor: `hsl(${(hue + 40) % 360}, 60%, 35%)`,
-          opacity: 0.55,
-        }}
-      />
+      {imageUrl ? (
+        <Image
+          source={{ uri: imageUrl }}
+          style={{ width: TILE_SIZE, height: TILE_SIZE }}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          recyclingKey={imageUrl}
+        />
+      ) : (
+        <SymbolView name="person.fill" size={48} tintColor={theme.color.fgMuted} />
+      )}
       <RankBadge rank={rank} />
     </View>
   );
@@ -135,12 +137,12 @@ function RankBadge({ rank }: { rank: number }) {
     <View
       style={{
         position: "absolute",
-        top: 6,
-        left: 6,
-        minWidth: 22,
-        height: 22,
-        paddingHorizontal: 7,
-        borderRadius: 999,
+        top: 8,
+        left: 8,
+        minWidth: 24,
+        height: 24,
+        paddingHorizontal: 8,
+        borderRadius: 12,
         backgroundColor: "rgba(0,0,0,0.6)",
         alignItems: "center",
         justifyContent: "center",
@@ -149,7 +151,7 @@ function RankBadge({ rank }: { rank: number }) {
       <Text
         style={{
           color: "#FFFFFF",
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: "600",
           fontVariant: ["tabular-nums"],
         }}

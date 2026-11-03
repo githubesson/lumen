@@ -209,7 +209,7 @@ export default function AdminNewInviteScreen() {
           >
             <Text
               accessibilityRole="header"
-              style={{ color: theme.color.fg, fontSize: 24, fontWeight: "700" }}
+              style={{ color: theme.color.fg, fontSize: 24, fontWeight: "600" }}
             >
               Invite ready
             </Text>
@@ -224,7 +224,7 @@ export default function AdminNewInviteScreen() {
 
           <FormField
             label="Registration link"
-            hint="Opens Lumen directly when the app is installed."
+            hint="Opens Lumen directly when the app is installed"
           >
             <InviteValue value={buildInviteRegistrationUrl(created.token)} />
           </FormField>
@@ -278,7 +278,7 @@ export default function AdminNewInviteScreen() {
 
           <FormField
             label="Expires in (days)"
-            hint="Leave blank for no expiry."
+            hint="Leave blank for no expiry"
           >
             <FormTextInput
               accessibilityLabel="Invite expiry in days"
@@ -314,7 +314,7 @@ function InviteValue({ value }: { value: string }) {
         backgroundColor: theme.color.bgElev1,
         borderRadius: theme.radius.md,
         borderCurve: "continuous",
-        paddingHorizontal: 14,
+        paddingHorizontal: 16,
         paddingVertical: 12,
       }}
     >

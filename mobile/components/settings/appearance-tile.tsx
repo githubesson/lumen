@@ -256,7 +256,7 @@ const styles = StyleSheet.create({
   label: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 4,
   },
   radio: {
     width: RADIO,
@@ -266,20 +266,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   mini: {
-    paddingTop: 14,
-    paddingHorizontal: 9,
+    paddingTop: 12,
+    paddingHorizontal: 8,
   },
   miniTitle: {
     height: 7,
     width: "46%",
     borderRadius: 3,
-    marginBottom: 9,
+    marginBottom: 8,
   },
   miniLine: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
-    marginBottom: 7,
+    gap: 4,
+    marginBottom: 8,
   },
   miniCover: {
     width: 15,

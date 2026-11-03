@@ -34,16 +34,18 @@ export function ShelfTile({
   subtitleAccessory?: ReactNode;
   width: number;
   accessibilityLabel: string;
-  onPress: () => void;
+  /** Omitted when the tile has nothing to open or play. */
+  onPress?: () => void;
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
-      accessibilityRole="button"
+      // Not `disabled`: VoiceOver would read a tile with nothing to do as dimmed.
+      accessibilityRole={onPress ? "button" : undefined}
       accessibilityLabel={accessibilityLabel}
-      style={({ pressed }) => [{ width, opacity: pressed ? 0.7 : 1 }, style]}
+      style={({ pressed }) => [{ width, opacity: pressed && onPress ? 0.7 : 1 }, style]}
     >
       {artwork}
       <Text

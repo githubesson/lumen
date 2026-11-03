@@ -36,7 +36,7 @@ const HERO_COVER_MAX = 160;
 // "Custom" is the download order, newest first. No "Plays": the stored
 // snapshots carry no play counts.
 const SORT_OPTIONS: SortMenuOption[] = [
-  { key: "custom", label: "Recently Downloaded", symbol: "arrow.down.circle" },
+  { key: "custom", label: "Recently downloaded", symbol: "arrow.down.circle" },
   { key: "title", label: "Title" },
   { key: "duration", label: "Length" },
 ];
@@ -184,7 +184,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 24,
-    fontWeight: "700",
+    fontWeight: "600",
     letterSpacing: -0.2,
     textAlign: "center",
   },

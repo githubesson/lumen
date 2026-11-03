@@ -230,7 +230,7 @@ describe("PlaylistPickerScreen", () => {
     mock.trackId = undefined;
     mock.playlists = [playlist("p1", "late night")];
     const html = renderToStaticMarkup(<PlaylistPickerScreen />);
-    expect(html).toContain("No track to add.");
+    expect(html).toContain("No track to add");
     expect(html).not.toContain("late night");
     expect(html).not.toContain("loading");
   });

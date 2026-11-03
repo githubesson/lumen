@@ -383,7 +383,7 @@ function AddConfirmationHud({
             {confirmation.playlistName}
           </Text>
           <Text style={[styles.subtitle, { color: theme.color.fgMuted }]}>
-            {confirmation.created ? "New Playlist" : "Added"}
+            {confirmation.created ? "New playlist" : "Added"}
           </Text>
         </Animated.View>
       </Animated.View>

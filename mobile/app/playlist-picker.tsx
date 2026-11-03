@@ -205,13 +205,13 @@ export default function PlaylistPickerScreen() {
         ListEmptyComponent={
           // Only a link can open the sheet without a track.
           !trackId ? (
-            <EmptyState selectable message="No track to add." />
+            <EmptyState selectable message="No track to add" />
           ) : !playlists && playlistsQuery.isError ? (
-            <EmptyState selectable message="Couldn't load playlists." />
+            <EmptyState selectable message="Couldn't load playlists" />
           ) : !playlists ? (
             <EmptyState loading />
           ) : (
-            <EmptyState message="No playlists you can add to." />
+            <EmptyState message="No playlists you can add to" />
           )
         }
       />
@@ -252,7 +252,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
     paddingTop: 24,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
   },
   close: {
     width: 44,

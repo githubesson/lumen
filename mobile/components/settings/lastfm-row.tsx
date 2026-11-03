@@ -127,7 +127,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
     paddingHorizontal: SETTINGS_INSET,
-    paddingVertical: 14,
+    paddingVertical: 12,
   },
   lead: {
     flexDirection: "row",

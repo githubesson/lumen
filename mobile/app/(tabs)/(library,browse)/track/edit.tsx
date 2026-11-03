@@ -30,7 +30,7 @@ import { EmptyState, retryAction } from "../../../../components/empty-state";
 
 /**
  * Admin-only track metadata editor. Reached from the track context menu's
- * "Edit Metadata" action. Loads the track, lets an admin rewrite the same
+ * "Edit metadata" action. Loads the track, lets an admin rewrite the same
  * fields the web edit dialog exposes, and PATCHes only what actually changed.
  */
 export default function TrackEditScreen() {
@@ -59,7 +59,7 @@ export default function TrackEditScreen() {
       <EmptyState
         fill
         selectable
-        message="Couldn't load track."
+        message="Couldn't load track"
         action={retryAction(trackQuery)}
       />
     );
@@ -67,7 +67,7 @@ export default function TrackEditScreen() {
   if (!canEdit) {
     return (
       <>
-        <Stack.Screen options={{ title: "Edit Track" }} />
+        <Stack.Screen options={{ title: "Edit track" }} />
         <EmptyState
           fill
           message={
@@ -114,7 +114,7 @@ function TrackEditor({ id, track }: { id: string; track: TrackDetail }) {
     <>
       <Stack.Screen
         options={{
-          title: "Edit Track",
+          title: "Edit track",
           headerRight: () => (
             <HeaderSaveButton saving={saving} onPress={() => void onSave()} />
           ),
@@ -147,7 +147,7 @@ function TrackEditor({ id, track }: { id: string; track: TrackDetail }) {
             autoCapitalize="words"
           />
         </FormField>
-        <FormField label="Album" hint="Leave blank to detach from its album.">
+        <FormField label="Album" hint="Leave blank to detach from its album">
           <FormTextInput
             value={draft.albumTitle}
             onChangeText={(value) => setField("albumTitle", value)}
@@ -156,7 +156,7 @@ function TrackEditor({ id, track }: { id: string; track: TrackDetail }) {
         </FormField>
         <FormField
           label="Album artist"
-          hint="Leave blank for compilations (Various Artists)."
+          hint="Leave blank for compilations (Various Artists)"
         >
           <FormTextInput
             value={draft.albumArtist}

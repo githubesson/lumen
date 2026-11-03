@@ -124,7 +124,7 @@ export default function ArtistDetailScreen() {
       <EmptyState
         fill
         selectable
-        message="Couldn't load artist."
+        message="Couldn't load artist"
         action={retryAction(artistQuery, tracksQuery)}
       />
     );

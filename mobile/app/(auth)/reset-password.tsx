@@ -57,7 +57,7 @@ export default function ResetPasswordScreen() {
         <Text
           style={{
             fontSize: 34,
-            fontWeight: "700",
+            fontWeight: "600",
             color: theme.color.fg,
             letterSpacing: -0.4,
           }}
@@ -65,7 +65,7 @@ export default function ResetPasswordScreen() {
           Set a new password
         </Text>
         <Text style={{ fontSize: 16, color: theme.color.fgMuted }}>
-          Choose a new password before continuing.
+          Choose a new password before continuing
         </Text>
       </View>
 
@@ -114,6 +114,7 @@ export default function ResetPasswordScreen() {
       <FormError message={error} />
 
       <PrimaryButton
+        tone="inverse"
         label="Update password"
         onPress={onSubmit}
         loading={pending}

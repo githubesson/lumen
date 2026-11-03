@@ -225,14 +225,14 @@ it("keeps the previous version up, its rows hidden and buttons waiting, while th
   expect(mock.pending).toBe(true);
   expect(mock.segments?.value).toBe("2");
   expect(html).toContain('aria-hidden="true"><span>Powiedz To</span>');
-  expect(html).not.toContain("Couldn&#x27;t load TIDAL album.");
+  expect(html).not.toContain("Couldn&#x27;t load TIDAL album");
 });
 
 it("shows the error with the picker when the picked version can't load offline", () => {
   mock.params = { id: "2", artist: "77" };
   Object.assign(mock.album, { isPlaceholderData: true, isPaused: true });
   const html = markup();
-  expect(html).toContain("Couldn&#x27;t load TIDAL album.");
+  expect(html).toContain("Couldn&#x27;t load TIDAL album");
   expect(html).not.toContain("<span>Powiedz To</span>");
   mock.segments?.onChange("1");
   expect(mock.setParams).toHaveBeenCalledWith({ id: "1", artist: "77" });
@@ -242,7 +242,7 @@ it("shows the error with the picker when the picked version fails", () => {
   mock.params = { id: "2", artist: "77" };
   mock.album = { data: undefined, isError: true };
   const html = markup();
-  expect(html).toContain("Couldn&#x27;t load TIDAL album.");
+  expect(html).toContain("Couldn&#x27;t load TIDAL album");
   expect(mock.segments?.value).toBe("2");
 });
 
@@ -250,7 +250,7 @@ it("stays on the error while a failed version is retried", () => {
   mock.params = { id: "2", artist: "77" };
   Object.assign(mock.album, { isPlaceholderData: true, errorUpdateCount: 1 });
   const html = markup();
-  expect(html).toContain("Couldn&#x27;t load TIDAL album.");
+  expect(html).toContain("Couldn&#x27;t load TIDAL album");
   expect(html).not.toContain("<span>Powiedz To</span>");
   expect(mock.segments?.value).toBe("2");
 });

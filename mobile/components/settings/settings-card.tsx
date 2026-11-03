@@ -13,7 +13,7 @@ import { SectionLabel } from "../primitives";
 import { useTheme } from "../../theme/theme";
 
 /** Horizontal padding inside the Settings cards. */
-export const SETTINGS_INSET = 14;
+export const SETTINGS_INSET = 16;
 
 /**
  * A Settings card: the elevated surface with the large radius the redesign
@@ -45,13 +45,12 @@ export function SettingsCard({
   );
 }
 
-/** Muted uppercase label above a card ("Server"). */
+/** Muted label above a card ("Server"). */
 export function SettingsSectionLabel({ children }: { children: string }) {
   const theme = useTheme();
   return (
     <SectionLabel
       style={{
-        fontSize: 13,
         paddingHorizontal: theme.space.lg,
         paddingBottom: theme.space.sm,
       }}
@@ -137,7 +136,7 @@ export function SettingsLinkRow({
         styles.row,
         {
           paddingHorizontal: SETTINGS_INSET,
-          paddingVertical: 14,
+          paddingVertical: 12,
           borderTopWidth: border ? StyleSheet.hairlineWidth : 0,
           borderTopColor: theme.color.separator,
           backgroundColor: pressed ? theme.color.bgElev2 : "transparent",
@@ -164,7 +163,7 @@ export function CountBadge({ count }: { count: number }) {
       style={{
         minWidth: 22,
         height: 22,
-        paddingHorizontal: 7,
+        paddingHorizontal: 8,
         borderRadius: 11,
         backgroundColor: theme.color.danger,
         alignItems: "center",

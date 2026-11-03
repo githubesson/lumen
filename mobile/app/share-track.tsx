@@ -433,7 +433,7 @@ export default function ShareTrackScreen() {
   }, [getShareUrl, picked, trackQuery.data]);
 
   // Downloads the snippet's generated preview video (the MP4 chat apps embed)
-  // and hands it to the share sheet, whose "Save Video" puts it in Photos.
+  // and hands it to the share sheet, whose "Save video" puts it in Photos.
   const saveVideo = useCallback(async () => {
     if (!picked || videoBusy) return;
     let url: string;
@@ -544,7 +544,7 @@ export default function ShareTrackScreen() {
         ) : trackQuery.isError || !trackQuery.data ? (
           <View style={styles.center}>
             <Text style={{ color: theme.color.fgMuted }}>
-              Couldn&apos;t load track.
+              Couldn&apos;t load track
             </Text>
           </View>
         ) : (
@@ -595,21 +595,21 @@ export default function ShareTrackScreen() {
                 onPickCustom={() => void pickCustomBackground()}
               />
               <ShareActionButton
-                label={busy ? "Generating..." : "Share Link"}
+                label={busy ? "Generating…" : "Share link"}
                 icon="square.and.arrow.up"
                 disabled={!canShare}
                 loading={busy}
                 onPress={() => void shareLink()}
               />
               <ShareActionButton
-                label={videoBusy ? "Preparing Video..." : "Save Video"}
+                label={videoBusy ? "Preparing video…" : "Save video"}
                 icon="square.and.arrow.down"
                 disabled={!canShare}
                 loading={videoBusy}
                 onPress={() => void saveVideo()}
               />
               <ShareActionButton
-                label="Copy Link"
+                label="Copy link"
                 icon="doc.on.doc"
                 disabled={!canShare}
                 onPress={() => void copyLink()}
@@ -619,7 +619,7 @@ export default function ShareTrackScreen() {
         )}
       </ScrollView>
 
-      <Stack.Screen.Title>Share Track</Stack.Screen.Title>
+      <Stack.Screen.Title>Share track</Stack.Screen.Title>
       <Stack.Toolbar placement="left">
         <Stack.Toolbar.Button
           icon="xmark"

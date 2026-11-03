@@ -124,7 +124,7 @@ export default function AdminInvitesScreen() {
                 style={{ paddingVertical: 0 }}
                 message={errorMessage(
                   invitesQuery.error,
-                  "Couldn't load invitations.",
+                  "Couldn't load invitations",
                 )}
               />
               <SecondaryButton

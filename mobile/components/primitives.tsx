@@ -26,7 +26,7 @@ export function Card({
       style={[
         {
           backgroundColor: theme.color.bgElev1,
-          borderRadius: theme.radius.md,
+          borderRadius: theme.radius.lg,
           borderCurve: "continuous",
         },
         style,
@@ -37,7 +37,7 @@ export function Card({
   );
 }
 
-/** Muted uppercase micro-label above a form section or list group. */
+/** Muted label above a form section or list group. */
 export function SectionLabel({
   style,
   children,
@@ -51,9 +51,7 @@ export function SectionLabel({
       style={[
         {
           color: theme.color.fgMuted,
-          fontSize: 12,
-          textTransform: "uppercase",
-          letterSpacing: 0.4,
+          fontSize: 13,
         },
         style,
       ]}

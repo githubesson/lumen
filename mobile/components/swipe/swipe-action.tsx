@@ -23,7 +23,7 @@ export type SwipeActionKind = "next" | "favorite" | "unfavorite";
 
 /**
  * What each swipe does, and its colour: Play Next in the accent, Favorite in
- * systemPink, Unfavorite in systemGray2. Unfavorite is gray rather than red:
+ * Favorites' purple, Unfavorite in systemGray2. Unfavorite is gray rather than red:
  * it can be undone and isn't Delete, and the same motion never looks the same
  * while doing the opposite thing.
  */
@@ -32,7 +32,7 @@ export function swipeActionStyle(kind: SwipeActionKind, theme: ThemeTokens) {
   switch (kind) {
     case "next":
       return {
-        label: "Play Next",
+        label: "Play next",
         icon: "text.line.first.and.arrowtriangle.forward" as SFSymbol,
         color: theme.color.accent,
       };
@@ -40,7 +40,7 @@ export function swipeActionStyle(kind: SwipeActionKind, theme: ThemeTokens) {
       return {
         label: "Favorite",
         icon: "heart.fill" as SFSymbol,
-        color: dark ? "#FF375F" : "#FF2D55",
+        color: theme.color.brand,
       };
     case "unfavorite":
       return {
@@ -223,7 +223,6 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 15,
     fontWeight: "600",
-    letterSpacing: -0.15,
   },
   // The mock darkens a pressed capsule (brightness .8).
   pressed: {

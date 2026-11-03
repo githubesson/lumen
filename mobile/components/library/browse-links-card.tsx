@@ -44,7 +44,7 @@ export function BrowseLinksCard({
   );
 }
 
-/** One disclosure row inside the card: accent icon, label, chevron, and an optional inset hairline above. */
+/** One disclosure row inside the card: icon, label, chevron, and an optional inset hairline above. */
 function BrowseLinkRow({
   icon,
   label,
@@ -68,7 +68,7 @@ function BrowseLinkRow({
           flexDirection: "row",
           alignItems: "center",
           paddingHorizontal: theme.space.md,
-          paddingVertical: 13,
+          paddingVertical: 12,
           gap: theme.space.md,
           backgroundColor: pressed ? theme.color.bgElev2 : "transparent",
         })}
@@ -77,7 +77,7 @@ function BrowseLinkRow({
           name={icon}
           size={20}
           weight="medium"
-          tintColor={theme.color.accent}
+          tintColor={theme.color.fg}
         />
         <Text style={{ flex: 1, color: theme.color.fg, fontSize: 16 }}>
           {label}

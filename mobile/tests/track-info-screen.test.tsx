@@ -355,7 +355,7 @@ it("offers no Play for a track dropped from TIDAL, and says why", () => {
   const out = html();
   expect(out).not.toContain("<button>Play</button>");
   expect(out).toContain("<button>More actions</button>");
-  expect(out).toContain("Removed from TIDAL, so it can&#x27;t play.");
+  expect(out).toContain("Removed from TIDAL, so it can&#x27;t play");
 });
 
 it("doesn't ask for the album after TIDAL failed, and never twice", () => {

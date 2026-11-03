@@ -24,7 +24,7 @@ import {
 const CROP_EDITOR_MAX_HEIGHT = 360;
 
 /**
- * "Story Background" section: previews the user's picked photo and lets them
+ * "Story background" section: previews the user's picked photo and lets them
  * drag the story-aspect crop window over it. Header offers Change (re-pick)
  * and Clear (back to generated colors). Crop state is normalized (0..1) and
  * owned by the screen.
@@ -114,7 +114,7 @@ export function StoryBackgroundCropEditor({
 
   return (
     <SharePanel
-      title="Story Background"
+      title="Story background"
       accessory={
         <View style={styles.cropActionRow}>
           <CropTextButton
@@ -212,7 +212,7 @@ function CropTextButton({
         { opacity: disabled ? 0.45 : pressed ? 0.6 : 1 },
       ]}
     >
-      <Text style={{ color, fontWeight: "700" }}>{label}</Text>
+      <Text style={{ color, fontWeight: "600" }}>{label}</Text>
     </Pressable>
   );
 }

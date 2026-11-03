@@ -186,7 +186,7 @@ export default function AdminLibraryScreen() {
           ) : rootsQuery.isError ? (
             <EmptyState
               selectable
-              message="Couldn't load music roots."
+              message="Couldn't load music roots"
               action={{
                 label: rootsQuery.isFetching ? "Retrying…" : "Try again",
                 disabled: rootsQuery.isFetching,
@@ -263,7 +263,7 @@ function RescanHeader({
         </Text>
       ) : (
         <Text style={{ color: theme.color.fgMuted, fontSize: 12 }}>
-          Scan all enabled roots for new or changed tracks.
+          Scan all enabled roots for new or changed tracks
         </Text>
       )}
     </Card>

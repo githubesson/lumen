@@ -88,7 +88,7 @@ export function PlaybackDeviceButton({
             swiftFrame({ width: size, height: size }),
           ]}
         >
-          <Section title={connected ? "Playback Device" : "Reconnecting…"}>
+          <Section title={connected ? "Playback device" : "Reconnecting…"}>
             <Button
               label={LOCAL_DEVICE_LABEL}
               systemImage={targetDeviceId ? localIcon : "checkmark"}
@@ -117,7 +117,7 @@ export function PlaybackDeviceButton({
             <>
               <Divider />
               <Button
-                label="No Other Devices Available"
+                label="No other devices available"
                 systemImage="wifi.slash"
                 modifiers={[swiftDisabled()]}
               />
@@ -127,7 +127,7 @@ export function PlaybackDeviceButton({
             <>
               <Divider />
               <Button
-                label="Last Command Failed"
+                label="Last command failed"
                 systemImage="exclamationmark.triangle"
                 modifiers={[swiftDisabled()]}
               />
@@ -228,7 +228,7 @@ export function PlaybackDeviceButton({
                   selectable
                   style={[styles.eyebrow, { color: theme.color.fgMuted }]}
                 >
-                  CONNECT
+                  Connect
                 </Text>
                 <Text
                   selectable
@@ -273,7 +273,7 @@ export function PlaybackDeviceButton({
               selectable
               style={[styles.sectionLabel, { color: theme.color.fgMuted }]}
             >
-              AVAILABLE DEVICES
+              Available devices
             </Text>
             {remoteDevices.length ? (
               remoteDevices.map((device) => (
@@ -569,13 +569,11 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   eyebrow: {
-    fontSize: 10,
-    fontWeight: "600",
-    letterSpacing: 1.2,
+    fontSize: 13,
   },
   title: {
     fontSize: 18,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   connectionState: {
     flexDirection: "row",
@@ -594,9 +592,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingTop: 16,
     paddingBottom: 6,
-    fontSize: 10,
-    fontWeight: "600",
-    letterSpacing: 1.1,
+    fontSize: 13,
   },
   deviceRow: {
     minHeight: 62,
@@ -630,7 +626,7 @@ const styles = StyleSheet.create({
   deviceCopy: {
     flex: 1,
     minWidth: 0,
-    gap: 3,
+    gap: 2,
   },
   deviceName: {
     fontSize: 15,

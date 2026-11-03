@@ -437,7 +437,7 @@ export default function PlaylistDetailScreen() {
             style={{
               color: theme.color.fg,
               fontSize: 24,
-              fontWeight: "700",
+              fontWeight: "600",
               letterSpacing: -0.2,
               textAlign: "center",
             }}
@@ -608,7 +608,7 @@ export default function PlaylistDetailScreen() {
     return <EmptyState fill loading />;
   }
   if (playlistQuery.isError || tracksQuery.isError || !playlist) {
-    return <EmptyState fill selectable message="Couldn't load playlist."
+    return <EmptyState fill selectable message="Couldn't load playlist"
       action={{ label: playlistQuery.isFetching || tracksQuery.isFetching ? "Retrying…" : "Try again", disabled: playlistQuery.isFetching || tracksQuery.isFetching,
         onPress: () => { void playlistQuery.refetch(); void tracksQuery.refetch(); } }} />;
   }

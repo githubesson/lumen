@@ -26,7 +26,7 @@ export function TrackCard({
   lifted: boolean;
 }) {
   const theme = useTheme();
-  const title = track ? displayText(track.title) : "Add to Playlist";
+  const title = track ? displayText(track.title) : "Add to playlist";
   const names = track
     ? [displayText(track.artist), displayText(track.album_title)].filter(Boolean)
     : [];
@@ -107,7 +107,7 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 10,
     paddingLeft: 10,
-    paddingRight: 14,
+    paddingRight: 16,
     borderRadius: 18,
     borderCurve: "continuous",
   },

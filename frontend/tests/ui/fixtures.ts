@@ -560,7 +560,7 @@ export const adminUsers: AdminUser[] = [
 ];
 
 export const invites: Invite[] = [
-  { id: "inv-1", token: "lmn_7QxV2pKc9RfT4wZb", target_role: "user", max_uses: 5, uses: 2, expires_at: "2026-11-01T00:00:00Z", created_at: "2026-10-01T12:00:00Z" },
+  { id: "inv-1", token: "lmn_7QxV2pKc9RfT4wZb", target_role: "user", max_uses: 5, uses: 2, expires_at: "2099-11-01T00:00:00Z", created_at: "2026-10-01T12:00:00Z" },
   { id: "inv-2", token: "lmn_Hd83LwQe1NvY6sAa", target_role: "admin", max_uses: 1, uses: 0, expires_at: "2026-10-18T00:00:00Z", created_at: "2026-10-09T08:30:00Z" },
   { id: "inv-3", token: "lmn_Zp4mKt7BcXr2Ue9J", target_role: "user", max_uses: 10, uses: 10, expires_at: null, created_at: "2026-05-20T17:45:00Z" },
 ];

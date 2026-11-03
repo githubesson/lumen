@@ -63,7 +63,7 @@ export default function TidalArtistScreen() {
   );
   const onTrackPress = usePlayQueue(tracks);
   const warning = data?.warnings?.join(" ");
-  const problem = query.isError ? "Couldn't load artist." : warning;
+  const problem = query.isError ? "Couldn't load artist" : warning;
   const artistName = data?.artist?.name || name || "TIDAL artist";
   // Artists without a TIDAL picture borrow their top track's cover.
   const imageUri = artistImageUrl(
@@ -175,7 +175,7 @@ export default function TidalArtistScreen() {
           query.isLoading ? (
             <EmptyState loading />
           ) : !problem && releases.length === 0 ? (
-            <EmptyState message="No releases found." />
+            <EmptyState message="No releases found" />
           ) : null
         }
         contentInsetAdjustmentBehavior="automatic"

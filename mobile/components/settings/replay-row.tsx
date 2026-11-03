@@ -95,7 +95,7 @@ export function ReplayRow({
 
 /**
  * Two-by-two top covers. One cover fills the tile; two or three repeat to
- * fill the grid (as the playlist hero does); none shows Replay's sparkles.
+ * fill the grid (as the playlist hero does); none shows a waveform.
  */
 function Collage({ covers }: { covers: string[] }) {
   const theme = useTheme();
@@ -109,7 +109,7 @@ function Collage({ covers }: { covers: string[] }) {
   return (
     <View style={[styles.collage, { backgroundColor: theme.color.bgElev2 }]}>
       {cells.length === 0 ? (
-        <SymbolView name="sparkles" size={20} tintColor={theme.color.fgMuted} />
+        <SymbolView name="waveform" size={20} tintColor={theme.color.fgMuted} />
       ) : (
         cells.map((uri, index) => (
           <Image

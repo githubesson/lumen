@@ -1,132 +1,145 @@
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useState } from "react";
+import {
+  Pressable,
+  ScrollView,
+  Text,
+  useWindowDimensions,
+  View,
+  type TextStyle,
+} from "react-native";
 import { useRouter } from "expo-router";
+import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
+import Animated, { FadeInDown } from "react-native-reanimated";
 import { getBaseUrl } from "@music-library/core";
-import { BouncingTitle } from "../../components/auth/bouncing-title";
-import { BubbleParade } from "../../components/auth/bubble-parade";
-import { useAuthMotionClock } from "../../components/auth/motion";
+import { WELCOME_RECORD } from "../../components/auth/welcome-art";
+import { WelcomeHero } from "../../components/auth/welcome-hero";
 import { PrimaryButton } from "../../components/buttons";
 import { useTheme } from "../../theme/theme";
 
-/** Room for the largest bubble plus its bob, so the parade never collapses. */
-const PARADE_MIN_HEIGHT = 240;
+const RECORD_SIZE = 32;
+/** Room for the record, even when large text pushes the words up the screen. */
+const HERO_MIN_HEIGHT = 240;
+const ENTER = FadeInDown.delay(120)
+  .duration(400)
+  .withInitialValues({ opacity: 0, transform: [{ translateY: 12 }] });
 
 /**
- * Where signed-out users land: the wordmark, a parade of glass bubbles drifting
- * across the upper half, and the two ways in (sign in, or register with an invite).
+ * Where signed-out users land: a scene from Lumen's world over the headline,
+ * then the two ways in (sign in, or register with an invite).
  */
 export default function WelcomeScreen() {
   const theme = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const clock = useAuthMotionClock();
+  const { fontScale } = useWindowDimensions();
+  // The scene ends where the words start, whatever the screen and text size.
+  const [wordsTop, setWordsTop] = useState<number | null>(null);
   const host = serverHost();
+
+  const headline: TextStyle = {
+    color: theme.color.fg,
+    fontSize: 36,
+    lineHeight: 44,
+    fontWeight: "500",
+    letterSpacing: -0.4,
+  };
+  const recordSize = RECORD_SIZE * Math.min(fontScale, 1.6);
 
   return (
     // Scrolls only when the content outgrows the screen (large text sizes);
-    // otherwise the bubbles take whatever height is left.
+    // otherwise the scene takes whatever height is left.
     <ScrollView
       style={{ flex: 1, backgroundColor: theme.color.bg }}
       contentContainerStyle={{ flexGrow: 1 }}
       alwaysBounceVertical={false}
     >
-      <View style={{ paddingTop: insets.top + theme.space.lg, alignItems: "center" }}>
-        <BouncingTitle
-          text="Lumen"
-          clock={clock}
-          style={{
-            fontSize: 28,
-            fontWeight: "700",
-            color: theme.color.fg,
-            letterSpacing: -0.4,
-          }}
-        />
-      </View>
+      {wordsTop !== null ? (
+        <WelcomeHero height={wordsTop + theme.space.md} />
+      ) : null}
 
-      <BubbleParade clock={clock} style={{ flex: 1, minHeight: PARADE_MIN_HEIGHT }} />
+      <View style={{ flex: 1, minHeight: HERO_MIN_HEIGHT }} />
 
-      <View
+      <Animated.View
+        entering={ENTER}
+        onLayout={(event) => setWordsTop(Math.round(event.nativeEvent.layout.y))}
         style={{
           paddingHorizontal: theme.space.xl,
           paddingBottom: insets.bottom + theme.space.md,
-          gap: theme.space.xl,
         }}
       >
-        <Animated.View
-          entering={FadeInDown.delay(250).duration(500)}
-          style={{ gap: theme.space.sm }}
+        <View
+          accessible
+          accessibilityRole="header"
+          accessibilityLabel="Your music, on your server"
         >
-          <Text
+          <Text style={headline}>Your music,</Text>
+          <View
             style={{
-              fontSize: 34,
-              fontWeight: "700",
-              color: theme.color.fg,
-              letterSpacing: -0.4,
-              textAlign: "center",
+              flexDirection: "row",
+              flexWrap: "wrap",
+              alignItems: "center",
+              columnGap: theme.space.sm,
             }}
           >
-            {"Your music library,\nlit up."}
-          </Text>
-          <Text
-            style={{ fontSize: 16, color: theme.color.fgMuted, textAlign: "center" }}
-          >
-            Sign in to your server, or join with an invite.
-          </Text>
-        </Animated.View>
+            <Text style={headline}>on your</Text>
+            <Image
+              source={WELCOME_RECORD}
+              style={{ width: recordSize, height: recordSize }}
+              contentFit="contain"
+            />
+            <Text style={headline}>server</Text>
+          </View>
+        </View>
 
-        <Animated.View
-          entering={FadeInDown.delay(380).duration(500)}
-          style={{ gap: theme.space.md }}
+        <Text
+          style={{
+            color: theme.color.fgMuted,
+            fontSize: 15,
+            lineHeight: 20,
+            marginTop: theme.space.md,
+          }}
         >
+          Lumen plays your library from {host ?? "your server"} on your phone, in
+          the car and offline
+        </Text>
+
+        <View style={{ marginTop: theme.space.xl }}>
           <PrimaryButton
             label="Sign in"
+            tone="inverse"
             onPress={() => {
               void Haptics.selectionAsync();
               router.push("/(auth)/login");
             }}
           />
-          <Pressable
-            onPress={() => {
-              void Haptics.selectionAsync();
-              router.push("/(auth)/register");
-            }}
-            accessibilityRole="button"
-            accessibilityLabel="Create an account with an invite"
-            style={({ pressed }) => ({
-              alignItems: "center",
-              paddingVertical: 8,
-              opacity: pressed ? 0.6 : 1,
-            })}
-          >
-            <Text
-              style={{ color: theme.color.accent, fontSize: 15, textAlign: "center" }}
-            >
-              Have an invite? Create an account
-            </Text>
-          </Pressable>
-        </Animated.View>
+        </View>
 
-        <Animated.Text
-          entering={FadeIn.delay(600).duration(400)}
-          style={{ fontSize: 13, color: theme.color.fgMuted, textAlign: "center" }}
+        <Pressable
+          onPress={() => {
+            void Haptics.selectionAsync();
+            router.push("/(auth)/register");
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Create an account with an invite"
+          style={({ pressed }) => ({
+            alignItems: "center",
+            marginTop: theme.space.xs,
+            paddingVertical: theme.space.md,
+            opacity: pressed ? 0.6 : 1,
+          })}
         >
-          {host ? (
-            <>
-              Accounts on <Text style={{ color: theme.color.fg }}>{host}</Text>{" "}
-              are invite-only.
-            </>
-          ) : (
-            "Accounts are invite-only."
-          )}
-        </Animated.Text>
-      </View>
+          <Text style={{ color: theme.color.fgSubtle, fontSize: 15 }}>
+            I have an invite
+          </Text>
+        </Pressable>
+      </Animated.View>
     </ScrollView>
   );
 }
 
-/** Host of the server this build talks to, for the footer; null if unset. */
+/** Host of the server this build talks to, for the subhead; null if unset. */
 function serverHost(): string | null {
   try {
     return new URL(getBaseUrl()).hostname || null;

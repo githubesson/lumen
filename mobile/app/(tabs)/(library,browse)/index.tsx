@@ -346,7 +346,7 @@ export default function HomeScreen() {
             )}
 
             {hasReplay && topAlbums.length > 0 && (
-              <Section eyebrow="Heavy rotation" title="Your albums">
+              <Section title="Your albums">
                 <HorizontalShelf>
                   {topAlbums.map((a) => (
                     <AlbumTile
@@ -383,7 +383,7 @@ export default function HomeScreen() {
 
             {(rediscoverQuery.data?.items.length ?? 0) > 0 && (
               <Section
-                eyebrow="A daily dig through the shelves"
+                eyebrow="Changes daily"
                 title="Rediscover"
               >
                 <HorizontalShelf>

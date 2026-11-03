@@ -84,7 +84,7 @@ export function PlaylistCoverField({
         quality: 0.9,
       });
     } catch {
-      setError("Couldn't open the photo library.");
+      setError("Couldn't open the photo library");
       return;
     }
     if (result.canceled || result.assets.length === 0) return;

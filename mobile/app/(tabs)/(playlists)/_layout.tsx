@@ -13,14 +13,14 @@ export default function PlaylistsStackLayout() {
         name="new"
         options={{
           headerLargeTitle: false,
-          title: "New Playlist",
+          title: "New playlist",
         }}
       />
       <Stack.Screen
         name="edit/[id]"
         options={{
           headerLargeTitle: false,
-          title: "Edit Playlist",
+          title: "Edit playlist",
         }}
       />
       <Stack.Screen
@@ -31,16 +31,16 @@ export default function PlaylistsStackLayout() {
         name="invite-collaborator"
         options={{
           headerLargeTitle: false,
-          title: "Invite Collaborator",
+          title: "Invite collaborator",
         }}
       />
       <Stack.Screen
         name="track/[id]"
-        options={{ headerLargeTitle: false, title: "Track Info" }}
+        options={{ headerLargeTitle: false, title: "Track info" }}
       />
       <Stack.Screen
         name="track/edit"
-        options={{ headerLargeTitle: false, title: "Edit Track" }}
+        options={{ headerLargeTitle: false, title: "Edit track" }}
       />
       <Stack.Screen
         name="albums/[id]"
@@ -60,7 +60,7 @@ export default function PlaylistsStackLayout() {
       />
       <Stack.Screen
         name="albums/edit"
-        options={{ headerLargeTitle: false, title: "Edit Album" }}
+        options={{ headerLargeTitle: false, title: "Edit album" }}
       />
     </Stack>
   );
