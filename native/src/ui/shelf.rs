@@ -46,10 +46,16 @@ impl Shelves {
 /// `ShelfScroller`: `cards` in a sideways row, each `col` px wide (168, or
 /// the page's `--shelf-col`), `label` naming the row ("Top artists").
 pub fn shelf(app: &App, t: &Theme, key: &str, label: &str, cards: Vec<El>, col: f32) -> El {
+    shelf_pb(app, t, key, label, cards, col, 8.0)
+}
+
+/// [`shelf`] with the row's bottom padding (`.shelf`'s 8 px, which Replay's
+/// bento sets to 0).
+pub fn shelf_pb(app: &App, t: &Theme, key: &str, label: &str, cards: Vec<El>, col: f32, pad_bottom: f32) -> El {
     let edges = app.widgets.shelves.edges(key);
     let viewport_key = format!("{key}-shelf");
     let feed = edges.clone();
-    let mut strip = row().gap(t.gap()).pb(8.0);
+    let mut strip = row().gap(t.gap()).pb(pad_bottom);
     for c in cards {
         strip = strip.child(el().w(col).min_w(col).child(c));
     }

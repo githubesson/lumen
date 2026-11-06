@@ -56,7 +56,8 @@ pub fn iconbtn(t: &Theme, key: &str, glyph: &'static Icon, glyph_size: f32, stat
         .size(32.0, 32.0)
         .radius(t.radius_lg())
         .center()
-        .border(1.0, Color::TRANSPARENT)
+        // `border: 1px solid transparent` under a border-box background: the
+        // fill covers the ring, so no `.border` (which would cut it out).
         .role("button")
         .cursor(if state.disabled { Cursor::NotAllowed } else { Cursor::Pointer })
         .child(ico(glyph, glyph_size, t.c.foreground));

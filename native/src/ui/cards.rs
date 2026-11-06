@@ -34,12 +34,12 @@ pub fn square_art(t: &Theme, images: &Images, url: Option<&str>, label: &str, ra
 }
 
 /// `.card`'s padding, gap and type for the density.
-fn card_metrics(t: &Theme) -> (f32, f32, f32) {
+pub fn card_metrics(t: &Theme) -> (f32, f32, f32) {
     if t.density == Density::Dense { (6.0, 8.0, 12.0) } else { (8.0, 10.0, 14.0) }
 }
 
 /// `.card`: the tile box, lit on hover.
-fn card_box(t: &Theme, key: &str) -> El {
+pub fn card_box(t: &Theme, key: &str) -> El {
     let (pad, gap, _) = card_metrics(t);
     col()
         .key(key)
@@ -54,7 +54,7 @@ fn card_box(t: &Theme, key: &str) -> El {
 }
 
 /// `.card-title` and `.card-sub`.
-fn card_text(t: &Theme, title: El, sub: Option<&str>) -> El {
+pub fn card_text(t: &Theme, title: El, sub: Option<&str>) -> El {
     let (_, _, sub_fs) = card_metrics(t);
     let (_, _, title_fs) = card_metrics(t);
     let mut c = col().w_full().min_w(0.0).child(crate::ui::exact_text(title.w_full(), title_fs, title_fs * 1.45));

@@ -76,13 +76,13 @@ pub fn exact(e: El, lh: f32) -> El {
     rune::el().h(lh).child(e)
 }
 
-/// [`exact`] for a line set at `size` px, truncating if it must. Measured
-/// against Chromium: at 14 px and up Rune draws a line's glyphs about the
-/// rounding lower than Chromium does at the same box top, so they're lifted
-/// by it; 12 and 13 px lines land right as they are.
+/// [`exact`] for a line set at `size` px, truncating if it must. Rune
+/// places glyphs within 0.3 px of Chromium for the same box top, so the
+/// line needs no lift (the one this had came from a reference-harness flag
+/// that drew Chromium's text high).
 pub fn exact_text(e: El, size: f32, lh: f32) -> El {
-    let lift = if size >= 14.0 { lh.ceil() - lh } else { 0.0 };
-    rune::el().h(lh).min_w(0.0).shrink().child(e.offset(0.0, -lift))
+    let _ = size;
+    rune::el().h(lh).min_w(0.0).shrink().child(e)
 }
 
 /// Text that ends at its box's right edge (`text-align: right`). Rune
