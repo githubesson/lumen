@@ -84,11 +84,11 @@ pub fn parse_track_share_url(raw: &str) -> Option<TrackShareRef> {
         .unwrap_or_default();
     let param = |key: &str| parsed.query_pairs().find(|(k, _)| k == key).map(|(_, v)| v.into_owned());
     let sig = param("sig").unwrap_or_default();
-    let start = parse_int_prefix(&param("t").unwrap_or_else(|| "0".into()))?;
+    let start = crate::core::js::parse_int(&param("t").unwrap_or_else(|| "0".into()))?;
     let duration = match param("d") {
         None => None,
         Some(d) => {
-            let n: f64 = js_number(&d)?;
+            let n: f64 = crate::core::js::number(&d)?;
             if n.fract() != 0.0 || n <= 0.0 || n > MAX_SHARE_SNIPPET_DURATION_SEC as f64 {
                 return None;
             }
@@ -99,30 +99,6 @@ pub fn parse_track_share_url(raw: &str) -> Option<TrackShareRef> {
         return None;
     }
     Some(TrackShareRef { track_id, sig, start_sec: start as u64, duration_sec: duration })
-}
-
-/// `Number.parseInt(s, 10)`: leading whitespace and sign, then digits up to
-/// the first other character; `None` (NaN) without any.
-fn parse_int_prefix(s: &str) -> Option<i64> {
-    let s = s.trim_start();
-    let (sign, rest) = match s.strip_prefix('-') {
-        Some(r) => (-1, r),
-        None => (1, s.strip_prefix('+').unwrap_or(s)),
-    };
-    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-    if digits.is_empty() {
-        return None;
-    }
-    Some(sign * digits.parse::<i64>().unwrap_or(i64::MAX))
-}
-
-/// `Number(s)`: the whole (trimmed) string as a number; "" is 0.
-fn js_number(s: &str) -> Option<f64> {
-    let t = s.trim();
-    if t.is_empty() {
-        return Some(0.0);
-    }
-    t.parse::<f64>().ok().filter(|n| n.is_finite())
 }
 
 /// The window's start and length as the server takes them.

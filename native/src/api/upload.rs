@@ -245,7 +245,7 @@ mod tests {
     use std::sync::Mutex;
 
     fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("lumen-upload-test-{}", std::process::id()));
+        let dir = crate::api::testing::temp_path("upload");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join(name);
         std::fs::write(&p, bytes).unwrap();

@@ -162,3 +162,10 @@ fn serve(stream: TcpStream, handler: &Handler, seen: &Mutex<Vec<Req>>) {
     }
     let _ = stream.flush();
 }
+
+/// A scratch path for a test file, under `target/test-tmp` (not `/tmp`).
+pub fn temp_path(name: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp");
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join(format!("{}-{name}", std::process::id()))
+}
