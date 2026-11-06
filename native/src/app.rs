@@ -327,6 +327,22 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
     ("recent", |a| scene(a, "/recent")),
     ("playlists", |a| scene(a, "/playlists")),
     ("replay", |a| scene(a, "/replay")),
+    ("replay-last30", |a| scene(a, "/replay?period=last-30")),
+    ("replay-month", |a| scene(a, "/replay?period=this-month")),
+    ("replay-2025", |a| scene(a, "/replay?period=year:2025")),
+    ("replay-all", |a| scene(a, "/replay?period=all")),
+    ("replay-empty", |a| {
+        scene(a, "/replay?period=last-30");
+        crate::pages::replay::scenes::empty(a);
+    }),
+    ("replay-loading", |a| {
+        scene(a, "/replay");
+        crate::pages::replay::scenes::loading(a);
+    }),
+    ("replay-all-tracks", |a| {
+        scene(a, "/replay");
+        crate::pages::replay::scenes::all_tracks(a);
+    }),
     ("admin", |a| scene(a, "/admin")),
     ("drawer", |a| {
         scene(a, "/library");
