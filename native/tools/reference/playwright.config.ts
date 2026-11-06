@@ -26,7 +26,8 @@ export default defineConfig({
     deviceScaleFactor: 1,
     // Fractional glyph advances, as DirectWrite gives the Windows build;
     // Linux Chromium's default full hinting rounds them to whole pixels.
-    launchOptions: { args: ["--font-render-hinting=none", "--disable-font-subpixel-positioning=false"] },
+    // The desktop app shows its styled scrollbars; headless Chromium hides them by default.
+    launchOptions: { args: ["--font-render-hinting=none"], ignoreDefaultArgs: ["--hide-scrollbars"] },
   },
   projects: [
     { name: "dark", use: { colorScheme: "dark" } },
