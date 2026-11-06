@@ -1,7 +1,7 @@
 //! The app's state and root view: `App.tsx`, the providers in `main.tsx`,
 //! and the desktop bridge's state that lived in Electron's main process.
 
-use rune::{Color, Cx, El, KeyEvent, Tx, Waker, col, el};
+use rune::{Color, Cx, El, KeyEvent, Tx, Waker, col};
 
 use crate::api::{self, Client, Me, Playlist};
 use crate::config::{Config, Tweaks};
@@ -56,6 +56,10 @@ pub struct App {
     pub overlays: crate::overlays::Overlays,
     /// The open `<Select>` listbox, if any.
     pub select: Option<crate::ui::forms::OpenSelect>,
+    /// The shared components' state (selections, tooltips, shelves).
+    pub widgets: crate::ui::Widgets,
+    /// What Electron's main process did: presence, the now-playing API, updates.
+    pub desktop: crate::desktop::Desktop,
 }
 
 impl App {
@@ -80,6 +84,8 @@ impl App {
             pages: crate::pages::Pages::default(),
             overlays: crate::overlays::Overlays::default(),
             select: None,
+            widgets: crate::ui::Widgets::default(),
+            desktop: crate::desktop::Desktop::default(),
             config,
             waker,
         };
@@ -109,30 +115,36 @@ impl App {
         self.refresh_me();
     }
 
+    /// `refresh()`: re-check the session (`pages::auth::session`).
     pub fn refresh_me(&mut self) {
-        let Some(client) = self.client.clone() else { return };
-        self.net.run(
-            move || api::auth::me(&client),
-            |app, result| match result {
-                Ok(me) => app.signed_in(me),
-                Err(e) if e.is_unauthorized() => {
-                    app.session = Session::SignedOut;
-                    app.navigate_replace(Location::parse("/login"));
-                }
-                Err(e) => app.session = Session::Unreachable(e.to_string()),
-            },
-        );
+        crate::pages::auth::session::refresh(self);
     }
 
-    fn signed_in(&mut self, me: Me) {
+    /// A session landed (`/me`, sign-in, registration): the shell's data,
+    /// and the route `App.tsx` sends this user to.
+    pub fn signed_in(&mut self, me: Me) {
+        let forced = me.must_reset_password;
         self.session = Session::SignedIn(me);
-        if self.location().is("/login") {
-            self.navigate_replace(Location::parse("/"));
+        if forced {
+            // A forced reset loads nothing until the new password is set.
+            self.playlists = Some(Vec::new());
+            self.pending_invites = 0;
+        } else {
+            self.load_playlists();
+            self.load_pending_invites();
+            crate::pages::favorites::refresh(self);
         }
-        self.load_playlists();
-        self.load_pending_invites();
-        let loc = self.location().clone();
-        crate::pages::enter(self, &loc);
+        let at = self.location().path.clone();
+        if at == "/login" {
+            // `<Navigate to="/" replace />`, and "/" forwards a forced reset.
+            let to = if forced { "/reset-password" } else { "/" };
+            self.navigate_replace(Location::parse(to));
+        } else if forced && at == "/" {
+            self.navigate_replace(Location::parse("/reset-password"));
+        } else {
+            let loc = self.location().clone();
+            crate::pages::enter(self, &loc);
+        }
     }
 
     pub fn me(&self) -> Option<&Me> {
@@ -142,13 +154,30 @@ impl App {
         }
     }
 
+    /// `usePlaylists().reload()`: only the newest read commits, and none that
+    /// an `update` overtook (`useApiResource`).
     pub fn load_playlists(&mut self) {
         let Some(client) = self.client.clone() else { return };
+        let list = &mut self.pages.playlists.list;
+        list.seq += 1;
+        list.error = None;
+        let (seq, updates) = (list.seq, list.updates);
+        if self.me().is_some_and(|me| me.must_reset_password) {
+            self.playlists = Some(Vec::new());
+            return;
+        }
         self.net.run(
             move || client.get::<Option<Vec<Playlist>>>("/api/playlists"),
-            |app, result| {
-                if let Ok(list) = result {
-                    app.playlists = Some(list.unwrap_or_default());
+            move |app, result| {
+                let list = &mut app.pages.playlists.list;
+                if list.seq != seq || list.updates != updates {
+                    return;
+                }
+                match result {
+                    Ok(rows) => app.playlists = Some(rows.unwrap_or_default()),
+                    Err(e) => {
+                        list.error = Some(crate::pages::playlists::error_message(&e, "Could not load playlists."))
+                    }
                 }
             },
         );
@@ -234,30 +263,27 @@ impl App {
         self.set_tweaks(|t| t.layout = next);
     }
 
+    /// `logout()` (`pages::auth::session`).
     pub fn sign_out(&mut self) {
-        let Some(client) = self.client.clone() else { return };
         self.player.stop();
-        self.net.run(
-            move || {
-                let _ = client.post_void("/api/auth/logout", None);
-                client.clear_cookies();
-            },
-            |app, ()| app.signed_out(),
-        );
+        crate::pages::auth::session::logout(self);
     }
 
-    /// The session is gone (signed out here, or the server said 401).
+    /// Signed out: drop what the session showed and start at `/login`.
     pub fn signed_out(&mut self) {
+        // A late 401 from the old session must not end the next one.
         if let Some(client) = &self.client {
             client.advance_auth_generation();
         }
-        self.player.stop();
         self.session = Session::SignedOut;
+        self.player.stop();
         self.playlists = None;
         self.pending_invites = 0;
         self.pages = Default::default();
         self.history = History::new(Location::parse("/login"));
+        crate::pages::enter(self, &Location::parse("/login"));
     }
+
 
     /// Load everything a scene shows before its first frame (headless only).
     pub fn settle_sync(&mut self) {
@@ -275,9 +301,15 @@ fn setup(app: &mut App, waker: Waker) {
     app.waker.set(waker);
 }
 
-fn poll(app: &mut App, _clock: f64, tx: &mut Tx) -> bool {
+fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
     let mut changed = Net::drain(app);
     changed |= crate::player::poll(app, tx);
+    changed |= crate::ui::poll(app, clock, tx);
+    changed |= crate::desktop::poll(app);
+    changed |= crate::pages::auth::poll(app, clock, tx);
+    changed |= crate::pages::share_preview::poll(app, clock, tx);
+    // Overlay work that finished off the UI thread and needs a `Tx` (a copy, a save dialog).
+    changed |= crate::overlays::poll(app, tx);
     changed |= crate::shell::player::poll(app, tx);
     changed
 }
@@ -288,14 +320,13 @@ fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
 
 pub fn view(app: &App, cx: &mut Cx<App>) -> El {
     app.system_dark.set(cx.system_dark());
+    app.widgets.lists.begin_frame();
     let t = app.theme();
-    let body = match &app.session {
-        Session::SignedIn(_) => crate::shell::view(app, &t, cx),
-        Session::Loading => el().w_full().h_full(),
-        Session::SignedOut | Session::Unreachable(_) => crate::pages::signed_out(app, &t, cx),
-    };
+    // `App.tsx`'s gating: the shell only for a signed-in route.
+    let in_shell = crate::pages::auth::gate(app) == crate::pages::auth::Gate::Shell;
+    let body = if in_shell { crate::shell::view(app, &t, cx) } else { crate::pages::signed_out(app, &t, cx) };
     let mut root = col().key("root").w_full().h_full().fill(Color::TRANSPARENT).child(body);
-    if matches!(app.session, Session::SignedIn(_)) {
+    if in_shell {
         for layer in crate::overlays::view(app, &t, cx) {
             root = root.child(layer);
         }
@@ -305,14 +336,14 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
 
 /// Scenes for headless snapshots: each signs in against `LUMEN_SERVER` (the
 /// mock server by default) and opens one screen with its data loaded.
-/// [`scene`] for other modules' scene lists.
-pub fn scene_at(app: &mut App, path: &str) {
-    scene(app, path);
-}
-
-fn scene(app: &mut App, path: &str) {
+pub(crate) fn scene(app: &mut App, path: &str) {
+    // Synchronous first, so the session check lands before the first frame
+    // (one started at launch, still on a worker, no longer counts).
+    app.settle_sync();
     if app.client.is_none() {
         app.connect(&std::env::var("LUMEN_SERVER").unwrap_or_else(|_| "http://127.0.0.1:4791".into()));
+    } else {
+        app.refresh_me();
     }
     app.settle_sync();
     app.navigate(Location::parse(path));
@@ -320,16 +351,160 @@ fn scene(app: &mut App, path: &str) {
     app.settle_sync();
 }
 
+/// A Home scene on a saved arrangement (`tweaks.homeBoard`), seeded before
+/// sign-in as the reference seeds it, without touching config.json.
+fn home_scene(app: &mut App, board: &str, path: &str) {
+    app.tweaks.home_board = serde_json::from_str(board).ok();
+    scene(app, path);
+}
+
 pub const SCENES: &[(&str, fn(&mut App))] = &[
     ("home", |a| scene(a, "/")),
+    ("home-medium", |a| scene(a, "/")),
+    ("home-narrow", |a| scene(a, "/")),
+    ("home-customize", |a| scene(a, "/?customize")),
+    ("home-swapped", |a| home_scene(a, crate::pages::home::scenes::SWAPPED, "/")),
+    ("home-custom", |a| home_scene(a, crate::pages::home::scenes::CUSTOM, "/")),
+    ("home-empty", |a| home_scene(a, crate::pages::home::scenes::HIDDEN, "/")),
+    ("home-custom-customize", |a| home_scene(a, crate::pages::home::scenes::CUSTOM, "/?customize")),
+    ("home-add", |a| {
+        home_scene(a, crate::pages::home::scenes::CUSTOM, "/?customize");
+        crate::pages::home::dialogs::open_add(a);
+    }),
+    ("home-settings", |a| {
+        home_scene(a, crate::pages::home::scenes::CUSTOM, "/?customize");
+        crate::pages::home::dialogs::open_settings(a, "repeat", Some("activity".into()));
+    }),
+    ("home-reset", |a| {
+        home_scene(a, crate::pages::home::scenes::CUSTOM, "/?customize");
+        crate::pages::home::editing::reset_board(a);
+    }),
     ("library", |a| scene(a, "/library")),
     ("albums", |a| scene(a, "/library?view=albums")),
     ("artists", |a| scene(a, "/library?view=artists")),
     ("favorites", |a| scene(a, "/favorites")),
     ("recent", |a| scene(a, "/recent")),
     ("playlists", |a| scene(a, "/playlists")),
+    ("playlist-owned", |a| scene(a, "/playlists/pl-night-drives")),
+    ("playlist-collab", |a| scene(a, "/playlists/pl-sunday-coffee")),
+    ("playlist-shared", |a| scene(a, "/playlists/pl-road-trip")),
+    ("playlist-collaborators", |a| {
+        scene(a, "/playlists/pl-sunday-coffee");
+        crate::pages::playlists::scene(a, "collaborators");
+    }),
+    ("playlist-shared-collaborators", |a| {
+        scene(a, "/playlists/pl-road-trip");
+        crate::pages::playlists::scene(a, "collaborators");
+    }),
+    ("playlist-settings", |a| {
+        scene(a, "/playlists/pl-sunday-coffee");
+        crate::pages::playlists::scene(a, "settings");
+    }),
+    ("playlist-shared-settings", |a| {
+        scene(a, "/playlists/pl-road-trip");
+        crate::pages::playlists::scene(a, "settings");
+    }),
+    ("playlist-add", |a| {
+        scene(a, "/playlists/pl-night-drives");
+        crate::pages::playlists::scene(a, "add");
+    }),
+    ("playlist-drag", |a| {
+        scene(a, "/playlists/pl-night-drives");
+        crate::pages::playlists::scene(a, "drag");
+    }),
+    ("playlist-new", |a| scene(a, "/playlists/new")),
+    ("invites", |a| scene(a, "/invites")),
     ("replay", |a| scene(a, "/replay")),
-    ("admin", |a| scene(a, "/admin")),
+    ("admin", |a| {
+        scene(a, "/admin");
+        crate::pages::admin::scenes::ready(a);
+    }),
+    // The admin page's sections and dialogs (scroll the library ones with
+    // a `--script` wheel, as the reference scrolls `.content`).
+    ("admin-users", |a| {
+        scene(a, "/admin?section=users");
+        crate::pages::admin::scenes::ready(a);
+    }),
+    ("admin-invites", |a| {
+        scene(a, "/admin?section=invites");
+        crate::pages::admin::scenes::ready(a);
+    }),
+    ("admin-errors", |a| {
+        scene(a, "/admin");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::errors_open(a);
+    }),
+    ("admin-downloads", |a| {
+        scene(a, "/admin");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::downloads_open(a);
+    }),
+    ("admin-pin-history", |a| {
+        scene(a, "/admin");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::pin_history(a);
+    }),
+    ("admin-remove-folder", |a| {
+        scene(a, "/admin");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::remove_folder(a);
+    }),
+    ("admin-unlink", |a| {
+        scene(a, "/admin");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::tidal_unlink(a);
+    }),
+    ("admin-link-flow", |a| {
+        scene(a, "/admin");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::tidal_flow(a);
+    }),
+    ("admin-disable-user", |a| {
+        scene(a, "/admin?section=users");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::disable_user(a);
+    }),
+    ("admin-delete-user", |a| {
+        scene(a, "/admin?section=users");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::delete_user(a);
+    }),
+    ("admin-invites-past", |a| {
+        scene(a, "/admin?section=invites");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::invites_past(a);
+    }),
+    ("admin-invite-created", |a| {
+        scene(a, "/admin?section=invites");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::invite_created(a);
+    }),
+    ("admin-revoke-invite", |a| {
+        scene(a, "/admin?section=invites");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::revoke_invite(a);
+    }),
+    ("library-grid", |a| {
+        scene(a, "/library");
+        crate::pages::library::scenes::grid(a);
+    }),
+    ("library-select", |a| {
+        scene(a, "/library");
+        crate::pages::library::scenes::select(a);
+    }),
+    ("library-sort", |a| {
+        scene(a, "/library");
+        crate::pages::library::scenes::sort_open(a);
+    }),
+    ("library-search", |a| scene(a, "/library?q=harbour")),
+    ("library-album", |a| scene(a, "/library?album=al-weather")),
+    ("library-album-medium", |a| scene(a, "/library?album=al-lanterns")),
+    ("library-artist", |a| scene(a, "/library?artist=ar-velvet")),
+    ("library-tidal-album", |a| scene(a, "/library?tidalAlbum=381245566&tidalArtist=4419021")),
+    ("library-tidal-saved", |a| scene(a, "/library?tidalAlbum=310077120")),
+    ("library-tidal-artist", |a| scene(a, "/library?tidalArtist=4419021&artistName=Marisol%20Vey")),
+    ("library-album-missing", |a| scene(a, "/library?album=missing")),
+    ("library-tidal-missing", |a| scene(a, "/library?tidalAlbum=404404")),
     ("drawer", |a| {
         scene(a, "/library");
         a.ui.mobile_nav_open = true;
@@ -344,16 +519,34 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
     ("mini-lyrics", crate::shell::player::scenes::mini_lyrics),
     ("mini-devices", crate::shell::player::scenes::mini_devices),
     ("mini-error", crate::shell::player::scenes::mini_error),
+    ("login", crate::pages::auth::scenes::login),
+    ("login-error", crate::pages::auth::scenes::login_error),
+    ("register", crate::pages::auth::scenes::register),
+    ("register-invite", crate::pages::auth::scenes::register_invite),
+    ("reset-password", crate::pages::auth::scenes::reset_password),
+    ("welcome", crate::pages::auth::scenes::welcome),
+    ("welcome-server", crate::pages::auth::scenes::welcome_server),
+    ("welcome-prefs", crate::pages::auth::scenes::welcome_prefs),
+    ("welcome-change", crate::pages::auth::scenes::welcome_change),
+    ("startup-loading", crate::pages::auth::scenes::startup_loading),
+    ("startup-unreachable", crate::pages::auth::scenes::startup_unreachable),
+    ("share-preview", crate::pages::auth::scenes::share),
     ("light", |a| {
         a.config.tweaks = Some(Tweaks { theme: Mode::Light, ..a.tweaks.clone() });
         a.tweaks.theme = Mode::Light;
     }),
 ];
 
+/// [`SCENES`] and the overlays' scenes, for `--scene`.
+fn all_scenes() -> &'static [(&'static str, fn(&mut App))] {
+    static ALL: std::sync::OnceLock<Vec<(&'static str, fn(&mut App))>> = std::sync::OnceLock::new();
+    ALL.get_or_init(|| SCENES.iter().chain(crate::overlays::scenes::SCENES).copied().collect())
+}
+
 pub fn spec() -> rune::AppSpec<App> {
     rune::AppSpec {
         min_size: Some((640.0, 480.0)),
-        scenes: SCENES,
+        scenes: all_scenes(),
         fonts: crate::FONTS,
         families: ("Geist", "Geist Mono"),
         setup: Some(setup),

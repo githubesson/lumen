@@ -8,6 +8,7 @@ use super::adapters::{self, MenuContext};
 use super::{Popover, close_btn, pop_box, pop_layer, position_pill};
 use crate::api::{TrackListItem, media};
 use crate::app::App;
+use crate::ui::tooltip::TipExt;
 use crate::format::display_text;
 use crate::shell::player_bar::t_btn_icon;
 use crate::theme::{Theme, color_mix};
@@ -25,7 +26,7 @@ pub fn position(app: &App) -> Option<String> {
 pub fn button(app: &App, t: &Theme) -> El {
     let mini = app.ui.player.mini.on;
     let open = if mini { app.ui.player.mini.requested == Some(super::mini::Panel::Queue) } else { app.ui.player.popover == Some(Popover::Queue) };
-    let b = t_btn_icon(t, "queue", &i::LIST_MUSIC, crate::shell::player_bar::util_icon(app), open, false).label("Queue").help("Queue").expanded(open);
+    let b = t_btn_icon(t, "queue", &i::LIST_MUSIC, crate::shell::player_bar::util_icon(app), open, false).label("Queue").tip("queue", "Queue").expanded(open);
     if mini {
         b.on_press_tx(|app: &mut App, tx: &mut rune::Tx| super::mini::toggle_panel(app, tx, super::mini::Panel::Queue))
     } else {

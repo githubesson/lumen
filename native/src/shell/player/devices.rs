@@ -7,6 +7,7 @@ use rune::{Align, Color, Cursor, Cx, El, Icon, Side, col, el, row, text};
 
 use super::{Popover, close_btn, pop_box, pop_head, pop_layer, status_pill};
 use crate::app::App;
+use crate::ui::tooltip::TipExt;
 use crate::format::display_text;
 use crate::player::{DeviceKind, playback_device_button_label, playback_device_kind, playback_device_status};
 use crate::shell::player_bar::t_btn_with;
@@ -49,7 +50,7 @@ pub fn button(app: &App, t: &Theme) -> El {
         (None, Some(d)) => format!("Controlling {}", d.device_name),
         (None, None) => playback_device_button_label(None),
     };
-    b = b.label(playback_device_button_label(target)).help(help).expanded(open);
+    b = b.label(playback_device_button_label(target)).tip("devices", &help).expanded(open);
     if mini {
         b.on_press_tx(|app: &mut App, tx: &mut rune::Tx| super::mini::toggle_panel(app, tx, super::mini::Panel::Devices))
     } else {
@@ -240,7 +241,7 @@ fn device_row(
 /// `RemoteControlIndicator`: "Controlled from another device" over the top
 /// edge of the bar for 6 s after another device's command lands here.
 pub fn remote_indicator(app: &App, t: &Theme, mini: bool) -> Option<El> {
-    let event = app.player.remote_control_event()?;
+    app.player.remote_control_event()?;
     let pill = shadow(t, css_border(row(), 1.0, t.c.border, t.radius_lg()))
         .key("remote-control-indicator")
         .h(28.0)
@@ -250,7 +251,6 @@ pub fn remote_indicator(app: &App, t: &Theme, mini: bool) -> Option<El> {
         .radius(t.radius_lg())
         .fill(t.c.popover)
         .role("status")
-        .help(format!("Remote {}", event.action.replace('_', " ")))
         .inert()
         .child(ico(&i::SMARTPHONE, 14.0, t.c.muted_foreground))
         .child(text("Controlled from another device").font(with_lh(font(12.0, 500.0), 12.0)).color(t.c.popover_foreground));

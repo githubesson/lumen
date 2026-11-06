@@ -14,6 +14,7 @@ use rune::{Color, Cx, El, Span, Tx, col, el, row, text};
 use crate::api::lyrics::LyricsResult;
 use crate::api::{TrackListItem, media};
 use crate::app::App;
+use crate::ui::tooltip::TipExt;
 use crate::core::lyrics::{
     LYRICS_NOT_FOUND_MESSAGE, LyricsCache, LyricsCacheEntry, LyricsContent, active_line_index, active_word_index_for_line,
     lyrics_cache_key_for, lyrics_content, lyrics_error_message, lyrics_request_for, lyrics_timing_duration,
@@ -221,7 +222,7 @@ fn sidebar(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let r = t.radius_xl();
     let close = iconbtn(t, "lyrics-close", &i::X, 16.0, BtnState::default())
         .label("Close lyrics panel")
-        .help("Close lyrics")
+        .tip("lyrics-close", "Close lyrics")
         .on_press(|app: &mut App| set_open(app, false));
     let head = row()
         .w_full()

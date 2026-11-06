@@ -1,39 +1,56 @@
 //! The mini player's window calls (`setMiniPlayerMode`,
-//! `setMiniPlayerPanel`, `getMiniPlayerPanelAnchor` on the desktop bridge).
-//! Stand-ins that resize the window from the view until the desktop layer's
-//! own functions land.
-// TODO(desktop-merge): call `crate::desktop::window::{set_mini_player,
-// set_mini_player_panel, mini_player_panel_anchor}` instead (they also keep
-// the window on screen, pick the anchor and restore the normal bounds).
+//! `setMiniPlayerPanel`, `getMiniPlayerPanelAnchor` on the desktop bridge):
+//! [`crate::desktop::window`], which pins the window's size, keeps it on its
+//! screen, picks the anchor and puts the normal bounds back. Headless runs
+//! have no native window; there the viewport is resized instead, so scripts
+//! can drive mini mode.
 
 use rune::Tx;
 
 use super::mini::Anchor;
 use crate::app::App;
+use crate::desktop::window::{self, PanelAnchor};
 
 /// The mini player window: 780×184, and 344 tall with a panel open.
-pub const MINI_SIZE: (f32, f32) = (780.0, 184.0);
-pub const MINI_PANEL_HEIGHT: f32 = 344.0;
+pub const MINI_SIZE: (f32, f32) = (window::MINI_PLAYER_SIZE.0 as f32, window::MINI_PLAYER_SIZE.1 as f32);
 
-/// Enter or leave the mini player window. Leaving goes back to the size the
-/// window had. False when the window can't change.
-pub fn set_mini_player(app: &mut App, tx: &mut Tx, on: bool) -> bool {
-    let size = if on { MINI_SIZE } else { app.ui.player.window.unwrap_or((1280.0, 820.0)) };
-    tx.resize_window_instant(size);
-    true
+fn anchor(a: PanelAnchor) -> Anchor {
+    match a {
+        PanelAnchor::Top => Anchor::Top,
+        PanelAnchor::Bottom => Anchor::Bottom,
+    }
 }
 
-/// Which edge stays put when the window grows for a panel: the top, unless
-/// the window sits too low on its screen to grow down.
+fn headless() -> bool {
+    rune::tooling::headless_run().is_some()
+}
+
+/// Enter or leave the mini player window. False when the window can't change.
+pub fn set_mini_player(app: &mut App, tx: &mut Tx, on: bool) -> bool {
+    if headless() {
+        let size = if on { MINI_SIZE } else { app.ui.player.window.unwrap_or((1280.0, 820.0)) };
+        tx.resize_window_instant(size);
+        return true;
+    }
+    let result = window::set_mini_player(on);
+    result.ok && result.mini_player == on
+}
+
+/// Which edge stays put when the window grows for a panel.
 pub fn mini_player_panel_anchor(app: &App) -> Anchor {
     let _ = app;
-    Anchor::Top
+    anchor(window::mini_player_panel_anchor())
 }
 
 /// Grow the mini window for a panel, or shrink it back. The edge that
 /// stayed put, or None when the window can't change.
 pub fn set_mini_player_panel(app: &mut App, tx: &mut Tx, open: bool) -> Option<Anchor> {
-    let h = if open { MINI_PANEL_HEIGHT } else { MINI_SIZE.1 };
-    tx.resize_window_instant((MINI_SIZE.0, h));
-    Some(mini_player_panel_anchor(app))
+    let _ = app;
+    if headless() {
+        let size = if open { window::MINI_PLAYER_PANEL_SIZE } else { window::MINI_PLAYER_SIZE };
+        tx.resize_window_instant((size.0 as f32, size.1 as f32));
+        return Some(Anchor::Top);
+    }
+    let result = window::set_mini_player_panel(open);
+    result.ok.then(|| anchor(result.anchor))
 }

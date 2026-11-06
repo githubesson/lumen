@@ -12,9 +12,24 @@ use rune::{Color, Cursor, El, Icon, Live, ScrollPos, Shadow, Side, col, el, row,
 use crate::app::App;
 use crate::theme::{Theme, color_mix};
 use crate::ui::{BtnState, font, ico, iconbtn, icons as i, line, motion, with_lh};
+use crate::ui::tooltip::TipExt;
 
 thread_local! {
     static THUMBS: RefCell<HashMap<String, Live<[f32; 4]>>> = RefCell::new(HashMap::new());
+    static PORTALS: RefCell<Vec<El>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Draw `layer` at the window's root, above the shell and the overlays, as a
+/// React portal does: a page's own dialogs. Call it while building the view;
+/// the root mounts what was portaled during the same pass ([`take_portals`]).
+pub fn portal(layer: El) {
+    PORTALS.with(|p| p.borrow_mut().push(layer));
+}
+
+/// The layers portaled since the last call, in order (the root's side of
+/// [`portal`]).
+pub fn take_portals() -> Vec<El> {
+    PORTALS.with(|p| std::mem::take(&mut *p.borrow_mut()))
 }
 
 fn thumb_live(key: &str) -> Live<[f32; 4]> {
@@ -34,14 +49,21 @@ pub fn scroll_area(t: &Theme, key: &str, content: El) -> El {
 /// content's right edge (plain `overflow: auto`, which on Windows also
 /// takes 10 px, but only while overflowing).
 pub fn scroll_area_with(t: &Theme, key: &str, content: El, stable_gutter: bool) -> El {
+    scroll_area_fit(t, key, content, stable_gutter, None)
+}
+
+/// [`scroll_area_with`] for an area whose height follows its content up to
+/// `max_h` (CSS `max-height` on an `overflow: auto` box in an auto-height
+/// column), instead of growing into a bounded parent.
+pub fn scroll_area_fit(t: &Theme, key: &str, content: El, stable_gutter: bool, max_h: Option<f32>) -> El {
     let live = thumb_live(key);
     let feed = live.clone();
-    let viewport = col()
-        .key(key)
-        .grow(1.0)
-        .min_h(0.0)
-        .min_w(0.0)
-        .h_full()
+    let viewport = col().key(key).min_h(0.0).min_w(0.0);
+    let viewport = match max_h {
+        Some(m) => viewport.grow(1.0).max_h(m),
+        None => viewport.grow(1.0).h_full(),
+    };
+    let viewport = viewport
         .scroll(rune::ScrollSpec { stick_bottom: false })
         .on_scroll_offset(move |at: ScrollPos| {
             let [_, vh] = at.viewport;
@@ -125,7 +147,7 @@ impl Dialog {
         if let Some(title) = self.title {
             let close_btn = iconbtn(t, &format!("{}-close", self.key), &i::X, 14.0, BtnState::default())
                 .label("Close")
-                .help("Close")
+                .tip(&format!("{}-close", self.key), "Close")
                 .on_press(close);
             panel = panel.child(
                 crate::ui::css_border_bottom(row(), 1.0, t.c.border)
@@ -138,7 +160,9 @@ impl Dialog {
                     .child(close_btn),
             );
         }
-        panel = panel.child(col().grow(1.0).min_h(0.0).child(self.body));
+        // `grid-rows-[auto_1fr_auto]` in an auto-height panel: the body takes
+        // its content height and shrinks only to fit `max-height`.
+        panel = panel.child(col().w_full().shrink().min_h(0.0).child(self.body));
         if let Some(f) = self.footer {
             panel = panel.child(f);
         }
@@ -241,6 +265,21 @@ pub fn anchored_below(e: El, anchor_key: &str, gap: f32) -> El {
     e.anchored(anchor_key, Side::Bottom, rune::Align::Start, gap)
 }
 
+/// A `.segmented` group's metrics: its height, inset and label size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SegSize {
+    pub h: f32,
+    pub pad: f32,
+    pub fs: f32,
+}
+
+impl SegSize {
+    /// `.segmented`: 32 px, 3 px inset, 14 px labels.
+    pub const DEFAULT: SegSize = SegSize { h: 32.0, pad: 3.0, fs: 14.0 };
+    /// `.cmdk-type .segmented`: 28 px, 2 px inset, 12 px labels.
+    pub const SMALL: SegSize = SegSize { h: 28.0, pad: 2.0, fs: 12.0 };
+}
+
 /// `.segmented`: a pill group whose lit pill travels between options.
 pub fn segmented<T: Copy + PartialEq + 'static>(
     t: &Theme,
@@ -249,7 +288,20 @@ pub fn segmented<T: Copy + PartialEq + 'static>(
     current: T,
     on_pick: fn(&mut App, T),
 ) -> El {
-    let mut group = row().key(key).h(32.0).padding(3.0).items_center().radius(t.radius_lg()).fill(t.c.muted).role("tablist");
+    segmented_sized(t, key, options, current, on_pick, SegSize::DEFAULT)
+}
+
+/// [`segmented`] at another size.
+pub fn segmented_sized<T: Copy + PartialEq + 'static>(
+    t: &Theme,
+    key: &str,
+    options: &[(T, &str)],
+    current: T,
+    on_pick: fn(&mut App, T),
+    size: SegSize,
+) -> El {
+    let mut group =
+        row().key(key).h(size.h).padding(size.pad).items_center().radius(t.radius_lg()).fill(t.c.muted).role("tablist");
     for (n, (value, label)) in options.iter().enumerate() {
         let active = *value == current;
         let v = *value;
@@ -273,7 +325,8 @@ pub fn segmented<T: Copy + PartialEq + 'static>(
                 // 200 ms ease-in-out in CSS; a critically damped spring of the same length.
                 .motion(rune_motion::Spring::new(0.2, 0.0));
             if t.dark() {
-                pill = pill.fill(t.c.input_bg).border(1.0, t.c.input);
+                // A CSS border, painted over the pill's own fill.
+                pill = crate::ui::css_border(pill.fill(t.c.input_bg), 1.0, t.c.input, t.radius_md());
             } else {
                 pill = pill
                     .fill(t.c.background)
@@ -283,7 +336,7 @@ pub fn segmented<T: Copy + PartialEq + 'static>(
             b = b.child(pill);
         }
         let ink = if active { t.c.foreground } else { t.c.muted_foreground };
-        b = b.child(text(*label).font(font(14.0, 500.0)).color(ink).group_color(t.c.foreground));
+        b = b.child(text(*label).font(font(size.fs, 500.0)).color(ink).group_color(t.c.foreground));
         if !active {
             b = b.hover(Color::TRANSPARENT).press_scale(0.97);
         }
@@ -340,9 +393,10 @@ pub fn empty_state(t: &Theme, glyph: Option<&'static Icon>, title: &str, hint: O
     if let Some(g) = glyph {
         c = c.child(el().size(40.0, 40.0).mb(4.0).radius(t.radius_lg()).fill(t.c.muted).center().child(ico(g, 20.0, t.c.foreground)));
     }
-    c = c.child(text(title).font(font(16.0, 500.0)).color(t.c.foreground));
+    // `text-align: center` for lines that wrap.
+    c = c.child(text(title).font(font(16.0, 500.0)).color(t.c.foreground).wrap().align(rune::Align::Center));
     if let Some(h) = hint {
-        c = c.child(text(h).font(font(14.0, 400.0)).color(t.c.muted_foreground).wrap());
+        c = c.child(text(h).font(font(14.0, 400.0)).color(t.c.muted_foreground).wrap().align(rune::Align::Center));
     }
     if let Some(a) = action {
         c = c.child(a);
@@ -350,20 +404,32 @@ pub fn empty_state(t: &Theme, glyph: Option<&'static Icon>, title: &str, hint: O
     c
 }
 
-/// `LoadingState` (`.loading-state`).
+/// `LoadingState` (`.loading-state mono`: tabular figures).
 pub fn loading_state(t: &Theme, label: &str) -> El {
-    el().padding(20.0).child(text(label).font(font(14.0, 400.0)).color(t.c.muted_foreground))
+    el().padding(20.0).child(text(label).font(crate::ui::tnum(font(14.0, 400.0))).color(t.c.muted_foreground))
 }
 
 /// `ErrorBanner`.
 pub fn error_banner(t: &Theme, message: &str) -> El {
+    error_banner_in(t, message, None)
+}
+
+/// [`error_banner`] `width` wide, its text boxed as CSS boxes it (whole
+/// 20.3 px lines, where rune rounds the box up).
+pub fn error_banner_in(t: &Theme, message: &str, width: Option<f32>) -> El {
+    let style = font(14.0, 400.0);
+    let mut msg = text(message).font(style).color(t.c.destructive).wrap();
+    if let Some(w) = width {
+        msg = msg.h(crate::ui::css_text_h(message, style, Some(w - 26.0)));
+    }
     crate::ui::css_border(el(), 1.0, t.c.destructive_border, t.radius_lg())
         .w_full()
         .px(13.0)
         .py(9.0)
         .radius(t.radius_lg())
         .fill(t.c.destructive_soft)
-        .child(text(message).font(font(14.0, 400.0)).color(t.c.destructive).wrap())
+        .role("alert")
+        .child(msg)
 }
 
 /// `PageHeader`: the 24 px title with an optional muted count after it,

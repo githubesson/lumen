@@ -1,14 +1,42 @@
 //! Shared building blocks: text styles, and the web app's small components
 //! (`.iconbtn`, `.btn`, `kbd`, `CoverArt`, …) built from rune elements with
 //! the same box metrics as their CSS.
+pub mod blocks;
+pub mod cards;
+pub mod chart;
 pub mod icons;
 pub mod forms;
 pub mod kit;
+pub mod paging;
+pub mod shelf;
+pub mod tooltip;
+pub mod track_list;
+pub mod track_row;
+pub mod track_select;
 pub mod widgets;
 
 pub use widgets::*;
 
+/// State the shared components keep between frames (`App::widgets`): each
+/// track list's selection, the tooltip layer, shelves' scroll edges and the
+/// favourite hearts' pop animation.
+#[derive(Default)]
+pub struct Widgets {
+    pub lists: track_select::Lists,
+    pub tooltip: tooltip::State,
+    pub shelves: shelf::Shelves,
+    pub numbers: blocks::Numbers,
+}
+
 use rune::{Color, El, Family, Icon, TextStyle, icon, text};
+
+/// Runs before each frame for the shared components: tooltips waiting out
+/// their delay and counters rolling.
+pub fn poll(app: &mut crate::app::App, clock: f64, tx: &mut rune::Tx) -> bool {
+    let a = tooltip::poll(app, clock);
+    let b = blocks::poll_numbers(app, clock, tx);
+    a || b
+}
 
 /// CSS `line-height: 1.45` (the body's), which every text inherits unless a
 /// rule says otherwise.
@@ -40,9 +68,62 @@ pub fn line(s: impl Into<String>, style: TextStyle, color: Color) -> El {
     text(s).font(style).color(color).truncate().shrink()
 }
 
+/// A single line of text laid out at its CSS line height `lh` exactly.
+/// Rune rounds a text's box up to whole pixels (17.4 → 18), which adds up
+/// down a column of lines; the box around it keeps the fractional height,
+/// so what follows sits where the browser puts it.
+pub fn exact(e: El, lh: f32) -> El {
+    rune::el().h(lh).child(e)
+}
+
+/// [`exact`] for a line set at `size` px, truncating if it must. Rune draws
+/// a line's glyphs within 0.3 px of where Chromium does at the same box top
+/// (`examples/calib.rs`), so no correction is needed. (An earlier lift here
+/// was calibrated against reference shots taken with a Chromium flag that
+/// drew its text about 0.9 px high.)
+pub fn exact_text(e: El, size: f32, lh: f32) -> El {
+    let _ = size;
+    rune::el().h(lh).min_w(0.0).shrink().child(e)
+}
+
+/// Text a flex row centres vertically (`align-items: center`). Rune rounds
+/// a text box up to whole pixels (20.3 → 21), so centring puts its top
+/// half the rounding above where the browser centres the 20.3 px box, and
+/// both engines then snap the baseline to a whole pixel: often the one
+/// above Chromium's. This nudges the glyphs back by that half (drawing
+/// only; layout keeps the rounded box).
+pub fn centred(e: El, style: TextStyle) -> El {
+    let lh = if style.line_height > 0.0 { style.line_height } else { style.size * 1.25 };
+    e.offset(0.0, (lh.ceil() - lh) / 2.0)
+}
+
+/// Text that ends at its box's right edge (`text-align: right`). Rune
+/// sizes a text's box to its advance rounded up to a whole pixel, which
+/// would leave the glyphs up to a pixel short of the edge; this moves them
+/// back onto it.
+pub fn text_end(s: impl Into<String>, style: TextStyle, color: Color) -> El {
+    let s = s.into();
+    let adv = rune::text::advance(&s, style);
+    text(s).font(style).color(color).offset(adv.ceil() - adv, 0.0)
+}
+
 /// A lucide icon `size` px square in `color` (`currentColor`).
 pub fn ico(i: &'static Icon, size: f32, color: Color) -> El {
     icon(i, size).color(color)
+}
+
+/// The height CSS gives `s` set in `style` and wrapped at `max_width`: whole
+/// lines of `line-height`, fractions kept. Rune rounds each text box up to
+/// whole pixels (a 20.3 px line takes 21), which moves everything under it;
+/// pin a text's box with `.h(css_text_h(..))` where that matters.
+pub fn css_text_h(s: &str, style: TextStyle, max_width: Option<f32>) -> f32 {
+    let (_, h) = rune::text::measure(s, &[], style, max_width);
+    let lh = style.line_height;
+    if lh <= 1.0 {
+        return h;
+    }
+    // `h` is ceil(lines × lh), so with lh > 1 the floor gives the lines back.
+    (h / lh + 1e-3).floor().max(1.0) * lh
 }
 
 /// `TextStyle` with an explicit line height in px.
@@ -94,4 +175,14 @@ pub mod motion {
     pub fn shell(ms: f32) -> Anim {
         Anim::new(Curve::tween(ms / 1000.0, Easing::cubic(0.22, 1.0, 0.36, 1.0)))
     }
+}
+
+/// Text that may wrap, held to the CSS height of its lines (`lh` each).
+/// Rune rounds a text box's height up to whole pixels, so a stack of
+/// fractional line heights (16.8, 20.3) drifts down a pixel every few rows;
+/// this reads the text's line count from the last layout and sizes a box to
+/// `lines × lh`. `key` must be unique in the view.
+pub fn snug_lines(key: &str, t: El, lh: f32) -> El {
+    let n = rune::memo::layout_with(key, move |r| (r[3] / lh).round().max(1.0) as u32).unwrap_or(1);
+    rune::col().w_full().min_w(0.0).h(n as f32 * lh).child(t.key(key).w_full())
 }

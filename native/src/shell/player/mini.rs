@@ -16,6 +16,7 @@ use rune::{Align, Cx, El, Tx, col, el, row, text};
 
 use super::{display, position_pill, status_pill, window_bridge};
 use crate::app::App;
+use crate::ui::tooltip::TipExt;
 use crate::format::fmt_duration_sec;
 use crate::shell::player_bar::{self as bar, TransportSize};
 use crate::theme::Theme;
@@ -291,7 +292,7 @@ fn np_text(app: &App, t: &Theme, title: f32, artist: f32, gap: f32, centred: boo
         .key("np-text")
         .min_w(0.0)
         .gap(gap)
-        .child(held(crate::ui::line(d.title.clone(), title_style, t.c.foreground).help(d.title).matched("mini-title"), title_lh, centred))
+        .child(held(crate::ui::line(d.title.clone(), title_style, t.c.foreground).tip_truncated("np-title", &d.title, title_style).matched("mini-title"), title_lh, centred))
         .child(held(bar::np_artist(app, t, artist_style, underline).matched("mini-artist"), artist_lh, centred));
     if centred {
         c = c.items_center();

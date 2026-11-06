@@ -20,6 +20,7 @@ pub mod window_bridge;
 use rune::{Color, Cursor, El, Icon, Key, KeyEvent, Shadow, Tx, col, el, row, text};
 
 use crate::app::App;
+use crate::ui::tooltip::TipExt;
 use crate::theme::Theme;
 use crate::ui::{css_border, css_border_bottom, font, ico, icons as i};
 
@@ -202,7 +203,7 @@ pub fn status_pill(app: &App, t: &Theme) -> El {
         .items_center()
         .radius(999.0)
         .fill(t.c.muted)
-        .help(if connected { "Connected to your server" } else { "Reconnecting to your server" })
+        .tip("device-pop-status", if connected { "Connected to your server" } else { "Reconnecting to your server" })
         .child(dot)
         .child(centred(text(if connected { "Live" } else { "Reconnecting" }).font(font(12.0, 500.0)).color(t.c.muted_foreground), 17.4))
 }

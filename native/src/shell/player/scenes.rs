@@ -14,7 +14,7 @@ const FAILED_AT_MS: u64 = 1_793_966_400_000;
 
 /// The library, with the reference's first row loaded and paused.
 fn library(app: &mut App) {
-    crate::app::scene_at(app, "/library");
+    crate::app::scene(app, "/library");
 }
 
 /// Seek the loaded track to 0:15, as the reference does with the → key.

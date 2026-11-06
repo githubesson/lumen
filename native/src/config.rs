@@ -70,15 +70,21 @@ fn path() -> PathBuf {
 }
 
 impl Config {
+    /// A config.json with nothing in it (`{}`): Discord presence is on until
+    /// turned off, as Electron's `discordEnabled ?? true`.
+    fn empty() -> Config {
+        Config { discord_enabled: true, ..Config::default() }
+    }
+
     pub fn load() -> Config {
-        let Ok(text) = std::fs::read_to_string(path()) else { return Config::default() };
-        let Ok(Value::Object(mut map)) = serde_json::from_str::<Value>(&text) else { return Config::default() };
+        let Ok(text) = std::fs::read_to_string(path()) else { return Config::empty() };
+        let Ok(Value::Object(mut map)) = serde_json::from_str::<Value>(&text) else { return Config::empty() };
         let mut take = |k: &str| map.remove(k);
         let str_of = |v: Option<Value>| v.and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty());
         let bool_of = |v: Option<Value>| v.and_then(|v| v.as_bool()).unwrap_or(false);
         Config {
             backend_url: str_of(take("backendUrl")),
-            discord_enabled: bool_of(take("discordEnabled")),
+            discord_enabled: take("discordEnabled").and_then(|v| v.as_bool()).unwrap_or(true),
             discord_client_id: str_of(take("discordClientId")),
             discord_card: take("discordCard"),
             always_on_top: bool_of(take("alwaysOnTop")),
@@ -94,6 +100,11 @@ impl Config {
     }
 
     pub fn save(&self) {
+        let _ = self.try_save();
+    }
+
+    /// `save`, saying when config.json couldn't be written.
+    pub fn try_save(&self) -> std::io::Result<()> {
         let mut map = self.rest.clone();
         let mut put = |k: &str, v: Option<Value>| {
             if let Some(v) = v {
@@ -114,13 +125,11 @@ impl Config {
         put("updateRepoUrl", self.update_repo_url.clone().map(Value::String));
         let p = path();
         if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
+            std::fs::create_dir_all(dir)?;
         }
-        if let Ok(text) = serde_json::to_string_pretty(&Value::Object(map)) {
-            let tmp = p.with_extension("json.tmp");
-            if std::fs::write(&tmp, text).is_ok() {
-                let _ = std::fs::rename(&tmp, &p);
-            }
-        }
+        let text = serde_json::to_string_pretty(&Value::Object(map))?;
+        let tmp = p.with_extension("json.tmp");
+        std::fs::write(&tmp, text)?;
+        std::fs::rename(&tmp, &p)
     }
 }

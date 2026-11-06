@@ -62,8 +62,46 @@ Electron app in `frontend/` with full feature parity, Windows first.
   `ui::hover_overlay(base, target)`. Text/icon colour on hover: `.group_color(c)` on the child
   (the parent with `.hover` is the group). Transitions: `ui::motion::{ease, ease_out, …}`.
 - **Pixels**: CSS px = Rune points. Windows at 100% scale is 1:1.
+- **Text boxes and baselines** (measured against Chromium; see `examples/calib.rs`):
+  Rune places a line's glyphs within 0.3 px of Chromium for the same box top, but rounds
+  every text box up to whole pixels (20.3 → 21, 17.4 → 18). Two consequences:
+  - *Stacked lines drift*: hold each line in a box of its CSS height, `ui::exact(text, lh)` /
+    `ui::exact_text(..)` (or `ui::css_text_h` for wrapped text), so what follows sits where
+    the browser puts it.
+  - *Centred lines snap a pixel high*: a row that centres a text (`align-items: center`)
+    starts Rune's rounded box half the rounding above the browser's, and both engines snap
+    the baseline to a whole pixel, often the one above. Wrap such text in
+    `ui::centred(text, style)` (a draw-only nudge of half the rounding).
+  - Never hand-tune glyph offsets against a reference shot; measure with
+    `node tools/centroid.mjs ref.png rune.png x,y,w,h` (ink centroid, sub-pixel) and compare
+    layout boxes with `--tree` against the DOM (`tools/reference/rects.ref.ts`, which prints
+    `getBoundingClientRect` for `RECT_SEL` on `RECT_PATH`).
 - **Colours**: take every colour from `t.c` (the tokens). `color_mix(a, p, b)` is CSS
   `color-mix(in oklch, a p%, b)`.
+
+## Shared components
+
+| Module | Ports | Use |
+| --- | --- | --- |
+| `ui::track_list` | `TrackList.tsx` | `TrackList::new("key", \|a\| &a.pages.x.tracks).view_gap(18.0).empty(el).page(app, t, head, tail)` as a page's whole view (virtual rows), or `.build(app, t)` inside a page for short lists. `.queue`, `.no_cover`, `.no_album`, `.headless`, `.not_selectable`, `.no_source_badge`, `.bar_elsewhere`, `.omit_artists`, `.extra(Extra { .. })`. |
+| `ui::track_select` | `useTrackSelection`, `TrackSelectionToolbar`, `TrackCheckbox` | Selection lives in `app.widgets.lists` by list key; `selection_bar(app, t, key, source, BarPlace::Group)` for a toolbar group, `checkbox(..)`. |
+| `ui::track_row` | `TrackRowCells.tsx`, `TrackRow` | `index_cell`, `playing_bars`, `favorite_button`, `badge`, plus `actions`, `play_from`, `start_list`, `is_local`, `can_share` (`core/track.ts`). |
+| `overlays::track_menu` | `TrackContextMenu.tsx` | `track_menu::open(app, track, [x, y], MenuContext { queue, edit, move_to_album, info, share, selection })` from `.on_secondary_press`. |
+| `ui::tooltip` | `TitleTooltips.tsx`, `Tooltip.tsx` | `use crate::ui::tooltip::TipExt;` then `el.tip("its-key", "Text")`, `.tip_side(.., Side::Right)`, `.tip_truncated(key, text, style)` (truncation hints), `tooltip::tip_body(el, key, Body::..)`. Don't use Rune's `.help`. |
+| `ui::cards` | `MediaCard`, `PlaylistCard`, `TopArtist` | `MediaCard::new(key, title).to(href).cover(url).subtitle(s).on_play(label, f).build(app, t)`, `media_card_placeholders`, `playlist_card(app, t, &p)`, `top_artist_glyph`, `square_art`. |
+| `ui::shelf` | `ShelfScroller` | `shelf(app, t, key, "Top artists", cards, SHELF_COL)`. |
+| `ui::blocks` | `Section`, `ListPageHeader`, `PageHeader`, `ListMeta`, `LoadMoreSentinel`, `DataState`, `CenteredCard`, `RadioCardOption`, `IosSpinner`, `AnimatedNumber`, `PlayListButton` | `section(..)`, `list_page_header(app, t, key, ListHeader { .. })`, `meta_line`, `page_header(t, title, count, actions)`, `list_meta`, `load_more`, `data_state`, `centered_card`, `radio_card`, `ios_spinner`, `animated_number(app, cx, key, value, style, ink)`, `play_list_button`. |
+| `ui::chart` | `ActivityChart` | `activity_chart(t, key, &[Bar { start, plays }], Bucket::Day)`. |
+| `ui::paging` | `usePaginatedList` | `Paginated<T>` in page state with `reset` / `load_more` / `reload` through an accessor and a `Fetcher`. |
+
+Text boxes: Rune rounds a text's height up to whole pixels (17.4 → 18), which adds up down a
+column of lines (a header's kind, title and meta). Wrap such lines in `ui::exact(text, lh)` to keep
+the browser's fractional height; `ui::text_end` puts right-aligned text on its box's edge.
+
+Reference scenes for interactions use `act` in `scenes.ref.ts` (`keepPointer` for hover) and a
+script in `tools/reference/scripts/` on the Rune side:
+`./target/debug/lumen --snap out/rune/favorites-menu-dark.png --scene favorites --script tools/reference/scripts/favorites-menu.json --at 1.0 …`.
+Headless Chromium hides scrollbars, so the content's scrollbar thumb shows only in Rune's shots.
 
 ## Checking your work: pixel diffs against the Electron app
 
@@ -94,5 +132,32 @@ is thin. Rune is pre-release; work around gaps in this crate rather than patchin
 
 ## Building for Windows
 
+`tools/wine-snap.sh <scene>` renders a scene with the Windows `lumen.exe` under Wine (virtual
+X display, Vulkan on lavapipe, d3d12 off: Wine's HLSL compiler lacks the shader-model 5.1
+resource arrays Rune's blur layers use, which Windows' own FXC has). Its output should match
+the Linux build pixel for pixel; it did for home, library and login (2026-11-06).
+
 `cargo build --release --target x86_64-pc-windows-gnu` cross-compiles from Linux (mingw).
-CI builds the MSVC target on Windows runners.
+CI builds the MSVC target on Windows runners (`.github/workflows/native.yml`); packaging,
+release asset names and the updater's rules are in `packaging/README.md`.
+
+## The desktop layer (`src/desktop`)
+
+What Electron's main process did. Services start once the window is up (`desktop::start`),
+never in headless runs. Call these on the UI thread:
+
+| Electron IPC | Native |
+| --- | --- |
+| `window:minimize` / `maximize-toggle` / `close` | `desktop::window::{minimize, toggle_maximize, close}(tx)` |
+| `window:mini-player:set` | `window::set_mini_player(bool) -> MiniPlayerResult { ok, mini_player }` |
+| `window:mini-player:panel-anchor` | `window::mini_player_panel_anchor() -> PanelAnchor` |
+| `window:mini-player:panel` | `window::set_mini_player_panel(open) -> PanelResult { ok, open, anchor }` |
+| `config:get` / `config:update` | `desktop::desktop_config(app)`, `desktop::update_config(app, ConfigPatch)` |
+| `now-playing:new-token` | `desktop::new_now_playing_token(app)` |
+| `config:test-server` | `desktop::test_server(url)` (blocks: run it on `app.net`) |
+| `external:open` | `desktop::open_external(tx, url)` |
+| `updates:get` / `save` / `check` / `download` / `install` | `app.desktop.updater.status()`, `desktop::save_update_config`, `updater::{check, download_update, install}` |
+| `tracks:export-files` | `desktop::export::export_track_files(app, tx, items, done)` |
+| `discord:activity` / `discord:clear` | none: `desktop::presence` watches `app.player` |
+
+The Discord card preview uses `desktop::discord_card::DiscordCard::lines`, as Discord will.

@@ -14,6 +14,7 @@ use crate::shell::Bp;
 use crate::shell::player::{self as pui, adapters, devices, display, error, lyrics, queue};
 use crate::theme::Theme;
 use crate::ui::{self, css_border, font, ico, icons as i, line, tnum};
+use crate::ui::tooltip::TipExt;
 
 /// `.t-btn`: a 28 px muted icon button.
 pub fn t_btn(t: &Theme, key: &str, glyph: &'static Icon, active: bool, disabled: bool) -> El {
@@ -143,9 +144,8 @@ pub fn np_artist(app: &App, t: &Theme, style: rune::TextStyle, underline_at: f32
     let d = display::display(app);
     match &d.error {
         Some(summary) => error::line_button(app, t, summary, style, underline_at),
-        None => line(d.artist.clone(), style, t.c.muted_foreground).help(d.artist),
+        None => line(d.artist.clone(), style, t.c.muted_foreground).tip_truncated("np-artist", &d.artist, style),
     }
-    .key("np-artist")
 }
 
 /// Right-click on the now-playing block opens the track's menu (not while
@@ -172,7 +172,7 @@ fn now_playing(app: &App, t: &Theme, bp: Bp) -> El {
         .h(art_size)
         .gap(2.0)
         .justify_center()
-        .child(line(d.title.clone(), font(14.0, 500.0), t.c.foreground).help(d.title).key("np-title").h(20.3))
+        .child(line(d.title.clone(), font(14.0, 500.0), t.c.foreground).tip_truncated("np-title", &d.title, font(14.0, 500.0)).h(20.3))
         .child(el().h(17.4).min_w(0.0).child(np_artist(app, t, font(12.0, 400.0), error::underline_at(12.0, 17.4))));
     let np = row()
         .key("np")
@@ -329,7 +329,7 @@ pub fn lyrics_button(app: &App, t: &Theme) -> El {
     // The lit tab is the mini panel's close control, so it stays usable if
     // the track goes away while lyrics are showing.
     let disabled = app.player.current().is_none() && !(mini && open);
-    let b = t_btn_icon(t, "lyrics", &i::MIC_VOCAL, util_icon(app), open, disabled).label("Toggle lyrics panel").help("Lyrics").checked(open);
+    let b = t_btn_icon(t, "lyrics", &i::MIC_VOCAL, util_icon(app), open, disabled).label("Toggle lyrics panel").tip("lyrics", "Lyrics").checked(open);
     let b = util_disabled(app, b, disabled);
     if mini {
         b.on_press_tx(|app: &mut App, tx: &mut rune::Tx| pui::mini::toggle_panel(app, tx, pui::mini::Panel::Lyrics))
@@ -384,7 +384,7 @@ pub fn mini_toggle(app: &App, t: &Theme) -> El {
     } else {
         t_btn(t, "mini-player", &i::MINIMIZE_2, false, false)
     };
-    b.label(label).help(label).checked(on).on_press_tx(|app: &mut App, tx: &mut rune::Tx| pui::mini::toggle_mode(app, tx))
+    b.label(label).tip("mini-player", label).checked(on).on_press_tx(|app: &mut App, tx: &mut rune::Tx| pui::mini::toggle_mode(app, tx))
 }
 
 fn utility(app: &App, t: &Theme, bp: Bp) -> El {

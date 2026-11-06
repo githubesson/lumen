@@ -8,6 +8,7 @@ use rune::{Align, Cursor, Cx, El, Side, Tx, col, el, row, text};
 
 use super::{Popover, close_btn, pop_box, pop_head, pop_layer};
 use crate::app::App;
+use crate::ui::tooltip::TipExt;
 use crate::theme::Theme;
 use crate::ui::{Btn, font, icons as i, line};
 
@@ -31,7 +32,7 @@ pub fn line_button(app: &App, t: &Theme, summary: &str, style: rune::TextStyle, 
         .radius(t.radius_sm())
         .role("button")
         .label(summary)
-        .help(summary)
+        .tip("np-error-btn", summary)
         .expanded(open)
         .cursor(Cursor::Pointer)
         .focusable(true)

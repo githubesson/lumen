@@ -16,7 +16,17 @@ pub enum SelectVariant {
     Minimal,
     /// Inside a `.toolbar-group`.
     Toolbar,
+    /// `<NativeSelect>`: a `<select class="input">` as Chromium draws it,
+    /// with its own arrow.
+    Native,
 }
+
+/// Chromium's `<select>` arrow: a short heavy chevron.
+const NATIVE_ARROW: rune::Icon = rune::Icon {
+    name: "native-select-arrow",
+    view: 24.0,
+    body: r#"<path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SelectOption {
@@ -87,6 +97,18 @@ pub fn select(
                 .child(line(label, font(14.0, 400.0), ink).grow(1.0))
                 .child(ico(&i::CHEVRONS_UP_DOWN, 14.0, t.c.muted_foreground))
         }
+        SelectVariant::Native => {
+            let b = css_border(row(), 1.0, if open { t.c.focus_ring } else { t.c.input }, t.radius_lg());
+            b.h(32.0)
+                .w_full()
+                .pl(15.0)
+                .gap(4.0)
+                .items_center()
+                .radius(t.radius_lg())
+                .fill(t.c.input_bg)
+                .child(line(label, font(14.0, 400.0), t.c.foreground).grow(1.0))
+                .child(ico(&NATIVE_ARROW, 18.0, t.c.foreground))
+        }
         SelectVariant::Minimal => row()
             .gap(4.0)
             .items_center()
@@ -121,19 +143,33 @@ pub fn select(
     }
 }
 
-/// The open select's listbox, anchored to its trigger. Mount at the root.
+/// The root's top layers: what views portaled (`kit::portal`, a page's
+/// dialogs), then the open select's listbox, anchored to its trigger (above
+/// them, for a select inside a dialog). Mount at the root.
 pub fn select_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> {
+    // Always there, so a portaled dialog that closes can play its exit.
+    let mut top = el().key("top-layers").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0));
+    for layer in crate::ui::kit::take_portals() {
+        top = top.child(layer);
+    }
+    if let Some(listbox) = listbox_layer(app, t, cx) {
+        top = top.child(listbox);
+    }
+    Some(top)
+}
+
+fn listbox_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> {
     let open = app.select.as_ref()?;
     let trigger_w = cx.layout_size(&open.key).map_or(160.0, |s| s[0]);
     let mut list = crate::ui::kit::menu_panel(t, &format!("{}-listbox", open.key), None)
         .max_h(240.0)
         .role("listbox")
         .focus_group();
-    list = match open.variant {
-        SelectVariant::Outlined => list.w(trigger_w),
-        SelectVariant::Minimal => list.min_w(160.0),
-        SelectVariant::Toolbar => list.min_w(176.0),
-    };
+    // The other variants' `min-w-40` / `min-w-44` lose to `.menu`'s 220 px:
+    // Tailwind's utilities sit in a cascade layer and menu.css doesn't.
+    if matches!(open.variant, SelectVariant::Outlined | SelectVariant::Native) {
+        list = list.w(trigger_w);
+    }
     let mut items = col();
     for (n, o) in open.options.iter().enumerate() {
         let selected = o.value == open.value;
@@ -170,7 +206,7 @@ pub fn select_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> 
     }
     list = list.child(crate::ui::kit::scroll_area_with(t, &format!("{}-scroll", open.key), items, false).shrink());
     let (align, gap) = match open.variant {
-        SelectVariant::Outlined => (Align::Start, 4.0),
+        SelectVariant::Outlined | SelectVariant::Native => (Align::Start, 4.0),
         SelectVariant::Minimal => (Align::End, 4.0),
         SelectVariant::Toolbar => (Align::End, 8.0),
     };
@@ -186,9 +222,45 @@ pub fn select_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> 
     )
 }
 
+/// Binds a field to its `TextEdit` in the app state.
+pub type EditBind = fn(&mut App) -> &mut TextEdit;
+
+/// [`search_input`] bound to its `TextEdit` (`bind`), with `on_change`
+/// hearing each edit.
+pub fn search_input_bound(
+    t: &Theme,
+    key: &str,
+    edit: &TextEdit,
+    placeholder: &str,
+    width: Option<f32>,
+    bind: EditBind,
+    on_change: Option<fn(&mut App)>,
+) -> El {
+    search_input_with(t, key, edit, placeholder, width, move |input| {
+        let input = input.on_edit(bind);
+        match on_change {
+            Some(f) => input.on_input_change(move |app: &mut App, _| f(app)),
+            None => input,
+        }
+    })
+}
+
 /// `SearchInput`: the `.search` box with a magnifier and a text field.
 /// Escape clears it when `on_clear` is given.
 pub fn search_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, width: Option<f32>) -> El {
+    search_input_with(t, key, edit, placeholder, width, |field| field)
+}
+
+/// [`search_input`] with `bind` applied to the inner text field, where its
+/// `.on_edit(..)`, `.on_input_key(..)` and `.on_submit(..)` go.
+pub fn search_input_with(
+    t: &Theme,
+    key: &str,
+    edit: &TextEdit,
+    placeholder: &str,
+    width: Option<f32>,
+    bind: impl FnOnce(El) -> El,
+) -> El {
     let focused = edit.focused;
     let mut b = css_border(row(), 1.0, if focused { t.c.focus_ring } else { t.c.input }, t.radius_lg())
         .key(format!("{key}-box"))
@@ -216,7 +288,7 @@ pub fn search_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, wi
                 inset: false,
             });
     }
-    b.child(ico(&i::SEARCH, 14.0, t.c.muted_foreground)).child(
+    b.child(ico(&i::SEARCH, 14.0, t.c.muted_foreground)).child(bind(
         rune::text_input(edit, font(14.0, 400.0))
             .key(key)
             .single_line()
@@ -226,16 +298,30 @@ pub fn search_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, wi
             .selection_color(t.c.selection)
             .grow(1.0)
             .min_w(0.0),
-    )
+    ))
 }
 
 /// `Field`: a label over a control, with a hint or an error under it.
 pub fn field(t: &Theme, label: &str, control: El, hint: Option<&str>, error: Option<&str>) -> El {
+    field_in(t, label, control, hint, error, None)
+}
+
+/// [`field`] `width` wide, its hint or error boxed as CSS boxes it (whole
+/// 17.4 px lines, where rune rounds each text box up).
+pub fn field_in(t: &Theme, label: &str, control: El, hint: Option<&str>, error: Option<&str>, width: Option<f32>) -> El {
+    let note = |s: &str, color: Color| {
+        let style = font(12.0, 400.0);
+        let e = text(s).font(style).color(color).wrap();
+        match width {
+            Some(w) => e.h(crate::ui::css_text_h(s, style, Some(w))),
+            None => e,
+        }
+    };
     let mut c = col().gap(6.0).child(text(label).font(with_lh(font(14.0, 500.0), 14.0)).color(t.c.foreground)).child(control);
     if let Some(e) = error {
-        c = c.child(text(e).font(font(12.0, 400.0)).color(t.c.destructive).wrap().role("alert"));
+        c = c.child(note(e, t.c.destructive).role("alert"));
     } else if let Some(h) = hint {
-        c = c.child(text(h).font(font(12.0, 400.0)).color(t.c.muted_foreground).wrap());
+        c = c.child(note(h, t.c.muted_foreground));
     }
     c
 }
@@ -260,9 +346,37 @@ pub fn setting_row(
     error: Option<&str>,
     last: bool,
 ) -> El {
-    let mut texts = col().min_w(0.0).shrink().child(text(label).font(font(14.0, 400.0)).color(t.c.foreground));
+    setting_row_in(t, label, description, control, below, error, last, None)
+}
+
+/// [`setting_row`] whose texts are `text_width` wide, boxed as CSS boxes
+/// them (whole lines, where rune rounds each text box up).
+#[allow(clippy::too_many_arguments)]
+pub fn setting_row_in(
+    t: &Theme,
+    label: &str,
+    description: Option<&str>,
+    control: Option<El>,
+    below: Option<El>,
+    error: Option<&str>,
+    last: bool,
+    text_width: Option<f32>,
+) -> El {
+    // One line box as tall as CSS makes it (rune rounds text boxes up).
+    let label_style = font(14.0, 400.0);
+    let mut title = text(label).font(label_style).color(t.c.foreground);
+    title = match text_width {
+        Some(w) => title.wrap().h(crate::ui::css_text_h(label, label_style, Some(w))),
+        None => title.h(label_style.line_height),
+    };
+    let mut texts = col().min_w(0.0).shrink().child(title);
     if let Some(d) = description {
-        texts = texts.child(text(d).font(with_lh(font(12.0, 400.0), 16.8)).color(t.c.muted_foreground).wrap_anywhere().mt(2.0));
+        let style = with_lh(font(12.0, 400.0), 16.8);
+        let mut e = text(d).font(style).color(t.c.muted_foreground).wrap_anywhere().mt(2.0);
+        if let Some(w) = text_width {
+            e = e.h(crate::ui::css_text_h(d, style, Some(w)));
+        }
+        texts = texts.child(e);
     }
     let mut main = row().min_h(28.0).gap(16.0).items_center().justify_between().child(texts);
     if let Some(c) = control {
