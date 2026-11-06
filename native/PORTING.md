@@ -95,4 +95,26 @@ is thin. Rune is pre-release; work around gaps in this crate rather than patchin
 ## Building for Windows
 
 `cargo build --release --target x86_64-pc-windows-gnu` cross-compiles from Linux (mingw).
-CI builds the MSVC target on Windows runners.
+CI builds the MSVC target on Windows runners (`.github/workflows/native.yml`); packaging,
+release asset names and the updater's rules are in `packaging/README.md`.
+
+## The desktop layer (`src/desktop`)
+
+What Electron's main process did. Services start once the window is up (`desktop::start`),
+never in headless runs. Call these on the UI thread:
+
+| Electron IPC | Native |
+| --- | --- |
+| `window:minimize` / `maximize-toggle` / `close` | `desktop::window::{minimize, toggle_maximize, close}(tx)` |
+| `window:mini-player:set` | `window::set_mini_player(bool) -> MiniPlayerResult { ok, mini_player }` |
+| `window:mini-player:panel-anchor` | `window::mini_player_panel_anchor() -> PanelAnchor` |
+| `window:mini-player:panel` | `window::set_mini_player_panel(open) -> PanelResult { ok, open, anchor }` |
+| `config:get` / `config:update` | `desktop::desktop_config(app)`, `desktop::update_config(app, ConfigPatch)` |
+| `now-playing:new-token` | `desktop::new_now_playing_token(app)` |
+| `config:test-server` | `desktop::test_server(url)` (blocks: run it on `app.net`) |
+| `external:open` | `desktop::open_external(tx, url)` |
+| `updates:get` / `save` / `check` / `download` / `install` | `app.desktop.updater.status()`, `desktop::save_update_config`, `updater::{check, download_update, install}` |
+| `tracks:export-files` | `desktop::export::export_track_files(app, tx, items, done)` |
+| `discord:activity` / `discord:clear` | none: `desktop::presence` watches `app.player` |
+
+The Discord card preview uses `desktop::discord_card::DiscordCard::lines`, as Discord will.
