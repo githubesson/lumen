@@ -108,31 +108,33 @@ pub fn disclosure(t: &Theme, key: &str, label: &str, count: Option<&str>, open: 
 
 /// `.stat-link`: inherited text with a dotted underline 4 px under it
 /// (solid on hover), widened to at least 24 px without moving the text.
-pub fn stat_link(key: &str, label: &str, style: TextStyle, color: Color, help: Option<&str>, on_press: impl Fn(&mut App) + 'static) -> El {
+pub fn stat_link(key: &str, label: &str, style: TextStyle, color: Color, help: Option<&str>, on_press: impl Fn(&mut App, &mut rune::Tx) + 'static) -> El {
     let w = advance(label, style);
-    // Chromium draws a dotted underline as round dots of the line's
-    // thickness, a dot and a gap each that wide.
-    let thick = (style.size / 18.0).max(1.0).round();
-    let base = style.line_height / 2.0 + style.size * 0.36;
-    let under = base + 4.0;
-    let mut dots = row().absolute(6.0, under).w(w).h(thick).gap(thick).group_opacity(1.0, 0.0);
+    // A `<button>` centres its text in the 24 px it's widened to.
+    let box_w = (w + 12.0).max(24.0);
+    let x = (box_w - w) / 2.0;
+    // Chromium's dotted underline: square dots as thick as the line (2 px
+    // at 18 px), a dot and a gap each that wide, 4 px under the baseline.
+    let thick = (style.size / 9.0).round().max(1.0);
+    let under = style.line_height / 2.0 + style.size * 0.36 + 2.75;
+    let mut dots = row().absolute(x, under).w(w).h(thick).gap(thick).group_opacity(1.0, 0.0);
     let n = ((w + thick) / (thick * 2.0)).floor() as usize;
     for _ in 0..n {
-        dots = dots.child(el().size(thick, thick).radius(thick).fill(color));
+        dots = dots.child(el().size(thick, thick).fill(color));
     }
-    let solid = el().absolute(6.0, under).size(w, thick).fill(color).group_opacity(0.0, 1.0);
-    let mut b = el()
+    let solid = el().absolute(x, under).size(w, thick).fill(color).group_opacity(0.0, 1.0);
+    let mut b = row()
         .key(key.to_string())
-        .min_w(24.0)
-        .px(6.0)
+        .w(box_w)
         .mx(-6.0)
+        .justify_center()
         .role("button")
         .label(label.to_string())
         .cursor(Cursor::Pointer)
         .focusable(true)
         .hover(Color::TRANSPARENT)
-        .on_press(on_press)
-        .child(text(label.to_string()).font(style).color(color))
+        .on_press_tx(on_press)
+        .child(text(label.to_string()).font(style).color(color).w(w))
         .child(dots)
         .child(solid);
     if let Some(h) = help {
@@ -176,13 +178,13 @@ pub fn banner(t: &Theme, message: &str) -> El {
 }
 
 /// A 12 px muted note under a table, with an inline "Try again".
-pub fn retry_note(t: &Theme, key: &str, message: &str, retry: impl Fn(&mut App) + 'static) -> El {
+pub fn retry_note(t: &Theme, key: &str, message: &str, retry: fn(&mut App)) -> El {
     let style = font(12.0, 400.0);
     row()
         .flex_wrap()
         .items_center()
         .child(text(format!("{message} ")).font(style).color(t.c.muted_foreground).wrap())
-        .child(stat_link(key, "Try again", style, t.c.muted_foreground, None, retry))
+        .child(stat_link(key, "Try again", style, t.c.muted_foreground, None, move |app, _| retry(app)))
 }
 
 /// The 14 px body line height text style with an explicit `lh`.

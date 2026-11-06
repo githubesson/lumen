@@ -274,4 +274,5 @@ pub mod scenes {
     pub use super::auto_download::scene_downloads_open as downloads_open;
     pub use super::invites::{scene_past_open as invites_past, scene_revoke as revoke_invite};
     pub use super::users::scene_disable as disable_user;
+    pub use super::pins::scene_history as pin_history;
 }

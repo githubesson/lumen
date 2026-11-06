@@ -342,7 +342,8 @@ mod tests {
         assert_eq!(bytes(41_983_442_944), "39.1 GB");
         assert_eq!(bytes(0), "—");
         assert_eq!(bytes(512), "512 B");
-        assert_eq!(interval(3600.0), "60 min");
+        assert_eq!(interval(3540.0), "59 min");
+        assert_eq!(interval(3600.0), "1 hr");
         assert_eq!(interval(21_600.0), "6 hr");
         assert_eq!(interval(5400.0), "1.5 hr");
         assert_eq!(interval(0.0), "-");

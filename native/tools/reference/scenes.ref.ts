@@ -5,6 +5,7 @@ import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { test, type Page } from "playwright/test";
 import { go, ready, settle, signedIn, signedOut } from "../../../frontend/tests/ui/helpers";
+import { artistGridPins } from "../../../frontend/tests/ui/fixtures";
 
 const OUT = fileURLToPath(new URL("../../out/ref/", import.meta.url));
 mkdirSync(OUT, { recursive: true });
@@ -123,6 +124,33 @@ function adminScenes(): Scene[] {
         await scroll(600)(p);
         await press("Link account")(p);
         await p.getByText("Finish signing in to TIDAL").waitFor();
+      },
+    },
+    {
+      // The fixtures' pin ids aren't UUIDs, so their actions stay disabled:
+      // give the ArtistGrid pin a real one and open its history.
+      name: "admin-pin-history",
+      path: "/admin",
+      wait: lib,
+      act: async (p) => {
+        const id = "3f1c9a2e-77b4-4c1e-9d0a-5be1f2c8a901";
+        await p.route("**/api/admin/library/artistgrid/pins", (r) =>
+          r.fulfill({ json: artistGridPins.map((pin) => ({ ...pin, id })) }),
+        );
+        await p.route(`**/api/admin/library/artistgrid/pins/${id}/downloads*`, (r) =>
+          r.fulfill({
+            json: [
+              { id: 1, pin_id: id, source_url: "https://artistgrid.example.org/velvet-meridian/demo-1.flac", file_path: "/music/artistgrid/velvet-meridian/Demo 1.flac", status: "downloaded", first_seen_at: "2026-10-10T18:00:00Z", updated_at: "2026-10-10T18:00:00Z" },
+              { id: 2, pin_id: id, source_url: "https://artistgrid.example.org/velvet-meridian/demo-2.flac", status: "failed", error: "HTTP 404 Not Found", first_seen_at: "2026-10-10T18:00:00Z", updated_at: "2026-10-10T18:01:00Z" },
+            ],
+          }),
+        );
+        // Remount the section so the pins load through the override.
+        await p.locator(".segmented button", { hasText: "Users" }).click();
+        await p.locator(".segmented button", { hasText: "Library" }).click();
+        await p.getByRole("button", { name: "Download history for Velvet Meridian demos" }).click();
+        await p.getByText("No download records yet.").or(p.getByText("Demo 1.flac", { exact: false })).first().waitFor();
+        await scroll(1900)(p);
       },
     },
     {

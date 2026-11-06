@@ -520,8 +520,10 @@ fn ingest_errors(t: &Theme, data: &IngestErrors, open: bool, width: f32) -> El {
     c
 }
 
-fn open_errors(app: &mut App) {
+/// "Errored N": show the failed files and bring them into view.
+fn open_errors(app: &mut App, tx: &mut rune::Tx) {
     st(app).show_errors = true;
+    tx.scroll_into_view("ingest-errors");
 }
 
 /// "Last scan": what the last finished scan did.
@@ -537,7 +539,11 @@ fn last_scan(app: &App, t: &Theme, r: &RescanStatus) -> El {
             text(value.to_string()).font(vstyle).color(t.c.foreground)
         };
         let lstyle = tnum(font(12.0, 400.0));
+        // Text widths as the browser has them (a text element rounds up).
+        let vw = table::advance(&value.to_string(), vstyle);
+        let w = table::advance(label, lstyle).max(vw);
         col()
+            .w(w)
             .items_start()
             .child(parts::line_box(text(label.to_string()).font(lstyle).color(t.c.muted_foreground), lstyle).mb(2.0))
             .child(parts::line_box(value_el, vstyle))

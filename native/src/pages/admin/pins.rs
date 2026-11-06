@@ -744,3 +744,29 @@ fn history(t: &Theme, kind: PinKind, title: &str, rows: Option<&Vec<PinDownload>
     let cols = [Col::auto("Status"), Col::auto("File"), Col::auto("Source"), Col::auto("Updated")];
     parts::surface(t, 16.0).child(head).child(table::table(t, &format!("admin-pin-{}-history", kind.index()), &cols, list, empty, width - 34.0))
 }
+
+/// Scene: the ArtistGrid pin with a real id, its download history open.
+pub fn scene_history(app: &mut App) {
+    let id = "3f1c9a2e-77b4-4c1e-9d0a-5be1f2c8a901".to_string();
+    let s = k(app, PinKind::ArtistGrid);
+    if let Some(p) = s.pins.as_mut().and_then(|p| p.first_mut()) {
+        p.id = id.clone();
+    }
+    let row = |n: i64, file: Option<&str>, status: &str, error: Option<&str>, at: &str| PinDownload {
+        id: n,
+        source_url: Some(format!("https://artistgrid.example.org/velvet-meridian/demo-{n}.flac")),
+        source_path: None,
+        file_path: file.map(str::to_string),
+        status: status.into(),
+        error: error.map(str::to_string),
+        updated_at: at.into(),
+    };
+    s.downloads.insert(
+        id.clone(),
+        vec![
+            row(1, Some("/music/artistgrid/velvet-meridian/Demo 1.flac"), "downloaded", None, "2026-10-10T18:00:00Z"),
+            row(2, None, "failed", Some("HTTP 404 Not Found"), "2026-10-10T18:01:00Z"),
+        ],
+    );
+    s.history = Some(id);
+}

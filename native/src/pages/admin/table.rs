@@ -124,24 +124,48 @@ pub fn advance(s: &str, style: TextStyle) -> f32 {
 }
 
 /// `word-break: break-all`: fill each line to `width`, breaking between any
-/// two characters; spaces at a break are dropped.
+/// two characters the line-breaking rules still allow (never before closing
+/// punctuation, `/` or a hyphen, nor after an opening bracket, UAX #14
+/// LB13/LB14/LB21); spaces at a break are dropped.
 pub fn break_all(s: &str, style: TextStyle, width: f32) -> Vec<String> {
+    let chars: Vec<char> = s.chars().collect();
+    let allowed = |i: usize| -> bool {
+        // A break before chars[i].
+        let (a, b) = (chars[i - 1], chars[i]);
+        if b == ' ' {
+            return false;
+        }
+        if a == ' ' {
+            return true;
+        }
+        !(matches!(b, '/' | ',' | '.' | ':' | ';' | '!' | '?' | ')' | ']' | '}' | '-' | '%') || matches!(a, '(' | '[' | '{'))
+    };
+    let fits = |from: usize, to: usize| advance(chars[from..to].iter().collect::<String>().trim_end(), style) <= width + 0.01;
     let mut lines = Vec::new();
-    let mut cur = String::new();
-    for ch in s.chars() {
-        let mut next = cur.clone();
-        next.push(ch);
-        if !cur.is_empty() && ch != ' ' && advance(next.trim_end(), style) > width + 0.01 {
-            lines.push(cur.trim_end().to_string());
-            cur = ch.to_string();
-        } else if cur.is_empty() && ch == ' ' && !lines.is_empty() {
-            // A space that would start a wrapped line collapses.
-        } else {
-            cur = next;
+    let mut start = 0;
+    while start < chars.len() {
+        let mut end = start + 1;
+        while end < chars.len() && fits(start, end + 1) {
+            end += 1;
+        }
+        if end < chars.len() {
+            // Back up to the last break opportunity on the line.
+            let mut cut = end;
+            while cut > start + 1 && !allowed(cut) {
+                cut -= 1;
+            }
+            if cut > start + 1 || allowed(cut) {
+                end = cut;
+            }
+        }
+        lines.push(chars[start..end].iter().collect::<String>().trim_end().to_string());
+        start = end;
+        while start < chars.len() && chars[start] == ' ' {
+            start += 1;
         }
     }
-    if !cur.is_empty() || lines.is_empty() {
-        lines.push(cur.trim_end().to_string());
+    if lines.is_empty() {
+        lines.push(String::new());
     }
     lines
 }
@@ -386,6 +410,7 @@ pub fn badge(t: &Theme, label: &str, accent: bool) -> (El, f32) {
     let w = advance(label, style) + 18.0;
     let (bg, ink) = if accent { (t.c.primary, t.c.primary_foreground) } else { (t.c.secondary, t.c.secondary_foreground) };
     let e = row()
+        .w(w)
         .h(20.0)
         .px(9.0)
         .items_center()

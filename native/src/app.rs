@@ -325,6 +325,11 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
         crate::pages::admin::scenes::ready(a);
         crate::pages::admin::scenes::downloads_open(a);
     }),
+    ("admin-pin-history", |a| {
+        scene(a, "/admin");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::pin_history(a);
+    }),
     ("admin-remove-folder", |a| {
         scene(a, "/admin");
         crate::pages::admin::scenes::ready(a);
