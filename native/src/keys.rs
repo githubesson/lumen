@@ -30,6 +30,9 @@ pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     if modal_open(app) || app.me().is_none() {
         return false;
     }
+    if crate::pages::home::on_key(app, ev, tx) {
+        return true;
+    }
     // sidebar:toggle is `ctrl+b` on every platform.
     if matches!(ev.key, Key::Command('b')) && m.ctrl && !m.shift && !m.alt {
         app.toggle_sidebar();
