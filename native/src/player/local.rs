@@ -210,6 +210,10 @@ impl LocalPlayer {
     pub fn error(&self) -> Option<&PlaybackError> {
         self.error.as_ref()
     }
+    /// Headless scenes: a failure set as is (`Player::scene_set_error`).
+    pub(super) fn scene_set_error(&mut self, error: PlaybackError) {
+        self.error = Some(error);
+    }
     /// The engine's playhead, unquantized (for the activity heartbeat).
     pub fn engine_time(&self) -> (f64, f64) {
         (self.adapter.current_time(), self.adapter.duration())

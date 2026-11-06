@@ -57,15 +57,26 @@ pub trait AudioAdapter {
     fn next_event(&mut self) -> Option<AdapterEvent>;
 }
 
-/// Plays nothing: headless scenes, which never open an audio device.
+/// Plays nothing: headless scenes, which never open an audio device. Its
+/// clock follows the wall clock while "playing", as a silent stream's would.
 #[derive(Default)]
 pub struct NullAdapter {
     position: f64,
+    playing_since: Option<std::time::Instant>,
+}
+
+impl NullAdapter {
+    fn fold(&mut self) {
+        if let Some(at) = self.playing_since.take() {
+            self.position += at.elapsed().as_secs_f64();
+        }
+    }
 }
 
 impl AudioAdapter for NullAdapter {
     fn load(&mut self, _url: &str) {
         self.position = 0.0;
+        self.playing_since = None;
     }
     fn prepare_next(&mut self, _url: &str) {}
     fn activate_prepared(&mut self, _url: &str) -> bool {
@@ -76,16 +87,24 @@ impl AudioAdapter for NullAdapter {
     }
     fn clear_prepared(&mut self) {}
     fn play(&mut self) -> bool {
+        if self.playing_since.is_none() {
+            self.playing_since = Some(std::time::Instant::now());
+        }
         true
     }
-    fn pause(&mut self) {}
+    fn pause(&mut self) {
+        self.fold();
+    }
     fn seek(&mut self, seconds: f64) {
         self.position = seconds.max(0.0);
+        if self.playing_since.is_some() {
+            self.playing_since = Some(std::time::Instant::now());
+        }
     }
     fn set_volume(&mut self, _volume: f64) {}
     fn set_muted(&mut self, _muted: bool) {}
     fn current_time(&self) -> f64 {
-        self.position
+        self.position + self.playing_since.map_or(0.0, |at| at.elapsed().as_secs_f64())
     }
     fn duration(&self) -> f64 {
         0.0

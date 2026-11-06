@@ -1,6 +1,7 @@
 //! `Shell.tsx`: the signed-in frame (`app-shell.css`). A grid of the sidebar,
 //! the main pane (top bar over the routed page) and the lyrics panel, over
 //! the player bar, on the sidebar colour with the window's rounded corners.
+pub mod player;
 pub mod player_bar;
 pub mod sidebar;
 pub mod topbar;
@@ -43,6 +44,11 @@ pub fn window_size(cx: &mut Cx<App>) -> [f32; 2] {
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let [window_w, _] = window_size(cx);
     let bp = Bp::of(window_w);
+    if app.ui.player.mini.on {
+        // `html[data-mini-player]`: the window is the player bar alone, on
+        // a transparent window.
+        return col().key("app").w_full().h_full().child(player_bar::view(app, t, bp, cx));
+    }
     let narrow = bp == Bp::Narrow;
     let main = css_border(col(), 1.0, t.c.border, t.radius_xl())
         .key("main")
@@ -61,9 +67,8 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
         grid = grid.child(sidebar::view(app, t, false)).child(el().w(8.0));
     }
     grid = grid.child(main);
-    if app.ui.lyrics_open && !narrow {
-        let w = if t.layout == crate::theme::Layout::Wide { 320.0 } else { 280.0 };
-        grid = grid.child(el().w(8.0)).child(el().key("lyrics-panel").w(w).h_full());
+    if !narrow && let Some(lyrics) = player::lyrics::column(app, t, cx) {
+        grid = grid.child(lyrics);
     }
     let mut shell = col()
         .key("app")
@@ -75,8 +80,11 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
         .radius(t.radius_xl())
         .clip_rounded(t.radius_xl())
         .child(grid)
-        .child(player_bar::view(app, t, bp));
+        .child(player_bar::view(app, t, bp, cx));
     if narrow && let Some(drawer) = sidebar::drawer(app, t, window_w) {
+        shell = shell.child(drawer);
+    }
+    if narrow && let Some(drawer) = player::lyrics::drawer(app, t, cx, window_w) {
         shell = shell.child(drawer);
     }
     shell

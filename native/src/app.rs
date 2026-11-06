@@ -32,6 +32,8 @@ pub struct Ui {
     pub mobile_nav_open: bool,
     /// A `SeekBar` being dragged: its key and the value under the pointer.
     pub seek_drag: Option<(String, f32)>,
+    /// The player's popovers, lyrics state and mini player mode.
+    pub player: crate::shell::player::State,
 }
 
 pub struct App {
@@ -320,6 +322,7 @@ fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
     changed |= crate::pages::share_preview::poll(app, clock, tx);
     // Overlay work that finished off the UI thread and needs a `Tx` (a copy, a save dialog).
     changed |= crate::overlays::poll(app, tx);
+    changed |= crate::shell::player::poll(app, tx);
     changed
 }
 
@@ -548,6 +551,17 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
         scene(a, "/library");
         a.ui.mobile_nav_open = true;
     }),
+    ("queue-open", crate::shell::player::scenes::queue_open),
+    ("devices-open", crate::shell::player::scenes::devices_open),
+    ("lyrics-open", crate::shell::player::scenes::lyrics_open),
+    ("lyrics-narrow", crate::shell::player::scenes::lyrics_open),
+    ("error-popover", crate::shell::player::scenes::error_popover),
+    ("mini", crate::shell::player::scenes::mini_closed),
+    ("mini-queue", crate::shell::player::scenes::mini_queue),
+    ("mini-lyrics", crate::shell::player::scenes::mini_lyrics),
+    ("mini-devices", crate::shell::player::scenes::mini_devices),
+    ("mini-error", crate::shell::player::scenes::mini_error),
+    ("player-playing", crate::shell::player::scenes::playing),
     ("login", crate::pages::auth::scenes::login),
     ("login-error", crate::pages::auth::scenes::login_error),
     ("register", crate::pages::auth::scenes::register),

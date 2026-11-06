@@ -256,6 +256,22 @@ impl Player {
     pub fn generation(&self) -> u64 {
         self.generation
     }
+
+    /// Headless scenes: show `error` as the current track's failure, as the
+    /// engine and the stream probe would have left it.
+    pub fn scene_set_error(&mut self, error: PlaybackError) {
+        self.local.scene_set_error(error);
+        self.refresh();
+    }
+
+    /// Headless scenes: the playback session as a connected socket would
+    /// leave it (the reference's mock answers with this device alone).
+    pub fn scene_set_session(&mut self, connected: bool, devices: Vec<PlaybackDevice>) {
+        self.session.connected = connected;
+        self.session.devices_ready = true;
+        self.session.devices = devices;
+        self.generation += 1;
+    }
 }
 
 /// The app-level poll: hand the player the app's state, then poll it.
