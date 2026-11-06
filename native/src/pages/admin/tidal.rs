@@ -2,7 +2,6 @@
 //! the hifi-api proxy's connection, the linked accounts and the device-code
 //! sign-in that links another, then the auto-download card.
 
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -10,9 +9,10 @@ use std::time::{Duration, Instant};
 use rune::{Color, El, col, el, row, text};
 
 use super::requests::{self as rq, TidalAccount, TidalAuthPoll, TidalAuthStart, TidalStatus};
-use super::{ConfirmArt, ConfirmRequest, ConfirmSubject, Res, Section, call, confirm, format, load, parts, still_mounted};
+use super::{Res, Section, call, format, load, parts, still_mounted};
 use crate::api::ApiError;
 use crate::app::App;
+use crate::overlays::confirm::{self, Art, ConfirmSpec, Subject};
 use crate::theme::Theme;
 use crate::ui::{Btn, css_border, font, ico, icons as i, mono, tnum, with_lh};
 
@@ -84,29 +84,15 @@ fn normalize_url(raw: &str) -> String {
     if host == "tidal.com" || host.ends_with(".tidal.com") { candidate } else { t.to_string() }
 }
 
-/// Opens a link in the browser, as Electron's `shell.openExternal`.
-/// TODO(desktop-merge): use the desktop bridge's openExternal.
-fn open_external(url: &str) -> Result<(), String> {
-    let lower = url.to_ascii_lowercase();
-    if !(lower.starts_with("https://") || lower.starts_with("http://")) || url.chars().any(|c| c.is_whitespace()) {
-        return Err("Could not open the TIDAL sign-in page.".into());
-    }
-    if rune::tooling::headless_run().is_some() {
-        return Ok(());
-    }
-    #[cfg(windows)]
-    let cmd = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).spawn();
-    #[cfg(target_os = "macos")]
-    let cmd = std::process::Command::new("open").arg(url).spawn();
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let cmd = std::process::Command::new("xdg-open").arg(url).spawn();
-    cmd.map(|_| ()).map_err(|_| "Could not open the TIDAL sign-in page.".to_string())
-}
-
+/// The device login's page in the browser (`openExternal`), from the next
+/// frame (opening needs the window's `Tx`).
 fn open(app: &mut App, url: &str) {
-    if let Err(e) = open_external(&normalize_url(url)) {
-        st(app).error = Some(e);
-    }
+    let url = normalize_url(url);
+    crate::overlays::later(app, move |app: &mut App, tx: &mut rune::Tx| {
+        if crate::desktop::open_external(tx, &url).is_err() {
+            st(app).error = Some("Could not open the TIDAL sign-in page.".into());
+        }
+    });
 }
 
 /// `start`: begin a device login and open its page.
@@ -251,21 +237,15 @@ fn unlink(app: &mut App, account: TidalAccount) {
 }
 
 fn ask_unlink(app: &mut App, account: TidalAccount) {
-    let subject = ConfirmSubject {
-        art: ConfirmArt::Icon(&i::LINK),
+    let subject = Subject {
+        art: Art::Icon(&i::LINK),
         name: account_label(&account),
         detail: Some(account_source(&account).into()),
     };
-    confirm(
+    confirm::ask_then(
         app,
-        ConfirmRequest {
-            title: "Unlink this TIDAL account?".into(),
-            message: "Lumen stops using it for TIDAL. You can link it again later.".into(),
-            subject: Some(subject),
-            confirm_label: "Unlink".into(),
-            confirm_icon: Some(&i::TRASH_2),
-            on_confirm: Rc::new(move |app: &mut App| unlink(app, account.clone())),
-        },
+        ConfirmSpec::new("Unlink this TIDAL account?", "Lumen stops using it for TIDAL. You can link it again later.", "Unlink").maybe_subject(Some(subject)).icon(&i::TRASH_2),
+        move |app: &mut App| unlink(app, account.clone()),
     );
 }
 
