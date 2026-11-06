@@ -1,7 +1,7 @@
 //! The app's state and root view: `App.tsx`, the providers in `main.tsx`,
 //! and the desktop bridge's state that lived in Electron's main process.
 
-use rune::{Color, Cx, El, KeyEvent, Tx, Waker, col, el};
+use rune::{Color, Cx, El, KeyEvent, Tx, Waker, col};
 
 use crate::api::{self, Client, Me, Playlist};
 use crate::config::{Config, Tweaks};
@@ -113,31 +113,36 @@ impl App {
         self.refresh_me();
     }
 
+    /// `refresh()`: re-check the session (`pages::auth::session`).
     pub fn refresh_me(&mut self) {
-        let Some(client) = self.client.clone() else { return };
-        self.net.run(
-            move || api::auth::me(&client),
-            |app, result| match result {
-                Ok(me) => app.signed_in(me),
-                Err(e) if e.is_unauthorized() => {
-                    app.session = Session::SignedOut;
-                    app.navigate_replace(Location::parse("/login"));
-                }
-                Err(e) => app.session = Session::Unreachable(e.to_string()),
-            },
-        );
+        crate::pages::auth::session::refresh(self);
     }
 
-    fn signed_in(&mut self, me: Me) {
+    /// A session landed (`/me`, sign-in, registration): the shell's data,
+    /// and the route `App.tsx` sends this user to.
+    pub fn signed_in(&mut self, me: Me) {
+        let forced = me.must_reset_password;
         self.session = Session::SignedIn(me);
-        if self.location().is("/login") {
-            self.navigate_replace(Location::parse("/"));
+        if forced {
+            // A forced reset loads nothing until the new password is set.
+            self.playlists = Some(Vec::new());
+            self.pending_invites = 0;
+        } else {
+            self.load_playlists();
+            self.load_pending_invites();
+            crate::pages::favorites::refresh(self);
         }
-        self.load_playlists();
-        self.load_pending_invites();
-        crate::pages::favorites::refresh(self);
-        let loc = self.location().clone();
-        crate::pages::enter(self, &loc);
+        let at = self.location().path.clone();
+        if at == "/login" {
+            // `<Navigate to="/" replace />`, and "/" forwards a forced reset.
+            let to = if forced { "/reset-password" } else { "/" };
+            self.navigate_replace(Location::parse(to));
+        } else if forced && at == "/" {
+            self.navigate_replace(Location::parse("/reset-password"));
+        } else {
+            let loc = self.location().clone();
+            crate::pages::enter(self, &loc);
+        }
     }
 
     pub fn me(&self) -> Option<&Me> {
@@ -239,30 +244,27 @@ impl App {
         self.set_tweaks(|t| t.layout = next);
     }
 
+    /// `logout()` (`pages::auth::session`).
     pub fn sign_out(&mut self) {
-        let Some(client) = self.client.clone() else { return };
         self.player.stop();
-        self.net.run(
-            move || {
-                let _ = client.post_void("/api/auth/logout", None);
-                client.clear_cookies();
-            },
-            |app, ()| app.signed_out(),
-        );
+        crate::pages::auth::session::logout(self);
     }
 
-    /// The session is gone (signed out here, or the server said 401).
+    /// Signed out: drop what the session showed and start at `/login`.
     pub fn signed_out(&mut self) {
+        // A late 401 from the old session must not end the next one.
         if let Some(client) = &self.client {
             client.advance_auth_generation();
         }
-        self.player.stop();
         self.session = Session::SignedOut;
+        self.player.stop();
         self.playlists = None;
         self.pending_invites = 0;
         self.pages = Default::default();
         self.history = History::new(Location::parse("/login"));
+        crate::pages::enter(self, &Location::parse("/login"));
     }
+
 
     /// Load everything a scene shows before its first frame (headless only).
     pub fn settle_sync(&mut self) {
@@ -280,11 +282,13 @@ fn setup(app: &mut App, waker: Waker) {
     app.waker.set(waker);
 }
 
-fn poll(app: &mut App, _clock: f64, tx: &mut Tx) -> bool {
+fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
     let mut changed = Net::drain(app);
     changed |= crate::player::poll(app, tx);
-    changed |= crate::ui::poll(app, _clock, tx);
+    changed |= crate::ui::poll(app, clock, tx);
     changed |= crate::desktop::poll(app);
+    changed |= crate::pages::auth::poll(app, clock, tx);
+    changed |= crate::pages::share_preview::poll(app, clock, tx);
     changed
 }
 
@@ -296,13 +300,11 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
     app.system_dark.set(cx.system_dark());
     app.widgets.lists.begin_frame();
     let t = app.theme();
-    let body = match &app.session {
-        Session::SignedIn(_) => crate::shell::view(app, &t, cx),
-        Session::Loading => el().w_full().h_full(),
-        Session::SignedOut | Session::Unreachable(_) => crate::pages::signed_out(app, &t, cx),
-    };
+    // `App.tsx`'s gating: the shell only for a signed-in route.
+    let in_shell = crate::pages::auth::gate(app) == crate::pages::auth::Gate::Shell;
+    let body = if in_shell { crate::shell::view(app, &t, cx) } else { crate::pages::signed_out(app, &t, cx) };
     let mut root = col().key("root").w_full().h_full().fill(Color::TRANSPARENT).child(body);
-    if matches!(app.session, Session::SignedIn(_)) {
+    if in_shell {
         for layer in crate::overlays::view(app, &t, cx) {
             root = root.child(layer);
         }
@@ -313,8 +315,13 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
 /// Scenes for headless snapshots: each signs in against `LUMEN_SERVER` (the
 /// mock server by default) and opens one screen with its data loaded.
 fn scene(app: &mut App, path: &str) {
+    // Synchronous first, so the session check lands before the first frame
+    // (one started at launch, still on a worker, no longer counts).
+    app.settle_sync();
     if app.client.is_none() {
         app.connect(&std::env::var("LUMEN_SERVER").unwrap_or_else(|_| "http://127.0.0.1:4791".into()));
+    } else {
+        app.refresh_me();
     }
     app.settle_sync();
     app.navigate(Location::parse(path));
@@ -336,6 +343,18 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
         scene(a, "/library");
         a.ui.mobile_nav_open = true;
     }),
+    ("login", crate::pages::auth::scenes::login),
+    ("login-error", crate::pages::auth::scenes::login_error),
+    ("register", crate::pages::auth::scenes::register),
+    ("register-invite", crate::pages::auth::scenes::register_invite),
+    ("reset-password", crate::pages::auth::scenes::reset_password),
+    ("welcome", crate::pages::auth::scenes::welcome),
+    ("welcome-server", crate::pages::auth::scenes::welcome_server),
+    ("welcome-prefs", crate::pages::auth::scenes::welcome_prefs),
+    ("welcome-change", crate::pages::auth::scenes::welcome_change),
+    ("startup-loading", crate::pages::auth::scenes::startup_loading),
+    ("startup-unreachable", crate::pages::auth::scenes::startup_unreachable),
+    ("share", crate::pages::auth::scenes::share),
     ("light", |a| {
         a.config.tweaks = Some(Tweaks { theme: Mode::Light, ..a.tweaks.clone() });
         a.tweaks.theme = Mode::Light;
