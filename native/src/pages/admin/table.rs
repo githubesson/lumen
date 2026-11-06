@@ -421,11 +421,13 @@ pub fn badge(t: &Theme, label: &str, accent: bool) -> (El, f32) {
 }
 
 /// A `.badge` inline in a cell's text: baseline-aligned in the 14 px line,
-/// whose box it makes 20.70 px tall, sitting 0.70 px down (as Chromium
-/// lays out an inline-flex badge on the cell's strut).
+/// whose box it makes 21.70 px tall, sitting 1.70 px down. The strut's
+/// baseline is 15 px down (`css_baseline(14, 20.3)`), the badge's 13.3 px
+/// (its border, the 0.3 px its 17.4 px line is centred by, and
+/// `css_baseline(12, 17.4)`), in LayoutUnits.
 pub fn inline_badge(t: &Theme, label: &str, accent: bool) -> Part {
     let (b, w) = badge(t, label, accent);
-    Part::Fixed(el().h(20.703125).child(b.mt(0.703125)), w)
+    Part::Fixed(el().h(21.703125).child(b.mt(1.703125)), w)
 }
 
 /// A row action (`.admin-actions .iconbtn`): a muted 32 px icon button that

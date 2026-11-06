@@ -1,0 +1,5 @@
+{"events": [
+  {"t": 0.1, "type": "scroll", "x": 760, "y": 410, "dx": 0, "dy": -600, "dur": 0.2},
+  {"t": 0.6, "type": "tap", "key": "admin-tidal-unlink-acct-1"},
+  {"t": 0.7, "type": "move", "x": 1, "y": 1}
+]}

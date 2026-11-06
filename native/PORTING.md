@@ -126,6 +126,12 @@ Headless Chromium hides scrollbars, so the content's scrollbar thumb shows only 
 4. Diff: `node tools/diff.mjs out/ref/<scene>-dark.png out/rune/<scene>-dark.png out/<name> [--crop x,y,w,h] [--zoom 3]`
    writes `<name>-side.png` (reference | rune | diff). `node tools/px.mjs a.png b.png x,y …`
    prints pixels. Look at the side-by-side; fix layout and colour first, then details.
+5. Everything at once: `node tools/sweep.mjs [--only <regex>]` renders every scene the spec
+   names with `target/release/lumen`, diffs it, and lists them worst first (renders and
+   side-by-sides in `out/sweep`). A spec scene the port plays from another one (a scroll, a
+   size, a script) goes in its `VARIANTS` table. The text's lighter ink alone leaves 1–4 %
+   of pixels past 32/255; anything well above that is layout. `out/data/config.json` must
+   hold no `tweaks` (a saved theme overrides `--theme`).
 
 Rune renders headless with `--tree out.json` (element tree, rects) and `--script s.json`
 (scripted input: clicks, keys, typing) — see Rune's README "Agent tooling". Use them to test
