@@ -1,4 +1,21 @@
-//! `Home.tsx and components/home/* (home.css, board.css)`, at `/`.
+//! `Home.tsx` and `components/home/*` (`home.css`, `board.css`,
+//! `cards.css`), at `/`.
+//!
+//! - [`kinds`], [`arrangement`], [`layout`], [`fill`], [`albums`]: the
+//!   panel kinds, the saved arrangement (`tweaks.homeBoard`), the default
+//!   and packed layouts, how panels fill their slots, Albums' list.
+//! - [`grid`]: the board's CSS grid (placement and auto rows).
+//! - [`requests`], [`logic`]: what Home loads, and the core helpers it uses
+//!   (until the API port merges).
+
+pub mod albums;
+pub mod arrangement;
+pub mod fill;
+pub mod grid;
+pub mod kinds;
+pub mod layout;
+pub mod logic;
+pub mod requests;
 
 use rune::{Cx, El};
 
