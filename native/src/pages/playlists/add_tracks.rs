@@ -10,7 +10,7 @@ use crate::app::App;
 use crate::format::{display_text, fmt_duration_ms};
 use crate::images::Cover;
 use crate::theme::Theme;
-use crate::ui::forms::search_input_with;
+use crate::ui::forms::search_input;
 use crate::ui::kit::{Dialog, scroll_area_fit};
 use crate::ui::{Btn, css_border, css_border_bottom, font, ico, icons as i, line, tnum};
 
@@ -231,7 +231,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut rune::Cx<App>, window: [f32; 2]) -> O
     let d = detail(app)?;
     let s = state(app).filter(|s| s.open)?;
     let existing: HashSet<&str> = d.tracks.as_deref().unwrap_or(&[]).iter().map(|e| e.track_id.as_str()).collect();
-    let search = search_input_with(t, "add-tracks-search", &app.pages.playlists.fields.add_query, "Search local + TIDAL", Some(320.0), |f| {
+    let search = search_input(t, "add-tracks-search", &app.pages.playlists.fields.add_query, "Search local + TIDAL", Some(320.0), |f| {
         f.label("Search tracks")
             .on_edit(|a: &mut App| &mut a.pages.playlists.fields.add_query)
             .on_input_change(|a: &mut App, _| query_changed(a))

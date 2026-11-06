@@ -5,7 +5,7 @@ use rune::{Color, Cursor, El, Key, KeyEvent, Tx, el, row};
 
 use crate::app::App;
 use crate::theme::{Theme, color_mix};
-use crate::ui::forms::{SelectOption, SelectVariant, search_input_with, select};
+use crate::ui::forms::{SelectOption, SelectVariant, search_input, select};
 use crate::ui::kit::{SegSize, segmented_counted, toolbar_sep};
 use crate::ui::{ico, icons as i};
 
@@ -82,7 +82,7 @@ pub fn toolbar(app: &App, t: &Theme, d: &Detail, collabs: bool, settings: bool) 
         }
         bar = bar.child(group);
     }
-    let search = search_input_with(t, "playlist-search", &app.pages.playlists.fields.search, "Search this playlist", Some(260.0), |f| {
+    let search = search_input(t, "playlist-search", &app.pages.playlists.fields.search, "Search this playlist", Some(260.0), |f| {
         f.on_edit(|a: &mut App| &mut a.pages.playlists.fields.search).on_input_key(|a: &mut App, ev: &KeyEvent, tx: &mut Tx| {
             // Escape clears the query and leaves the field (`onClear`).
             if ev.key != Key::Escape {

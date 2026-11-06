@@ -7,7 +7,7 @@ use super::{Which, reset};
 use crate::api::{Album, TrackListItem};
 use crate::app::App;
 use crate::theme::Theme;
-use crate::ui::forms::search_input_bound;
+use crate::ui::forms::search_input;
 use crate::ui::kit::{Dialog, error_banner, scroll_area_fit};
 use crate::ui::{Btn, cover_art, font, line, tnum};
 
@@ -118,15 +118,9 @@ pub fn view(app: &App, t: &Theme, window: [f32; 2], _cx: &mut Cx<App>) -> El {
     }
     // `.search`: 320 px, at most 40% of the window.
     let search_w = 320.0f32.min(window[0] * 0.4);
-    body = body.child(search_input_bound(
-        t,
-        "move-album-search",
-        &s.query,
-        "Search albums",
-        Some(search_w),
-        |a: &mut App| &mut a.overlays.edit.query,
-        Some(search),
-    ));
+    body = body.child(search_input(t, "move-album-search", &s.query, "Search albums", Some(search_w), |f| {
+        f.on_edit(|a: &mut App| &mut a.overlays.edit.query).on_input_change(move |app: &mut App, _| search(app))
+    }));
     let mut list = col().w_full().gap(2.0);
     let note = |msg: &str| el().padding(8.0).child(text(msg.to_string()).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground));
     match &s.albums {

@@ -69,8 +69,8 @@ pub fn card(app: &App, t: &Theme, c: Card, width: f32, play: Option<El>) -> El {
         art = art.child(button.absolute(art_w - 40.0, art_w - 40.0));
     }
     let (ts, ss) = (font(title_size, 500.0), font(12.0, 400.0));
-    let mut title = super::exact(line(c.title, ts, t.c.foreground), ts, 1).w_full();
-    let mut sub = super::exact(line(c.sub, ss, t.c.muted_foreground), ss, 1).w_full();
+    let mut title = crate::ui::exact(line(c.title, ts, t.c.foreground), ts.line_height).w_full();
+    let mut sub = crate::ui::exact(line(c.sub, ss, t.c.muted_foreground), ss.line_height).w_full();
     if c.round {
         title = title.justify_center();
         sub = sub.justify_center();

@@ -223,13 +223,9 @@ pub fn not_found(t: &Theme, kind: &str) -> El {
             .w_full()
             .padding(40.0)
             .items_center()
-            .child(super::exact(text(format!("{kind} not found.")).font(font(14.0, 500.0)).color(t.c.foreground), font(14.0, 500.0), 1))
+            .child(crate::ui::exact(text(format!("{kind} not found.")).font(font(14.0, 500.0)).color(t.c.foreground), font(14.0, 500.0).line_height))
             .child(
-                super::exact(
-                    text("It may have been removed or renamed.").font(font(14.0, 400.0)).color(t.c.muted_foreground),
-                    font(14.0, 400.0),
-                    1,
-                )
+                crate::ui::exact(text("It may have been removed or renamed.").font(font(14.0, 400.0)).color(t.c.muted_foreground), font(14.0, 400.0).line_height)
                 .mt(8.0),
             )
             .child(back),
@@ -333,7 +329,7 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, id: &str, artist_param
                     .padding(40.0)
                     .items_center()
                     .child(banner)
-                    .child(super::exact(text("TIDAL album unavailable.").font(st).color(t.c.foreground), st, 1)),
+                    .child(crate::ui::exact(text("TIDAL album unavailable.").font(st).color(t.c.foreground), st.line_height)),
             );
         }
         let mut s = loading_sleeve("TIDAL Album", "Loading TIDAL album…", admin, TIDAL_LOADING_FACTS);

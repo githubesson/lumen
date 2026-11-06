@@ -15,24 +15,6 @@ use crate::ui::blocks::{ListHeader, list_page_header, list_title_style, meta_lin
 use super::detail;
 use super::logic::{self, Permissions, pluralize};
 
-/// `text-wrap: balance`: the narrowest width (up to `max`) that keeps the
-/// lines `text` takes at `max`, so they come out even.
-pub fn balanced_width(s: &str, style: TextStyle, max: f32) -> f32 {
-    let lines = |w: f32| {
-        let (_, h) = rune::text::measure(s, &[], style, Some(w));
-        (h / style.line_height).round().max(1.0)
-    };
-    let n = lines(max);
-    if n <= 1.0 {
-        return max;
-    }
-    let (mut lo, mut hi) = (max / n, max);
-    for _ in 0..12 {
-        let mid = (lo + hi) / 2.0;
-        if lines(mid) > n { lo = mid } else { hi = mid }
-    }
-    hi.ceil().min(max)
-}
 
 fn title_style() -> TextStyle {
     list_title_style()
@@ -132,7 +114,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, h: Props) -> El {
     let p = h.playlist;
     // The body's width: the header's, less the padding, art and gap.
     let body_w = cx.layout_size("playlist-header").map_or(956.0, |s| s[0]) - 50.0 - 200.0 - 24.0;
-    let width = balanced_width(&p.name, title_style(), body_w.max(1.0));
+    let width = crate::ui::balanced_width(&p.name, title_style(), body_w.max(1.0));
     let title_text = text(p.name.clone()).font(title_style()).color(t.c.card_foreground).wrap_anywhere().max_w(width);
     let title = if h.perms.can_edit_details {
         el().radius(t.radius_sm())

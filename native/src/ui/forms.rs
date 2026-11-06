@@ -269,35 +269,10 @@ fn listbox_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> {
 /// Binds a field to its `TextEdit` in the app state.
 pub type EditBind = fn(&mut App) -> &mut TextEdit;
 
-/// [`search_input`] bound to its `TextEdit` (`bind`), with `on_change`
-/// hearing each edit.
-pub fn search_input_bound(
-    t: &Theme,
-    key: &str,
-    edit: &TextEdit,
-    placeholder: &str,
-    width: Option<f32>,
-    bind: EditBind,
-    on_change: Option<fn(&mut App)>,
-) -> El {
-    search_input_with(t, key, edit, placeholder, width, move |input| {
-        let input = input.on_edit(bind);
-        match on_change {
-            Some(f) => input.on_input_change(move |app: &mut App, _| f(app)),
-            None => input,
-        }
-    })
-}
-
 /// `SearchInput`: the `.search` box with a magnifier and a text field.
-/// Escape clears it when `on_clear` is given.
-pub fn search_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, width: Option<f32>) -> El {
-    search_input_with(t, key, edit, placeholder, width, |field| field)
-}
-
-/// [`search_input`] with `bind` applied to the inner text field, where its
-/// `.on_edit(..)`, `.on_input_key(..)` and `.on_submit(..)` go.
-pub fn search_input_with(
+/// `bind` gets the inner text field, where its `.on_edit(..)`,
+/// `.on_input_change(..)`, `.on_input_key(..)` and `.on_submit(..)` go.
+pub fn search_input(
     t: &Theme,
     key: &str,
     edit: &TextEdit,

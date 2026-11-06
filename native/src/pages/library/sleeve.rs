@@ -11,12 +11,12 @@ use crate::api::TrackListItem;
 use crate::app::App;
 use crate::shell::{Bp, window_size};
 use crate::theme::Theme;
-use crate::ui::forms::search_input_with;
+use crate::ui::forms::search_input;
 use crate::ui::kit::eyebrow;
 use crate::ui::{self, Btn, BtnState, font, icons as i, iconbtn, tnum, with_lh};
 
 use crate::ui::track_select::{self, BarPlace};
-use super::{exact, line_count};
+use super::line_count;
 use super::logic::{AlbumCredit, AlbumFact, FactKey};
 
 /// Below this content width the column stacks above the list.
@@ -53,21 +53,6 @@ pub struct Sleeve<'a> {
     pub list: Vec<El>,
 }
 
-/// The narrowest width `text` fits in `max` without taking more lines
-/// (`text-wrap: balance`).
-pub fn balanced_width(s: &str, style: TextStyle, max: f32) -> f32 {
-    let measure = |w: f32| rune::text::measure_with(s, &[], style, Some(w), rune::text::RichLayoutOptions::new().wrap_anywhere());
-    let (_, h) = measure(max);
-    if h <= style.line_height * 1.5 {
-        return max;
-    }
-    let (mut lo, mut hi) = (max / 2.0, max);
-    for _ in 0..12 {
-        let mid = (lo + hi) / 2.0;
-        if measure(mid).1 > h + 0.5 { lo = mid } else { hi = mid }
-    }
-    hi.ceil().min(max)
-}
 
 /// A bar in place of a line of text (`.skeleton-text`).
 pub fn skeleton(t: &Theme, w: f32, font_size: f32) -> El {
@@ -151,7 +136,7 @@ fn facts_grid(t: &Theme, width: f32, facts: Vec<(String, El)>) -> El {
         for (label, value) in it.by_ref().take(n) {
             let dt = font(12.0, 400.0);
             r = r.child(
-                col().w(w).min_w(0.0).child(exact(text(label).font(dt).color(t.c.muted_foreground), dt, 1)).child(value.mt(2.0)),
+                col().w(w).min_w(0.0).child(crate::ui::exact(text(label).font(dt).color(t.c.muted_foreground), dt.line_height)).child(value.mt(2.0)),
             );
         }
         out = out.child(r);
@@ -187,7 +172,7 @@ fn details(t: &Theme, s: &mut Sleeve, width: f32) -> El {
                 if f.key == FactKey::Saved {
                     v = v.help(a.saved_hint);
                 }
-                (f.label.to_string(), exact(v, dd, lines))
+                (f.label.to_string(), crate::ui::exact(v, dd.line_height * lines as f32))
             })
             .collect(),
         None => s
@@ -204,13 +189,13 @@ fn details(t: &Theme, s: &mut Sleeve, width: f32) -> El {
 /// The name block: kind, title (or two skeleton lines) and credits.
 fn name_block(t: &Theme, s: &Sleeve, width: f32, title_style: TextStyle) -> El {
     let kind = font(12.0, 500.0);
-    let mut name = col().w_full().min_w(0.0).gap(4.0).child(exact(text(s.kind).font(kind).color(t.c.muted_foreground), kind, 1));
+    let mut name = col().w_full().min_w(0.0).gap(4.0).child(crate::ui::exact(text(s.kind).font(kind).color(t.c.muted_foreground), kind.line_height));
     let title = match &s.album {
         Some(a) => {
             let shown = crate::format::display_text(Some(&a.title), "");
-            let w = balanced_width(&shown, title_style, width);
+            let w = crate::ui::balanced_width(&shown, title_style, width);
             let lines = line_count(&shown, title_style, w);
-            exact(text(shown).font(title_style).color(t.c.foreground).wrap_anywhere().w(w).role("heading"), title_style, lines)
+            crate::ui::exact(text(shown).font(title_style).color(t.c.foreground).wrap_anywhere().w(w).role("heading"), title_style.line_height * lines as f32)
         }
         None => {
             let lh = title_style.line_height;
@@ -225,12 +210,12 @@ fn name_block(t: &Theme, s: &Sleeve, width: f32, title_style: TextStyle) -> El {
         Some(a) if !a.credits.is_empty() => {
             let names: Vec<&str> = a.credits.iter().map(|c| c.name.as_str()).collect();
             let lines = line_count(&names.join(", "), by, width);
-            name = name.child(exact(credits_line(t, &a.credits, width), by, lines));
+            name = name.child(crate::ui::exact(credits_line(t, &a.credits, width), by.line_height * lines as f32));
         }
         Some(_) => {}
         None => {
             let st = font(14.0, 400.0);
-            name = name.child(exact(text(s.loading_label).font(st).color(t.c.muted_foreground).role("status"), st, 1));
+            name = name.child(crate::ui::exact(text(s.loading_label).font(st).color(t.c.muted_foreground).role("status"), st.line_height));
         }
     }
     name
@@ -301,7 +286,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, mut s: Sleeve) -> El {
     // The list.
     let search = &app.pages.library.detail.search;
     let search_w = if phone { None } else { Some(280.0f32.min(if stacked { content_w } else { content_w - 280.0 - 49.0 })) };
-    let field = search_input_with(t, "sleeve-search", search, "Search this album", search_w, |f| {
+    let field = search_input(t, "sleeve-search", search, "Search this album", search_w, |f| {
         f.on_edit(|app: &mut App| &mut app.pages.library.detail.search)
             .on_input_change(|app: &mut App, _| super::refilter(app))
             .on_input_key(clear_on_escape)

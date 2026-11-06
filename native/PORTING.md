@@ -83,20 +83,27 @@ Electron app in `frontend/` with full feature parity, Windows first.
 
 | Module | Ports | Use |
 | --- | --- | --- |
-| `ui::track_list` | `TrackList.tsx` | `TrackList::new("key", \|a\| &a.pages.x.tracks).view_gap(18.0).empty(el).page(app, t, head, tail)` as a page's whole view (virtual rows), or `.build(app, t)` inside a page for short lists. `.queue`, `.no_cover`, `.no_album`, `.headless`, `.not_selectable`, `.no_source_badge`, `.bar_elsewhere`, `.omit_artists`, `.extra(Extra { .. })`. |
-| `ui::track_select` | `useTrackSelection`, `TrackSelectionToolbar`, `TrackCheckbox` | Selection lives in `app.widgets.lists` by list key; `selection_bar(app, t, key, source, BarPlace::Group)` for a toolbar group, `checkbox(..)`. |
+| `ui::track_list` | `TrackList.tsx` | `TrackList::new("key", \|a\| &a.pages.x.tracks).view_gap(18.0).empty(el).page(app, t, head, tail)` as a page's whole view (virtual rows: every long list goes this way), or `.build(app, t)` for short lists inside a page that can't be virtual (the album sleeve). `.queue`, `.no_cover`, `.no_album`, `.headless`, `.not_selectable`, `.no_source_badge`, `.bar_elsewhere`, `.omit_artists`, `.extra(Extra { .. })`, `.stale(b)` (`.refreshable`), `.head_gap(g)`. A `Source` is a `fn(&App) -> &[TrackListItem]`, so a filtered list keeps its rows in page state (Library's `detail.rows`, the playlist's `shown_items`). `virtual_page(..)` gives a table of its own (the playlist's) the same virtual rows; `menu_selection(..)` the menu's selection. |
+| `ui::track_select` | `useTrackSelection`, `TrackSelectionToolbar`, `TrackCheckbox` | Selection lives in `app.widgets.lists` by list key; `selection_bar(app, t, key, source, BarPlace::Group)` for a toolbar group, `BarPlace::Attached` for a plain host (the album sleeve), `selection_bar_placeholder(t, key, place)` while loading, `checkbox(..)`. |
 | `ui::track_row` | `TrackRowCells.tsx`, `TrackRow` | `index_cell`, `playing_bars`, `favorite_button`, `badge`, plus `actions`, `play_from`, `start_list`, `is_local`, `can_share` (`core/track.ts`). |
-| `overlays::track_menu` | `TrackContextMenu.tsx` | `track_menu::open(app, track, [x, y], MenuContext { queue, edit, move_to_album, info, share, selection })` from `.on_secondary_press`. |
+| `overlays::track_menu` | `TrackContextMenu.tsx` | `track_menu::open(app, track, [x, y], MenuContext { queue, edit, move_to_album, info, share, selection })` from `.on_secondary_press`; `MenuContext::bind(&track, queue)` is the hook's `bind(track, { queue })`. Every track row opens it. |
 | `ui::tooltip` | `TitleTooltips.tsx`, `Tooltip.tsx` | `use crate::ui::tooltip::TipExt;` then `el.tip("its-key", "Text")`, `.tip_side(.., Side::Right)`, `.tip_truncated(key, text, style)` (truncation hints), `tooltip::tip_body(el, key, Body::..)`. Don't use Rune's `.help`. |
-| `ui::cards` | `MediaCard`, `PlaylistCard`, `TopArtist` | `MediaCard::new(key, title).to(href).cover(url).subtitle(s).on_play(label, f).build(app, t)`, `media_card_placeholders`, `playlist_card(app, t, &p)`, `top_artist_glyph`, `square_art`. |
+| `ui::cards` | `MediaCard`, `PlaylistCard`, `TopArtist` | `MediaCard::new(key, title).to(href).cover(url).subtitle(s).on_play(label, f).rank_badge(replay_rank(t, n)).build(app, t)` (width from its parent), `media_card_height`, `media_card_placeholders`, `playlist_card(app, t, &p)`, `top_artist_glyph`, `top_artist_press`, `square_art`. |
 | `ui::shelf` | `ShelfScroller` | `shelf(app, t, key, "Top artists", cards, SHELF_COL)`. |
-| `ui::blocks` | `Section`, `ListPageHeader`, `PageHeader`, `ListMeta`, `LoadMoreSentinel`, `DataState`, `CenteredCard`, `RadioCardOption`, `IosSpinner`, `AnimatedNumber`, `PlayListButton` | `section(..)`, `list_page_header(app, t, key, ListHeader { .. })`, `meta_line`, `page_header(t, title, count, actions)`, `list_meta`, `load_more`, `data_state`, `centered_card`, `radio_card`, `ios_spinner`, `animated_number(app, cx, key, value, style, ink)`, `play_list_button`. |
-| `ui::chart` | `ActivityChart` | `activity_chart(t, key, &[Bar { start, plays }], Bucket::Day)`. |
+| `ui::blocks` | `Section`, `ListPageHeader`, `PageHeader`, `ListMeta`, `LoadMoreSentinel`, `DataState`, `CenteredCard`, `RadioCardOption`, `IosSpinner`, `AnimatedNumber`, `PlayListButton` | `section(..)` (`section_with(.., SectionLook::artist())` for a page's override, `section_head` above a virtual list), `list_page_header(app, t, key, ListHeader { .. })` (`kind_el` / `title_el` for rich slots), `meta_line`, `page_header(t, title, count, actions)`, `list_meta`, `load_more`, `data_state`, `centered_card`, `radio_card`, `ios_spinner`, `animated_number(app, cx, key, value, style, ink)`, `play_list_button`. |
+| `ui::chart` | `ActivityChart` | `activity_chart(t, key, &[Bar { start, plays }], Bucket::Day)`; `activity_chart_sized(.., h)` fills a panel. |
+| `ui::kit`, `ui::forms` | `SegmentedControl`, `Select`, `SearchInput` | `segmented` (`segmented_counted` for a count after a label), `select(..)` (its listbox opens on the current option; `OpenSelect::new`), `search_input(t, key, edit, placeholder, width, \|f\| f.on_edit(..))`. |
 | `ui::paging` | `usePaginatedList` | `Paginated<T>` in page state with `reset` / `load_more` / `reload` through an accessor and a `Fetcher`. |
 
 Text boxes: Rune rounds a text's height up to whole pixels (17.4 → 18), which adds up down a
-column of lines (a header's kind, title and meta). Wrap such lines in `ui::exact(text, lh)` to keep
-the browser's fractional height; `ui::text_end` puts right-aligned text on its box's edge.
+column of lines (a header's kind, title and meta). Wrap a line in `ui::exact(text, lh)` to keep
+the browser's fractional height (add `.shrink()` where it may truncate in a row); wrapped text
+takes `ui::css_text_h(s, style, Some(width))` when its width is known, else
+`ui::snug_lines(key, text, lh)`. `ui::balanced_width` is `text-wrap: balance`; `ui::text_end`
+puts right-aligned text on its box's edge.
+
+The library changed (an upload, an edit, a delete, a rescan): call `pages::library_changed(app)`
+(`libraryChanged.emit()`); it fires `core::events::LIBRARY_CHANGED` and the open lists reload.
 
 Reference scenes for interactions use `act` in `scenes.ref.ts` (`keepPointer` for hover) and a
 script in `tools/reference/scripts/` on the Rune side:

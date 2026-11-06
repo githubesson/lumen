@@ -861,7 +861,7 @@ fn list_item(t: &Theme, key: &str, glyph: Option<&'static rune::Icon>, label: &s
     if let Some(g) = glyph {
         r = r.child(ico(g, 14.0, t.c.popover_foreground).group_color(t.c.accent_foreground));
     }
-    r = r.child(exact_line14(line(label, font(14.0, 400.0), t.c.popover_foreground).group_color(t.c.accent_foreground), 20.3));
+    r = r.child(exact_line(line(label, font(14.0, 400.0), t.c.popover_foreground).group_color(t.c.accent_foreground), 20.3));
     let base = item_base(t, &format!("{key}-item"), highlighted, enabled).w_full();
     base.child(r).label(label)
 }
@@ -879,11 +879,7 @@ fn press(e: El, item: Item, enabled: bool) -> El {
 /// lifted by the rounding (measured against the reference; 12 and 13 px
 /// lines land right as they are).
 fn exact_line(e: El, lh: f32) -> El {
-    crate::ui::exact_text(e, 12.0, lh)
-}
-
-fn exact_line14(e: El, lh: f32) -> El {
-    crate::ui::exact_text(e, 14.0, lh)
+    crate::ui::exact(e, lh).shrink()
 }
 
 /// `.ctx-heading`.
@@ -915,7 +911,7 @@ fn playlist_item(app: &App, t: &Theme, m: &Menu, pl: &Playlist, can_add: bool) -
         .gap(6.0)
         .items_center()
         .child(cover_art_letter_size(t, &app.images, art.as_deref(), &pl.name, 18.0, t.radius_sm(), 12.0).ml(-2.0))
-        .child(exact_line14(line(pl.name.clone(), font(14.0, 400.0), t.c.popover_foreground).group_color(t.c.accent_foreground), 20.3).grow(1.0));
+        .child(exact_line(line(pl.name.clone(), font(14.0, 400.0), t.c.popover_foreground).group_color(t.c.accent_foreground), 20.3).grow(1.0));
     if busy {
         r = r.child(text("…").font(mono(12.0, 400.0)).color(muted));
     } else if added {
@@ -958,7 +954,7 @@ fn track_header(app: &App, t: &Theme, tr: &TrackListItem) -> El {
             col()
                 .grow(1.0)
                 .min_w(0.0)
-                .child(exact_line14(
+                .child(exact_line(
                     crate::ui::tooltip::tip_truncated(
                         line(title.clone(), with_lh(font(14.0, 500.0), 18.2), t.c.popover_foreground),
                         "ctx-head-title",
@@ -995,7 +991,7 @@ fn selection_header(app: &App, t: &Theme, tracks: &[TrackListItem]) -> El {
     let mut text_col = col()
         .grow(1.0)
         .min_w(0.0)
-        .child(exact_line14(line(format!("{} tracks", tracks.len()), with_lh(font(14.0, 500.0), 18.2), t.c.popover_foreground), 18.2));
+        .child(exact_line(line(format!("{} tracks", tracks.len()), with_lh(font(14.0, 500.0), 18.2), t.c.popover_foreground), 18.2));
     if !artists.is_empty() {
         text_col = text_col.child(exact_line(
             crate::ui::tooltip::tip_truncated(

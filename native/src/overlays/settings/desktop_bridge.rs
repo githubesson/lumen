@@ -35,7 +35,7 @@ pub fn config(app: &App) -> Option<DesktopConfig> {
         backend_url,
         discord_enabled: d.discord_enabled,
         always_on_top: d.always_on_top,
-        discord_card: DiscordCard::from_value(Some(&d.discord_card.to_json())),
+        discord_card: d.discord_card,
         now_playing_api_enabled: d.now_playing_api_enabled,
         now_playing_api_url: d.now_playing_api_url,
         now_playing_api_token: d.now_playing_api_token,
@@ -67,7 +67,7 @@ pub fn set_toggle(app: &mut App, toggle: Toggle, on: bool) -> Result<(), String>
 pub fn save_card(app: &mut App, changes: &serde_json::Map<String, Value>) -> Result<DiscordCard, String> {
     let patch = ConfigPatch { discord_card: Some(Value::Object(changes.clone())), ..ConfigPatch::default() };
     let saved = desktop::update_config(app, patch)?;
-    Ok(DiscordCard::from_value(Some(&saved.config.discord_card.to_json())))
+    Ok(saved.config.discord_card)
 }
 
 /// `newNowPlayingApiToken()`: links with the old token stop working.

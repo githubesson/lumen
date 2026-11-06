@@ -11,7 +11,7 @@ use super::rows::{display_artists, display_text, format_bitrate, format_duration
 use crate::api::{TrackDetail, TrackListItem, TrackSource};
 use crate::app::App;
 use crate::theme::Theme;
-use crate::ui::forms::search_input_bound;
+use crate::ui::forms::search_input;
 use crate::ui::kit::{error_banner, eyebrow};
 use crate::ui::{Btn, css_border, font, snug_lines, with_lh};
 
@@ -331,15 +331,9 @@ fn linker(app: &App, t: &Theme, track: &TrackDetail) -> El {
             .items_center()
             .child(
                 el().grow(1.0).min_w(0.0).child(
-                    search_input_bound(
-                        t,
-                        "track-linker-search",
-                        &s.query,
-                        "Find another file of this song",
-                        None,
-                        |app: &mut App| &mut app.overlays.track_info.query,
-                        Some(search),
-                    ),
+                    search_input(t, "track-linker-search", &s.query, "Find another file of this song", None, |f| {
+                        f.on_edit(|app: &mut App| &mut app.overlays.track_info.query).on_input_change(move |app: &mut App, _| search(app))
+                    }),
                 ),
             )
             .child(Btn::new("track-linker-cancel", "Cancel").small().ghost().disabled(s.linking_id.is_some()).build(t).on_press(cancel_linking)),

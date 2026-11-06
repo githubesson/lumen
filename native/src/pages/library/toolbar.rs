@@ -8,7 +8,7 @@ use rune::{Color, Cursor, Cx, El, Shadow, el, row, text};
 
 use crate::app::App;
 use crate::theme::Theme;
-use crate::ui::forms::{SelectOption, SelectVariant, search_input_with, select};
+use crate::ui::forms::{SelectOption, SelectVariant, search_input, select};
 use crate::ui::kit::{segmented, toolbar_group, toolbar_sep};
 use crate::ui::{font, ico, icons as i};
 
@@ -114,7 +114,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, view: View, query: &str, sea
     let group_w = if has_group { Some(cx.layout_size("lib-tools").map_or(304.0, |s| s[0])) } else { None };
     let w = search_width(width, tabs_w, group_w);
     let placeholder = format!("Search {}, local + TIDAL", search_noun(search_type));
-    let field = search_input_with(t, "lib-search", &s.query_edit, &placeholder, Some(w), |f| {
+    let field = search_input(t, "lib-search", &s.query_edit, &placeholder, Some(w), |f| {
         f.label("Search music")
             .on_edit(|app: &mut App| {
                 super::query_edited(app);

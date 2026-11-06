@@ -120,7 +120,7 @@ fn apply(card: &mut DiscordCard, key: &str, v: &Value) {
         ("details", Value::String(s)) => card.details = s.clone(),
         ("state", Value::String(s)) => card.state = s.clone(),
         ("largeText", Value::String(s)) => card.large_text = s.clone(),
-        ("statusName", Value::String(s)) => card.status_name = s.clone(),
+        ("statusName", Value::String(s)) => card.status_name = super::discord_card::status_name(s),
         ("cover", Value::Bool(b)) => card.cover = *b,
         ("playState", Value::Bool(b)) => card.play_state = *b,
         ("showPaused", Value::Bool(b)) => card.show_paused = *b,
@@ -266,7 +266,7 @@ pub fn settings<'a>(app: &'a App, t: &'a Theme, cx: &mut rune::Cx<App>, d: &Desk
             last,
         )
     }));
-    let status_name = card.status_name.clone();
+    let status_name = card.status_name.as_str().to_string();
     rows.push(Box::new(move |last| {
         let options = vec![SelectOption::new("app", "Lumen"), SelectOption::new("details", "Line 1"), SelectOption::new("state", "Line 2")];
         let c = select(app, t, "discord-status-name", options, &status_name, false, |app, v| {
@@ -286,7 +286,7 @@ pub fn settings<'a>(app: &'a App, t: &'a Theme, cx: &mut rune::Cx<App>, d: &Desk
         rows.push(Box::new(move |last| {
             let reset = (!is_default).then(|| {
                 Btn::new("discord-reset", "Reset").small().build(t).on_press(|app: &mut App| {
-                    let d = serde_json::to_value(DiscordCard::default()).ok().and_then(|v| v.as_object().cloned()).unwrap_or_default();
+                    let d = DiscordCard::default().to_json().as_object().cloned().unwrap_or_default();
                     let ui = &mut app.overlays.settings.discord;
                     ui.lines = [0, 1, 2].map(|n| TextEdit::new(line_text(&DiscordCard::default(), n)));
                     change(app, d, false);
@@ -370,10 +370,10 @@ pub fn preview(app: &App, t: &Theme) -> El {
     let is_playing = app.player.playing;
     let playing = is_playing || current.is_none();
     let hidden = !playing && !card.show_paused;
-    let status = match card.status_name.as_str() {
-        "details" => details.clone(),
-        "state" => state.clone(),
-        _ => None,
+    let status = match card.status_name {
+        super::discord_card::StatusName::Details => details.clone(),
+        super::discord_card::StatusName::State => state.clone(),
+        super::discord_card::StatusName::App => None,
     }
     .unwrap_or_else(|| "Lumen".into());
     let name = app.me().map_or("you".to_string(), |m| m.username.clone());

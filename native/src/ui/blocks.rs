@@ -15,7 +15,7 @@ use crate::app::App;
 use crate::theme::{Theme, color_mix};
 use crate::ui::kit::{error_banner, loading_state};
 use crate::ui::track_select::Source;
-use crate::ui::{Btn, exact, exact_text, font, ico, icons as i, tnum, with_lh};
+use crate::ui::{Btn, exact, font, ico, icons as i, tnum, with_lh};
 
 /// `Section`: the eyebrow (`sub`) over the 16 px title, an optional action
 /// at the right (a "view all" link), then the section's content.
@@ -195,9 +195,9 @@ pub fn page_header(t: &Theme, title: &str, count: Option<&str>, actions: Option<
     let mut h = row().w_full().gap(16.0).items_start().flex_wrap();
     // Both drawn a pixel higher than the line boxes put them: where
     // Chromium's 24 px baseline lands (measured against the reference).
-    h = h.child(exact_text(text(title).font(with_lh(font(24.0, 600.0), 34.8).tracking(-0.6)).color(t.c.foreground), 24.0, 34.8));
+    h = h.child(crate::ui::exact(text(title).font(with_lh(font(24.0, 600.0), 34.8).tracking(-0.6)).color(t.c.foreground), 34.8).shrink());
     if let Some(c) = count {
-        h = h.child(exact_text(text(c).font(tnum(font(14.0, 400.0))).color(t.c.muted_foreground), 14.0, 20.3).mt(25.9 - 15.15));
+        h = h.child(crate::ui::exact(text(c).font(tnum(font(14.0, 400.0))).color(t.c.muted_foreground), 20.3).shrink().mt(25.9 - 15.15));
     }
     h = h.child(el().grow(1.0));
     if let Some(a) = actions {

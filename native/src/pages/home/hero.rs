@@ -38,20 +38,6 @@ fn lines_height(s: &str, style: TextStyle, width: f32) -> f32 {
     rune::text::measure_with(s, &[], style, Some(width), rune::text::RichLayoutOptions::new().wrap_anywhere()).1
 }
 
-/// `text-wrap: balance`: the narrowest width that keeps the text on as few
-/// lines as `width` gives it, so the lines come out even.
-fn balanced_width(s: &str, style: TextStyle, width: f32) -> f32 {
-    let h = lines_height(s, style, width);
-    if h <= style.line_height + 0.5 {
-        return width;
-    }
-    let (mut lo, mut hi) = (0.0f32, width);
-    while hi - lo > 0.5 {
-        let mid = (lo + hi) / 2.0;
-        if lines_height(s, style, mid) <= h + 0.5 { hi = mid } else { lo = mid }
-    }
-    hi.ceil()
-}
 
 /// What the hero's text says.
 struct Body {
@@ -139,7 +125,7 @@ fn body_view(t: &Theme, b: Body, l: &HeadLayout, narrow: bool) -> El {
     }
     c = c.child(match &b.title {
         Some(title) => {
-            let w = if narrow { l.body_w } else { balanced_width(title, title_style(), l.body_w) };
+            let w = if narrow { l.body_w } else { crate::ui::balanced_width(title, title_style(), l.body_w) };
             let h = lines_height(title, title_style(), l.body_w);
             let h = (h / 27.6).round().max(1.0) * 27.6;
             board::lh(text(title.clone()).font(title_style()).color(t.c.card_foreground).wrap_anywhere().max_w(w), h).mb(6.0)

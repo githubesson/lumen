@@ -369,12 +369,6 @@ pub fn on_key(app: &mut App, ev: &KeyEvent) -> bool {
 
 // ---------------------------------------------------------------- text boxes
 
-/// `e`, a text in `style`, held to its CSS line box: rune rounds a text's
-/// height up to a whole pixel (17.4 → 18), which would push what follows
-/// down. `lines` is how many lines it wraps to.
-pub fn exact(e: El, style: rune::TextStyle, lines: usize) -> El {
-    rune::el().h(style.line_height * lines.max(1) as f32).min_w(0.0).child(e)
-}
 
 /// How many lines `s` takes in `style` at `width` (wrapping anywhere).
 pub fn line_count(s: &str, style: rune::TextStyle, width: f32) -> usize {

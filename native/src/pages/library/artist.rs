@@ -9,7 +9,7 @@ use crate::app::App;
 use crate::format::display_text;
 use crate::shell::{Bp, window_size};
 use crate::theme::{Theme, color_mix};
-use crate::ui::forms::search_input_with;
+use crate::ui::forms::search_input;
 use crate::ui::kit::{empty_state, error_banner, loading_state};
 use crate::ui::shelf::{SHELF_COL, shelf};
 use crate::ui::{self, Btn, css_border, font, ico, icons as i, motion, tnum, with_lh};
@@ -21,7 +21,7 @@ use super::album::not_found;
 use super::cards;
 use super::logic::{self, ArtistRelease, RELEASE_FILTER_OPTIONS};
 use crate::api::{self, error_message};
-use super::sleeve::{balanced_width, clear_on_escape, skeleton};
+use super::sleeve::{clear_on_escape, skeleton};
 
 const SHELF_LIMIT: usize = 6;
 
@@ -150,7 +150,7 @@ fn hero(app: &App, t: &Theme, width: f32, name: Option<&str>, image: Option<Stri
     let title = match name {
         Some(n) => {
             let shown = display_text(Some(n), "");
-            let w = balanced_width(&shown, style, body_w);
+            let w = crate::ui::balanced_width(&shown, style, body_w);
             text(shown).font(style).color(t.c.foreground).wrap_anywhere().w(w).role("heading")
         }
         None => el().h(style.line_height).items_center().child(skeleton(t, 360.0f32.min(body_w * 0.7).floor(), name_size)),
@@ -247,7 +247,7 @@ fn actions(app: &App, t: &Theme, name: &str, tracks: &[TrackListItem], end: Opti
 fn search_bar(app: &App, t: &Theme, total: usize, matches: usize, full: bool) -> El {
     let edit = &app.pages.library.detail.search;
     let active = !edit.text.trim().is_empty();
-    let field = search_input_with(t, "artist-search", edit, "Search this artist", if full { None } else { Some(260.0) }, |f| {
+    let field = search_input(t, "artist-search", edit, "Search this artist", if full { None } else { Some(260.0) }, |f| {
         f.on_edit(|app: &mut App| &mut app.pages.library.detail.search)
             .on_input_change(|app: &mut App, _| super::refilter(app))
             .on_input_key(clear_on_escape)

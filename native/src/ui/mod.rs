@@ -68,23 +68,32 @@ pub fn line(s: impl Into<String>, style: TextStyle, color: Color) -> El {
     text(s).font(style).color(color).truncate().shrink()
 }
 
+/// `text-wrap: balance` for text that breaks anywhere: the narrowest width
+/// up to `max` at which `s` in `style` is no taller than at `max`, so its
+/// lines come out even. One line keeps `max`.
+pub fn balanced_width(s: &str, style: TextStyle, max: f32) -> f32 {
+    let opts = rune::text::RichLayoutOptions::new().wrap_anywhere();
+    let height = |w: f32| rune::text::measure_with(s, &[], style, Some(w), opts).1;
+    let h = height(max);
+    if h <= style.line_height * 1.5 {
+        return max;
+    }
+    let (mut lo, mut hi) = (0.0f32, max);
+    for _ in 0..14 {
+        let mid = (lo + hi) / 2.0;
+        if height(mid) > h + 0.5 { lo = mid } else { hi = mid }
+    }
+    hi.ceil().min(max)
+}
+
 /// A single line of text laid out at its CSS line height `lh` exactly.
 /// Rune rounds a text's box up to whole pixels (17.4 → 18), which adds up
 /// down a column of lines; the box around it keeps the fractional height,
 /// so what follows sits where the browser puts it.
 pub fn exact(e: El, lh: f32) -> El {
-    rune::el().h(lh).child(e)
+    rune::el().h(lh).min_w(0.0).child(e)
 }
 
-/// [`exact`] for a line set at `size` px, truncating if it must. Rune draws
-/// a line's glyphs within 0.3 px of where Chromium does at the same box top
-/// (`examples/calib.rs`), so no correction is needed. (An earlier lift here
-/// was calibrated against reference shots taken with a Chromium flag that
-/// drew its text about 0.9 px high.)
-pub fn exact_text(e: El, size: f32, lh: f32) -> El {
-    let _ = size;
-    rune::el().h(lh).min_w(0.0).shrink().child(e)
-}
 
 /// Text a flex row centres vertically (`align-items: center`). Rune rounds
 /// a text box up to whole pixels (20.3 → 21), so centring puts its top

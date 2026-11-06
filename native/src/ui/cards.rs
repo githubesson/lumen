@@ -57,10 +57,10 @@ fn card_box(t: &Theme, key: &str) -> El {
 fn card_text(t: &Theme, title: El, sub: Option<&str>) -> El {
     let (_, _, sub_fs) = card_metrics(t);
     let (_, _, title_fs) = card_metrics(t);
-    let mut c = col().w_full().min_w(0.0).child(crate::ui::exact_text(title.w_full(), title_fs, title_fs * 1.45));
+    let mut c = col().w_full().min_w(0.0).child(crate::ui::exact(title.w_full(), title_fs * 1.45).shrink());
     if let Some(s) = sub {
         let _ = sub_fs;
-        c = c.child(crate::ui::exact_text(line(s, font(12.0, 400.0), t.c.muted_foreground), 12.0, 17.4));
+        c = c.child(crate::ui::exact(line(s, font(12.0, 400.0), t.c.muted_foreground), 17.4).shrink());
     }
     c
 }
