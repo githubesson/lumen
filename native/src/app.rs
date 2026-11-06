@@ -323,6 +323,8 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
     ("library-tidal-album", |a| scene(a, "/library?tidalAlbum=381245566&tidalArtist=4419021")),
     ("library-tidal-saved", |a| scene(a, "/library?tidalAlbum=310077120")),
     ("library-tidal-artist", |a| scene(a, "/library?tidalArtist=4419021&artistName=Marisol%20Vey")),
+    ("library-album-missing", |a| scene(a, "/library?album=missing")),
+    ("library-tidal-missing", |a| scene(a, "/library?tidalAlbum=404404")),
     ("drawer", |a| {
         scene(a, "/library");
         a.ui.mobile_nav_open = true;

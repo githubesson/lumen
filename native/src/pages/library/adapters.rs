@@ -41,6 +41,8 @@ pub struct TableOptions {
     /// `.table-scroll .table { min-width: 720px }`: wider than its box, the
     /// table scrolls sideways (the album sleeve's list sets 0).
     pub min_width: f32,
+    /// The width the list is given.
+    pub width: f32,
 }
 
 impl Default for TableOptions {
@@ -54,6 +56,7 @@ impl Default for TableOptions {
             omit_artists: Vec::new(),
             host: None,
             min_width: 720.0,
+            width: 956.0,
         }
     }
 }
@@ -84,7 +87,7 @@ pub fn track_table(
         return out.child(e);
     }
     let sel = opts.selectable && opts.host.is_some() && selecting(app, opts.host);
-    let width = app.pages.library.table_widths.get(key).copied().unwrap_or(900.0).max(opts.min_width);
+    let width = opts.width.max(opts.min_width);
     let album_w = (width * 0.25).floor();
     // A headless table keeps a 16 px header row (its hidden select-all box).
     let header_h = if opts.show_header { 40.0 } else { 16.0 };
@@ -180,15 +183,7 @@ pub fn track_table(
         }
         table = table.child(r);
     }
-    let k = key.to_string();
-    let scroller = el().key(format!("{key}-scroll")).w_full().min_w(0.0).scroll_x().child(table);
-    out.child(scroller.on_layout(move |app: &mut App, rect: [f32; 4]| {
-        let w = rect[2];
-        let slot = app.pages.library.table_widths.entry(k.clone()).or_insert(0.0);
-        if (*slot - w).abs() > 0.5 {
-            *slot = w;
-        }
-    }))
+    out.child(el().key(format!("{key}-scroll")).w_full().min_w(0.0).scroll_x().child(table))
 }
 
 fn checkbox(t: &Theme) -> El {

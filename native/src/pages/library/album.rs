@@ -198,13 +198,22 @@ pub fn filtered<'a>(app: &App, tracks: &'a [TrackListItem]) -> (Vec<TrackListIte
 
 /// `AlbumTrackList`: no row covers or albums, and rows crediting only the
 /// album's artists leave their artist line out.
-fn album_tracks(app: &App, t: &Theme, rows: &[TrackListItem], queue: &[TrackListItem], credits: Vec<String>, query: Option<&str>) -> El {
+fn album_tracks(
+    app: &App,
+    t: &Theme,
+    cx: &mut Cx<App>,
+    rows: &[TrackListItem],
+    queue: &[TrackListItem],
+    credits: Vec<String>,
+    query: Option<&str>,
+) -> El {
     let opts = TableOptions {
         show_cover: false,
         show_album: false,
         omit_artists: credits,
         host: Some(Host::AlbumTools),
         min_width: 0.0,
+        width: sleeve::list_width(t, cx),
         ..TableOptions::default()
     };
     let empty = query.map(|q| empty_state(t, None, "No matches.", Some(&format!("Nothing in this album matches \"{q}\".")), None));
@@ -224,8 +233,15 @@ pub fn not_found(t: &Theme, kind: &str) -> El {
             .w_full()
             .padding(40.0)
             .items_center()
-            .child(text(format!("{kind} not found.")).font(font(14.0, 500.0)).color(t.c.foreground))
-            .child(text("It may have been removed or renamed.").font(font(14.0, 400.0)).color(t.c.muted_foreground).mt(8.0))
+            .child(super::exact(text(format!("{kind} not found.")).font(font(14.0, 500.0)).color(t.c.foreground), font(14.0, 500.0), 1))
+            .child(
+                super::exact(
+                    text("It may have been removed or renamed.").font(font(14.0, 400.0)).color(t.c.muted_foreground),
+                    font(14.0, 400.0),
+                    1,
+                )
+                .mt(8.0),
+            )
             .child(back),
     )
 }
@@ -262,7 +278,7 @@ pub fn view_library(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
         list.push(error_banner(t, e));
     }
     let names: Vec<String> = credits.iter().map(|c| c.name.clone()).collect();
-    list.push(album_tracks(app, t, &rows, tracks, names, query.as_deref()));
+    list.push(album_tracks(app, t, cx, &rows, tracks, names, query.as_deref()));
     let actions = match album.tidal_album_id.as_deref().filter(|s| !s.is_empty()) {
         Some(tidal) if admin => download_control(app, t, tidal, tracks, album.queued_count.unwrap_or(0)),
         _ => Vec::new(),
@@ -319,13 +335,22 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, id: &str, artist_param
         .and_then(|artist| versions(app, artist, id).map(|v| version_picker(app, t, cx, &v, id, artist)));
     let Some(album) = &d.tidal_album else {
         if let Some(e) = &d.error {
+            // The banner's text centres too (`text-align: center` on the box).
+            let banner = crate::ui::css_border(rune::el(), 1.0, t.c.destructive_border, t.radius_lg())
+                .w_full()
+                .px(13.0)
+                .py(9.0)
+                .radius(t.radius_lg())
+                .fill(t.c.destructive_soft)
+                .child(text(e.clone()).font(font(14.0, 400.0)).color(t.c.destructive).wrap().align(rune::Align::Center).w_full());
+            let st = font(14.0, 500.0);
             return col().key("lib-detail-error").w_full().padding(t.pad()).child(
                 col()
                     .w_full()
                     .padding(40.0)
                     .items_center()
-                    .child(error_banner(t, e))
-                    .child(text("TIDAL album unavailable.").font(font(14.0, 500.0)).color(t.c.foreground)),
+                    .child(banner)
+                    .child(super::exact(text("TIDAL album unavailable.").font(st).color(t.c.foreground), st, 1)),
             );
         }
         let mut s = loading_sleeve("TIDAL Album", "Loading TIDAL album…", admin, TIDAL_LOADING_FACTS);
@@ -367,7 +392,7 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, id: &str, artist_param
         list.push(error_banner(t, e));
     }
     let names: Vec<String> = credits.iter().map(|c| c.name.clone()).collect();
-    list.push(album_tracks(app, t, &rows, tracks, names, query.as_deref()));
+    list.push(album_tracks(app, t, cx, &rows, tracks, names, query.as_deref()));
     sleeve::view(
         app,
         t,

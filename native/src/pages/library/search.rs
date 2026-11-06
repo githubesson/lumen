@@ -109,7 +109,7 @@ pub fn view(app: &App, t: &Theme, query: &str, ty: SearchType, width: f32) -> El
         v = v.child(col().w_full().label("Albums").child(heading(t, "Albums")).child(cards::grid(t, "search-albums", width, album_cards)));
     }
     if !tracks.is_empty() {
-        let table = adapters::track_table(app, t, "search-table", &tracks, &tracks, &TableOptions::default(), None);
+        let table = adapters::track_table(app, t, "search-table", &tracks, &tracks, &TableOptions { width, ..TableOptions::default() }, None);
         v = v.child(col().w_full().label("Songs").child(heading(t, "Songs")).child(table));
     }
     for e in paging::sentinel(t, "lib-search", p, slot) {

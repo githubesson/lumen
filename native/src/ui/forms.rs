@@ -129,11 +129,11 @@ pub fn select_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> 
         .max_h(240.0)
         .role("listbox")
         .focus_group();
-    list = match open.variant {
-        SelectVariant::Outlined => list.w(trigger_w),
-        SelectVariant::Minimal => list.min_w(160.0),
-        SelectVariant::Toolbar => list.min_w(176.0),
-    };
+    // The other variants' `min-w-40` / `min-w-44` lose to `.menu`'s 220 px:
+    // Tailwind's utilities sit in a cascade layer and menu.css doesn't.
+    if open.variant == SelectVariant::Outlined {
+        list = list.w(trigger_w);
+    }
     let mut items = col();
     for (n, o) in open.options.iter().enumerate() {
         let selected = o.value == open.value;

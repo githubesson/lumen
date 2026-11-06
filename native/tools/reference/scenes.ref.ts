@@ -115,6 +115,16 @@ const SCENES: Scene[] = [
     wait: (p) => ready(p, p.locator(".card")),
   },
   {
+    name: "library-album-missing",
+    path: "/library?album=missing",
+    wait: (p) => ready(p, p.getByText("Album not found.")),
+  },
+  {
+    name: "library-tidal-missing",
+    path: "/library?tidalAlbum=404404",
+    wait: (p) => ready(p, p.getByText("TIDAL album unavailable.")),
+  },
+  {
     name: "drawer-narrow",
     path: "/library",
     size: { width: 700, height: 600 },

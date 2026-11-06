@@ -351,7 +351,7 @@ pub fn view_library(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
         v = v.child(discography(app, t, &releases, width));
     }
     let empty = query.as_deref().map(|q| empty_state(t, None, "No matches.", Some(&format!("Nothing by this artist matches \"{q}\".")), None));
-    let table = adapters::track_table(app, t, "artist-table", &rows, tracks, &TableOptions::default(), empty);
+    let table = adapters::track_table(app, t, "artist-table", &rows, tracks, &TableOptions { width, ..TableOptions::default() }, empty);
     v.child(adapters::section(t, "artist-songs", "Songs", None, vec![table]).mt(16.0))
 }
 
@@ -391,7 +391,7 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, name_param: &str) -> E
     }
     if data.is_some() {
         if !tracks.is_empty() {
-            v = v.child(popular(app, t, tracks));
+            v = v.child(popular(app, t, tracks, width));
         }
         if !releases.is_empty() {
             v = v.child(discography(app, t, &releases, width));
@@ -404,10 +404,10 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, name_param: &str) -> E
 }
 
 /// `PopularTracks`: the first five, then the rest behind "See more".
-fn popular(app: &App, t: &Theme, tracks: &[TrackListItem]) -> El {
+fn popular(app: &App, t: &Theme, tracks: &[TrackListItem], width: f32) -> El {
     let expanded = app.pages.library.detail.popular_expanded;
     let shown = if expanded { tracks } else { &tracks[..tracks.len().min(logic::ARTIST_POPULAR_PREVIEW_COUNT)] };
-    let opts = TableOptions { show_header: false, selectable: false, show_source_badge: false, ..TableOptions::default() };
+    let opts = TableOptions { show_header: false, selectable: false, show_source_badge: false, width, ..TableOptions::default() };
     let mut body = vec![adapters::track_table(app, t, "artist-popular", shown, tracks, &opts, None)];
     if tracks.len() > logic::ARTIST_POPULAR_PREVIEW_COUNT {
         body.push(

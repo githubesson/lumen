@@ -192,8 +192,6 @@ pub struct State {
     pub query_value: String,
     /// TODO(components-merge): the shared track list keeps its own selection mode.
     pub selecting: Option<adapters::Host>,
-    /// TODO(components-merge): widths the track table placeholder lays out in.
-    pub table_widths: HashMap<String, f32>,
     pub detail: Detail,
     pub cache: Caches,
 }
@@ -212,7 +210,6 @@ impl Default for State {
             query_gen: 0,
             query_value: String::new(),
             selecting: None,
-            table_widths: HashMap::new(),
             detail: Detail::default(),
             cache: Caches::default(),
         }

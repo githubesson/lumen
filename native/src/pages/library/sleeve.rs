@@ -236,6 +236,12 @@ fn name_block(t: &Theme, s: &Sleeve, width: f32, title_style: TextStyle) -> El {
     name
 }
 
+/// The list's width: beside the column, or the content's when stacked.
+pub fn list_width(t: &Theme, cx: &mut Cx<App>) -> f32 {
+    let content_w = cx.layout_size("sleeve-view").map_or(956.0 + 2.0 * t.pad(), |r| r[0]) - 2.0 * t.pad();
+    if content_w < STACK_BELOW_PX { content_w } else { content_w - 280.0 - 49.0 }
+}
+
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, mut s: Sleeve) -> El {
     let view_w = cx.layout_size("sleeve-view").map_or(956.0 + 2.0 * t.pad(), |r| r[0]);
     let content_w = view_w - 2.0 * t.pad();

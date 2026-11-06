@@ -143,7 +143,7 @@ fn tracks_view(app: &App, t: &Theme, width: f32) -> Vec<El> {
         }
         Some(items) => match s.display {
             Display::List => {
-                let opts = TableOptions { host: Some(Host::LibraryToolbar), ..TableOptions::default() };
+                let opts = TableOptions { host: Some(Host::LibraryToolbar), width, ..TableOptions::default() };
                 body = body.child(adapters::track_table(app, t, "lib-table", items, items, &opts, None));
             }
             Display::Grid => {
