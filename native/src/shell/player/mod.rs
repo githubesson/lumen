@@ -43,8 +43,6 @@ pub struct State {
     copied_generation: u64,
     /// Bumped each time the favourite button turns on: replays its heart pop.
     pub fav_pops: u32,
-    /// Favourite toggles in flight (`createToggleGuard`).
-    pub fav_pending: Vec<String>,
     pub mini: mini::Mini,
     pub lyrics: lyrics::Lyrics,
     /// Playback progress, published from the poll.
