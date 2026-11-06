@@ -1572,11 +1572,13 @@ name = "lumen-desktop"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "libc",
  "rune",
  "rune-motion",
  "serde",
  "serde_json",
  "ureq",
+ "url",
  "urlencoding",
 ]
 

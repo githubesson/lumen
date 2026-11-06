@@ -19,6 +19,11 @@ serde_json = "1"
 ureq = { version = "3", default-features = false, features = ["rustls", "json", "cookies", "gzip"] }
 dirs = "6"
 urlencoding = "2"
+url = "2"
+
+# The local time zone (`localtime_r`) for dates shown in local time.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [profile.dev.package."*"]
 debug = false

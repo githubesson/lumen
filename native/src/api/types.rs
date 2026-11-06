@@ -1,9 +1,11 @@
 //! Payload types, mirroring `core/src/api.ts` and `api-auth-types.ts`. Every
 //! optional field the web client reads as `field?: T` is `Option<T>` (or a
 //! defaulted collection) here, so older servers' payloads still decode.
-#![allow(dead_code)]
+//! Lists the Go server may send as `null` decode as empty.
 
 use serde::{Deserialize, Serialize};
+
+use super::de::nullable;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -34,6 +36,10 @@ pub enum TrackSource {
     #[default]
     Local,
     Tidal,
+    /// A source this client doesn't know (a newer server's): never local,
+    /// never shareable.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
@@ -156,7 +162,7 @@ pub struct TrackDetail {
     pub channels: Option<u32>,
     #[serde(default)]
     pub file_size: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub artists: Vec<TrackArtist>,
     #[serde(default)]
     pub has_cover: bool,
@@ -174,11 +180,11 @@ pub struct TrackDetail {
     pub tags_file_name: Option<String>,
     #[serde(default)]
     pub metadata_edited: Option<bool>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub aliases: Vec<TrackAlias>,
     #[serde(default)]
     pub alias_count: Option<u32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub linked: Vec<TrackLinkedFile>,
     #[serde(default)]
     pub linked_to: Option<String>,
@@ -303,7 +309,7 @@ impl PlaylistTrackEntry {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct PlaylistTracks {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub tracks: Vec<PlaylistTrackEntry>,
     #[serde(default)]
     pub tidal_queued: Option<u32>,
@@ -337,7 +343,7 @@ pub struct Album {
     pub saved_count: Option<u32>,
     #[serde(default)]
     pub queued_count: Option<u32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub artist_names: Vec<String>,
 }
 
@@ -383,17 +389,17 @@ pub struct SearchArtist {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct SearchResponse {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub albums: Vec<SearchAlbum>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub artists: Vec<SearchArtist>,
     #[serde(default)]
-    pub next_offsets: Option<serde_json::Map<String, serde_json::Value>>,
-    #[serde(default)]
+    pub next_offsets: Option<SearchOffsets>,
+    #[serde(default, deserialize_with = "nullable")]
     pub tracks: Vec<TrackListItem>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub sources: Vec<TrackSource>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub warnings: Vec<String>,
 }
 
@@ -438,4 +444,247 @@ pub struct PlaybackActivity {
     pub muted: Option<bool>,
     #[serde(default)]
     pub updated_at: Option<String>,
+}
+
+/// `SearchOffsets`: where each search stream (`local`, `tidal`,
+/// `local_album`, `tidal_artist`, …) continues; empty means exhausted.
+pub type SearchOffsets = std::collections::BTreeMap<String, u64>;
+
+/// The body of `PUT /api/activity` (`PlaybackActivityInput`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub struct PlaybackActivityInput {
+    pub device_id: String,
+    pub device_name: String,
+    pub track_id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_sec: Option<f64>,
+    pub position_sec: f64,
+    pub is_playing: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub muted: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CollaboratorRole {
+    #[default]
+    Viewer,
+    Editor,
+}
+
+impl CollaboratorRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CollaboratorRole::Viewer => "viewer",
+            CollaboratorRole::Editor => "editor",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CollaboratorStatus {
+    #[default]
+    Pending,
+    Accepted,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub struct Collaborator {
+    pub user_id: String,
+    pub username: String,
+    #[serde(default)]
+    pub role: CollaboratorRole,
+    #[serde(default)]
+    pub status: CollaboratorStatus,
+    #[serde(default)]
+    pub invited_at: String,
+    #[serde(default)]
+    pub accepted_at: Option<String>,
+    #[serde(default)]
+    pub playlist_id: Option<String>,
+}
+
+/// A conditional playlist-tracks read (`listPlaylistTracksIfChanged`).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct PlaylistTracksIfChanged {
+    pub etag: Option<String>,
+    /// The whole snapshot, or `None` when it hasn't changed since the ETag sent.
+    pub data: Option<PlaylistTracks>,
+}
+
+/// `TrackPatch`: only the fields to change are sent.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub struct TrackPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genre: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disc_no: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_no: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artists: Option<Vec<String>>,
+    /// Move the track into an existing album by id. Takes precedence over
+    /// `album_title` (which upserts/detaches by name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album_artist: Option<String>,
+}
+
+impl TrackPatch {
+    pub fn is_empty(&self) -> bool {
+        *self == TrackPatch::default()
+    }
+}
+
+/// `AlbumPatch`: only the fields to change are sent.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub struct AlbumPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album_artist: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_year: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_compilation: Option<bool>,
+}
+
+impl AlbumPatch {
+    pub fn is_empty(&self) -> bool {
+        *self == AlbumPatch::default()
+    }
+}
+
+/// One file's outcome in `POST /api/library/upload`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub struct UploadResult {
+    pub file: String,
+    #[serde(default)]
+    pub inserted: bool,
+    #[serde(default)]
+    pub dedup: Option<bool>,
+    #[serde(default)]
+    pub skipped: Option<bool>,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub track_id: Option<String>,
+}
+
+/// One page of a list (`Page<T>`): its items and the total there is.
+/// Search pages carry per-stream cursors instead (`next_offsets`; empty
+/// means exhausted) and the warnings the sources raised.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Page<T> {
+    pub items: Vec<T>,
+    pub total: u64,
+    pub next_offsets: Option<SearchOffsets>,
+    pub warnings: Vec<String>,
+}
+
+/// `PageParams`: the paging and filter query of a list endpoint.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct PageParams {
+    pub limit: Option<u32>,
+    pub offset: Option<u64>,
+    pub q: Option<String>,
+    pub sort: Option<ListSort>,
+    pub search_offsets: Option<SearchOffsets>,
+}
+
+impl PageParams {
+    pub fn new(limit: u32, offset: u64) -> PageParams {
+        PageParams { limit: Some(limit), offset: Some(offset), ..Default::default() }
+    }
+
+    /// `?limit=…&offset=…&q=…&sort=…`.
+    pub fn query(&self) -> String {
+        super::client::query(&[
+            ("limit", self.limit.map(|v| v.to_string())),
+            ("offset", self.offset.map(|v| v.to_string())),
+            ("q", self.q.clone()),
+            ("sort", self.sort.map(|s| s.as_str().to_string())),
+        ])
+    }
+}
+
+/// `PageParams.sort`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ListSort {
+    Recent,
+    Title,
+    Artist,
+    Album,
+    Duration,
+}
+
+impl ListSort {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ListSort::Recent => "recent",
+            ListSort::Title => "title",
+            ListSort::Artist => "artist",
+            ListSort::Album => "album",
+            ListSort::Duration => "duration",
+        }
+    }
+}
+
+impl TrackSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TrackSource::Local => "local",
+            TrackSource::Tidal => "tidal",
+            TrackSource::Other => "other",
+        }
+    }
+}
+
+impl Role {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::User => "user",
+            Role::Admin => "admin",
+        }
+    }
+}
+
+impl Visibility {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Visibility::Private => "private",
+            Visibility::Collaborative => "collaborative",
+        }
+    }
+}
+
+impl EffectiveRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EffectiveRole::Owner => "owner",
+            EffectiveRole::Editor => "editor",
+            EffectiveRole::Viewer => "viewer",
+            EffectiveRole::None => "",
+        }
+    }
 }
