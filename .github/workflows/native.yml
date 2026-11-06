@@ -1,0 +1,237 @@
+name: native
+
+# The native desktop client (`native/`, Rust + Rune). Builds and tests it on
+# Windows (MSVC) and Linux, cross-builds the Windows GNU target the way
+# `native/PORTING.md` does locally, renders a scene headless against the
+# UI-lint mock API on both, and packages the Windows build (NSIS installer,
+# portable zip, SHA256SUMS) as workflow artifacts.
+#
+# The artifacts are unsigned and nothing here publishes a release:
+# release.yml owns releases and their branch/channel rules. When the native
+# app ships, its packaging step belongs in release.yml's platform jobs, with
+# the version `prepare` resolves passed as LUMEN_BUILD_VERSION.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "native/**"
+      - "frontend/electron/assets/icon.ico"
+      - ".github/workflows/native.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "native/**"
+      - "frontend/electron/assets/icon.ico"
+      - ".github/workflows/native.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # Rune links libxkbcommon and libwayland-client; headless snapshots
+      # draw with lavapipe (software Vulkan) on a runner without a GPU.
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxkbcommon-dev libwayland-dev mesa-vulkan-drivers
+
+      # The toolchain native/rust-toolchain.toml pins (Rune's).
+      - name: Rust toolchain
+        working-directory: native
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: native
+
+      - run: cargo build --locked
+        working-directory: native
+
+      - run: cargo test --locked
+        working-directory: native
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.23.4"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            core/package-lock.json
+
+      # The mock API serves frontend/tests/ui/mock-api.ts, so it needs the
+      # frontend's (and core's) dependencies.
+      - run: npm ci --no-audit --no-fund
+        working-directory: core
+      - run: npm ci --no-audit --no-fund
+        working-directory: frontend
+
+      - name: Render Home headless against the mock API
+        env:
+          LUMEN_DATA_DIR: ${{ runner.temp }}/lumen-data
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+        run: |
+          frontend/node_modules/.bin/jiti native/tools/mock-server.ts --port 4791 >"$RUNNER_TEMP/mock.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:4791/api/auth/me >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:4791/api/auth/me >/dev/null || { cat "$RUNNER_TEMP/mock.log"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/snap"
+          native/target/debug/lumen --snap "$RUNNER_TEMP/snap/home-linux.png" --scene home --size 1280x820 --scale 1 --theme dark
+          node native/packaging/check-snapshot.mjs "$RUNNER_TEMP/snap/home-linux.png" 1280 820
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: snapshot-linux
+          path: ${{ runner.temp }}/snap/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # What `cargo build --target x86_64-pc-windows-gnu` does on a Linux
+  # machine (PORTING.md), plus the installer built with Linux's makensis.
+  windows-gnu-cross:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: native
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 nsis p7zip-full
+
+      - name: Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: native
+          key: windows-gnu
+
+      - run: cargo build --locked --target x86_64-pc-windows-gnu
+
+      - name: The executable carries its icon and version, and needs no MinGW DLLs
+        run: |
+          exe=target/x86_64-pc-windows-gnu/debug/lumen.exe
+          x86_64-w64-mingw32-objdump -p "$exe" | grep -i "DLL Name" | sort -u
+          if x86_64-w64-mingw32-objdump -p "$exe" | grep -iE "DLL Name: (libgcc|libstdc|libwinpthread)"; then
+            echo "::error::lumen.exe depends on MinGW runtime DLLs"
+            exit 1
+          fi
+          x86_64-w64-mingw32-objdump -h "$exe" | grep -q "\.rsrc"
+
+      - name: Package (checks installer.nsi)
+        run: packaging/windows/package.sh target/x86_64-pc-windows-gnu/debug/lumen.exe 0.0.0-ci.${{ github.run_number }} "$RUNNER_TEMP/package"
+
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      # CI artifacts are not releases: the version says so.
+      LUMEN_BUILD_VERSION: 0.1.0-ci.${{ github.run_number }}
+      # Rich Presence and the update source, as release.yml bakes them in.
+      DISCORD_CLIENT_ID: ${{ vars.DISCORD_CLIENT_ID }}
+      UPDATE_REPO_URL: ${{ vars.UPDATE_REPO_URL || 'https://github.com/githubesson/lumen' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Rust toolchain
+        working-directory: native
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: native
+
+      - run: cargo build --release --locked
+        working-directory: native
+
+      - run: cargo test --release --locked
+        working-directory: native
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.23.4"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            core/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: core
+      - run: npm ci --no-audit --no-fund
+        working-directory: frontend
+
+      # No GPU on the runner: wgpu's DX12 backend finds the WARP software
+      # adapter ("Microsoft Basic Render Driver"). The release build has no
+      # console, but its stderr still reaches this step through the pipe.
+      - name: Render Home headless against the mock API
+        env:
+          LUMEN_DATA_DIR: ${{ runner.temp }}/lumen-data
+          RUNE_GPU_LOG: "1"
+        run: |
+          frontend/node_modules/.bin/jiti native/tools/mock-server.ts --port 4791 >"$RUNNER_TEMP/mock.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:4791/api/auth/me >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:4791/api/auth/me >/dev/null || { cat "$RUNNER_TEMP/mock.log"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/snap"
+          native/target/release/lumen.exe --snap "$RUNNER_TEMP/snap/home-windows.png" --scene home --size 1280x820 --scale 1 --theme dark
+          node native/packaging/check-snapshot.mjs "$RUNNER_TEMP/snap/home-windows.png" 1280 820
+
+      - name: Package
+        run: |
+          if ! command -v makensis >/dev/null && [[ ! -x "/c/Program Files (x86)/NSIS/makensis.exe" ]]; then
+            choco install nsis --no-progress -y
+          fi
+          native/packaging/windows/package.sh native/target/release/lumen.exe "$LUMEN_BUILD_VERSION" native/out/package
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lumen-native-windows-x64-unsigned
+          path: |
+            native/out/package/*.exe
+            native/out/package/*.zip
+            native/out/package/*SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: snapshot-windows
+          path: ${{ runner.temp }}/snap/
+          if-no-files-found: ignore
+          retention-days: 14

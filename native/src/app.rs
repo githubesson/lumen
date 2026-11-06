@@ -56,6 +56,8 @@ pub struct App {
     pub select: Option<crate::ui::forms::OpenSelect>,
     /// The shared components' state (selections, tooltips, shelves).
     pub widgets: crate::ui::Widgets,
+    /// What Electron's main process did: presence, the now-playing API, updates.
+    pub desktop: crate::desktop::Desktop,
 }
 
 impl App {
@@ -81,6 +83,7 @@ impl App {
             overlays: crate::overlays::Overlays::default(),
             select: None,
             widgets: crate::ui::Widgets::default(),
+            desktop: crate::desktop::Desktop::default(),
             config,
             waker,
         };
@@ -281,6 +284,7 @@ fn poll(app: &mut App, _clock: f64, tx: &mut Tx) -> bool {
     let mut changed = Net::drain(app);
     changed |= crate::player::poll(app, tx);
     changed |= crate::ui::poll(app, _clock, tx);
+    changed |= crate::desktop::poll(app);
     changed
 }
 
