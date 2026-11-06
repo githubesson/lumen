@@ -7,8 +7,7 @@ use crate::app::App;
 pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     let _ = tx;
     if ev.is_command('k') {
-        app.ui.settings_open = false;
-        app.ui.palette_open = !app.ui.palette_open;
+        crate::overlays::palette::toggle(app);
         return true;
     }
     if ev.is_command('b') {

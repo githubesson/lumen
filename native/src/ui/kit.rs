@@ -34,14 +34,21 @@ pub fn scroll_area(t: &Theme, key: &str, content: El) -> El {
 /// content's right edge (plain `overflow: auto`, which on Windows also
 /// takes 10 px, but only while overflowing).
 pub fn scroll_area_with(t: &Theme, key: &str, content: El, stable_gutter: bool) -> El {
+    scroll_area_fit(t, key, content, stable_gutter, None)
+}
+
+/// [`scroll_area_with`] for an area whose height follows its content up to
+/// `max_h` (CSS `max-height` on an `overflow: auto` box in an auto-height
+/// column), instead of growing into a bounded parent.
+pub fn scroll_area_fit(t: &Theme, key: &str, content: El, stable_gutter: bool, max_h: Option<f32>) -> El {
     let live = thumb_live(key);
     let feed = live.clone();
-    let viewport = col()
-        .key(key)
-        .grow(1.0)
-        .min_h(0.0)
-        .min_w(0.0)
-        .h_full()
+    let viewport = col().key(key).min_h(0.0).min_w(0.0);
+    let viewport = match max_h {
+        Some(m) => viewport.grow(1.0).max_h(m),
+        None => viewport.grow(1.0).h_full(),
+    };
+    let viewport = viewport
         .scroll(rune::ScrollSpec { stick_bottom: false })
         .on_scroll_offset(move |at: ScrollPos| {
             let [_, vh] = at.viewport;
@@ -241,6 +248,21 @@ pub fn anchored_below(e: El, anchor_key: &str, gap: f32) -> El {
     e.anchored(anchor_key, Side::Bottom, rune::Align::Start, gap)
 }
 
+/// A `.segmented` group's metrics: its height, inset and label size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SegSize {
+    pub h: f32,
+    pub pad: f32,
+    pub fs: f32,
+}
+
+impl SegSize {
+    /// `.segmented`: 32 px, 3 px inset, 14 px labels.
+    pub const DEFAULT: SegSize = SegSize { h: 32.0, pad: 3.0, fs: 14.0 };
+    /// `.cmdk-type .segmented`: 28 px, 2 px inset, 12 px labels.
+    pub const SMALL: SegSize = SegSize { h: 28.0, pad: 2.0, fs: 12.0 };
+}
+
 /// `.segmented`: a pill group whose lit pill travels between options.
 pub fn segmented<T: Copy + PartialEq + 'static>(
     t: &Theme,
@@ -249,7 +271,20 @@ pub fn segmented<T: Copy + PartialEq + 'static>(
     current: T,
     on_pick: fn(&mut App, T),
 ) -> El {
-    let mut group = row().key(key).h(32.0).padding(3.0).items_center().radius(t.radius_lg()).fill(t.c.muted).role("tablist");
+    segmented_sized(t, key, options, current, on_pick, SegSize::DEFAULT)
+}
+
+/// [`segmented`] at another size.
+pub fn segmented_sized<T: Copy + PartialEq + 'static>(
+    t: &Theme,
+    key: &str,
+    options: &[(T, &str)],
+    current: T,
+    on_pick: fn(&mut App, T),
+    size: SegSize,
+) -> El {
+    let mut group =
+        row().key(key).h(size.h).padding(size.pad).items_center().radius(t.radius_lg()).fill(t.c.muted).role("tablist");
     for (n, (value, label)) in options.iter().enumerate() {
         let active = *value == current;
         let v = *value;
@@ -283,7 +318,7 @@ pub fn segmented<T: Copy + PartialEq + 'static>(
             b = b.child(pill);
         }
         let ink = if active { t.c.foreground } else { t.c.muted_foreground };
-        b = b.child(text(*label).font(font(14.0, 500.0)).color(ink).group_color(t.c.foreground));
+        b = b.child(text(*label).font(font(size.fs, 500.0)).color(ink).group_color(t.c.foreground));
         if !active {
             b = b.hover(Color::TRANSPARENT).press_scale(0.97);
         }

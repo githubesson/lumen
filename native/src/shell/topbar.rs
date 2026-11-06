@@ -118,7 +118,7 @@ fn search(t: &Theme, window_w: f32) -> El {
         .label("Search library, albums, tracks… Ctrl+K")
         .cursor(Cursor::Pointer)
         .focusable(true)
-        .on_press(|app: &mut App| app.ui.palette_open = true)
+        .on_press(crate::overlays::palette::open)
         .child(ico(&i::SEARCH, 14.0, t.c.muted_foreground))
         .child(ui::line("Search library, albums, tracks…", font(14.0, 400.0), t.c.muted_foreground).grow(1.0))
         .child(kbd(t, "Ctrl+K"))
@@ -211,7 +211,7 @@ pub fn view(app: &App, t: &Theme, window_w: f32) -> El {
         iconbtn(t, "add-music", &i::UPLOAD, 16.0, BtnState::default())
             .label("Add music")
             .help("Add music")
-            .on_press(|app: &mut App| app.ui.upload_open = true),
+            .on_press(crate::overlays::upload::open),
     )
     .child(
         iconbtn(t, "toggle-theme", if dark { &i::SUN } else { &i::MOON }, 16.0, BtnState::default())
@@ -223,7 +223,7 @@ pub fn view(app: &App, t: &Theme, window_w: f32) -> El {
         iconbtn(t, "open-settings", &i::SLIDERS_HORIZONTAL, 16.0, BtnState { active: app.ui.settings_open, disabled: false })
             .label("Settings")
             .help("Settings")
-            .on_press(|app: &mut App| app.ui.settings_open = !app.ui.settings_open),
+            .on_press(crate::overlays::settings::toggle),
     )
     .child(window_controls(t))
 }

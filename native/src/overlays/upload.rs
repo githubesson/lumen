@@ -14,3 +14,11 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     let _ = (app, t, cx);
     None
 }
+
+pub fn open(app: &mut App) {
+    app.ui.upload_open = true;
+}
+
+pub fn close(app: &mut App) {
+    app.ui.upload_open = false;
+}

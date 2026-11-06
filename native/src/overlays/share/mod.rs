@@ -1,4 +1,6 @@
-//! `CommandPalette.tsx (command-palette.css)`.
+//! `ShareDialog.tsx and components/share/*`.
+
+pub mod snippet;
 
 use rune::{Cx, El};
 

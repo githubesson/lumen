@@ -161,7 +161,11 @@ pub struct Btn {
     pub disabled: bool,
     pub leading: Option<&'static Icon>,
     pub leading_filled: bool,
+    /// The leading icon's size: 14 px (`size-3.5`) unless set.
+    pub leading_size: f32,
     pub trailing: Option<&'static Icon>,
+    /// The icon's colour when it differs from the label's.
+    pub leading_color: Option<Color>,
 }
 
 impl Btn {
@@ -174,7 +178,9 @@ impl Btn {
             disabled: false,
             leading: None,
             leading_filled: false,
+            leading_size: 14.0,
             trailing: None,
+            leading_color: None,
         }
     }
     pub fn primary(mut self) -> Btn {
@@ -200,6 +206,12 @@ impl Btn {
     /// A 14 px (`size-3.5`) icon before the label.
     pub fn icon(mut self, glyph: &'static Icon) -> Btn {
         self.leading = Some(glyph);
+        self
+    }
+    /// A leading icon at another size (`size-4` = 16 px).
+    pub fn icon_sized(mut self, glyph: &'static Icon, size: f32) -> Btn {
+        self.leading = Some(glyph);
+        self.leading_size = size;
         self
     }
     pub fn trailing(mut self, glyph: &'static Icon) -> Btn {
@@ -234,7 +246,7 @@ impl Btn {
             .role("button")
             .label(self.label.clone());
         if let Some(g) = self.leading {
-            b = b.child(ico(g, 14.0, ink));
+            b = b.child(ico(g, self.leading_size, self.leading_color.unwrap_or(ink)));
         }
         if !self.label.is_empty() {
             b = b.child(text(self.label).font(font(fs, 500.0)).color(ink));
