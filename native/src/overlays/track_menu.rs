@@ -53,6 +53,14 @@ pub struct MenuContext {
     pub selection: Option<MenuSelection>,
 }
 
+impl MenuContext {
+    /// `bind(track, { queue })`: Play from `queue`, Song info, and Share
+    /// when the track can be shared (the hook's default wiring).
+    pub fn bind(track: &TrackListItem, queue: Vec<TrackListItem>) -> MenuContext {
+        MenuContext { queue, info: true, share: crate::ui::track_row::can_share(track), ..MenuContext::default() }
+    }
+}
+
 /// One open menu.
 pub struct Menu {
     track: TrackListItem,
@@ -583,64 +591,10 @@ fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
 
 /// `prepareTrackDownload` + the stream: the file's bytes and its name
 /// ("Artist - Title.ext").
-// TODO(api-merge): move to the desktop bridge's download module once it lands.
 pub fn fetch_download(client: &Client, t: &TrackListItem) -> api::ApiResult<(Vec<u8>, String)> {
-    let detail = client.get::<api::TrackDetail>(&format!("/api/tracks/{}", api::seg(&t.id))).ok();
-    let (bytes, content_type) = client.bytes(&client.url(&api::media::download_stream_path(&t.id)))?;
-    let ext = detail.as_ref().and_then(|d| ext_for_format(&d.format)).or_else(|| ext_for_content_type(&content_type));
-    Ok((bytes, download_filename(t, detail.as_ref(), ext)))
-}
-
-fn sanitize(name: &str) -> String {
-    let cleaned: String = name.chars().map(|c| if "<>:\"/\\|?*".contains(c) || (c as u32) < 0x20 { '_' } else { c }).collect();
-    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
-    collapsed.trim_end_matches(['.', ' ']).chars().take(180).collect()
-}
-
-fn download_filename(t: &TrackListItem, d: Option<&api::TrackDetail>, ext: Option<&str>) -> String {
-    let artists: Vec<&str> = d.map(|d| d.artists.iter().map(|a| a.name.as_str()).filter(|n| !n.is_empty()).collect()).unwrap_or_default();
-    let artist = if artists.is_empty() { t.artist.clone().unwrap_or_default() } else { artists.join(", ") };
-    let title = d.map(|d| d.title.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| t.title.clone());
-    let base = [artist, title].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" - ");
-    let name = sanitize(if base.is_empty() { "track" } else { &base });
-    match ext {
-        Some(e) if !name.to_lowercase().ends_with(&format!(".{e}")) => format!("{name}.{e}"),
-        _ => name,
-    }
-}
-
-fn ext_for_format(format: &str) -> Option<&'static str> {
-    let n = format.to_lowercase().trim_start_matches('.').replace(['_', '-'], " ");
-    let n = n.trim();
-    if n.is_empty() {
-        return None;
-    }
-    Some(match n {
-        "mp3" | "id3" | "id3v1" | "id3v2" | "mpeg" | "mpeg audio" => "mp3",
-        "m4a" | "mp4" | "mp4a" | "aac" | "alac" => "m4a",
-        "mov" => "mov",
-        _ if n.contains("flac") => "flac",
-        _ if n.contains("ogg") => "ogg",
-        _ if n.contains("opus") => "opus",
-        _ if n.contains("wav") || n.contains("wave") => "wav",
-        _ if n.contains("webm") => "webm",
-        _ if n.contains("quicktime") => "mov",
-        _ => return None,
-    })
-}
-
-fn ext_for_content_type(ct: &str) -> Option<&'static str> {
-    let ct = ct.split(';').next().unwrap_or("").trim().to_lowercase();
-    Some(match ct.as_str() {
-        "audio/mpeg" | "audio/mp3" => "mp3",
-        "audio/flac" | "audio/x-flac" => "flac",
-        "audio/mp4" | "audio/m4a" | "audio/x-m4a" | "audio/aac" => "m4a",
-        "audio/ogg" => "ogg",
-        "audio/opus" => "opus",
-        "audio/wav" | "audio/x-wav" | "audio/wave" => "wav",
-        "audio/webm" => "webm",
-        _ => return None,
-    })
+    let prepared = crate::core::audio_format::prepare_track_download(client, t);
+    let (bytes, _) = client.bytes(&client.url(&api::media::download_stream_path(&t.id)))?;
+    Ok((bytes, prepared.filename))
 }
 
 /// `runViewAlbum`: the track's album page, from the row or its detail.
@@ -699,7 +653,6 @@ fn album_href(t: &TrackListItem, d: Option<&api::TrackDetail>) -> Option<String>
 fn confirm_delete(app: &mut App, t: &TrackListItem, global: bool) {
     use crate::overlays::confirm::{self, Art, ConfirmSpec};
     let id = t.id.clone();
-    let path = if global { format!("/api/admin/tracks/{}", api::seg(&id)) } else { format!("/api/tracks/{}", api::seg(&id)) };
     let (title, message, label, busy) = if global {
         ("Remove for everyone?", "This permanently deletes the file from the server, so it leaves every library.", "Remove", "Removing…")
     } else {
@@ -714,11 +667,10 @@ fn confirm_delete(app: &mut App, t: &TrackListItem, global: bool) {
         .icon(&i::TRASH_2)
         .busy_label(busy)
         .error_fallback("Delete failed.");
-    confirm::ask_action(app, spec, move |client: &Client| client.delete_void(&path), |app: &mut App| {
-        // The library changed: reload what's on screen.
-        let loc = app.location().clone();
-        crate::pages::enter(app, &loc);
-    });
+    let action = move |client: &Client| {
+        if global { api::admin::delete_global_track(client, &id) } else { api::library::delete_track(client, &id) }
+    };
+    confirm::ask_action(app, spec, action, crate::pages::library_changed);
 }
 
 /// The menu, at the pointer.
@@ -909,7 +861,7 @@ fn list_item(t: &Theme, key: &str, glyph: Option<&'static rune::Icon>, label: &s
     if let Some(g) = glyph {
         r = r.child(ico(g, 14.0, t.c.popover_foreground).group_color(t.c.accent_foreground));
     }
-    r = r.child(exact_line14(line(label, font(14.0, 400.0), t.c.popover_foreground).group_color(t.c.accent_foreground), 20.3));
+    r = r.child(exact_line(line(label, font(14.0, 400.0), t.c.popover_foreground).group_color(t.c.accent_foreground), 20.3));
     let base = item_base(t, &format!("{key}-item"), highlighted, enabled).w_full();
     base.child(r).label(label)
 }
@@ -927,11 +879,7 @@ fn press(e: El, item: Item, enabled: bool) -> El {
 /// lifted by the rounding (measured against the reference; 12 and 13 px
 /// lines land right as they are).
 fn exact_line(e: El, lh: f32) -> El {
-    crate::ui::exact_text(e, 12.0, lh)
-}
-
-fn exact_line14(e: El, lh: f32) -> El {
-    crate::ui::exact_text(e, 14.0, lh)
+    crate::ui::exact(e, lh).shrink()
 }
 
 /// `.ctx-heading`.
@@ -963,7 +911,7 @@ fn playlist_item(app: &App, t: &Theme, m: &Menu, pl: &Playlist, can_add: bool) -
         .gap(6.0)
         .items_center()
         .child(cover_art_letter_size(t, &app.images, art.as_deref(), &pl.name, 18.0, t.radius_sm(), 12.0).ml(-2.0))
-        .child(exact_line14(line(pl.name.clone(), font(14.0, 400.0), t.c.popover_foreground).group_color(t.c.accent_foreground), 20.3).grow(1.0));
+        .child(exact_line(line(pl.name.clone(), font(14.0, 400.0), t.c.popover_foreground).group_color(t.c.accent_foreground), 20.3).grow(1.0));
     if busy {
         r = r.child(text("…").font(mono(12.0, 400.0)).color(muted));
     } else if added {
@@ -1006,7 +954,7 @@ fn track_header(app: &App, t: &Theme, tr: &TrackListItem) -> El {
             col()
                 .grow(1.0)
                 .min_w(0.0)
-                .child(exact_line14(
+                .child(exact_line(
                     crate::ui::tooltip::tip_truncated(
                         line(title.clone(), with_lh(font(14.0, 500.0), 18.2), t.c.popover_foreground),
                         "ctx-head-title",
@@ -1043,7 +991,7 @@ fn selection_header(app: &App, t: &Theme, tracks: &[TrackListItem]) -> El {
     let mut text_col = col()
         .grow(1.0)
         .min_w(0.0)
-        .child(exact_line14(line(format!("{} tracks", tracks.len()), with_lh(font(14.0, 500.0), 18.2), t.c.popover_foreground), 18.2));
+        .child(exact_line(line(format!("{} tracks", tracks.len()), with_lh(font(14.0, 500.0), 18.2), t.c.popover_foreground), 18.2));
     if !artists.is_empty() {
         text_col = text_col.child(exact_line(
             crate::ui::tooltip::tip_truncated(
@@ -1085,12 +1033,5 @@ mod tests {
         assert_eq!(key_target(&items, Some(&Item::Play), &Key::Left), None);
         assert_eq!(key_target(&items, Some(&Item::Info), &Key::Down), Some(Item::Edit));
         assert_eq!(key_target(&items, Some(&Item::Move), &Key::Down), Some(Item::Fav));
-    }
-
-    #[test]
-    fn file_names() {
-        let t = TrackListItem { id: "1".into(), title: "A/B".into(), artist: Some("X".into()), ..Default::default() };
-        assert_eq!(download_filename(&t, None, Some("flac")), "X - A_B.flac");
-        assert_eq!(ext_for_format("MPEG audio"), Some("mp3"));
     }
 }

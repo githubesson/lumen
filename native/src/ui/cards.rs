@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use rune::{Color, Cursor, El, PointerPress, Shadow, col, el, row, text};
 
-use crate::api::{EffectiveRole, Playlist, Visibility, media};
+use crate::api::{Playlist, Visibility, media};
 use crate::app::App;
 use crate::images::{Cover, Images};
 use crate::theme::{Density, Theme};
@@ -59,10 +59,10 @@ pub fn card_box(t: &Theme, key: &str) -> El {
 pub fn card_text(t: &Theme, title: El, sub: Option<&str>) -> El {
     let (_, _, sub_fs) = card_metrics(t);
     let (_, _, title_fs) = card_metrics(t);
-    let mut c = col().w_full().min_w(0.0).child(crate::ui::exact_text(title.w_full(), title_fs, title_fs * 1.45));
+    let mut c = col().w_full().min_w(0.0).child(crate::ui::exact(title.w_full(), title_fs * 1.45).shrink());
     if let Some(s) = sub {
         let _ = sub_fs;
-        c = c.child(crate::ui::exact_text(line(s, font(12.0, 400.0), t.c.muted_foreground), 12.0, 17.4));
+        c = c.child(crate::ui::exact(line(s, font(12.0, 400.0), t.c.muted_foreground), 17.4).shrink());
     }
     c
 }
@@ -175,6 +175,28 @@ impl MediaCard {
     }
 }
 
+/// A [`MediaCard`]'s height at `width` (`.card`: its padding, the square
+/// cover, the gap and the title and subtitle lines).
+pub fn media_card_height(t: &Theme, width: f32) -> f32 {
+    let (pad, gap, title_fs) = card_metrics(t);
+    width + gap + title_fs * 1.45 + 17.4 - 2.0 * pad + 2.0 * pad
+}
+
+/// `.replay-rank`: a play-count rank over a card's cover corner
+/// ([`MediaCard::rank_badge`]).
+pub fn replay_rank(t: &Theme, rank: usize) -> El {
+    row()
+        .absolute(6.0, 6.0)
+        .min_w(20.0)
+        .h(20.0)
+        .px(6.0)
+        .items_center()
+        .justify_center()
+        .radius(999.0)
+        .fill(t.c.background)
+        .child(text(rank.to_string()).font(crate::ui::tnum(font(12.0, 500.0))).color(t.c.foreground))
+}
+
 /// `MediaCardPlaceholders`: stand-ins for a loading row of cards, the same
 /// box as a real one.
 pub fn media_card_placeholders(t: &Theme, key: &str, count: usize) -> Vec<El> {
@@ -198,12 +220,7 @@ pub fn media_card_placeholders(t: &Theme, key: &str, count: usize) -> Vec<El> {
 
 /// `playlistSubtitle`: "Private", "Collaborative · editor".
 pub fn playlist_subtitle(p: &Playlist) -> String {
-    let vis = if p.visibility == Visibility::Collaborative { "Collaborative" } else { "Private" };
-    match p.effective_role {
-        Some(EffectiveRole::Editor) => format!("{vis} · editor"),
-        Some(EffectiveRole::Viewer) => format!("{vis} · viewer"),
-        _ => vis.to_string(),
-    }
+    crate::core::playlist_details::playlist_subtitle(p.visibility, p.effective_role)
 }
 
 /// `PlaylistCard`: a playlist's tile, the same on Home and the Playlists page.
@@ -237,12 +254,8 @@ pub fn playlist_card(app: &App, t: &Theme, p: &Playlist) -> El {
         .on_press(move |app: &mut App| app.navigate_to(&href))
 }
 
-/// `TopArtistAction`: what a top artist's tile does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TopArtistAction {
-    Open,
-    Play,
-}
+/// What a top artist's tile does (`topArtistAction`).
+pub use crate::core::replay::figures::TopArtistAction;
 
 /// `artistHref`: a library artist's page.
 pub fn artist_href(id: &str) -> String {

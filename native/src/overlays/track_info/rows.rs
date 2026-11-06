@@ -3,7 +3,7 @@
 //! the same on both clients.
 
 use crate::api::{TrackDetail, TrackSource};
-use crate::overlays::requests::TidalTrackInfo;
+use crate::api::tidal::{TidalArtistRole, TidalStreamQuality, TidalTrackInfo};
 
 /// One labelled value. A row kept while empty shows a faded dash.
 #[derive(Clone, Debug, PartialEq)]
@@ -153,9 +153,9 @@ fn credits(t: &TrackDetail, info: Option<&TidalTrackInfo>) -> Vec<(String, Strin
             ("Producers".into(), dash(own_producers)),
         ];
     };
-    let names = |role: &str| info.artists.iter().filter(|a| a.role == role).map(|a| a.name.clone()).collect::<Vec<_>>();
-    let main = names("main");
-    let guests = names("featured");
+    let names = |role: TidalArtistRole| info.artists.iter().filter(|a| a.role == role).map(|a| a.name.clone()).collect::<Vec<_>>();
+    let main = names(TidalArtistRole::Main);
+    let guests = names(TidalArtistRole::Featured);
     let mut roles: Vec<(String, String, Vec<String>)> = Vec::new();
     for c in &info.credits {
         let key = c.role.trim().to_lowercase();
@@ -197,26 +197,26 @@ fn credits(t: &TrackDetail, info: Option<&TidalTrackInfo>) -> Vec<(String, Strin
 }
 
 /// What a stream at a tier is: (format, quality, bit depth, sample rate, bitrate, summary).
-fn tier(t: Option<&str>) -> Option<[&'static str; 6]> {
+fn tier(t: Option<TidalStreamQuality>) -> Option<[&'static str; 6]> {
     Some(match t? {
-        "HI_RES_LOSSLESS" => ["FLAC", "Hi-Res Lossless", "24-bit", "Up to 192 kHz", "", "Hi-Res Lossless (24-bit FLAC)"],
-        "LOSSLESS" => ["FLAC", "Lossless", "16-bit", "44.1 kHz", "", "Lossless (16-bit / 44.1 kHz FLAC)"],
-        "HIGH" => ["AAC", "Lossy", "", "", "320 kbps", "AAC 320 kbps"],
-        "LOW" => ["AAC", "Lossy", "", "", "96 kbps", "AAC 96 kbps"],
-        _ => return None,
+        TidalStreamQuality::HiResLossless => ["FLAC", "Hi-Res Lossless", "24-bit", "Up to 192 kHz", "", "Hi-Res Lossless (24-bit FLAC)"],
+        TidalStreamQuality::Lossless => ["FLAC", "Lossless", "16-bit", "44.1 kHz", "", "Lossless (16-bit / 44.1 kHz FLAC)"],
+        TidalStreamQuality::High => ["AAC", "Lossy", "", "", "320 kbps", "AAC 320 kbps"],
+        TidalStreamQuality::Low => ["AAC", "Lossy", "", "", "96 kbps", "AAC 96 kbps"],
+        TidalStreamQuality::Unknown => return None,
     })
 }
 
 /// `tidalAudioRows`.
 fn tidal_audio(info: Option<&TidalTrackInfo>) -> Vec<Row> {
-    if let Some(s) = tier(info.and_then(|i| i.streamed_quality.as_deref())) {
+    if let Some(s) = tier(info.and_then(|i| i.streamed_quality)) {
         return [("Format", s[0]), ("Quality", s[1]), ("Bit depth", s[2]), ("Sample rate", s[3]), ("Bitrate", s[4])]
             .iter()
             .filter(|(_, v)| !v.is_empty())
             .map(|(l, v)| kept(l, v, false))
             .collect();
     }
-    match tier(info.and_then(|i| i.max_quality.as_deref())) {
+    match tier(info.and_then(|i| i.max_quality)) {
         Some(c) => vec![kept("Quality", &format!("Up to {}", c[5]), true)],
         None => vec![kept("Quality", "—", false)],
     }

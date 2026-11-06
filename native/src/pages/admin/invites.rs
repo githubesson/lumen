@@ -2,15 +2,15 @@
 //! making registration links, the one-time link of the invite just made,
 //! and the active and past invites.
 
-use std::rc::Rc;
 use std::time::Duration;
 
 use rune::{El, TextEdit, col, el, row};
 
 use super::requests::{self as rq, Invite};
 use super::table::{self, Action, Cell, Col, Empty, Line};
-use super::{ConfirmArt, ConfirmRequest, ConfirmSubject, Res, call, confirm, format, load, parts};
+use super::{Res, call, format, load, parts};
 use crate::app::App;
+use crate::overlays::confirm::{self, Art, ConfirmSpec, Subject};
 use crate::theme::Theme;
 use crate::ui::forms::{SelectOption, SelectVariant, select};
 use crate::ui::{Btn, css_border, font, ico, icons as i, mono, tnum};
@@ -216,26 +216,20 @@ fn revoke(app: &mut App, inv: &Invite) {
         _ => "no expiry".into(),
     };
     let id = inv.id.clone();
-    confirm(
+    confirm::ask_then(
         app,
-        ConfirmRequest {
-            title: "Revoke this invite?".into(),
-            message: "Its link stops working, so no one else can sign up with it.".into(),
-            subject: Some(ConfirmSubject {
-                art: ConfirmArt::Icon(&i::TICKET),
+        ConfirmSpec::new("Revoke this invite?", "Its link stops working, so no one else can sign up with it.", "Revoke").maybe_subject(Some(Subject {
+                art: Art::Icon(&i::TICKET),
                 name: format!("{} invite", role_label(&inv.target_role)),
                 detail: Some(format!("{} used · {expiry}", usage(inv))),
-            }),
-            confirm_label: "Revoke".into(),
-            confirm_icon: Some(&i::TRASH_2),
-            on_confirm: Rc::new(move |app: &mut App| {
+            })).icon(&i::TRASH_2),
+        move |app: &mut App| {
                 let id = id.clone();
                 call(app, move |c| rq::revoke_invite(c, &id), |app, r| match r {
                     Ok(()) => reload(app, |_| {}),
                     Err(e) => st(app).action_error = Some(super::error_message(&e, "Failed to revoke.")),
                 });
-            }),
-        },
+            },
     );
 }
 

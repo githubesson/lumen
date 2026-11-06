@@ -72,6 +72,11 @@ impl ConfirmSpec {
         self.subject = Some(Subject { art, name: name.into(), detail });
         self
     }
+    /// [`ConfirmSpec::subject`] when there is one.
+    pub fn maybe_subject(mut self, subject: Option<Subject>) -> ConfirmSpec {
+        self.subject = subject;
+        self
+    }
     pub fn icon(mut self, glyph: &'static Icon) -> ConfirmSpec {
         self.confirm_icon = Some(glyph);
         self
@@ -295,7 +300,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     let mut confirm = Btn::new("confirm-go", label).disabled(s.busy);
     confirm = if spec.danger { confirm.danger() } else { confirm.primary() };
     if let Some(g) = spec.confirm_icon {
-        confirm = confirm.icon_sized(g, 16.0);
+        confirm = confirm.icon(g).icon_size(16.0);
     }
     let footer = row()
         .key("confirm-actions")

@@ -11,6 +11,7 @@ use rune::{El, TextStyle, col, el, row, text};
 
 use crate::api::TrackListItem;
 use crate::app::App;
+use crate::ui::tooltip::TipExt;
 use crate::theme::Theme;
 use crate::ui::{Btn, cover_art, font, icons as i, line, with_lh};
 
@@ -37,20 +38,6 @@ fn lines_height(s: &str, style: TextStyle, width: f32) -> f32 {
     rune::text::measure_with(s, &[], style, Some(width), rune::text::RichLayoutOptions::new().wrap_anywhere()).1
 }
 
-/// `text-wrap: balance`: the narrowest width that keeps the text on as few
-/// lines as `width` gives it, so the lines come out even.
-fn balanced_width(s: &str, style: TextStyle, width: f32) -> f32 {
-    let h = lines_height(s, style, width);
-    if h <= style.line_height + 0.5 {
-        return width;
-    }
-    let (mut lo, mut hi) = (0.0f32, width);
-    while hi - lo > 0.5 {
-        let mid = (lo + hi) / 2.0;
-        if lines_height(s, style, mid) <= h + 0.5 { hi = mid } else { lo = mid }
-    }
-    hi.ceil()
-}
 
 /// What the hero's text says.
 struct Body {
@@ -138,7 +125,7 @@ fn body_view(t: &Theme, b: Body, l: &HeadLayout, narrow: bool) -> El {
     }
     c = c.child(match &b.title {
         Some(title) => {
-            let w = if narrow { l.body_w } else { balanced_width(title, title_style(), l.body_w) };
+            let w = if narrow { l.body_w } else { crate::ui::balanced_width(title, title_style(), l.body_w) };
             let h = lines_height(title, title_style(), l.body_w);
             let h = (h / 27.6).round().max(1.0) * 27.6;
             board::lh(text(title.clone()).font(title_style()).color(t.c.card_foreground).wrap_anywhere().max_w(w), h).mb(6.0)
@@ -217,8 +204,8 @@ pub fn resume(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<
             title: None,
             meta: vec!["Loading your music…".into()],
             actions: vec![
-                board::button16(t, Btn::new(format!("{key}-play"), "Play").primary().disabled(true), &i::PLAY_FILLED),
-                board::button16(t, Btn::new(format!("{key}-open"), "Open album").disabled(true), &i::DISC_3),
+                Btn::new(format!("{key}-play"), "Play").primary().disabled(true).icon(&i::PLAY_FILLED).icon_size(16.0).build(t),
+                Btn::new(format!("{key}-open"), "Open album").disabled(true).icon(&i::DISC_3).icon_size(16.0).build(t),
             ],
             status_meta: true,
             note: None,
@@ -248,7 +235,7 @@ pub fn resume(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<
             title: Some("Your library is quiet".into()),
             meta: vec!["Nothing ingested yet".into()],
             actions: vec![
-                board::button16(t, Btn::new(format!("{key}-explore"), "Explore").primary(), &i::SPARKLES)
+                Btn::new(format!("{key}-explore"), "Explore").primary().icon(&i::SPARKLES).icon_size(16.0).build(t)
                     .role("link")
                     .on_press(|app: &mut App| app.navigate_to("/library")),
             ],
@@ -272,7 +259,7 @@ fn hero_album(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, track: &TrackListI
     let target = track_album_target(track);
     // Only a library album has a page to describe it and tracks to play
     // through here; a TIDAL track links to its release.
-    let album_id = target.as_ref().filter(|t| !t.tidal).map(|t| t.id.clone());
+    let album_id = target.as_ref().filter(|t| t.kind != crate::core::entity_target::EntityKind::Tidal).map(|t| t.id.clone());
     let album = album_id.as_ref().and_then(|id| st.hero_album.get(id)).and_then(|r| r.data.as_ref());
     let year = album.and_then(|a| a.release_year).filter(|y| *y != 0);
     let track_count = album.map(|a| a.track_count).filter(|n| *n > 0);
@@ -286,12 +273,12 @@ fn hero_album(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, track: &TrackListI
     }
     let mut actions = vec![{
         let tr = track.clone();
-        board::button16(t, Btn::new(format!("{key}-play"), "Play").primary().disabled(st.hero_starting), &i::PLAY_FILLED)
+        Btn::new(format!("{key}-play"), "Play").primary().disabled(st.hero_starting).icon(&i::PLAY_FILLED).icon_size(16.0).build(t)
             .on_press(move |app: &mut App| super::play_hero(app, &tr))
     }];
     if let Some(href) = target.as_ref().map(album_href) {
         actions.push(
-            board::button16(t, Btn::new(format!("{key}-open"), "Open album"), &i::DISC_3)
+            Btn::new(format!("{key}-open"), "Open album").icon(&i::DISC_3).icon_size(16.0).build(t)
                 .role("link")
                 .on_press(move |app: &mut App| app.navigate_to(&href)),
         );
@@ -362,7 +349,7 @@ fn hero_tracks(
             let id = album_id.to_string();
             c = c.child(
                 row().w_full().gap(8.0).pt(8.0).items_center().role("status")
-                    .child(line(e.clone(), font(14.0, 400.0), t.c.muted_foreground).help(e).shrink())
+                    .child(line(e.clone(), font(14.0, 400.0), t.c.muted_foreground).shrink().tip(&format!("{key}-tracks-error"), &e))
                     .child(
                         Btn::new(format!("{key}-tracks-retry"), "Retry")
                             .small()

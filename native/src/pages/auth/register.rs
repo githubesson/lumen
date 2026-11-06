@@ -73,7 +73,7 @@ fn submit(app: &mut App) {
     if s.busy {
         return;
     }
-    let v = super::validation::validate_registration_input(&s.username.text, &s.password.text);
+    let v = crate::core::auth::validation::validate_registration_input(&s.username.text, &s.password.text);
     if let Some(e) = v.error() {
         s.error = Some(e.to_string());
         return;
@@ -136,14 +136,14 @@ pub fn view(app: &App, t: &Theme, h: f32) -> El {
         ),
         (false, None) => centered_card(t, h, "Checking invite", None, note(t, "One moment…")),
         (false, Some(Ok(check))) if check.valid => {
-            let role = check.target_role.clone().unwrap_or_default();
+            let role = check.target_role.map(|r| r.as_str()).unwrap_or("");
             let muted = t.c.muted_foreground;
             let intro_row = row()
                 .w_full()
                 .justify_center()
                 .items_center()
                 .child(text("Registering as ").font(font(14.0, 400.0)).color(muted).h(LINE))
-                .child(role_pill(t, &role))
+                .child(role_pill(t, role))
                 .child(text(".").font(font(14.0, 400.0)).color(muted).h(LINE));
             centered_card(t, h, "Create account", Some(intro_row), form(t, s))
         }

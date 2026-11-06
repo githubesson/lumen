@@ -50,6 +50,47 @@ pub struct OpenSelect {
     pub value: String,
     pub variant: SelectVariant,
     pub on_change: fn(&mut App, &str),
+    /// The highlighted option (Radix's `data-highlighted`): the current one
+    /// as it opens, then wherever the pointer or the arrow keys take it.
+    pub highlight: Option<usize>,
+}
+
+impl OpenSelect {
+    pub fn new(key: impl Into<String>, options: Vec<SelectOption>, value: impl Into<String>, variant: SelectVariant, on_change: fn(&mut App, &str)) -> OpenSelect {
+        let value = value.into();
+        let highlight = options.iter().position(|o| o.value == value && !o.disabled);
+        OpenSelect { key: key.into(), options, value, variant, on_change, highlight }
+    }
+}
+
+/// The open listbox's keys: Up and Down move the highlight over the
+/// enabled options, Home and End jump, Return picks, Escape closes.
+pub fn on_key(app: &mut App, ev: &rune::KeyEvent) -> bool {
+    use rune::Key;
+    let Some(open) = app.select.as_mut() else { return false };
+    let enabled: Vec<usize> = open.options.iter().enumerate().filter(|(_, o)| !o.disabled).map(|(n, _)| n).collect();
+    let at = open.highlight.and_then(|h| enabled.iter().position(|&n| n == h));
+    let next = match ev.key {
+        Key::Down => Some(at.map_or(0, |i| (i + 1).min(enabled.len().saturating_sub(1)))),
+        Key::Up => Some(at.map_or(enabled.len().saturating_sub(1), |i| i.saturating_sub(1))),
+        Key::Home => Some(0),
+        Key::End => Some(enabled.len().saturating_sub(1)),
+        Key::Enter => {
+            let pick = open.highlight.and_then(|h| open.options.get(h)).map(|o| (o.value.clone(), open.on_change));
+            app.select = None;
+            if let Some((value, on_change)) = pick {
+                on_change(app, &value);
+            }
+            return true;
+        }
+        Key::Escape => {
+            app.select = None;
+            return true;
+        }
+        _ => return false,
+    };
+    open.highlight = next.and_then(|i| enabled.get(i).copied());
+    true
 }
 
 /// `<Select>`: a trigger showing the chosen option, opening a listbox
@@ -68,13 +109,7 @@ pub fn select(
     let open = app.select.as_ref().is_some_and(|s| s.key == key);
     let selected = options.iter().find(|o| o.value == value);
     let label = selected.map(|o| o.label.clone()).unwrap_or_else(|| placeholder.to_string());
-    let open_spec = OpenSelect {
-        key: key.to_string(),
-        options: options.to_vec(),
-        value: value.to_string(),
-        variant,
-        on_change,
-    };
+    let open_spec = OpenSelect::new(key, options.to_vec(), value, variant, on_change);
     let toggle = move |app: &mut App| {
         if app.select.as_ref().is_some_and(|s| s.key == open_spec.key) {
             app.select = None;
@@ -186,21 +221,30 @@ fn listbox_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> {
             .radius(t.radius_md())
             .role("option")
             .checked(selected)
-            .focus_selected(selected)
             .child(line(o.label.clone(), font(14.0, if selected { 500.0 } else { 400.0 }), t.c.popover_foreground).grow(1.0));
+        if open.highlight == Some(n) {
+            it = it.fill(t.c.accent);
+        }
         if selected {
             it = it.child(ico(&i::CHECK, 14.0, t.c.primary));
         }
         if let Some(title) = &o.title {
-            it = it.help(title.clone());
+            it = crate::ui::tooltip::tip(it, &format!("{}-opt-{n}", open.key), title);
         }
         if o.disabled {
             it = it.opacity(0.5).cursor(Cursor::NotAllowed);
         } else {
-            it = it.cursor(Cursor::Pointer).focusable(true).focus_highlight(t.c.accent).hover(t.c.accent).on_press(move |app: &mut App| {
-                app.select = None;
-                on_change(app, &value);
-            });
+            it = it
+                .cursor(Cursor::Pointer)
+                .on_hover_change(move |app: &mut App, inside, _| {
+                    if let Some(s) = app.select.as_mut().filter(|_| inside) {
+                        s.highlight = Some(n);
+                    }
+                })
+                .on_press(move |app: &mut App| {
+                    app.select = None;
+                    on_change(app, &value);
+                });
         }
         items = items.child(it);
     }
@@ -225,35 +269,10 @@ fn listbox_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> {
 /// Binds a field to its `TextEdit` in the app state.
 pub type EditBind = fn(&mut App) -> &mut TextEdit;
 
-/// [`search_input`] bound to its `TextEdit` (`bind`), with `on_change`
-/// hearing each edit.
-pub fn search_input_bound(
-    t: &Theme,
-    key: &str,
-    edit: &TextEdit,
-    placeholder: &str,
-    width: Option<f32>,
-    bind: EditBind,
-    on_change: Option<fn(&mut App)>,
-) -> El {
-    search_input_with(t, key, edit, placeholder, width, move |input| {
-        let input = input.on_edit(bind);
-        match on_change {
-            Some(f) => input.on_input_change(move |app: &mut App, _| f(app)),
-            None => input,
-        }
-    })
-}
-
 /// `SearchInput`: the `.search` box with a magnifier and a text field.
-/// Escape clears it when `on_clear` is given.
-pub fn search_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, width: Option<f32>) -> El {
-    search_input_with(t, key, edit, placeholder, width, |field| field)
-}
-
-/// [`search_input`] with `bind` applied to the inner text field, where its
-/// `.on_edit(..)`, `.on_input_key(..)` and `.on_submit(..)` go.
-pub fn search_input_with(
+/// `bind` gets the inner text field, where its `.on_edit(..)`,
+/// `.on_input_change(..)`, `.on_input_key(..)` and `.on_submit(..)` go.
+pub fn search_input(
     t: &Theme,
     key: &str,
     edit: &TextEdit,

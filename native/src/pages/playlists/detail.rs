@@ -11,9 +11,9 @@ use crate::theme::Theme;
 use crate::ui::kit::{error_banner, loading_state};
 use crate::ui::icons as i;
 
-use super::confirm::{self, Art, ConfirmSpec, Subject};
+use crate::overlays::confirm::{self, Art, ConfirmSpec, Subject};
 use super::logic::{self, Details, SortKey, error_message, pluralize};
-use super::requests::{self, Collaborator, PlaylistTracksIfChanged};
+use crate::api::{Collaborator, PlaylistTracksIfChanged};
 use super::edits::pending;
 use super::{add_tracks, collaborators, header, settings, tracks, update_playlists};
 
@@ -65,6 +65,16 @@ pub struct Detail {
     /// The auto-download poll's current timer.
     poll: u64,
     pub table: tracks::State,
+    /// What the table shows, kept by [`sync`]: `tracks` sorted for display
+    /// then filtered by the search, as indices into `tracks` and as queue
+    /// items (the selection's rows), and the whole sorted play queue.
+    pub shown_idx: Vec<usize>,
+    pub shown_items: Vec<TrackListItem>,
+    pub queue_items: Vec<TrackListItem>,
+    /// Bumped when `shown_idx` changes (the virtual rows' version).
+    pub shown_rev: u64,
+    /// The inputs `shown_*` were made from.
+    shown_of: Option<(Option<Vec<PlaylistTrackEntry>>, SortKey, bool, String)>,
     pub settings: settings::State,
     pub collab: collaborators::State,
     pub add: add_tracks::State,
@@ -93,6 +103,11 @@ impl Detail {
             etag: None,
             poll: 0,
             table: tracks::State::default(),
+            shown_idx: Vec::new(),
+            shown_items: Vec::new(),
+            queue_items: Vec::new(),
+            shown_rev: 0,
+            shown_of: None,
             settings,
             collab: collaborators::State::default(),
             add: add_tracks::State::default(),
@@ -101,7 +116,7 @@ impl Detail {
 
     /// The rows as the table shows them, by index into `tracks`: sorted,
     /// then filtered by `q` (trimmed and lowercased).
-    pub fn shown(&self, q: &str) -> Vec<usize> {
+    fn compute_shown(&self, q: &str) -> Vec<usize> {
         let Some(rows) = &self.tracks else { return Vec::new() };
         let order = logic::sort_for_display(rows, self.sort, self.sort_asc);
         if q.is_empty() {
@@ -112,9 +127,47 @@ impl Detail {
 
     /// The play queue, in the order the table sorts it.
     pub fn queue(&self) -> Vec<TrackListItem> {
-        let Some(rows) = &self.tracks else { return Vec::new() };
-        logic::sort_for_display(rows, self.sort, self.sort_asc).into_iter().map(|i| rows[i].as_track()).collect()
+        self.queue_items.clone()
     }
+}
+
+/// The table's track list key (its selection).
+pub const TRACKS_LIST: &str = "playlist-tracks";
+
+/// The rows the table shows, as queue items (the selection's `Source`).
+pub fn shown_source(app: &App) -> &[TrackListItem] {
+    detail(app).map_or(&[], |d| &d.shown_items)
+}
+
+/// The whole play queue, sorted as the table is.
+pub fn queue_source(app: &App) -> &[TrackListItem] {
+    detail(app).map_or(&[], |d| &d.queue_items)
+}
+
+/// Before each frame: when the rows, the sort or the search changed,
+/// work out again what the table shows. Returns whether it did.
+pub fn sync(app: &mut App) -> bool {
+    let q = app.pages.playlists.fields.search.text.trim().to_lowercase();
+    let Some(d) = app.pages.playlists.detail.as_mut() else { return false };
+    if let Some((tracks, sort, asc, query)) = &d.shown_of
+        && *sort == d.sort
+        && *asc == d.sort_asc
+        && *query == q
+        && *tracks == d.tracks
+    {
+        return false;
+    }
+    let idx = d.compute_shown(&q);
+    let rows = d.tracks.as_deref().unwrap_or(&[]);
+    d.shown_items = idx.iter().map(|&i| rows[i].as_track()).collect();
+    d.queue_items = match &d.tracks {
+        Some(rows) => logic::sort_for_display(rows, d.sort, d.sort_asc).into_iter().map(|i| rows[i].as_track()).collect(),
+        None => Vec::new(),
+    };
+    d.shown_idx = idx;
+    d.shown_rev += 1;
+    d.shown_of = Some((d.tracks.clone(), d.sort, d.sort_asc, q));
+    true
 }
 
 type Then = Box<dyn FnOnce(&mut App) + Send>;
@@ -218,6 +271,9 @@ pub fn enter(app: &mut App, id: &str) {
     *fields = super::Fields::default();
     settings::sync_fields(&d, fields);
     app.pages.playlists.detail = Some(d);
+    // A new visit is a new table: nothing selected.
+    crate::ui::track_select::clear(app, TRACKS_LIST);
+    sync(app);
     load(app, None);
 }
 
@@ -234,12 +290,12 @@ pub fn load(app: &mut App, then: Option<Then>) {
     let (id, mount, seq) = (d.id.clone(), d.mount, d.load_gen);
     app.net.run(
         move || {
-            let p = requests::get_playlist(&client, &id);
-            let t = requests::list_playlist_tracks_if_changed(&client, &id, None);
-            let first = early.then(|| requests::list_collaborators(&client, &id).ok());
+            let p = crate::api::playlists::get_playlist(&client, &id);
+            let t = crate::api::playlists::list_playlist_tracks_if_changed(&client, &id, None);
+            let first = early.then(|| crate::api::playlists::list_collaborators(&client, &id).ok());
             // None: that request failed, so keep what's shown.
             let collabs = match &p {
-                Ok(p) if shows_collaborators(p) => first.unwrap_or_else(|| requests::list_collaborators(&client, &id).ok()),
+                Ok(p) if shows_collaborators(p) => first.unwrap_or_else(|| crate::api::playlists::list_collaborators(&client, &id).ok()),
                 Ok(_) => Some(Vec::new()),
                 Err(_) => None,
             };
@@ -375,7 +431,7 @@ fn refresh(app: &mut App, mount: u64, token: u64) {
     }
     let (id, etag, seq) = (d.id.clone(), d.etag.clone(), d.load_gen);
     app.net.run(
-        move || requests::list_playlist_tracks_if_changed(&client, &id, etag.as_deref()),
+        move || crate::api::playlists::list_playlist_tracks_if_changed(&client, &id, etag.as_deref()),
         move |app, result| {
             let Some(d) = current(app, mount) else { return };
             if d.poll != token {
@@ -406,7 +462,7 @@ pub fn set_tab(app: &mut App, tab: Tab) {
 
 pub(super) fn set_sort(app: &mut App, value: &str) {
     if let Some(d) = detail_mut(app) {
-        let next = SortKey::parse(value);
+        let next = logic::parse_sort(value);
         if next != d.sort {
             d.sort_asc = next.default_asc();
         }
@@ -426,7 +482,7 @@ pub fn toggle_auto_download(app: &mut App) {
     invalidate_loads(app);
     detail_mut(app).unwrap().saving_auto = true;
     app.net.run(
-        move || requests::set_tidal_auto_download(&client, &id, next),
+        move || crate::api::playlists::set_tidal_auto_download(&client, &id, next),
         move |app, result| match result {
             Ok(()) => {
                 if let Some(d) = detail_mut(app) {
@@ -452,7 +508,7 @@ pub fn save_details(app: &mut App, details: Details, done: impl FnOnce(&mut App,
     invalidate_loads(app);
     let sent = details.clone();
     app.net.run(
-        move || requests::update_playlist(&client, &id, &sent.name, &sent.description, sent.visibility),
+        move || crate::api::playlists::update_playlist(&client, &id, &sent.name, &sent.description, sent.visibility),
         move |app, result| match result {
             Err(e) => {
                 load(app, None);
@@ -511,8 +567,8 @@ fn change_cover(app: &mut App, image: Option<std::path::PathBuf>, fallback: &'st
     detail_mut(app).unwrap().saving_cover = true;
     app.net.run(
         move || match &image {
-            Some(path) => requests::set_playlist_cover(&client, &id, path),
-            None => requests::remove_playlist_cover(&client, &id),
+            Some(path) => crate::api::upload::set_playlist_cover(&client, &id, path),
+            None => crate::api::playlists::remove_playlist_cover(&client, &id),
         },
         move |app, result| match result {
             Ok(updated) => {
@@ -580,7 +636,7 @@ pub fn delete(app: &mut App) {
         }
         let Some(client) = app.client.clone() else { return };
         app.net.run(
-            move || requests::delete_playlist(&client, &id),
+            move || crate::api::playlists::delete_playlist(&client, &id),
             |app, result| match result {
                 Ok(()) => leave_playlist(app),
                 Err(e) => {
@@ -628,7 +684,9 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let has_settings = perms.can_edit_details || perms.can_toggle_tidal_auto_download;
     let auto = p.tidal_auto_download == Some(true);
     let queued = d.download.as_ref().zip(d.tracks.as_ref()).map(|(dl, rows)| logic::tidal_queued(rows, dl.queued));
-    let mut col_ = page().gap(18.0).child(header::view(
+    // The page's head; on the Tracks tab the table's rows follow it as the
+    // content's virtual rows.
+    let mut col_ = col().w_full().gap(18.0).child(header::view(
         app,
         t,
         cx,
@@ -636,7 +694,6 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
             playlist: p,
             perms,
             tracks: d.tracks.as_deref(),
-            queue: d.queue(),
             first_cover: first_cover_track(d),
             queued: if auto { queued } else { None },
             saving_cover: d.saving_cover,
@@ -651,13 +708,13 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
         col_ = col_.child(loading_state(t, "Loading…"));
     }
     match d.tab {
-        Tab::Tracks if d.tracks.is_some() => col_ = col_.child(tracks::view(app, t, cx, d, p, &perms)),
+        Tab::Tracks if d.tracks.is_some() => return tracks::page(app, t, cx, d, p, &perms, col_),
         Tab::Collaborators if d.tracks.is_some() => col_ = col_.child(collaborators::view(app, t, d, &perms)),
         Tab::Settings if has_settings => {
             col_ = col_.child(settings::view(app, t, d, p, &perms, auto, queued.unwrap_or(0)));
         }
         _ => {}
     }
-    col_
+    page().child(col_)
 }
 

@@ -10,7 +10,6 @@ use crate::theme::Theme;
 use crate::ui::kit::{error_banner, loading_state};
 use crate::ui::{Btn, css_border, font, tnum};
 
-use super::playlists::requests;
 
 /// What this page keeps between visits (`useApiResource` with the
 /// `invites:pending` cache key: a revisit starts from the last list).
@@ -35,7 +34,7 @@ fn reload(app: &mut App) {
     s.load_error = None;
     let seq = s.seq;
     app.net.run(
-        move || requests::list_pending_invites(&client),
+        move || crate::api::playlists::list_pending_invites(&client),
         move |app, result| {
             let s = &mut app.pages.invites;
             if s.seq != seq {
@@ -52,7 +51,7 @@ fn reload(app: &mut App) {
 fn accept(app: &mut App, id: String) {
     let Some(client) = app.client.clone() else { return };
     app.net.run(
-        move || requests::accept_invite(&client, &id),
+        move || crate::api::playlists::accept_invite(&client, &id),
         |app, result| match result {
             Ok(()) => {
                 app.load_playlists();
@@ -66,7 +65,7 @@ fn accept(app: &mut App, id: String) {
 fn decline(app: &mut App, id: String) {
     let Some(client) = app.client.clone() else { return };
     app.net.run(
-        move || requests::decline_invite(&client, &id),
+        move || crate::api::playlists::decline_invite(&client, &id),
         |app, result| match result {
             Ok(()) => reload(app),
             Err(e) => app.pages.invites.action_error = Some(super::playlists::error_message(&e, "Failed to decline.")),

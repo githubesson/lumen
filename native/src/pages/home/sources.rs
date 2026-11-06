@@ -11,7 +11,7 @@ use crate::app::App;
 use super::kinds::DEFAULT_PERIOD;
 use super::logic::{Period, error_message, replay_query};
 use super::panels::LIST_ROWS;
-use super::requests::{self, ReplayBucket, ReplayData};
+use crate::api::stats::{ReplayBucket, ReplayData, ReplayParams};
 use super::{Res, State};
 
 /// Recently played is asked for in steps of this many, enough to fill its
@@ -74,19 +74,18 @@ pub fn track_limit(state: &State, album_panels: &[String], added_panels: &[Strin
 pub fn load_recent(app: &mut App) {
     let limit = app.pages.home.recent_limit.max(RECENT_STEP);
     app.pages.home.recent_sent = limit;
-    load(app, |s| &mut s.recent, move |c| requests::list_recent(c, limit), "Could not load recently played tracks.");
+    load(app, |s| &mut s.recent, move |c| crate::api::library::list_recent(c, limit as u32), "Could not load recently played tracks.");
 }
 
 pub fn load_tracks(app: &mut App) {
     let limit = app.pages.home.track_limit.max(TRACKS_PER_SIX_ALBUMS);
     app.pages.home.tracks_sent = limit;
-    load(app, |s| &mut s.tracks, move |c| requests::list_tracks(c, limit), "Could not load your library.");
+    load(app, |s| &mut s.tracks, move |c| crate::api::library::list_tracks(c, &crate::api::PageParams { limit: Some(limit as u32), ..Default::default() }).map(|(t, _)| t), "Could not load your library.");
 }
 
-/// TODO(api-merge): the favorites context (`useFavorites`) is app-wide in
-/// the web app; Home keeps its own copy until one lands.
+/// `useFavorites().refresh`: the app-wide favourites store reads again.
 pub fn load_favorites(app: &mut App) {
-    load(app, |s| &mut s.favorites, requests::list_favorites, "Could not load favorites.");
+    crate::pages::favorites::refresh(app);
 }
 
 /// `usePlaylists().reload`: the shell's list, with Home tracking its state.
@@ -98,7 +97,7 @@ pub fn load_playlists(app: &mut App) {
     home.playlists_error = None;
     let serial = home.playlists_serial;
     app.net.run(
-        move || requests::list_playlists(&client),
+        move || crate::api::playlists::list_playlists(&client, None),
         move |app, result| {
             if app.pages.home.playlists_serial != serial {
                 return;
@@ -134,10 +133,10 @@ pub fn load_replay(app: &mut App, period: Period) {
     let serial = res.serial;
     app.net.run(
         move || {
-            let daily = requests::get_replay(&client, q.from.clone(), q.to.clone(), ReplayBucket::Day)?;
+            let daily = crate::api::stats::get_replay(&client, &ReplayParams { from: q.from.clone(), to: q.to.clone(), bucket: Some(ReplayBucket::Day) })?;
             let counted: u64 = daily.activity.iter().map(|b| b.plays).sum();
             if q.range.from.is_none() && counted < daily.summary.total_plays {
-                return requests::get_replay(&client, None, None, ReplayBucket::Month);
+                return crate::api::stats::get_replay(&client, &ReplayParams { bucket: Some(ReplayBucket::Month), ..Default::default() });
             }
             Ok(daily)
         },
@@ -171,7 +170,7 @@ pub fn load_playlist(app: &mut App, id: &str) {
     load(
         app,
         move |s| s.playlist_tracks.entry(key.clone()).or_default(),
-        move |c| requests::list_playlist_tracks(c, &pid),
+        move |c| crate::api::playlists::list_playlist_tracks(c, &pid).map(|l| l.tracks.iter().map(|e| e.as_track()).collect::<Vec<_>>()),
         "Could not load the playlist.",
     );
 }
@@ -179,7 +178,7 @@ pub fn load_playlist(app: &mut App, id: &str) {
 /// `HeroAlbum`'s album, for its year and length.
 pub fn load_hero_album(app: &mut App, id: &str) {
     let (key, aid) = (id.to_string(), id.to_string());
-    load(app, move |s| s.hero_album.entry(key.clone()).or_default(), move |c| requests::get_album(c, &aid), "Could not load the album.");
+    load(app, move |s| s.hero_album.entry(key.clone()).or_default(), move |c| crate::api::library::get_album(c, &aid), "Could not load the album.");
 }
 
 /// `HeroTracks`' list, loaded only once there's room for it.
@@ -188,7 +187,7 @@ pub fn load_hero_tracks(app: &mut App, id: &str) {
     load(
         app,
         move |s| s.hero_tracks.entry(key.clone()).or_default(),
-        move |c| requests::list_album_tracks(c, &aid),
+        move |c| crate::api::library::list_album_tracks(c, &aid),
         "Could not load the album's tracks.",
     );
 }

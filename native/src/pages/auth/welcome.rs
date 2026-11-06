@@ -139,10 +139,14 @@ fn save(app: &mut App, url: String, with_prefs: bool) {
     s.busy = true;
     s.error = None;
     if with_prefs {
-        app.config.discord_enabled = s.discord_enabled;
-        app.config.always_on_top = s.always_on_top;
-        // TODO(desktop-merge): apply them live (Discord presence, the
-        // window's always-on-top level), as `applyConfigPatch` does.
+        // Saved and applied live (Discord presence, the window's
+        // always-on-top level), as `applyConfigPatch` does.
+        let patch = crate::desktop::ConfigPatch {
+            discord_enabled: Some(s.discord_enabled),
+            always_on_top: Some(s.always_on_top),
+            ..Default::default()
+        };
+        let _ = crate::desktop::update_config(app, patch);
     }
     let changed = backend_url(app).as_deref() != Some(url.as_str());
     app.config.backend_url = Some(url.clone());
@@ -309,7 +313,7 @@ fn server_step(t: &Theme, s: &State, change: bool) -> El {
     } else {
         Btn::new("welcome-back", "Back")
             .ghost()
-            .icon_sized(&i::ARROW_LEFT, 16.0)
+            .icon(&i::ARROW_LEFT).icon_size(16.0)
             .disabled(busy)
             .build(t)
             .on_press(back)
@@ -437,7 +441,7 @@ fn prefs_step(t: &Theme, s: &State) -> El {
     step.child(actions(vec![
         Btn::new("welcome-back", "Back")
             .ghost()
-            .icon_sized(&i::ARROW_LEFT, 16.0)
+            .icon(&i::ARROW_LEFT).icon_size(16.0)
             .disabled(busy)
             .build(t)
             .on_press(back),

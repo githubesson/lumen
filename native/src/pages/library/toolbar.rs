@@ -8,12 +8,14 @@ use rune::{Color, Cursor, Cx, El, Shadow, el, row, text};
 
 use crate::app::App;
 use crate::theme::Theme;
-use crate::ui::forms::{SelectOption, SelectVariant, search_input_with, select};
+use crate::ui::forms::{SelectOption, SelectVariant, search_input, select};
 use crate::ui::kit::{segmented, toolbar_group, toolbar_sep};
 use crate::ui::{font, ico, icons as i};
 
-use super::adapters::{self, Host};
-use super::requests::{SEARCH_DEBOUNCE_MS, SEARCH_TYPE_OPTIONS, SearchType};
+use crate::ui::track_select::{self, BarPlace};
+
+use super::browse::{TRACKS_LIST, tracks_source};
+use crate::api::search::{SEARCH_DEBOUNCE_MS, SEARCH_TYPE_OPTIONS, SearchType};
 use super::{Display, Sort, View};
 
 const SORT_OPTIONS: [(Sort, &str); 5] = [
@@ -77,11 +79,16 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, view: View, query: &str, sea
         let mut parts: Vec<El> = Vec::new();
         let mut selecting = false;
         if list {
+            // `TrackSelectionToolbar` portaled into the group, or its
+            // disabled placeholder while the list loads.
             let ready = s.tracks.items.as_ref().is_some_and(|i| !i.is_empty());
-            let (controls, on) = adapters::selection_controls(app, t, Host::LibraryToolbar, ready);
-            selecting = on;
-            parts.extend(controls);
-            if !on {
+            selecting = ready && app.widgets.lists.is_selecting(TRACKS_LIST);
+            parts.push(if ready {
+                track_select::selection_bar(app, t, TRACKS_LIST, tracks_source, BarPlace::Group)
+            } else {
+                track_select::selection_bar_placeholder(t, TRACKS_LIST, BarPlace::Group)
+            });
+            if !selecting {
                 parts.push(toolbar_sep(t));
             }
         }
@@ -107,7 +114,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, view: View, query: &str, sea
     let group_w = if has_group { Some(cx.layout_size("lib-tools").map_or(304.0, |s| s[0])) } else { None };
     let w = search_width(width, tabs_w, group_w);
     let placeholder = format!("Search {}, local + TIDAL", search_noun(search_type));
-    let field = search_input_with(t, "lib-search", &s.query_edit, &placeholder, Some(w), |f| {
+    let field = search_input(t, "lib-search", &s.query_edit, &placeholder, Some(w), |f| {
         f.label("Search music")
             .on_edit(|app: &mut App| {
                 super::query_edited(app);

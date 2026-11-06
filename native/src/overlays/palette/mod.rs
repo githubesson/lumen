@@ -146,7 +146,7 @@ fn refresh(app: &mut App) {
             if latest.load(Ordering::Relaxed) != id {
                 return None;
             }
-            Some(super::requests::search(&client, &q, kind.as_str(), limit))
+            Some(crate::api::search::search(&client, &crate::api::search::SearchParams { page: crate::api::PageParams { limit: Some(limit), q: Some(q.clone()), ..Default::default() }, kind: crate::api::search::SearchType::parse(kind.as_str()), sources: None }))
         },
         move |app, result| {
             let s = &mut app.overlays.palette;
@@ -626,6 +626,16 @@ fn item_view(app: &App, t: &Theme, it: &Item, selected: bool) -> El {
     }
     if it.disabled {
         return r.opacity(0.5).disabled(true);
+    }
+    // A track result's right-click: its menu, playing from the results
+    // (`bindCtx(t, { queue: tracks })`).
+    if let Act::Play(n) = it.act {
+        r = r.on_secondary_press(move |app: &mut App, at: rune::PointerPress, _| {
+            let tracks = app.overlays.palette.tracks.clone();
+            let Some(track) = tracks.get(n).cloned() else { return };
+            let ctx = crate::overlays::track_menu::MenuContext::bind(&track, tracks);
+            crate::overlays::track_menu::open(app, track, [at.x, at.y], ctx);
+        });
     }
     let value = it.value.clone();
     let act = it.act.clone();

@@ -9,10 +9,10 @@ use crate::ui::forms::{OpenSelect, SelectOption, SelectVariant, field};
 use crate::ui::kit::{empty_state, error_banner};
 use crate::ui::{Btn, css_border, font, ico, icons as i, input_with, line, tnum};
 
-use super::confirm::{self, Art, ConfirmSpec};
+use crate::overlays::confirm::{self, Art, ConfirmSpec};
 use super::detail::{self, Detail, detail_mut};
 use super::logic::{self, Permissions, error_message, fmt_date};
-use super::requests::{self, Collaborator, CollaboratorRole, CollaboratorStatus};
+use crate::api::{Collaborator, CollaboratorRole, CollaboratorStatus};
 
 pub struct State {
     /// The role the invite form sends.
@@ -46,7 +46,7 @@ fn invite(app: &mut App) {
     let (id, role) = (d.id.clone(), d.collab.role);
     let Some(client) = app.client.clone() else { return };
     app.net.run(
-        move || requests::invite_collaborator(&client, &id, &username, role),
+        move || crate::api::playlists::invite_collaborator(&client, &id, &username, role),
         |app, result| match result {
             Ok(()) => {
                 app.pages.playlists.fields.invite.clear();
@@ -95,7 +95,7 @@ fn remove(app: &mut App, c: &Collaborator, is_self: bool) {
         let id = d.id.clone();
         let Some(client) = app.client.clone() else { return };
         app.net.run(
-            move || requests::remove_collaborator(&client, &id, &user),
+            move || crate::api::playlists::remove_collaborator(&client, &id, &user),
             move |app, result| match result {
                 Ok(()) if is_self => detail::leave_playlist(app),
                 Ok(()) => detail::load(app, None),
@@ -112,7 +112,7 @@ fn set_role(app: &mut App, value: &str) {
     let id = d.id.clone();
     let Some(client) = app.client.clone() else { return };
     app.net.run(
-        move || requests::set_collaborator_role(&client, &id, &user, role),
+        move || crate::api::playlists::set_collaborator_role(&client, &id, &user, role),
         |app, result| match result {
             Ok(()) => detail::load(app, None),
             Err(e) => set_error(app, Some(error_message(&e, "Failed to update role."))),
@@ -143,7 +143,7 @@ const SELECT_ARROW: rune::Icon = rune::Icon {
 fn native_select(app: &App, t: &Theme, key: &str, value: CollaboratorRole, width: Option<f32>, target: Option<String>, on_change: fn(&mut App, &str)) -> El {
     let open = app.select.as_ref().is_some_and(|s| s.key == key);
     let label = if value == CollaboratorRole::Editor { "Editor" } else { "Viewer" };
-    let spec = OpenSelect { key: key.to_string(), options: role_options(), value: value.as_str().to_string(), variant: SelectVariant::Outlined, on_change };
+    let spec = OpenSelect::new(key, role_options(), value.as_str(), SelectVariant::Outlined, on_change);
     let b = css_border(row(), 1.0, if open { t.c.focus_ring } else { t.c.input }, t.radius_lg())
         .key(key)
         .h(32.0)
@@ -201,7 +201,7 @@ pub fn view(app: &App, t: &Theme, d: &Detail, perms: &Permissions) -> El {
             f.label("Invite by username").on_edit(|a: &mut App| &mut a.pages.playlists.fields.invite).on_submit(|a: &mut App, _| invite(a))
         });
         let can_send = !s.busy && !app.pages.playlists.fields.invite.text.trim().is_empty();
-        let send = Btn::new("playlist-invite-send", "Invite").primary().icon_sized(&i::USER_PLUS, 16.0).disabled(!can_send).build(t);
+        let send = Btn::new("playlist-invite-send", "Invite").primary().icon(&i::USER_PLUS).icon_size(16.0).disabled(!can_send).build(t);
         let form = row()
             .w_full()
             .padding(16.0)

@@ -53,6 +53,11 @@ pub struct TrackList {
     /// The gap of the grid the list sits in (a `.view`'s 18 px), which
     /// also falls between its bar and its table.
     gap: f32,
+    /// The space under the page's head, when it isn't [`TrackList::view_gap`].
+    head_gap: Option<f32>,
+    /// `.refreshable[aria-busy]`: the rows are the previous sort's or
+    /// query's, dimmed until the new ones land.
+    stale: bool,
 }
 
 impl TrackList {
@@ -72,6 +77,8 @@ impl TrackList {
             extra: None,
             empty: None,
             gap: 0.0,
+            head_gap: None,
+            stale: false,
         }
     }
     /// The list's parts are items of a grid with this gap (`.view`'s
@@ -79,6 +86,12 @@ impl TrackList {
     /// between the bar and the table.
     pub fn view_gap(mut self, gap: f32) -> Self {
         self.gap = gap;
+        self
+    }
+    /// The space between [`TrackList::page`]'s head and the list (a
+    /// section head's `margin-bottom`), when the list isn't a grid item.
+    pub fn head_gap(mut self, gap: f32) -> Self {
+        self.head_gap = Some(gap);
         self
     }
     /// `queueSource`: what plays when a row does (defaults to the rows).
@@ -96,7 +109,8 @@ impl TrackList {
         self.album = false;
         self
     }
-    /// `showHeader={false}`: the header row's labels go, its line stays out.
+    /// `showHeader={false}` (`.table-headless`): the header row's labels and
+    /// line go, and the rows are rounded, borderless, with 40 px covers.
     pub fn headless(mut self) -> Self {
         self.header = false;
         self
@@ -133,6 +147,16 @@ impl TrackList {
         self.empty = Some(empty);
         self
     }
+    /// Inside a `.refreshable` that's `stale`: the table dims to 55%.
+    pub fn stale(mut self, stale: bool) -> Self {
+        self.stale = stale;
+        self
+    }
+
+    /// `.refreshable`'s dimming on one of the list's parts.
+    fn dim(&self, e: El) -> El {
+        e.opacity(if self.stale { 0.55 } else { 1.0 }).opacity_motion(crate::ui::motion::ease_out(150.0))
+    }
 
     pub fn key(&self) -> &str {
         &self.key
@@ -157,11 +181,12 @@ impl TrackList {
         if let Some(place) = self.bar {
             c = c.child(self.selection_bar(app, t, place));
         }
-        c = c.child(self.header_row(app, t));
+        let mut table = col().w_full().child(self.header_row(app, t));
         for (n, tr) in items.iter().enumerate() {
-            c = c.child(self.row(app, t, n, tr));
+            table = table.child(self.row(app, t, n, tr));
         }
-        c
+        let table = self.dim(table);
+        c.child(table)
     }
 
     /// The whole page as virtual rows of the content scroller: `head` (the
@@ -210,31 +235,31 @@ impl TrackList {
                     let lead = if items.is_empty() { 1 } else { 1 + usize::from(build.bar.is_some()) + 1 };
                     let wrap = |e: El| el().w_full().px(pad).child(e);
                     if i == 0 {
-                        let g = if items.is_empty() && build.empty.is_none() { 0.0 } else { build.gap };
+                        let g = if items.is_empty() && build.empty.is_none() { 0.0 } else { build.head_gap.unwrap_or(build.gap) };
                         return wrap((*head).clone()).pt(pad).pb(g);
                     }
                     if i < lead {
                         return if i + 1 == lead {
-                            wrap(build.header_row(app, &t))
+                            wrap(build.dim(build.header_row(app, &t)))
                         } else {
                             wrap(build.selection_bar(app, &t, BarPlace::Inline)).pb(build.gap)
                         };
                     }
                     if i - lead < items.len() {
                         let n = i - lead;
-                        return wrap(build.row(app, &t, n, &items[n]));
+                        return wrap(build.dim(build.row(app, &t, n, &items[n])));
                     }
-                    let mut end = el().w_full().px(pad).pb(pad);
+                    let mut end = col().w_full().px(pad).pb(pad);
                     if items.is_empty() {
                         end = end.child(build.empty.clone().unwrap_or_else(el));
                     }
                     if let Some(tail) = &*tail {
-                        end = end.child(tail.clone());
+                        end = end.child(build.dim(tail.clone()));
                     }
                     end
                 },
             )
-            .virtual_rows_version((count, pad.to_bits(), lead, items.first().map(|t| t.id.clone()), items.last().map(|t| t.id.clone())))
+            .virtual_rows_version((count, pad.to_bits(), lead, me.stale, items.first().map(|t| t.id.clone()), items.last().map(|t| t.id.clone())))
     }
 
     fn row(&self, app: &App, t: &Theme, index: usize, tr: &TrackListItem) -> El {
@@ -251,6 +276,7 @@ impl TrackList {
                 cover: self.cover,
                 album: self.album,
                 source_badge: self.source_badge,
+                headless: !self.header,
                 artist,
                 extra: self.extra.as_ref(),
             },
@@ -268,7 +294,9 @@ impl TrackList {
         let label_end = |s: &str| -> El {
             if self.header { crate::ui::text_end(s, font(12.0, 500.0), t.c.muted_foreground) } else { el() }
         };
-        let h = if self.header { 40.0 } else { 0.0 };
+        // A headless table keeps its row for the (hidden) select-all box,
+        // which holds it at the checkbox's 16 px (`.table-headless`).
+        let h = if self.header { 40.0 } else { 16.0 };
         let mut r = row().key(format!("{}-thead", self.key)).w_full().h(h).items_center();
         if self.header {
             // `.table thead th { background: var(--background) }`: seen
@@ -292,7 +320,7 @@ impl TrackList {
         r = r.child(el().w(if sel.mode { 32.0 } else { 0.0 }).h_full().center().clip_rounded(0.0).child(check));
         r = r.child(row().w(40.0).px(8.0).justify_end().child(label_end("#")));
         if self.cover {
-            r = r.child(el().w(44.0));
+            r = r.child(el().w(if self.header { 44.0 } else { 56.0 }));
         }
         r = r.child(row().grow(1.0).min_w(0.0).px(8.0).child(label("Title")));
         if self.album {
@@ -310,23 +338,80 @@ impl TrackList {
     }
 }
 
+/// `useMenuSelection`: the selection a right-click on `tr` acts on, when
+/// the row is part of one of two or more.
+pub fn menu_selection(app: &App, list: &str, source: Source, tr: &TrackListItem) -> Option<crate::overlays::track_menu::MenuSelection> {
+    let sel = app.widgets.lists.get(list);
+    let items = source(app);
+    if !(sel.mode && sel.count(items) > 1 && sel.ids.contains(&tr.id)) {
+        return None;
+    }
+    let tracks: Vec<TrackListItem> = sel.selected(items).into_iter().cloned().collect();
+    let local = tracks.iter().any(track_row::is_local);
+    Some(crate::overlays::track_menu::MenuSelection {
+        tracks,
+        list: Some((list.to_string(), source)),
+        export_disabled_reason: (!local).then(|| track_select::EXPORT_DISABLED_REASON.to_string()),
+    })
+}
+
+/// A page as the content scroller's virtual rows, for a table of its own
+/// (the playlist's): `head` padded like `.view`, `count` rows keyed by
+/// `row_key` and built by `row` only while near the viewport, then `tail`
+/// and the view's bottom padding. Bump `version` when the rows' order or
+/// keys change at the same count.
+#[allow(clippy::too_many_arguments)]
+pub fn virtual_page(
+    t: &Theme,
+    key: &str,
+    count: usize,
+    version: impl std::hash::Hash + 'static,
+    head: El,
+    tail: Option<El>,
+    row_key: impl Fn(&App, usize) -> String + 'static,
+    row: impl Fn(&App, usize) -> El + 'static,
+) -> El {
+    let (head, tail) = (Rc::new(head), Rc::new(tail));
+    let pad = t.pad();
+    col()
+        .key(format!("{key}-page"))
+        .w_full()
+        .growth(GrowthSpec { edge: rune::edge::NO_MASK, ..GrowthSpec::default() })
+        .virtual_rows(
+            count + 2,
+            t.row_h(),
+            move |app: &App, i| -> Cow<'_, str> {
+                if i == 0 {
+                    Cow::Borrowed("page-head")
+                } else if i <= count {
+                    Cow::Owned(row_key(app, i - 1))
+                } else {
+                    Cow::Borrowed("page-tail")
+                }
+            },
+            move |app: &App, i| {
+                let pad = app.theme().pad();
+                if i == 0 {
+                    return el().w_full().px(pad).pt(pad).child((*head).clone());
+                }
+                if i <= count {
+                    return el().w_full().px(pad).child(row(app, i - 1));
+                }
+                let mut end = col().w_full().px(pad).pb(pad);
+                if let Some(tail) = &*tail {
+                    end = end.child(tail.clone());
+                }
+                end
+            },
+        )
+        .virtual_rows_version((count, pad.to_bits(), version))
+}
+
 /// A row's right-click: the track menu at the pointer, for the selection
 /// when the row is part of one of two or more (`useMenuSelection`).
 pub fn open_menu(app: &mut App, list: &str, source: Source, queue: Source, tr: &TrackListItem, at: [f32; 2]) {
-    use crate::overlays::track_menu::{self, MenuContext, MenuSelection};
-    let sel = app.widgets.lists.get(list);
-    let items = source(app);
-    let selection = if sel.mode && sel.count(items) > 1 && sel.ids.contains(&tr.id) {
-        let tracks: Vec<TrackListItem> = sel.selected(items).into_iter().cloned().collect();
-        let local = tracks.iter().any(track_row::is_local);
-        Some(MenuSelection {
-            tracks,
-            list: Some((list.to_string(), source)),
-            export_disabled_reason: (!local).then(|| track_select::EXPORT_DISABLED_REASON.to_string()),
-        })
-    } else {
-        None
-    };
+    use crate::overlays::track_menu::{self, MenuContext};
+    let selection = menu_selection(app, list, source, tr);
     let is_admin = app.me().is_some_and(|m| m.is_admin());
     let acts = track_row::actions(tr, is_admin);
     let ctx = MenuContext {

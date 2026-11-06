@@ -11,17 +11,14 @@
 //! - [`sleeve`] + [`album`]: `AlbumSleeve`, `LibraryDetail`, the version
 //!   picker and `AlbumDownloadControl`
 //! - [`artist`]: `ArtistDetail`
-//! - [`adapters`]: stand-ins for the shared `TrackList`, `Section`, …
-//! - [`logic`] + [`requests`]: core helpers and API calls, until the merge
+//! - [`logic`]: the page's own helpers over `crate::core`
 
-pub mod adapters;
 pub mod album;
 pub mod artist;
 pub mod browse;
 pub mod cards;
 pub mod logic;
 pub mod paging;
-pub mod requests;
 pub mod search;
 pub mod sleeve;
 pub mod toolbar;
@@ -35,9 +32,10 @@ use crate::app::App;
 use crate::route::Location;
 use crate::theme::Theme;
 
-use logic::{EntityTarget, ReleaseFilter};
+use logic::{EntityKind, EntityTarget, ReleaseFilter};
 use paging::Paged;
-use requests::{SearchItem, SearchType, TidalAlbum, TidalArtist};
+use crate::api::search::{SearchResult as SearchItem, SearchType};
+use crate::api::tidal::{TidalAlbum, TidalArtist};
 
 /// The browse tab (`?view=`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -119,6 +117,17 @@ impl Sort {
             Sort::Duration => "duration",
         }
     }
+    /// The API's `sort` for it.
+    pub fn list_sort(self) -> crate::api::ListSort {
+        use crate::api::ListSort;
+        match self {
+            Sort::Recent => ListSort::Recent,
+            Sort::Title => ListSort::Title,
+            Sort::Artist => ListSort::Artist,
+            Sort::Album => ListSort::Album,
+            Sort::Duration => ListSort::Duration,
+        }
+    }
     pub fn parse(s: &str) -> Sort {
         match s {
             "title" => Sort::Title,
@@ -142,6 +151,9 @@ pub struct Detail {
     pub album: Option<Album>,
     pub artist: Option<Artist>,
     pub tracks: Option<Vec<TrackListItem>>,
+    /// The page's tracks matching its search (`useDetailTrackSearch`), the
+    /// rows its track list shows: kept by [`refilter`].
+    pub rows: Vec<TrackListItem>,
     pub tidal_album: Option<TidalAlbum>,
     pub tidal_artist: Option<TidalArtist>,
     pub not_found: bool,
@@ -183,6 +195,8 @@ pub struct State {
     pub albums: Paged<Album>,
     pub artists: Paged<Artist>,
     pub search: Paged<SearchItem>,
+    /// The search results' songs, the rows of their track list.
+    pub search_tracks: Vec<TrackListItem>,
     /// The search the warnings came from (`type\0query`), and them.
     pub search_warnings: (String, Vec<String>),
     /// The search box's draft (`LibrarySearchInput`).
@@ -190,8 +204,6 @@ pub struct State {
     pub query_gen: u64,
     /// The URL's query the draft last took.
     pub query_value: String,
-    /// TODO(components-merge): the shared track list keeps its own selection mode.
-    pub selecting: Option<adapters::Host>,
     pub detail: Detail,
     pub cache: Caches,
 }
@@ -205,11 +217,11 @@ impl Default for State {
             albums: Paged::new(60),
             artists: Paged::new(60),
             search: Paged::new(25),
+            search_tracks: Vec::new(),
             search_warnings: Default::default(),
             query_edit: TextEdit::new(""),
             query_gen: 0,
             query_value: String::new(),
-            selecting: None,
             detail: Detail::default(),
             cache: Caches::default(),
         }
@@ -289,8 +301,8 @@ fn poll(app: &mut App) {
     }
 }
 
-/// `libraryChanged`: an upload or scan landed, so the open list reads its
-/// rows again. TODO(api-merge): call from wherever library events arrive.
+/// `libraryChanged` (see `pages::library_changed`): the open list, or the
+/// album or artist page, reads its rows again.
 pub fn library_changed(app: &mut App) {
     if app.location().is("/library") {
         let loc = app.location().clone();
@@ -357,12 +369,6 @@ pub fn on_key(app: &mut App, ev: &KeyEvent) -> bool {
 
 // ---------------------------------------------------------------- text boxes
 
-/// `e`, a text in `style`, held to its CSS line box: rune rounds a text's
-/// height up to a whole pixel (17.4 → 18), which would push what follows
-/// down. `lines` is how many lines it wraps to.
-pub fn exact(e: El, style: rune::TextStyle, lines: usize) -> El {
-    rune::el().h(style.line_height * lines.max(1) as f32).min_w(0.0).child(e)
-}
 
 /// How many lines `s` takes in `style` at `width` (wrapping anywhere).
 pub fn line_count(s: &str, style: rune::TextStyle, width: f32) -> usize {
@@ -393,7 +399,7 @@ pub fn set_view(app: &mut App, v: View) {
 pub fn set_search_type(app: &mut App, ty: SearchType) {
     let loc = library_loc(app);
     let Route::Browse { view, .. } = route(&loc) else { return };
-    let next = apply_view(loc.with("type", Some(ty.param())), View::of_search_type(ty).unwrap_or(view));
+    let next = apply_view(loc.with("type", Some(ty.as_str())), View::of_search_type(ty).unwrap_or(view));
     app.navigate_replace(next);
 }
 
@@ -430,16 +436,18 @@ pub fn set_sort(app: &mut App, sort: Sort) {
 
 pub fn set_display(app: &mut App, d: Display) {
     app.pages.library.display = d;
-    app.pages.library.selecting = None;
+    // The table unmounts, and its selection with it.
+    crate::ui::track_select::clear(app, browse::TRACKS_LIST);
 }
 
 /// `openAlbum`: one album param at a time. A TIDAL album keeps the TIDAL
 /// artist it was opened from, whose releases list its other versions.
 pub fn open_album(app: &mut App, target: EntityTarget) {
     let loc = library_loc(app);
-    let next = match target {
-        EntityTarget::Tidal(id) => loc.with("album", None).with("tidalAlbum", Some(&id)),
-        EntityTarget::Local(id) => loc.with("tidalArtist", None).with("tidalAlbum", None).with("album", Some(&id)),
+    let id = target.id;
+    let next = match target.kind {
+        EntityKind::Tidal => loc.with("album", None).with("tidalAlbum", Some(&id)),
+        EntityKind::Local => loc.with("tidalArtist", None).with("tidalAlbum", None).with("album", Some(&id)),
     };
     app.navigate(next);
 }
@@ -453,15 +461,16 @@ pub fn open_version(app: &mut App, id: &str, artist_id: &str) {
 /// `openArtist`.
 pub fn open_artist(app: &mut App, target: EntityTarget, name: Option<&str>) {
     let loc = library_loc(app);
-    let next = match target {
-        EntityTarget::Tidal(id) => {
+    let id = target.id;
+    let next = match target.kind {
+        EntityKind::Tidal => {
             let l = loc.with("tidalArtist", Some(&id));
             match name {
                 Some(n) if !n.is_empty() => l.with("artistName", Some(n)),
                 _ => l,
             }
         }
-        EntityTarget::Local(id) => loc.with("artist", Some(&id)),
+        EntityKind::Local => loc.with("artist", Some(&id)),
     };
     app.navigate(next);
 }
@@ -479,6 +488,42 @@ pub fn artist_link(app: &mut App, artist_id: &str) {
     app.navigate(next);
 }
 
+/// The open album's or artist's tracks (a TIDAL album's from its payload).
+pub fn detail_tracks(app: &App) -> &[TrackListItem] {
+    let d = &app.pages.library.detail;
+    match (&d.tracks, &d.tidal_album, &d.tidal_artist) {
+        (Some(t), _, _) => t,
+        (None, Some(a), _) => &a.tracks,
+        (None, None, Some(a)) => &a.tracks,
+        _ => &[],
+    }
+}
+
+/// The rows the page's search leaves ([`Detail::rows`]).
+pub fn detail_rows(app: &App) -> &[TrackListItem] {
+    &app.pages.library.detail.rows
+}
+
+/// The page's search query, if it has one.
+pub fn detail_query(app: &App) -> Option<String> {
+    let q = &app.pages.library.detail.search.text;
+    (!q.trim().is_empty()).then(|| q.clone())
+}
+
+/// Recompute [`Detail::rows`]: after the tracks load and on each edit of the search.
+pub fn refilter(app: &mut App) {
+    let needle = app.pages.library.detail.search.text.trim().to_lowercase();
+    let rows: Vec<TrackListItem> = detail_tracks(app)
+        .iter()
+        .filter(|t| needle.is_empty() || logic::track_search_key(t).contains(&needle))
+        .cloned()
+        .collect();
+    app.pages.library.detail.rows = rows;
+}
+
+/// The drill-down pages' track lists (their selections reset with the page).
+pub const DETAIL_LISTS: [&str; 3] = [album::TRACKS_LIST, artist::TRACKS_LIST, artist::POPULAR_LIST];
+
 /// Mount a drill-down page: a new key resets its state, a revisit of the
 /// same one keeps it (and reloads behind it).
 fn mount(app: &mut App, key: String, id: &str) -> bool {
@@ -489,7 +534,10 @@ fn mount(app: &mut App, key: String, id: &str) -> bool {
     let refresh_gen = d.refresh_gen + 1;
     let seq = d.seq + 1;
     *d = Detail { key, id: id.to_string(), refresh_gen, seq, ..Detail::default() };
-    app.pages.library.selecting = None;
+    // A new page is a new table: nothing selected.
+    for list in DETAIL_LISTS {
+        crate::ui::track_select::clear(app, list);
+    }
     true
 }
 
@@ -504,17 +552,17 @@ pub mod scenes {
     }
 
     pub fn select(app: &mut App) {
-        app.pages.library.selecting = Some(adapters::Host::LibraryToolbar);
+        crate::ui::track_select::toggle_mode(app, browse::TRACKS_LIST);
     }
 
     pub fn sort_open(app: &mut App) {
         let value = app.pages.library.sort.param().to_string();
-        app.select = Some(crate::ui::forms::OpenSelect {
-            key: "lib-sort".into(),
-            options: toolbar::sort_options(),
+        app.select = Some(crate::ui::forms::OpenSelect::new(
+            "lib-sort",
+            toolbar::sort_options(),
             value,
-            variant: crate::ui::forms::SelectVariant::Toolbar,
-            on_change: |app, v| set_sort(app, Sort::parse(v)),
-        });
+            crate::ui::forms::SelectVariant::Toolbar,
+            |app, v| set_sort(app, Sort::parse(v)),
+        ));
     }
 }

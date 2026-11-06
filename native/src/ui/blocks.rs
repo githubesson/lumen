@@ -15,21 +15,59 @@ use crate::app::App;
 use crate::theme::{Theme, color_mix};
 use crate::ui::kit::{error_banner, loading_state};
 use crate::ui::track_select::Source;
-use crate::ui::{Btn, exact, exact_text, font, ico, icons as i, tnum, with_lh};
+use crate::ui::{Btn, exact, font, ico, icons as i, tnum, with_lh};
 
 /// `Section`: the eyebrow (`sub`) over the 16 px title, an optional action
 /// at the right (a "view all" link), then the section's content.
 pub fn section(t: &Theme, key: &str, sub: Option<&str>, title: &str, action: Option<El>, body: El) -> El {
-    let mut head_text = col();
-    if let Some(s) = sub {
-        head_text = head_text.child(text(s).font(font(12.0, 400.0)).color(t.c.muted_foreground));
+    section_with(t, key, sub, title, action, body, SectionLook::default())
+}
+
+/// How a [`section_with`]'s head looks: `home.css`'s `.section-head` and
+/// `.section-title`, or a page's override of them.
+#[derive(Clone, Copy, Debug)]
+pub struct SectionLook {
+    /// `.section-title`'s type.
+    pub title: rune::TextStyle,
+    /// `.section-head`'s `margin-bottom`.
+    pub gap: f32,
+    /// `align-items: center` (else `baseline`, the title's last line on the action's).
+    pub center: bool,
+}
+
+impl Default for SectionLook {
+    fn default() -> Self {
+        SectionLook { title: font(16.0, 600.0).tracking(-0.16), gap: 12.0, center: false }
     }
-    head_text = head_text.child(text(title).font(font(16.0, 600.0).tracking(-0.16)).color(t.c.foreground));
-    let mut head = row().w_full().gap(16.0).mb(12.0).items_end().justify_between().child(head_text);
+}
+
+impl SectionLook {
+    /// `artist.css`'s `.artist-section`: an 18 px title, centred, 10 px above the content.
+    pub fn artist() -> Self {
+        SectionLook { title: font(18.0, 600.0).tracking(-0.27), gap: 10.0, center: true }
+    }
+}
+
+/// [`section`] with its head styled by `look`.
+pub fn section_with(t: &Theme, key: &str, sub: Option<&str>, title: &str, action: Option<El>, body: El, look: SectionLook) -> El {
+    col().key(key).w_full().child(section_head(t, sub, title, action, look).mb(look.gap)).child(body)
+}
+
+/// `.section-head` alone (without its `margin-bottom`), for a section whose
+/// content is a virtualised [`TrackList::page`](crate::ui::track_list::TrackList::page).
+pub fn section_head(t: &Theme, sub: Option<&str>, title: &str, action: Option<El>, look: SectionLook) -> El {
+    let mut head_text = col().min_w(0.0);
+    if let Some(s) = sub {
+        head_text = head_text.child(exact(text(s).font(font(12.0, 400.0)).color(t.c.muted_foreground), 17.4));
+    }
+    let lh = look.title.line_height;
+    head_text = head_text.child(exact(text(title).font(look.title).color(t.c.foreground), lh));
+    let mut head = row().w_full().gap(16.0).justify_between().child(head_text);
+    head = if look.center { head.items_center() } else { head.items_end() };
     if let Some(a) = action {
         head = head.child(a);
     }
-    col().key(key).w_full().child(head).child(body)
+    head
 }
 
 /// `.section-link`: a muted 14 px link that lights up on hover.
@@ -58,6 +96,11 @@ pub struct ListHeader<'a> {
     pub fallback_icon: Option<&'static Icon>,
     /// Replaces the art entirely (`art`).
     pub art: Option<El>,
+    /// Replaces the kind's text (a playlist's visibility icon and role),
+    /// held to its own line height.
+    pub kind_el: Option<El>,
+    /// Replaces the title's text (a playlist owner's "Edit details" button).
+    pub title_el: Option<El>,
     pub meta: Option<El>,
     pub actions: Option<El>,
 }
@@ -82,17 +125,21 @@ pub fn list_page_header(app: &App, t: &Theme, key: &str, h: ListHeader) -> El {
         }
     });
     let mut body = col().grow(1.0).min_w(0.0).justify_end();
-    body = body.child(exact(text(h.kind).font(font(12.0, 500.0)).color(t.c.muted_foreground), 17.4));
-    body = body.child(
-        text(h.title)
-            .font(with_lh(font(36.0, 600.0), 39.6).tracking(-0.9))
-            .color(t.c.card_foreground)
-            .wrap_anywhere()
-            .mt(6.0)
-            .mb(10.0 - 0.4),
-    );
+    // A custom kind sets its own line height (an inline-flex icon box makes
+    // the browser's line taller than the text's 17.4 px).
+    let kind = h.kind_el.unwrap_or_else(|| exact(text(h.kind).font(font(12.0, 500.0)).color(t.c.muted_foreground), 17.4));
+    body = body.child(kind);
+    // Wrapped lines held to their CSS height (Rune rounds a text box up).
+    let title = h.title_el.unwrap_or_else(|| {
+        text(h.title).font(list_title_style()).color(t.c.card_foreground).wrap_anywhere()
+    });
+    body = body.child(crate::ui::snug_lines(&format!("{key}-title"), title, list_title_style().line_height).mt(6.0).mb(10.0));
     if let Some(d) = h.description {
-        body = body.child(text(d).font(font(14.0, 400.0)).color(t.c.muted_foreground).wrap().max_w(14.0 * 0.55 * 60.0).mb(10.0));
+        // `max-width: 60ch`: sixty of the font's "0".
+        let style = font(14.0, 400.0);
+        let ch = rune::text::advance("0", style);
+        let d = text(d).font(style).color(t.c.muted_foreground).wrap();
+        body = body.child(crate::ui::snug_lines(&format!("{key}-description"), d, style.line_height).max_w(60.0 * ch).mb(10.0));
     }
     if let Some(m) = h.meta {
         body = body.child(m);
@@ -112,6 +159,11 @@ pub fn list_page_header(app: &App, t: &Theme, key: &str, h: ListHeader) -> El {
         .clip_rounded(t.radius_xl())
         .child(art)
         .child(body)
+}
+
+/// `.detail-title`'s type: 36 px semibold on a 39.6 px line.
+pub fn list_title_style() -> rune::TextStyle {
+    with_lh(font(36.0, 600.0), 39.6).tracking(-0.9)
 }
 
 /// `.detail-meta`: muted 14 px parts with 3 px dots between them.
@@ -143,9 +195,9 @@ pub fn page_header(t: &Theme, title: &str, count: Option<&str>, actions: Option<
     let mut h = row().w_full().gap(16.0).items_start().flex_wrap();
     // Both drawn a pixel higher than the line boxes put them: where
     // Chromium's 24 px baseline lands (measured against the reference).
-    h = h.child(exact_text(text(title).font(with_lh(font(24.0, 600.0), 34.8).tracking(-0.6)).color(t.c.foreground), 24.0, 34.8));
+    h = h.child(crate::ui::exact(text(title).font(with_lh(font(24.0, 600.0), 34.8).tracking(-0.6)).color(t.c.foreground), 34.8).shrink());
     if let Some(c) = count {
-        h = h.child(exact_text(text(c).font(tnum(font(14.0, 400.0))).color(t.c.muted_foreground), 14.0, 20.3).mt(25.9 - 15.15));
+        h = h.child(crate::ui::exact(text(c).font(tnum(font(14.0, 400.0))).color(t.c.muted_foreground), 20.3).shrink().mt(25.9 - 15.15));
     }
     h = h.child(el().grow(1.0));
     if let Some(a) = actions {
@@ -166,9 +218,10 @@ pub fn list_meta_text(loaded: Option<u64>, total: Option<u64>, unit: &str) -> St
     }
 }
 
-/// `ListMeta`: the mono count under a library toolbar.
+/// `ListMeta`: the mono count under a library toolbar, 14 px below it (its
+/// 17.4 px line box held, so what follows sits where the browser puts it).
 pub fn list_meta(t: &Theme, loaded: Option<u64>, total: Option<u64>, unit: &str) -> El {
-    text(list_meta_text(loaded, total, unit)).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground).mt(14.0)
+    exact(text(list_meta_text(loaded, total, unit)).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground), 17.4).mt(14.0)
 }
 
 /// `toLocaleString()` in en-US: thousands grouped with commas.

@@ -2,14 +2,14 @@
 //! what's unusual, and disabling, enabling or deleting the others.
 
 use std::collections::HashSet;
-use std::rc::Rc;
 
 use rune::{El, col, row, text};
 
 use super::requests::{self as rq, AdminUser};
 use super::table::{self, Action, Cell, Col, Empty, Line, Part};
-use super::{ConfirmArt, ConfirmRequest, ConfirmSubject, Res, call, confirm, delete_user, format, load, parts};
+use super::{Res, call, delete_user, format, load, parts};
 use crate::app::App;
+use crate::overlays::confirm::{self, Art, ConfirmSpec, Subject};
 use crate::theme::Theme;
 use crate::ui::{Btn, font, icons as i, kit, tnum};
 
@@ -90,20 +90,14 @@ fn toggle_disabled(app: &mut App, user: &AdminUser) {
         None => "never signed in".into(),
     };
     let u = user.clone();
-    confirm(
+    confirm::ask_then(
         app,
-        ConfirmRequest {
-            title: "Disable this account?".into(),
-            message: "They're signed out everywhere and can't sign in until you enable it again.".into(),
-            subject: Some(ConfirmSubject {
-                art: ConfirmArt::Person(user.username.clone()),
+        ConfirmSpec::new("Disable this account?", "They're signed out everywhere and can't sign in until you enable it again.", "Disable").maybe_subject(Some(Subject {
+                art: Art::Person(user.username.clone()),
                 name: user.username.clone(),
                 detail: Some(format!("{} · {last}", if user.role == "admin" { "Admin" } else { "User" })),
-            }),
-            confirm_label: "Disable".into(),
-            confirm_icon: Some(&i::USER_X),
-            on_confirm: Rc::new(move |app: &mut App| set_disabled(app, u.clone())),
-        },
+            })).icon(&i::USER_X),
+        move |app: &mut App| set_disabled(app, u.clone()),
     );
 }
 

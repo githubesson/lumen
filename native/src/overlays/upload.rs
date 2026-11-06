@@ -11,87 +11,27 @@ use std::path::PathBuf;
 
 use rune::{Color, Cursor, Cx, El, col, el, row, text};
 
-use super::requests::{self, UploadResult};
+use crate::api::UploadResult;
 use crate::app::App;
 use crate::theme::{Theme, color_mix};
 use crate::ui::kit::{Dialog, dialog_footer, error_banner, eyebrow, scroll_area_fit};
 use crate::ui::{Btn, font, ico, icons as i, line, tnum};
 
-/// The extensions the server ingests (`supportedExt` in the backend).
-pub const UPLOAD_EXTENSIONS: [&str; 9] = ["mp3", "flac", "m4a", "mp4", "ogg", "opus", "wav", "aac", "webm"];
-
-/// The server's cap on one upload request (`maxUploadBytes`).
-pub const UPLOAD_REQUEST_MAX_BYTES: u64 = 512 << 20;
-const UPLOAD_FORM_OVERHEAD_BYTES: u64 = 64 << 10;
-const UPLOAD_PART_OVERHEAD_BYTES: u64 = 4 << 10;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Scope {
-    #[default]
-    Global,
-    Personal,
-}
-
-impl Scope {
-    fn as_str(self) -> &'static str {
-        match self {
-            Scope::Global => "global",
-            Scope::Personal => "personal",
-        }
-    }
-}
-
-/// `defaultUploadScope`: admins upload to the shared library unless they say otherwise.
-pub fn default_scope(is_admin: bool) -> Scope {
-    if is_admin { Scope::Global } else { Scope::Personal }
-}
-
-/// `uploadScope`: only admins choose.
-pub fn upload_scope(is_admin: bool, chosen: Scope) -> Scope {
-    if is_admin { chosen } else { Scope::Personal }
-}
-
-/// `isUploadableFile`: by extension, as the server judges.
-pub fn is_uploadable(name: &str) -> bool {
-    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
-    let Some(dot) = base.rfind('.') else { return false };
-    let ext = base[dot + 1..].to_ascii_lowercase();
-    UPLOAD_EXTENSIONS.contains(&ext.as_str())
-}
+pub use crate::core::upload::{
+    UPLOAD_EXTENSIONS, UPLOAD_REQUEST_MAX_BYTES, UploadScope as Scope, default_upload_scope as default_scope, is_uploadable_file as is_uploadable,
+    upload_scope,
+};
 
 /// `planUploadBatches`: requests that each stay under the cap, in order; a
 /// file whose size isn't known goes alone, one too big for any is left out.
 pub fn plan_batches<T: Clone>(files: &[T], size_of: impl Fn(&T) -> Option<u64>, max: u64) -> (Vec<Vec<T>>, Vec<T>) {
-    let budget = max.saturating_sub(UPLOAD_FORM_OVERHEAD_BYTES);
-    let mut batches = Vec::new();
-    let mut too_large = Vec::new();
-    let mut batch: Vec<T> = Vec::new();
-    let mut used = 0u64;
-    for f in files {
-        let Some(size) = size_of(f) else {
-            if !batch.is_empty() {
-                batches.push(std::mem::take(&mut batch));
-            }
-            used = 0;
-            batches.push(vec![f.clone()]);
-            continue;
-        };
-        let cost = size + UPLOAD_PART_OVERHEAD_BYTES;
-        if cost > budget {
-            too_large.push(f.clone());
-            continue;
-        }
-        if used + cost > budget {
-            batches.push(std::mem::take(&mut batch));
-            used = 0;
-        }
-        batch.push(f.clone());
-        used += cost;
-    }
-    if !batch.is_empty() {
-        batches.push(batch);
-    }
-    (batches, too_large)
+    let plan = crate::core::upload::plan_upload_batches(files, size_of, max);
+    (plan.batches, plan.too_large)
+}
+
+/// The last path component, for messages and part headers.
+fn file_name(p: &std::path::Path) -> String {
+    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string_lossy().into_owned())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -192,9 +132,9 @@ pub fn accept(app: &mut App, list: Vec<PathBuf>) {
     if list.is_empty() || s.busy {
         return;
     }
-    let name = |p: &PathBuf| requests::file_name(p);
+    let name = |p: &PathBuf| file_name(p);
     s.left_out = list.iter().filter(|p| !is_uploadable(&name(p))).map(name).collect();
-    s.files = list.into_iter().filter(|p| is_uploadable(&requests::file_name(p))).collect();
+    s.files = list.into_iter().filter(|p| is_uploadable(&file_name(p))).collect();
     s.results = None;
     s.error = None;
 }
@@ -219,9 +159,9 @@ fn submit(app: &mut App) {
     }
     s.busy = true;
     s.error = None;
-    let scope = upload_scope(admin, s.scope.unwrap_or_default());
+    let scope = upload_scope(admin, s.scope.unwrap_or(default_scope(admin)));
     let (batches, too_large) = plan_batches(&s.files, |p| std::fs::metadata(p).ok().map(|m| m.len()), UPLOAD_REQUEST_MAX_BYTES);
-    let too_large: Vec<String> = too_large.iter().map(|p| requests::file_name(p)).collect();
+    let too_large: Vec<String> = too_large.iter().map(|p| file_name(p)).collect();
     send_batch(app, batches, 0, Vec::new(), too_large, scope);
 }
 
@@ -235,14 +175,14 @@ fn send_batch(app: &mut App, batches: Vec<Vec<PathBuf>>, n: usize, mut uploaded:
         s.results = Some(uploaded);
         s.busy = false;
         if added {
-            library_changed(app);
+            crate::pages::library_changed(app);
         }
         return;
     }
     let Some(client) = app.client.clone() else { return };
     let files = batches[n].clone();
     app.net.run(
-        move || requests::upload_music(&client, &files, scope.as_str()),
+        move || crate::api::upload::upload_music(&client, &files, scope, None),
         move |app, result| {
             if app.overlays.upload.session != session {
                 return;
@@ -263,7 +203,7 @@ fn send_batch(app: &mut App, batches: Vec<Vec<PathBuf>>, n: usize, mut uploaded:
                         let mut results = uploaded.clone();
                         for f in batches[n..].iter().flatten() {
                             results.push(UploadResult {
-                                file: requests::file_name(f),
+                                file: file_name(f),
                                 inserted: false,
                                 error: Some(message.clone()),
                                 ..Default::default()
@@ -274,7 +214,7 @@ fn send_batch(app: &mut App, batches: Vec<Vec<PathBuf>>, n: usize, mut uploaded:
                     }
                     s.busy = false;
                     if uploaded.iter().any(|r| r.inserted) {
-                        library_changed(app);
+                        crate::pages::library_changed(app);
                     }
                 }
             }
@@ -282,13 +222,6 @@ fn send_batch(app: &mut App, batches: Vec<Vec<PathBuf>>, n: usize, mut uploaded:
     );
 }
 
-/// `libraryChanged.emit()`: views that list the library reload.
-fn library_changed(app: &mut App) {
-    // TODO(pages-merge): the pages' library-changed hook; until then the
-    // current page reloads.
-    let loc = app.location().clone();
-    crate::pages::enter(app, &loc);
-}
 
 /// `RadioCardOption`.
 fn radio_card(t: &Theme, key: &str, label: &str, description: &str, checked: bool, pick: Scope) -> El {
@@ -432,7 +365,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
         let n = s.files.len();
         let mut names = col().w_full();
         for f in &s.files {
-            names = names.child(line(requests::file_name(f), tnum(font(12.0, 400.0)), t.c.muted_foreground));
+            names = names.child(line(file_name(f), tnum(font(12.0, 400.0)), t.c.muted_foreground));
         }
         body = body.child(
             col()

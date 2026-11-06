@@ -13,7 +13,6 @@ use rune::{Cx, El, TextEdit, col, el, row, text};
 use self::rows::{Row, Tidal, display_artists, display_text, track_info_rows};
 use crate::api::{TrackDetail, TrackListItem, TrackSource};
 use crate::app::App;
-use crate::overlays::requests;
 use crate::theme::Theme;
 use crate::ui::kit::{Dialog, eyebrow, scroll_area_fit};
 use crate::ui::{cover_art, font, snug_lines, with_lh};
@@ -53,7 +52,7 @@ pub fn open(app: &mut App, track_id: &str) {
         move || {
             // `useTrackDetail` gives up after 15 s.
             let started = std::time::Instant::now();
-            let r = requests::track(&client, &id);
+            let r = crate::api::library::get_track(&client, &id);
             (r, started.elapsed() > std::time::Duration::from_secs(15))
         },
         move |app, (result, timed_out)| {
@@ -86,7 +85,7 @@ fn load_tidal(app: &mut App, id: String, nonce: u64) {
     let Some(client) = app.client.clone() else { return };
     app.net.run(
         move || {
-            let r = requests::tidal_track(&client, &id);
+            let r = crate::api::tidal::get_tidal_track(&client, &id);
             (id, r)
         },
         move |app, (id, result)| {
@@ -127,12 +126,6 @@ fn escape(app: &mut App) {
     }
 }
 
-/// `libraryChanged.emit()` after a link or unlink.
-fn library_changed(app: &mut App) {
-    // TODO(pages-merge): the pages' library-changed hook.
-    let loc = app.location().clone();
-    crate::pages::enter(app, &loc);
-}
 
 /// The left third: artwork and the lines a player shows.
 fn summary(app: &App, t: &Theme, track: Option<&TrackDetail>, w: f32) -> El {

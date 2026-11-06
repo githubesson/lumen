@@ -2,14 +2,12 @@
 //! album picked from a searchable list (no near-duplicate album from a typo).
 
 use rune::{Cursor, Cx, El, Span, TextEdit, col, el, rich, row, text};
-use serde_json::json;
 
 use super::{Which, reset};
 use crate::api::{Album, TrackListItem};
 use crate::app::App;
-use crate::overlays::requests;
 use crate::theme::Theme;
-use crate::ui::forms::search_input_bound;
+use crate::ui::forms::search_input;
 use crate::ui::kit::{Dialog, error_banner, scroll_area_fit};
 use crate::ui::{Btn, cover_art, font, line, tnum};
 
@@ -36,7 +34,7 @@ fn search(app: &mut App) {
             if wait {
                 std::thread::sleep(std::time::Duration::from_millis(220));
             }
-            requests::list_albums(&client, (!q.is_empty()).then_some(q.as_str()), 50)
+            crate::api::library::list_albums(&client, &crate::api::PageParams { limit: Some(50), q: (!q.is_empty()).then(|| q.clone()), ..Default::default() }).map(|(a, _)| a)
         },
         move |app, result| {
             let s = &mut app.overlays.edit;
@@ -65,7 +63,7 @@ fn move_to(app: &mut App, album: Album) {
     let nonce = s.nonce;
     let Some(client) = app.client.clone() else { return };
     app.net.run(
-        move || requests::update_track(&client, &track.id, json!({ "album_id": album.id })),
+        move || crate::api::library::update_track(&client, &track.id, &crate::api::library::move_to_album_patch(&album.id)),
         move |app, result| {
             let s = &mut app.overlays.edit;
             if s.nonce != nonce {
@@ -74,7 +72,7 @@ fn move_to(app: &mut App, album: Album) {
             match result {
                 Ok(_) => {
                     s.moving_id = None;
-                    super::library_changed(app);
+                    crate::pages::library_changed(app);
                     super::close(app);
                 }
                 Err(e) => {
@@ -120,15 +118,9 @@ pub fn view(app: &App, t: &Theme, window: [f32; 2], _cx: &mut Cx<App>) -> El {
     }
     // `.search`: 320 px, at most 40% of the window.
     let search_w = 320.0f32.min(window[0] * 0.4);
-    body = body.child(search_input_bound(
-        t,
-        "move-album-search",
-        &s.query,
-        "Search albums",
-        Some(search_w),
-        |a: &mut App| &mut a.overlays.edit.query,
-        Some(search),
-    ));
+    body = body.child(search_input(t, "move-album-search", &s.query, "Search albums", Some(search_w), |f| {
+        f.on_edit(|a: &mut App| &mut a.overlays.edit.query).on_input_change(move |app: &mut App, _| search(app))
+    }));
     let mut list = col().w_full().gap(2.0);
     let note = |msg: &str| el().padding(8.0).child(text(msg.to_string()).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground));
     match &s.albums {

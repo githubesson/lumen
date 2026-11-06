@@ -9,7 +9,7 @@ use crate::app::App;
 
 use super::detail::{Download, arm_poll, cover_for, current, detail, detail_mut, invalidate_loads, load, on_screen, write_cache};
 use super::logic::{self, error_message};
-use super::{requests, update_playlists};
+use super::update_playlists;
 
 /// Counters for one visit's track edits (`pendingTrackMutationsRef`, …).
 #[derive(Default)]
@@ -150,7 +150,7 @@ fn finish(app: &mut App, mount: u64, id: String, next: Vec<PlaylistTrackEntry>) 
     if let Some(client) = app.client.clone() {
         let read_id = id.clone();
         app.net.run(
-            move || requests::list_playlist_tracks_if_changed(&client, &read_id, None),
+            move || crate::api::playlists::list_playlist_tracks_if_changed(&client, &read_id, None),
             move |app, result| {
                 let busy = pending(app, mount) > 0;
                 let Some(d) = current(app, mount) else { return };
@@ -185,7 +185,7 @@ pub fn remove(app: &mut App, position: u32) {
     let Some(rows) = &d.tracks else { return };
     let next = logic::remove_entry(rows, position);
     let id = d.id.clone();
-    commit_tracks(app, next, "Failed to remove track.", move |c| requests::remove_playlist_track(c, &id, position));
+    commit_tracks(app, next, "Failed to remove track.", move |c| crate::api::playlists::remove_playlist_track(c, &id, position));
 }
 
 /// Move the row at index `from` to index `to` (only offered against the
@@ -199,5 +199,5 @@ pub fn reorder(app: &mut App, from: usize, to: usize) {
     let next = logic::move_entry(rows, from, to);
     let ids: Vec<String> = next.iter().map(|t| t.track_id.clone()).collect();
     let id = d.id.clone();
-    commit_tracks(app, next, "Failed to reorder tracks.", move |c| requests::reorder_playlist(c, &id, &ids));
+    commit_tracks(app, next, "Failed to reorder tracks.", move |c| crate::api::playlists::reorder_playlist(c, &id, &ids));
 }

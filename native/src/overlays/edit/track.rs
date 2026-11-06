@@ -8,7 +8,6 @@ use serde_json::{Map, Value, json};
 use super::{Which, grid_field, grid_row, input, loading, number_input, reset, save_cancel};
 use crate::api::TrackDetail;
 use crate::app::App;
-use crate::overlays::requests;
 use crate::overlays::track_info::rows::display_artists;
 use crate::theme::Theme;
 use crate::ui::kit::{Dialog, error_banner};
@@ -94,7 +93,7 @@ pub fn open(app: &mut App, track_id: &str) {
     let Some(client) = app.client.clone() else { return };
     let id = track_id.to_string();
     app.net.run(
-        move || requests::track(&client, &id),
+        move || crate::api::library::get_track(&client, &id),
         move |app, result| {
             let s = &mut app.overlays.edit;
             if s.nonce != nonce {
@@ -124,7 +123,7 @@ fn save(app: &mut App) {
     let nonce = s.nonce;
     let Some(client) = app.client.clone() else { return };
     app.net.run(
-        move || requests::update_track(&client, &id, Value::Object(patch)),
+        move || crate::api::library::update_track(&client, &id, &serde_json::from_value(Value::Object(patch)).map_err(|e| crate::api::ApiError::local(0, e.to_string()))?),
         move |app, result| {
             let s = &mut app.overlays.edit;
             s.busy = false;
@@ -133,7 +132,7 @@ fn save(app: &mut App) {
             }
             match result {
                 Ok(_) => {
-                    super::library_changed(app);
+                    crate::pages::library_changed(app);
                     super::close(app);
                 }
                 Err(e) => s.error = Some(crate::overlays::error_message(&e, "Save failed.")),

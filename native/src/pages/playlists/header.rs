@@ -7,34 +7,17 @@ use crate::api::{Playlist, PlaylistTrackEntry, TrackListItem, Visibility, media}
 use crate::app::App;
 use crate::images::Cover;
 use crate::theme::Theme;
-use crate::ui::{Btn, font, ico, icons as i, motion, with_lh};
+use crate::ui::tooltip::TipExt;
+use crate::ui::{Btn, font, ico, icons as i, motion};
 
-use super::adapters::{self, Header};
+use crate::ui::blocks::{ListHeader, list_page_header, list_title_style, meta_line, play_list_button};
+
 use super::detail;
 use super::logic::{self, Permissions, pluralize};
 
-/// `text-wrap: balance`: the narrowest width (up to `max`) that keeps the
-/// lines `text` takes at `max`, so they come out even.
-pub fn balanced_width(s: &str, style: TextStyle, max: f32) -> f32 {
-    let lines = |w: f32| {
-        let (_, h) = rune::text::measure(s, &[], style, Some(w));
-        (h / style.line_height).round().max(1.0)
-    };
-    let n = lines(max);
-    if n <= 1.0 {
-        return max;
-    }
-    let (mut lo, mut hi) = (max / n, max);
-    for _ in 0..12 {
-        let mid = (lo + hi) / 2.0;
-        if lines(mid) > n { lo = mid } else { hi = mid }
-    }
-    hi.ceil().min(max)
-}
 
-/// `.detail-title`'s style: 36 px semibold, tight.
 fn title_style() -> TextStyle {
-    with_lh(font(36.0, 600.0), 39.6).tracking(-0.9)
+    list_title_style()
 }
 
 /// The header art's picture: the custom cover, else the first track's.
@@ -100,31 +83,28 @@ fn kind(t: &Theme, p: &Playlist, perms: &Permissions) -> El {
 
 /// `.detail-meta`: the count, the length and what's queued, dot-separated.
 fn meta(t: &Theme, tracks: Option<&[PlaylistTrackEntry]>, queued: Option<u32>) -> El {
-    let ink = t.c.muted_foreground;
-    let item = |s: String| text(s).font(font(14.0, 400.0)).color(ink);
-    let dot = || el().size(3.0, 3.0).radius(99.0).fill(ink);
-    let mut m = row().gap(8.0).items_center().flex_wrap();
+    let mut parts: Vec<String> = Vec::new();
     match tracks {
-        None => m = m.child(item("—".into())),
+        None => parts.push("—".into()),
         Some(rows) => {
-            m = m.child(item(pluralize(rows.len(), "track")));
+            parts.push(pluralize(rows.len(), "track"));
             if !rows.is_empty() {
                 let total: u64 = rows.iter().map(|r| r.duration_ms).sum();
-                m = m.child(dot()).child(item(crate::format::fmt_total_ms(total)));
+                parts.push(crate::format::fmt_total_ms(total));
             }
         }
     }
     if let Some(n) = queued.filter(|n| *n > 0) {
-        m = m.child(dot()).child(item(format!("{n} queued for download")));
+        parts.push(format!("{n} queued for download"));
     }
-    m
+    let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
+    meta_line(t, &parts)
 }
 
 pub struct Props<'a> {
     pub playlist: &'a Playlist,
     pub perms: Permissions,
     pub tracks: Option<&'a [PlaylistTrackEntry]>,
-    pub queue: Vec<TrackListItem>,
     pub first_cover: Option<TrackListItem>,
     pub queued: Option<u32>,
     pub saving_cover: bool,
@@ -134,40 +114,46 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, h: Props) -> El {
     let p = h.playlist;
     // The body's width: the header's, less the padding, art and gap.
     let body_w = cx.layout_size("playlist-header").map_or(956.0, |s| s[0]) - 50.0 - 200.0 - 24.0;
-    let width = balanced_width(&p.name, title_style(), body_w.max(1.0));
+    let width = crate::ui::balanced_width(&p.name, title_style(), body_w.max(1.0));
     let title_text = text(p.name.clone()).font(title_style()).color(t.c.card_foreground).wrap_anywhere().max_w(width);
     let title = if h.perms.can_edit_details {
         el().radius(t.radius_sm())
             .role("button")
             .label(p.name.clone())
-            .help("Edit details")
             .cursor(Cursor::Pointer)
             .focusable(true)
             .on_press(detail::open_settings_on_name)
             .child(title_text)
+            .tip("playlist-header-title", "Edit details")
     } else {
         el().child(title_text)
     };
-    let mut actions = row().gap(8.0).items_center().flex_wrap().child(adapters::play_list_button(
+    let mut actions = row().gap(8.0).items_center().flex_wrap().child(play_list_button(
         t,
         "playlist-play-all",
-        h.queue,
-        h.tracks.is_none_or(|r| r.is_empty()),
         "Play all",
+        detail::queue_source,
+        h.tracks.is_none_or(|r| r.is_empty()),
     ));
     if h.perms.can_edit_tracks {
-        let add = Btn::new("playlist-add-tracks", "Add tracks").icon_sized(&i::PLUS, 16.0).disabled(h.tracks.is_none()).build(t);
+        let add = Btn::new("playlist-add-tracks", "Add tracks").icon(&i::PLUS).icon_size(16.0).disabled(h.tracks.is_none()).build(t);
         actions = actions.child(if h.tracks.is_none() { add } else { add.on_press(super::add_tracks::open) });
     }
-    let header = adapters::list_page_header(
+    let description = p.description.clone().filter(|d| !d.is_empty());
+    let header = list_page_header(
+        app,
         t,
-        Header {
-            kind: kind(t, p, &h.perms),
-            title: title.mt(6.0).mb(10.0),
-            description: p.description.clone().filter(|d| !d.is_empty()),
-            art: art(app, t, p, h.first_cover.as_ref(), h.tracks.is_some(), h.perms.can_change_cover, h.saving_cover),
+        "playlist-header",
+        ListHeader {
+            // The browser's line is 20.08 px: the icon's inline-flex box
+            // sits on its bottom edge, which lifts the line's top.
+            kind_el: Some(crate::ui::exact(kind(t, p, &h.perms), 20.08)),
+            title_el: Some(title),
+            description: description.as_deref(),
+            art: Some(art(app, t, p, h.first_cover.as_ref(), h.tracks.is_some(), h.perms.can_change_cover, h.saving_cover)),
             meta: Some(meta(t, h.tracks, h.queued)),
             actions: Some(actions),
+            ..Default::default()
         },
     );
     header.key("playlist-header")

@@ -12,7 +12,7 @@ use rune::{Color, Cursor, Cx, El, Icon, Shadow, TextEdit, col, el, row, text};
 
 use crate::app::App;
 use crate::theme::Theme;
-use crate::ui::forms::{OpenSelect, SelectOption, SelectVariant, search_input_bound};
+use crate::ui::forms::{OpenSelect, SelectOption, SelectVariant, search_input};
 use crate::ui::kit::scroll_area_with;
 use crate::ui::{BtnState, css_border, font, ico, iconbtn, icons as i, line, motion, with_lh};
 
@@ -36,8 +36,8 @@ pub struct State {
     pub query: TextEdit,
     /// The side column, toggled on (it stays as left for the session).
     pub side_shown: bool,
-    /// TODO(desktop-merge): the updater's status lives with the desktop side;
-    /// this stands in for it (scenes set it).
+    /// A headless scene's stand-in for the updater's status (the real one
+    /// is `app.desktop.updater`'s, see `desktop_bridge::update_status`).
     pub updater: Option<desktop_bridge::UpdateStatus>,
     pub lastfm: rows::LastFm,
     pub desktop: rows::DesktopUi,
@@ -219,7 +219,7 @@ pub fn select(
 ) -> El {
     let open = app.select.as_ref().is_some_and(|s| s.key == key);
     let label = options.iter().find(|o| o.value == value).map(|o| o.label.clone()).unwrap_or_else(|| "Select…".into());
-    let spec = OpenSelect { key: key.to_string(), options, value: value.to_string(), variant: SelectVariant::Minimal, on_change };
+    let spec = OpenSelect::new(key, options, value, SelectVariant::Minimal, on_change);
     let b = row()
         .key(key)
         .h(28.0)
@@ -263,7 +263,7 @@ fn nav(app: &App, t: &Theme, list: &[(SectionId, &'static str, &'static Icon)], 
         .help("Close settings")
         .on_press(close);
     let search = el().grow(1.0).min_w(0.0).child(
-        search_input_bound(t, "settings-search", &s.query, "Search settings", None, |app: &mut App| &mut app.overlays.settings.query, None),
+        search_input(t, "settings-search", &s.query, "Search settings", None, |f| f.on_edit(|app: &mut App| &mut app.overlays.settings.query)),
     );
     let mut items = col().gap(2.0).w_full();
     for (id, title, icon) in list {

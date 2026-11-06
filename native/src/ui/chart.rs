@@ -105,12 +105,12 @@ pub fn chart_scale(bars: &[Bar]) -> (u64, usize) {
 
 /// `ActivityChart`, or its empty card.
 pub fn activity_chart(t: &Theme, key: &str, bars: &[Bar], bucket: Bucket) -> El {
-    activity_chart_h(t, key, bars, bucket, 140.0)
+    activity_chart_sized(t, key, bars, bucket, 140.0)
 }
 
-/// [`activity_chart`] `height` px tall (`.activity-chart`'s height, which
-/// Replay's bento sets to 124).
-pub fn activity_chart_h(t: &Theme, key: &str, bars: &[Bar], bucket: Bucket, height: f32) -> El {
+/// [`activity_chart`] `h` px tall instead of `.activity-chart`'s 140 (Home's
+/// `.board-chart` stretches it over the panel's room; Replay's bento sets 124).
+pub fn activity_chart_sized(t: &Theme, key: &str, bars: &[Bar], bucket: Bucket, h: f32) -> El {
     if bars.is_empty() {
         return crate::ui::css_border(el(), 1.0, t.c.border, t.radius_xl())
             .key(key)
@@ -123,7 +123,7 @@ pub fn activity_chart_h(t: &Theme, key: &str, bars: &[Bar], bucket: Bucket, heig
     }
     let (max, step) = chart_scale(bars);
     // `.activity-chart`: 140 px, padded 8 0 28; the bars sit on a hairline.
-    let plot_h = height - 8.0 - 28.0 - 1.0;
+    let plot_h = (h - 8.0 - 28.0 - 1.0).max(0.0);
     let mut cols = row().key(format!("{key}-bars")).w_full().h(plot_h).gap(3.0).items_end().justify_center().role("img").label("Listening activity");
     for (n, b) in bars.iter().enumerate() {
         let day = utc_day(&b.start).unwrap_or(0);
@@ -146,7 +146,7 @@ pub fn activity_chart_h(t: &Theme, key: &str, bars: &[Bar], bucket: Bucket, heig
         cols = cols.child(tooltip::tip(c, &ck, &tip));
     }
     let plot = crate::ui::css_border_bottom(el().w_full().pb(1.0).child(cols), 1.0, t.c.border);
-    col().key(key).w_full().h(height).pt(8.0).pb(28.0).child(plot)
+    col().key(key).w_full().h(h).pt(8.0).pb(28.0).child(plot)
 }
 
 #[cfg(test)]

@@ -4,7 +4,6 @@
 //! cell, the row actions and the download history).
 
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -13,8 +12,9 @@ use rune::{El, TextEdit, col, row, text};
 
 use super::requests::{self as rq, Pin, PinCreate, PinDownload, PinKind, is_valid_pin_id};
 use super::table::{self, Action, Cell, Col, Empty, Line, Part};
-use super::{ConfirmArt, ConfirmRequest, ConfirmSubject, Section, call, confirm, format, library, parts, still_mounted};
+use super::{Section, call, format, library, parts, still_mounted};
 use crate::app::App;
+use crate::overlays::confirm::{self, Art, ConfirmSpec, Subject};
 use crate::theme::Theme;
 use crate::ui::forms::{SelectOption, SelectVariant, select};
 use crate::ui::{Btn, font, icons as i, mono, tnum};
@@ -261,20 +261,15 @@ fn toggle(app: &mut App, kind: PinKind, p: &Pin) {
 fn remove(app: &mut App, kind: PinKind, p: &Pin) {
     let Some(id) = require_id(app, kind, p) else { return };
     let sp = spec(kind);
-    let subject = ConfirmSubject {
-        art: ConfirmArt::Icon(sp.icon),
+    let subject = Subject {
+        art: Art::Icon(sp.icon),
         name: action_name(kind, p),
         detail: Some(format!("Downloads to {}", p.destination_path)),
     };
-    confirm(
+    confirm::ask_then(
         app,
-        ConfirmRequest {
-            title: format!("Remove this {}?", sp.noun),
-            message: "It stops being scanned. Files it downloaded stay on disk and in the library.".into(),
-            subject: Some(subject),
-            confirm_label: "Remove".into(),
-            confirm_icon: Some(&i::TRASH_2),
-            on_confirm: Rc::new(move |app: &mut App| {
+        ConfirmSpec::new(format!("Remove this {}?", sp.noun), "It stops being scanned. Files it downloaded stay on disk and in the library.", "Remove").maybe_subject(Some(subject)).icon(&i::TRASH_2),
+        move |app: &mut App| {
                 let (i2, i3) = (id.clone(), id.clone());
                 with_busy(app, kind, id.clone(), move |c| rq::delete_pin(c, kind, &i2), move |app| {
                     let s = k(app, kind);
@@ -285,8 +280,7 @@ fn remove(app: &mut App, kind: PinKind, p: &Pin) {
                         s.history = None;
                     }
                 });
-            }),
-        },
+            },
     );
 }
 
@@ -311,6 +305,7 @@ fn scan(app: &mut App, kind: PinKind, p: &Pin) {
                     }
                     reload(app, kind, |_| {});
                     load_downloads(app, kind, id, false);
+                    crate::pages::library_changed(app);
                 },
             );
         }

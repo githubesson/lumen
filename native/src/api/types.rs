@@ -490,6 +490,10 @@ impl CollaboratorRole {
             CollaboratorRole::Editor => "editor",
         }
     }
+    /// A role picker's value: "editor", else viewer.
+    pub fn parse(s: &str) -> CollaboratorRole {
+        if s == "editor" { CollaboratorRole::Editor } else { CollaboratorRole::Viewer }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]

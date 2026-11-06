@@ -9,93 +9,19 @@ use std::sync::OnceLock;
 use rune::{Color, Cursor, El, el, row, text};
 use rune_motion::{Beat, Easing, LoopSpec, Sequence};
 
-use crate::api::{TrackListItem, TrackSource, media};
+use crate::api::{TrackListItem, media};
 use crate::app::App;
 use crate::format::{display_text, fmt_duration_ms};
 use crate::theme::Theme;
 use crate::ui::track_select::{self, Source};
 use crate::ui::{css_border_bottom, font, ico, icons as i, line, motion, tnum, tooltip};
 
-// TODO(api-merge): these mirror `core/src/track.ts` and `entity-labels.ts`
-// until the core port lands; switch callers to it then.
-
-/// `isLocalTrack`: stored in this library (not streamed from TIDAL).
-pub fn is_local(t: &TrackListItem) -> bool {
-    t.source.is_none_or(|s| s == TrackSource::Local)
-}
-
-/// `isTidalTrack`.
-pub fn is_tidal(t: &TrackListItem) -> bool {
-    t.source == Some(TrackSource::Tidal)
-}
-
-/// `canShareTrack`: library and TIDAL tracks, never a personal upload.
-pub fn can_share(t: &TrackListItem) -> bool {
-    t.owned != Some(true) && (is_local(t) || is_tidal(t))
-}
-
-/// `trackActions`: which of a track's actions to offer.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Actions {
-    pub play: bool,
-    pub download: bool,
-    pub view_album: bool,
-    pub share: bool,
-    pub edit_metadata: bool,
-    pub edit_album: bool,
-    pub move_to_album: bool,
-    pub delete_own_upload: bool,
-    pub admin_remove: bool,
-}
-
-pub fn actions(t: &TrackListItem, is_admin: bool) -> Actions {
-    let local = is_local(t);
-    let owned = t.owned == Some(true) && local;
-    let unavailable = t.unavailable == Some(true);
-    Actions {
-        play: !unavailable,
-        download: !unavailable,
-        view_album: t.album_id.as_deref().is_some_and(|s| !s.is_empty())
-            || t.album_title.as_deref().is_some_and(|s| !s.is_empty())
-            || is_tidal(t),
-        share: can_share(t),
-        edit_metadata: is_admin && local,
-        edit_album: is_admin && local && t.album_id.is_some(),
-        move_to_album: is_admin && local,
-        delete_own_upload: owned,
-        admin_remove: is_admin && local && !owned,
-    }
-}
-
-/// `creditsOnly`: the track credits only artists from `names`, each a whole
-/// entry of its ", "-joined credit (case-insensitive).
-pub fn credits_only(artist: Option<&str>, names: &[String]) -> bool {
-    let credit = display_text(artist, "").to_lowercase();
-    if credit.is_empty() {
-        return false;
-    }
-    let mut entries: Vec<String> = names.iter().map(|n| display_text(Some(n), "").to_lowercase()).filter(|n| !n.is_empty()).collect();
-    entries.dedup();
-    let mut starts = vec![0usize];
-    let mut k = 0;
-    while k < starts.len() {
-        let at = starts[k];
-        k += 1;
-        for e in &entries {
-            if !credit[at..].starts_with(e.as_str()) {
-                continue;
-            }
-            let end = at + e.len();
-            if end == credit.len() {
-                return true;
-            }
-            if credit[end..].starts_with(", ") && !starts.contains(&(end + 2)) {
-                starts.push(end + 2);
-            }
-        }
-    }
-    false
-}
+// `core/src/track.ts` and `entity-labels.ts`, under the names the rows use.
+pub use crate::core::entity_labels::credits_only;
+pub use crate::core::track::{
+    TrackActions as Actions, can_share_track as can_share, is_local_track as is_local, is_tidal_track as is_tidal,
+    track_actions as actions,
+};
 
 /// `playableTracks`: the rows that can stream.
 pub fn playable(tracks: &[TrackListItem]) -> Vec<TrackListItem> {
@@ -269,6 +195,9 @@ pub struct RowSpec<'a> {
     pub cover: bool,
     pub album: bool,
     pub source_badge: bool,
+    /// In a `.table-headless`: rounded rows over transparent borders, and
+    /// 40 px covers in a 56 px column.
+    pub headless: bool,
     pub artist: bool,
     pub extra: Option<&'a crate::ui::track_list::Extra>,
 }
@@ -302,7 +231,7 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
         r = r.checked(selected);
     }
     r = if selected { r.fill(t.c.muted).hover_group() } else { r.hover(t.c.ghost_hover) };
-    r = css_border_bottom(r, 1.0, t.c.border);
+    r = if spec.headless { r.radius(t.radius_lg()) } else { css_border_bottom(r, 1.0, t.c.border) };
 
     // `.col-select`: collapsed to nothing until selection mode opens it.
     let check = {
@@ -347,14 +276,15 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
     // `.col-art`.
     if spec.cover {
         let url = cover_url(tr, 64);
+        let (col_w, art) = if spec.headless { (56.0, 40.0) } else { (44.0, 32.0) };
         r = r.child(
-            row().w(44.0).h_full().pl(8.0).items_center().child(crate::ui::cover_art(
+            row().w(col_w).h_full().pl(8.0).items_center().child(crate::ui::cover_art(
                 t,
                 &app.images,
                 Some(&url),
                 &art_label(tr),
-                32.0,
-                32.0,
+                art,
+                art,
                 t.radius_md(),
             )),
         );

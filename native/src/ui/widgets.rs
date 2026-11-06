@@ -179,7 +179,6 @@ pub struct Btn {
     pub small: bool,
     pub disabled: bool,
     pub leading: Option<&'static Icon>,
-    pub leading_filled: bool,
     /// The leading icon's size (`size-3.5`, 14, unless a page sets `size-4`).
     pub leading_size: f32,
     pub trailing: Option<&'static Icon>,
@@ -196,7 +195,6 @@ impl Btn {
             small: false,
             disabled: false,
             leading: None,
-            leading_filled: false,
             leading_size: 14.0,
             trailing: None,
             leading_color: None,
@@ -229,12 +227,6 @@ impl Btn {
     }
     /// The leading icon at `size` px (`size-4` is 16).
     pub fn icon_size(mut self, size: f32) -> Btn {
-        self.leading_size = size;
-        self
-    }
-    /// A leading icon at another size (`size-4` = 16).
-    pub fn icon_sized(mut self, glyph: &'static Icon, size: f32) -> Btn {
-        self.leading = Some(glyph);
         self.leading_size = size;
         self
     }

@@ -861,7 +861,7 @@ fn activity(t: &Theme, series: &[ReplayActivityBucket], bucket: ReplayBucket) ->
         ReplayBucket::Week => Bucket::Week,
         ReplayBucket::Month => Bucket::Month,
     };
-    chart::activity_chart_h(t, "replay-chart", &bars, bucket, CHART_H)
+    chart::activity_chart_sized(t, "replay-chart", &bars, bucket, CHART_H)
 }
 
 /// `.genre-row` in the bento: the label in a 112 px column, the share's

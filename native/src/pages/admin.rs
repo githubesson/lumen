@@ -8,7 +8,6 @@
 //! sign-in poll, pin re-scans) stop once their section is gone.
 
 mod auto_download;
-mod confirm;
 mod delete_user;
 mod format;
 mod invites;
@@ -31,7 +30,6 @@ use crate::route::Location;
 use crate::theme::Theme;
 use crate::ui::{font, kit, with_lh};
 
-pub use confirm::{ConfirmArt, ConfirmRequest, ConfirmSubject, confirm};
 
 /// `?section=`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -77,7 +75,6 @@ pub struct State {
     pub pins: pins::State,
     pub users: users::State,
     pub invites: invites::State,
-    pub confirm: confirm::State,
     /// The section mounted last, and the commit the page last drew in
     /// (a visit after another page mounts afresh).
     mounted: Option<Section>,
@@ -96,7 +93,6 @@ impl Default for State {
             pins: Default::default(),
             users: Default::default(),
             invites: Default::default(),
-            confirm: Default::default(),
             mounted: None,
             seen: Cell::new(u64::MAX),
             mount_id: 0,
@@ -182,7 +178,6 @@ pub fn enter(app: &mut App, loc: &Location) {
     if fresh || st.mounted != Some(section) {
         st.mounted = Some(section);
         st.mount_id += 1;
-        st.confirm = Default::default();
         match section {
             Section::Library => library::mount(app),
             Section::Users => users::mount(app),
@@ -218,9 +213,6 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let mut wrap = col().key("admin-section-wrap").w_full().min_w(0.0).child(section.w(inner_w));
     if content_w < 720.0 {
         wrap = wrap.scroll_x();
-    }
-    if let Some(d) = confirm::view(app, t, cx) {
-        kit::portal(d);
     }
     if let Some(d) = remove_folder::view(app, t, cx) {
         kit::portal(d);

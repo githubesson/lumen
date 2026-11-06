@@ -2,8 +2,6 @@
 //! `.table-tracks`), with the playlist's own columns (Added, added-by,
 //! remove), selection, and drag reorder (`useDragReorder.ts`).
 
-use std::collections::HashSet;
-
 use rune::{Cursor, Cx, El, Phase, Tx, col, el, row, text};
 
 use crate::api::{Playlist, PlaylistTrackEntry, Visibility, media};
@@ -11,10 +9,12 @@ use crate::app::App;
 use crate::format::{display_text, fmt_duration_ms};
 use crate::theme::Theme;
 use crate::ui::kit::empty_state;
-use crate::ui::{css_border_bottom, font, icons as i, line, tnum};
+use crate::ui::tooltip::TipExt;
+use crate::ui::track_row::{action_button, favorite_button, idx_play, index_cell};
+use crate::ui::track_select::{self, BarPlace};
+use crate::ui::{css_border_bottom, exact, font, ico, icons as i, line, tnum};
 
-use super::adapters::{self, SelectionBar};
-use super::detail::{self, Detail, detail_mut};
+use super::detail::{self, Detail, TRACKS_LIST, detail_mut, queue_source, shown_source};
 use super::edits;
 use super::logic::{Permissions, SortKey, fmt_date};
 
@@ -28,103 +28,38 @@ pub struct DragState {
     pub active: bool,
 }
 
-/// `useTrackSelection` and `useDragReorder`'s state.
+/// `useDragReorder`'s state (the selection is the shared list's,
+/// [`detail::TRACKS_LIST`]).
 #[derive(Default)]
 pub struct State {
-    pub selecting: bool,
-    /// Selected track ids.
-    pub selected: HashSet<String>,
-    /// The last row toggled, for shift-click ranges.
-    pub anchor: Option<usize>,
     pub drag: Option<DragState>,
 }
 
-/// The rows the table shows, as entries.
-fn shown_rows<'a>(app: &App, d: &'a Detail) -> Vec<&'a PlaylistTrackEntry> {
-    let rows = d.tracks.as_deref().unwrap_or(&[]);
-    d.shown(&query(app)).into_iter().map(|i| &rows[i]).collect()
-}
-
-fn query(app: &App) -> String {
-    app.pages.playlists.fields.search.text.trim().to_lowercase()
+fn selecting(app: &App) -> bool {
+    app.widgets.lists.is_selecting(TRACKS_LIST)
 }
 
 /// The selection controls in the toolbar's host (`TrackSelectionToolbar`).
-pub fn selection_host(app: &App, t: &Theme, d: &Detail) -> El {
-    adapters::selection_toolbar(t, "playlist-selectbar", bar(app, d), toggle_mode, select_all, clear)
+pub fn selection_host(app: &App, t: &Theme) -> El {
+    track_select::selection_bar(app, t, TRACKS_LIST, shown_source, BarPlace::Group)
 }
 
-fn bar(app: &App, d: &Detail) -> SelectionBar {
-    let rows = shown_rows(app, d);
-    let s = &d.table;
-    let selected = rows.iter().filter(|r| s.selected.contains(&r.track_id)).count();
-    SelectionBar { selecting: s.selecting, selected, all_selected: !rows.is_empty() && selected == rows.len(), some_selected: selected > 0 }
-}
-
-fn toggle_mode(app: &mut App) {
-    if let Some(d) = detail_mut(app) {
-        d.table.selecting = !d.table.selecting;
-    }
-}
-
-fn clear(app: &mut App) {
-    if let Some(d) = detail_mut(app) {
-        d.table.selecting = false;
-        d.table.selected.clear();
-        d.table.anchor = None;
-    }
-}
-
-/// Select every shown row, or none when they all are.
-fn select_all(app: &mut App) {
-    let ids: Vec<String> = match detail::detail(app) {
-        Some(d) => shown_rows(app, d).iter().map(|r| r.track_id.clone()).collect(),
-        None => return,
-    };
-    let Some(d) = detail_mut(app) else { return };
-    let s = &mut d.table;
-    if !ids.is_empty() && ids.iter().all(|id| s.selected.contains(id)) && s.selected.len() == ids.len() {
-        s.selected.clear();
-    } else {
-        s.selected = ids.into_iter().collect();
-    }
-    s.selecting = true;
-}
-
-/// `toggleSelection`: one row, or with Shift the range from the last one.
-fn toggle_row(app: &mut App, index: usize, range: bool) {
-    let ids: Vec<String> = match detail::detail(app) {
-        Some(d) => shown_rows(app, d).iter().map(|r| r.track_id.clone()).collect(),
-        None => return,
-    };
-    let Some(d) = detail_mut(app) else { return };
-    let s = &mut d.table;
-    let Some(id) = ids.get(index) else { return };
-    match s.anchor.filter(|_| range) {
-        Some(a) => {
-            for id in &ids[a.min(index)..=a.max(index).min(ids.len() - 1)] {
-                s.selected.insert(id.clone());
-            }
-        }
-        None => {
-            if !s.selected.remove(id) {
-                s.selected.insert(id.clone());
-            }
-        }
-    }
-    s.anchor = if s.selected.is_empty() { None } else { Some(index) };
+/// Whether the table is in selection mode (the toolbar group then holds
+/// only the selection's controls).
+pub fn is_selecting(app: &App) -> bool {
+    selecting(app)
 }
 
 /// Play `track_id` with the table's queue.
 fn play(app: &mut App, track_id: &str) {
-    let Some(d) = detail::detail(app) else { return };
-    let queue = d.queue();
+    let queue = queue_source(app).to_vec();
     let Some(start) = queue.iter().position(|t| t.id == track_id) else { return };
     app.player.play_list(queue, start);
 }
 
 /// The column widths (`table-layout: fixed`): select, #, art, title, album
 /// (25%), added, time, actions.
+#[derive(Clone, Copy)]
 struct Cols {
     select: f32,
     idx: f32,
@@ -149,20 +84,23 @@ fn cell(w: f32) -> El {
     row().w(w).h_full().px(8.0).items_center().min_w(0.0)
 }
 
-fn header(t: &Theme, c: &Cols, selecting: bool, bar: &SelectionBar) -> El {
+fn header(app: &App, t: &Theme, c: &Cols, selecting: bool) -> El {
     let th = |s: &str| text(s.to_string()).font(font(12.0, 500.0)).color(t.c.muted_foreground);
-    let mut h = row().key("playlist-thead").w_full().h(40.0).pb(1.0).fill(t.c.background).sticky_top(0.0);
+    let mut h = row().key("playlist-thead").w_full().h(40.0).pb(1.0).fill(t.c.background);
     if selecting {
+        let items = shown_source(app);
+        let sel = app.widgets.lists.get(TRACKS_LIST);
+        let (all, some) = (sel.all_selected(items), sel.some_selected(items));
         h = h.child(
             row().w(c.select).h_full().px(4.0).items_center().justify_center().child(
-                adapters::checkbox(
+                track_select::checkbox(
                     t,
                     "playlist-select-all",
-                    bar.all_selected,
-                    bar.some_selected && !bar.all_selected,
-                    if bar.all_selected { "Deselect all tracks" } else { "Select all tracks" },
+                    all,
+                    some && !all,
+                    if all { "Deselect all tracks" } else { "Select all tracks" },
                 )
-                .on_press(select_all),
+                .on_press(|app: &mut App| track_select::select_all(app, TRACKS_LIST, shown_source)),
             ),
         );
     }
@@ -220,9 +158,8 @@ fn track_row(app: &App, t: &Theme, e: &PlaylistTrackEntry, r: RowCtx) -> El {
     let title = display_text(Some(&e.title), "");
     let id = e.track_id.clone();
     let play_id = id.clone();
-    let index_cell = adapters::index_cell(t, &format!("{key}-idx"), r.index, r.now && r.playing, ink, &format!("Play {}", e.title), move |app| {
-        play(app, &play_id)
-    });
+    let play_btn = idx_play(t, &format!("{key}-play"), &format!("Play {}", e.title)).on_press(move |app: &mut App| play(app, &play_id));
+    let index_cell = index_cell(t, &format!("{key}-idx"), r.index, r.now && r.playing, ink, Some(play_btn));
     let art_url = match e.album_id.as_deref() {
         Some(a) => media::album_cover_path(a, None, None),
         None => media::cover_path(&e.track_id, None),
@@ -231,45 +168,58 @@ fn track_row(app: &App, t: &Theme, e: &PlaylistTrackEntry, r: RowCtx) -> El {
     let album = e.album_title.as_deref().map(|a| display_text(Some(a), "")).filter(|a| !a.is_empty());
     let added = if e.added_at.is_empty() { "—".to_string() } else { fmt_date(&e.added_at) };
 
-    let mut acts = row().gap(8.0).items_center().group_opacity(0.0, 1.0).child(adapters::favorite_button(t, &format!("{key}-fav"), &e.track_id, r.fav));
+    let fav_key = format!("{key}-fav");
+    let heart = favorite_button(app, t, &fav_key, &e.track_id, r.fav).tip(&fav_key, if r.fav { "Remove from favorites" } else { "Add to favorites" });
+    let mut acts = row().gap(8.0).items_center().group_opacity(0.0, 1.0).child(heart);
     if r.can_edit {
         let position = e.position;
+        let remove_key = format!("{key}-remove");
         acts = acts.child(
-            adapters::row_action(t, &format!("{key}-remove"), &i::TRASH_2, t.c.muted_foreground)
-                .label("Remove from playlist")
-                .on_press(move |app: &mut App| edits::remove(app, position)),
+            action_button(t, &remove_key, "Remove from playlist")
+                .child(ico(&i::TRASH_2, 14.0, t.c.muted_foreground).group_color(t.c.accent_foreground))
+                .on_press(move |app: &mut App| edits::remove(app, position))
+                .tip(&remove_key, "Remove from playlist"),
         );
     }
 
     // The cells' 1 px bottom border is inside the row height.
     let mut tr = row().key(key.clone()).w_full().h(t.row_h()).pb(1.0).cursor(Cursor::Pointer);
     if r.selecting {
-        let sel_id = r.index;
+        let (sel_index, sel_id) = (r.index, e.track_id.clone());
         tr = tr.child(
             row().w(c.select).h_full().px(4.0).items_center().justify_center().child(
-                adapters::checkbox(t, &format!("{key}-check"), r.selected, false, &format!("Select {}", display_text(Some(&e.title), "track")))
-                    .on_press_tx(move |app: &mut App, tx: &mut Tx| toggle_row(app, sel_id, tx.mods().shift)),
+                track_select::checkbox(t, &format!("{key}-check"), r.selected, false, &format!("Select {}", display_text(Some(&e.title), "track")))
+                    .on_press_tx(move |app: &mut App, tx: &mut Tx| {
+                        track_select::toggle_row(app, TRACKS_LIST, shown_source, &sel_id, sel_index, tx.mods().shift)
+                    }),
             ),
         );
     }
     tr = tr
         // `.play-cell`: an 18 px inline-grid whose one track grows to the
         // 24 px play button, overflowing to the right and down.
-        .child(cell(c.idx).justify_end().child(el().w(18.0).h(18.0).child(index_cell.absolute(0.0, -2.0))))
+        .child(cell(c.idx).justify_end().child(index_cell))
         .child(cell(c.art).child(crate::ui::cover_art(t, &app.images, Some(&art_url), &art_label, 32.0, 32.0, t.radius_md()).min_w(32.0).mb(1.0)))
         .child(
             cell(c.title).child(
                 col()
                     .w_full()
                     .min_w(0.0)
-                    .child(line(title.clone(), font(14.0, 500.0), t.c.foreground).help(title))
-                    .child(line(sub.clone(), font(12.0, 400.0), t.c.muted_foreground).help(sub)),
+                    // At their CSS line heights (Rune would round them to 21 and 18).
+                    .child(exact(
+                        line(title.clone(), font(14.0, 500.0), t.c.foreground).tip_truncated(&format!("{key}-title"), &title, font(14.0, 500.0)),
+                        20.3,
+                    ))
+                    .child(exact(
+                        line(sub.clone(), font(12.0, 400.0), t.c.muted_foreground).tip_truncated(&format!("{key}-sub"), &sub, font(12.0, 400.0)),
+                        17.4,
+                    )),
             ),
         )
         .child(cell(c.album).child({
             let a = line(album.clone().unwrap_or_else(|| "—".into()), tnum(font(12.0, 400.0)), ink);
             match album {
-                Some(s) => a.help(s),
+                Some(s) => a.tip_truncated(&format!("{key}-album"), &s, tnum(font(12.0, 400.0))),
                 None => a,
             }
         }))
@@ -304,8 +254,13 @@ fn track_row(app: &App, t: &Theme, e: &PlaylistTrackEntry, r: RowCtx) -> El {
             }
         })
         .on_secondary_press(move |app: &mut App, at, _tx| {
-            let queue = detail::detail(app).map(|d| d.queue()).unwrap_or_default();
-            adapters::open_track_menu(app, menu_track.clone(), queue, [at.x, at.y]);
+            // `bind(item, { queue, selection })`: the playlist offers no edits.
+            let selection = crate::ui::track_list::menu_selection(app, TRACKS_LIST, shown_source, &menu_track);
+            let ctx = crate::overlays::track_menu::MenuContext {
+                selection,
+                ..crate::overlays::track_menu::MenuContext::bind(&menu_track, queue_source(app).to_vec())
+            };
+            crate::overlays::track_menu::open(app, menu_track.clone(), [at.x, at.y], ctx);
         })
 }
 
@@ -372,7 +327,7 @@ fn on_drag(app: &mut App, g: &mut rune::Drag, tx: &mut Tx, r: Gesture) {
                 return;
             }
             if r.selecting {
-                toggle_row(app, r.index, tx.mods().shift);
+                track_select::toggle_row(app, TRACKS_LIST, shown_source, r.id, r.index, tx.mods().shift);
             } else if g.x >= r.title_x.0 && g.x < r.title_x.1 {
                 play(app, r.id);
             }
@@ -380,74 +335,77 @@ fn on_drag(app: &mut App, g: &mut rune::Drag, tx: &mut Tx, r: Gesture) {
     }
 }
 
-pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, d: &Detail, p: &Playlist, perms: &Permissions) -> El {
+/// The Tracks tab under the page's `head` (header, error, toolbar): the
+/// whole page, whose rows are the content's virtual rows (only those near
+/// the viewport are built), or the empty state.
+pub fn page(app: &App, t: &Theme, cx: &mut Cx<App>, d: &Detail, p: &Playlist, perms: &Permissions, head: El) -> El {
     let rows = d.tracks.as_deref().unwrap_or(&[]);
     let raw = app.pages.playlists.fields.search.text.clone();
-    let q = query(app);
+    let q = raw.trim().to_lowercase();
+    let padded = |head: El, e: El| col().key("playlist-view").w_full().padding(t.pad()).child(head.child(e));
     if rows.is_empty() {
         let hint = perms.can_edit_tracks.then_some("Choose \"Add tracks\" to pull songs in from your library.");
-        return empty_state(t, None, "No tracks yet.", hint, None);
+        return padded(head, empty_state(t, None, "No tracks yet.", hint, None));
     }
-    let shown = d.shown(&q);
-    if shown.is_empty() {
+    let shown = d.shown_idx.len();
+    if shown == 0 {
         let hint = format!("Nothing in this playlist matches \"{raw}\".");
-        return empty_state(t, None, "No matches.", Some(&hint), None);
+        return padded(head, empty_state(t, None, "No matches.", Some(&hint), None));
     }
-    let s = &d.table;
-    let width = cx.layout_size("playlist-table").map_or(956.0, |s| s[0]);
-    let c = cols(width, s.selecting);
+    let selecting = selecting(app);
+    let width = cx.layout_size("playlist-head").map_or(956.0, |s| s[0]);
+    let c = cols(width, selecting);
     let show_added_by =
         p.visibility == Visibility::Collaborative || rows.iter().any(|t| t.added_by_id.as_deref().is_some_and(|by| by != p.owner_id));
-    let reorderable = perms.can_edit_tracks && d.sort == SortKey::Custom && q.is_empty() && !s.selecting;
-    let current = app.player.current().map(|t| t.id.clone());
-    let b = bar(app, d);
-    let mut body = col().key("playlist-tbody").w_full();
-    for (index, &i) in shown.iter().enumerate() {
-        let e = &rows[i];
-        let now = current.as_deref() == Some(e.track_id.as_str());
-        body = body.child(track_row(
-            app,
-            t,
-            e,
-            RowCtx {
-                c: &c,
-                index,
-                count: shown.len(),
-                now,
-                playing: app.player.playing,
-                selected: s.selected.contains(&e.track_id),
-                selecting: s.selecting,
-                can_edit: perms.can_edit_tracks,
-                show_added_by,
-                reorderable,
-                drag: s.drag,
-                fav: app.pages.favorites_has(&e.track_id),
-            },
-        ));
-    }
+    let reorderable = perms.can_edit_tracks && d.sort == SortKey::Custom && q.is_empty() && !selecting;
+    let can_edit = perms.can_edit_tracks;
     let mut panel = col().w_full().gap(8.0);
     if !q.is_empty() {
-        panel = panel.child(text(format!("{} of {} match", shown.len(), rows.len())).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground));
+        panel = panel.child(text(format!("{shown} of {} match", rows.len())).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground));
     }
     // With one row there's no toolbar host, so the bar sits above the table.
     if rows.len() <= 1 {
-        let status = if b.selecting {
-            format!("{} selected", b.selected)
-        } else {
-            format!("{} track{}", rows.len(), if rows.len() == 1 { "" } else { "s" })
-        };
-        panel = panel.child(
-            row()
-                .w_full()
-                .min_h(38.0)
-                .pb(8.0)
-                .gap(8.0)
-                .items_center()
-                .child(text(status).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground).grow(1.0))
-                .child(selection_host(app, t, d)),
-        );
+        panel = panel.child(track_select::selection_bar(app, t, TRACKS_LIST, shown_source, BarPlace::Inline));
     }
-    panel.child(col().key("playlist-table").w_full().child(header(t, &c, s.selecting, &b)).child(body))
+    let head = head.child(panel.child(header(app, t, &c, selecting)));
+    let row_key = |d: &Detail, n: usize| -> String {
+        let e = &d.tracks.as_deref().unwrap_or(&[])[d.shown_idx[n]];
+        format!("pl-row-{}-{}", e.position, e.track_id)
+    };
+    crate::ui::track_list::virtual_page(
+        t,
+        "playlist",
+        shown,
+        (d.shown_rev, selecting, c.title.to_bits()),
+        head.key("playlist-head"),
+        None,
+        move |app: &App, n| detail::detail(app).filter(|d| n < d.shown_idx.len()).map_or_else(|| format!("pl-row-{n}"), |d| row_key(d, n)),
+        move |app: &App, n| {
+            let t = app.theme();
+            let Some(d) = detail::detail(app).filter(|d| n < d.shown_idx.len()) else { return el() };
+            let e = &d.tracks.as_deref().unwrap_or(&[])[d.shown_idx[n]];
+            let sel = app.widgets.lists.selection(TRACKS_LIST);
+            track_row(
+                app,
+                &t,
+                e,
+                RowCtx {
+                    c: &c,
+                    index: n,
+                    count: d.shown_idx.len(),
+                    now: app.player.current().is_some_and(|c| c.id == e.track_id),
+                    playing: app.player.playing,
+                    selected: sel.is_some_and(|s| s.ids.contains(&e.track_id)),
+                    selecting,
+                    can_edit,
+                    show_added_by,
+                    reorderable,
+                    drag: d.table.drag,
+                    fav: app.pages.favorites_has(&e.track_id),
+                },
+            )
+        },
+    )
 }
 
 #[cfg(test)]

@@ -56,10 +56,15 @@ fn remove(app: &mut App, purge: bool) {
     call(
         app,
         move |c| rq::delete_music_root(c, &root.id, purge),
-        |app, r| {
+        move |app, r| {
             st(app).busy = None;
             match r {
-                Ok(_) => library::removed(app),
+                Ok(deleted) => {
+                    library::removed(app);
+                    if crate::core::admin::music_roots::root_removal_changed_library(purge, Some(deleted)) {
+                        crate::pages::library_changed(app);
+                    }
+                }
                 Err(e) => st(app).error = Some(super::error_message(&e, "Couldn't remove the folder.")),
             }
         },

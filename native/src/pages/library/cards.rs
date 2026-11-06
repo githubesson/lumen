@@ -69,15 +69,15 @@ pub fn card(app: &App, t: &Theme, c: Card, width: f32, play: Option<El>) -> El {
         art = art.child(button.absolute(art_w - 40.0, art_w - 40.0));
     }
     let (ts, ss) = (font(title_size, 500.0), font(12.0, 400.0));
-    let mut title = super::exact(line(c.title, ts, t.c.foreground), ts, 1).w_full();
-    let mut sub = super::exact(line(c.sub, ss, t.c.muted_foreground), ss, 1).w_full();
+    let mut title = crate::ui::exact(line(c.title, ts, t.c.foreground), ts.line_height).w_full();
+    let mut sub = crate::ui::exact(line(c.sub, ss, t.c.muted_foreground), ss.line_height).w_full();
     if c.round {
         title = title.justify_center();
         sub = sub.justify_center();
     }
     let mut texts = col().w_full().min_w(0.0).child(title).child(sub);
     if let Some(b) = c.badge {
-        texts = texts.child(row().mt(6.0).child(super::adapters::badge(t, b)));
+        texts = texts.child(row().mt(6.0).child(crate::ui::track_row::badge(t, b)));
     }
     col()
         .key(c.key)
@@ -163,7 +163,7 @@ pub fn artist_card(
 /// `ReleaseCard` on an artist page.
 pub fn release_card(app: &App, t: &Theme, key: &str, r: &ArtistRelease, width: f32) -> El {
     let cover = media::album_art(&r.id, r.has_cover, r.cover_url.as_deref(), r.source, Some(384), None);
-    let target: EntityTarget = r.target();
+    let target: EntityTarget = logic::release_target(r);
     card(
         app,
         t,
@@ -203,7 +203,7 @@ pub fn track_card(app: &App, t: &Theme, key: &str, tr: &TrackListItem, queue: &[
         .group_opacity(0.0, 1.0)
         .press_scale(0.95)
         .child(ico(&i::PLAY_FILLED, 16.0, t.c.primary_foreground))
-        .on_press(move |app: &mut App| logic::play_from_list(&mut app.player, &q, &id));
+        .on_press(move |app: &mut App| { if let Some(tr) = q.iter().find(|t| t.id == id).cloned() { crate::ui::track_row::play_from(app, &tr, &q) } });
     let letter = tr.album_title.as_deref().filter(|s| !s.is_empty()).unwrap_or(&tr.title);
     let menu_track = tr.clone();
     let menu_queue = queue.to_vec();
@@ -225,6 +225,7 @@ pub fn track_card(app: &App, t: &Theme, key: &str, tr: &TrackListItem, queue: &[
     .focusable(false)
     .role("group")
     .on_secondary_press(move |app: &mut App, at: rune::PointerPress, _tx: &mut rune::Tx| {
-        super::adapters::open_track_menu(app, &menu_track, &menu_queue, [at.x, at.y])
+        let ctx = crate::overlays::track_menu::MenuContext::bind(&menu_track, menu_queue.clone());
+        crate::overlays::track_menu::open(app, menu_track.clone(), [at.x, at.y], ctx)
     })
 }

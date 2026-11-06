@@ -32,7 +32,7 @@ use crate::route::Location;
 use crate::theme::Theme;
 use crate::ui::blocks::play_list_button;
 use crate::ui::kit::error_banner;
-use crate::ui::{Btn, exact_text, font, icons as i, tnum, with_lh};
+use crate::ui::{Btn, exact, font, icons as i, tnum, with_lh};
 
 /// What the page keeps between visits.
 pub struct State {
@@ -365,7 +365,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let head = head(t, s, now, no_tracks, window_w <= 760.0);
     let mut under = row().w_full().flex_wrap().items_center().gaps(8.0, 12.0).child(pills(app, t));
     if let Some(label) = range_label(calendar.as_ref(), request, now) {
-        under = under.child(exact_text(text(label).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground), 12.0, 17.4));
+        under = under.child(exact(text(label).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground), 17.4));
     }
     let mut page = col().key("replay").w_full().padding(t.pad()).gap(16.0).child(head).child(under);
     for e in [&s.error, &s.create_error, &s.image_error].into_iter().flatten() {
@@ -400,7 +400,7 @@ fn head(t: &Theme, s: &State, now: i64, no_tracks: bool, narrow: bool) -> El {
     let title = col()
         .min_w(0.0)
         .shrink()
-        .child(exact_text(text("Replay").font(font(12.0, 500.0)).color(t.c.muted_foreground), 12.0, 17.4))
+        .child(exact(text("Replay").font(font(12.0, 500.0)).color(t.c.muted_foreground), 17.4))
         .child(
             text(period_title(s.period, now))
                 .font(with_lh(font(30.0, 600.0), 33.0).tracking(-0.75))
@@ -463,7 +463,7 @@ fn pills(app: &App, t: &Theme) -> El {
             pill = pill.hover(Color::TRANSPARENT).hover_motion(crate::ui::motion::ease(120.0), crate::ui::motion::ease(120.0));
         }
         let ink = if active { t.c.foreground } else { t.c.muted_foreground };
-        pill = pill.child(exact_text(text(period_label(period)).font(style).color(ink).group_color(t.c.foreground), 14.0, 20.3));
+        pill = pill.child(exact(text(period_label(period)).font(style).color(ink).group_color(t.c.foreground), 20.3));
         group = group.child(pill);
     }
     group
@@ -495,8 +495,8 @@ fn empty(t: &Theme) -> El {
                 .center()
                 .child(crate::ui::ico(&i::SPARKLES, 20.0, t.c.foreground)),
         )
-        .child(exact_text(text("No plays in this window yet.").font(font(16.0, 500.0)).color(t.c.foreground), 16.0, 23.2))
-        .child(exact_text(hint, 14.0, 20.3))
+        .child(exact(text("No plays in this window yet.").font(font(16.0, 500.0)).color(t.c.foreground), 23.2))
+        .child(exact(hint, 20.3))
 }
 
 /// Scenes: Replay for a period, and its states (`app.rs`'s `SCENES`).

@@ -13,7 +13,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rune::{Color, Cx, El, Tx, col, el, row, text};
 
 use self::snippet::Grab;
-use super::requests;
 use crate::api::{TrackDetail, TrackListItem};
 use crate::app::App;
 use crate::format::{fmt_duration_ms, fmt_duration_sec};
@@ -47,6 +46,9 @@ pub struct State {
     drag: Option<(Grab, f64)>,
     /// Bumped as the dialog opens or the window moves, so late answers drop.
     gen_: Arc<AtomicU64>,
+    /// The dialog's own `<audio>` on the track's stream; made on the first
+    /// play (none in headless runs).
+    audio: Option<Box<dyn crate::player::adapter::AudioAdapter>>,
 }
 
 /// Open the dialog for a track id (`useShare().open(trackId)`).
@@ -72,6 +74,8 @@ pub fn close(app: &mut App) {
     s.gen_.fetch_add(1, Ordering::Relaxed);
     s.track_id = None;
     s.playing = false;
+    // Unmounting the dialog stops its audio.
+    s.audio = None;
 }
 
 fn dismiss(app: &mut App) {
@@ -84,7 +88,7 @@ fn load(app: &mut App, id: String) {
     let Some(client) = app.client.clone() else { return };
     let gen_ = app.overlays.share.gen_.load(Ordering::Relaxed);
     app.net.run(
-        move || requests::track(&client, &id),
+        move || crate::api::library::get_track(&client, &id),
         move |app, result| {
             let s = &mut app.overlays.share;
             if s.gen_.load(Ordering::Relaxed) != gen_ {
@@ -141,7 +145,7 @@ fn ensure_url(app: &mut App, then: impl FnOnce(&mut App, Result<String, String>)
     let at = gen_.load(Ordering::Relaxed);
     let (start, dur) = (s.start, w.effective_duration);
     app.net.run(
-        move || requests::create_share_link(&client, &id, start, dur),
+        move || crate::api::share::create_track_share_link(&client, &id, start, dur),
         move |app, result| {
             if gen_.load(Ordering::Relaxed) != at {
                 return;
@@ -258,50 +262,67 @@ fn save_video(app: &mut App, r: &snippet::ShareRef, path: std::path::PathBuf) {
     );
 }
 
-/// Play the window end to end, as the embed will.
-// TODO(player-merge): route this through the audio engine (the track's
-// stream from `start` to `end`); until then the playhead runs silent.
+/// Play the window end to end, as the embed will (`useSnippetPreview`):
+/// the track's stream in the dialog's own audio, from `start`.
 fn toggle_play(app: &mut App) {
     let s = &mut app.overlays.share;
     if s.playing {
         s.playing = false;
+        if let Some(a) = s.audio.as_mut() {
+            a.pause();
+        }
         return;
     }
-    let w = window(s);
     s.playing = true;
     s.current = s.start;
-    if app.net.is_sync() {
+    if rune::tooling::headless_run().is_some() || app.net.is_sync() {
         return;
     }
-    let (start, end) = (s.start, w.end);
-    let gen_ = s.gen_.clone();
-    let at = gen_.load(Ordering::Relaxed);
-    let sender = app.net.sender();
-    std::thread::spawn(move || {
-        let began = std::time::Instant::now();
-        loop {
-            std::thread::sleep(std::time::Duration::from_millis(250));
-            let now = start + began.elapsed().as_secs_f64();
-            let (tx, rx) = std::sync::mpsc::channel();
-            let gen_ = gen_.clone();
-            sender.send(move |app: &mut App| {
-                let s = &mut app.overlays.share;
-                let live = s.playing && gen_.load(Ordering::Relaxed) == at;
-                if live {
-                    if now >= end {
-                        s.playing = false;
-                        s.current = start;
-                    } else {
-                        s.current = now;
-                    }
-                }
-                let _ = tx.send(live && now < end);
-            });
-            if rx.recv_timeout(std::time::Duration::from_secs(5)) != Ok(true) {
-                break;
-            }
+    let Some(id) = s.track_id.clone() else { return };
+    let Some(client) = app.client.clone() else { return };
+    if s.audio.is_none() {
+        let engine = crate::player::engine::Engine::start(app.waker.clone(), app.config.audio_sink_id.clone());
+        let shared = Arc::new(std::sync::Mutex::new(Some(client.clone())));
+        let mut audio: Box<dyn crate::player::adapter::AudioAdapter> = Box::new(crate::player::engine::EngineAdapter::new(engine, shared));
+        audio.load(&client.url(&crate::api::media::stream_path(&id)));
+        s.audio = Some(audio);
+    }
+    let start = s.start;
+    if let Some(a) = s.audio.as_mut() {
+        a.seek(start);
+        if !a.play() {
+            s.playing = false;
         }
-    });
+    }
+}
+
+/// Before each frame while the preview plays: follow the audio's clock
+/// (`timeupdate`), and back to the window's start at its end.
+pub fn poll(app: &mut App, tx: &mut rune::Tx) -> bool {
+    let s = &mut app.overlays.share;
+    let end = snippet::window(track_secs(s), s.selected, s.start).end;
+    let Some(audio) = s.audio.as_mut() else { return false };
+    let mut ended = false;
+    while let Some(ev) = audio.next_event() {
+        ended |= matches!(ev, crate::player::adapter::AdapterEvent::Ended | crate::player::adapter::AdapterEvent::Error);
+    }
+    if !s.playing {
+        return ended;
+    }
+    let now = audio.current_time();
+    if ended || now >= end {
+        audio.pause();
+        s.playing = false;
+        s.current = s.start;
+    } else {
+        // The window moved under the playhead: snap back to its start.
+        if now < s.start - 0.5 {
+            audio.seek(s.start);
+        }
+        s.current = now.max(s.start);
+        tx.wake_after(std::time::Duration::from_millis(250));
+    }
+    true
 }
 
 /// `primaryArtistName`.

@@ -203,7 +203,12 @@ fn watch(app: &mut App) {
                 Watched::Stopped => {}
                 Watched::Lost => on_error(app, "Lost track of the rescan: the server stopped answering. It may still be running."),
                 Watched::Finished(status) => {
+                    // `rescanChangedLibrary`: files went through, or some were pruned.
+                    let changed = !status.running && (status.processed.unwrap_or(0) > 0 || status.pruned.unwrap_or(0) > 0);
                     st(app).rescan = Some(status);
+                    if changed {
+                        crate::pages::library_changed(app);
+                    }
                     st(app).refresh_usage = true;
                     reload_usage(app);
                     reload_errors(app);
