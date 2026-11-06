@@ -627,6 +627,16 @@ fn item_view(app: &App, t: &Theme, it: &Item, selected: bool) -> El {
     if it.disabled {
         return r.opacity(0.5).disabled(true);
     }
+    // A track result's right-click: its menu, playing from the results
+    // (`bindCtx(t, { queue: tracks })`).
+    if let Act::Play(n) = it.act {
+        r = r.on_secondary_press(move |app: &mut App, at: rune::PointerPress, _| {
+            let tracks = app.overlays.palette.tracks.clone();
+            let Some(track) = tracks.get(n).cloned() else { return };
+            let ctx = crate::overlays::track_menu::MenuContext::bind(&track, tracks);
+            crate::overlays::track_menu::open(app, track, [at.x, at.y], ctx);
+        });
+    }
     let value = it.value.clone();
     let act = it.act.clone();
     r.cursor(Cursor::Default)
