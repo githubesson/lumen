@@ -253,8 +253,54 @@ fn route(loc: &Location) -> Route {
     Route::Browse { view, query: loc.get("q").unwrap_or("").to_string(), search_type }
 }
 
+/// `usePaginatedList`'s `pollIntervalMs` for the browse lists.
+const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// One timer for the app's life: every 15 minutes the browse list on
+/// screen reads its rows again.
+fn start_poll(app: &mut App) {
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if app.net.is_sync() || STARTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let tx = app.net.sender();
+    let _ = std::thread::Builder::new().name("lumen-library-poll".into()).spawn(move || {
+        loop {
+            std::thread::sleep(POLL_INTERVAL / 3);
+            tx.send(poll);
+        }
+    });
+}
+
+fn poll(app: &mut App) {
+    if !app.location().is("/library") {
+        return;
+    }
+    let Route::Browse { view, query, .. } = route(app.location()) else { return };
+    if !query.trim().is_empty() {
+        return;
+    }
+    let due = |at: Option<std::time::Instant>| at.is_some_and(|t| t.elapsed() >= POLL_INTERVAL);
+    match view {
+        View::Tracks if due(app.pages.library.tracks.loaded_at) => paging::revalidate(app, |a| &mut a.pages.library.tracks),
+        View::Albums if due(app.pages.library.albums.loaded_at) => paging::revalidate(app, |a| &mut a.pages.library.albums),
+        View::Artists if due(app.pages.library.artists.loaded_at) => paging::revalidate(app, |a| &mut a.pages.library.artists),
+        _ => {}
+    }
+}
+
+/// `libraryChanged`: an upload or scan landed, so the open list reads its
+/// rows again. TODO(api-merge): call from wherever library events arrive.
+pub fn library_changed(app: &mut App) {
+    if app.location().is("/library") {
+        let loc = app.location().clone();
+        enter(app, &loc);
+    }
+}
+
 /// Runs on each navigation to the page: start its requests.
 pub fn enter(app: &mut App, loc: &Location) {
+    start_poll(app);
     match route(loc) {
         Route::Album(id) => album::enter_library(app, &id),
         Route::TidalAlbum { id, artist } => album::enter_tidal(app, &id, artist.as_deref()),

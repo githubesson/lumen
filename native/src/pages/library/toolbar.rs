@@ -179,21 +179,20 @@ fn display_toggle(t: &Theme, current: Display) -> El {
     g
 }
 
-/// The track view's empty-state hint: its "upload them" link opens the
-/// upload dialog.
+/// `LibraryEmptyState`: its hint's "upload them" opens the upload dialog.
 pub fn empty_library(t: &Theme) -> El {
-    let link = text("upload them")
+    let lead = "Drop audio files into a watched folder on the server, or ";
+    let link = "upload them";
+    let hint = format!("{lead}{link}. New files are ingested automatically.");
+    let range = lead.len()..lead.len() + link.len();
+    let hint = text(hint)
         .font(font(14.0, 400.0))
-        .color(t.c.primary)
-        .role("button")
-        .cursor(Cursor::Pointer)
-        .on_press(|app: &mut App| app.ui.upload_open = true);
-    let hint = row()
-        .flex_wrap()
-        .justify_center()
-        .child(text("Drop audio files into a watched folder on the server, or\u{a0}").font(font(14.0, 400.0)).color(t.c.muted_foreground))
-        .child(link)
-        .child(text(". New files are ingested automatically.").font(font(14.0, 400.0)).color(t.c.muted_foreground));
+        .color(t.c.muted_foreground)
+        .wrap()
+        .align(rune::Align::Center)
+        .spans(vec![rune::Span::new(range.start, range.end).color(t.c.primary)])
+        .link(rune::Link::new(range, "upload").role("button"))
+        .on_link(|app: &mut App, _id: &str, _tx: &mut rune::Tx| app.ui.upload_open = true);
     rune::col()
         .w_full()
         .px(24.0)

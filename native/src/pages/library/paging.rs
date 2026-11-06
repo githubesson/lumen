@@ -48,6 +48,8 @@ pub struct Paged<T> {
     on_page: Option<OnPage<T>>,
     /// The bottom sentinel is within reach of the window.
     pub near_end: bool,
+    /// When the shown rows were last read from the server.
+    pub loaded_at: Option<std::time::Instant>,
 }
 
 impl<T> Paged<T> {
@@ -67,6 +69,7 @@ impl<T> Paged<T> {
             fetch: None,
             on_page: None,
             near_end: false,
+            loaded_at: None,
         }
     }
 
@@ -153,6 +156,9 @@ fn run<T: Clone + Send + 'static>(app: &mut App, slot: Slot<T>, offset: usize, r
                     }
                     p.loaded_key = Some(key);
                     p.error = None;
+                    if reset {
+                        p.loaded_at = Some(std::time::Instant::now());
+                    }
                     let on_page = p.on_page;
                     let near = p.near_end;
                     if let Some(f) = on_page {
@@ -171,6 +177,38 @@ fn run<T: Clone + Send + 'static>(app: &mut App, slot: Slot<T>, offset: usize, r
                         p.loaded_key = Some(key);
                     }
                 }
+            }
+        },
+    );
+}
+
+/// The poll's quiet refresh: everything shown, read again in one go (up
+/// to 1000 rows), replacing the rows without a loading state. Failures
+/// keep what's there.
+pub fn revalidate<T: Clone + Send + 'static>(app: &mut App, slot: Slot<T>) {
+    let Some(client) = app.client.clone() else { return };
+    let p = slot(app);
+    let Some(fetch) = p.fetch.clone() else { return };
+    if p.loading || p.stale() || p.next_offsets.is_some() {
+        return;
+    }
+    let limit = p.page_size.max(p.len().unwrap_or(0).min(1000));
+    p.loading = true;
+    let seq = p.seq;
+    app.net.run(
+        move || fetch(&client, limit, 0, None),
+        move |app, result| {
+            let p = slot(app);
+            if p.seq != seq {
+                return;
+            }
+            p.loading = false;
+            if let Ok(page) = result {
+                p.has_more = (page.items.len() as u64) < page.total;
+                p.total = Some(page.total);
+                p.items = Some(page.items);
+                p.loaded_at = Some(std::time::Instant::now());
+                p.error = None;
             }
         },
     );
