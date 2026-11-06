@@ -22,13 +22,11 @@ pub const ROW_H: f32 = 52.0;
 /// `.board-artist`: 48 px avatar in 8 px padding.
 pub const ARTIST_H: f32 = 64.0;
 
-/// Where a line's baseline sits in its box, as Blink lays it out: Geist's
-/// ascent and descent, each rounded to whole pixels, around the
-/// half-leading, and the baseline itself on a whole pixel.
+/// Where a line's baseline sits in its box, as Blink lays it out
+/// ([`crate::ui::css_baseline`]: Geist's ascent and descent rounded, the
+/// half-leading above floored).
 pub fn baseline(size: f32, line_h: f32) -> f32 {
-    let asc = (size * 1.005).round();
-    let desc = (size * 0.295).round();
-    ((line_h - asc - desc) / 2.0 + asc).round()
+    crate::ui::css_baseline(size, line_h)
 }
 
 /// `.skeleton-text` in a line of `size`: a bar 0.75em tall, `frac` of the
