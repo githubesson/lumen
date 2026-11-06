@@ -112,6 +112,8 @@ pub struct Reply {
     pub content_type: String,
     pub total: Option<u64>,
     pub etag: Option<String>,
+    /// `Cache-Control`, for the cover cache's freshness.
+    pub cache_control: Option<String>,
     pub body: Vec<u8>,
 }
 
@@ -380,6 +382,7 @@ impl Client {
         let content_type = header("content-type").unwrap_or_default();
         let total = header("x-total-count").and_then(|v| v.trim().parse().ok());
         let etag = header("etag");
+        let cache_control = header("cache-control");
         let mut body = Vec::new();
         if method != "HEAD" {
             response
@@ -407,7 +410,7 @@ impl Client {
             // status text) on the web, so callers show their own fallback.
             return Err(ApiError::http(status, text));
         }
-        Ok(Reply { status, content_type, total, etag, body })
+        Ok(Reply { status, content_type, total, etag, cache_control, body })
     }
 
     fn notify_unauthorized(&self) {
@@ -489,6 +492,11 @@ impl Client {
     pub fn bytes(&self, url: &str) -> ApiResult<(Vec<u8>, String)> {
         let reply = self.send_with("GET", url, Body::None, Some(REQUEST_TIMEOUT), &[("Accept", "*/*")])?;
         Ok((reply.body, reply.content_type))
+    }
+
+    /// [`Client::bytes`] with the whole reply (its `Cache-Control` and `ETag`).
+    pub fn bytes_reply(&self, url: &str) -> ApiResult<Reply> {
+        self.send_with("GET", url, Body::None, Some(REQUEST_TIMEOUT), &[("Accept", "*/*")])
     }
 
     fn save_jar(&self) {

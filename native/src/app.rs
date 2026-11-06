@@ -39,6 +39,9 @@ pub struct App {
     pub tweaks: Tweaks,
     /// The OS appearance, used until the user picks a theme.
     pub system_dark: std::cell::Cell<bool>,
+    /// The next commit lands at once (a navigation, data arriving): the web
+    /// app swaps pages and shows loaded data without any transition.
+    pub instant_once: std::cell::Cell<bool>,
     pub waker: LateWaker,
     pub net: Net,
     pub images: Images,
@@ -70,6 +73,7 @@ impl App {
         let mut app = App {
             tweaks,
             system_dark: std::cell::Cell::new(true),
+            instant_once: std::cell::Cell::new(false),
             images,
             net,
             client: None,
@@ -199,6 +203,7 @@ impl App {
 
     /// Follow a link (`navigate(to)`).
     pub fn navigate(&mut self, loc: Location) {
+        self.instant_once.set(true);
         self.history.push(loc.clone());
         crate::pages::enter(self, &loc);
     }
@@ -209,11 +214,13 @@ impl App {
 
     /// `navigate(to, { replace: true })`.
     pub fn navigate_replace(&mut self, loc: Location) {
+        self.instant_once.set(true);
         self.history.replace(loc.clone());
         crate::pages::enter(self, &loc);
     }
 
     pub fn back(&mut self) {
+        self.instant_once.set(true);
         if self.history.back() {
             let loc = self.location().clone();
             crate::pages::enter(self, &loc);
@@ -221,6 +228,7 @@ impl App {
     }
 
     pub fn forward(&mut self) {
+        self.instant_once.set(true);
         if self.history.forward() {
             let loc = self.location().clone();
             crate::pages::enter(self, &loc);
@@ -301,6 +309,10 @@ fn setup(app: &mut App, waker: Waker) {
 
 fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
     let mut changed = Net::drain(app);
+    if changed {
+        // Loaded data shows at once, as the web app renders it.
+        tx.instant();
+    }
     changed |= crate::player::poll(app, tx);
     changed |= crate::ui::poll(app, clock, tx);
     changed |= crate::desktop::poll(app);
@@ -317,16 +329,30 @@ fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
 
 pub fn view(app: &App, cx: &mut Cx<App>) -> El {
     app.system_dark.set(cx.system_dark());
+    app.images.set_scale(cx.env().scale);
     app.widgets.lists.begin_frame();
     let t = app.theme();
     // `App.tsx`'s gating: the shell only for a signed-in route.
     let in_shell = crate::pages::auth::gate(app) == crate::pages::auth::Gate::Shell;
     let body = if in_shell { crate::shell::view(app, &t, cx) } else { crate::pages::signed_out(app, &t, cx) };
-    let mut root = col().key("root").w_full().h_full().fill(Color::TRANSPARENT).child(body);
+    // Motion as the CSS has it: layout and colour changes take a short
+    // ease-out (Rune's default spring runs 0.5 s; the web's transitions are
+    // 120–280 ms, and most changes have none), hover fades 120 ms.
+    let mut root = col()
+        .key("root")
+        .w_full()
+        .h_full()
+        .fill(Color::TRANSPARENT)
+        .motion(crate::ui::motion::LAYOUT)
+        .hover_motion_within(crate::ui::motion::ease(120.0), crate::ui::motion::ease(120.0))
+        .child(body);
     if in_shell {
         for layer in crate::overlays::view(app, &t, cx) {
             root = root.child(layer);
         }
+    }
+    if app.instant_once.replace(false) {
+        root = root.instant_changes();
     }
     root
 }

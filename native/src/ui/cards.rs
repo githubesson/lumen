@@ -20,9 +20,11 @@ pub type MenuAction = Rc<dyn Fn(&mut App, PointerPress)>;
 /// `CoverArt` filling its box's width as a square (`.card-art`):
 /// the image, the muted surface while it loads, or the letter.
 pub fn square_art(t: &Theme, images: &Images, url: Option<&str>, label: &str, radius: f32) -> El {
-    let base = el().w_full().aspect_ratio(1.0).radius(radius).fill(t.c.muted).clip_rounded(radius);
-    match url.map(|u| images.get(u)).unwrap_or(Cover::Failed) {
-        Cover::Ready(img) => base.child(el().w_full().h_full().pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
+    // Cards run up to about 240 px wide (grid columns, shelves); smaller ones
+    // draw from the image's mips. The image rounds its own corners.
+    let base = el().w_full().aspect_ratio(1.0).radius(radius).fill(t.c.muted);
+    match url.map(|u| images.get_sized(u, 240.0, 240.0)).unwrap_or(Cover::Failed) {
+        Cover::Ready(img) => base.child(el().w_full().h_full().radius(radius).pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
         Cover::Loading => base,
         Cover::Failed => {
             let ch = label.trim().chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());

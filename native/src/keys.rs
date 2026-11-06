@@ -51,6 +51,7 @@ pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     }
     // sidebar:toggle is `ctrl+b` on every platform.
     if matches!(ev.key, Key::Command('b')) && m.ctrl && !m.shift && !m.alt {
+        tx.motion_curve(crate::ui::motion::shell(280.0));
         app.toggle_sidebar();
         return true;
     }

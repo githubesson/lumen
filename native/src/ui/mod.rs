@@ -153,7 +153,11 @@ pub fn css_border_bottom(e: El, width: f32, color: Color) -> El {
 
 /// CSS transitions as rune curves.
 pub mod motion {
-    use rune_motion::{Anim, Curve, Easing};
+    use rune_motion::{Anim, Curve, Easing, Spring};
+
+    /// Layout and colour changes that aren't given a curve of their own: the
+    /// length of the web's common 200 ms transitions, without a long tail.
+    pub const LAYOUT: Spring = Spring::new(0.2, 0.0);
 
     /// `transition: <ms>ms ease`.
     pub fn ease(ms: f32) -> Anim {

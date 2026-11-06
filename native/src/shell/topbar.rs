@@ -221,7 +221,11 @@ pub fn view(app: &App, t: &Theme, window_w: f32, bp: super::Bp) -> El {
                 iconbtn(t, "sidebar-toggle", if compact { &i::PANEL_LEFT_OPEN } else { &i::PANEL_LEFT_CLOSE }, 16.0, BtnState::default())
                     .label(if compact { "Expand sidebar" } else { "Collapse sidebar" })
                     .tip("sidebar-toggle", if compact { "Expand sidebar" } else { "Collapse sidebar" })
-                    .on_press(|app: &mut App| app.toggle_sidebar()),
+                    .on_press_tx(|app: &mut App, tx| {
+                        // `.app`'s `grid-template-columns` transition.
+                        tx.motion_curve(crate::ui::motion::shell(280.0));
+                        app.toggle_sidebar();
+                    }),
             )
             .child(breadcrumbs(app, t))
             .child(el().grow(1.0).h(1.0))

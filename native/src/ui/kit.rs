@@ -32,6 +32,28 @@ pub fn take_portals() -> Vec<El> {
     PORTALS.with(|p| std::mem::take(&mut *p.borrow_mut()))
 }
 
+thread_local! {
+    /// Each scroll area's last position, for its bar's drag, page and wheel.
+    static POSITIONS: RefCell<HashMap<String, ScrollPos>> = RefCell::new(HashMap::new());
+}
+
+fn position(key: &str) -> Option<ScrollPos> {
+    POSITIONS.with(|m| m.borrow().get(key).copied())
+}
+
+/// The thumb's top and length along a track as long as the viewport.
+fn thumb_geometry(at: &ScrollPos) -> Option<(f32, f32)> {
+    let [_, vh] = at.viewport;
+    if at.max[1] <= 0.5 || vh <= 0.0 {
+        return None;
+    }
+    // Chromium: thumb length is track × visible / total, at least 18 px
+    // (the webkit custom scrollbar minimum), placed in proportion.
+    let len = (vh * vh / (vh + at.max[1])).max(18.0).min(vh);
+    let y = (at.offset[1] / at.max[1]).clamp(0.0, 1.0) * (vh - len);
+    Some((y, len))
+}
+
 fn thumb_live(key: &str) -> Live<[f32; 4]> {
     THUMBS.with(|m| m.borrow_mut().entry(key.to_string()).or_insert_with(|| Live::new([0.0, 0.0, 0.0, 0.0])).clone())
 }
@@ -63,22 +85,16 @@ pub fn scroll_area_fit(t: &Theme, key: &str, content: El, stable_gutter: bool, m
         Some(m) => viewport.grow(1.0).max_h(m),
         None => viewport.grow(1.0).h_full(),
     };
+    let pos_key = key.to_string();
     let viewport = viewport
         .scroll(rune::ScrollSpec { stick_bottom: false })
         .on_scroll_offset(move |at: ScrollPos| {
-            let [_, vh] = at.viewport;
-            let content_h = vh + at.max[1];
-            if at.max[1] <= 0.5 || vh <= 0.0 {
-                feed.set([0.0, 0.0, 0.0, 0.0]);
-                return;
-            }
-            // Chromium: thumb length is track × visible / total, at least 18 px
-            // (the webkit custom scrollbar minimum), placed in proportion.
-            let track = vh;
-            let len = (track * vh / content_h).max(18.0).min(track);
-            let y = (at.offset[1] / at.max[1]).clamp(0.0, 1.0) * (track - len);
-            // The 2 px transparent border with padding-box clip insets the pill.
-            feed.set([2.0, y + 2.0, 6.0, (len - 4.0).max(0.0)]);
+            POSITIONS.with(|m| m.borrow_mut().insert(pos_key.clone(), at));
+            match thumb_geometry(&at) {
+                // The 2 px transparent border with padding-box clip insets the pill.
+                Some((y, len)) => feed.set([2.0, y + 2.0, 6.0, (len - 4.0).max(0.0)]),
+                None => feed.set([0.0, 0.0, 0.0, 0.0]),
+            };
         })
         .child(content.w_full());
     let thumb = el()
@@ -88,7 +104,45 @@ pub fn scroll_area_fit(t: &Theme, key: &str, content: El, stable_gutter: bool, m
         .radius(99.0)
         .fill(t.c.border)
         .hover(crate::ui::hover_overlay(t.c.border, t.c.input));
-    let gutter = el().key(format!("{key}-gutter")).w(10.0).h_full().child(thumb);
+    // The bar works as Chromium's classic scrollbar: drag the thumb, press the
+    // track to page toward the pointer, and the wheel over it scrolls.
+    let (drag_key, wheel_key) = (key.to_string(), key.to_string());
+    let gutter = el()
+        .key(format!("{key}-gutter"))
+        .w(10.0)
+        .h_full()
+        .on_drag(move |_: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
+            let Some(at) = position(&drag_key) else { return };
+            let Some((thumb_y, len)) = thumb_geometry(&at) else { return };
+            match d.phase {
+                rune::Phase::Down => {
+                    if d.y >= thumb_y && d.y <= thumb_y + len {
+                        d.data = at.offset[1];
+                    } else {
+                        d.data = f32::NAN;
+                        tx.scroll_page(drag_key.clone(), if d.y < thumb_y { -1 } else { 1 });
+                    }
+                }
+                rune::Phase::Move if d.data.is_finite() => {
+                    let travel = (at.viewport[1] - len).max(1.0);
+                    let y = (d.data + d.dy * at.max[1] / travel).clamp(0.0, at.max[1]);
+                    tx.scroll_to_instant(drag_key.clone(), at.offset[0], y);
+                }
+                _ => {}
+            }
+            tx.live_only();
+        })
+        .on_wheel(move |_: &mut App, e: rune::WheelEvent, tx: &mut rune::Tx| {
+            let Some(at) = position(&wheel_key) else { return false };
+            if at.max[1] <= 0.5 {
+                return false;
+            }
+            let y = (at.offset[1] - e.dy).clamp(0.0, at.max[1]);
+            tx.scroll_to_instant(wheel_key.clone(), at.offset[0], y);
+            tx.live_only();
+            true
+        })
+        .child(thumb);
     if stable_gutter {
         row().key(format!("{key}-area")).min_h(0.0).min_w(0.0).child(viewport).child(gutter)
     } else {
