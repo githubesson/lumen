@@ -28,8 +28,13 @@ use rune::{Cx, El};
 use crate::app::App;
 use crate::theme::Theme;
 
+/// Work for the next `poll`, which has a `Tx`.
+pub type Later = Box<dyn FnOnce(&mut App, &mut rune::Tx)>;
+
 #[derive(Default)]
 pub struct Overlays {
+    /// Run on the next poll: what a request's answer needs a `Tx` for.
+    pub later: Vec<Later>,
     pub settings: settings::State,
     pub palette: palette::State,
     pub upload: upload::State,
@@ -69,4 +74,20 @@ pub fn window_size(cx: &mut Cx<App>) -> [f32; 2] {
 /// (a transport failure or an empty body).
 pub fn error_message(e: &crate::api::ApiError, fallback: &str) -> String {
     if e.status == 0 || e.message.trim().is_empty() { fallback.to_string() } else { e.message.clone() }
+}
+
+/// Run `f` with a `Tx` on the next poll (a request's answer has none).
+pub fn later(app: &mut App, f: impl FnOnce(&mut App, &mut rune::Tx) + 'static) {
+    app.overlays.later.push(Box::new(f));
+    app.waker.wake();
+}
+
+/// The app's poll: run what [`later`] queued. True when anything ran.
+pub fn poll(app: &mut App, tx: &mut rune::Tx) -> bool {
+    let queued = std::mem::take(&mut app.overlays.later);
+    let any = !queued.is_empty();
+    for f in queued {
+        f(app, tx);
+    }
+    any
 }

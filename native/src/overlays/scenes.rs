@@ -123,6 +123,11 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
         a.overlays.settings.updater = Some(update_available());
         crate::overlays::toast::on_status(a);
     }),
+    ("share", |a| {
+        library(a);
+        crate::overlays::share::open(a, MENU_TRACK);
+        a.settle_sync();
+    }),
 ];
 
 /// A library row by id, as the track list shows it.

@@ -256,6 +256,8 @@ fn setup(app: &mut App, waker: Waker) {
 fn poll(app: &mut App, _clock: f64, tx: &mut Tx) -> bool {
     let mut changed = Net::drain(app);
     changed |= app.player.poll(tx);
+    // Overlay work that finished off the UI thread and needs a `Tx` (a copy, a save dialog).
+    changed |= crate::overlays::poll(app, tx);
     changed
 }
 
