@@ -1,0 +1,282 @@
+//! Form controls: `Select.tsx` (the custom listbox), `SearchInput.tsx`,
+//! `Field.tsx` (`Field`, `FieldRow`), `SettingRow.tsx`, `Fieldset.tsx`.
+
+use rune::{Align, Color, Cursor, El, Side, TextEdit, col, el, row, text};
+
+use crate::app::App;
+use crate::theme::{Theme, color_mix};
+use crate::ui::{css_border, font, ico, icons as i, line, with_lh};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SelectVariant {
+    /// `.input`-styled full-width trigger.
+    #[default]
+    Outlined,
+    /// Text and chevron only (`text-sm text-muted-foreground`).
+    Minimal,
+    /// Inside a `.toolbar-group`.
+    Toolbar,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SelectOption {
+    pub value: String,
+    pub label: String,
+    pub title: Option<String>,
+    pub disabled: bool,
+}
+
+impl SelectOption {
+    pub fn new(value: impl Into<String>, label: impl Into<String>) -> SelectOption {
+        SelectOption { value: value.into(), label: label.into(), title: None, disabled: false }
+    }
+}
+
+/// The one open select (only one listbox is ever open).
+#[derive(Clone)]
+pub struct OpenSelect {
+    pub key: String,
+    pub options: Vec<SelectOption>,
+    pub value: String,
+    pub variant: SelectVariant,
+    pub on_change: fn(&mut App, &str),
+}
+
+/// `<Select>`: a trigger showing the chosen option, opening a listbox
+/// (drawn by [`select_layer`] at the root, above everything).
+pub fn select(
+    app: &App,
+    t: &Theme,
+    key: &str,
+    options: &[SelectOption],
+    value: &str,
+    variant: SelectVariant,
+    placeholder: &str,
+    disabled: bool,
+    on_change: fn(&mut App, &str),
+) -> El {
+    let open = app.select.as_ref().is_some_and(|s| s.key == key);
+    let selected = options.iter().find(|o| o.value == value);
+    let label = selected.map(|o| o.label.clone()).unwrap_or_else(|| placeholder.to_string());
+    let open_spec = OpenSelect {
+        key: key.to_string(),
+        options: options.to_vec(),
+        value: value.to_string(),
+        variant,
+        on_change,
+    };
+    let toggle = move |app: &mut App| {
+        if app.select.as_ref().is_some_and(|s| s.key == open_spec.key) {
+            app.select = None;
+        } else {
+            app.select = Some(open_spec.clone());
+        }
+    };
+    let mut trigger = match variant {
+        SelectVariant::Outlined => {
+            let ink = if selected.is_some() { t.c.foreground } else { t.c.muted_foreground };
+            let b = css_border(row(), 1.0, if open { t.c.focus_ring } else { t.c.input }, t.radius_lg());
+            b.h(32.0)
+                .w_full()
+                .pl(11.0)
+                .pr(11.0)
+                .gap(8.0)
+                .items_center()
+                .radius(t.radius_lg())
+                .fill(t.c.input_bg)
+                .child(line(label, font(14.0, 400.0), ink).grow(1.0))
+                .child(ico(&i::CHEVRONS_UP_DOWN, 14.0, t.c.muted_foreground))
+        }
+        SelectVariant::Minimal => row()
+            .gap(4.0)
+            .items_center()
+            .radius(t.radius_md())
+            .child(line(label, font(14.0, 400.0), t.c.muted_foreground).group_color(t.c.foreground))
+            .child(ico(&i::CHEVRONS_UP_DOWN, 14.0, t.c.muted_foreground).group_color(t.c.foreground))
+            .hover(Color::TRANSPARENT),
+        SelectVariant::Toolbar => {
+            let hot = color_mix(t.c.foreground, 0.07, Color::TRANSPARENT);
+            let ink = if open { t.c.foreground } else { t.c.muted_foreground };
+            let mut b = row()
+                .h(26.0)
+                .px(9.0)
+                .gap(6.0)
+                .items_center()
+                .radius(t.radius_md())
+                .child(text(label).font(font(14.0, 500.0)).color(ink).group_color(t.c.foreground))
+                .child(ico(&i::CHEVRONS_UP_DOWN, 14.0, ink).group_color(t.c.foreground))
+                .hover(hot)
+                .press_scale(0.97);
+            if open {
+                b = b.fill(hot);
+            }
+            b
+        }
+    };
+    trigger = trigger.key(key).role("combobox").expanded(open);
+    if disabled {
+        trigger.opacity(0.5).disabled(true).cursor(Cursor::NotAllowed)
+    } else {
+        trigger.cursor(Cursor::Pointer).focusable(true).on_press(toggle)
+    }
+}
+
+/// The open select's listbox, anchored to its trigger. Mount at the root.
+pub fn select_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> {
+    let open = app.select.as_ref()?;
+    let trigger_w = cx.layout_size(&open.key).map_or(160.0, |s| s[0]);
+    let mut list = crate::ui::kit::menu_panel(t, &format!("{}-listbox", open.key), None)
+        .max_h(240.0)
+        .role("listbox")
+        .focus_group();
+    list = match open.variant {
+        SelectVariant::Outlined => list.w(trigger_w),
+        SelectVariant::Minimal => list.min_w(160.0),
+        SelectVariant::Toolbar => list.min_w(176.0),
+    };
+    let mut items = col();
+    for (n, o) in open.options.iter().enumerate() {
+        let selected = o.value == open.value;
+        let value = o.value.clone();
+        let on_change = open.on_change;
+        let mut it = row()
+            .key(format!("{}-opt-{n}", open.key))
+            .w_full()
+            .min_h(28.0)
+            .px(6.0)
+            .py(4.0)
+            .gap(6.0)
+            .items_center()
+            .radius(t.radius_md())
+            .role("option")
+            .checked(selected)
+            .focus_selected(selected)
+            .child(line(o.label.clone(), font(14.0, if selected { 500.0 } else { 400.0 }), t.c.popover_foreground).grow(1.0));
+        if selected {
+            it = it.child(ico(&i::CHECK, 14.0, t.c.primary));
+        }
+        if let Some(title) = &o.title {
+            it = it.help(title.clone());
+        }
+        if o.disabled {
+            it = it.opacity(0.5).cursor(Cursor::NotAllowed);
+        } else {
+            it = it.cursor(Cursor::Pointer).focusable(true).focus_highlight(t.c.accent).hover(t.c.accent).on_press(move |app: &mut App| {
+                app.select = None;
+                on_change(app, &value);
+            });
+        }
+        items = items.child(it);
+    }
+    list = list.child(crate::ui::kit::scroll_area_with(t, &format!("{}-scroll", open.key), items, false).shrink());
+    let (align, gap) = match open.variant {
+        SelectVariant::Outlined => (Align::Start, 4.0),
+        SelectVariant::Minimal => (Align::End, 4.0),
+        SelectVariant::Toolbar => (Align::End, 8.0),
+    };
+    let catcher = el()
+        .key(format!("{}-dismiss", open.key))
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .on_press(|app: &mut App| app.select = None);
+    Some(
+        el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+            .modal(false, |app: &mut App| app.select = None)
+            .child(catcher)
+            .child(list.anchored(open.key.clone(), Side::Bottom, align, gap)),
+    )
+}
+
+/// `SearchInput`: the `.search` box with a magnifier and a text field.
+/// Escape clears it when `on_clear` is given.
+pub fn search_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, width: Option<f32>) -> El {
+    let focused = edit.focused;
+    let mut b = css_border(row(), 1.0, if focused { t.c.focus_ring } else { t.c.input }, t.radius_lg())
+        .key(format!("{key}-box"))
+        .h(32.0)
+        .pl(11.0)
+        .pr(7.0)
+        .gap(8.0)
+        .items_center()
+        .radius(t.radius_lg())
+        .fill(t.c.input_bg)
+        .min_w(0.0);
+    b = match width {
+        Some(w) => b.w(w),
+        None => b.w_full(),
+    };
+    if focused {
+        b = b
+            .box_shadow(rune::Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: t.c.focus_ring, inset: false })
+            .box_shadow(rune::Shadow {
+                x: 0.0,
+                y: 0.0,
+                blur: 0.0,
+                spread: 4.0,
+                color: color_mix(t.c.ring, 0.3, Color::TRANSPARENT),
+                inset: false,
+            });
+    }
+    b.child(ico(&i::SEARCH, 14.0, t.c.muted_foreground)).child(
+        rune::text_input(edit, font(14.0, 400.0))
+            .key(key)
+            .single_line()
+            .placeholder(placeholder, t.c.muted_foreground)
+            .label(placeholder)
+            .color(t.c.foreground)
+            .selection_color(t.c.selection)
+            .grow(1.0)
+            .min_w(0.0),
+    )
+}
+
+/// `Field`: a label over a control, with a hint or an error under it.
+pub fn field(t: &Theme, label: &str, control: El, hint: Option<&str>, error: Option<&str>) -> El {
+    let mut c = col().gap(6.0).child(text(label).font(with_lh(font(14.0, 500.0), 14.0)).color(t.c.foreground)).child(control);
+    if let Some(e) = error {
+        c = c.child(text(e).font(font(12.0, 400.0)).color(t.c.destructive).wrap().role("alert"));
+    } else if let Some(h) = hint {
+        c = c.child(text(h).font(font(12.0, 400.0)).color(t.c.muted_foreground).wrap());
+    }
+    c
+}
+
+/// `FieldRow`: fields side by side in equal columns, 12 px apart.
+pub fn field_row(children: Vec<El>) -> El {
+    let mut r = row().gap(12.0).w_full();
+    for c in children {
+        r = r.child(el().grow(1.0).w(0.0).min_w(0.0).child(c.w_full()));
+    }
+    r
+}
+
+/// `SettingRow`: label (and description) on the left, the control on the
+/// right, `below` across the full width, a hairline under it unless `last`.
+pub fn setting_row(
+    t: &Theme,
+    label: &str,
+    description: Option<&str>,
+    control: Option<El>,
+    below: Option<El>,
+    error: Option<&str>,
+    last: bool,
+) -> El {
+    let mut texts = col().min_w(0.0).shrink().child(text(label).font(font(14.0, 400.0)).color(t.c.foreground));
+    if let Some(d) = description {
+        texts = texts.child(text(d).font(with_lh(font(12.0, 400.0), 16.8)).color(t.c.muted_foreground).wrap_anywhere().mt(2.0));
+    }
+    let mut main = row().min_h(28.0).gap(16.0).items_center().justify_between().child(texts);
+    if let Some(c) = control {
+        main = main.child(el().child(c));
+    }
+    let mut r = col().gap(8.0).pt(14.0).pb(if last { 14.0 } else { 15.0 }).child(main);
+    if !last {
+        r = crate::ui::css_border_bottom(r, 1.0, t.c.border);
+    }
+    if let Some(b) = below {
+        r = r.child(b);
+    }
+    if let Some(e) = error {
+        r = r.child(text(e).font(font(12.0, 400.0)).color(t.c.destructive).wrap());
+    }
+    r
+}

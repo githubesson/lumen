@@ -48,6 +48,8 @@ pub struct App {
     pub player: crate::player::Player,
     pub pages: crate::pages::Pages,
     pub overlays: crate::overlays::Overlays,
+    /// The open `<Select>` listbox, if any.
+    pub select: Option<crate::ui::forms::OpenSelect>,
 }
 
 impl App {
@@ -71,6 +73,7 @@ impl App {
             player: crate::player::Player::default(),
             pages: crate::pages::Pages::default(),
             overlays: crate::overlays::Overlays::default(),
+            select: None,
             config,
             waker,
         };
