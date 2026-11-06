@@ -323,7 +323,7 @@ fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
     changed |= crate::pages::share_preview::poll(app, clock, tx);
     // Overlay work that finished off the UI thread and needs a `Tx` (a copy, a save dialog).
     changed |= crate::overlays::poll(app, tx);
-    changed |= crate::shell::player::poll(app, tx);
+    changed |= crate::shell::player::poll(app, clock, tx);
     changed
 }
 
@@ -335,6 +335,7 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
     app.system_dark.set(cx.system_dark());
     app.images.set_scale(cx.env().scale);
     app.widgets.lists.begin_frame();
+    crate::ui::track_row::begin_bars();
     let t = app.theme();
     // `App.tsx`'s gating: the shell only for a signed-in route.
     let in_shell = crate::pages::auth::gate(app) == crate::pages::auth::Gate::Shell;

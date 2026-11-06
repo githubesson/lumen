@@ -4,18 +4,32 @@
 //! play/pause, a label growing a digit, a drag).
 //!
 //! The web moves the clock in 0.25 s steps and glides the fill over each
-//! step (`transition: clip-path 250ms linear`); here the published steps are
-//! smoothed by a 0.25 s spring.
+//! step (`transition: clip-path 250ms linear`). Here the poll runs the same
+//! linear glide, but only as often as the bar visibly moves: a four-minute
+//! track creeps a fraction of a pixel per step, so the window redraws a few
+//! times a step instead of at the display's rate for as long as music plays.
 
-use rune::{El, Live, LiveText, Spring, el, text};
+use std::time::Duration;
+
+use rune::{El, Live, LiveText, Tx, el, text};
 
 use crate::app::App;
 use crate::format::fmt_duration_sec;
 use crate::theme::Theme;
 use crate::ui::{font, tnum};
 
-/// The clock's glide between its 0.25 s steps.
-const GLIDE: Spring = Spring::new(0.25, 0.0);
+/// The clock's glide between its 0.25 s steps, in seconds.
+const GLIDE: f64 = 0.25;
+/// How far the bar moves between two redraws of a glide, in px.
+const GLIDE_STEP_PX: f32 = 0.25;
+
+/// A linear glide of the shown value from one published step to the next.
+#[derive(Clone, Copy, Debug)]
+struct Glide {
+    from: f32,
+    to: f32,
+    start: f64,
+}
 
 /// The live values the seek bar and its times are bound to.
 #[derive(Clone)]
@@ -31,6 +45,9 @@ pub struct Progress {
     pub remaining: LiveText,
     /// The seek bar's laid-out size.
     size: [f32; 2],
+    /// The value the fill shows now, and the glide it is on.
+    shown: f32,
+    glide: Option<Glide>,
 }
 
 impl Default for Progress {
@@ -42,6 +59,8 @@ impl Default for Progress {
             total: LiveText::new("0:00"),
             remaining: LiveText::new("0:00"),
             size: [0.0; 2],
+            shown: 0.0,
+            glide: None,
         }
     }
 }
@@ -78,26 +97,51 @@ impl Progress {
         ([0.0, 0.0, v * w, h], [v * w, 0.0])
     }
 
-    /// Land the fill and thumb at `v` at once (a release after a drag, a
-    /// resize).
-    pub fn snap(&self, v: f32) {
+    fn show(&mut self, v: f32) {
+        self.shown = v;
         let (fill, thumb) = self.rects(v);
         self.fill.snap(fill);
         self.thumb.snap(thumb);
+    }
+
+    /// Land the fill and thumb at `v` at once (a release after a drag, a
+    /// resize).
+    pub fn snap(&mut self, v: f32) {
+        self.glide = None;
+        self.show(v);
+    }
+
+    /// Glide toward `v`, as of `now`; asks for the next redraw while the
+    /// glide runs.
+    fn glide_to(&mut self, v: f32, now: f64, tx: &mut Tx) {
+        if self.glide.map_or(self.shown, |g| g.to) != v {
+            self.glide = Some(Glide { from: self.shown, to: v, start: now });
+        }
+        let Some(g) = self.glide else { return };
+        let t = ((now - g.start) / GLIDE).clamp(0.0, 1.0) as f32;
+        self.show(g.from + (g.to - g.from) * t);
+        if t >= 1.0 {
+            self.glide = None;
+            return;
+        }
+        // Redraw when the fill has moved another `GLIDE_STEP_PX`: rarely for
+        // a long track's creep, at the display's rate for a seek's jump.
+        let speed = (g.to - g.from).abs() * self.size[0] / GLIDE as f32;
+        let wait = if speed > 0.0 { (GLIDE_STEP_PX / speed) as f64 } else { GLIDE };
+        let left = (1.0 - t as f64) * GLIDE;
+        tx.wake_after(Duration::from_secs_f64(wait.clamp(1.0 / 120.0, left.max(1.0 / 120.0))));
     }
 }
 
 /// Every frame, after the player's poll: publish the clock. True when the
 /// view has to run again: a label changed its length (its box is sized from
 /// the text the view last saw).
-pub fn publish(app: &mut App) -> bool {
+pub fn publish(app: &mut App, now: f64, tx: &mut Tx) -> bool {
     let (position, duration, v) = clock(app);
-    let p = &app.ui.player.progress;
     if app.ui.seek_drag.as_ref().is_none_or(|(k, _)| k != "seek") {
-        let (fill, thumb) = p.rects(v);
-        p.fill.set(fill);
-        p.thumb.set(thumb);
+        app.ui.player.progress.glide_to(v, now, tx);
     }
+    let p = &app.ui.player.progress;
     let mut relayout = false;
     for (live, s) in [&p.elapsed, &p.total, &p.remaining].into_iter().zip(labels(position, duration)) {
         if live.get().chars().count() != s.chars().count() {
@@ -119,7 +163,7 @@ pub fn resized(app: &mut App, w: f32, h: f32) {
 
 /// The played part of the seek bar, bound to the live clock.
 pub fn fill(app: &App, t: &Theme) -> El {
-    el().absolute(0.0, 0.0).size(0.0, 0.0).radius(999.0).fill(t.c.primary).inert().live_rect(app.ui.player.progress.fill.smooth(GLIDE))
+    el().absolute(0.0, 0.0).size(0.0, 0.0).radius(999.0).fill(t.c.primary).inert().live_rect(&app.ui.player.progress.fill)
 }
 
 /// The seek bar's thumb (12 px, centred on the value), bound to the live
@@ -132,7 +176,7 @@ pub fn thumb(app: &App, t: &Theme, h: f32, dragging: bool) -> El {
         .border(1.0, t.c.primary)
         .inert()
         .group_opacity(if dragging { 1.0 } else { 0.0 }, 1.0)
-        .live_offset(app.ui.player.progress.thumb.smooth(GLIDE))
+        .live_offset(&app.ui.player.progress.thumb)
 }
 
 /// A tabular 12 px time bound to `live`: its box is the text the view saw,

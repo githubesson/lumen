@@ -78,9 +78,9 @@ pub fn flash_copied(app: &mut App) {
 
 /// Every frame, from `App::poll`: start the lyrics request for a new track,
 /// close what went with a failure, and run the mini player's queued steps.
-pub fn poll(app: &mut App, tx: &mut Tx) -> bool {
+pub fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
     let mut changed = lyrics::sync(app);
-    changed |= progress::publish(app);
+    changed |= progress::publish(app, clock, tx);
     changed |= lyrics::follow(app, tx);
     // The details go with the failure: playing again, or another track,
     // shuts them, so the next failure doesn't open them by itself.
