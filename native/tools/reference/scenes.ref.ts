@@ -77,6 +77,23 @@ type Scene = {
   bridge?: Bridge;
   /** `tweaks.homeBoard` to seed before sign-in (Home's saved arrangement). */
   homeBoard?: unknown;
+  /** Runs once signed in, before `path` opens (extra API routes). */
+  before?: (page: Page) => Promise<void>;
+};
+
+/** Replay with its tiles loaded (the placeholder bento has the same headings). */
+const replayLoaded = (p: Page) => ready(p, p.locator(".replay-bento:not(.is-loading), .replay .empty-state"));
+
+/** Scrolls the routed content (`.content`) to `top`, clamped to its end. */
+const scrollContent = (p: Page, top: number) =>
+  p.locator(".content").evaluate((el, y) => {
+    el.scrollTop = y;
+  }, top);
+
+/** A Replay answer with no plays (the server's shape for an empty window). */
+const emptyReplay = {
+  summary: { total_plays: 0, total_ms: 0, unique_tracks: 0, unique_artists: 0 },
+  top_tracks: [], top_artists: [], top_albums: [], top_genres: [], activity: [], bucket: "day", available_years: [2025, 2026],
 };
 
 /** The desktop config the desktop-settings lint run serves. */
@@ -229,7 +246,68 @@ const SCENES: Scene[] = [
   { name: "favorites", path: "/favorites", wait: (p) => ready(p, p.locator("tbody tr")) },
   { name: "recent", path: "/recent", wait: (p) => ready(p, p.locator("tbody tr")) },
   { name: "playlists", path: "/playlists", wait: (p) => ready(p, p.locator(".card, .playlist-card")) },
-  { name: "replay", path: "/replay", wait: (p) => ready(p, p.locator(".replay, main")) },
+  { name: "replay", path: "/replay", wait: replayLoaded },
+  { name: "replay-last30", path: "/replay?period=last-30", wait: replayLoaded },
+  { name: "replay-month", path: "/replay?period=this-month", wait: replayLoaded },
+  { name: "replay-2025", path: "/replay?period=year:2025", wait: replayLoaded },
+  { name: "replay-all", path: "/replay?period=all", wait: replayLoaded },
+  {
+    name: "replay-empty",
+    path: "/replay?period=last-30",
+    before: (p) => p.route("**/api/stats/replay?**", (r) => r.fulfill({ json: emptyReplay })),
+    wait: replayLoaded,
+  },
+  {
+    name: "replay-loading",
+    path: "/replay",
+    // Never answers: the placeholder bento stays up.
+    before: (p) => p.route("**/api/stats/replay?**", () => {}),
+    wait: (p) => p.locator(".replay-bento.is-loading").waitFor(),
+  },
+  {
+    name: "replay-all-tracks",
+    path: "/replay",
+    wait: replayLoaded,
+    act: async (p) => {
+      await p.getByRole("button", { name: /^Show all \d+$/ }).click();
+      await p.getByRole("button", { name: "Show fewer" }).waitFor();
+      // The click scrolled the button into view; settle on a fixed offset.
+      await scrollContent(p, 380);
+    },
+  },
+  {
+    name: "replay-hover",
+    path: "/replay",
+    wait: replayLoaded,
+    act: async (p) => {
+      const box = await p.locator(".bento-row").nth(1).boundingBox();
+      await p.mouse.move(box!.x + 120, box!.y + box!.height / 2);
+    },
+    keepPointer: true,
+  },
+  { name: "replay-medium", path: "/replay", size: { width: 900, height: 700 }, wait: replayLoaded },
+  { name: "replay-narrow", path: "/replay", size: { width: 700, height: 600 }, wait: replayLoaded },
+  // With the sidebar the panel is under 560 px: the bento's phone layout.
+  { name: "replay-small", path: "/replay", size: { width: 820, height: 700 }, wait: replayLoaded },
+  // Below the fold: the content scrolled 420 px (Rune: scripts/replay-scroll.json), and to its end.
+  { name: "replay-mid", path: "/replay", wait: replayLoaded, act: (p) => scrollContent(p, 420) },
+  { name: "replay-bottom", path: "/replay", wait: replayLoaded, act: (p) => scrollContent(p, 1e6) },
+  { name: "replay-month-bottom", path: "/replay?period=this-month", wait: replayLoaded, act: (p) => scrollContent(p, 1e6) },
+  {
+    name: "replay-all-tracks-bottom",
+    path: "/replay",
+    wait: replayLoaded,
+    act: async (p) => {
+      await p.getByRole("button", { name: /^Show all \d+$/ }).click();
+      await p.getByRole("button", { name: "Show fewer" }).waitFor();
+      await scrollContent(p, 1e6);
+    },
+  },
+  { name: "replay-medium-bottom", path: "/replay", size: { width: 900, height: 700 }, wait: replayLoaded, act: (p) => scrollContent(p, 1e6) },
+  { name: "replay-narrow-mid", path: "/replay", size: { width: 700, height: 600 }, wait: replayLoaded, act: (p) => scrollContent(p, 420) },
+  { name: "replay-narrow-bottom", path: "/replay", size: { width: 700, height: 600 }, wait: replayLoaded, act: (p) => scrollContent(p, 1e6) },
+  { name: "replay-small-mid", path: "/replay", size: { width: 820, height: 700 }, wait: replayLoaded, act: (p) => scrollContent(p, 420) },
+  { name: "replay-small-bottom", path: "/replay", size: { width: 820, height: 700 }, wait: replayLoaded, act: (p) => scrollContent(p, 1e6) },
   { name: "admin", path: "/admin", wait: (p) => ready(p, p.locator(".admin-section-wrap tbody tr")) },
   ...adminScenes(),
   // Shared components (TrackList, the track menu, tooltips) on the Favorites page.
@@ -839,6 +917,7 @@ for (const scene of SCENES) {
       await page.goto(scene.path ?? "/login");
     } else {
       await signedIn(page);
+      await scene.before?.(page);
       if (scene.path) await go(page, scene.path);
     }
     await scene.wait?.(page);

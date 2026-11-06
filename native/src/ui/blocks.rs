@@ -343,6 +343,14 @@ impl Run {
 /// over 600 ms, ease-out cubic, with thousands separators. Under reduced
 /// motion it shows the value at once.
 pub fn animated_number(app: &App, cx: &rune::Cx<App>, key: &str, value: f64, style: rune::TextStyle, ink: Color) -> El {
+    let shown = animated_value(app, cx, key, value);
+    text(format_count(shown)).font(tnum(style)).color(ink).key(key.to_string())
+}
+
+/// [`animated_number`]'s value this frame, for a counter that formats it
+/// itself (`AnimatedNumber`'s `format`: Replay's listening time) or sets it
+/// with other text.
+pub fn animated_value(app: &App, cx: &rune::Cx<App>, key: &str, value: f64) -> f64 {
     let nums = &app.widgets.numbers;
     let now = nums.clock.get();
     let shown = if cx.is_reduced_motion() {
@@ -356,7 +364,7 @@ pub fn animated_number(app: &App, cx: &rune::Cx<App>, key: &str, value: f64, sty
         }
         run.at(now)
     };
-    text(format_count(shown)).font(tnum(style)).color(ink).key(key.to_string())
+    shown
 }
 
 /// Runs before each frame: starts new counts and keeps frames coming while

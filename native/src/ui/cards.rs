@@ -36,12 +36,12 @@ pub fn square_art(t: &Theme, images: &Images, url: Option<&str>, label: &str, ra
 }
 
 /// `.card`'s padding, gap and type for the density.
-fn card_metrics(t: &Theme) -> (f32, f32, f32) {
+pub fn card_metrics(t: &Theme) -> (f32, f32, f32) {
     if t.density == Density::Dense { (6.0, 8.0, 12.0) } else { (8.0, 10.0, 14.0) }
 }
 
 /// `.card`: the tile box, lit on hover.
-fn card_box(t: &Theme, key: &str) -> El {
+pub fn card_box(t: &Theme, key: &str) -> El {
     let (pad, gap, _) = card_metrics(t);
     col()
         .key(key)
@@ -56,7 +56,7 @@ fn card_box(t: &Theme, key: &str) -> El {
 }
 
 /// `.card-title` and `.card-sub`.
-fn card_text(t: &Theme, title: El, sub: Option<&str>) -> El {
+pub fn card_text(t: &Theme, title: El, sub: Option<&str>) -> El {
     let (_, _, sub_fs) = card_metrics(t);
     let (_, _, title_fs) = card_metrics(t);
     let mut c = col().w_full().min_w(0.0).child(crate::ui::exact_text(title.w_full(), title_fs, title_fs * 1.45));
@@ -181,10 +181,8 @@ pub fn media_card_placeholders(t: &Theme, key: &str, count: usize) -> Vec<El> {
     let (pad, gap, title_fs) = card_metrics(t);
     (0..count)
         .map(|n| {
-            // `.skeleton-text`: a 0.75em bar centred on the line.
-            let bar = |fs: f32, frac: f32| {
-                el().w_full().h(fs * 1.45).items_center().child(el().w_frac(frac).h(fs * 0.75).radius(t.radius_sm()).fill(t.c.muted))
-            };
+            // `.skeleton-text`: a 0.75 em bar at `vertical-align: middle`.
+            let bar = |fs: f32, frac: f32| crate::ui::skeleton_line(t, fs, fs * 1.45, frac);
             col()
                 .key(format!("{key}-{n}"))
                 .w_full()

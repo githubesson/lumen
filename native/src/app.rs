@@ -528,6 +528,22 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
     ("library-tidal-artist", |a| scene(a, "/library?tidalArtist=4419021&artistName=Marisol%20Vey")),
     ("library-album-missing", |a| scene(a, "/library?album=missing")),
     ("library-tidal-missing", |a| scene(a, "/library?tidalAlbum=404404")),
+    ("replay-last30", |a| scene(a, "/replay?period=last-30")),
+    ("replay-month", |a| scene(a, "/replay?period=this-month")),
+    ("replay-2025", |a| scene(a, "/replay?period=year:2025")),
+    ("replay-all", |a| scene(a, "/replay?period=all")),
+    ("replay-empty", |a| {
+        scene(a, "/replay?period=last-30");
+        crate::pages::replay::scenes::empty(a);
+    }),
+    ("replay-loading", |a| {
+        scene(a, "/replay");
+        crate::pages::replay::scenes::loading(a);
+    }),
+    ("replay-all-tracks", |a| {
+        scene(a, "/replay");
+        crate::pages::replay::scenes::all_tracks(a);
+    }),
     ("drawer", |a| {
         scene(a, "/library");
         a.ui.mobile_nav_open = true;

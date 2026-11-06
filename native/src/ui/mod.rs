@@ -97,6 +97,23 @@ pub fn centred(e: El, style: TextStyle) -> El {
     e.offset(0.0, (lh.ceil() - lh) / 2.0)
 }
 
+/// Where Chromium puts the baseline of a line of Geist at `size` px in its
+/// `lh`-tall box: the font's ascent (1.005 em) and descent (0.295 em) each
+/// rounded to whole pixels, the half-leading floored. Lines of different
+/// sizes that share a baseline, and `vertical-align: middle` boxes (half
+/// the 0.53 em x-height above it), line up by it.
+pub fn css_baseline(size: f32, lh: f32) -> f32 {
+    let (ascent, descent) = ((1.005 * size).round(), (0.295 * size).round());
+    ascent + ((lh - ascent - descent) / 2.0).floor()
+}
+
+/// `.skeleton-text`: a bar 0.75 em tall at `vertical-align: middle` in a
+/// line of `size` px type `lh` tall, `frac` of the line's width.
+pub fn skeleton_line(t: &crate::theme::Theme, size: f32, lh: f32, frac: f32) -> El {
+    let top = css_baseline(size, lh) - 0.265 * size - 0.375 * size;
+    rune::el().w_full().h(lh).child(rune::el().absolute(0.0, top).w_frac(frac).h(0.75 * size).radius(t.radius_sm()).fill(t.c.muted))
+}
+
 /// Text that ends at its box's right edge (`text-align: right`). Rune
 /// sizes a text's box to its advance rounded up to a whole pixel, which
 /// would leave the glyphs up to a pixel short of the edge; this moves them

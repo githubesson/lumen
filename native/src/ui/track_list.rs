@@ -271,7 +271,9 @@ impl TrackList {
         let h = if self.header { 40.0 } else { 0.0 };
         let mut r = row().key(format!("{}-thead", self.key)).w_full().h(h).items_center();
         if self.header {
-            r = css_border_bottom(r.pb(1.0), 1.0, t.c.border);
+            // `.table thead th { background: var(--background) }`: seen
+            // where the table sits on a card (Replay's top tracks).
+            r = css_border_bottom(r.pb(1.0).fill(t.c.background), 1.0, t.c.border);
         }
         let (all, some) = (sel.all_selected(items), sel.some_selected(items));
         let key = self.key.clone();
