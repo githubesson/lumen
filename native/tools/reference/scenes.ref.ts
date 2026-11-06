@@ -246,6 +246,9 @@ const SCENES: Scene[] = [
   { name: "albums", path: "/library?view=albums", wait: (p) => ready(p, p.locator(".card")) },
   { name: "artists", path: "/library?view=artists", wait: (p) => ready(p, p.locator(".card")) },
   { name: "favorites", path: "/favorites", wait: (p) => ready(p, p.locator("tbody tr")) },
+  // Scrolled past the table's header, which doesn't stick: `.table-scroll`
+  // (overflow-x: auto) is its sticky container (Rune: scripts/content-scroll-600.json).
+  { name: "library-scrolled", path: "/library", wait: (p) => ready(p, p.locator("tbody tr")), act: (p) => scrollContent(p, 600) },
   { name: "recent", path: "/recent", wait: (p) => ready(p, p.locator("tbody tr")) },
   { name: "playlists", path: "/playlists", wait: (p) => ready(p, p.locator(".card, .playlist-card")) },
   { name: "replay", path: "/replay", wait: replayLoaded },
