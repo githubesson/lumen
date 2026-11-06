@@ -32,6 +32,8 @@ pub struct Ui {
     pub mobile_nav_open: bool,
     /// A `SeekBar` being dragged: its key and the value under the pointer.
     pub seek_drag: Option<(String, f32)>,
+    /// The player's popovers, lyrics state and mini player mode.
+    pub player: crate::shell::player::State,
 }
 
 pub struct App {
@@ -276,6 +278,7 @@ fn setup(app: &mut App, waker: Waker) {
 fn poll(app: &mut App, _clock: f64, tx: &mut Tx) -> bool {
     let mut changed = Net::drain(app);
     changed |= crate::player::poll(app, tx);
+    changed |= crate::shell::player::poll(app, tx);
     changed
 }
 
@@ -302,6 +305,11 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
 
 /// Scenes for headless snapshots: each signs in against `LUMEN_SERVER` (the
 /// mock server by default) and opens one screen with its data loaded.
+/// [`scene`] for other modules' scene lists.
+pub fn scene_at(app: &mut App, path: &str) {
+    scene(app, path);
+}
+
 fn scene(app: &mut App, path: &str) {
     if app.client.is_none() {
         app.connect(&std::env::var("LUMEN_SERVER").unwrap_or_else(|_| "http://127.0.0.1:4791".into()));
@@ -326,6 +334,16 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
         scene(a, "/library");
         a.ui.mobile_nav_open = true;
     }),
+    ("queue-open", crate::shell::player::scenes::queue_open),
+    ("devices-open", crate::shell::player::scenes::devices_open),
+    ("lyrics-open", crate::shell::player::scenes::lyrics_open),
+    ("lyrics-narrow", crate::shell::player::scenes::lyrics_open),
+    ("error-popover", crate::shell::player::scenes::error_popover),
+    ("mini", crate::shell::player::scenes::mini_closed),
+    ("mini-queue", crate::shell::player::scenes::mini_queue),
+    ("mini-lyrics", crate::shell::player::scenes::mini_lyrics),
+    ("mini-devices", crate::shell::player::scenes::mini_devices),
+    ("mini-error", crate::shell::player::scenes::mini_error),
     ("light", |a| {
         a.config.tweaks = Some(Tweaks { theme: Mode::Light, ..a.tweaks.clone() });
         a.tweaks.theme = Mode::Light;
