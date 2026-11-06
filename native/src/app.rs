@@ -301,7 +301,70 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
     ("recent", |a| scene(a, "/recent")),
     ("playlists", |a| scene(a, "/playlists")),
     ("replay", |a| scene(a, "/replay")),
-    ("admin", |a| scene(a, "/admin")),
+    ("admin", |a| {
+        scene(a, "/admin");
+        crate::pages::admin::scenes::ready(a);
+    }),
+    // The admin page's sections and dialogs (scroll the library ones with
+    // a `--script` wheel, as the reference scrolls `.content`).
+    ("admin-users", |a| {
+        scene(a, "/admin?section=users");
+        crate::pages::admin::scenes::ready(a);
+    }),
+    ("admin-invites", |a| {
+        scene(a, "/admin?section=invites");
+        crate::pages::admin::scenes::ready(a);
+    }),
+    ("admin-errors", |a| {
+        scene(a, "/admin");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::errors_open(a);
+    }),
+    ("admin-downloads", |a| {
+        scene(a, "/admin");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::downloads_open(a);
+    }),
+    ("admin-remove-folder", |a| {
+        scene(a, "/admin");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::remove_folder(a);
+    }),
+    ("admin-unlink", |a| {
+        scene(a, "/admin");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::tidal_unlink(a);
+    }),
+    ("admin-link-flow", |a| {
+        scene(a, "/admin");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::tidal_flow(a);
+    }),
+    ("admin-disable-user", |a| {
+        scene(a, "/admin?section=users");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::disable_user(a);
+    }),
+    ("admin-delete-user", |a| {
+        scene(a, "/admin?section=users");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::delete_user(a);
+    }),
+    ("admin-invites-past", |a| {
+        scene(a, "/admin?section=invites");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::invites_past(a);
+    }),
+    ("admin-invite-created", |a| {
+        scene(a, "/admin?section=invites");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::invite_created(a);
+    }),
+    ("admin-revoke-invite", |a| {
+        scene(a, "/admin?section=invites");
+        crate::pages::admin::scenes::ready(a);
+        crate::pages::admin::scenes::revoke_invite(a);
+    }),
     ("light", |a| {
         a.config.tweaks = Some(Tweaks { theme: Mode::Light, ..a.tweaks.clone() });
         a.tweaks.theme = Mode::Light;
