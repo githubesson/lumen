@@ -481,7 +481,6 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
         crate::pages::admin::scenes::ready(a);
         crate::pages::admin::scenes::revoke_invite(a);
     }),
-    ("admin", |a| scene(a, "/admin")),
     ("library-grid", |a| {
         scene(a, "/library");
         crate::pages::library::scenes::grid(a);
@@ -518,7 +517,7 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
     ("welcome-change", crate::pages::auth::scenes::welcome_change),
     ("startup-loading", crate::pages::auth::scenes::startup_loading),
     ("startup-unreachable", crate::pages::auth::scenes::startup_unreachable),
-    ("share", crate::pages::auth::scenes::share),
+    ("share-preview", crate::pages::auth::scenes::share),
     ("light", |a| {
         a.config.tweaks = Some(Tweaks { theme: Mode::Light, ..a.tweaks.clone() });
         a.tweaks.theme = Mode::Light;

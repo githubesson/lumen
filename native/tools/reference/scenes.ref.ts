@@ -131,7 +131,7 @@ async function openSettings(page: Page, section?: string) {
 const MENU_TRACK = "The Lighthouse Keeper's Daughter Never Learned to Swim";
 const LINKED_TRACK = "Everything You Left in the Glovebox";
 /** The playlist page's own track rows (not the library's, still up as it opens). */
-const rows = (p: Page) => ready(p, p.locator(".view:has(.playlist-toolbar) tbody tr"));
+const playlistRows = (p: Page) => ready(p, p.locator(".view:has(.playlist-toolbar) tbody tr"));
 /** Picks a tab without moving the mouse (no hover left behind). */
 const tab = (p: Page, name: string | RegExp) => p.getByRole("tab", { name }).first().dispatchEvent("click");
 
@@ -291,13 +291,13 @@ const SCENES: Scene[] = [
   },
   // Playlists: one owned private, one owned collaborative, one shared with
   // the user as an editor (fixtures.ts), each on its tabs.
-  { name: "playlist-owned", path: "/playlists/pl-night-drives", wait: rows },
-  { name: "playlist-collab", path: "/playlists/pl-sunday-coffee", wait: rows },
-  { name: "playlist-shared", path: "/playlists/pl-road-trip", wait: rows },
+  { name: "playlist-owned", path: "/playlists/pl-night-drives", wait: playlistRows },
+  { name: "playlist-collab", path: "/playlists/pl-sunday-coffee", wait: playlistRows },
+  { name: "playlist-shared", path: "/playlists/pl-road-trip", wait: playlistRows },
   {
     name: "playlist-collaborators",
     path: "/playlists/pl-sunday-coffee",
-    wait: rows,
+    wait: playlistRows,
     act: async (p) => {
       await tab(p, /^Collaborators/);
       await ready(p, p.getByText("theo", { exact: true }));
@@ -306,7 +306,7 @@ const SCENES: Scene[] = [
   {
     name: "playlist-shared-collaborators",
     path: "/playlists/pl-road-trip",
-    wait: rows,
+    wait: playlistRows,
     act: async (p) => {
       await tab(p, /^Collaborators/);
       await ready(p, p.getByText("priya", { exact: true }));
@@ -315,7 +315,7 @@ const SCENES: Scene[] = [
   {
     name: "playlist-settings",
     path: "/playlists/pl-sunday-coffee",
-    wait: rows,
+    wait: playlistRows,
     act: async (p) => {
       await tab(p, "Settings");
       await ready(p, p.getByRole("textbox", { name: "Name" }));
@@ -324,7 +324,7 @@ const SCENES: Scene[] = [
   {
     name: "playlist-shared-settings",
     path: "/playlists/pl-road-trip",
-    wait: rows,
+    wait: playlistRows,
     act: async (p) => {
       await tab(p, "Settings");
       await ready(p, p.getByText("Save TIDAL tracks to the library"));
@@ -333,7 +333,7 @@ const SCENES: Scene[] = [
   {
     name: "playlist-add",
     path: "/playlists/pl-night-drives",
-    wait: rows,
+    wait: playlistRows,
     act: async (p) => {
       await p.getByRole("button", { name: "Add tracks" }).dispatchEvent("click");
       await ready(p, p.locator("[role=dialog] li"));
@@ -346,7 +346,7 @@ const SCENES: Scene[] = [
     // A row picked up and held over the gap above the fifth row.
     name: "playlist-drag",
     path: "/playlists/pl-night-drives",
-    wait: rows,
+    wait: playlistRows,
     act: async (p) => {
       const all = p.locator(".view:has(.playlist-toolbar) tbody tr");
       const data = await p.evaluateHandle(() => new DataTransfer());
@@ -509,7 +509,7 @@ const SCENES: Scene[] = [
     wait: (p) => ready(p, p.getByText("Your server is unavailable")),
   },
   {
-    name: "share",
+    name: "share-preview",
     signedOut: true,
     path: "/shared/track/t-al-weather-1?t=45&d=30&sig=4b1d9e",
     wait: (p) => ready(p, p.locator(".share-preview-card")),
