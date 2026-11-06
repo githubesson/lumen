@@ -31,16 +31,76 @@ pub fn t_btn(t: &Theme, key: &str, glyph: &'static Icon, active: bool, disabled:
     }
 }
 
-/// `SeekBar`'s look: a 4 px track with the filled part in the primary colour.
-fn bar(t: &Theme, key: &str, value: f32) -> El {
-    let v = value.clamp(0.0, 1.0);
+/// `SeekBar` (`.bar`, `.bar-fill`, `.bar-thumb`): a 4 px track with the
+/// played part in the primary colour, a 24 px tall hit area that takes no
+/// layout space, and a 12 px thumb shown on hover and while dragging (grown
+/// 1.25×). Seeks commit on release unless `live` (the volume follows the
+/// pointer). Arrows step 5%, Home and End go to the ends.
+pub fn seek_bar(app: &App, t: &Theme, key: &str, value: f32, label: &str, live: bool, on_seek: fn(&mut App, f32)) -> El {
+    let dragging = app.ui.seek_drag.as_ref().filter(|(k, _)| k == key).map(|(_, v)| *v);
+    let v = dragging.unwrap_or(value).clamp(0.0, 1.0);
+    let k = key.to_string();
+    let hit = el()
+        .key(format!("{key}-hit"))
+        .pin(Some(0.0), Some(-10.0), Some(0.0), Some(-10.0))
+        .cursor(Cursor::Pointer)
+        .on_drag(move |app: &mut App, d: &mut rune::Drag, _tx: &mut rune::Tx| {
+            let at = if d.w > 0.0 { (d.x / d.w).clamp(0.0, 1.0) } else { 0.0 };
+            match d.phase {
+                rune::Phase::Down | rune::Phase::Move => {
+                    app.ui.seek_drag = Some((k.clone(), at));
+                    if live {
+                        on_seek(app, at);
+                    }
+                }
+                rune::Phase::Up => {
+                    app.ui.seek_drag = None;
+                    on_seek(app, at);
+                }
+            }
+        });
+    let thumb_opacity = if dragging.is_some() { 1.0 } else { 0.0 };
+    // Centred on the value: the end of a box `v` of the track wide, pulled 6 px past it.
+    let thumb = el()
+        .key(format!("{key}-thumb"))
+        .size(12.0, 12.0)
+        .mr(-6.0)
+        .radius(999.0)
+        .fill(t.c.background)
+        .border(1.0, t.c.primary)
+        .scale(if dragging.is_some() { 1.25 } else { 1.0 })
+        .group_opacity(thumb_opacity, 1.0);
+    let thumb_track = el()
+        .pin(Some(0.0), Some(0.0), None, Some(0.0))
+        .w_frac(v)
+        .items_center()
+        .justify_end()
+        .inert()
+        .child(thumb);
+    let mut fill = el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w_frac(v).radius(999.0).fill(t.c.primary).inert();
+    if dragging.is_none() {
+        // The clock advances in 0.25 s steps; a 250 ms linear glide hides them.
+        fill = fill.motion(rune_motion::Spring::new(0.25, 0.0));
+    } else {
+        fill = fill.instant_changes();
+    }
+    // At 0 the CSS clip hides the fill entirely; a zero-width pill would still
+    // leave an anti-aliased sliver.
+    let fill = if v > 0.0 { fill } else { fill.opacity(0.0) };
     el().key(key)
         .grow(1.0)
         .h(4.0)
         .radius(999.0)
         .fill(t.c.muted)
-        .cursor(Cursor::Pointer)
-        .child(el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w_frac(v).radius(999.0).fill(t.c.primary))
+        .hover_group()
+        .role("slider")
+        .label(label)
+        .range_value((v * 100.0).round() as f64, 0.0, 100.0)
+        .on_step(move |app: &mut App, delta: i32, _tx: &mut rune::Tx| on_seek(app, (value + 0.05 * delta as f32).clamp(0.0, 1.0)))
+        .on_step_limit(move |app: &mut App, max: bool, _tx: &mut rune::Tx| on_seek(app, if max { 1.0 } else { 0.0 }))
+        .child(fill)
+        .child(thumb_track)
+        .child(hit)
 }
 
 fn now_playing(app: &App, t: &Theme, bp: Bp) -> El {
@@ -127,7 +187,10 @@ fn transport(app: &App, t: &Theme, bp: Bp) -> El {
         .gap(if bp == Bp::Medium { 6.0 } else { 8.0 })
         .items_center()
         .child(time(fmt_duration_sec(p.position)))
-        .child(bar(t, "seek", progress).label("Seek"))
+        .child(seek_bar(app, t, "seek", progress, "Seek", false, |app: &mut App, v: f32| {
+            let d = app.player.duration.unwrap_or(0.0);
+            app.player.seek(v as f64 * d);
+        }))
         .child(time(fmt_duration_sec(duration)));
     col().key("transport").w_full().min_w(0.0).gap(6.0).items_center().child(controls).child(progress_row)
 }
@@ -145,7 +208,9 @@ fn utility(app: &App, t: &Theme, bp: Bp) -> El {
         .child(t_btn(t, "mute", if off { &i::VOLUME_X } else { &i::VOLUME_2 }, false, false)
             .label(if off { "Unmute" } else { "Mute" })
             .on_press(|app: &mut App| app.player.toggle_mute()))
-        .child(bar(t, "volume-bar", if p.muted { 0.0 } else { p.volume }).label("Volume"));
+        .child(seek_bar(app, t, "volume-bar", if p.muted { 0.0 } else { p.volume }, "Volume", true, |app: &mut App, v: f32| {
+            app.player.set_volume(v)
+        }));
     row()
         .key("utility")
         .gap(8.0)

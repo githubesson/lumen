@@ -43,22 +43,10 @@ pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     let p = &mut app.player;
     match &ev.key {
         Key::Text(t) if t == " " => p.toggle_play(),
-        Key::Left => {
-            let to = (p.position - 5.0).max(0.0);
-            p.seek(to);
-        }
-        Key::Right => {
-            let to = p.position + 5.0;
-            p.seek(to);
-        }
-        Key::Up => {
-            let v = p.volume + 0.05;
-            p.set_volume(v);
-        }
-        Key::Down => {
-            let v = p.volume - 0.05;
-            p.set_volume(v);
-        }
+        Key::Left => p.seek_by(-5.0),
+        Key::Right => p.seek_by(5.0),
+        Key::Up => p.change_volume(0.05),
+        Key::Down => p.change_volume(-0.05),
         Key::Text(t) if !m.shift => match t.as_str() {
             "n" => p.next(),
             "p" => p.previous(),

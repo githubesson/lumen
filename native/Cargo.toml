@@ -20,10 +20,39 @@ ureq = { version = "3", default-features = false, features = ["rustls", "json", 
 dirs = "6"
 urlencoding = "2"
 url = "2"
+# The player (src/player): shuffle order, decoding, resampling, the HLS keys,
+# the device socket.
+fastrand = "2"
+symphonia = { version = "0.5.5", default-features = false, features = ["aac", "adpcm", "alac", "flac", "isomp4", "mkv", "mp3", "ogg", "pcm", "vorbis", "wav"] }
+opuscule = "0.2.2"
+rubato = { version = "0.16", default-features = false, features = ["fft_resampler"] }
+rtrb = "0.3"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+uuid = { version = "1", features = ["v4"] }
+
 
 # The local time zone (`localtime_r`) for dates shown in local time.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Audio output: WASAPI on Windows, Core Audio on macOS. Linux builds play
+# silently on a clock unless built with `--features alsa` (needs libasound).
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+cpal = "0.18"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+cpal = { version = "0.18", optional = true }
+
+# The System Media Transport Controls (media keys, the OS media flyout).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Foundation", "Media", "Media_Playback", "Storage_Streams"] }
+
+[features]
+alsa = ["dep:cpal"]
 
 [profile.dev.package."*"]
 debug = false

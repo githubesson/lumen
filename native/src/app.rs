@@ -30,6 +30,8 @@ pub struct Ui {
     pub lyrics_open: bool,
     /// The sidebar drawer of narrow windows (`useMobileNav`).
     pub mobile_nav_open: bool,
+    /// A `SeekBar` being dragged: its key and the value under the pointer.
+    pub seek_drag: Option<(String, f32)>,
 }
 
 pub struct App {
@@ -72,7 +74,7 @@ impl App {
             playlists: None,
             pending_invites: 0,
             ui: Ui::default(),
-            player: crate::player::Player::default(),
+            player: crate::player::Player::new(waker.clone(), config.audio_sink_id.clone()),
             pages: crate::pages::Pages::default(),
             overlays: crate::overlays::Overlays::default(),
             select: None,
@@ -273,7 +275,7 @@ fn setup(app: &mut App, waker: Waker) {
 
 fn poll(app: &mut App, _clock: f64, tx: &mut Tx) -> bool {
     let mut changed = Net::drain(app);
-    changed |= app.player.poll(tx);
+    changed |= crate::player::poll(app, tx);
     changed
 }
 
