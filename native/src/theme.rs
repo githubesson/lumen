@@ -328,7 +328,7 @@ mod tests {
     use super::*;
 
     fn srgb(c: Color) -> [u8; 4] {
-        let e = |v: f32| (rune::srgb_encode(v) * 255.0).round() as u8;
+        let e = |v: f32| (rune::color::srgb_encode(v) * 255.0).round() as u8;
         [e(c.r), e(c.g), e(c.b), (c.a * 255.0).round() as u8]
     }
 

@@ -90,6 +90,15 @@ impl App {
     pub fn connect(&mut self, server: &str) {
         let jar = crate::config::data_dir().join("session.json");
         let client = Client::new(server, Some(jar));
+        // A request the server rejects with 401 ends the session (`setUnauthorizedHandler`).
+        let sender = self.net.sender();
+        client.on_unauthorized(move || {
+            sender.send(|app: &mut App| {
+                if matches!(app.session, Session::SignedIn(_)) {
+                    app.signed_out();
+                }
+            })
+        });
         self.images.set_client(Some(client.clone()));
         self.client = Some(client);
         self.session = Session::Loading;
@@ -99,7 +108,7 @@ impl App {
     pub fn refresh_me(&mut self) {
         let Some(client) = self.client.clone() else { return };
         self.net.run(
-            move || client.get::<Me>("/api/auth/me"),
+            move || api::auth::me(&client),
             |app, result| match result {
                 Ok(me) => app.signed_in(me),
                 Err(e) if e.is_unauthorized() => {
@@ -229,14 +238,21 @@ impl App {
                 let _ = client.post_void("/api/auth/logout", None);
                 client.clear_cookies();
             },
-            |app, ()| {
-                app.session = Session::SignedOut;
-                app.playlists = None;
-                app.pending_invites = 0;
-                app.pages = Default::default();
-                app.history = History::new(Location::parse("/login"));
-            },
+            |app, ()| app.signed_out(),
         );
+    }
+
+    /// The session is gone (signed out here, or the server said 401).
+    pub fn signed_out(&mut self) {
+        if let Some(client) = &self.client {
+            client.advance_auth_generation();
+        }
+        self.player.stop();
+        self.session = Session::SignedOut;
+        self.playlists = None;
+        self.pending_invites = 0;
+        self.pages = Default::default();
+        self.history = History::new(Location::parse("/login"));
     }
 
     /// Load everything a scene shows before its first frame (headless only).
