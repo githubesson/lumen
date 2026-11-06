@@ -7,20 +7,10 @@ use std::sync::Arc;
 
 use rune::{El, el};
 
-use crate::api::{ApiResult, Client};
+pub use crate::api::Page as PageResult;
+use crate::api::{ApiResult, Client, SearchOffsets, error_message};
 use crate::app::App;
 use crate::theme::Theme;
-
-use super::requests::{SearchOffsets, error_message};
-
-/// One page from a fetcher. `next_offsets` is set for search's per-stream
-/// cursors (empty: exhausted); other lists page by offset up to `total`.
-pub struct PageResult<T> {
-    pub items: Vec<T>,
-    pub total: u64,
-    pub next_offsets: Option<SearchOffsets>,
-    pub warnings: Vec<String>,
-}
 
 pub type Fetch<T> = Arc<dyn Fn(&Client, usize, usize, Option<&SearchOffsets>) -> ApiResult<PageResult<T>> + Send + Sync>;
 

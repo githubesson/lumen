@@ -20,7 +20,7 @@ use crate::ui::track_list::TrackList;
 use super::album::not_found;
 use super::cards;
 use super::logic::{self, ArtistRelease, RELEASE_FILTER_OPTIONS};
-use super::requests::{self, error_message};
+use crate::api::{self, error_message};
 use super::sleeve::{balanced_width, clear_on_escape, skeleton};
 
 const SHELF_LIMIT: usize = 6;
@@ -41,7 +41,7 @@ pub fn enter_library(app: &mut App, id: &str) {
     d.seq += 1;
     let (seq, key, id) = (d.seq, d.key.clone(), d.id.clone());
     app.net.run(
-        move || requests::get_artist(&client, &id),
+        move || -> api::ApiResult<_> { Ok((api::library::get_artist(&client, &id)?, api::library::list_artist_tracks(&client, &id)?)) },
         move |app, result| {
             let s = &mut app.pages.library;
             if s.detail.seq != seq || s.detail.key != key {
@@ -79,7 +79,7 @@ fn load_tidal(app: &mut App) {
     d.seq += 1;
     let (seq, key, id, attempt) = (d.seq, d.key.clone(), d.id.clone(), d.attempt);
     app.net.run(
-        move || requests::get_tidal_artist(&client, &id),
+        move || api::tidal::get_tidal_artist(&client, &id),
         move |app, result| {
             let s = &mut app.pages.library;
             if s.detail.seq != seq || s.detail.key != key {
@@ -187,7 +187,8 @@ fn hero(app: &App, t: &Theme, width: f32, name: Option<&str>, image: Option<Stri
 
 /// `ArtistActions`: play/pause the artist, shuffle, and `end` on the right.
 fn actions(app: &App, t: &Theme, name: &str, tracks: &[TrackListItem], end: Option<El>, wrap_end: bool) -> El {
-    let (here, show_pause, can_play) = logic::list_playback_state(tracks, app.player.current(), app.player.playing);
+    let st = crate::player::list_playback_state(tracks, app.player.current(), app.player.playing);
+    let (here, show_pause, can_play) = (st.playing_here, st.show_pause, st.can_play);
     let label = display_text(Some(name), "");
     let queue = tracks.to_vec();
     let hot = color_mix(t.c.primary, 0.8, Color::TRANSPARENT);
@@ -210,7 +211,7 @@ fn actions(app: &App, t: &Theme, name: &str, tracks: &[TrackListItem], end: Opti
                 if here {
                     app.player.toggle_play();
                 } else {
-                    logic::start_list_playback(&mut app.player, &queue);
+                    crate::ui::track_row::start_list(app, &queue, app.player.shuffle);
                 }
             });
     } else {
@@ -380,9 +381,9 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, name_param: &str) -> E
     let width = content_width(t, cx);
     let data = d.tidal_artist.as_ref();
     let loading = d.completed != Some(d.attempt);
-    let warning = data.and_then(|a| a.warnings.as_ref()).map(|w| w.join(" ")).filter(|w| !w.is_empty());
-    let tracks: &[TrackListItem] = data.map_or(&[], |a| a.tracks());
-    let releases = data.map(|a| logic::fold_release_versions(&logic::tidal_artist_releases(a.albums()))).unwrap_or_default();
+    let warning = data.map(|a| a.warnings.join(" ")).filter(|w| !w.is_empty());
+    let tracks: &[TrackListItem] = data.map_or(&[], |a| &a.tracks);
+    let releases = data.map(|a| logic::fold_release_versions(&logic::tidal_artist_releases(&a.albums))).unwrap_or_default();
     let profile = data.and_then(|a| a.artist.as_ref());
     let name = profile.map(|p| p.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| name_param.to_string());
     let image = logic::artist_image_url(profile.and_then(|p| p.cover_url.as_deref()), tracks, None);

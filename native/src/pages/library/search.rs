@@ -16,16 +16,17 @@ use crate::ui::track_list::TrackList;
 
 use super::browse::refreshable;
 use super::cards;
-use super::logic::merge_search_warnings;
+use crate::api::search::merge_search_warnings;
 use super::paging::{self, PageResult, Paged};
-use super::requests::{self, SearchItem, SearchType};
+use crate::api::search::{self, SearchParams, SearchResult as SearchItem, SearchType};
+use crate::api::PageParams;
 
 fn slot(app: &mut App) -> &mut Paged<SearchItem> {
     &mut app.pages.library.search
 }
 
 fn search_key(q: &str, ty: SearchType) -> String {
-    format!("{}\u{0}{}", ty.param(), q.trim())
+    format!("{}\u{0}{}", ty.as_str(), q.trim())
 }
 
 /// Tag each page's warnings with the search it came from, so an old
@@ -53,9 +54,12 @@ pub fn load(app: &mut App, q: &str, ty: SearchType) {
         if query.is_empty() {
             return Ok(PageResult { items: Vec::new(), total: 0, next_offsets: Some(Default::default()), warnings: Vec::new() });
         }
-        let page = requests::search_page(c, &query, ty, limit, offset, offsets)?;
-        let total = (offset + page.items.len()) as u64;
-        Ok(PageResult { items: page.items, total, next_offsets: Some(page.next_offsets), warnings: page.warnings })
+        let page = PageParams {
+            q: Some(query.clone()),
+            search_offsets: offsets.cloned(),
+            ..PageParams::new(limit as u32, offset as u64)
+        };
+        search::search_page(c, &SearchParams { page, kind: Some(ty), sources: None })
     });
     paging::reload(app, slot, search_key(q, ty), fetch, true, Some(on_page));
 }

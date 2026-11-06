@@ -17,7 +17,7 @@ use crate::ui::{self, Btn, BtnState, font, icons as i, iconbtn, tnum, with_lh};
 
 use crate::ui::track_select::{self, BarPlace};
 use super::{exact, line_count};
-use super::logic::{self, AlbumCredit, AlbumFact, FactKey};
+use super::logic::{AlbumCredit, AlbumFact, FactKey};
 
 /// Below this content width the column stacks above the list.
 pub const STACK_BELOW_PX: f32 = 720.0;
@@ -114,7 +114,7 @@ fn play_row(app: &App, t: &Theme, tracks: &[TrackListItem], loading: bool, grow:
     }
     if can_play {
         play = play.on_press(move |app: &mut App| {
-            logic::start_list_playback(&mut app.player, &queue);
+            crate::ui::track_row::start_list(app, &queue, app.player.shuffle);
         });
     }
     let on = app.player.shuffle;

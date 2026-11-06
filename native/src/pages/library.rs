@@ -11,7 +11,7 @@
 //! - [`sleeve`] + [`album`]: `AlbumSleeve`, `LibraryDetail`, the version
 //!   picker and `AlbumDownloadControl`
 //! - [`artist`]: `ArtistDetail`
-//! - [`logic`] + [`requests`]: core helpers and API calls, until the merge
+//! - [`logic`]: the page's own helpers over `crate::core`
 
 pub mod album;
 pub mod artist;
@@ -19,7 +19,6 @@ pub mod browse;
 pub mod cards;
 pub mod logic;
 pub mod paging;
-pub mod requests;
 pub mod search;
 pub mod sleeve;
 pub mod toolbar;
@@ -33,9 +32,10 @@ use crate::app::App;
 use crate::route::Location;
 use crate::theme::Theme;
 
-use logic::{EntityTarget, ReleaseFilter};
+use logic::{EntityKind, EntityTarget, ReleaseFilter};
 use paging::Paged;
-use requests::{SearchItem, SearchType, TidalAlbum, TidalArtist};
+use crate::api::search::{SearchResult as SearchItem, SearchType};
+use crate::api::tidal::{TidalAlbum, TidalArtist};
 
 /// The browse tab (`?view=`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -115,6 +115,17 @@ impl Sort {
             Sort::Artist => "artist",
             Sort::Album => "album",
             Sort::Duration => "duration",
+        }
+    }
+    /// The API's `sort` for it.
+    pub fn list_sort(self) -> crate::api::ListSort {
+        use crate::api::ListSort;
+        match self {
+            Sort::Recent => ListSort::Recent,
+            Sort::Title => ListSort::Title,
+            Sort::Artist => ListSort::Artist,
+            Sort::Album => ListSort::Album,
+            Sort::Duration => ListSort::Duration,
         }
     }
     pub fn parse(s: &str) -> Sort {
@@ -394,7 +405,7 @@ pub fn set_view(app: &mut App, v: View) {
 pub fn set_search_type(app: &mut App, ty: SearchType) {
     let loc = library_loc(app);
     let Route::Browse { view, .. } = route(&loc) else { return };
-    let next = apply_view(loc.with("type", Some(ty.param())), View::of_search_type(ty).unwrap_or(view));
+    let next = apply_view(loc.with("type", Some(ty.as_str())), View::of_search_type(ty).unwrap_or(view));
     app.navigate_replace(next);
 }
 
@@ -439,9 +450,10 @@ pub fn set_display(app: &mut App, d: Display) {
 /// artist it was opened from, whose releases list its other versions.
 pub fn open_album(app: &mut App, target: EntityTarget) {
     let loc = library_loc(app);
-    let next = match target {
-        EntityTarget::Tidal(id) => loc.with("album", None).with("tidalAlbum", Some(&id)),
-        EntityTarget::Local(id) => loc.with("tidalArtist", None).with("tidalAlbum", None).with("album", Some(&id)),
+    let id = target.id;
+    let next = match target.kind {
+        EntityKind::Tidal => loc.with("album", None).with("tidalAlbum", Some(&id)),
+        EntityKind::Local => loc.with("tidalArtist", None).with("tidalAlbum", None).with("album", Some(&id)),
     };
     app.navigate(next);
 }
@@ -455,15 +467,16 @@ pub fn open_version(app: &mut App, id: &str, artist_id: &str) {
 /// `openArtist`.
 pub fn open_artist(app: &mut App, target: EntityTarget, name: Option<&str>) {
     let loc = library_loc(app);
-    let next = match target {
-        EntityTarget::Tidal(id) => {
+    let id = target.id;
+    let next = match target.kind {
+        EntityKind::Tidal => {
             let l = loc.with("tidalArtist", Some(&id));
             match name {
                 Some(n) if !n.is_empty() => l.with("artistName", Some(n)),
                 _ => l,
             }
         }
-        EntityTarget::Local(id) => loc.with("artist", Some(&id)),
+        EntityKind::Local => loc.with("artist", Some(&id)),
     };
     app.navigate(next);
 }
@@ -486,8 +499,8 @@ pub fn detail_tracks(app: &App) -> &[TrackListItem] {
     let d = &app.pages.library.detail;
     match (&d.tracks, &d.tidal_album, &d.tidal_artist) {
         (Some(t), _, _) => t,
-        (None, Some(a), _) => a.tracks(),
-        (None, None, Some(a)) => a.tracks(),
+        (None, Some(a), _) => &a.tracks,
+        (None, None, Some(a)) => &a.tracks,
         _ => &[],
     }
 }

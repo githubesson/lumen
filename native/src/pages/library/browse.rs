@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use rune::{Cx, El, col};
 
-use crate::api::{Album, Artist, TrackListItem};
+use crate::api::{self, Album, Artist, PageParams, TrackListItem};
+use crate::api::search::SearchType;
 use crate::app::App;
 use crate::theme::Theme;
 use crate::ui::blocks::list_meta;
@@ -16,7 +17,6 @@ use crate::ui::track_list::TrackList;
 
 use super::cards;
 use super::paging::{self, PageResult, Paged};
-use super::requests::{self, SearchType};
 use super::{Display, View, toolbar};
 
 fn tracks_slot(app: &mut App) -> &mut Paged<TrackListItem> {
@@ -33,23 +33,24 @@ fn artists_slot(app: &mut App) -> &mut Paged<Artist> {
 pub fn load(app: &mut App, view: View) {
     match view {
         View::Tracks => {
-            let sort = app.pages.library.sort.param();
+            let sort = app.pages.library.sort;
             let fetch: paging::Fetch<TrackListItem> = Arc::new(move |c, limit, offset, _| {
-                let (items, total) = requests::list_tracks_page(c, limit, offset, sort)?;
+                let params = PageParams { sort: Some(sort.list_sort()), ..PageParams::new(limit as u32, offset as u64) };
+                let (items, total) = api::library::list_tracks(c, &params)?;
                 Ok(PageResult { items, total, next_offsets: None, warnings: Vec::new() })
             });
-            paging::reload(app, tracks_slot, sort.to_string(), fetch, true, None);
+            paging::reload(app, tracks_slot, sort.param().to_string(), fetch, true, None);
         }
         View::Albums => {
             let fetch: paging::Fetch<Album> = Arc::new(|c, limit, offset, _| {
-                let (items, total) = requests::list_albums_page(c, limit, offset)?;
+                let (items, total) = api::library::list_albums(c, &PageParams::new(limit as u32, offset as u64))?;
                 Ok(PageResult { items, total, next_offsets: None, warnings: Vec::new() })
             });
             paging::reload(app, albums_slot, String::new(), fetch, false, None);
         }
         View::Artists => {
             let fetch: paging::Fetch<Artist> = Arc::new(|c, limit, offset, _| {
-                let (items, total) = requests::list_artists_page(c, limit, offset)?;
+                let (items, total) = api::library::list_artists(c, &PageParams::new(limit as u32, offset as u64))?;
                 Ok(PageResult { items, total, next_offsets: None, warnings: Vec::new() })
             });
             paging::reload(app, artists_slot, String::new(), fetch, false, None);

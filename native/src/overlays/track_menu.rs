@@ -591,64 +591,10 @@ fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
 
 /// `prepareTrackDownload` + the stream: the file's bytes and its name
 /// ("Artist - Title.ext").
-// TODO(api-merge): move to the desktop bridge's download module once it lands.
 pub fn fetch_download(client: &Client, t: &TrackListItem) -> api::ApiResult<(Vec<u8>, String)> {
-    let detail = client.get::<api::TrackDetail>(&format!("/api/tracks/{}", api::seg(&t.id))).ok();
-    let (bytes, content_type) = client.bytes(&client.url(&api::media::download_stream_path(&t.id)))?;
-    let ext = detail.as_ref().and_then(|d| ext_for_format(&d.format)).or_else(|| ext_for_content_type(&content_type));
-    Ok((bytes, download_filename(t, detail.as_ref(), ext)))
-}
-
-fn sanitize(name: &str) -> String {
-    let cleaned: String = name.chars().map(|c| if "<>:\"/\\|?*".contains(c) || (c as u32) < 0x20 { '_' } else { c }).collect();
-    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
-    collapsed.trim_end_matches(['.', ' ']).chars().take(180).collect()
-}
-
-fn download_filename(t: &TrackListItem, d: Option<&api::TrackDetail>, ext: Option<&str>) -> String {
-    let artists: Vec<&str> = d.map(|d| d.artists.iter().map(|a| a.name.as_str()).filter(|n| !n.is_empty()).collect()).unwrap_or_default();
-    let artist = if artists.is_empty() { t.artist.clone().unwrap_or_default() } else { artists.join(", ") };
-    let title = d.map(|d| d.title.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| t.title.clone());
-    let base = [artist, title].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" - ");
-    let name = sanitize(if base.is_empty() { "track" } else { &base });
-    match ext {
-        Some(e) if !name.to_lowercase().ends_with(&format!(".{e}")) => format!("{name}.{e}"),
-        _ => name,
-    }
-}
-
-fn ext_for_format(format: &str) -> Option<&'static str> {
-    let n = format.to_lowercase().trim_start_matches('.').replace(['_', '-'], " ");
-    let n = n.trim();
-    if n.is_empty() {
-        return None;
-    }
-    Some(match n {
-        "mp3" | "id3" | "id3v1" | "id3v2" | "mpeg" | "mpeg audio" => "mp3",
-        "m4a" | "mp4" | "mp4a" | "aac" | "alac" => "m4a",
-        "mov" => "mov",
-        _ if n.contains("flac") => "flac",
-        _ if n.contains("ogg") => "ogg",
-        _ if n.contains("opus") => "opus",
-        _ if n.contains("wav") || n.contains("wave") => "wav",
-        _ if n.contains("webm") => "webm",
-        _ if n.contains("quicktime") => "mov",
-        _ => return None,
-    })
-}
-
-fn ext_for_content_type(ct: &str) -> Option<&'static str> {
-    let ct = ct.split(';').next().unwrap_or("").trim().to_lowercase();
-    Some(match ct.as_str() {
-        "audio/mpeg" | "audio/mp3" => "mp3",
-        "audio/flac" | "audio/x-flac" => "flac",
-        "audio/mp4" | "audio/m4a" | "audio/x-m4a" | "audio/aac" => "m4a",
-        "audio/ogg" => "ogg",
-        "audio/opus" => "opus",
-        "audio/wav" | "audio/x-wav" | "audio/wave" => "wav",
-        "audio/webm" => "webm",
-        _ => return None,
-    })
+    let prepared = crate::core::audio_format::prepare_track_download(client, t);
+    let (bytes, _) = client.bytes(&client.url(&api::media::download_stream_path(&t.id)))?;
+    Ok((bytes, prepared.filename))
 }
 
 /// `runViewAlbum`: the track's album page, from the row or its detail.
@@ -1093,12 +1039,5 @@ mod tests {
         assert_eq!(key_target(&items, Some(&Item::Play), &Key::Left), None);
         assert_eq!(key_target(&items, Some(&Item::Info), &Key::Down), Some(Item::Edit));
         assert_eq!(key_target(&items, Some(&Item::Move), &Key::Down), Some(Item::Fav));
-    }
-
-    #[test]
-    fn file_names() {
-        let t = TrackListItem { id: "1".into(), title: "A/B".into(), artist: Some("X".into()), ..Default::default() };
-        assert_eq!(download_filename(&t, None, Some("flac")), "X - A_B.flac");
-        assert_eq!(ext_for_format("MPEG audio"), Some("mp3"));
     }
 }

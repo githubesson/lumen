@@ -15,7 +15,7 @@ use crate::ui::{font, ico, icons as i};
 use crate::ui::track_select::{self, BarPlace};
 
 use super::browse::{TRACKS_LIST, tracks_source};
-use super::requests::{SEARCH_DEBOUNCE_MS, SEARCH_TYPE_OPTIONS, SearchType};
+use crate::api::search::{SEARCH_DEBOUNCE_MS, SEARCH_TYPE_OPTIONS, SearchType};
 use super::{Display, Sort, View};
 
 const SORT_OPTIONS: [(Sort, &str); 5] = [

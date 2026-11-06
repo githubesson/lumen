@@ -144,63 +144,61 @@ pub fn toggle_row(app: &mut App, key: &str, source: Source, id: &str, index: usi
     s.last_index = if s.ids.is_empty() { None } else { Some(index) };
 }
 
-/// `exportSelected`: the selected library files into a folder the user
-/// picks (`exportTracksAsFiles` with the desktop's folder picker).
+/// `exportSelected` (`exportTracksAsFiles`): name each selected library
+/// file (`prepareTrackDownload`, off the UI thread), then the desktop's
+/// folder picker and download (`desktop::export`).
 pub fn export_selected(app: &mut App, key: &str, source: Source, tx: &mut Tx) {
+    let _ = tx;
     let s = app.widgets.lists.get(key);
     if s.exporting {
         return;
     }
     let tracks: Vec<TrackListItem> =
-        s.selected(source(app)).into_iter().filter(|t| crate::ui::track_row::is_local(t)).cloned().collect();
+        s.selected(source(app)).into_iter().filter(|t| crate::ui::track_row::is_local(*t)).cloned().collect();
     if tracks.is_empty() {
         return;
     }
+    let Some(client) = app.client.clone() else { return };
     {
         let e = app.widgets.lists.entry(key);
         e.exporting = true;
         e.notice = None;
     }
     let key = key.to_string();
-    let options = rune::FileDialogOptions { title: "Export files".into(), ..Default::default() };
-    tx.open_folder(options, move |app: &mut App, picked, _tx| {
-        let dir = match picked {
-            Ok(Some(dir)) => dir,
-            Ok(None) => return export_done(app, &key, "Export canceled.".into()),
-            Err(e) => return export_done(app, &key, e.0),
-        };
-        let Some(client) = app.client.clone() else { return export_done(app, &key, "Export failed.".into()) };
-        app.net.run(
-            move || export_files(&client, &tracks, &dir),
-            move |app, (exported, failed)| {
-                let suffix = if failed > 0 { format!(", {failed} failed") } else { String::new() };
-                let plural = if exported == 1 { "" } else { "s" };
-                export_done(app, &key, format!("Exported {exported} file{plural}{suffix}."));
-            },
-        );
-    });
+    app.net.run(
+        move || {
+            tracks
+                .iter()
+                .map(|t| {
+                    let prepared = crate::core::audio_format::prepare_track_download(&client, t);
+                    crate::desktop::export::ExportItem { url: crate::api::media::download_stream_path(&t.id), filename: prepared.filename }
+                })
+                .collect::<Vec<_>>()
+        },
+        move |app, items| {
+            // The folder picker needs the window's Tx: on the next frame.
+            crate::overlays::later(app, move |app: &mut App, tx: &mut Tx| {
+                let k = key.clone();
+                crate::desktop::export::export_track_files(app, tx, items, move |app, res| {
+                    if res.canceled {
+                        return export_done(app, &k, "Export canceled.".into());
+                    }
+                    if let Some(e) = res.error.filter(|_| res.saved == 0 && res.failed == 0) {
+                        return export_done(app, &k, e);
+                    }
+                    let suffix = if res.failed > 0 { format!(", {} failed", res.failed) } else { String::new() };
+                    let plural = if res.saved == 1 { "" } else { "s" };
+                    export_done(app, &k, format!("Exported {} file{plural}{suffix}.", res.saved));
+                });
+            });
+        },
+    );
 }
 
 fn export_done(app: &mut App, key: &str, notice: String) {
     let e = app.widgets.lists.entry(key);
     e.exporting = false;
     e.notice = Some(if notice.is_empty() { "Export failed.".into() } else { notice });
-}
-
-/// Each file's original bytes into `dir`: how many landed and how many failed.
-// TODO(api-merge): move to the desktop bridge's download module once it lands.
-fn export_files(client: &crate::api::Client, tracks: &[TrackListItem], dir: &std::path::Path) -> (usize, usize) {
-    let (mut ok, mut failed) = (0, 0);
-    for t in tracks {
-        match crate::overlays::track_menu::fetch_download(client, t) {
-            Ok((bytes, name)) => match std::fs::write(dir.join(name), bytes) {
-                Ok(()) => ok += 1,
-                Err(_) => failed += 1,
-            },
-            Err(_) => failed += 1,
-        }
-    }
-    (ok, failed)
 }
 
 /// The selection shortcuts (`useKey` in the hook): `v` toggles selection
@@ -283,7 +281,7 @@ pub fn selection_bar(app: &App, t: &Theme, key: &str, source: Source, place: Bar
     let count = s.count(items);
     let all = s.all_selected(items);
     let some = count > 0;
-    let local = s.selected(items).iter().any(|t| crate::ui::track_row::is_local(t));
+    let local = s.selected(items).iter().any(|t| crate::ui::track_row::is_local(*t));
     let export_disabled = !local;
     let total = items.len();
     let status_text = if s.mode {
