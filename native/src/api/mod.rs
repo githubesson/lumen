@@ -30,6 +30,8 @@ pub mod lastfm;
 pub mod library;
 pub mod lyrics;
 pub mod media;
+#[cfg(test)]
+mod mock_api_tests;
 pub mod playlists;
 pub mod search;
 pub mod share;
@@ -38,6 +40,8 @@ pub mod stats;
 #[cfg(test)]
 pub mod testing;
 pub mod tidal;
+#[cfg(test)]
+mod transport_tests;
 pub mod types;
 pub mod upload;
 
