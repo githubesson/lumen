@@ -162,6 +162,8 @@ pub struct Btn {
     pub leading: Option<&'static Icon>,
     pub leading_filled: bool,
     pub trailing: Option<&'static Icon>,
+    /// The icons' size: 14 (`size-3.5`) unless set.
+    pub icon_px: f32,
 }
 
 impl Btn {
@@ -175,6 +177,7 @@ impl Btn {
             leading: None,
             leading_filled: false,
             trailing: None,
+            icon_px: 14.0,
         }
     }
     pub fn primary(mut self) -> Btn {
@@ -206,6 +209,11 @@ impl Btn {
         self.trailing = Some(glyph);
         self
     }
+    /// Icons at `px` (16 for a `size-4` icon).
+    pub fn icon_size(mut self, px: f32) -> Btn {
+        self.icon_px = px;
+        self
+    }
 
     /// The button; attach `.on_press` to it.
     pub fn build(self, t: &Theme) -> El {
@@ -234,13 +242,13 @@ impl Btn {
             .role("button")
             .label(self.label.clone());
         if let Some(g) = self.leading {
-            b = b.child(ico(g, 14.0, ink));
+            b = b.child(ico(g, self.icon_px, ink));
         }
         if !self.label.is_empty() {
             b = b.child(text(self.label).font(font(fs, 500.0)).color(ink));
         }
         if let Some(g) = self.trailing {
-            b = b.child(ico(g, 14.0, ink));
+            b = b.child(ico(g, self.icon_px, ink));
         }
         if self.disabled {
             b.opacity(0.5).disabled(true).cursor(Cursor::NotAllowed)
@@ -250,9 +258,15 @@ impl Btn {
     }
 }
 
-/// `.input`: a 32 px outlined single-line field. Bind it with
-/// `.on_edit(|s| &mut s.field)`; `placeholder` shows while it's empty.
+/// `.input`: a 32 px outlined single-line field; `placeholder` shows while
+/// it's empty. Use [`input_with`] to bind it.
 pub fn input(t: &Theme, key: &str, edit: &rune::TextEdit, placeholder: &str) -> El {
+    input_with(t, key, edit, placeholder, |e| e)
+}
+
+/// [`input`], with `inner` applied to the text field inside the box: bind it
+/// there with `.on_edit(|app: &mut App| &mut ..)`, add `.on_submit(..)`.
+pub fn input_with(t: &Theme, key: &str, edit: &rune::TextEdit, placeholder: &str, inner: impl FnOnce(El) -> El) -> El {
     let focused = edit.focused;
     let mut field = el().key(format!("{key}-box")).h(32.0).w_full().radius(t.radius_lg()).fill(t.c.input_bg).items_center();
     field = crate::ui::css_border(field, 1.0, if focused { t.c.focus_ring } else { t.c.input }, t.radius_lg());
@@ -268,7 +282,7 @@ pub fn input(t: &Theme, key: &str, edit: &rune::TextEdit, placeholder: &str) -> 
                 inset: false,
             });
     }
-    field.child(
+    field.child(inner(
         rune::text_input(edit, font(14.0, 400.0))
             .key(key)
             .single_line()
@@ -277,5 +291,5 @@ pub fn input(t: &Theme, key: &str, edit: &rune::TextEdit, placeholder: &str) -> 
             .selection_color(t.c.selection)
             .grow(1.0)
             .px(11.0),
-    )
+    ))
 }

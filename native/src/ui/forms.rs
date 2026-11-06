@@ -16,7 +16,17 @@ pub enum SelectVariant {
     Minimal,
     /// Inside a `.toolbar-group`.
     Toolbar,
+    /// `<NativeSelect>`: a `<select class="input">` as Chromium draws it,
+    /// with its own arrow.
+    Native,
 }
+
+/// Chromium's `<select>` arrow: a short heavy chevron.
+const NATIVE_ARROW: rune::Icon = rune::Icon {
+    name: "native-select-arrow",
+    view: 24.0,
+    body: r#"<path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SelectOption {
@@ -87,6 +97,18 @@ pub fn select(
                 .child(line(label, font(14.0, 400.0), ink).grow(1.0))
                 .child(ico(&i::CHEVRONS_UP_DOWN, 14.0, t.c.muted_foreground))
         }
+        SelectVariant::Native => {
+            let b = css_border(row(), 1.0, if open { t.c.focus_ring } else { t.c.input }, t.radius_lg());
+            b.h(32.0)
+                .w_full()
+                .pl(15.0)
+                .gap(4.0)
+                .items_center()
+                .radius(t.radius_lg())
+                .fill(t.c.input_bg)
+                .child(line(label, font(14.0, 400.0), t.c.foreground).grow(1.0))
+                .child(ico(&NATIVE_ARROW, 18.0, t.c.foreground))
+        }
         SelectVariant::Minimal => row()
             .gap(4.0)
             .items_center()
@@ -121,8 +143,22 @@ pub fn select(
     }
 }
 
-/// The open select's listbox, anchored to its trigger. Mount at the root.
+/// The root's top layers: what views portaled (`kit::portal`, a page's
+/// dialogs), then the open select's listbox, anchored to its trigger (above
+/// them, for a select inside a dialog). Mount at the root.
 pub fn select_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> {
+    // Always there, so a portaled dialog that closes can play its exit.
+    let mut top = el().key("top-layers").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0));
+    for layer in crate::ui::kit::take_portals() {
+        top = top.child(layer);
+    }
+    if let Some(listbox) = listbox_layer(app, t, cx) {
+        top = top.child(listbox);
+    }
+    Some(top)
+}
+
+fn listbox_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> {
     let open = app.select.as_ref()?;
     let trigger_w = cx.layout_size(&open.key).map_or(160.0, |s| s[0]);
     let mut list = crate::ui::kit::menu_panel(t, &format!("{}-listbox", open.key), None)
@@ -130,7 +166,7 @@ pub fn select_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> 
         .role("listbox")
         .focus_group();
     list = match open.variant {
-        SelectVariant::Outlined => list.w(trigger_w),
+        SelectVariant::Outlined | SelectVariant::Native => list.w(trigger_w),
         SelectVariant::Minimal => list.min_w(160.0),
         SelectVariant::Toolbar => list.min_w(176.0),
     };
@@ -170,7 +206,7 @@ pub fn select_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> 
     }
     list = list.child(crate::ui::kit::scroll_area_with(t, &format!("{}-scroll", open.key), items, false).shrink());
     let (align, gap) = match open.variant {
-        SelectVariant::Outlined => (Align::Start, 4.0),
+        SelectVariant::Outlined | SelectVariant::Native => (Align::Start, 4.0),
         SelectVariant::Minimal => (Align::End, 4.0),
         SelectVariant::Toolbar => (Align::End, 8.0),
     };
