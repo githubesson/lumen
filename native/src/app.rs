@@ -129,13 +129,30 @@ impl App {
         }
     }
 
+    /// `usePlaylists().reload()`: only the newest read commits, and none that
+    /// an `update` overtook (`useApiResource`).
     pub fn load_playlists(&mut self) {
         let Some(client) = self.client.clone() else { return };
+        let list = &mut self.pages.playlists.list;
+        list.seq += 1;
+        list.error = None;
+        let (seq, updates) = (list.seq, list.updates);
+        if self.me().is_some_and(|me| me.must_reset_password) {
+            self.playlists = Some(Vec::new());
+            return;
+        }
         self.net.run(
             move || client.get::<Option<Vec<Playlist>>>("/api/playlists"),
-            |app, result| {
-                if let Ok(list) = result {
-                    app.playlists = Some(list.unwrap_or_default());
+            move |app, result| {
+                let list = &mut app.pages.playlists.list;
+                if list.seq != seq || list.updates != updates {
+                    return;
+                }
+                match result {
+                    Ok(rows) => app.playlists = Some(rows.unwrap_or_default()),
+                    Err(e) => {
+                        list.error = Some(crate::pages::playlists::error_message(&e, "Could not load playlists."))
+                    }
                 }
             },
         );
