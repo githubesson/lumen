@@ -361,7 +361,8 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
     }
 
     // Title and artist.
-    let mut title_line = row().w_full().min_w(0.0).items_center().child(line(title.clone(), font(14.0, 500.0), t.c.foreground));
+    let mut title_line =
+        row().w_full().min_w(0.0).items_center().child(crate::ui::centred(line(title.clone(), font(14.0, 500.0), t.c.foreground), font(14.0, 500.0)));
     if spec.source_badge && is_tidal(tr) {
         title_line = title_line.child(badge(t, if unavailable { "Removed from TIDAL" } else { "TIDAL" }).ml(8.0));
     }
@@ -369,11 +370,15 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
         title_line = title_line.child(aka_hint(t, &format!("{key}-aka"), &tr.id, aka));
     }
     let title_line = tooltip::tip_truncated(title_line, &format!("{key}-title"), &title, font(14.0, 500.0));
-    let mut title_cell = rune::col().grow(1.0).min_w(0.0).h_full().px(8.0).justify_center().child(title_line);
+    // Both lines at their CSS heights (20.3 and 17.4 px; Rune would round
+    // them to 21 and 18 and the centred pair would sit high).
+    let mut title_cell =
+        rune::col().grow(1.0).min_w(0.0).h_full().px(8.0).justify_center().child(crate::ui::exact(title_line.h(20.3), 20.3));
     if spec.artist {
         let artist = display_text(tr.artist.as_deref(), "Unknown artist");
         let sub = line(artist.clone(), font(12.0, 400.0), t.c.muted_foreground);
-        title_cell = title_cell.child(tooltip::tip_truncated(sub, &format!("{key}-artist"), &artist, font(12.0, 400.0)));
+        title_cell =
+            title_cell.child(crate::ui::exact(tooltip::tip_truncated(sub, &format!("{key}-artist"), &artist, font(12.0, 400.0)), 17.4));
     }
     {
         let (l, id, tr2) = (list.clone(), tr.id.clone(), tr.clone());

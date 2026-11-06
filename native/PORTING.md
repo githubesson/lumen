@@ -62,6 +62,20 @@ Electron app in `frontend/` with full feature parity, Windows first.
   `ui::hover_overlay(base, target)`. Text/icon colour on hover: `.group_color(c)` on the child
   (the parent with `.hover` is the group). Transitions: `ui::motion::{ease, ease_out, …}`.
 - **Pixels**: CSS px = Rune points. Windows at 100% scale is 1:1.
+- **Text boxes and baselines** (measured against Chromium; see `examples/calib.rs`):
+  Rune places a line's glyphs within 0.3 px of Chromium for the same box top, but rounds
+  every text box up to whole pixels (20.3 → 21, 17.4 → 18). Two consequences:
+  - *Stacked lines drift*: hold each line in a box of its CSS height, `ui::exact(text, lh)` /
+    `ui::exact_text(..)` (or `ui::css_text_h` for wrapped text), so what follows sits where
+    the browser puts it.
+  - *Centred lines snap a pixel high*: a row that centres a text (`align-items: center`)
+    starts Rune's rounded box half the rounding above the browser's, and both engines snap
+    the baseline to a whole pixel, often the one above. Wrap such text in
+    `ui::centred(text, style)` (a draw-only nudge of half the rounding).
+  - Never hand-tune glyph offsets against a reference shot; measure with
+    `node tools/centroid.mjs ref.png rune.png x,y,w,h` (ink centroid, sub-pixel) and compare
+    layout boxes with `--tree` against the DOM (`tools/reference/rects.ref.ts`, which prints
+    `getBoundingClientRect` for `RECT_SEL` on `RECT_PATH`).
 - **Colours**: take every colour from `t.c` (the tokens). `color_mix(a, p, b)` is CSS
   `color-mix(in oklch, a p%, b)`.
 

@@ -355,8 +355,8 @@ fn footer(app: &App, t: &Theme) -> El {
     let user = col()
         .grow(1.0)
         .min_w(0.0)
-        .child(line(name, with_lh(font(14.0, 500.0), 17.5), t.c.foreground))
-        .child(line(if admin { "admin" } else { "local library" }, font(12.0, 400.0), t.c.muted_foreground));
+        .child(ui::exact(line(name, with_lh(font(14.0, 500.0), 17.5), t.c.foreground), 17.5))
+        .child(ui::exact(line(if admin { "admin" } else { "local library" }, font(12.0, 400.0), t.c.muted_foreground), 17.4));
     let mut r = row().key("sidebar-footer").padding(8.0).gap(8.0).items_center().child(avatar).child(user);
     if let Some(b) = admin_btn {
         r = r.child(b);

@@ -76,13 +76,25 @@ pub fn exact(e: El, lh: f32) -> El {
     rune::el().h(lh).child(e)
 }
 
-/// [`exact`] for a line set at `size` px, truncating if it must. Measured
-/// against Chromium: at 14 px and up Rune draws a line's glyphs about the
-/// rounding lower than Chromium does at the same box top, so they're lifted
-/// by it; 12 and 13 px lines land right as they are.
+/// [`exact`] for a line set at `size` px, truncating if it must. Rune draws
+/// a line's glyphs within 0.3 px of where Chromium does at the same box top
+/// (`examples/calib.rs`), so no correction is needed. (An earlier lift here
+/// was calibrated against reference shots taken with a Chromium flag that
+/// drew its text about 0.9 px high.)
 pub fn exact_text(e: El, size: f32, lh: f32) -> El {
-    let lift = if size >= 14.0 { lh.ceil() - lh } else { 0.0 };
-    rune::el().h(lh).min_w(0.0).shrink().child(e.offset(0.0, -lift))
+    let _ = size;
+    rune::el().h(lh).min_w(0.0).shrink().child(e)
+}
+
+/// Text a flex row centres vertically (`align-items: center`). Rune rounds
+/// a text box up to whole pixels (20.3 → 21), so centring puts its top
+/// half the rounding above where the browser centres the 20.3 px box, and
+/// both engines then snap the baseline to a whole pixel: often the one
+/// above Chromium's. This nudges the glyphs back by that half (drawing
+/// only; layout keeps the rounded box).
+pub fn centred(e: El, style: TextStyle) -> El {
+    let lh = if style.line_height > 0.0 { style.line_height } else { style.size * 1.25 };
+    e.offset(0.0, (lh.ceil() - lh) / 2.0)
 }
 
 /// Text that ends at its box's right edge (`text-align: right`). Rune

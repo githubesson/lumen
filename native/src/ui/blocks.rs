@@ -123,9 +123,8 @@ pub fn meta_line(t: &Theme, parts: &[&str]) -> El {
         }
         r = r.child(text(*p).font(font(14.0, 400.0)).color(t.c.muted_foreground));
     }
-    // 20.3 px tall, as the browser lays it out (Rune rounds the text to
-    // 21), with the glyphs on the pixel row Chromium draws them on.
-    exact(r.offset(0.0, -0.7), 20.3)
+    // 20.3 px tall, as the browser lays it out (Rune rounds the text to 21).
+    exact(r, 20.3)
 }
 
 /// `.detail-meta .dot`.
@@ -144,9 +143,9 @@ pub fn page_header(t: &Theme, title: &str, count: Option<&str>, actions: Option<
     let mut h = row().w_full().gap(16.0).items_start().flex_wrap();
     // Both drawn a pixel higher than the line boxes put them: where
     // Chromium's 24 px baseline lands (measured against the reference).
-    h = h.child(exact_text(text(title).font(with_lh(font(24.0, 600.0), 34.8).tracking(-0.6)).color(t.c.foreground), 24.0, 34.8).offset(0.0, -1.0));
+    h = h.child(exact_text(text(title).font(with_lh(font(24.0, 600.0), 34.8).tracking(-0.6)).color(t.c.foreground), 24.0, 34.8));
     if let Some(c) = count {
-        h = h.child(exact_text(text(c).font(tnum(font(14.0, 400.0))).color(t.c.muted_foreground), 14.0, 20.3).mt(25.9 - 15.15).offset(0.0, -1.0));
+        h = h.child(exact_text(text(c).font(tnum(font(14.0, 400.0))).color(t.c.muted_foreground), 14.0, 20.3).mt(25.9 - 15.15));
     }
     h = h.child(el().grow(1.0));
     if let Some(a) = actions {
