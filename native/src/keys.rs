@@ -10,6 +10,11 @@ pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         crate::overlays::palette::toggle(app);
         return true;
     }
+    // While Settings is open, Ctrl+F means its own search box.
+    if ev.is_command('f') && crate::overlays::settings::is_open(app) {
+        crate::overlays::settings::focus_search(app);
+        return true;
+    }
     if ev.is_command('b') {
         app.toggle_sidebar();
         return true;

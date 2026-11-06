@@ -328,8 +328,11 @@ mod tests {
     use super::*;
 
     fn srgb(c: Color) -> [u8; 4] {
-        let e = |v: f32| (rune::srgb_encode(v) * 255.0).round() as u8;
-        [e(c.r), e(c.g), e(c.b), (c.a * 255.0).round() as u8]
+        // `srgb_encode` isn't public at this rune rev; an opaque colour's
+        // premultiplied sRGB is its encoded channels.
+        let p = Color { a: 1.0, ..c }.premul_srgb(1.0);
+        let e = |v: f32| (v * 255.0).round() as u8;
+        [e(p[0]), e(p[1]), e(p[2]), (c.a * 255.0).round() as u8]
     }
 
     #[test]

@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(format_calendar_date("2023-03-17"), "Mar 17, 2023");
         assert_eq!(format_calendar_date("2023-02-30"), "—");
         assert_eq!(role_label("Mixing Engineer"), "Mixing engineer");
-        assert_eq!(role_label("A&R Director"), "A&R Director");
+        assert_eq!(role_label("A&R Director"), "A&R director");
         assert_eq!(display_text(Some(" Ã©A Â· B "), ""), "©A · B");
     }
 }

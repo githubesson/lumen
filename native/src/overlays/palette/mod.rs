@@ -432,9 +432,16 @@ fn groups(app: &App) -> Vec<Group> {
     out.push(Group {
         heading: Some("Playback"),
         items: vec![
-            pb(if playing { "Pause" } else { "Play" }, "playback toggle", if playing { &i::PAUSE } else { &i::PLAY }, Command::PlayPause, !has_track),
-            pb("Next track", "skip forward", &i::SKIP_FORWARD, Command::Next, !has_track),
-            pb("Previous track", "back prev", &i::SKIP_BACK, Command::Prev, !has_track),
+            // The CSS fills the transport glyphs.
+            pb(
+                if playing { "Pause" } else { "Play" },
+                "playback toggle",
+                if playing { &i::PAUSE_FILLED } else { &i::PLAY_FILLED },
+                Command::PlayPause,
+                !has_track,
+            ),
+            pb("Next track", "skip forward", &i::SKIP_FORWARD_FILLED, Command::Next, !has_track),
+            pb("Previous track", "back prev", &i::SKIP_BACK_FILLED, Command::Prev, !has_track),
             pb("Toggle shuffle", "random", &i::SHUFFLE, Command::Shuffle, false),
             pb("Cycle repeat", "repeat loop", &i::REPEAT, Command::Repeat, false),
         ],
@@ -474,17 +481,18 @@ fn groups(app: &App) -> Vec<Group> {
     out
 }
 
-/// What shows: with a short query, cmdk's filter (score > 0) and ranking
-/// (items by score, groups by their best item); otherwise everything.
+/// What shows: with a short query, cmdk's filter (score > 0) and ranking.
+/// Items sort by score within their group (stable for ties); the groups
+/// keep their order, as cmdk 1.1.1's group pass looks groups up by an id
+/// they don't carry and never moves them.
 fn visible(app: &App) -> Vec<Group> {
     let s = &app.overlays.palette;
-    let mut all = groups(app);
+    let all = groups(app);
     let search = s.query.text.as_str();
     if searching(s) || search.is_empty() {
         return all;
     }
-    let mut ranked: Vec<(f64, Group)> = all
-        .drain(..)
+    all.into_iter()
         .filter_map(|mut g| {
             let mut scored: Vec<(f64, Item)> =
                 g.items.drain(..).map(|it| (score::command_score(&it.value, search), it)).filter(|(sc, _)| *sc > 0.0).collect();
@@ -492,13 +500,10 @@ fn visible(app: &App) -> Vec<Group> {
                 return None;
             }
             scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-            let best = scored[0].0;
             g.items = scored.into_iter().map(|(_, it)| it).collect();
-            Some((best, g))
+            Some(g)
         })
-        .collect();
-    ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    ranked.into_iter().map(|(_, g)| g).collect()
+        .collect()
 }
 
 /// The highlighted item's value: the chosen one while it shows and can be
