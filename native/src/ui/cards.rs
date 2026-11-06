@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use rune::{Color, Cursor, El, PointerPress, Shadow, col, el, row, text};
 
-use crate::api::{EffectiveRole, Playlist, Visibility, media};
+use crate::api::{Playlist, Visibility, media};
 use crate::app::App;
 use crate::images::{Cover, Images};
 use crate::theme::{Density, Theme};
@@ -220,12 +220,7 @@ pub fn media_card_placeholders(t: &Theme, key: &str, count: usize) -> Vec<El> {
 
 /// `playlistSubtitle`: "Private", "Collaborative · editor".
 pub fn playlist_subtitle(p: &Playlist) -> String {
-    let vis = if p.visibility == Visibility::Collaborative { "Collaborative" } else { "Private" };
-    match p.effective_role {
-        Some(EffectiveRole::Editor) => format!("{vis} · editor"),
-        Some(EffectiveRole::Viewer) => format!("{vis} · viewer"),
-        _ => vis.to_string(),
-    }
+    crate::core::playlist_details::playlist_subtitle(p.visibility, p.effective_role)
 }
 
 /// `PlaylistCard`: a playlist's tile, the same on Home and the Playlists page.

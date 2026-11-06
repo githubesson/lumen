@@ -12,7 +12,7 @@ use crate::ui::{Btn, css_border, font, ico, icons as i, input_with, line, tnum};
 use crate::overlays::confirm::{self, Art, ConfirmSpec};
 use super::detail::{self, Detail, detail_mut};
 use super::logic::{self, Permissions, error_message, fmt_date};
-use super::requests::{self, Collaborator, CollaboratorRole, CollaboratorStatus};
+use crate::api::{Collaborator, CollaboratorRole, CollaboratorStatus};
 
 pub struct State {
     /// The role the invite form sends.
@@ -46,7 +46,7 @@ fn invite(app: &mut App) {
     let (id, role) = (d.id.clone(), d.collab.role);
     let Some(client) = app.client.clone() else { return };
     app.net.run(
-        move || requests::invite_collaborator(&client, &id, &username, role),
+        move || crate::api::playlists::invite_collaborator(&client, &id, &username, role),
         |app, result| match result {
             Ok(()) => {
                 app.pages.playlists.fields.invite.clear();
@@ -95,7 +95,7 @@ fn remove(app: &mut App, c: &Collaborator, is_self: bool) {
         let id = d.id.clone();
         let Some(client) = app.client.clone() else { return };
         app.net.run(
-            move || requests::remove_collaborator(&client, &id, &user),
+            move || crate::api::playlists::remove_collaborator(&client, &id, &user),
             move |app, result| match result {
                 Ok(()) if is_self => detail::leave_playlist(app),
                 Ok(()) => detail::load(app, None),
@@ -112,7 +112,7 @@ fn set_role(app: &mut App, value: &str) {
     let id = d.id.clone();
     let Some(client) = app.client.clone() else { return };
     app.net.run(
-        move || requests::set_collaborator_role(&client, &id, &user, role),
+        move || crate::api::playlists::set_collaborator_role(&client, &id, &user, role),
         |app, result| match result {
             Ok(()) => detail::load(app, None),
             Err(e) => set_error(app, Some(error_message(&e, "Failed to update role."))),

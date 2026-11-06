@@ -13,7 +13,7 @@ use crate::ui::icons as i;
 
 use crate::overlays::confirm::{self, Art, ConfirmSpec, Subject};
 use super::logic::{self, Details, SortKey, error_message, pluralize};
-use super::requests::{self, Collaborator, PlaylistTracksIfChanged};
+use crate::api::{Collaborator, PlaylistTracksIfChanged};
 use super::edits::pending;
 use super::{add_tracks, collaborators, header, settings, tracks, update_playlists};
 
@@ -290,12 +290,12 @@ pub fn load(app: &mut App, then: Option<Then>) {
     let (id, mount, seq) = (d.id.clone(), d.mount, d.load_gen);
     app.net.run(
         move || {
-            let p = requests::get_playlist(&client, &id);
-            let t = requests::list_playlist_tracks_if_changed(&client, &id, None);
-            let first = early.then(|| requests::list_collaborators(&client, &id).ok());
+            let p = crate::api::playlists::get_playlist(&client, &id);
+            let t = crate::api::playlists::list_playlist_tracks_if_changed(&client, &id, None);
+            let first = early.then(|| crate::api::playlists::list_collaborators(&client, &id).ok());
             // None: that request failed, so keep what's shown.
             let collabs = match &p {
-                Ok(p) if shows_collaborators(p) => first.unwrap_or_else(|| requests::list_collaborators(&client, &id).ok()),
+                Ok(p) if shows_collaborators(p) => first.unwrap_or_else(|| crate::api::playlists::list_collaborators(&client, &id).ok()),
                 Ok(_) => Some(Vec::new()),
                 Err(_) => None,
             };
@@ -431,7 +431,7 @@ fn refresh(app: &mut App, mount: u64, token: u64) {
     }
     let (id, etag, seq) = (d.id.clone(), d.etag.clone(), d.load_gen);
     app.net.run(
-        move || requests::list_playlist_tracks_if_changed(&client, &id, etag.as_deref()),
+        move || crate::api::playlists::list_playlist_tracks_if_changed(&client, &id, etag.as_deref()),
         move |app, result| {
             let Some(d) = current(app, mount) else { return };
             if d.poll != token {
@@ -462,7 +462,7 @@ pub fn set_tab(app: &mut App, tab: Tab) {
 
 pub(super) fn set_sort(app: &mut App, value: &str) {
     if let Some(d) = detail_mut(app) {
-        let next = SortKey::parse(value);
+        let next = logic::parse_sort(value);
         if next != d.sort {
             d.sort_asc = next.default_asc();
         }
@@ -482,7 +482,7 @@ pub fn toggle_auto_download(app: &mut App) {
     invalidate_loads(app);
     detail_mut(app).unwrap().saving_auto = true;
     app.net.run(
-        move || requests::set_tidal_auto_download(&client, &id, next),
+        move || crate::api::playlists::set_tidal_auto_download(&client, &id, next),
         move |app, result| match result {
             Ok(()) => {
                 if let Some(d) = detail_mut(app) {
@@ -508,7 +508,7 @@ pub fn save_details(app: &mut App, details: Details, done: impl FnOnce(&mut App,
     invalidate_loads(app);
     let sent = details.clone();
     app.net.run(
-        move || requests::update_playlist(&client, &id, &sent.name, &sent.description, sent.visibility),
+        move || crate::api::playlists::update_playlist(&client, &id, &sent.name, &sent.description, sent.visibility),
         move |app, result| match result {
             Err(e) => {
                 load(app, None);
@@ -567,8 +567,8 @@ fn change_cover(app: &mut App, image: Option<std::path::PathBuf>, fallback: &'st
     detail_mut(app).unwrap().saving_cover = true;
     app.net.run(
         move || match &image {
-            Some(path) => requests::set_playlist_cover(&client, &id, path),
-            None => requests::remove_playlist_cover(&client, &id),
+            Some(path) => crate::api::upload::set_playlist_cover(&client, &id, path),
+            None => crate::api::playlists::remove_playlist_cover(&client, &id),
         },
         move |app, result| match result {
             Ok(updated) => {
@@ -636,7 +636,7 @@ pub fn delete(app: &mut App) {
         }
         let Some(client) = app.client.clone() else { return };
         app.net.run(
-            move || requests::delete_playlist(&client, &id),
+            move || crate::api::playlists::delete_playlist(&client, &id),
             |app, result| match result {
                 Ok(()) => leave_playlist(app),
                 Err(e) => {

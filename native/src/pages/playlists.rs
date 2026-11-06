@@ -14,7 +14,6 @@ mod header;
 mod list;
 mod logic;
 mod new;
-pub(super) mod requests;
 mod settings;
 mod toolbar;
 mod tracks;

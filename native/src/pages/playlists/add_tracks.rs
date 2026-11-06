@@ -16,7 +16,6 @@ use crate::ui::{Btn, css_border, css_border_bottom, font, ico, icons as i, line,
 
 use super::detail::{self, detail, detail_mut};
 use super::logic::error_message;
-use super::requests;
 
 /// The dialog's state, kept for the visit (it stays mounted, closed).
 #[derive(Default)]
@@ -74,9 +73,16 @@ fn fetch(app: &mut App) {
     app.net.run(
         move || {
             if q.is_empty() {
-                requests::list_tracks(&client, 200).map(|t| (t, None))
+                crate::api::library::list_tracks(&client, &crate::api::PageParams { limit: Some(200), ..Default::default() }).map(|(t, _)| (t, None))
             } else {
-                requests::search_tracks(&client, &q, 50).map(|(t, w)| (t, (!w.is_empty()).then(|| w.join(" "))))
+                crate::api::search::search_tracks(
+                    &client,
+                    &crate::api::search::SearchParams {
+                        page: crate::api::PageParams { limit: Some(50), q: Some(q.clone()), ..Default::default() },
+                        ..Default::default()
+                    },
+                )
+                .map(|r| (r.tracks, (!r.warnings.is_empty()).then(|| r.warnings.join(" "))))
             }
         },
         move |app, result| {
@@ -114,7 +120,7 @@ fn submit(app: &mut App) {
     let (id, mount) = (d.id.clone(), d.mount);
     let Some(client) = app.client.clone() else { return };
     app.net.run(
-        move || requests::add_playlist_tracks(&client, &id, &ids),
+        move || crate::api::playlists::add_playlist_tracks(&client, &id, &ids),
         move |app, result| {
             let Some(d) = detail_mut(app).filter(|d| d.mount == mount) else { return };
             match result {

@@ -10,7 +10,6 @@ use crate::ui::kit::{error_banner, eyebrow};
 use crate::ui::{Btn, css_border, font, input_with};
 
 use super::logic::{ch60, details_payload, error_message, is_valid_name};
-use super::requests;
 
 pub struct State {
     pub name: TextEdit,
@@ -54,7 +53,7 @@ fn submit(app: &mut App) {
     s.busy = true;
     let d = details_payload(&s.name.text, &s.description.text, s.visibility);
     app.net.run(
-        move || requests::create_playlist(&client, &d.name, Some(&d.description), Some(d.visibility)),
+        move || crate::api::playlists::create_playlist(&client, &d.name, Some(&d.description), Some(d.visibility)),
         |app, result| {
             app.pages.playlists.new.busy = false;
             match result {

@@ -35,7 +35,7 @@ pub fn toolbar(app: &App, t: &Theme, d: &Detail, collabs: bool, settings: bool) 
     }
     let rows = d.tracks.as_deref().unwrap_or(&[]);
     if rows.len() > 1 {
-        let options: Vec<SelectOption> = logic::SORT_OPTIONS.iter().map(|(k, l)| SelectOption::new(k.as_str(), *l)).collect();
+        let options: Vec<SelectOption> = logic::SORT_OPTIONS.iter().map(|(k, l)| SelectOption::new(logic::sort_value(*k), *l)).collect();
         let mut group = row()
             .key("playlist-sort-controls")
             .min_h(32.0)
@@ -52,7 +52,7 @@ pub fn toolbar(app: &App, t: &Theme, d: &Detail, collabs: bool, settings: bool) 
         if !selecting {
             group = group
                 .child(toolbar_sep(t))
-                .child(select(app, t, "playlist-sort", &options, d.sort.as_str(), SelectVariant::Toolbar, "", false, set_sort));
+                .child(select(app, t, "playlist-sort", &options, logic::sort_value(d.sort), SelectVariant::Toolbar, "", false, set_sort));
         }
         if d.sort != SortKey::Custom && !selecting {
             let hot = color_mix(t.c.foreground, 0.07, Color::TRANSPARENT);
