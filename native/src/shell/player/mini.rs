@@ -17,7 +17,6 @@ use rune::{Align, Cx, El, Tx, col, el, row, text};
 use super::{display, position_pill, status_pill, window_bridge};
 use crate::app::App;
 use crate::ui::tooltip::TipExt;
-use crate::format::fmt_duration_sec;
 use crate::shell::player_bar::{self as bar, TransportSize};
 use crate::theme::Theme;
 use crate::ui::{css_border, font, with_lh};
@@ -268,7 +267,6 @@ fn card(t: &Theme, pad: f32) -> El {
         .padding(pad + 1.0)
         .radius(t.radius_xl())
         .fill(t.c.background)
-        .clip_rounded(t.radius_xl())
         .label("Player")
         .window_drag()
 }
@@ -305,12 +303,6 @@ fn transport_size(compact: bool) -> TransportSize {
     TransportSize { btn: 30.0, gap: 2.0, play: 40.0, play_icon: 18.0, play_margin: 6.0, compact }
 }
 
-fn times(app: &App) -> (String, String) {
-    let p = &app.player;
-    let duration = p.duration.unwrap_or(0.0);
-    let remaining = if duration > 0.0 { format!("-{}", fmt_duration_sec((duration - p.position).max(0.0))) } else { fmt_duration_sec(duration) };
-    (fmt_duration_sec(p.position), remaining)
-}
 
 /// `.utility` in the mini player: 28 px buttons 2 px apart, a divider, the
 /// volume, and the outlined toggle.
@@ -360,7 +352,6 @@ fn bar_layout(app: &App, t: &Theme, w: f32, h: f32) -> El {
     let controls = bar::transport_row(app, t, transport_size(tiny)).matched("mini-transport");
     let mut row2 = row().gap(col_gap).items_center().child(controls);
     if !compact {
-        let (elapsed, remaining) = times(app);
         row2 = row2.child(
             row()
                 .key("progress")
@@ -369,9 +360,9 @@ fn bar_layout(app: &App, t: &Theme, w: f32, h: f32) -> El {
                 .pl(8.0)
                 .gap(10.0)
                 .items_center()
-                .child(bar::time_label(t, "elapsed", elapsed, 36.0, Align::Start).matched("mini-elapsed"))
+                .child(bar::live_time_label(t, "elapsed", &app.ui.player.progress.elapsed, 36.0, Align::Start).matched("mini-elapsed"))
                 .child(bar::seek(app, t).matched("mini-seek"))
-                .child(bar::time_label(t, "remaining", remaining, 36.0, Align::End).matched("mini-remaining")),
+                .child(bar::live_time_label(t, "remaining", &app.ui.player.progress.remaining, 36.0, Align::End).matched("mini-remaining")),
         );
     }
     let right = col().key("mini-bar-right").grow(1.0).min_w(0.0).h_full().gap(row_gap).child(row1).child(row2);
@@ -390,7 +381,6 @@ fn panel_layout(app: &App, t: &Theme, cx: &mut Cx<App>, panel: Panel) -> El {
         .child(bar::np_art(app, t, column, t.radius_xl()).matched("mini-art"))
         .child(np_text(app, t, 16.0, 13.0, 3.0, true).w_full());
     let np = bar::np_context(app, np);
-    let (elapsed, remaining) = times(app);
     let progress = col()
         .key("progress")
         .w_full()
@@ -400,8 +390,8 @@ fn panel_layout(app: &App, t: &Theme, cx: &mut Cx<App>, panel: Panel) -> El {
             row()
                 .w_full()
                 .justify_between()
-                .child(bar::time_label(t, "elapsed", elapsed, 36.0, Align::Start).matched("mini-elapsed"))
-                .child(bar::time_label(t, "remaining", remaining, 36.0, Align::End).matched("mini-remaining")),
+                .child(bar::live_time_label(t, "elapsed", &app.ui.player.progress.elapsed, 36.0, Align::Start).matched("mini-elapsed"))
+                .child(bar::live_time_label(t, "remaining", &app.ui.player.progress.remaining, 36.0, Align::End).matched("mini-remaining")),
         );
     let transport = col()
         .key("transport")
@@ -491,7 +481,6 @@ fn panel_layout(app: &App, t: &Theme, cx: &mut Cx<App>, panel: Panel) -> El {
         .padding(1.0)
         .radius(t.radius_lg())
         .fill(t.c.card)
-        .clip_rounded(t.radius_lg())
         .role("region")
         .label(panel.label())
         .transition(rune::Transition::scale_anchor(0.92, corner))

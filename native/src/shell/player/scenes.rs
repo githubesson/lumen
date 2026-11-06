@@ -119,3 +119,10 @@ pub fn mini_error(app: &mut App) {
     fail_track(app);
     mini(app, Some(Panel::Error));
 }
+
+/// The library with its first row playing (headless audio follows the wall
+/// clock): for checking that playback doesn't re-run the view.
+pub fn playing(app: &mut App) {
+    library(app);
+    app.player.resume();
+}

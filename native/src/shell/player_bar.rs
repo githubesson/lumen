@@ -8,7 +8,6 @@ use rune::{Cursor, Cx, El, Icon, col, el, row, text};
 
 use crate::api::media;
 use crate::app::App;
-use crate::format::fmt_duration_sec;
 use crate::player::Repeat;
 use crate::shell::Bp;
 use crate::shell::player::{self as pui, adapters, devices, display, error, lyrics, queue};
@@ -54,16 +53,21 @@ pub fn t_btn_with(t: &Theme, key: &str, glyph: El, active: bool, disabled: bool)
 /// played part in the primary colour, a 24 px tall hit area that takes no
 /// layout space, and a 12 px thumb shown on hover and while dragging (grown
 /// 1.25×). Seeks commit on release unless `live` (the volume follows the
-/// pointer). Arrows step 5%, Home and End go to the ends.
-pub fn seek_bar(app: &App, t: &Theme, key: &str, value: f32, label: &str, live: bool, on_seek: fn(&mut App, f32)) -> El {
-    seek_bar_h(app, t, key, value, label, live, 4.0, on_seek)
+/// pointer). Arrows step 5% from `current`, Home and End go to the ends.
+pub fn seek_bar(app: &App, t: &Theme, key: &str, current: fn(&App) -> f32, label: &str, live: bool, on_seek: fn(&mut App, f32)) -> El {
+    seek_bar_h(app, t, key, current, label, live, 4.0, on_seek)
 }
 
 /// [`seek_bar`] with a track `h` px tall (the mini player's volume is 3).
 #[allow(clippy::too_many_arguments)]
-pub fn seek_bar_h(app: &App, t: &Theme, key: &str, value: f32, label: &str, live: bool, h: f32, on_seek: fn(&mut App, f32)) -> El {
+pub fn seek_bar_h(app: &App, t: &Theme, key: &str, current: fn(&App) -> f32, label: &str, live: bool, h: f32, on_seek: fn(&mut App, f32)) -> El {
+    bar_with(app, t, key, current, label, live, h, on_seek, false)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bar_with(app: &App, t: &Theme, key: &str, current: fn(&App) -> f32, label: &str, live: bool, h: f32, on_seek: fn(&mut App, f32), clock: bool) -> El {
     let dragging = app.ui.seek_drag.as_ref().filter(|(k, _)| k == key).map(|(_, v)| *v);
-    let v = dragging.unwrap_or(value).clamp(0.0, 1.0);
+    let v = dragging.unwrap_or_else(|| current(app)).clamp(0.0, 1.0);
     let k = key.to_string();
     let hit = el()
         .key(format!("{key}-hit"))
@@ -81,38 +85,43 @@ pub fn seek_bar_h(app: &App, t: &Theme, key: &str, value: f32, label: &str, live
                 rune::Phase::Up => {
                     app.ui.seek_drag = None;
                     on_seek(app, at);
+                    if clock {
+                        // The fill stays where it was let go, rather than
+                        // gliding back from where the clock last was.
+                        app.ui.player.progress.snap(at);
+                    }
                 }
             }
         });
-    let thumb_opacity = if dragging.is_some() { 1.0 } else { 0.0 };
-    // Centred on the value: the end of a box `v` of the track wide, pulled 6 px past it.
-    let thumb = el()
-        .key(format!("{key}-thumb"))
-        .size(12.0, 12.0)
-        .mr(-6.0)
-        .radius(999.0)
-        .fill(t.c.background)
-        .border(1.0, t.c.primary)
-        .scale(if dragging.is_some() { 1.25 } else { 1.0 })
-        .group_opacity(thumb_opacity, 1.0);
-    let thumb_track = el()
-        .pin(Some(0.0), Some(0.0), None, Some(0.0))
-        .w_frac(v)
-        .items_center()
-        .justify_end()
-        .inert()
-        .child(thumb);
-    let mut fill = el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w_frac(v).radius(999.0).fill(t.c.primary).inert();
-    if dragging.is_none() {
-        // The clock advances in 0.25 s steps; a 250 ms linear glide hides them.
-        fill = fill.motion(rune_motion::Spring::new(0.25, 0.0));
+    let (fill, thumb_track) = if clock && dragging.is_none() {
+        // Playback moves these through live values, not the view.
+        (pui::progress::fill(app, t), pui::progress::thumb(app, t, h, false))
     } else {
-        fill = fill.instant_changes();
-    }
-    // At 0 the CSS clip hides the fill entirely; a zero-width pill would still
-    // leave an anti-aliased sliver.
-    let fill = if v > 0.0 { fill } else { fill.opacity(0.0) };
-    el().key(key)
+        let thumb_opacity = if dragging.is_some() { 1.0 } else { 0.0 };
+        // Centred on the value: the end of a box `v` of the track wide, pulled 6 px past it.
+        let thumb = el()
+            .key(format!("{key}-thumb"))
+            .size(12.0, 12.0)
+            .mr(-6.0)
+            .radius(999.0)
+            .fill(t.c.background)
+            .border(1.0, t.c.primary)
+            .scale(if dragging.is_some() { 1.25 } else { 1.0 })
+            .group_opacity(thumb_opacity, 1.0);
+        let thumb_track = el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w_frac(v).items_center().justify_end().inert().child(thumb);
+        let mut fill = el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w_frac(v).radius(999.0).fill(t.c.primary).inert();
+        if dragging.is_none() {
+            // A 250 ms glide, as `transition: clip-path 250ms linear`.
+            fill = fill.motion(rune_motion::Spring::new(0.25, 0.0));
+        } else {
+            fill = fill.instant_changes();
+        }
+        // At 0 the CSS clip hides the fill entirely; a zero-width pill would
+        // still leave an anti-aliased sliver.
+        (if v > 0.0 { fill } else { fill.opacity(0.0) }, thumb_track)
+    };
+    let mut bar = el()
+        .key(key)
         .grow(1.0)
         .h(h)
         .radius(999.0)
@@ -121,11 +130,15 @@ pub fn seek_bar_h(app: &App, t: &Theme, key: &str, value: f32, label: &str, live
         .role("slider")
         .label(label)
         .range_value((v * 100.0).round() as f64, 0.0, 100.0)
-        .on_step(move |app: &mut App, delta: i32, _tx: &mut rune::Tx| on_seek(app, (value + 0.05 * delta as f32).clamp(0.0, 1.0)))
+        .on_step(move |app: &mut App, delta: i32, _tx: &mut rune::Tx| on_seek(app, (current(app) + 0.05 * delta as f32).clamp(0.0, 1.0)))
         .on_step_limit(move |app: &mut App, max: bool, _tx: &mut rune::Tx| on_seek(app, if max { 1.0 } else { 0.0 }))
         .child(fill)
         .child(thumb_track)
-        .child(hit)
+        .child(hit);
+    if clock {
+        bar = bar.on_layout(|app: &mut App, r: [f32; 4]| pui::progress::resized(app, r[2], r[3]));
+    }
+    bar
 }
 
 /// The now-playing cover (`.np-art`): the track's, or the muted placeholder.
@@ -253,9 +266,20 @@ pub fn progress_value(app: &App) -> f32 {
 
 /// `.progress-time`: a tabular 12 px time, at least `min_w` wide.
 pub fn time_label(t: &Theme, key: &str, s: String, min_w: f32, align: rune::Align) -> El {
+    let label = text(s.clone()).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground);
+    time_box(key, label, &s, min_w, align)
+}
+
+/// [`time_label`] bound to a live clock label.
+pub fn live_time_label(t: &Theme, key: &str, live: &rune::LiveText, min_w: f32, align: rune::Align) -> El {
+    let (label, s) = pui::progress::time_text(t, live);
+    time_box(key, label, &s, min_w, align)
+}
+
+fn time_box(key: &str, label: El, s: &str, min_w: f32, align: rune::Align) -> El {
     let style = tnum(font(12.0, 400.0));
     let e = el().key(key).min_w(min_w).h(17.4).items_start();
-    let label = text(s.clone()).font(style).color(t.c.muted_foreground);
+    let s = s.to_string();
     match align {
         rune::Align::Start => e.child(label),
         rune::Align::End => e.justify_end().child(pui::nudge_end(label, &s, style)),
@@ -265,28 +289,27 @@ pub fn time_label(t: &Theme, key: &str, s: String, min_w: f32, align: rune::Alig
 
 /// The seek bar.
 pub fn seek(app: &App, t: &Theme) -> El {
-    seek_bar(app, t, "seek", progress_value(app), "Seek", false, |app: &mut App, v: f32| {
+    let on_seek = |app: &mut App, v: f32| {
         let d = app.player.duration.unwrap_or(0.0);
         app.player.seek(v as f64 * d);
-    })
+    };
+    bar_with(app, t, "seek", progress_value, "Seek", false, 4.0, on_seek, true)
 }
 
 fn transport(app: &App, t: &Theme, bp: Bp) -> El {
-    let p = &app.player;
     let controls = transport_row(app, t, BAR_TRANSPORT);
     if bp == Bp::Narrow {
         // `.progress` hides on narrow windows.
         return col().key("transport").min_w(0.0).items_center().child(controls);
     }
-    let duration = p.duration.unwrap_or(0.0);
     let progress_row = row()
         .key("progress")
         .w_full()
         .gap(if bp == Bp::Medium { 6.0 } else { 8.0 })
         .items_center()
-        .child(time_label(t, "elapsed", fmt_duration_sec(p.position), 32.0, rune::Align::Center))
+        .child(live_time_label(t, "elapsed", &app.ui.player.progress.elapsed, 32.0, rune::Align::Center))
         .child(seek(app, t))
-        .child(time_label(t, "remaining", fmt_duration_sec(duration), 32.0, rune::Align::Center));
+        .child(live_time_label(t, "remaining", &app.ui.player.progress.total, 32.0, rune::Align::Center));
     col().key("transport").w_full().min_w(0.0).gap(6.0).items_center().child(controls).child(progress_row)
 }
 
@@ -356,7 +379,7 @@ pub fn volume(app: &App, t: &Theme, w: f32, gap: f32, btn: f32, icon: f32, bar_h
         .gap(gap)
         .items_center()
         .child(mute)
-        .child(seek_bar_h(app, t, "volume-bar", if p.muted { 0.0 } else { p.volume }, "Volume", true, bar_h, |app: &mut App, v: f32| {
+        .child(seek_bar_h(app, t, "volume-bar", |app: &App| if app.player.muted { 0.0 } else { app.player.volume }, "Volume", true, bar_h, |app: &mut App, v: f32| {
             app.player.set_volume(v)
         }))
 }
@@ -425,7 +448,6 @@ fn bar(app: &App, t: &Theme, bp: Bp) -> El {
         .items_center()
         .radius(t.radius_xl())
         .fill(t.c.background)
-        .clip_rounded(t.radius_xl())
         .label("Player");
     match bp {
         Bp::Wide => bar

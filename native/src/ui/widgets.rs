@@ -102,13 +102,14 @@ pub fn kbd(t: &Theme, keys: &str) -> El {
 /// `CoverArt`: the image at `url` filling a `w`×`h` box, the muted surface
 /// while it loads, and the entity's initial once it fails (or without a URL).
 pub fn cover_art(t: &Theme, images: &Images, url: Option<&str>, label: &str, w: f32, h: f32, radius: f32) -> El {
-    let base = el().size(w, h).radius(radius).fill(t.c.muted).clip_rounded(radius);
+    // The picture rounds itself: a rounded clip around an image costs a layer.
+    let base = el().size(w, h).radius(radius).fill(t.c.muted);
     let state = match url {
         Some(u) => images.get(u),
         None => Cover::Failed,
     };
     match state {
-        Cover::Ready(img) => base.child(el().w(w).h(h).pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
+        Cover::Ready(img) => base.child(el().w(w).h(h).radius(radius).pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
         Cover::Loading => base,
         Cover::Failed => {
             // `font-size: clamp(16px, 32%, 40px)`: the percentage is of the
@@ -131,9 +132,9 @@ pub fn cover_art_letter_size(
     radius: f32,
     letter: f32,
 ) -> El {
-    let base = el().size(size, size).radius(radius).fill(t.c.muted).clip_rounded(radius);
+    let base = el().size(size, size).radius(radius).fill(t.c.muted);
     match url.map(|u| images.get(u)).unwrap_or(Cover::Failed) {
-        Cover::Ready(img) => base.child(el().w(size).h(size).pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
+        Cover::Ready(img) => base.child(el().w(size).h(size).radius(radius).pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
         Cover::Loading => base,
         Cover::Failed => {
             let ch = label.trim().chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());

@@ -519,6 +519,7 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
     ("mini-lyrics", crate::shell::player::scenes::mini_lyrics),
     ("mini-devices", crate::shell::player::scenes::mini_devices),
     ("mini-error", crate::shell::player::scenes::mini_error),
+    ("player-playing", crate::shell::player::scenes::playing),
     ("login", crate::pages::auth::scenes::login),
     ("login-error", crate::pages::auth::scenes::login_error),
     ("register", crate::pages::auth::scenes::register),

@@ -53,11 +53,13 @@ pub struct Lyrics {
     pub parsed: LyricsContent,
     /// The synced line last scrolled to (`lastScrolledLineRef`).
     pub scrolled: isize,
+    /// The active line and word the view last showed.
+    shown: (isize, Option<usize>),
 }
 
 impl Default for Lyrics {
     fn default() -> Self {
-        Lyrics { cache: SharedCache::default(), key: None, loading: false, error: None, result: None, parsed: LyricsContent::None, scrolled: -1 }
+        Lyrics { cache: SharedCache::default(), key: None, loading: false, error: None, result: None, parsed: LyricsContent::None, scrolled: -1, shown: (-1, None) }
     }
 }
 
@@ -158,18 +160,23 @@ fn synced(app: &App) -> Option<Synced<'_>> {
 }
 
 /// Every frame: glide the active synced line to the middle of its view when
-/// it changes (the `useLayoutEffect` on `currentIndex`).
-pub fn follow(app: &mut App, tx: &mut Tx) {
+/// it changes (the `useLayoutEffect` on `currentIndex`). True when the active
+/// line or word moved, which the view has to show (the clock alone doesn't
+/// re-run it).
+pub fn follow(app: &mut App, tx: &mut Tx) -> bool {
     if app.ui.player.lyrics.key.is_none() {
-        return;
+        return false;
     }
-    let Some(active) = synced(app).map(|s| s.active) else { return };
-    if active < 0 || active == app.ui.player.lyrics.scrolled {
-        return;
+    let Some(now) = synced(app).map(|s| (s.active, s.word)) else { return false };
+    let changed = now != app.ui.player.lyrics.shown;
+    app.ui.player.lyrics.shown = now;
+    let active = now.0;
+    if active >= 0 && active != app.ui.player.lyrics.scrolled {
+        app.ui.player.lyrics.scrolled = active;
+        let scope = if app.ui.player.mini.on { "mini-lyrics-scroll" } else { "lyrics-scroll" };
+        tx.scroll_center_in(scope, format!("{scope}-line-{active}"));
     }
-    app.ui.player.lyrics.scrolled = active;
-    let scope = if app.ui.player.mini.on { "mini-lyrics-scroll" } else { "lyrics-scroll" };
-    tx.scroll_center_in(scope, format!("{scope}-line-{active}"));
+    changed
 }
 
 // ---- views ----
@@ -246,7 +253,6 @@ fn sidebar(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
         .padding(1.0)
         .radius(r)
         .fill(t.c.background)
-        .clip_rounded(r)
         .role("complementary")
         .label("Lyrics")
         .child(head);

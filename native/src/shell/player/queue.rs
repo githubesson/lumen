@@ -127,6 +127,7 @@ fn now_playing_band(app: &App, t: &Theme, scope: &str, track: &TrackListItem, in
         .gap(12.0)
         .items_center()
         .fill(color_mix(t.c.muted, 0.5, Color::TRANSPARENT))
+        .corners(if scope == "mini-queue" { let r = (t.radius_lg() - 1.0).max(0.0); [r, r, 0.0, 0.0] } else { [0.0; 4] })
         .child(cover_art(t, &app.images, Some(&cover), &track.title, 48.0, 48.0, t.radius_md()))
         .child(text_col);
     if menus {

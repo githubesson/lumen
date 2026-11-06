@@ -10,7 +10,10 @@ use serde_json::json;
 use super::*;
 
 /// Everything the views read, to tell whether a poll changed any of it.
-type ViewKey = (Option<String>, Option<usize>, bool, u64, Option<u64>, u32, bool, bool, Repeat, Option<PlaybackError>, Option<u64>, usize);
+/// What the view shows of the player, except the clock: playback progress
+/// reaches the bar through live values (`shell::player::progress`), so the
+/// 250 ms tick doesn't re-run the view.
+type ViewKey = (Option<String>, Option<usize>, bool, Option<u64>, u32, bool, bool, Repeat, Option<PlaybackError>, Option<u64>, usize);
 
 impl Player {
     // ---- the frame ----
@@ -336,7 +339,6 @@ impl Player {
             self.current().map(|t| t.id.clone()),
             self.index,
             self.playing,
-            self.position.to_bits(),
             self.duration.map(f64::to_bits),
             self.volume.to_bits(),
             self.muted,

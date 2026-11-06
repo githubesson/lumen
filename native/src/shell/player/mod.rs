@@ -13,6 +13,7 @@ pub mod display;
 pub mod error;
 pub mod lyrics;
 pub mod mini;
+pub mod progress;
 pub mod queue;
 pub mod scenes;
 pub mod window_bridge;
@@ -46,6 +47,8 @@ pub struct State {
     pub fav_pending: Vec<String>,
     pub mini: mini::Mini,
     pub lyrics: lyrics::Lyrics,
+    /// Playback progress, published from the poll.
+    pub progress: progress::Progress,
     /// The window's size outside mini mode, to go back to.
     pub window: Option<(f32, f32)>,
 }
@@ -79,7 +82,8 @@ pub fn flash_copied(app: &mut App) {
 /// close what went with a failure, and run the mini player's queued steps.
 pub fn poll(app: &mut App, tx: &mut Tx) -> bool {
     let mut changed = lyrics::sync(app);
-    lyrics::follow(app, tx);
+    changed |= progress::publish(app);
+    changed |= lyrics::follow(app, tx);
     // The details go with the failure: playing again, or another track,
     // shuts them, so the next failure doesn't open them by itself.
     let failed = display::shown_error(app).is_some();
@@ -125,7 +129,6 @@ pub fn pop_box(t: &Theme, key: &str, w: f32, from_left: bool) -> El {
         .padding(1.0)
         .radius(r)
         .fill(t.c.popover)
-        .clip_rounded(r)
         .role("dialog")
         .transition(enter)
 }
