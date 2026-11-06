@@ -124,6 +124,23 @@ fn search(t: &Theme, window_w: f32) -> El {
         .child(kbd(t, "Ctrl+K"))
 }
 
+/// The narrow window's search: a 32 px icon button (`.topbar-search` without
+/// its label and key cap).
+fn search_icon(t: &Theme) -> El {
+    css_border(el(), 1.0, t.c.input, t.radius_lg())
+        .key("topbar-search")
+        .size(32.0, 32.0)
+        .center()
+        .radius(t.radius_lg())
+        .fill(t.c.input_bg)
+        .role("button")
+        .label("Search library, albums, tracks… Ctrl+K")
+        .cursor(Cursor::Pointer)
+        .focusable(true)
+        .on_press(|app: &mut App| app.ui.palette_open = true)
+        .child(ico(&i::SEARCH, 14.0, t.c.muted_foreground))
+}
+
 /// `WindowControls`: minimize, maximize and close in a bordered group.
 pub fn window_controls(t: &Theme) -> El {
     let button = |key: &str, glyph: &'static rune::Icon, size: f32, close: bool| {
@@ -167,7 +184,8 @@ pub fn window_controls(t: &Theme) -> El {
         )
 }
 
-pub fn view(app: &App, t: &Theme, window_w: f32) -> El {
+pub fn view(app: &App, t: &Theme, window_w: f32, bp: super::Bp) -> El {
+    let narrow = bp == super::Bp::Narrow;
     let compact = t.layout == Layout::Compact;
     let on_home = app.location().is("/");
     let customizing = on_home && app.location().has("customize");
@@ -176,20 +194,36 @@ pub fn view(app: &App, t: &Theme, window_w: f32) -> El {
     let mut bar = ui::css_border_bottom(row(), 1.0, t.c.border)
         .key("topbar")
         .h(48.0)
-        .px(t.pad())
+        .px(if narrow { 8.0 } else { t.pad() })
         .pb(1.0)
         .gap(8.0)
         .items_center()
-        .window_drag()
-        .child(
-            iconbtn(t, "sidebar-toggle", if compact { &i::PANEL_LEFT_OPEN } else { &i::PANEL_LEFT_CLOSE }, 16.0, BtnState::default())
-                .label(if compact { "Expand sidebar" } else { "Collapse sidebar" })
-                .help(if compact { "Expand sidebar" } else { "Collapse sidebar" })
-                .on_press(|app: &mut App| app.toggle_sidebar()),
-        )
-        .child(breadcrumbs(app, t))
-        .child(el().grow(1.0).h(1.0))
-        .child(search(t, window_w));
+        .window_drag();
+    if narrow {
+        let open = app.ui.mobile_nav_open;
+        let label = if open { "Close navigation" } else { "Open navigation" };
+        bar = bar
+            .child(
+                iconbtn(t, "sidebar-toggle-mobile", if open { &i::X } else { &i::MENU }, 16.0, BtnState::default())
+                    .label(label)
+                    .help(label)
+                    .expanded(open)
+                    .on_press(|app: &mut App| app.ui.mobile_nav_open = !app.ui.mobile_nav_open),
+            )
+            .child(breadcrumbs(app, t).grow(1.0))
+            .child(search_icon(t));
+    } else {
+        bar = bar
+            .child(
+                iconbtn(t, "sidebar-toggle", if compact { &i::PANEL_LEFT_OPEN } else { &i::PANEL_LEFT_CLOSE }, 16.0, BtnState::default())
+                    .label(if compact { "Expand sidebar" } else { "Collapse sidebar" })
+                    .help(if compact { "Expand sidebar" } else { "Collapse sidebar" })
+                    .on_press(|app: &mut App| app.toggle_sidebar()),
+            )
+            .child(breadcrumbs(app, t))
+            .child(el().grow(1.0).h(1.0))
+            .child(search(t, window_w));
+    }
     if on_home {
         bar = bar.child(
             iconbtn(t, "customize-home", &i::LAYOUT_DASHBOARD, 16.0, BtnState { active: customizing, disabled: false })
@@ -201,13 +235,17 @@ pub fn view(app: &App, t: &Theme, window_w: f32) -> El {
                 }),
         );
     }
-    bar.child(
+    bar = bar.child(
         iconbtn(t, "toggle-lyrics", &i::MIC_VOCAL, 16.0, BtnState { active: app.ui.lyrics_open, disabled: false })
             .label("Toggle lyrics panel")
             .help("Lyrics")
             .on_press(|app: &mut App| app.ui.lyrics_open = !app.ui.lyrics_open),
-    )
-    .child(
+    );
+    if narrow {
+        // `.topbar-secondary` hides on narrow windows.
+        return bar.child(window_controls(t));
+    }
+    bar.child(
         iconbtn(t, "add-music", &i::UPLOAD, 16.0, BtnState::default())
             .label("Add music")
             .help("Add music")

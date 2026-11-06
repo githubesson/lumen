@@ -28,6 +28,8 @@ pub struct Ui {
     pub settings_open: bool,
     pub upload_open: bool,
     pub lyrics_open: bool,
+    /// The sidebar drawer of narrow windows (`useMobileNav`).
+    pub mobile_nav_open: bool,
 }
 
 pub struct App {
@@ -271,7 +273,7 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
         Session::Loading => el().w_full().h_full(),
         Session::SignedOut | Session::Unreachable(_) => crate::pages::signed_out(app, &t, cx),
     };
-    let mut root = col().w_full().h_full().fill(Color::TRANSPARENT).child(body);
+    let mut root = col().key("root").w_full().h_full().fill(Color::TRANSPARENT).child(body);
     if matches!(app.session, Session::SignedIn(_)) {
         for layer in crate::overlays::view(app, &t, cx) {
             root = root.child(layer);
@@ -302,6 +304,10 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
     ("playlists", |a| scene(a, "/playlists")),
     ("replay", |a| scene(a, "/replay")),
     ("admin", |a| scene(a, "/admin")),
+    ("drawer", |a| {
+        scene(a, "/library");
+        a.ui.mobile_nav_open = true;
+    }),
     ("light", |a| {
         a.config.tweaks = Some(Tweaks { theme: Mode::Light, ..a.tweaks.clone() });
         a.tweaks.theme = Mode::Light;

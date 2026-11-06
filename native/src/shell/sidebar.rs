@@ -104,7 +104,10 @@ fn nav_badge(t: &Theme, n: usize, rail: bool) -> El {
     b
 }
 
-pub fn view(app: &App, t: &Theme) -> El {
+pub fn view(app: &App, t: &Theme, drawer: bool) -> El {
+    // The drawer always shows the full sidebar, whatever the layout tweak.
+    let full = Theme { layout: if drawer && t.layout == Layout::Compact { Layout::Sidebar } else { t.layout }, ..*t };
+    let t = &full;
     let loc = app.location();
     let library_view = loc.is("/library").then(|| library_view_of(loc));
     let w = t.layout.sidebar_w();
@@ -158,16 +161,92 @@ pub fn view(app: &App, t: &Theme) -> El {
         ));
     }
 
-    col()
+    let mut c = col()
         .key("sidebar")
-        .w(w)
         .h_full()
         .min_h(0.0)
-        .clip_rounded(0.0)
         .child(brand)
         .child(nav)
-        .child(playlists(app, t))
-        .child(footer(app, t))
+        .child(playlists(app, t));
+    if drawer {
+        c = c.w_full().child(mobile_actions(app, t));
+    } else {
+        c = c.w(w);
+    }
+    c.child(footer(app, t))
+}
+
+/// `MobileSidebarActions`: the top bar's secondary buttons, in the drawer.
+fn mobile_actions(app: &App, t: &Theme) -> El {
+    let dark = t.dark();
+    let action = |key: &str, glyph: &'static Icon, label: &str| {
+        row()
+            .key(key)
+            .min_h(48.0)
+            .w_full()
+            .px(8.0)
+            .gap(8.0)
+            .items_center()
+            .radius(t.radius_md())
+            .role("button")
+            .cursor(Cursor::Pointer)
+            .focusable(true)
+            .hover(t.c.sidebar_accent)
+            .child(ico(glyph, 16.0, t.c.sidebar_foreground))
+            .child(line(label, font(14.0, 400.0), t.c.sidebar_foreground))
+    };
+    let _ = app;
+    ui::css_border(col(), 0.0, Color::TRANSPARENT, 0.0)
+        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(t.c.border).inert())
+        .padding(8.0)
+        .pt(9.0)
+        .gap(2.0)
+        .child(action("mobile-add-music", &i::UPLOAD, "Add music").on_press(|app: &mut App| {
+            app.ui.mobile_nav_open = false;
+            app.ui.upload_open = true;
+        }))
+        .child(
+            action("mobile-theme", if dark { &i::SUN } else { &i::MOON }, if dark { "Light mode" } else { "Dark mode" })
+                .on_press(|app: &mut App| app.toggle_theme()),
+        )
+        .child(action("mobile-settings", &i::SLIDERS_HORIZONTAL, "Settings").on_press(|app: &mut App| {
+            app.ui.mobile_nav_open = false;
+            app.ui.settings_open = true;
+        }))
+}
+
+/// The narrow window's sidebar: a floating drawer over a scrim, sliding in
+/// from the left (`responsive.css` at 760 px and under).
+pub fn drawer(app: &App, t: &Theme, window_w: f32) -> Option<El> {
+    if !app.ui.mobile_nav_open {
+        return None;
+    }
+    let w = 296.0f32.min(window_w - 48.0);
+    let a = t.c.shadow_md_alpha;
+    let panel = ui::css_border(col(), 1.0, t.c.sidebar_border, t.radius_xl())
+        .key("sidebar-drawer")
+        .pin(Some(4.0), Some(4.0), None, Some(4.0))
+        .w(w)
+        .padding(1.0)
+        .radius(t.radius_xl())
+        .fill(t.c.sidebar)
+        .clip_rounded(t.radius_xl())
+        .box_shadow(rune::Shadow { x: 0.0, y: 4.0, blur: 6.0, spread: -1.0, color: Color::BLACK.alpha(a), inset: false })
+        .box_shadow(rune::Shadow { x: 0.0, y: 2.0, blur: 4.0, spread: -2.0, color: Color::BLACK.alpha(a), inset: false })
+        .transition(rune::Transition::offset(-(w + 12.0), 0.0))
+        .child(view(app, t, true));
+    Some(el().key("mobile-nav")
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .modal(true, |app: &mut App| app.ui.mobile_nav_open = false)
+        .child(
+            el().key("mobile-nav-backdrop")
+                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                .fill(t.c.scrim)
+                .label("Close navigation")
+                .transition(rune::Transition::opacity())
+                .on_press(|app: &mut App| app.ui.mobile_nav_open = false),
+        )
+        .child(panel))
 }
 
 /// `SidebarPlaylists`: scrolls without a scrollbar.

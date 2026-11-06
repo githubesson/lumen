@@ -48,6 +48,10 @@ type Scene = {
   /** Waits for the scene's own content before the shot. */
   wait?: (page: Page) => Promise<void>;
   act?: (page: Page) => Promise<void>;
+  /** Window size, when not the default 1280×820. */
+  size?: { width: number; height: number };
+  /** Skip `settle` (it waits on every finite animation) and just wait. */
+  noSettle?: boolean;
 };
 
 const SCENES: Scene[] = [
@@ -61,11 +65,25 @@ const SCENES: Scene[] = [
   { name: "replay", path: "/replay", wait: (p) => ready(p, p.locator(".replay, main")) },
   { name: "admin", path: "/admin", wait: (p) => ready(p, p.locator(".admin, main")) },
   { name: "login", signedOut: true, path: "/login", wait: (p) => ready(p, p.locator("form")) },
+  { name: "library-medium", path: "/library", size: { width: 900, height: 700 }, wait: (p) => ready(p, p.locator("tbody tr")) },
+  { name: "library-narrow", path: "/library", size: { width: 700, height: 600 }, wait: (p) => ready(p, p.locator("tbody tr")) },
+  {
+    name: "drawer-narrow",
+    path: "/library",
+    size: { width: 700, height: 600 },
+    wait: (p) => ready(p, p.locator("tbody tr")),
+    act: async (p) => {
+      await p.getByRole("button", { name: "Open navigation" }).click();
+      await p.waitForTimeout(400);
+    },
+    noSettle: true,
+  },
 ];
 
 for (const scene of SCENES) {
   test(scene.name, async ({ page }, info) => {
     await stubElectron(page);
+    if (scene.size) await page.setViewportSize(scene.size);
     if (scene.signedOut) {
       await signedOut(page);
       await page.goto(scene.path ?? "/login");
@@ -76,7 +94,8 @@ for (const scene of SCENES) {
     await scene.wait?.(page);
     await scene.act?.(page);
     await page.mouse.move(-10, -10);
-    await settle(page);
+    if (scene.noSettle) await page.waitForTimeout(800);
+    else await settle(page);
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${OUT}${scene.name}-${info.project.name}.png`, omitBackground: true });
   });
