@@ -74,6 +74,7 @@ pub fn details(app: &App, t: &Theme, w: f32) -> El {
     let Some(error) = super::display::shown_error(app) else { return col() };
     let lines = error.lines(p.current());
     let style = font(12.0, 400.0);
+    // `grid-template-columns: auto …`: the longest label's width.
     let label_w = lines.iter().map(|l| rune::text::measure(l.label, &[], style, None).0).fold(0.0f32, f32::max);
     let value_w = (w - 28.0 - label_w - 14.0).max(0.0);
     let mut grid = col().w_full().gap(6.0);

@@ -42,7 +42,7 @@ pub fn is_favorite(app: &App, id: &str) -> bool {
 /// if it fails. A second toggle while one is in flight is dropped.
 // TODO(components-merge): the app-wide favourites store (`core::favorites::Favorites`).
 pub fn toggle_favorite(app: &mut App, id: &str) {
-    if app.ui.player.fav_pending.is_some() {
+    if app.ui.player.fav_pending.iter().any(|p| p == id) {
         return;
     }
     let Some(client) = app.client.clone() else { return };
@@ -52,13 +52,13 @@ pub fn toggle_favorite(app: &mut App, id: &str) {
     if favorite {
         app.ui.player.fav_pops += 1;
     }
-    app.ui.player.fav_pending = Some(id.to_string());
+    app.ui.player.fav_pending.push(id.to_string());
     let toggle = crate::core::favorites::Toggle { id: id.to_string(), favorite };
     let sent = toggle.clone();
     app.net.run(
         move || sent.send(&client),
         move |app, result| {
-            app.ui.player.fav_pending = None;
+            app.ui.player.fav_pending.retain(|p| *p != toggle.id);
             if result.is_err() {
                 app.pages.favorite_ids = crate::core::favorites::with_favorite_id(&app.pages.favorite_ids, &toggle.id, !toggle.favorite);
             }

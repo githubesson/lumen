@@ -117,46 +117,89 @@ pub fn toggle_panel(app: &mut App, tx: &mut Tx, which: Panel) {
     request_panel(app, tx, next, false);
 }
 
+/// What the window has to do for a panel request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    Nothing,
+    /// Grow the window for the panel (the bar pinned to its edge first).
+    Grow,
+    /// Shrink it back at once (Escape).
+    ShrinkNow,
+    /// Shrink it back once the closing morph is done.
+    ShrinkAfterMorph,
+}
+
+impl Mini {
+    /// Ask for `next` (None closes the panel): what the layout shows now,
+    /// and what the window has to do. A panel swapped for another slides in
+    /// from its button's side; one opened while the window is still grown
+    /// from the last (its shrink pending) just shows again.
+    pub fn request(&mut self, next: Option<Panel>, instant: bool) -> Step {
+        self.requested = next;
+        match (self.panel, next) {
+            (Some(from), Some(to)) if from != to => {
+                self.enter = Some(if to > from { Swap::Forward } else { Swap::Back });
+                self.panel = Some(to);
+                Step::Nothing
+            }
+            (None, Some(to)) => {
+                self.enter = None;
+                self.panel = Some(to);
+                if self.shrink_at.take().is_some() {
+                    return Step::Nothing;
+                }
+                // Pin the bar to the edge that stays put before the window grows.
+                self.bar_height = Some(self.bar_height.unwrap_or(window_bridge::MINI_SIZE.1));
+                Step::Grow
+            }
+            (Some(_), None) => {
+                self.panel = None;
+                self.enter = None;
+                if instant {
+                    self.shrink_at = None;
+                    Step::ShrinkNow
+                } else {
+                    self.shrink_at = Some(Instant::now() + CLOSE_MORPH);
+                    Step::ShrinkAfterMorph
+                }
+            }
+            _ => Step::Nothing,
+        }
+    }
+
+    /// The pending shrink is due.
+    fn shrink_due(&mut self, now: Instant) -> Option<Duration> {
+        let at = self.shrink_at?;
+        if now >= at {
+            self.shrink_at = None;
+            None
+        } else {
+            Some(at - now)
+        }
+    }
+}
+
 /// Show `next` (None closes the panel). `instant` closes without the morph,
 /// as Escape does.
 pub fn request_panel(app: &mut App, tx: &mut Tx, next: Option<Panel>, instant: bool) {
-    let m = &mut app.ui.player.mini;
-    m.requested = next;
-    match (m.panel, next) {
-        (Some(from), Some(to)) if from != to => {
-            m.enter = Some(if to > from { Swap::Forward } else { Swap::Back });
-            m.panel = Some(to);
-        }
-        (None, Some(to)) => {
-            m.enter = None;
-            if m.shrink_at.take().is_none() {
-                // Pin the bar to the edge that stays put before the window grows.
-                m.bar_height = Some(m.bar_height.unwrap_or(window_bridge::MINI_SIZE.1));
-                let anchor = window_bridge::mini_player_panel_anchor(app);
-                app.ui.player.mini.anchor = anchor;
-                match window_bridge::set_mini_player_panel(app, tx, true) {
-                    Some(anchor) => app.ui.player.mini.anchor = anchor,
-                    None => {
-                        app.ui.player.mini.requested = None;
-                        return;
-                    }
+    match app.ui.player.mini.request(next, instant) {
+        Step::Nothing => {}
+        Step::Grow => {
+            app.ui.player.mini.anchor = window_bridge::mini_player_panel_anchor(app);
+            match window_bridge::set_mini_player_panel(app, tx, true) {
+                Some(anchor) => app.ui.player.mini.anchor = anchor,
+                None => {
+                    let m = &mut app.ui.player.mini;
+                    m.requested = None;
+                    m.panel = None;
                 }
             }
-            app.ui.player.mini.panel = Some(to);
         }
-        (Some(_), None) => {
-            m.panel = None;
-            m.enter = None;
-            if instant {
-                tx.instant();
-                m.shrink_at = None;
-                window_bridge::set_mini_player_panel(app, tx, false);
-            } else {
-                m.shrink_at = Some(Instant::now() + CLOSE_MORPH);
-                tx.wake_after(CLOSE_MORPH);
-            }
+        Step::ShrinkNow => {
+            tx.instant();
+            window_bridge::set_mini_player_panel(app, tx, false);
         }
-        _ => {}
+        Step::ShrinkAfterMorph => tx.wake_after(CLOSE_MORPH),
     }
     super::lyrics::sync(app);
 }
@@ -169,13 +212,13 @@ pub fn poll(app: &mut App, tx: &mut Tx, failed: bool) -> bool {
         return false;
     }
     let mut changed = false;
-    if let Some(at) = m.shrink_at {
-        if Instant::now() >= at {
-            m.shrink_at = None;
-            window_bridge::set_mini_player_panel(app, tx, false);
-            changed = true;
-        } else {
-            tx.wake_after(at - Instant::now());
+    if m.shrink_at.is_some() {
+        match m.shrink_due(Instant::now()) {
+            Some(wait) => tx.wake_after(wait),
+            None => {
+                window_bridge::set_mini_player_panel(app, tx, false);
+                changed = true;
+            }
         }
     }
     if !failed && app.ui.player.mini.requested == Some(Panel::Error) {
@@ -454,4 +497,51 @@ fn panel_layout(app: &App, t: &Theme, cx: &mut Cx<App>, panel: Panel) -> El {
         .child(content);
     let right = col().key("mini-panel-right").grow(1.0).min_w(0.0).h_full().gap(10.0).child(row1).child(body);
     card(t, 12.0).h_full().gap(16.0).child(left).child(right)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opening_grows_the_window_and_pins_the_bar() {
+        let mut m = Mini { on: true, ..Mini::default() };
+        assert_eq!(m.request(Some(Panel::Queue), false), Step::Grow);
+        assert_eq!((m.panel, m.requested, m.bar_height), (Some(Panel::Queue), Some(Panel::Queue), Some(184.0)));
+    }
+
+    #[test]
+    fn swapping_slides_from_the_buttons_side() {
+        let mut m = Mini { on: true, ..Mini::default() };
+        m.request(Some(Panel::Lyrics), false);
+        assert_eq!(m.request(Some(Panel::Queue), false), Step::Nothing);
+        assert_eq!(m.enter, Some(Swap::Forward));
+        m.request(Some(Panel::Error), false);
+        assert_eq!((m.panel, m.enter), (Some(Panel::Error), Some(Swap::Back)));
+    }
+
+    #[test]
+    fn closing_morphs_then_shrinks_and_escape_shrinks_at_once() {
+        let mut m = Mini { on: true, ..Mini::default() };
+        m.request(Some(Panel::Devices), false);
+        assert_eq!(m.request(None, false), Step::ShrinkAfterMorph);
+        assert_eq!((m.panel, m.requested), (None, None));
+        // The bar keeps its own height while the window is still grown.
+        assert_eq!(m.bar_height, Some(184.0));
+        assert!(m.shrink_due(Instant::now()).is_some());
+        assert!(m.shrink_due(Instant::now() + CLOSE_MORPH).is_none());
+        m.request(Some(Panel::Devices), false);
+        assert_eq!(m.request(None, true), Step::ShrinkNow);
+        assert!(m.shrink_at.is_none());
+    }
+
+    #[test]
+    fn reopening_before_the_shrink_keeps_the_grown_window() {
+        let mut m = Mini { on: true, ..Mini::default() };
+        m.request(Some(Panel::Queue), false);
+        m.request(None, false);
+        assert_eq!(m.request(Some(Panel::Lyrics), false), Step::Nothing);
+        assert_eq!(m.panel, Some(Panel::Lyrics));
+        assert!(m.shrink_at.is_none());
+    }
 }

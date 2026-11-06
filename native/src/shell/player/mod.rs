@@ -41,8 +41,8 @@ pub struct State {
     copied_generation: u64,
     /// Bumped each time the favourite button turns on: replays its heart pop.
     pub fav_pops: u32,
-    /// A favourite toggle in flight (`createToggleGuard`).
-    pub fav_pending: Option<String>,
+    /// Favourite toggles in flight (`createToggleGuard`).
+    pub fav_pending: Vec<String>,
     pub mini: mini::Mini,
     pub lyrics: lyrics::Lyrics,
     /// The window's size outside mini mode, to go back to.
@@ -93,7 +93,8 @@ pub fn poll(app: &mut App, tx: &mut Tx) -> bool {
 /// Window keys the player's UI takes before the app's own bindings: Escape
 /// closes the mini player's panel.
 pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
-    if ev.key == Key::Escape && app.ui.player.mini.on && app.ui.player.mini.requested.is_some() {
+    // An open context menu gets the key first.
+    if ev.key == Key::Escape && app.ui.player.mini.on && app.ui.player.mini.requested.is_some() && !adapters::track_menu_open(app) {
         mini::request_panel(app, tx, None, true);
         return true;
     }

@@ -48,13 +48,22 @@ pub struct Lyrics {
     pub loading: bool,
     pub error: Option<String>,
     pub result: Option<LyricsResult>,
+    /// `lyricsContent(result)`, parsed once per answer.
+    pub parsed: LyricsContent,
     /// The synced line last scrolled to (`lastScrolledLineRef`).
     pub scrolled: isize,
 }
 
 impl Default for Lyrics {
     fn default() -> Self {
-        Lyrics { cache: SharedCache::default(), key: None, loading: false, error: None, result: None, scrolled: -1 }
+        Lyrics { cache: SharedCache::default(), key: None, loading: false, error: None, result: None, parsed: LyricsContent::None, scrolled: -1 }
+    }
+}
+
+impl Lyrics {
+    fn set_result(&mut self, r: LyricsResult) {
+        self.parsed = lyrics_content(Some(&r));
+        self.result = Some(r);
     }
 }
 
@@ -83,13 +92,14 @@ pub fn sync(app: &mut App) -> bool {
     l.key = key.clone();
     l.scrolled = -1;
     l.result = None;
+    l.parsed = LyricsContent::None;
     l.error = None;
     l.loading = false;
     let (Some(track), Some(key)) = (track, key) else { return true };
     let cached = l.cache.0.borrow().peek(&key).cloned();
     match cached {
         // A cached answer for the new track replaces the previous track's.
-        Some(LyricsCacheEntry::Hit(r)) => l.result = Some(r),
+        Some(LyricsCacheEntry::Hit(r)) => l.set_result(r),
         Some(LyricsCacheEntry::Miss) => l.error = Some(LYRICS_NOT_FOUND_MESSAGE.into()),
         None => {
             l.loading = true;
@@ -115,7 +125,7 @@ fn fetch(app: &mut App, track: &TrackListItem, key: String) {
             }
             l.loading = false;
             match entry {
-                Ok(LyricsCacheEntry::Hit(r)) => l.result = Some(r),
+                Ok(LyricsCacheEntry::Hit(r)) => l.set_result(r),
                 Ok(LyricsCacheEntry::Miss) => l.error = Some(LYRICS_NOT_FOUND_MESSAGE.into()),
                 Err(e) => {
                     eprintln!("Failed to fetch lyrics: {e}");
@@ -127,18 +137,17 @@ fn fetch(app: &mut App, track: &TrackListItem, key: String) {
 }
 
 /// The synced lines and the active line and word at the player's clock.
-struct Synced {
-    lines: Vec<crate::core::lyrics::SyncedLine>,
+struct Synced<'a> {
+    lines: &'a [crate::core::lyrics::SyncedLine],
     active: isize,
     word: Option<usize>,
 }
 
-fn synced(app: &App) -> Option<Synced> {
-    let l = &app.ui.player.lyrics;
-    let LyricsContent::Synced(lines) = lyrics_content(l.result.as_ref()) else { return None };
+fn synced(app: &App) -> Option<Synced<'_>> {
+    let LyricsContent::Synced(lines) = &app.ui.player.lyrics.parsed else { return None };
     let p = &app.player;
     let time = p.position;
-    let active = active_line_index(&lines, time);
+    let active = active_line_index(lines, time);
     let duration = lyrics_timing_duration(p.current().map(|t| t.duration_ms), p.duration.unwrap_or(0.0)).max(1.0);
     let word = (active >= 0)
         .then(|| &lines[active as usize])
@@ -153,13 +162,13 @@ pub fn follow(app: &mut App, tx: &mut Tx) {
     if app.ui.player.lyrics.key.is_none() {
         return;
     }
-    let Some(s) = synced(app) else { return };
-    if s.active < 0 || s.active == app.ui.player.lyrics.scrolled {
+    let Some(active) = synced(app).map(|s| s.active) else { return };
+    if active < 0 || active == app.ui.player.lyrics.scrolled {
         return;
     }
-    app.ui.player.lyrics.scrolled = s.active;
+    app.ui.player.lyrics.scrolled = active;
     let scope = if app.ui.player.mini.on { "mini-lyrics-scroll" } else { "lyrics-scroll" };
-    tx.scroll_center_in(scope, format!("{scope}-line-{}", s.active));
+    tx.scroll_center_in(scope, format!("{scope}-line-{active}"));
 }
 
 // ---- views ----
@@ -298,10 +307,11 @@ pub fn content(app: &App, t: &Theme, cx: &mut Cx<App>, scope: &str, mini: bool) 
     if let Some(e) = &l.error {
         return status(t, e);
     }
-    let Some(result) = &l.result else { return status(t, LYRICS_NOT_FOUND_MESSAGE) };
-    let [window_w, window_h] = crate::shell::window_size(cx);
-    let _ = window_w;
-    match lyrics_content(Some(result)) {
+    if l.result.is_none() {
+        return status(t, LYRICS_NOT_FOUND_MESSAGE);
+    }
+    let [_, window_h] = crate::shell::window_size(cx);
+    match &l.parsed {
         LyricsContent::Instrumental => status(t, "Instrumental"),
         LyricsContent::Synced(_) => {
             let s = synced(app).expect("synced lyrics");
@@ -380,22 +390,13 @@ fn synced_line(t: &Theme, key: &str, s: &str, section: bool, state: LineState, w
     } else if state == LineState::Active {
         let mut spans = Vec::new();
         if let Some(active) = word {
-            let mut n = 0;
-            let mut at = 0;
-            for (i, part) in s.split_inclusive(char::is_whitespace).enumerate() {
-                let _ = i;
-                let w = part.trim_end();
-                if !w.is_empty() {
-                    let (ink, weight) = match n.cmp(&active) {
-                        std::cmp::Ordering::Less => (faded(color_mix(t.c.foreground, 0.68, Color::TRANSPARENT), 0.88), 500.0),
-                        std::cmp::Ordering::Equal => (t.c.foreground, 600.0),
-                        std::cmp::Ordering::Greater => (faded(color_mix(t.c.foreground, 0.38, Color::TRANSPARENT), 0.72), 500.0),
-                    };
-                    let start = at + (part.len() - part.trim_start().len());
-                    spans.push(Span::new(start, start + w.trim_start().len()).color(ink).weight(weight));
-                    n += 1;
-                }
-                at += part.len();
+            for (n, (start, end)) in word_ranges(s).into_iter().enumerate() {
+                let (ink, weight) = match n.cmp(&active) {
+                    std::cmp::Ordering::Less => (faded(color_mix(t.c.foreground, 0.68, Color::TRANSPARENT), 0.88), 500.0),
+                    std::cmp::Ordering::Equal => (t.c.foreground, 600.0),
+                    std::cmp::Ordering::Greater => (faded(color_mix(t.c.foreground, 0.38, Color::TRANSPARENT), 0.72), 500.0),
+                };
+                spans.push(Span::new(start, end).color(ink).weight(weight));
             }
         }
         css_lines(text(s).font(line_style(500.0)).color(t.c.foreground).spans(spans).wrap(), s, line_style(500.0), wrap_w).mb(18.0)
@@ -408,6 +409,27 @@ fn synced_line(t: &Theme, key: &str, s: &str, section: bool, state: LineState, w
         LineState::Past => e.opacity(0.28).scale(0.985).blur(0.35),
         LineState::Upcoming => e.opacity(0.42).blur(0.2),
     }
+}
+
+/// The byte ranges of `s`'s words (`text.split(/(\s+)/)`'s non-blank
+/// tokens), in the order `activeWordIndexForLine` counts them.
+fn word_ranges(s: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut start = None;
+    for (i, c) in s.char_indices() {
+        match (c.is_whitespace(), start) {
+            (false, None) => start = Some(i),
+            (true, Some(a)) => {
+                out.push((a, i));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(a) = start {
+        out.push((a, s.len()));
+    }
+    out
 }
 
 /// `color` at `opacity` (a word's own `opacity` over its colour).
@@ -429,4 +451,18 @@ fn scroller(cx: &mut Cx<App>, scope: &str, lines: El, mini: bool) -> El {
         .scroll(rune::ScrollSpec { stick_bottom: false })
         .clip_fade_linear(0.0, fade, 0.0, fade)
         .child(lines)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn words_are_the_non_blank_runs() {
+        let s = "  made up  line, here ";
+        let words: Vec<&str> = word_ranges(s).into_iter().map(|(a, b)| &s[a..b]).collect();
+        assert_eq!(words, ["made", "up", "line,", "here"]);
+        assert_eq!(words.len(), s.split_whitespace().count());
+        assert!(word_ranges("   ").is_empty());
+    }
 }

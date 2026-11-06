@@ -67,3 +67,16 @@ fn none_title(device: Option<&str>) -> String {
         None => "Nothing playing".into(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_artist_line_names_the_album_after_a_dot() {
+        let t = TrackListItem { title: "A song".into(), artist: Some("Someone".into()), album_title: Some("A record".into()), ..Default::default() };
+        assert_eq!(artist_line(&t), "Someone · A record");
+        let t = TrackListItem { title: "A song".into(), ..Default::default() };
+        assert_eq!(artist_line(&t), "—");
+    }
+}
