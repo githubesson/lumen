@@ -16,7 +16,12 @@ use crate::app::App;
 
 /// Whether a modal overlay holds the keyboard (`useModalKeyScope`).
 pub fn modal_open(app: &App) -> bool {
-    app.ui.settings_open || app.ui.palette_open || app.ui.upload_open || app.ui.mobile_nav_open || app.select.is_some()
+    app.ui.settings_open
+        || app.ui.palette_open
+        || app.ui.upload_open
+        || app.ui.mobile_nav_open
+        || app.select.is_some()
+        || app.overlays.confirm.is_open()
 }
 
 pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
@@ -28,10 +33,14 @@ pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     let m = ev.mods;
-    // palette:toggle (allowInInput, whileModal).
+    // palette:toggle (allowInInput, whileModal; it hands over from Settings).
     if ev.is_command('k') && !m.shift && !m.alt {
-        app.ui.settings_open = false;
-        app.ui.palette_open = !app.ui.palette_open;
+        crate::overlays::palette::toggle(app);
+        return true;
+    }
+    // While Settings is open, Ctrl+F means its own search box.
+    if ev.is_command('f') && crate::overlays::settings::is_open(app) {
+        crate::overlays::settings::focus_search(app);
         return true;
     }
     if modal_open(app) || app.me().is_none() {

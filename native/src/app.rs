@@ -289,6 +289,8 @@ fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
     changed |= crate::desktop::poll(app);
     changed |= crate::pages::auth::poll(app, clock, tx);
     changed |= crate::pages::share_preview::poll(app, clock, tx);
+    // Overlay work that finished off the UI thread and needs a `Tx` (a copy, a save dialog).
+    changed |= crate::overlays::poll(app, tx);
     changed
 }
 
@@ -314,7 +316,7 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
 
 /// Scenes for headless snapshots: each signs in against `LUMEN_SERVER` (the
 /// mock server by default) and opens one screen with its data loaded.
-fn scene(app: &mut App, path: &str) {
+pub(crate) fn scene(app: &mut App, path: &str) {
     // Synchronous first, so the session check lands before the first frame
     // (one started at launch, still on a worker, no longer counts).
     app.settle_sync();
@@ -361,10 +363,16 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
     }),
 ];
 
+/// [`SCENES`] and the overlays' scenes, for `--scene`.
+fn all_scenes() -> &'static [(&'static str, fn(&mut App))] {
+    static ALL: std::sync::OnceLock<Vec<(&'static str, fn(&mut App))>> = std::sync::OnceLock::new();
+    ALL.get_or_init(|| SCENES.iter().chain(crate::overlays::scenes::SCENES).copied().collect())
+}
+
 pub fn spec() -> rune::AppSpec<App> {
     rune::AppSpec {
         min_size: Some((640.0, 480.0)),
-        scenes: SCENES,
+        scenes: all_scenes(),
         fonts: crate::FONTS,
         families: ("Geist", "Geist Mono"),
         setup: Some(setup),

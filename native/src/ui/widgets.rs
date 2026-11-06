@@ -180,6 +180,8 @@ pub struct Btn {
     /// The leading icon's size (`size-3.5`, 14, unless a page sets `size-4`).
     pub leading_size: f32,
     pub trailing: Option<&'static Icon>,
+    /// The icon's colour when it differs from the label's.
+    pub leading_color: Option<Color>,
 }
 
 impl Btn {
@@ -194,6 +196,7 @@ impl Btn {
             leading_filled: false,
             leading_size: 14.0,
             trailing: None,
+            leading_color: None,
         }
     }
     pub fn primary(mut self) -> Btn {
@@ -251,6 +254,10 @@ impl Btn {
                 (t.c.destructive_soft, ink, Color::TRANSPARENT, hover_overlay(t.c.destructive_soft, hot))
             }
         };
+        // The 1 px border takes layout space (`box-sizing: border-box`). Only
+        // the plain `.btn` clips its fill to the padding box: the variants set
+        // `background`, which resets `background-clip`, so theirs fills the
+        // border box under the transparent border.
         let mut b = rune::row()
             .key(self.key)
             .h(h)
@@ -271,7 +278,7 @@ impl Btn {
             b = b.border(1.0, border);
         }
         if let Some(g) = self.leading {
-            b = b.child(ico(g, self.leading_size, ink));
+            b = b.child(ico(g, self.leading_size, self.leading_color.unwrap_or(ink)));
         }
         if !self.label.is_empty() {
             // One line box as tall as CSS makes it (rune rounds text boxes up).

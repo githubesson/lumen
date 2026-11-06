@@ -468,7 +468,7 @@ fn run(app: &mut App, item: Item, tx: &mut Tx) {
         }
         Item::Move => {
             close(app);
-            crate::overlays::edit::open_move(app, &track);
+            crate::overlays::edit::open_move_to_album(app, &track);
         }
         Item::Delete | Item::Remove => {
             close(app);
@@ -697,7 +697,7 @@ fn album_href(t: &TrackListItem, d: Option<&api::TrackDetail>) -> Option<String>
 
 /// The two deletes: confirmed, since both are irreversible.
 fn confirm_delete(app: &mut App, t: &TrackListItem, global: bool) {
-    use crate::overlays::confirm::{self, Request, Subject};
+    use crate::overlays::confirm::{self, Art, ConfirmSpec};
     let id = t.id.clone();
     let path = if global { format!("/api/admin/tracks/{}", api::seg(&id)) } else { format!("/api/tracks/{}", api::seg(&id)) };
     let (title, message, label, busy) = if global {
@@ -705,24 +705,20 @@ fn confirm_delete(app: &mut App, t: &TrackListItem, global: bool) {
     } else {
         ("Delete from your library?", "This permanently removes the file you uploaded.", "Delete", "Deleting…")
     };
-    confirm::open(
-        app,
-        Request {
-            title: title.into(),
-            message: message.into(),
-            confirm_label: label.into(),
-            busy_label: busy.into(),
-            subject: Some(Subject {
-                cover: Some(track_row::cover_url(t, THUMB)),
-                art_label: track_row::art_label(t),
-                name: display_text(Some(&t.title), ""),
-                detail: subline(t),
-            }),
-            confirm_icon: Some(&i::TRASH_2),
-            error_fallback: "Delete failed.".into(),
-            action: std::sync::Arc::new(move |client: &Client| client.delete_void(&path)),
-        },
-    );
+    let spec = ConfirmSpec::new(title, message, label)
+        .subject(
+            Art::Cover { url: Some(track_row::cover_url(t, THUMB)), label: track_row::art_label(t) },
+            display_text(Some(&t.title), ""),
+            Some(subline(t)),
+        )
+        .icon(&i::TRASH_2)
+        .busy_label(busy)
+        .error_fallback("Delete failed.");
+    confirm::ask_action(app, spec, move |client: &Client| client.delete_void(&path), |app: &mut App| {
+        // The library changed: reload what's on screen.
+        let loc = app.location().clone();
+        crate::pages::enter(app, &loc);
+    });
 }
 
 /// The menu, at the pointer.

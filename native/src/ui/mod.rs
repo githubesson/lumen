@@ -176,3 +176,13 @@ pub mod motion {
         Anim::new(Curve::tween(ms / 1000.0, Easing::cubic(0.22, 1.0, 0.36, 1.0)))
     }
 }
+
+/// Text that may wrap, held to the CSS height of its lines (`lh` each).
+/// Rune rounds a text box's height up to whole pixels, so a stack of
+/// fractional line heights (16.8, 20.3) drifts down a pixel every few rows;
+/// this reads the text's line count from the last layout and sizes a box to
+/// `lines × lh`. `key` must be unique in the view.
+pub fn snug_lines(key: &str, t: El, lh: f32) -> El {
+    let n = rune::memo::layout_with(key, move |r| (r[3] / lh).round().max(1.0) as u32).unwrap_or(1);
+    rune::col().w_full().min_w(0.0).h(n as f32 * lh).child(t.key(key).w_full())
+}
