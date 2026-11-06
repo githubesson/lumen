@@ -7,7 +7,6 @@
 //! switch the call sites over and delete this module then.
 
 use serde::Deserialize;
-use serde_json::json;
 
 use crate::api::{ApiError, ApiResult, Client, Me, query, seg};
 
@@ -114,26 +113,26 @@ fn parse_int_prefix(s: &str) -> Option<i64> {
     Some(if neg { -v } else { v })
 }
 
+// The session calls go through the API layer, whose `me` and `logout` never
+// fire the app-wide 401 sign-out and whose login moves the auth generation.
 pub fn login(client: &Client, username: &str, password: &str) -> ApiResult<Me> {
-    client.post(
-        "/api/auth/login",
-        json!({ "username": username, "password": password }),
-    )
+    let me = crate::api::auth::login(client, username, password)?;
+    client.advance_auth_generation();
+    Ok(me)
 }
 
 pub fn logout(client: &Client) -> ApiResult<()> {
-    client.post_void("/api/auth/logout", None)
+    crate::api::auth::logout(client)
 }
 
 pub fn me(client: &Client) -> ApiResult<Me> {
-    client.get("/api/auth/me")
+    crate::api::auth::me(client)
 }
 
 pub fn register(client: &Client, token: &str, username: &str, password: &str) -> ApiResult<Me> {
-    client.post(
-        "/api/auth/register",
-        json!({ "token": token, "username": username, "password": password }),
-    )
+    let me = crate::api::auth::register(client, token, username, password)?;
+    client.advance_auth_generation();
+    Ok(me)
 }
 
 pub fn check_invite(client: &Client, token: &str) -> ApiResult<InviteCheck> {
@@ -145,10 +144,7 @@ pub fn reset_password(
     current_password: &str,
     new_password: &str,
 ) -> ApiResult<()> {
-    client.post_void(
-        "/api/auth/reset-password",
-        Some(json!({ "current_password": current_password, "new_password": new_password })),
-    )
+    crate::api::auth::reset_password(client, current_password, new_password)
 }
 
 /// `getPublicTrackShare`.
@@ -261,9 +257,10 @@ mod tests {
     use super::*;
 
     fn err(status: u16, message: &str) -> ApiError {
-        ApiError {
-            status,
-            message: message.into(),
+        if status == 0 {
+            ApiError { status, message: message.into(), kind: crate::api::client::ErrorKind::Network }
+        } else {
+            ApiError::http(status, message)
         }
     }
 
