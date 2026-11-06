@@ -113,6 +113,27 @@ pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     detail::on_key(app, ev, tx)
 }
 
+/// Headless scenes: put the page in the state its reference shot shows.
+pub fn scene(app: &mut App, act: &str) {
+    match act {
+        "collaborators" => detail::set_tab(app, detail::Tab::Collaborators),
+        "settings" => detail::set_tab(app, detail::Tab::Settings),
+        "add" => {
+            add_tracks::open(app);
+            app.settle_sync();
+            // The shot blurs the search field the dialog focuses.
+            app.pages.playlists.fields.add_query.focused = false;
+        }
+        // Row 2 picked up and held over the gap above row 5.
+        "drag" => {
+            if let Some(d) = detail::detail_mut(app) {
+                d.table.drag = Some(tracks::DragState { from: 1, slot: Some(4), active: true });
+            }
+        }
+        _ => {}
+    }
+}
+
 /// `usePlaylists().update`: apply a change already made, ahead of any
 /// refetch; reads in flight no longer land.
 pub fn update_playlists(app: &mut App, f: impl FnOnce(&mut Vec<Playlist>)) {

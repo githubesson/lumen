@@ -319,6 +319,35 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
     ("favorites", |a| scene(a, "/favorites")),
     ("recent", |a| scene(a, "/recent")),
     ("playlists", |a| scene(a, "/playlists")),
+    ("playlist-owned", |a| scene(a, "/playlists/pl-night-drives")),
+    ("playlist-collab", |a| scene(a, "/playlists/pl-sunday-coffee")),
+    ("playlist-shared", |a| scene(a, "/playlists/pl-road-trip")),
+    ("playlist-collaborators", |a| {
+        scene(a, "/playlists/pl-sunday-coffee");
+        crate::pages::playlists::scene(a, "collaborators");
+    }),
+    ("playlist-shared-collaborators", |a| {
+        scene(a, "/playlists/pl-road-trip");
+        crate::pages::playlists::scene(a, "collaborators");
+    }),
+    ("playlist-settings", |a| {
+        scene(a, "/playlists/pl-sunday-coffee");
+        crate::pages::playlists::scene(a, "settings");
+    }),
+    ("playlist-shared-settings", |a| {
+        scene(a, "/playlists/pl-road-trip");
+        crate::pages::playlists::scene(a, "settings");
+    }),
+    ("playlist-add", |a| {
+        scene(a, "/playlists/pl-night-drives");
+        crate::pages::playlists::scene(a, "add");
+    }),
+    ("playlist-drag", |a| {
+        scene(a, "/playlists/pl-night-drives");
+        crate::pages::playlists::scene(a, "drag");
+    }),
+    ("playlist-new", |a| scene(a, "/playlists/new")),
+    ("invites", |a| scene(a, "/invites")),
     ("replay", |a| scene(a, "/replay")),
     ("admin", |a| scene(a, "/admin")),
     ("drawer", |a| {
