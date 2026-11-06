@@ -20,6 +20,13 @@ pub fn modal_open(app: &App) -> bool {
 }
 
 pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    if crate::overlays::track_menu::on_key(app, ev, tx) {
+        return true;
+    }
+    crate::ui::tooltip::on_key(app, ev);
+    if crate::ui::track_select::on_key(app, ev, tx) {
+        return true;
+    }
     let m = ev.mods;
     // palette:toggle (allowInInput, whileModal).
     if ev.is_command('k') && !m.shift && !m.alt {

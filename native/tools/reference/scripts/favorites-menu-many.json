@@ -1,0 +1,6 @@
+{"events": [
+  {"t": 0.1, "type": "tap", "key": "favorites-select"},
+  {"t": 0.5, "type": "tap", "x": 585, "y": 462},
+  {"t": 0.8, "type": "tap", "x": 585, "y": 550},
+  {"t": 1.0, "type": "secondary-click", "x": 585, "y": 550}
+]}

@@ -1,14 +1,42 @@
 //! Shared building blocks: text styles, and the web app's small components
 //! (`.iconbtn`, `.btn`, `kbd`, `CoverArt`, …) built from rune elements with
 //! the same box metrics as their CSS.
+pub mod blocks;
+pub mod cards;
+pub mod chart;
 pub mod icons;
 pub mod forms;
 pub mod kit;
+pub mod paging;
+pub mod shelf;
+pub mod tooltip;
+pub mod track_list;
+pub mod track_row;
+pub mod track_select;
 pub mod widgets;
 
 pub use widgets::*;
 
+/// State the shared components keep between frames (`App::widgets`): each
+/// track list's selection, the tooltip layer, shelves' scroll edges and the
+/// favourite hearts' pop animation.
+#[derive(Default)]
+pub struct Widgets {
+    pub lists: track_select::Lists,
+    pub tooltip: tooltip::State,
+    pub shelves: shelf::Shelves,
+    pub numbers: blocks::Numbers,
+}
+
 use rune::{Color, El, Family, Icon, TextStyle, icon, text};
+
+/// Runs before each frame for the shared components: tooltips waiting out
+/// their delay and counters rolling.
+pub fn poll(app: &mut crate::app::App, clock: f64, tx: &mut rune::Tx) -> bool {
+    let a = tooltip::poll(app, clock);
+    let b = blocks::poll_numbers(app, clock, tx);
+    a || b
+}
 
 /// CSS `line-height: 1.45` (the body's), which every text inherits unless a
 /// rule says otherwise.
@@ -38,6 +66,33 @@ pub fn label(s: impl Into<String>, style: TextStyle, color: Color) -> El {
 /// (`white-space: nowrap; overflow: hidden; text-overflow: ellipsis`).
 pub fn line(s: impl Into<String>, style: TextStyle, color: Color) -> El {
     text(s).font(style).color(color).truncate().shrink()
+}
+
+/// A single line of text laid out at its CSS line height `lh` exactly.
+/// Rune rounds a text's box up to whole pixels (17.4 → 18), which adds up
+/// down a column of lines; the box around it keeps the fractional height,
+/// so what follows sits where the browser puts it.
+pub fn exact(e: El, lh: f32) -> El {
+    rune::el().h(lh).child(e)
+}
+
+/// [`exact`] for a line set at `size` px, truncating if it must. Measured
+/// against Chromium: at 14 px and up Rune draws a line's glyphs about the
+/// rounding lower than Chromium does at the same box top, so they're lifted
+/// by it; 12 and 13 px lines land right as they are.
+pub fn exact_text(e: El, size: f32, lh: f32) -> El {
+    let lift = if size >= 14.0 { lh.ceil() - lh } else { 0.0 };
+    rune::el().h(lh).min_w(0.0).shrink().child(e.offset(0.0, -lift))
+}
+
+/// Text that ends at its box's right edge (`text-align: right`). Rune
+/// sizes a text's box to its advance rounded up to a whole pixel, which
+/// would leave the glyphs up to a pixel short of the edge; this moves them
+/// back onto it.
+pub fn text_end(s: impl Into<String>, style: TextStyle, color: Color) -> El {
+    let s = s.into();
+    let adv = rune::text::advance(&s, style);
+    text(s).font(style).color(color).offset(adv.ceil() - adv, 0.0)
 }
 
 /// A lucide icon `size` px square in `color` (`currentColor`).

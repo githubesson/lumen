@@ -26,7 +26,11 @@ export default defineConfig({
     deviceScaleFactor: 1,
     // Fractional glyph advances, as DirectWrite gives the Windows build;
     // Linux Chromium's default full hinting rounds them to whole pixels.
-    launchOptions: { args: ["--font-render-hinting=none", "--disable-font-subpixel-positioning=false"] },
+    // Playwright hides scrollbars by default; the desktop app shows its styled ones.
+    launchOptions: {
+      args: ["--font-render-hinting=none", "--disable-font-subpixel-positioning=false"],
+      ignoreDefaultArgs: ["--hide-scrollbars"],
+    },
   },
   projects: [
     { name: "dark", use: { colorScheme: "dark" } },

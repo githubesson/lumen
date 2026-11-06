@@ -54,6 +54,8 @@ pub struct App {
     pub overlays: crate::overlays::Overlays,
     /// The open `<Select>` listbox, if any.
     pub select: Option<crate::ui::forms::OpenSelect>,
+    /// The shared components' state (selections, tooltips, shelves).
+    pub widgets: crate::ui::Widgets,
 }
 
 impl App {
@@ -78,6 +80,7 @@ impl App {
             pages: crate::pages::Pages::default(),
             overlays: crate::overlays::Overlays::default(),
             select: None,
+            widgets: crate::ui::Widgets::default(),
             config,
             waker,
         };
@@ -129,6 +132,7 @@ impl App {
         }
         self.load_playlists();
         self.load_pending_invites();
+        crate::pages::favorites::refresh(self);
         let loc = self.location().clone();
         crate::pages::enter(self, &loc);
     }
@@ -276,6 +280,7 @@ fn setup(app: &mut App, waker: Waker) {
 fn poll(app: &mut App, _clock: f64, tx: &mut Tx) -> bool {
     let mut changed = Net::drain(app);
     changed |= crate::player::poll(app, tx);
+    changed |= crate::ui::poll(app, _clock, tx);
     changed
 }
 
@@ -285,6 +290,7 @@ fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
 
 pub fn view(app: &App, cx: &mut Cx<App>) -> El {
     app.system_dark.set(cx.system_dark());
+    app.widgets.lists.begin_frame();
     let t = app.theme();
     let body = match &app.session {
         Session::SignedIn(_) => crate::shell::view(app, &t, cx),

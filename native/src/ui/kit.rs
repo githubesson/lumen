@@ -12,6 +12,7 @@ use rune::{Color, Cursor, El, Icon, Live, ScrollPos, Shadow, Side, col, el, row,
 use crate::app::App;
 use crate::theme::{Theme, color_mix};
 use crate::ui::{BtnState, font, ico, iconbtn, icons as i, line, motion, with_lh};
+use crate::ui::tooltip::TipExt;
 
 thread_local! {
     static THUMBS: RefCell<HashMap<String, Live<[f32; 4]>>> = RefCell::new(HashMap::new());
@@ -125,7 +126,7 @@ impl Dialog {
         if let Some(title) = self.title {
             let close_btn = iconbtn(t, &format!("{}-close", self.key), &i::X, 14.0, BtnState::default())
                 .label("Close")
-                .help("Close")
+                .tip(&format!("{}-close", self.key), "Close")
                 .on_press(close);
             panel = panel.child(
                 crate::ui::css_border_bottom(row(), 1.0, t.c.border)
@@ -273,7 +274,8 @@ pub fn segmented<T: Copy + PartialEq + 'static>(
                 // 200 ms ease-in-out in CSS; a critically damped spring of the same length.
                 .motion(rune_motion::Spring::new(0.2, 0.0));
             if t.dark() {
-                pill = pill.fill(t.c.input_bg).border(1.0, t.c.input);
+                // A CSS border, painted over the pill's own fill.
+                pill = crate::ui::css_border(pill.fill(t.c.input_bg), 1.0, t.c.input, t.radius_md());
             } else {
                 pill = pill
                     .fill(t.c.background)
@@ -340,9 +342,10 @@ pub fn empty_state(t: &Theme, glyph: Option<&'static Icon>, title: &str, hint: O
     if let Some(g) = glyph {
         c = c.child(el().size(40.0, 40.0).mb(4.0).radius(t.radius_lg()).fill(t.c.muted).center().child(ico(g, 20.0, t.c.foreground)));
     }
-    c = c.child(text(title).font(font(16.0, 500.0)).color(t.c.foreground));
+    // `text-align: center` for lines that wrap.
+    c = c.child(text(title).font(font(16.0, 500.0)).color(t.c.foreground).wrap().align(rune::Align::Center));
     if let Some(h) = hint {
-        c = c.child(text(h).font(font(14.0, 400.0)).color(t.c.muted_foreground).wrap());
+        c = c.child(text(h).font(font(14.0, 400.0)).color(t.c.muted_foreground).wrap().align(rune::Align::Center));
     }
     if let Some(a) = action {
         c = c.child(a);
@@ -350,9 +353,9 @@ pub fn empty_state(t: &Theme, glyph: Option<&'static Icon>, title: &str, hint: O
     c
 }
 
-/// `LoadingState` (`.loading-state`).
+/// `LoadingState` (`.loading-state mono`: tabular figures).
 pub fn loading_state(t: &Theme, label: &str) -> El {
-    el().padding(20.0).child(text(label).font(font(14.0, 400.0)).color(t.c.muted_foreground))
+    el().padding(20.0).child(text(label).font(crate::ui::tnum(font(14.0, 400.0))).color(t.c.muted_foreground))
 }
 
 /// `ErrorBanner`.

@@ -52,6 +52,8 @@ type Scene = {
   size?: { width: number; height: number };
   /** Skip `settle` (it waits on every finite animation) and just wait. */
   noSettle?: boolean;
+  /** Leave the pointer where `act` put it (hover states). */
+  keepPointer?: boolean;
 };
 
 const SCENES: Scene[] = [
@@ -64,6 +66,63 @@ const SCENES: Scene[] = [
   { name: "playlists", path: "/playlists", wait: (p) => ready(p, p.locator(".card, .playlist-card")) },
   { name: "replay", path: "/replay", wait: (p) => ready(p, p.locator(".replay, main")) },
   { name: "admin", path: "/admin", wait: (p) => ready(p, p.locator(".admin, main")) },
+  // Shared components (TrackList, the track menu, tooltips) on the Favorites page.
+  {
+    name: "favorites-hover",
+    path: "/favorites",
+    wait: (p) => ready(p, p.locator("tbody tr")),
+    act: async (p) => {
+      const box = await p.locator("tbody tr").nth(1).boundingBox();
+      await p.mouse.move(box!.x + 300, box!.y + box!.height / 2);
+    },
+    keepPointer: true,
+  },
+  {
+    name: "favorites-select",
+    path: "/favorites",
+    wait: (p) => ready(p, p.locator("tbody tr")),
+    act: async (p) => {
+      await p.getByRole("button", { name: "Select", exact: true }).click();
+      await p.locator("tbody tr").nth(0).click();
+      await p.locator("tbody tr").nth(2).click();
+    },
+  },
+  {
+    name: "favorites-menu",
+    path: "/favorites",
+    wait: (p) => ready(p, p.locator("tbody tr")),
+    act: async (p) => {
+      const box = await p.locator("tbody tr").nth(1).boundingBox();
+      await p.mouse.click(box!.x + 300, box!.y + box!.height / 2, { button: "right" });
+      await p.locator(".ctx-menu .ctx-pl").first().waitFor();
+    },
+    keepPointer: true,
+  },
+  {
+    name: "favorites-menu-many",
+    path: "/favorites",
+    wait: (p) => ready(p, p.locator("tbody tr")),
+    act: async (p) => {
+      await p.getByRole("button", { name: "Select", exact: true }).click();
+      await p.locator("tbody tr").nth(0).click();
+      await p.locator("tbody tr").nth(2).click();
+      const box = await p.locator("tbody tr").nth(2).boundingBox();
+      await p.mouse.click(box!.x + 300, box!.y + box!.height / 2, { button: "right" });
+      await p.locator(".ctx-menu .ctx-pl").first().waitFor();
+    },
+    keepPointer: true,
+  },
+  {
+    name: "tooltip",
+    path: "/favorites",
+    wait: (p) => ready(p, p.locator("tbody tr")),
+    act: async (p) => {
+      const box = await p.getByRole("button", { name: "Settings" }).first().boundingBox();
+      await p.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+      await p.locator(".tooltip:not([data-closed])").waitFor();
+    },
+    keepPointer: true,
+  },
   { name: "login", signedOut: true, path: "/login", wait: (p) => ready(p, p.locator("form")) },
   { name: "library-medium", path: "/library", size: { width: 900, height: 700 }, wait: (p) => ready(p, p.locator("tbody tr")) },
   { name: "library-narrow", path: "/library", size: { width: 700, height: 600 }, wait: (p) => ready(p, p.locator("tbody tr")) },
@@ -93,7 +152,7 @@ for (const scene of SCENES) {
     }
     await scene.wait?.(page);
     await scene.act?.(page);
-    await page.mouse.move(-10, -10);
+    if (!scene.keepPointer) await page.mouse.move(-10, -10);
     if (scene.noSettle) await page.waitForTimeout(800);
     else await settle(page);
     await page.waitForTimeout(300);

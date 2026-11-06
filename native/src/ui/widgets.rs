@@ -161,6 +161,8 @@ pub struct Btn {
     pub disabled: bool,
     pub leading: Option<&'static Icon>,
     pub leading_filled: bool,
+    /// The leading icon's size (`size-3.5`, 14, unless a page sets `size-4`).
+    pub leading_size: f32,
     pub trailing: Option<&'static Icon>,
 }
 
@@ -174,6 +176,7 @@ impl Btn {
             disabled: false,
             leading: None,
             leading_filled: false,
+            leading_size: 14.0,
             trailing: None,
         }
     }
@@ -202,6 +205,11 @@ impl Btn {
         self.leading = Some(glyph);
         self
     }
+    /// The leading icon at `size` px (`size-4` is 16).
+    pub fn icon_size(mut self, size: f32) -> Btn {
+        self.leading_size = size;
+        self
+    }
     pub fn trailing(mut self, glyph: &'static Icon) -> Btn {
         self.trailing = Some(glyph);
         self
@@ -224,7 +232,9 @@ impl Btn {
         let mut b = rune::row()
             .key(self.key)
             .h(h)
-            .px(10.0)
+            // `padding: 0 10px` plus the 1 px border (rune's `.border` is drawn
+            // inside the box; CSS's takes layout space).
+            .px(11.0)
             .gap(gap)
             .items_center()
             .justify_center()
@@ -234,7 +244,7 @@ impl Btn {
             .role("button")
             .label(self.label.clone());
         if let Some(g) = self.leading {
-            b = b.child(ico(g, 14.0, ink));
+            b = b.child(ico(g, self.leading_size, ink));
         }
         if !self.label.is_empty() {
             b = b.child(text(self.label).font(font(fs, 500.0)).color(ink));
