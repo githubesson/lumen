@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use rune::{Color, El, Shadow, TextEdit, el, row};
 
-use super::desktop_bridge::{self as bridge, DesktopConfig, Toggle, UpdateStatus};
+use super::desktop_bridge::{self as bridge, DesktopConfig, Toggle};
 use super::{Desc, RowFn, SettingDef, select, setting_row};
 use crate::app::App;
 use crate::overlays::requests::{self, LastFmStatus};
@@ -529,16 +529,19 @@ fn lastfm_connect(app: &mut App) {
             let lf = &mut app.overlays.settings.lastfm;
             lf.busy = false;
             match result {
-                Ok(r) => match bridge::open_external(&r.authorization_url) {
-                    Ok(()) => {
-                        if let Some(s) = lf.status.as_mut() {
-                            s.pending = true;
-                            s.last_error = None;
+                // Opening needs the window's Tx: from the next frame.
+                Ok(r) => crate::overlays::later(app, move |app: &mut App, tx: &mut rune::Tx| {
+                    match crate::desktop::open_external(tx, &r.authorization_url) {
+                        Ok(()) => {
+                            if let Some(s) = app.overlays.settings.lastfm.status.as_mut() {
+                                s.pending = true;
+                                s.last_error = None;
+                            }
+                            lastfm_wait(app);
                         }
-                        lastfm_wait(app);
+                        Err(_) => app.overlays.settings.lastfm.error = Some("Could not open Last.fm authorization.".into()),
                     }
-                    Err(_) => lf.error = Some("Could not open Last.fm authorization.".into()),
-                },
+                }),
                 Err(e) => lf.error = Some(crate::overlays::error_message(&e, "Could not connect Last.fm.")),
             }
         },
@@ -623,12 +626,13 @@ pub fn updates<'a>(app: &'a App, t: &'a Theme) -> Vec<SettingDef<'a>> {
                 if status.message.is_empty() { status.state.clone() } else { status.message.clone() }
             });
             let button = if status.can_install {
-                Btn::new("settings-update-go", "Restart & install").small().primary().disabled(busy).build(t).on_press(|app: &mut App| {
-                    run_update(app, bridge::install_update, "Update install failed.", true)
+                Btn::new("settings-update-go", "Restart & install").small().primary().disabled(busy).build(t).on_press_tx(|app: &mut App, tx: &mut rune::Tx| {
+                    app.overlays.settings.updates.error = None;
+                    bridge::install_update(app, tx)
                 })
             } else if status.state == "available" && bridge::can_download() {
                 Btn::new("settings-update-go", "Download").small().primary().disabled(busy).build(t).on_press(|app: &mut App| {
-                    run_update(app, bridge::download_update, "Update download failed.", false)
+                    run_update(app, bridge::download_update)
                 })
             } else {
                 let label = if status.state == "downloading" {
@@ -642,7 +646,7 @@ pub fn updates<'a>(app: &'a App, t: &'a Theme) -> Vec<SettingDef<'a>> {
                     .small()
                     .disabled(busy || checking || !status.can_check || dirty)
                     .build(t)
-                    .on_press(|app: &mut App| run_update(app, bridge::check_for_updates, "Update check failed.", false))
+                    .on_press(|app: &mut App| run_update(app, bridge::check_for_updates))
             };
             setting_row(t, "Status", Some(Desc::Status { text: line, error: failed }), Some(button), None, None, last)
         }),
@@ -650,59 +654,29 @@ pub fn updates<'a>(app: &'a App, t: &'a Theme) -> Vec<SettingDef<'a>> {
     vec![SettingDef { keywords: "desktop updates update channel branch main dev source repository status check install", rows }]
 }
 
-/// Run an updater call off the UI thread; busy stays on after a successful
-/// install (the app is restarting).
-fn run_update(app: &mut App, call: fn() -> bridge::UpdateResult, failure: &'static str, hold_busy: bool) {
+/// An updater call: its progress and outcome show in the updater's status.
+fn run_update(app: &mut App, call: fn(&mut App)) {
     let ui = &mut app.overlays.settings.updates;
-    ui.busy = true;
     ui.error = None;
-    let session = app.overlays.settings.session;
-    app.net.run(call, move |app, result| {
-        if app.overlays.settings.session != session {
-            return;
-        }
-        match result {
-            Ok(status) => {
-                app.overlays.settings.updater = Some(status);
-                if !hold_busy {
-                    app.overlays.settings.updates.busy = false;
-                }
-            }
-            Err(e) => {
-                let ui = &mut app.overlays.settings.updates;
-                ui.error = Some(if e.is_empty() { failure.to_string() } else { e });
-                ui.busy = false;
-            }
-        }
-    });
+    call(app);
 }
 
 fn save_updates(app: &mut App) {
-    let Some(status) = bridge::update_status(app).cloned() else { return };
-    let ui = &mut app.overlays.settings.updates;
+    let Some(status) = bridge::update_status(app) else { return };
+    let ui = &app.overlays.settings.updates;
     let branch = ui.branch.clone();
     let repo = if ui.repo.text.trim().is_empty() { status.default_repo_url.clone() } else { ui.repo.text.trim().to_string() };
-    ui.busy = true;
-    ui.error = None;
-    let session = app.overlays.settings.session;
-    app.net.run(
-        move || bridge::save_update_config(&branch, &repo),
-        move |app, result: Result<UpdateStatus, String>| {
-            if app.overlays.settings.session != session {
-                return;
-            }
-            let ui = &mut app.overlays.settings.updates;
-            ui.busy = false;
-            match result {
-                Ok(s) => {
-                    ui.branch = s.branch.clone();
-                    ui.repo = TextEdit::new(s.repo_url.clone());
-                    app.overlays.settings.updater = Some(s);
-                }
-                Err(e) => ui.error = Some(if e.is_empty() { "Could not save the update source.".into() } else { e }),
-            }
-        },
-    );
+    let result = bridge::save_update_config(app, &branch, &repo);
+    let ui = &mut app.overlays.settings.updates;
+    ui.busy = false;
+    match result {
+        Ok(s) => {
+            ui.branch = s.branch.clone();
+            ui.repo = TextEdit::new(s.repo_url.clone());
+            ui.error = None;
+        }
+        Err(e) => ui.error = Some(if e.is_empty() { "Could not save the update source.".into() } else { e }),
+    }
 }
 
 // ---------------------------------------------------------------- session

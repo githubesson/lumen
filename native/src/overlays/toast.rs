@@ -37,10 +37,10 @@ pub struct State {
 }
 
 /// The updater's status as the toast follows it ("checking" keeps the last).
-fn status(app: &App) -> Option<&UpdateStatus> {
+fn status(app: &App) -> Option<UpdateStatus> {
     match bridge::update_status(app) {
         Some(s) if s.state != "checking" => Some(s),
-        _ => app.overlays.toast.last.as_ref(),
+        _ => app.overlays.toast.last.clone(),
     }
 }
 
@@ -59,10 +59,10 @@ fn dismiss_key(s: &UpdateStatus, phase: Phase) -> String {
 }
 
 /// Keep up with the updater: remember the last real status, and close out a
-/// download we started once the update is found, finished or gone.
-// TODO(desktop-merge): call from the updater's status events.
+/// download we started once the update is found, finished or gone. Runs
+/// before each frame (`overlays::poll`), as the web's status events.
 pub fn on_status(app: &mut App) {
-    let Some(s) = bridge::update_status(app).cloned() else { return };
+    let Some(s) = bridge::update_status(app) else { return };
     let t = &mut app.overlays.toast;
     if s.state != "checking" {
         t.last = Some(s.clone());
@@ -76,47 +76,37 @@ pub fn on_status(app: &mut App) {
 }
 
 fn dismiss(app: &mut App) {
-    let Some(s) = status(app).cloned() else { return };
+    let Some(s) = status(app) else { return };
     let Some(p) = phase(app, &s) else { return };
     app.overlays.toast.dismissed.insert(dismiss_key(&s, p));
 }
 
 fn download(app: &mut App) {
-    let s = status(app).cloned();
+    let s = status(app);
     let t = &mut app.overlays.toast;
     t.requested_at = s;
     t.download_started = true;
-    app.net.run(bridge::download_update, |app, result| match result {
-        Ok(s) => {
-            app.overlays.settings.updater = Some(s);
-            on_status(app);
-        }
-        Err(_) => app.overlays.toast.requested_at = None,
-    });
+    bridge::download_update(app);
+    on_status(app);
 }
 
 /// A failed download leaves the updater in "error"; a fresh check finds the
 /// update again and puts the Download button back.
 fn retry(app: &mut App) {
-    app.net.run(bridge::check_for_updates, |app, result| {
-        if let Ok(s) = result {
-            app.overlays.settings.updater = Some(s);
-            on_status(app);
-        }
-    });
+    bridge::check_for_updates(app);
+    on_status(app);
 }
 
-fn install(app: &mut App) {
+fn install(app: &mut App, tx: &mut rune::Tx) {
     app.overlays.toast.installing = true;
-    app.net.run(bridge::install_update, |app, result| {
-        if result.is_err() {
-            app.overlays.toast.installing = false;
-        }
-    });
+    bridge::install_update(app, tx);
+    if bridge::update_status(app).is_some_and(|s| s.state == "error") {
+        app.overlays.toast.installing = false;
+    }
 }
 
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
-    let s = status(app)?;
+    let s = &status(app)?;
     let p = phase(app, s)?;
     if app.overlays.toast.dismissed.contains(&dismiss_key(s, p)) {
         return None;
@@ -213,7 +203,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
                     .primary()
                     .disabled(st.installing)
                     .build(t)
-                    .on_press(install),
+                    .on_press_tx(install),
             );
         }
         Phase::Failed => {

@@ -315,6 +315,11 @@ impl Player {
 
     // ---- output devices (`audioOutput.ts`) ----
 
+    /// The output thread is up (it isn't in headless runs, or before launch).
+    pub fn output_started(&self) -> bool {
+        self.output.is_some()
+    }
+
     /// Output devices can be listed and chosen here.
     pub fn output_supported(&self) -> bool {
         self.output.as_ref().is_some_and(|o| o.shared.supported.load(std::sync::atomic::Ordering::Relaxed))

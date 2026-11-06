@@ -36,8 +36,8 @@ pub struct State {
     pub query: TextEdit,
     /// The side column, toggled on (it stays as left for the session).
     pub side_shown: bool,
-    /// TODO(desktop-merge): the updater's status lives with the desktop side;
-    /// this stands in for it (scenes set it).
+    /// A headless scene's stand-in for the updater's status (the real one
+    /// is `app.desktop.updater`'s, see `desktop_bridge::update_status`).
     pub updater: Option<desktop_bridge::UpdateStatus>,
     pub lastfm: rows::LastFm,
     pub desktop: rows::DesktopUi,
