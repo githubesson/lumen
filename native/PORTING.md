@@ -132,6 +132,11 @@ is thin. Rune is pre-release; work around gaps in this crate rather than patchin
 
 ## Building for Windows
 
+`tools/wine-snap.sh <scene>` renders a scene with the Windows `lumen.exe` under Wine (virtual
+X display, Vulkan on lavapipe, d3d12 off: Wine's HLSL compiler lacks the shader-model 5.1
+resource arrays Rune's blur layers use, which Windows' own FXC has). Its output should match
+the Linux build pixel for pixel; it did for home, library and login (2026-11-06).
+
 `cargo build --release --target x86_64-pc-windows-gnu` cross-compiles from Linux (mingw).
 CI builds the MSVC target on Windows runners (`.github/workflows/native.yml`); packaging,
 release asset names and the updater's rules are in `packaging/README.md`.
