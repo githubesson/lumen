@@ -294,8 +294,33 @@ fn scene(app: &mut App, path: &str) {
     app.settle_sync();
 }
 
+/// A Home scene on a saved arrangement (`tweaks.homeBoard`), seeded before
+/// sign-in as the reference seeds it, without touching config.json.
+fn home_scene(app: &mut App, board: &str, path: &str) {
+    app.tweaks.home_board = serde_json::from_str(board).ok();
+    scene(app, path);
+}
+
 pub const SCENES: &[(&str, fn(&mut App))] = &[
     ("home", |a| scene(a, "/")),
+    ("home-medium", |a| scene(a, "/")),
+    ("home-narrow", |a| scene(a, "/")),
+    ("home-customize", |a| scene(a, "/?customize")),
+    ("home-swapped", |a| home_scene(a, crate::pages::home::scenes::SWAPPED, "/")),
+    ("home-custom", |a| home_scene(a, crate::pages::home::scenes::CUSTOM, "/")),
+    ("home-custom-customize", |a| home_scene(a, crate::pages::home::scenes::CUSTOM, "/?customize")),
+    ("home-add", |a| {
+        home_scene(a, crate::pages::home::scenes::CUSTOM, "/?customize");
+        crate::pages::home::dialogs::open_add(a);
+    }),
+    ("home-settings", |a| {
+        home_scene(a, crate::pages::home::scenes::CUSTOM, "/?customize");
+        crate::pages::home::dialogs::open_settings(a, "repeat", Some("activity".into()));
+    }),
+    ("home-reset", |a| {
+        home_scene(a, crate::pages::home::scenes::CUSTOM, "/?customize");
+        crate::pages::home::editing::reset_board(a);
+    }),
     ("library", |a| scene(a, "/library")),
     ("albums", |a| scene(a, "/library?view=albums")),
     ("artists", |a| scene(a, "/library?view=artists")),
