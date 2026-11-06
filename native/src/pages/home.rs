@@ -9,7 +9,7 @@
 //! - [`grid`]: the board's CSS grid (placement and auto rows).
 //! - [`board`], [`panels`], [`hero`]: the panels' markup.
 //! - [`editing`], [`dialogs`]: customize mode and its dialogs.
-//! - [`sources`], [`requests`], [`logic`]: what Home loads, and the core
+//! - [`sources`], [`logic`]: what Home loads, and the core
 //!   helpers it uses (until the API port merges).
 
 pub mod albums;
@@ -24,7 +24,6 @@ pub mod kinds;
 pub mod layout;
 pub mod logic;
 pub mod panels;
-pub mod requests;
 pub mod sources;
 
 use std::cell::{Cell, RefCell};
@@ -43,7 +42,7 @@ use arrangement::{CUSTOMIZE_PARAM, DEFAULT_PANEL_IDS, HomeArrangement, HomePanel
 use kinds::{DEFAULT_PERIOD, PanelKind};
 use layout::{BoardCell, PackItem, board_layout, packed_layout};
 use logic::{Period, error_message, playable_tracks};
-use requests::ReplayData;
+use crate::api::stats::ReplayData;
 
 /// A source's state as panels read it (`ApiResource` / `SourceState`):
 /// unknown and loading until it reports.
@@ -53,6 +52,14 @@ pub struct Res<T> {
     pub error: Option<String>,
     /// Which load this is: a reply to an older one is dropped.
     pub serial: u64,
+}
+
+/// `useFavorites()` as a panel's source: the app-wide favourites store
+/// (`pages::favorites`), most recently hearted first.
+pub fn favorites_res(app: &App) -> Res<Vec<TrackListItem>> {
+    let f = &app.pages.favorites;
+    let known = f.loaded || !f.tracks.is_empty();
+    Res { data: known.then(|| f.tracks.clone()), loading: f.loading, error: f.error.clone(), serial: 0 }
 }
 
 impl<T> Default for Res<T> {
@@ -85,8 +92,6 @@ pub struct State {
     pub tracks: Res<Vec<TrackListItem>>,
     pub track_limit: usize,
     pub tracks_sent: usize,
-    /// TODO(api-merge): `useFavorites()`'s rows.
-    pub favorites: Res<Vec<TrackListItem>>,
     pub playlists_loading: bool,
     pub playlists_error: Option<String>,
     pub playlists_serial: u64,
@@ -282,6 +287,7 @@ impl Model {
 
 pub fn model(app: &App) -> Model {
     let st = &app.pages.home;
+    let favorites = favorites_res(app);
     let arrangement = read_arrangement(app.tweaks.home_board.as_ref());
     let enabled: Vec<HomePanel> = arrangement.panels.iter().filter(|p| !p.hidden).cloned().collect();
     let editing = app.location().has(CUSTOMIZE_PARAM);
@@ -336,7 +342,7 @@ pub fn model(app: &App) -> Model {
             }
             PanelKind::Recent => res_content("recent".into(), recent.len(), st.recent.data.is_some(), st.recent.loading, &st.recent.error),
             PanelKind::Favorites => {
-                let f = &st.favorites;
+                let f = &favorites;
                 res_content("favorites".into(), f.data.as_ref().map_or(0, Vec::len), f.data.is_some(), f.loading, &f.error)
             }
             PanelKind::Albums | PanelKind::Added => {
@@ -377,7 +383,7 @@ pub fn model(app: &App) -> Model {
     // Until every list has settled once, the board keeps its full shape,
     // with placeholders; then it swaps to the panels that have something,
     // in one change. Latched for the visit.
-    let fav_settled = st.favorites.data.is_some() || !st.favorites.loading;
+    let fav_settled = favorites.data.is_some() || !favorites.loading;
     let playlists_answered = playlists.is_some() || !st.playlists_loading;
     let all_settled = st.recent.answered()
         && st.tracks.answered()
@@ -466,6 +472,7 @@ fn plan(app: &App, t: &Theme, width: f32, window_w: f32) -> Plan {
         albums: m.albums.clone(),
         hero: m.hero.clone(),
         narrow_window: window_w <= 760.0,
+        favorites: favorites_res(app),
     };
     let laid = grid::lay_out(&areas, width, t.gap(), size.columns(), |n, w| {
         let natural = panels::panel(app, t, &ctx, &m.panels[n], w, None).natural;
@@ -481,7 +488,7 @@ fn plan(app: &App, t: &Theme, width: f32, window_w: f32) -> Plan {
             _ => {}
         }
     }
-    if let Some(target) = m.hero.as_ref().and_then(logic::track_album_target).filter(|t| !t.tidal) {
+    if let Some(target) = m.hero.as_ref().and_then(logic::track_album_target).filter(|t| t.kind != crate::core::entity_target::EntityKind::Tidal) {
         needs.hero_album = Some(target.id);
     }
     let mut outs = Vec::with_capacity(laid.rects.len());
@@ -685,7 +692,7 @@ pub fn play_fetched(
 /// list the track came from.
 pub fn play_hero(app: &mut App, track: &TrackListItem) {
     let fallback = sources::fallback_queue(&app.pages.home);
-    let Some(album) = logic::track_album_target(track).filter(|t| !t.tidal) else {
+    let Some(album) = logic::track_album_target(track).filter(|t| t.kind != crate::core::entity_target::EntityKind::Tidal) else {
         play_from(app, track, &fallback);
         return;
     };
@@ -696,7 +703,7 @@ pub fn play_hero(app: &mut App, track: &TrackListItem) {
     let seq = home.play_seq;
     let track = track.clone();
     app.net.run(
-        move || requests::list_album_tracks(&client, &album.id),
+        move || crate::api::library::list_album_tracks(&client, &album.id),
         move |app, result| {
             if app.pages.home.play_seq != seq {
                 return;

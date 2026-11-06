@@ -22,7 +22,7 @@ pub struct HomeAlbum {
 pub fn home_albums(tracks: &[TrackListItem]) -> Vec<HomeAlbum> {
     let mut albums: Vec<(String, String, Vec<(String, usize)>)> = Vec::new();
     for track in tracks {
-        let Some(target) = track_album_target(track).filter(|t| !t.tidal) else { continue };
+        let Some(target) = track_album_target(track).filter(|t| t.kind != crate::core::entity_target::EntityKind::Tidal) else { continue };
         let Some(title) = track.album_title.as_deref().map(str::trim).filter(|t| !t.is_empty()) else { continue };
         let at = match albums.iter().position(|(id, _, _)| *id == target.id) {
             Some(i) => i,

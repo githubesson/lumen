@@ -273,7 +273,7 @@ fn hero_album(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, track: &TrackListI
     let target = track_album_target(track);
     // Only a library album has a page to describe it and tracks to play
     // through here; a TIDAL track links to its release.
-    let album_id = target.as_ref().filter(|t| !t.tidal).map(|t| t.id.clone());
+    let album_id = target.as_ref().filter(|t| t.kind != crate::core::entity_target::EntityKind::Tidal).map(|t| t.id.clone());
     let album = album_id.as_ref().and_then(|id| st.hero_album.get(id)).and_then(|r| r.data.as_ref());
     let year = album.and_then(|a| a.release_year).filter(|y| *y != 0);
     let track_count = album.map(|a| a.track_count).filter(|n| *n > 0);

@@ -14,6 +14,21 @@ pub enum Period {
     Last30,
 }
 
+impl Period {
+    /// [`period_key`].
+    pub fn key(self) -> String {
+        period_key(self)
+    }
+    /// [`parse_period_key`].
+    pub fn parse(key: &str) -> Option<Period> {
+        parse_period_key(Some(key))
+    }
+    /// [`period_label`].
+    pub fn label(self) -> String {
+        period_label(self)
+    }
+}
+
 /// `periodKey`: stable, for caches and `?period=`.
 pub fn period_key(p: Period) -> String {
     match p {
