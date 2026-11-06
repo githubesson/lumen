@@ -233,18 +233,24 @@ impl Btn {
                 (t.c.destructive_soft, ink, Color::TRANSPARENT, hover_overlay(t.c.destructive_soft, hot))
             }
         };
+        // The 1 px border takes layout space (`box-sizing: border-box`). Only
+        // the plain `.btn` clips its fill to the padding box: the variants set
+        // `background`, which resets `background-clip`, so theirs fills the
+        // border box under the transparent border.
         let mut b = rune::row()
             .key(self.key)
             .h(h)
-            .px(10.0)
+            .px(11.0)
             .gap(gap)
             .items_center()
             .justify_center()
             .radius(radius)
             .fill(fill)
-            .border(1.0, border)
             .role("button")
             .label(self.label.clone());
+        if self.variant == BtnVariant::Secondary {
+            b = b.border(1.0, border);
+        }
         if let Some(g) = self.leading {
             b = b.child(ico(g, self.leading_size, self.leading_color.unwrap_or(ink)));
         }

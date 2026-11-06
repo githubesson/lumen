@@ -237,9 +237,17 @@ fn subject_card(app: &App, t: &Theme, subject: &Subject) -> El {
         .grow(1.0)
         .min_w(0.0)
         .gap(2.0)
-        .child(text(subject.name.clone()).font(with_lh(font(14.0, 500.0), 18.2)).color(t.c.foreground).wrap_anywhere());
+        .child(crate::ui::snug_lines(
+            "confirm-subject-name",
+            text(subject.name.clone()).font(with_lh(font(14.0, 500.0), 18.2)).color(t.c.foreground).wrap_anywhere(),
+            18.2,
+        ));
     if let Some(d) = &subject.detail {
-        words = words.child(text(d.clone()).font(with_lh(font(13.0, 400.0), 18.2)).color(t.c.muted_foreground).wrap_anywhere());
+        words = words.child(crate::ui::snug_lines(
+            "confirm-subject-detail",
+            text(d.clone()).font(with_lh(font(13.0, 400.0), 18.2)).color(t.c.muted_foreground).wrap_anywhere(),
+            18.2,
+        ));
     }
     css_border(row(), 1.0, t.c.border, t.radius_lg())
         .key("confirm-subject")
@@ -268,13 +276,15 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
         col()
             .w_full()
             .gap(6.0)
-            .child(
+            .child(crate::ui::snug_lines(
+                "confirm-title",
                 text(spec.title.clone())
                     .font(with_lh(font(16.0, 600.0), 20.8).tracking(-0.16))
                     .color(t.c.popover_foreground)
                     .wrap_anywhere()
                     .role("heading"),
-            )
+                20.8,
+            ))
             .child(text(spec.message.clone()).font(with_lh(font(14.0, 400.0), 21.0)).color(t.c.muted_foreground).wrap_anywhere()),
     );
     if let Some(e) = &s.error {

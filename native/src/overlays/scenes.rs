@@ -12,6 +12,14 @@ pub const LINKED_TRACK: &str = "t-al-weather-2";
 
 fn library(app: &mut App) {
     scene(app, "/library");
+    // The first `/me` may still be on a worker (it starts before scenes run
+    // requests inline); overlays read the signed-in user as they open.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app.me().is_none() && std::time::Instant::now() < deadline {
+        crate::net::Net::drain(app);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    app.settle_sync();
 }
 
 /// Type `text` into the palette as keystrokes would.
@@ -96,4 +104,57 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
         a.overlays.settings.updater = Some(update_available());
         settings(a, SectionId::Updates);
     }),
+    ("upload", |a| {
+        library(a);
+        crate::overlays::upload::open(a);
+    }),
+    ("confirm", |a| {
+        library(a);
+        let Some(t) = track(a, MENU_TRACK) else { return };
+        crate::overlays::confirm::ask_action(
+            a,
+            remove_spec(&t),
+            |_| Ok(()),
+            |_| {},
+        );
+    }),
+    ("toast", |a| {
+        library(a);
+        a.overlays.settings.updater = Some(update_available());
+        crate::overlays::toast::on_status(a);
+    }),
 ];
+
+/// A library row by id, as the track list shows it.
+pub fn track(app: &mut App, id: &str) -> Option<crate::api::TrackListItem> {
+    let client = app.client.clone()?;
+    let (list, _) = client.page::<crate::api::TrackListItem>("/api/tracks?limit=200").ok()?;
+    list.into_iter().find(|t| t.id == id)
+}
+
+/// The track menu's "Remove from library" question (`TrackContextMenu.tsx`).
+pub fn remove_spec(t: &crate::api::TrackListItem) -> crate::overlays::confirm::ConfirmSpec {
+    use crate::overlays::confirm::{Art, ConfirmSpec};
+    let artist = crate::format::display_text(t.artist.as_deref(), "Unknown artist");
+    let detail = match t.album_title.as_deref().filter(|a| !a.is_empty()) {
+        Some(al) => format!("{artist} · {al}"),
+        None => artist,
+    };
+    let label = t.album_title.clone().filter(|a| !a.is_empty()).unwrap_or_else(|| t.title.clone());
+    ConfirmSpec::new(
+        "Remove for everyone?",
+        "This permanently deletes the file from the server, so it leaves every library.",
+        "Remove",
+    )
+    .subject(
+        Art::Cover {
+            url: Some(crate::api::media::track_cover(&t.id, t.album_id.as_deref(), t.cover_url.as_deref(), Some(64))),
+            label,
+        },
+        t.title.clone(),
+        Some(detail),
+    )
+    .icon(&crate::ui::icons::TRASH_2)
+    .busy_label("Removing…")
+    .error_fallback("Delete failed.")
+}

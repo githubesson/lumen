@@ -145,7 +145,9 @@ impl Dialog {
                     .child(close_btn),
             );
         }
-        panel = panel.child(col().grow(1.0).min_h(0.0).child(self.body));
+        // `grid-rows-[auto_1fr_auto]` in an auto-height panel: the body takes
+        // its content height and shrinks only to fit `max-height`.
+        panel = panel.child(col().w_full().shrink().min_h(0.0).child(self.body));
         if let Some(f) = self.footer {
             panel = panel.child(f);
         }
