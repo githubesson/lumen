@@ -13,16 +13,16 @@
 //! Chromium's HTTP cache does for the Electron app, so a relaunch shows Home's
 //! covers at once.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rune::{Image, ImageCache};
 
 use crate::api::Client;
-use crate::net::{LateWaker, Pool};
+use crate::net::LateWaker;
 
 #[derive(Clone)]
 enum Slot {
@@ -51,46 +51,129 @@ const UNSIZED_MAX: u32 = 512;
 
 /// A byte-bounded least-recently-used map.
 struct Lru<V> {
-    map: HashMap<String, (V, usize)>,
-    order: VecDeque<String>,
+    /// Each entry with its size and the tick it was last used at.
+    map: HashMap<String, (V, usize, u64)>,
+    /// Keys by the tick they were last used at, oldest first.
+    order: BTreeMap<u64, String>,
+    tick: u64,
     bytes: usize,
     budget: usize,
 }
 
 impl<V: Clone> Lru<V> {
     fn new(budget: usize) -> Lru<V> {
-        Lru { map: HashMap::new(), order: VecDeque::new(), bytes: 0, budget }
+        Lru { map: HashMap::new(), order: BTreeMap::new(), tick: 0, bytes: 0, budget }
     }
 
     fn get(&mut self, key: &str) -> Option<V> {
-        let v = self.map.get(key)?.0.clone();
-        if let Some(i) = self.order.iter().position(|k| k == key) {
-            let k = self.order.remove(i).unwrap();
-            self.order.push_back(k);
-        }
-        Some(v)
+        self.tick += 1;
+        let (v, _, used) = self.map.get_mut(key)?;
+        let k = self.order.remove(used).unwrap_or_else(|| key.to_string());
+        *used = self.tick;
+        self.order.insert(self.tick, k);
+        Some(v.clone())
     }
 
     fn put(&mut self, key: String, value: V, bytes: usize) {
-        if let Some((_, old)) = self.map.remove(&key) {
-            self.bytes -= old;
-            self.order.retain(|k| k != &key);
-        }
+        self.remove(&key);
+        self.tick += 1;
         self.bytes += bytes;
-        self.order.push_back(key.clone());
-        self.map.insert(key, (value, bytes));
+        self.order.insert(self.tick, key.clone());
+        self.map.insert(key, (value, bytes, self.tick));
         while self.bytes > self.budget && self.order.len() > 1 {
-            let Some(k) = self.order.pop_front() else { break };
-            if let Some((_, b)) = self.map.remove(&k) {
+            let Some((_, k)) = self.order.pop_first() else { break };
+            if let Some((_, b, _)) = self.map.remove(&k) {
                 self.bytes -= b;
             }
         }
+    }
+
+    fn remove(&mut self, key: &str) -> Option<V> {
+        let (v, b, used) = self.map.remove(key)?;
+        self.bytes -= b;
+        self.order.remove(&used);
+        Some(v)
     }
 
     fn clear(&mut self) {
         self.map.clear();
         self.order.clear();
         self.bytes = 0;
+    }
+}
+
+/// Workers that take the newest job first: after a fast scroll the covers
+/// on screen were asked for last, so they load before the rows scrolled
+/// past. Past `MAX_QUEUED` the oldest waiting jobs are dropped and their
+/// slots forgotten, so a row that shows again asks again.
+struct Stack<J: Task = Job> {
+    jobs: Mutex<VecDeque<J>>,
+    ready: Condvar,
+    /// Workers start with the first job, and stop with the cache.
+    started: std::sync::Once,
+    closed: AtomicBool,
+}
+
+/// Cover jobs waiting at most (a few screens of rows).
+const MAX_QUEUED: usize = 192;
+/// Cover workers: fetches mostly wait on the network, as Chromium's six
+/// connections a host do.
+const WORKERS: usize = 6;
+
+/// A job on the [`Stack`].
+trait Task: Send + 'static {
+    fn run(self);
+    /// Dropped unrun, past `MAX_QUEUED`.
+    fn dropped(self);
+}
+
+impl<J: Task> Stack<J> {
+    fn new() -> Arc<Stack<J>> {
+        Arc::new(Stack { jobs: Mutex::new(VecDeque::new()), ready: Condvar::new(), started: std::sync::Once::new(), closed: AtomicBool::new(false) })
+    }
+
+    fn start(self: &Arc<Stack<J>>) {
+        for n in 0..WORKERS {
+            let s = self.clone();
+            std::thread::Builder::new().name(format!("lumen-img-{n}")).spawn(move || s.work()).ok();
+        }
+    }
+
+    fn work(&self) {
+        loop {
+            let job = {
+                let mut jobs = self.jobs.lock().unwrap();
+                loop {
+                    if self.closed.load(Ordering::Acquire) {
+                        return;
+                    }
+                    if let Some(job) = jobs.pop_back() {
+                        break job;
+                    }
+                    jobs = self.ready.wait(jobs).unwrap();
+                }
+            };
+            job.run();
+        }
+    }
+
+    fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        self.jobs.lock().unwrap().clear();
+        self.ready.notify_all();
+    }
+
+    fn push(self: &Arc<Stack<J>>, job: J) {
+        self.started.call_once(|| self.start());
+        let dropped = {
+            let mut jobs = self.jobs.lock().unwrap();
+            jobs.push_back(job);
+            if jobs.len() > MAX_QUEUED { jobs.pop_front() } else { None }
+        };
+        self.ready.notify_one();
+        if let Some(old) = dropped {
+            old.dropped();
+        }
     }
 }
 
@@ -102,7 +185,7 @@ struct Shared {
 pub struct Images {
     cache: Arc<ImageCache>,
     shared: Arc<Shared>,
-    pool: Pool,
+    jobs: Arc<Stack>,
     client: Arc<Mutex<Option<Client>>>,
     waker: LateWaker,
     sync: AtomicBool,
@@ -121,7 +204,7 @@ impl Images {
         Images {
             cache: Arc::new(ImageCache::new(waker.as_waker())),
             shared: Arc::new(Shared { decoded: Mutex::new(Lru::new(DECODED_BUDGET)), encoded: Mutex::new(Lru::new(ENCODED_BUDGET)) }),
-            pool: Pool::new("lumen-img", 4),
+            jobs: Stack::new(),
             client: Arc::default(),
             waker,
             sync: Default::default(),
@@ -197,8 +280,14 @@ impl Images {
             job.run();
             return self.request(url, size);
         }
-        self.pool.spawn(move || job.run());
+        self.jobs.push(job);
         Cover::Loading
+    }
+}
+
+impl Drop for Images {
+    fn drop(&mut self) {
+        self.jobs.close();
     }
 }
 
@@ -212,6 +301,20 @@ struct Job {
     shared: Arc<Shared>,
     waker: LateWaker,
     disk: Option<PathBuf>,
+}
+
+impl Task for Job {
+    fn run(self) {
+        Job::run(self);
+    }
+
+    /// The slot is forgotten, so the row asks again if it shows again.
+    fn dropped(self) {
+        let mut decoded = self.shared.decoded.lock().unwrap();
+        if matches!(decoded.get(&self.key), Some(Slot::Loading)) {
+            decoded.remove(&self.key);
+        }
+    }
 }
 
 impl Job {
@@ -387,6 +490,51 @@ mod tests {
         l.put("c".into(), 3, 30);
         assert!(l.map.contains_key("a") && l.map.contains_key("c") && !l.map.contains_key("b"));
         assert!(l.bytes <= 100);
+    }
+
+    #[test]
+    fn the_lru_forgets_and_replaces_entries() {
+        let mut l: Lru<u8> = Lru::new(100);
+        l.put("a".into(), 1, 40);
+        l.put("a".into(), 2, 50);
+        assert_eq!((l.get("a"), l.bytes, l.order.len()), (Some(2), 50, 1));
+        assert_eq!(l.remove("a"), Some(2));
+        assert_eq!((l.bytes, l.order.len(), l.map.len()), (0, 0, 0));
+        assert_eq!(l.get("a"), None);
+    }
+
+    struct Probe(u32, Arc<Mutex<Vec<(u32, bool)>>>);
+
+    impl Task for Probe {
+        fn run(self) {
+            self.1.lock().unwrap().push((self.0, true));
+        }
+        fn dropped(self) {
+            self.1.lock().unwrap().push((self.0, false));
+        }
+    }
+
+    #[test]
+    fn the_stack_runs_the_newest_first_and_drops_the_oldest() {
+        let stack: Arc<Stack<Probe>> = Stack::new();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        // Held so nothing starts: the queue fills as a fast scroll would fill it.
+        stack.started.call_once(|| {});
+        for n in 0..MAX_QUEUED as u32 + 3 {
+            stack.push(Probe(n, log.clone()));
+        }
+        assert_eq!(*log.lock().unwrap(), vec![(0, false), (1, false), (2, false)]);
+        log.lock().unwrap().clear();
+        let s = stack.clone();
+        let worker = std::thread::spawn(move || s.work());
+        while stack.jobs.lock().unwrap().len() > 0 {
+            std::thread::yield_now();
+        }
+        stack.close();
+        worker.join().unwrap();
+        let ran: Vec<u32> = log.lock().unwrap().iter().map(|&(n, _)| n).collect();
+        assert_eq!(ran.first(), Some(&(MAX_QUEUED as u32 + 2)));
+        assert!(ran.windows(2).all(|w| w[0] > w[1]));
     }
 
     #[test]
