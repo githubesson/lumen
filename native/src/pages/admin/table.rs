@@ -420,6 +420,14 @@ pub fn badge(t: &Theme, label: &str, accent: bool) -> (El, f32) {
     (e, w)
 }
 
+/// A `.badge` inline in a cell's text: baseline-aligned in the 14 px line,
+/// whose box it makes 20.70 px tall, sitting 0.70 px down (as Chromium
+/// lays out an inline-flex badge on the cell's strut).
+pub fn inline_badge(t: &Theme, label: &str, accent: bool) -> Part {
+    let (b, w) = badge(t, label, accent);
+    Part::Fixed(el().h(20.703125).child(b.mt(0.703125)), w)
+}
+
 /// A row action (`.admin-actions .iconbtn`): a muted 32 px icon button that
 /// lights on hover, red for `danger`.
 pub struct Action {

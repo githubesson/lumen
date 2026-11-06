@@ -161,13 +161,6 @@ fn toggle_downloads(app: &mut App) {
     s.downloads_open = !s.downloads_open;
 }
 
-/// `repeat(auto-fit, minmax(min, 1fr))` with `n` items: the columns' width.
-pub fn fit_columns(width: f32, min: f32, gap: f32, n: usize) -> (usize, f32) {
-    let tracks = (((width + gap) / (min + gap)).floor() as usize).max(1);
-    let cols = tracks.min(n.max(1));
-    (cols, (width - gap * (cols as f32 - 1.0)) / cols as f32)
-}
-
 pub fn view(app: &App, t: &Theme, width: f32) -> El {
     let s = &app.pages.admin.auto;
     let status = s.status.data.as_ref();
@@ -214,7 +207,7 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
         ("Failed", summary.map(|x| x.failed)),
         ("Saved", summary.map(|x| x.saved)),
     ];
-    let (_, stat_w) = fit_columns(inner, 110.0, 10.0, stats.len());
+    let (_, stat_w) = parts::fit_columns(inner, 110.0, 10.0, stats.len());
     let mut grid = row().flex_wrap().gap(10.0);
     for (label, value) in stats {
         grid = grid.child(
@@ -275,7 +268,7 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
         parts::field(t, "Subfolder", subdir),
         row().gap(8.0).justify_end().child(retry_btn).child(save_btn),
     ];
-    let (cols, w) = fit_columns(inner, 220.0, 12.0, items.len());
+    let (cols, w) = parts::fit_columns(inner, 220.0, 12.0, items.len());
     let mut form = col().gap(12.0);
     let mut line = row().gap(12.0).items_end();
     for (k, item) in items.into_iter().enumerate() {
@@ -320,8 +313,7 @@ fn downloads(t: &Theme, recent: &[rq::TidalDownload], width: f32) -> El {
     let rows = recent
         .iter()
         .map(|r| {
-            let (badge, bw) = table::badge(t, if r.status == "existing" { "in library" } else { &r.status }, r.status != "failed");
-            let mut status = vec![Part::Fixed(row().child(badge), bw)];
+            let mut status = vec![table::inline_badge(t, if r.status == "existing" { "in library" } else { &r.status }, r.status != "failed")];
             if let Some(e) = r.error.as_deref().filter(|e| !e.is_empty()) {
                 let mut msg = e.to_string();
                 if let Some(next) = r.next_attempt_at.as_deref() {
@@ -338,7 +330,7 @@ fn downloads(t: &Theme, recent: &[rq::TidalDownload], width: f32) -> El {
             table::Row {
                 key: format!("admin-auto-dl-{}", r.tidal_id),
                 cells: vec![
-                    status_cell(status),
+                    Cell::stack(status, 4.0),
                     Cell::lines(track),
                     Cell::text(Line::new(file, mono(14.0, 400.0), t.c.muted_foreground).break_all()),
                     Cell::text(Line::new(format::short(Some(&r.updated_at)), tnum(font(14.0, 400.0)), t.c.muted_foreground)),
@@ -348,57 +340,6 @@ fn downloads(t: &Theme, recent: &[rq::TidalDownload], width: f32) -> El {
         .collect();
     let cols = [Col::auto("Status"), Col::auto("Track"), Col::auto("File"), Col::auto("Updated")];
     table::table(t, "admin-auto-dl", &cols, rows, None, width)
-}
-
-/// A badge with the error 4 px under it.
-pub fn status_cell(parts: Vec<Part>) -> Cell {
-    let mut it = parts.into_iter();
-    let first = it.next();
-    let rest: Vec<Part> = it.collect();
-    let (mut min, mut max) = (0f32, 0f32);
-    let mut all = Vec::new();
-    if let Some(f) = first {
-        all.push(f);
-    }
-    all.extend(rest);
-    for p in &all {
-        let (a, b) = part_widths(p);
-        min = min.max(a);
-        max = max.max(b);
-    }
-    Cell::with(min, max, move |w| {
-        let mut c = col().items_start();
-        for (k, p) in all.into_iter().enumerate() {
-            let e = build_part(p, w);
-            c = c.child(if k > 0 { e.mt(4.0) } else { e });
-        }
-        c
-    })
-}
-
-fn part_widths(p: &Part) -> (f32, f32) {
-    match p {
-        Part::Line(l) => l.widths(),
-        Part::Fixed(_, w) => (*w, *w),
-        Part::Row(items, gap) => {
-            let gaps = gap * items.len().saturating_sub(1) as f32;
-            (items.iter().map(|i| i.1).sum::<f32>() + gaps, items.iter().map(|i| i.2).sum::<f32>() + gaps)
-        }
-    }
-}
-
-fn build_part(p: Part, w: f32) -> El {
-    match p {
-        Part::Line(l) => l.build(w),
-        Part::Fixed(e, _) => e,
-        Part::Row(items, gap) => {
-            let mut r = row().gap(gap).items_center();
-            for (e, _, _) in items {
-                r = r.child(e);
-            }
-            r
-        }
-    }
 }
 
 /// Scene: the recent downloads shown.

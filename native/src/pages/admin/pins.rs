@@ -11,7 +11,6 @@ use std::time::Duration;
 
 use rune::{El, TextEdit, col, row, text};
 
-use super::auto_download::{fit_columns, status_cell};
 use super::requests::{self as rq, Pin, PinCreate, PinDownload, PinKind, is_valid_pin_id};
 use super::table::{self, Action, Cell, Col, Empty, Line, Part};
 use super::{ConfirmArt, ConfirmRequest, ConfirmSubject, Section, call, confirm, format, library, parts, still_mounted};
@@ -460,7 +459,7 @@ impl Hooks {
 
 /// `repeat(auto-fit, minmax(min, 1fr))` of `items`, `gap` apart.
 fn grid(items: Vec<El>, width: f32, min: f32, gap: f32) -> El {
-    let (cols, w) = fit_columns(width, min, gap, items.len());
+    let (cols, w) = parts::fit_columns(width, min, gap, items.len());
     let mut out = col().gap(gap);
     let mut line = row().gap(gap);
     for (n, item) in items.into_iter().enumerate() {
@@ -662,7 +661,7 @@ fn pins_table(t: &Theme, kind: PinKind, s: &Kind, width: f32) -> El {
                 .build(t, move |app| remove(app, kind, &p3)),
         ]);
         let mono_cell = |s: String| Cell::text(Line::new(s, tnum(font(14.0, 400.0)), t.c.muted_foreground));
-        let mut status_cell = status_cell(status);
+        let mut status_cell = Cell::stack(status, 4.0);
         if status_cell.max == 0.0 {
             status_cell = Cell::empty();
         }
@@ -704,7 +703,12 @@ fn history(t: &Theme, kind: PinKind, title: &str, rows: Option<&Vec<PinDownload>
                 .shrink()
                 .min_w(0.0)
                 .child(parts::eyebrow(t, "Recent downloads"))
-                .child(text(title.to_string()).font(font(14.0, 400.0)).color(t.c.muted_foreground).wrap()),
+                .child({
+                    let style = font(14.0, 400.0);
+                    let refresh_w = 20.0 + 14.0 + 4.0 + table::advance("Refresh", font(13.0, 500.0));
+                    let w = table::advance(title, style).ceil().min(width - 34.0 - refresh_w - 12.0);
+                    parts::para(title, Vec::new(), style, t.c.muted_foreground, w)
+                }),
         )
         .child(refresh);
     let list: Vec<table::Row> = rows
@@ -712,8 +716,7 @@ fn history(t: &Theme, kind: PinKind, title: &str, rows: Option<&Vec<PinDownload>
             rows.iter()
                 .map(|r| {
                     let good = r.status == "downloaded" || r.status == "existing";
-                    let (b, w) = table::badge(t, &r.status, good);
-                    let mut status = vec![Part::Fixed(row().child(b), w)];
+                    let mut status = vec![table::inline_badge(t, &r.status, good)];
                     if let Some(e) = r.error.as_deref().filter(|e| !e.is_empty()) {
                         status.push(Part::Line(Line::new(e, font(12.0, 400.0), t.c.destructive)));
                     }
@@ -726,7 +729,7 @@ fn history(t: &Theme, kind: PinKind, title: &str, rows: Option<&Vec<PinDownload>
                     table::Row {
                         key: format!("admin-pin-{}-dl-{}", kind.index(), r.id),
                         cells: vec![
-                            status_cell(status),
+                            Cell::stack(status, 4.0),
                             Cell::text(Line::new(file, mono(14.0, 400.0), t.c.muted_foreground).break_all()),
                             Cell::text(Line::new(source, mono(14.0, 400.0), t.c.muted_foreground).break_all()),
                             Cell::text(Line::new(format::short(Some(&r.updated_at)), tnum(font(14.0, 400.0)), t.c.muted_foreground)),

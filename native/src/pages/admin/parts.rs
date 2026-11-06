@@ -191,3 +191,10 @@ pub fn retry_note(t: &Theme, key: &str, message: &str, retry: fn(&mut App)) -> E
 pub fn style_lh(size: f32, weight: f32, lh: f32) -> TextStyle {
     with_lh(font(size, weight), lh)
 }
+
+/// `repeat(auto-fit, minmax(min, 1fr))` with `n` items: the columns' width.
+pub fn fit_columns(width: f32, min: f32, gap: f32, n: usize) -> (usize, f32) {
+    let tracks = (((width + gap) / (min + gap)).floor() as usize).max(1);
+    let cols = tracks.min(n.max(1));
+    (cols, (width - gap * (cols as f32 - 1.0)) / cols as f32)
+}

@@ -5,10 +5,10 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use rune::{El, TextEdit, col, el, row, text};
+use rune::{El, TextEdit, col, el, row};
 
 use super::requests::{self as rq, Invite};
-use super::table::{self, Action, Cell, Col, Empty, Line, Part};
+use super::table::{self, Action, Cell, Col, Empty, Line};
 use super::{ConfirmArt, ConfirmRequest, ConfirmSubject, Res, call, confirm, format, load, parts};
 use crate::app::App;
 use crate::theme::Theme;
@@ -350,13 +350,16 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
             .icon(if s.copied { &i::CHECK } else { &i::CLIPBOARD })
             .build(t)
             .on_press_tx(copy);
+        // The middle column: the box's content less the check, the button and their gaps.
+        let copy_w = 22.0 + 14.0 + 4.0 + table::advance(if s.copied { "Copied" } else { "Copy" }, font(13.0, 500.0));
+        let mid = width - 34.0 - 16.0 - 12.0 - copy_w - 12.0;
         let link = css_border(col(), 1.0, t.c.border, t.radius_lg())
             .mt(8.0)
             .px(11.0)
             .py(9.0)
             .radius(t.radius_lg())
             .fill(t.c.muted)
-            .child(text(url).font(mono(12.0, 400.0)).color(t.c.card_foreground).wrap_anywhere());
+            .child(parts::para(&url, Vec::new(), mono(12.0, 400.0), t.c.card_foreground, mid - 22.0));
         panel = panel.child(
             css_border(row(), 1.0, t.c.border, t.radius_xl())
                 .padding(17.0)
@@ -370,12 +373,13 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
                     col()
                         .grow(1.0)
                         .min_w(0.0)
-                        .child(
-                            text("Invite ready — copy this link now. It won't be shown again.")
-                                .font(font(14.0, 500.0))
-                                .color(t.c.card_foreground)
-                                .wrap(),
-                        )
+                        .child(parts::para(
+                            "Invite ready — copy this link now. It won't be shown again.",
+                            Vec::new(),
+                            font(14.0, 500.0),
+                            t.c.card_foreground,
+                            mid,
+                        ))
                         .child(link),
                 )
                 .child(copy_btn),
@@ -429,8 +433,7 @@ fn invite_table(t: &Theme, key: &str, rows: &[&Invite], empty: Option<&str>, sho
                 )),
             ];
             if show_status {
-                let (b, w) = table::badge(t, status(inv, now), false);
-                cells.push(Cell::stack(vec![Part::Fixed(row().child(b), w)], 0.0));
+                cells.push(Cell::stack(vec![table::inline_badge(t, status(inv, now), false)], 0.0));
             }
             cells.push(Cell::text(Line::new(format::date(&inv.created_at), dim, t.c.muted_foreground)));
             if revocable {
