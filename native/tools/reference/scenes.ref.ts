@@ -122,6 +122,8 @@ const SCENES: Scene[] = [
   },
   { name: "replay-medium", path: "/replay", size: { width: 900, height: 700 }, wait: replayLoaded },
   { name: "replay-narrow", path: "/replay", size: { width: 700, height: 600 }, wait: replayLoaded },
+  // With the sidebar the panel is under 560 px: the bento's phone layout.
+  { name: "replay-small", path: "/replay", size: { width: 820, height: 700 }, wait: replayLoaded },
   // Below the fold: the content scrolled 420 px (Rune: scripts/replay-scroll.json), and to its end.
   { name: "replay-mid", path: "/replay", wait: replayLoaded, act: (p) => scrollContent(p, 420) },
   { name: "replay-bottom", path: "/replay", wait: replayLoaded, act: (p) => scrollContent(p, 1e6) },
@@ -139,6 +141,8 @@ const SCENES: Scene[] = [
   { name: "replay-medium-bottom", path: "/replay", size: { width: 900, height: 700 }, wait: replayLoaded, act: (p) => scrollContent(p, 1e6) },
   { name: "replay-narrow-mid", path: "/replay", size: { width: 700, height: 600 }, wait: replayLoaded, act: (p) => scrollContent(p, 420) },
   { name: "replay-narrow-bottom", path: "/replay", size: { width: 700, height: 600 }, wait: replayLoaded, act: (p) => scrollContent(p, 1e6) },
+  { name: "replay-small-mid", path: "/replay", size: { width: 820, height: 700 }, wait: replayLoaded, act: (p) => scrollContent(p, 420) },
+  { name: "replay-small-bottom", path: "/replay", size: { width: 820, height: 700 }, wait: replayLoaded, act: (p) => scrollContent(p, 1e6) },
   { name: "admin", path: "/admin", wait: (p) => ready(p, p.locator(".admin, main")) },
   // Shared components (TrackList, the track menu, tooltips) on the Favorites page.
   {
