@@ -28,7 +28,7 @@ export default defineConfig({
     // Linux Chromium's default full hinting rounds them to whole pixels.
     // Playwright hides scrollbars by default; the desktop app shows its styled ones.
     launchOptions: {
-      args: ["--font-render-hinting=none", "--disable-font-subpixel-positioning=false"],
+      args: ["--font-render-hinting=none"],
       ignoreDefaultArgs: ["--hide-scrollbars"],
     },
   },
