@@ -10,7 +10,6 @@ use super::multi_select::{self, Opt, badge, mark};
 use super::rows::{display_artists, display_text, format_bitrate, format_duration};
 use crate::api::{TrackDetail, TrackListItem, TrackSource};
 use crate::app::App;
-use crate::overlays::requests;
 use crate::theme::Theme;
 use crate::ui::forms::search_input_bound;
 use crate::ui::kit::{error_banner, eyebrow};
@@ -205,7 +204,7 @@ fn unlink(app: &mut App, id: String) {
     s.version_error = None;
     let Some(client) = app.client.clone() else { return };
     app.net.run(
-        move || requests::unlink_track(&client, &id),
+        move || crate::api::admin::unlink_track(&client, &id),
         |app, result| match result {
             Ok(t) => relinked(app, t),
             Err(e) => {
@@ -273,7 +272,7 @@ fn search(app: &mut App) {
             if wait {
                 std::thread::sleep(std::time::Duration::from_millis(250));
             }
-            (q.clone(), requests::list_tracks(&client, &q, 20))
+            (q.clone(), crate::api::library::list_tracks(&client, &crate::api::PageParams { limit: Some(20), q: Some(q.clone()), ..Default::default() }).map(|(t, _)| t))
         },
         move |app, (q, result)| {
             let s = &mut app.overlays.track_info;
@@ -303,7 +302,7 @@ fn link(app: &mut App, item: TrackListItem) {
     let own = track.db_track_id.clone().unwrap_or(track.id.clone());
     let other = item.db_track_id.clone().unwrap_or(item.id.clone());
     app.net.run(
-        move || requests::link_track(&client, &own, &other),
+        move || crate::api::admin::link_track(&client, &own, &other),
         |app, result| match result {
             Ok(t) => relinked(app, t),
             Err(e) => {

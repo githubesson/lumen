@@ -12,7 +12,7 @@ use rune::{Color, El, Shadow, TextEdit, el, row};
 use super::desktop_bridge::{self as bridge, DesktopConfig, Toggle};
 use super::{Desc, RowFn, SettingDef, select, setting_row};
 use crate::app::App;
-use crate::overlays::requests::{self, LastFmStatus};
+use crate::api::lastfm::LastFmStatus;
 use crate::theme::{Density, Layout, Mode, Theme, color_mix};
 use crate::ui::forms::SelectOption;
 use crate::ui::kit::switch;
@@ -403,6 +403,8 @@ pub struct LastFm {
     pub error: Option<String>,
     /// The running authorization wait; bumped to stop it.
     poll: Arc<AtomicU64>,
+    /// Cancels the running wait's request loop.
+    waiting: Option<crate::api::Cancel>,
 }
 
 /// `lastFMConnectionState`: the row's description and error.
@@ -442,7 +444,7 @@ fn lastfm_load(app: &mut App) {
     let Some(client) = app.client.clone() else { return };
     let session = app.overlays.settings.session;
     app.net.run(
-        move || requests::lastfm_status(&client),
+        move || crate::api::lastfm::get_lastfm_status(&client),
         move |app, result| {
             if app.overlays.settings.session != session {
                 return;
@@ -463,35 +465,16 @@ fn lastfm_wait(app: &mut App) {
     }
     lf.error = None;
     let id = lf.poll.fetch_add(1, Ordering::Relaxed) + 1;
-    let poll = lf.poll.clone();
+    if let Some(old) = lf.waiting.take() {
+        old.cancel();
+    }
+    let cancel = crate::api::Cancel::new();
+    lf.waiting = Some(cancel.clone());
     let Some(client) = app.client.clone() else { return };
     app.net.run(
-        move || {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
-            loop {
-                if poll.load(Ordering::Relaxed) != id {
-                    return None;
-                }
-                match requests::lastfm_complete(&client) {
-                    Ok(done) => return Some(Ok(done.username)),
-                    Err(e) if e.status == 409 => {}
-                    Err(e) => return Some(Err(e)),
-                }
-                if std::time::Instant::now() >= deadline {
-                    // A polling deadline is a local error (`ApiError(408, …)` on the web).
-                    return Some(Err(crate::api::ApiError {
-                        status: 408,
-                        message: "Timed out waiting for Last.fm authorization. You can try again.".into(),
-                        kind: crate::api::client::ErrorKind::Local,
-                    }));
-                }
-                for _ in 0..30 {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    if poll.load(Ordering::Relaxed) != id {
-                        return None;
-                    }
-                }
-            }
+        move || match crate::api::lastfm::wait_for_lastfm_authorization(&client, crate::api::lastfm::default_lastfm_poll(), &cancel) {
+            Err(e) if e.kind == crate::api::client::ErrorKind::Aborted => None,
+            other => Some(other),
         },
         move |app, result| {
             let lf = &mut app.overlays.settings.lastfm;
@@ -524,7 +507,7 @@ fn lastfm_connect(app: &mut App) {
     lf.error = None;
     let Some(client) = app.client.clone() else { return };
     app.net.run(
-        move || requests::lastfm_connect(&client),
+        move || crate::api::lastfm::connect_lastfm(&client),
         |app, result| {
             let lf = &mut app.overlays.settings.lastfm;
             lf.busy = false;
@@ -557,7 +540,7 @@ fn lastfm_disconnect(app: &mut App) {
     lf.error = None;
     let Some(client) = app.client.clone() else { return };
     app.net.run(
-        move || requests::lastfm_disconnect(&client),
+        move || crate::api::lastfm::disconnect_lastfm(&client),
         |app, result| {
             let lf = &mut app.overlays.settings.lastfm;
             lf.busy = false;
@@ -702,6 +685,9 @@ pub fn on_open(app: &mut App) {
 pub fn on_close(app: &mut App) {
     let s = &mut app.overlays.settings;
     s.lastfm.poll.fetch_add(1, Ordering::Relaxed);
+    if let Some(w) = s.lastfm.waiting.take() {
+        w.cancel();
+    }
     s.lastfm.busy = false;
     s.desktop = DesktopUi::default();
 }

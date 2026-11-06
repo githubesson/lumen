@@ -7,7 +7,6 @@ use serde_json::{Map, Value, json};
 use super::{Which, grid_field, grid_row, input, number_input, reset, save_cancel};
 use crate::api::Album;
 use crate::app::App;
-use crate::overlays::requests;
 use crate::theme::Theme;
 use crate::ui::kit::{Dialog, error_banner};
 use crate::ui::{Btn, cover_art, font, ico, icons as i};
@@ -73,7 +72,7 @@ fn save(app: &mut App) {
     let Some(client) = app.client.clone() else { return };
     let id = album.id.clone();
     app.net.run(
-        move || requests::update_album(&client, &id, Value::Object(patch)),
+        move || crate::api::library::update_album(&client, &id, &serde_json::from_value(Value::Object(patch)).map_err(|e| crate::api::ApiError::local(0, e.to_string()))?),
         move |app, result| {
             let s = &mut app.overlays.edit;
             s.busy = false;
@@ -121,7 +120,7 @@ fn pick_cover(app: &mut App, tx: &mut rune::Tx) {
         s.error = None;
         let nonce = s.nonce;
         let Some(client) = app.client.clone() else { return };
-        app.net.run(move || requests::set_album_cover(&client, &id, &path), move |app, r| cover_done(app, nonce, r, "Cover upload failed."));
+        app.net.run(move || crate::api::upload::set_album_cover(&client, &id, &path), move |app, r| cover_done(app, nonce, r, "Cover upload failed."));
     });
 }
 
@@ -132,7 +131,7 @@ fn remove_cover(app: &mut App) {
     s.error = None;
     let nonce = s.nonce;
     let Some(client) = app.client.clone() else { return };
-    app.net.run(move || requests::remove_album_cover(&client, &id), move |app, r| cover_done(app, nonce, r, "Couldn't remove the cover."));
+    app.net.run(move || crate::api::library::remove_album_cover(&client, &id), move |app, r| cover_done(app, nonce, r, "Couldn't remove the cover."));
 }
 
 /// A native checkbox with `accent-color: var(--primary)` (13 px).

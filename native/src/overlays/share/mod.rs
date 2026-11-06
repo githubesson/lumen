@@ -13,7 +13,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rune::{Color, Cx, El, Tx, col, el, row, text};
 
 use self::snippet::Grab;
-use super::requests;
 use crate::api::{TrackDetail, TrackListItem};
 use crate::app::App;
 use crate::format::{fmt_duration_ms, fmt_duration_sec};
@@ -89,7 +88,7 @@ fn load(app: &mut App, id: String) {
     let Some(client) = app.client.clone() else { return };
     let gen_ = app.overlays.share.gen_.load(Ordering::Relaxed);
     app.net.run(
-        move || requests::track(&client, &id),
+        move || crate::api::library::get_track(&client, &id),
         move |app, result| {
             let s = &mut app.overlays.share;
             if s.gen_.load(Ordering::Relaxed) != gen_ {
@@ -146,7 +145,7 @@ fn ensure_url(app: &mut App, then: impl FnOnce(&mut App, Result<String, String>)
     let at = gen_.load(Ordering::Relaxed);
     let (start, dur) = (s.start, w.effective_duration);
     app.net.run(
-        move || requests::create_share_link(&client, &id, start, dur),
+        move || crate::api::share::create_track_share_link(&client, &id, start, dur),
         move |app, result| {
             if gen_.load(Ordering::Relaxed) != at {
                 return;

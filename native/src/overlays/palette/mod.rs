@@ -146,7 +146,7 @@ fn refresh(app: &mut App) {
             if latest.load(Ordering::Relaxed) != id {
                 return None;
             }
-            Some(super::requests::search(&client, &q, kind.as_str(), limit))
+            Some(crate::api::search::search(&client, &crate::api::search::SearchParams { page: crate::api::PageParams { limit: Some(limit), q: Some(q.clone()), ..Default::default() }, kind: crate::api::search::SearchType::parse(kind.as_str()), sources: None }))
         },
         move |app, result| {
             let s = &mut app.overlays.palette;

@@ -14,7 +14,6 @@
 pub mod confirm;
 pub mod edit;
 pub mod palette;
-pub mod requests;
 pub mod scenes;
 pub mod settings;
 pub mod share;
