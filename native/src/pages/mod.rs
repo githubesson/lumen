@@ -51,7 +51,7 @@ pub fn enter(app: &mut App, loc: &Location) {
         "/recent" => recent::enter(app, loc),
         "/replay" => replay::enter(app, loc),
         "/invites" => invites::enter(app, loc),
-        "/admin" => admin::enter(app, loc),
+        "/admin" | "/admin/invites" | "/admin/users" | "/admin/library" => admin::enter(app, loc),
         "/login" | "/register" | "/reset-password" => auth::enter(app, loc),
         _ if p.starts_with("/playlists") => playlists::enter(app, loc),
         _ if p.starts_with("/shared/") => share_preview::enter(app, loc),

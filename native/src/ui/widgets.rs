@@ -286,7 +286,7 @@ impl Btn {
             b = b.child(text(self.label).font(style).color(ink).h(style.line_height));
         }
         if let Some(g) = self.trailing {
-            b = b.child(ico(g, 14.0, ink));
+            b = b.child(ico(g, self.leading_size, ink));
         }
         if self.disabled {
             b.opacity(0.5).disabled(true).cursor(Cursor::NotAllowed)

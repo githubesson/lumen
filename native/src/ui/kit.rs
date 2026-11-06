@@ -16,6 +16,20 @@ use crate::ui::tooltip::TipExt;
 
 thread_local! {
     static THUMBS: RefCell<HashMap<String, Live<[f32; 4]>>> = RefCell::new(HashMap::new());
+    static PORTALS: RefCell<Vec<El>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Draw `layer` at the window's root, above the shell and the overlays, as a
+/// React portal does: a page's own dialogs. Call it while building the view;
+/// the root mounts what was portaled during the same pass ([`take_portals`]).
+pub fn portal(layer: El) {
+    PORTALS.with(|p| p.borrow_mut().push(layer));
+}
+
+/// The layers portaled since the last call, in order (the root's side of
+/// [`portal`]).
+pub fn take_portals() -> Vec<El> {
+    PORTALS.with(|p| std::mem::take(&mut *p.borrow_mut()))
 }
 
 fn thumb_live(key: &str) -> Live<[f32; 4]> {
