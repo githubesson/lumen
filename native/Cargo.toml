@@ -19,8 +19,25 @@ serde_json = "1"
 ureq = { version = "3", default-features = false, features = ["rustls", "json", "cookies", "gzip"] }
 dirs = "6"
 urlencoding = "2"
-# The player (src/player): shuffle order.
+# The player (src/player): shuffle order, decoding, resampling, the HLS keys.
 fastrand = "2"
+symphonia = { version = "0.5.5", default-features = false, features = ["aac", "adpcm", "alac", "flac", "isomp4", "mkv", "mp3", "ogg", "pcm", "vorbis", "wav"] }
+opuscule = "0.2.2"
+rubato = { version = "0.16", default-features = false, features = ["fft_resampler"] }
+rtrb = "0.3"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+
+# Audio output: WASAPI on Windows, Core Audio on macOS. Linux builds play
+# silently on a clock unless built with `--features alsa` (needs libasound).
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+cpal = "0.18"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+cpal = { version = "0.18", optional = true }
+
+[features]
+alsa = ["dep:cpal"]
 
 [profile.dev.package."*"]
 debug = false

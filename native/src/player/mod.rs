@@ -3,6 +3,7 @@
 //! the state the views read; `engine` plays it.
 
 pub mod adapter;
+pub mod engine;
 pub mod core;
 pub mod error;
 pub mod local;
