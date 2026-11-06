@@ -2,6 +2,7 @@
 //! (`.iconbtn`, `.btn`, `kbd`, `CoverArt`, …) built from rune elements with
 //! the same box metrics as their CSS.
 pub mod icons;
+pub mod kit;
 pub mod widgets;
 
 pub use widgets::*;

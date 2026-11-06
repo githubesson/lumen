@@ -23,14 +23,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
         .fill(t.c.background)
         .clip_rounded(t.radius_xl())
         .child(topbar::view(app, t, window_w))
-        .child(
-            col()
-                .key("content")
-                .grow(1.0)
-                .min_h(0.0)
-                .scroll(rune::ScrollSpec { stick_bottom: false })
-                .child(crate::pages::view(app, t, cx)),
-        );
+        .child(crate::ui::kit::scroll_area(t, "content", crate::pages::view(app, t, cx)).grow(1.0));
     let mut grid = row().grow(1.0).min_h(0.0).child(sidebar::view(app, t)).child(el().w(8.0)).child(main);
     if app.ui.lyrics_open {
         let w = if t.layout == crate::theme::Layout::Wide { 320.0 } else { 280.0 };
