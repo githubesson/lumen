@@ -27,12 +27,33 @@ pub const FONTS: &[&[u8]] = &[
 ];
 
 fn main() {
+    // `requestSingleInstanceLock`: a second launch brings the first forward.
+    // Headless runs (snapshots, scripts) are never the app.
+    let headless = rune::is_headless();
+    if !headless && !desktop::single_instance::acquire() {
+        return;
+    }
     rune::prewarm_gpu();
+    let (w, h) = desktop::window::NORMAL_MIN_SIZE;
+    // `electron/windows.ts`: frameless and transparent, its corners drawn by
+    // the app; the window comes on screen with its first frame (Rune cloaks
+    // it until then on Windows), so nothing flashes white.
     let options = rune::WindowOptions {
         transparent: true,
         borderless: true,
-        min_size: Some((640.0, 480.0)),
+        min_size: Some((w as f32, h as f32)),
+        always_on_top: !headless && config::Config::load().always_on_top,
         ..Default::default()
     };
-    rune::App::new(app::spec()).window_options(options).run();
+    let app = rune::App::new(app::spec()).window_options(options);
+    let handle = app.handle();
+    app.on_window(desktop::window::on_window)
+        .on_ready(move |_| {
+            let started = handle.clone();
+            handle.update(move |app, _| desktop::start(app, started));
+        })
+        .on_close(desktop::on_close)
+        .run();
+    // `autoInstallOnAppQuit`: a downloaded update installs once the app is gone.
+    desktop::updater::install_on_quit();
 }

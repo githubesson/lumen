@@ -48,6 +48,8 @@ pub struct App {
     pub player: crate::player::Player,
     pub pages: crate::pages::Pages,
     pub overlays: crate::overlays::Overlays,
+    /// What Electron's main process did: presence, the now-playing API, updates.
+    pub desktop: crate::desktop::Desktop,
 }
 
 impl App {
@@ -71,6 +73,7 @@ impl App {
             player: crate::player::Player::default(),
             pages: crate::pages::Pages::default(),
             overlays: crate::overlays::Overlays::default(),
+            desktop: crate::desktop::Desktop::default(),
             config,
             waker,
         };
@@ -253,6 +256,7 @@ fn setup(app: &mut App, waker: Waker) {
 fn poll(app: &mut App, _clock: f64, tx: &mut Tx) -> bool {
     let mut changed = Net::drain(app);
     changed |= app.player.poll(tx);
+    changed |= crate::desktop::poll(app);
     changed
 }
 

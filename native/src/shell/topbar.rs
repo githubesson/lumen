@@ -151,19 +151,21 @@ pub fn window_controls(t: &Theme) -> El {
             button("window-minimize", &i::MINUS, 16.0, false)
                 .label("Minimize")
                 .help("Minimize")
-                .on_press_tx(|_: &mut App, tx| tx.minimize()),
+                .on_press_tx(|_: &mut App, tx| crate::desktop::window::minimize(tx)),
         )
         .child(
             button("window-maximize", &i::COPY, 14.0, false)
                 .label("Maximize")
                 .help("Maximize")
-                .on_press_tx(|_: &mut App, tx| crate::desktop::window::toggle_maximize(tx)),
+                .on_press_tx(|_: &mut App, tx| {
+                    crate::desktop::window::toggle_maximize(tx);
+                }),
         )
         .child(
             button("window-close", &i::X, 16.0, true)
                 .label("Close")
                 .help("Close")
-                .on_press_tx(|_: &mut App, tx| tx.close_window()),
+                .on_press_tx(|_: &mut App, tx| crate::desktop::window::close(tx)),
         )
 }
 
