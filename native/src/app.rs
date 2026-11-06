@@ -303,6 +303,7 @@ fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
     let mut changed = Net::drain(app);
     changed |= crate::player::poll(app, tx);
     changed |= crate::ui::poll(app, clock, tx);
+    changed |= crate::pages::playlists::sync(app);
     changed |= crate::desktop::poll(app);
     changed |= crate::pages::auth::poll(app, clock, tx);
     changed |= crate::pages::share_preview::poll(app, clock, tx);

@@ -300,9 +300,24 @@ pub fn segmented_sized<T: Copy + PartialEq + 'static>(
     on_pick: fn(&mut App, T),
     size: SegSize,
 ) -> El {
+    let options: Vec<(T, &str, Option<&str>)> = options.iter().map(|&(v, l)| (v, l, None)).collect();
+    segmented_counted(t, key, &options, current, on_pick, size)
+}
+
+/// [`segmented`] whose labels may end in a muted count (`<span
+/// className="mono" style={{ color: muted, marginLeft: 4 }}>`), as the
+/// playlist's Collaborators tab does.
+pub fn segmented_counted<T: Copy + PartialEq + 'static>(
+    t: &Theme,
+    key: &str,
+    options: &[(T, &str, Option<&str>)],
+    current: T,
+    on_pick: fn(&mut App, T),
+    size: SegSize,
+) -> El {
     let mut group =
         row().key(key).h(size.h).padding(size.pad).items_center().radius(t.radius_lg()).fill(t.c.muted).role("tablist");
-    for (n, (value, label)) in options.iter().enumerate() {
+    for (n, (value, label, count)) in options.iter().enumerate() {
         let active = *value == current;
         let v = *value;
         let mut b = el()
@@ -337,6 +352,9 @@ pub fn segmented_sized<T: Copy + PartialEq + 'static>(
         }
         let ink = if active { t.c.foreground } else { t.c.muted_foreground };
         b = b.child(text(*label).font(font(size.fs, 500.0)).color(ink).group_color(t.c.foreground));
+        if let Some(c) = count {
+            b = b.child(text(*c).font(crate::ui::mono(size.fs, 500.0)).color(t.c.muted_foreground).ml(4.0));
+        }
         if !active {
             b = b.hover(Color::TRANSPARENT).press_scale(0.97);
         }

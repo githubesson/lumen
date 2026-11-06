@@ -6,10 +6,8 @@
 //! Wiring for the merge: [`overlay`] draws this page's dialogs (Add tracks,
 //! the confirmations) and is mounted from `crate::overlays::view`; [`on_key`]
 //! takes the page's `mod+f` and belongs in `crate::keys::on_key`.
-mod adapters;
 mod add_tracks;
 mod collaborators;
-mod confirm;
 mod detail;
 mod edits;
 mod header;
@@ -46,7 +44,6 @@ pub struct State {
     pub(super) cache: HashMap<String, detail::Cached>,
     /// Track edits in flight, which outlive the page that made them.
     pub(super) mutations: edits::Mutations,
-    pub(super) confirm: confirm::State,
     /// The page's text fields, outside the visit so a field's binding never
     /// finds it gone; a new visit starts them over.
     pub(super) fields: Fields,
@@ -102,10 +99,13 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
 /// The page's dialogs, drawn above the shell.
 pub fn overlay(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     let window = crate::shell::window_size(cx);
-    if let Some(c) = confirm::view(app, t, window) {
-        return Some(c);
-    }
     add_tracks::view(app, t, cx, window)
+}
+
+/// Before each frame: what the open playlist's table shows (see
+/// `detail::sync`). Returns whether it changed.
+pub fn sync(app: &mut App) -> bool {
+    detail::sync(app)
 }
 
 /// The page's own shortcuts (`useKey("mod+f")` on a playlist).

@@ -72,6 +72,11 @@ impl ConfirmSpec {
         self.subject = Some(Subject { art, name: name.into(), detail });
         self
     }
+    /// [`ConfirmSpec::subject`] when there is one.
+    pub fn maybe_subject(mut self, subject: Option<Subject>) -> ConfirmSpec {
+        self.subject = subject;
+        self
+    }
     pub fn icon(mut self, glyph: &'static Icon) -> ConfirmSpec {
         self.confirm_icon = Some(glyph);
         self

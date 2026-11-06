@@ -96,6 +96,11 @@ pub struct ListHeader<'a> {
     pub fallback_icon: Option<&'static Icon>,
     /// Replaces the art entirely (`art`).
     pub art: Option<El>,
+    /// Replaces the kind's text (a playlist's visibility icon and role),
+    /// held to its own line height.
+    pub kind_el: Option<El>,
+    /// Replaces the title's text (a playlist owner's "Edit details" button).
+    pub title_el: Option<El>,
     pub meta: Option<El>,
     pub actions: Option<El>,
 }
@@ -120,17 +125,21 @@ pub fn list_page_header(app: &App, t: &Theme, key: &str, h: ListHeader) -> El {
         }
     });
     let mut body = col().grow(1.0).min_w(0.0).justify_end();
-    body = body.child(exact(text(h.kind).font(font(12.0, 500.0)).color(t.c.muted_foreground), 17.4));
-    body = body.child(
-        text(h.title)
-            .font(with_lh(font(36.0, 600.0), 39.6).tracking(-0.9))
-            .color(t.c.card_foreground)
-            .wrap_anywhere()
-            .mt(6.0)
-            .mb(10.0 - 0.4),
-    );
+    // A custom kind sets its own line height (an inline-flex icon box makes
+    // the browser's line taller than the text's 17.4 px).
+    let kind = h.kind_el.unwrap_or_else(|| exact(text(h.kind).font(font(12.0, 500.0)).color(t.c.muted_foreground), 17.4));
+    body = body.child(kind);
+    // Wrapped lines held to their CSS height (Rune rounds a text box up).
+    let title = h.title_el.unwrap_or_else(|| {
+        text(h.title).font(list_title_style()).color(t.c.card_foreground).wrap_anywhere()
+    });
+    body = body.child(crate::ui::snug_lines(&format!("{key}-title"), title, list_title_style().line_height).mt(6.0).mb(10.0));
     if let Some(d) = h.description {
-        body = body.child(text(d).font(font(14.0, 400.0)).color(t.c.muted_foreground).wrap().max_w(14.0 * 0.55 * 60.0).mb(10.0));
+        // `max-width: 60ch`: sixty of the font's "0".
+        let style = font(14.0, 400.0);
+        let ch = rune::text::advance("0", style);
+        let d = text(d).font(style).color(t.c.muted_foreground).wrap();
+        body = body.child(crate::ui::snug_lines(&format!("{key}-description"), d, style.line_height).max_w(60.0 * ch).mb(10.0));
     }
     if let Some(m) = h.meta {
         body = body.child(m);
@@ -150,6 +159,11 @@ pub fn list_page_header(app: &App, t: &Theme, key: &str, h: ListHeader) -> El {
         .clip_rounded(t.radius_xl())
         .child(art)
         .child(body)
+}
+
+/// `.detail-title`'s type: 36 px semibold on a 39.6 px line.
+pub fn list_title_style() -> rune::TextStyle {
+    with_lh(font(36.0, 600.0), 39.6).tracking(-0.9)
 }
 
 /// `.detail-meta`: muted 14 px parts with 3 px dots between them.

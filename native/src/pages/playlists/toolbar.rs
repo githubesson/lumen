@@ -1,13 +1,13 @@
 //! The playlist page's toolbar (`.playlist-toolbar`): the tabs, and on the
 //! Tracks tab the list options (selection, sort) and the search.
 
-use rune::{Color, Cursor, El, Key, KeyEvent, Tx, el, row, text};
+use rune::{Color, Cursor, El, Key, KeyEvent, Tx, el, row};
 
 use crate::app::App;
 use crate::theme::{Theme, color_mix};
 use crate::ui::forms::{SelectOption, SelectVariant, search_input_with, select};
-use crate::ui::kit::toolbar_sep;
-use crate::ui::{font, ico, icons as i, mono};
+use crate::ui::kit::{SegSize, segmented_counted, toolbar_sep};
+use crate::ui::{ico, icons as i};
 
 use super::detail::{Detail, Tab, detail_mut, set_sort, set_tab};
 use super::logic::{self, SortKey};
@@ -15,63 +15,15 @@ use super::tracks;
 
 /// The tab labels, with the collaborator count after "Collaborators".
 fn tabs(t: &Theme, d: &Detail, collabs: bool, settings: bool) -> El {
+    let count = (!d.collabs.is_empty()).then(|| d.collabs.len().to_string());
     let mut options = vec![(Tab::Tracks, "Tracks", None)];
     if collabs {
-        options.push((Tab::Collaborators, "Collaborators", (!d.collabs.is_empty()).then(|| d.collabs.len().to_string())));
+        options.push((Tab::Collaborators, "Collaborators", count.as_deref()));
     }
     if settings {
         options.push((Tab::Settings, "Settings", None));
     }
-    segmented(t, "playlist-tabs", &options, d.tab)
-}
-
-/// `SegmentedControl` whose labels can carry a muted count.
-// TODO(components-merge): fold into `ui::kit::segmented` once it takes rich labels.
-fn segmented(t: &Theme, key: &str, options: &[(Tab, &str, Option<String>)], current: Tab) -> El {
-    let mut group = row().key(key).h(32.0).padding(3.0).items_center().radius(t.radius_lg()).fill(t.c.muted).role("tablist");
-    for (n, (value, label, count)) in options.iter().enumerate() {
-        let active = *value == current;
-        let v = *value;
-        let mut b = row()
-            .key(format!("{key}-{n}"))
-            .h_full()
-            .px(9.0)
-            .gap(6.0)
-            .radius(t.radius_md())
-            .items_center()
-            .role("tab")
-            .label(label.to_string())
-            .checked(active)
-            .cursor(Cursor::Pointer)
-            .on_press(move |app: &mut App| set_tab(app, v));
-        if active {
-            let mut pill = el()
-                .key(format!("{key}-indicator"))
-                .matched(format!("{key}-indicator"))
-                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-                .radius(t.radius_md())
-                .motion(rune_motion::Spring::new(0.2, 0.0));
-            if t.dark() {
-                pill = pill.fill(t.c.input_bg).border(1.0, t.c.input);
-            } else {
-                pill = pill
-                    .fill(t.c.background)
-                    .box_shadow(rune::Shadow { x: 0.0, y: 1.0, blur: 3.0, spread: 0.0, color: Color::BLACK.alpha(0.1), inset: false })
-                    .box_shadow(rune::Shadow { x: 0.0, y: 1.0, blur: 2.0, spread: -1.0, color: Color::BLACK.alpha(0.1), inset: false });
-            }
-            b = b.child(pill);
-        }
-        let ink = if active { t.c.foreground } else { t.c.muted_foreground };
-        b = b.child(text(label.to_string()).font(font(14.0, 500.0)).color(ink).group_color(t.c.foreground));
-        if let Some(c) = count {
-            b = b.child(text(c.clone()).font(mono(14.0, 500.0)).color(t.c.muted_foreground).ml(4.0));
-        }
-        if !active {
-            b = b.hover(Color::TRANSPARENT).press_scale(0.97);
-        }
-        group = group.child(b);
-    }
-    group
+    segmented_counted(t, "playlist-tabs", &options, d.tab, set_tab, SegSize::DEFAULT)
 }
 
 /// `.playlist-toolbar`: the tabs, and on Tracks the list options and search.
@@ -94,10 +46,15 @@ pub fn toolbar(app: &App, t: &Theme, d: &Detail, collabs: bool, settings: bool) 
             .fill(t.c.muted)
             .role("group")
             .label("Track list options")
-            .child(tracks::selection_host(app, t, d))
-            .child(toolbar_sep(t))
-            .child(select(app, t, "playlist-sort", &options, d.sort.as_str(), SelectVariant::Toolbar, "", false, set_sort));
-        if d.sort != SortKey::Custom {
+            .child(tracks::selection_host(app, t));
+        // While selecting, the group holds only the selection's controls.
+        let selecting = tracks::is_selecting(app);
+        if !selecting {
+            group = group
+                .child(toolbar_sep(t))
+                .child(select(app, t, "playlist-sort", &options, d.sort.as_str(), SelectVariant::Toolbar, "", false, set_sort));
+        }
+        if d.sort != SortKey::Custom && !selecting {
             let hot = color_mix(t.c.foreground, 0.07, Color::TRANSPARENT);
             let label = if d.sort_asc {
                 "Sorted ascending, switch to descending"

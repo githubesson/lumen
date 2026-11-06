@@ -9,7 +9,7 @@ use crate::ui::forms::{OpenSelect, SelectOption, SelectVariant, field};
 use crate::ui::kit::{empty_state, error_banner};
 use crate::ui::{Btn, css_border, font, ico, icons as i, input_with, line, tnum};
 
-use super::confirm::{self, Art, ConfirmSpec};
+use crate::overlays::confirm::{self, Art, ConfirmSpec};
 use super::detail::{self, Detail, detail_mut};
 use super::logic::{self, Permissions, error_message, fmt_date};
 use super::requests::{self, Collaborator, CollaboratorRole, CollaboratorStatus};
