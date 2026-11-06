@@ -5,6 +5,7 @@
 use rune::{Align, Color, Cursor, Cx, Drag, El, Phase, Side, Tx, col, el, row, text};
 
 use crate::app::App;
+use crate::player::adapter::{AdapterEvent, AudioAdapter};
 use crate::format::fmt_duration_sec;
 use crate::pages::auth::requests::{self, PublicTrackShare, TrackShareRef};
 use crate::route::Location;
@@ -36,6 +37,10 @@ pub struct State {
     pub menu_open: bool,
     /// A download that failed to save.
     pub download_error: Option<String>,
+    /// The snippet's own media (the page's `<audio>`/`<video>`, apart from
+    /// the app's player); made on the first play. None in headless runs,
+    /// where the clock in `poll` stands in for `timeupdate`.
+    audio: Option<Box<dyn AudioAdapter>>,
 }
 
 /// The route's share id and its query, as `parseTrackShareParams` reads them.
@@ -105,19 +110,47 @@ fn toggle_play(app: &mut App) {
     if s.current >= duration(s) - 0.1 {
         s.current = 0.0;
     }
-    // TODO(player-merge): play the snippet (`share.audio_url`, else the
-    // `preview_url` MP4's audio) through the engine as a one-off source, and
-    // feed its position, length and end back into this state. Until then the
-    // clock in `poll` stands in for `timeupdate`.
     s.playing = true;
     s.last_tick = None;
+    let current = s.current;
+    if let Some(audio) = snippet_audio(app) {
+        audio.seek(current);
+        if !audio.play() {
+            app.pages.share_preview.playing = false;
+        }
+    }
+}
+
+/// The snippet's media, made (and loaded with `share.audio_url`, else the
+/// `preview_url` MP4) on first use. None in headless runs.
+fn snippet_audio(app: &mut App) -> Option<&mut Box<dyn AudioAdapter>> {
+    if rune::tooling::headless_run().is_some() || app.net.is_sync() {
+        return None;
+    }
+    if app.pages.share_preview.audio.is_none() {
+        let share = app.pages.share_preview.share.as_ref()?;
+        let raw = share.audio_url.clone().filter(|u| !u.is_empty()).unwrap_or_else(|| share.preview_url.clone());
+        let url = match &app.client {
+            Some(c) if raw.starts_with('/') => c.url(&raw),
+            _ => raw,
+        };
+        let engine = crate::player::engine::Engine::start(app.waker.clone(), app.config.audio_sink_id.clone());
+        let client = std::sync::Arc::new(std::sync::Mutex::new(app.client.clone()));
+        let mut audio: Box<dyn AudioAdapter> = Box::new(crate::player::engine::EngineAdapter::new(engine, client));
+        audio.load(&url);
+        app.pages.share_preview.audio = Some(audio);
+    }
+    app.pages.share_preview.audio.as_mut()
 }
 
 fn seek(app: &mut App, value: f64) {
     let s = &mut app.pages.share_preview;
     let d = duration(s);
-    // TODO(player-merge): seek the engine's snippet source too.
     s.current = (value * d).clamp(0.0, d);
+    let at = s.current;
+    if let Some(audio) = s.audio.as_mut() {
+        audio.seek(at);
+    }
 }
 
 fn copy(app: &mut App, tx: &mut Tx) {
@@ -137,6 +170,7 @@ pub fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
         let changed = s.playing || s.copied;
         s.playing = false;
         s.copied = false;
+        s.audio = None;
         return changed;
     }
     let mut changed = false;
@@ -149,6 +183,25 @@ pub fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
         } else {
             tx.wake_after(std::time::Duration::from_secs_f64(until - clock));
         }
+    }
+    if let Some(audio) = s.audio.as_mut() {
+        // The media's own clock and events (`timeupdate`, `loadedmetadata`, `ended`).
+        while let Some(ev) = audio.next_event() {
+            match ev {
+                AdapterEvent::LoadedMetadata => s.media_duration = audio.duration(),
+                AdapterEvent::Ended | AdapterEvent::Error => s.playing = false,
+                _ => {}
+            }
+            changed = true;
+        }
+        if !s.playing {
+            audio.pause();
+        } else if !s.dragging {
+            s.current = audio.current_time().min(duration(s));
+            changed = true;
+            tx.wake_after(std::time::Duration::from_millis(250));
+        }
+        return changed;
     }
     if s.playing && !s.dragging {
         if let Some(last) = s.last_tick {

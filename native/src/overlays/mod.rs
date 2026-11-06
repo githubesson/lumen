@@ -89,10 +89,11 @@ pub fn later(app: &mut App, f: impl FnOnce(&mut App, &mut rune::Tx) + 'static) {
 /// The app's poll: run what [`later`] queued. True when anything ran.
 pub fn poll(app: &mut App, tx: &mut rune::Tx) -> bool {
     toast::on_status(app);
+    let previewing = share::poll(app, tx);
     let queued = std::mem::take(&mut app.overlays.later);
     let any = !queued.is_empty();
     for f in queued {
         f(app, tx);
     }
-    any
+    any || previewing
 }
