@@ -74,9 +74,21 @@ pub(super) fn centred(e: El, lh: f32) -> El {
     e.offset(0.0, (lh.ceil() - lh) / 2.0)
 }
 
+/// `.replay-enter > .bento-tile > *`: when a period's results land, each
+/// tile's contents rise 8 px into place over 300 ms, a tile at a time, 40 ms
+/// apart (`order`), all within 160 ms. The tiles stay put: moving one would
+/// open a gap onto the hairlines behind it.
+fn rise(e: El, order: usize) -> El {
+    let enter = rune::Transition::offset(0.0, 8.0).combined(rune::Transition::opacity());
+    // Leaving, they go at once: the next period's placeholder takes over.
+    let t = rune::Transition::asymmetric(enter, rune::Transition::none());
+    e.transition(t.springs(rune::SpringPair::new(rune::Spring::new(0.3, 0.0), rune::Spring::NONE)))
+        .enter_delay(order.min(4) as f32 * 0.04)
+}
+
 /// `.bento-tile`.
 pub(super) fn tile(t: &Theme, key: &str) -> El {
-    col().key(key.to_string()).min_w(0.0).padding(PAD).fill(t.c.card)
+    col().key(key.to_string()).min_w(0.0).padding(PAD).fill(t.c.card).transition(rune::Transition::none())
 }
 
 /// `.bento-head`: the muted label and, on its baseline at the right, a note.
@@ -128,11 +140,15 @@ pub(super) fn stat_need(fit: Fit, sub: Sub) -> f32 {
 }
 
 /// `.stat-card`: the label at the top, the value and its note at the bottom.
-pub(super) fn stat_tile(t: &Theme, key: &str, label: El, value: El, sub: Option<El>) -> El {
+pub(super) fn stat_tile(t: &Theme, key: &str, label: El, value: El, sub: Option<El>, order: Option<usize>) -> El {
     let mut bottom = col().w_full().child(value);
     if let Some(s) = sub {
         bottom = bottom.child(col().w_full().mt(2.0).child(s));
     }
+    let (label, bottom) = match order {
+        Some(n) => (rise(label, n), rise(bottom, n)),
+        None => (label, bottom),
+    };
     tile(t, key).justify_between().gap(8.0).child(label).child(bottom)
 }
 
@@ -163,21 +179,12 @@ fn value_line(t: &Theme, fit: Fit, value: String, small: Option<String>) -> El {
         let plain = rune::TextStyle { tracking: 0.0, ..style };
         let x = rune::text::advance(&format!("{value} "), plain) + style.tracking * (value.chars().count() + 1) as f32;
         let small_lh = 14.0 * 1.15;
-        let y = blink_baseline(style.size, lh) - blink_baseline(14.0, small_lh);
+        let y = crate::ui::css_baseline(style.size, lh) - crate::ui::css_baseline(14.0, small_lh);
         v = v.child(
             text(s).font(tnum(with_lh(font(14.0, 400.0), small_lh))).color(t.c.muted_foreground).absolute(x, y),
         );
     }
     v
-}
-
-/// Where Chromium puts a line's baseline in its `lh`-tall box at `size` px:
-/// Geist's ascent (1.005 em) and descent (0.295 em) each rounded to whole
-/// pixels, the half-leading floored. Lines of different sizes sharing a
-/// baseline line up by it.
-fn blink_baseline(size: f32, lh: f32) -> f32 {
-    let (ascent, descent) = ((1.005 * size).round(), (0.295 * size).round());
-    ascent + ((lh - ascent - descent) / 2.0).floor()
 }
 
 /// "1.4" plays a day: whole numbers from ten up, one decimal below.
@@ -273,11 +280,13 @@ pub(super) fn panel(t: &Theme, key: &str, areas: &Areas, columns: usize, width: 
         let at = tiles.iter().position(|x| x.name == name).expect("a tile for every area");
         tiles.remove(at)
     };
-    let mut body = col().w_full().gap(1.0);
+    // The panel's structure mounts whole (Rune would fade each new box in).
+    let still = || rune::Transition::none();
+    let mut body = col().w_full().gap(1.0).transition(still());
     for band in bands(areas) {
         let mut inside: Vec<_> = all.iter().filter(|c| c.r0 >= band.start && c.r1 <= band.end).copied().collect();
         inside.sort_by_key(|c| (c.r0, c.c0));
-        let mut r = row().w_full().gap(1.0).items_stretch();
+        let mut r = row().w_full().gap(1.0).items_stretch().transition(still());
         if band.len() == 1 {
             for c in &inside {
                 r = r.child(take(c.name).el.w(span_width(col_w, c.c1 - c.c0)));
@@ -301,9 +310,9 @@ pub(super) fn panel(t: &Theme, key: &str, areas: &Areas, columns: usize, width: 
                 continue;
             }
             let end = tall.iter().map(|x| x.c0).filter(|x| *x > c).min().unwrap_or(columns);
-            let mut strip = col().w(span_width(col_w, end - c)).gap(1.0);
+            let mut strip = col().w(span_width(col_w, end - c)).gap(1.0).transition(still());
             for (k, row_at) in band.clone().enumerate() {
-                let mut line = row().w_full().gap(1.0).items_stretch().min_h(heights[k]).grow(1.0);
+                let mut line = row().w_full().gap(1.0).items_stretch().min_h(heights[k]).grow(1.0).transition(still());
                 for sc in short.iter().filter(|x| x.r0 == row_at && x.c0 >= c && x.c1 <= end) {
                     line = line.child(take(sc.name).el.w(span_width(col_w, sc.c1 - sc.c0)));
                 }
@@ -317,6 +326,9 @@ pub(super) fn panel(t: &Theme, key: &str, areas: &Areas, columns: usize, width: 
     let radius = t.radius_xl();
     css_border(el(), 1.0, t.c.border, radius)
         .key(key.to_string())
+        // Swapped in and out at once, as the web swaps the loading bento,
+        // the empty state and the results.
+        .transition(rune::Transition::none())
         .w_full()
         .padding(1.0)
         .radius(radius)
@@ -379,6 +391,7 @@ pub(super) fn view(
             stat_label(t, "Plays"),
             value_line(t, fit, crate::ui::blocks::format_count(plays), None),
             per_unit.map(|r| stat_sub(t, &format!("{} a {unit} on average", format_rate(r)))),
+            Some(1),
         ),
         need: stat_need(fit, if per_unit.is_some() { Sub::Text } else { Sub::None }),
     });
@@ -392,6 +405,7 @@ pub(super) fn view(
             stat_label(t, "Listening time"),
             value_line(t, fit, listening_time(ms), None),
             minutes.as_deref().map(|m| stat_sub(t, m)),
+            Some(1),
         ),
         need: stat_need(fit, if minutes.is_some() { Sub::Text } else { Sub::None }),
     });
@@ -404,6 +418,7 @@ pub(super) fn view(
             stat_label(t, "Tracks"),
             value_line(t, fit, crate::ui::blocks::format_count(tracks), None),
             Some(stat_sub(t, &format!("by {}", pluralize_grouped(summary.unique_artists, "artist")))),
+            Some(2),
         ),
         need: stat_need(fit, Sub::Text),
     });
@@ -422,7 +437,7 @@ pub(super) fn view(
         }
         None => (value_line(t, fit, "—".into(), None), None, Sub::None),
     };
-    let mut days = stat_tile(t, "replay-days", stat_label(t, days_label), days_value, days_sub);
+    let mut days = stat_tile(t, "replay-days", stat_label(t, days_label), days_value, days_sub, Some(2));
     if let Some(c) = calendar {
         let tip = format!("{} of {} had plays", group_thousands(c.with_plays as u64), pluralize_grouped(c.plays.len() as u64, unit));
         days = days.tip("replay-days", &tip);
@@ -449,7 +464,7 @@ pub(super) fn view(
     });
     let chart = activity(t, &series, series_bucket);
     let act_need = 2.0 * PAD + HEAD_H + if series.is_empty() { 2.0 * 29.0 + LH14 } else { CHART_H };
-    out.push(Tile { name: "act", el: tile(t, "replay-act").child(head(t, label(t, title), peak)).child(chart), need: act_need });
+    out.push(Tile { name: "act", el: tile(t, "replay-act").child(rise(head(t, label(t, title), peak), 3)).child(rise(chart, 3)), need: act_need });
 
     if tiles.genre {
         let mut list = col().w_full().gap(8.0);
@@ -465,7 +480,7 @@ pub(super) fn view(
         let n = genres.len() as f32;
         out.push(Tile {
             name: "genre",
-            el: tile(t, "replay-genre").child(head(t, label(t, "Genres"), None)).child(list),
+            el: tile(t, "replay-genre").child(rise(head(t, label(t, "Genres"), None), 4)).child(rise(list, 4)),
             need: 2.0 * PAD + HEAD_H + n * LH14 + (n - 1.0) * 8.0,
         });
     }
@@ -500,7 +515,8 @@ pub(super) fn view(
             .collect();
         out.push(Tile { name: "alb", el: cards_tile(app, t, "alb", "Top albums", !tiles.art, cards, width("alb"), fit), need: 0.0 });
     }
-    panel(t, "replay-bento", &areas, columns, panel_w, out)
+    // Keyed by period: a new period's tiles mount afresh and rise in.
+    panel(t, &format!("replay-bento-{}", crate::core::replay::period::period_key(s.period)), &areas, columns, panel_w, out)
 }
 
 /// The days tile's label: by month only when the server's cap cut a long
@@ -699,14 +715,15 @@ fn featured(app: &App, t: &Theme, track: &ReplayTrack, width: f32, fit: Fit) -> 
         .child(acts);
     let mut tile = row()
         .key("replay-feat")
+        .transition(rune::Transition::none())
         .min_w(0.0)
         .padding(pad)
         .gap(gap)
         .fill(t.c.card)
         .role("article")
         .label("Most played track")
-        .child(cover)
-        .child(body)
+        .child(rise(cover, 0))
+        .child(rise(body, 0))
         .on_secondary_press(move |app: &mut App, at: PointerPress, _tx: &mut rune::Tx| open_menu(app, &t2, [at.x, at.y]));
     tile = if fit.small { tile.items_start() } else { tile.items_center() };
     (tile, need)
@@ -730,9 +747,9 @@ fn repeat_list(
         rows = rows.child(repeat_row(app, t, tr, n + 2, max, row_w, fit));
     }
     let head = head(t, label(t, "Also on repeat"), Some(note(t, "Plays")));
-    let mut tile = tile(t, "replay-list").role("region").label("Also on repeat").child(head).child(rows);
+    let mut tile = tile(t, "replay-list").role("region").label("Also on repeat").child(rise(head, 3)).child(rise(rows, 3));
     if more {
-        tile = tile.child(foot(t, false, total));
+        tile = tile.child(rise(foot(t, false, total), 3));
     }
     let need = 2.0 * PAD + HEAD_H + others.len() as f32 * ROW_H + if more { FOOT_H } else { 0.0 };
     (tile, need)
@@ -757,9 +774,9 @@ fn full_list(app: &App, t: &Theme, d: &ReplayData, more: bool) -> El {
     let list = TrackList::new("replay-top", queue_source)
         .extra(Extra { header: "Plays", width: 64.0, align_end: true, render: plays_cell })
         .build(app, t);
-    let mut tile = tile(t, "replay-list").role("region").label("Top tracks").child(head(t, label(t, "Top tracks"), None)).child(list);
+    let mut tile = tile(t, "replay-list").role("region").label("Top tracks").child(rise(head(t, label(t, "Top tracks"), None), 3)).child(rise(list, 3));
     if more {
-        tile = tile.child(foot(t, true, d.top_tracks.len()));
+        tile = tile.child(rise(foot(t, true, d.top_tracks.len()), 3));
     }
     tile
 }
@@ -856,7 +873,11 @@ pub(super) fn genre_row(t: &Theme, key: &str, label: El, share: Option<f64>, cou
     }
     let r = row().key(key.to_string()).w_full().h(LH14).gap(12.0).items_center().child(el().w(112.0).min_w(0.0).child(label)).child(bar);
     r.child(match count {
-        Some(c) => centred(text(c).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground), LH12),
+        Some(c) => {
+            // An `auto` column: exactly the count's advance wide.
+            let style = tnum(font(12.0, 400.0));
+            el().w(rune::text::advance(&c, style)).child(centred(text(c).font(style).color(t.c.muted_foreground), LH12))
+        }
         // The count's column, empty: its gap stays.
         None => el().w(0.0),
     })
@@ -939,6 +960,6 @@ pub(super) fn cards_tile(app: &App, t: &Theme, area: &str, label_text: &str, alo
     tile(t, &key)
         .role("region")
         .label(label_text)
-        .child(head(t, label(t, label_text), None))
-        .child(el().w(minis).ml(-8.0).mb(-8.0).child(shelf_pb(app, t, &format!("{key}-shelf"), label_text, cards, col_w, 0.0)))
+        .child(rise(head(t, label(t, label_text), None), 4))
+        .child(rise(el().w(minis).ml(-8.0).mb(-8.0).child(shelf_pb(app, t, &format!("{key}-shelf"), label_text, cards, col_w, 0.0)), 4))
 }

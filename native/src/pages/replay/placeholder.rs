@@ -13,26 +13,7 @@ use crate::api::stats::ReplayBucket;
 use crate::app::App;
 use crate::theme::Theme;
 use crate::ui::cards::media_card_placeholders;
-
-/// `.skeleton-text`: an inline block 0.75 em tall at `vertical-align:
-/// middle` (its middle on the baseline raised by half the x-height) in a
-/// line of `size` px type `lh` tall, `frac` of the line's width.
-fn bar(t: &Theme, size: f32, lh: f32, width: Width) -> El {
-    // Geist: the baseline sits lh/2 + 0.355 em down; the x-height is 0.53 em.
-    let top = lh / 2.0 + 0.355 * size - 0.265 * size - 0.375 * size;
-    let b = el().absolute(0.0, top).h(0.75 * size).radius(t.radius_sm()).fill(t.c.muted);
-    let b = match width {
-        Width::Frac(f) => b.w_frac(f),
-        Width::Px(px) => b.w(px),
-    };
-    el().w_full().h(lh).child(b)
-}
-
-#[derive(Clone, Copy)]
-enum Width {
-    Frac(f32),
-    Px(f32),
-}
+use crate::ui::skeleton_line;
 
 /// The placeholder bento. `unit_known` is false for all time, which may
 /// count months instead of days: only its answer says, so until then the
@@ -55,12 +36,13 @@ pub(super) fn view(app: &App, t: &Theme, chart_bucket: ReplayBucket, unit_known:
         .self_stretch()
         .justify_end()
         .child(label(t, "Most played track"))
-        .child(bar(t, title_size, title_lh, Width::Frac(0.7)).mt(6.0))
-        .child(bar(t, 14.0, LH14, Width::Frac(0.55)).mt(2.0))
-        .child(bar(t, 14.0, LH14, Width::Frac(0.4)).mt(12.0))
+        .child(skeleton_line(t, title_size, title_lh, 0.7).mt(6.0))
+        .child(skeleton_line(t, 14.0, LH14, 0.55).mt(2.0))
+        .child(skeleton_line(t, 14.0, LH14, 0.4).mt(12.0))
         .child(row().h(40.0).mt(16.0).items_center().child(el().size(40.0, 40.0).radius(999.0).fill(t.c.muted)));
     let mut feat = row()
         .key("replay-feat")
+        .transition(rune::Transition::none())
         .min_w(0.0)
         .padding(pad)
         .gap(gap)
@@ -75,7 +57,7 @@ pub(super) fn view(app: &App, t: &Theme, chart_bucket: ReplayBucket, unit_known:
     for (name, text) in [("plays", Some("Plays")), ("time", Some("Listening time")), ("tracks", Some("Tracks")), ("days", unit_known.then_some("Days with plays"))] {
         let label = match text {
             Some(s) => stat_label(t, s),
-            None => bar(t, 14.0, LH14, Width::Frac(0.6)),
+            None => skeleton_line(t, 14.0, LH14, 0.6),
         };
         let size = if fit.small { 24.0 } else { 30.0 };
         out.push(Tile {
@@ -84,8 +66,9 @@ pub(super) fn view(app: &App, t: &Theme, chart_bucket: ReplayBucket, unit_known:
                 t,
                 &format!("replay-{name}"),
                 label,
-                bar(t, size, value_lh(fit), Width::Frac(0.45)),
-                Some(bar(t, 12.0, LH12, Width::Frac(0.65))),
+                skeleton_line(t, size, value_lh(fit), 0.45),
+                Some(skeleton_line(t, 12.0, LH12, 0.65)),
+                None,
             ),
             need: stat_need(fit, Sub::Text),
         });
@@ -111,8 +94,8 @@ pub(super) fn view(app: &App, t: &Theme, chart_bucket: ReplayBucket, unit_known:
                 .child(
                     col()
                         .w(text_w)
-                        .child(bar(t, 14.0, LH14, Width::Frac((60.0 - n as f32 * 4.0) / 100.0)))
-                        .child(bar(t, 12.0, LH12, Width::Frac(0.35))),
+                        .child(skeleton_line(t, 14.0, LH14, (60.0 - n as f32 * 4.0) / 100.0))
+                        .child(skeleton_line(t, 12.0, LH12, 0.35)),
                 ),
         );
     }
@@ -131,7 +114,7 @@ pub(super) fn view(app: &App, t: &Theme, chart_bucket: ReplayBucket, unit_known:
 
     let mut genres = col().w_full().gap(8.0);
     for n in 0..5 {
-        genres = genres.child(genre_row(t, &format!("replay-genre-{n}"), bar(t, 14.0, LH14, Width::Frac(0.7)), None, None));
+        genres = genres.child(genre_row(t, &format!("replay-genre-{n}"), skeleton_line(t, 14.0, LH14, 0.7), None, None));
     }
     out.push(Tile {
         name: "genre",

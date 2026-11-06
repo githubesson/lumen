@@ -481,6 +481,7 @@ fn empty(t: &Theme) -> El {
         .on_link(|app: &mut App, href: &str, _tx| app.navigate_to(href));
     col()
         .key("replay-empty")
+        .transition(rune::Transition::none())
         .w_full()
         .px(24.0)
         .py(48.0)
