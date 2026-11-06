@@ -189,6 +189,19 @@ pub fn select_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> 
 /// `SearchInput`: the `.search` box with a magnifier and a text field.
 /// Escape clears it when `on_clear` is given.
 pub fn search_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, width: Option<f32>) -> El {
+    search_input_with(t, key, edit, placeholder, width, |field| field)
+}
+
+/// [`search_input`] with `bind` applied to the inner text field, where its
+/// `.on_edit(..)`, `.on_input_key(..)` and `.on_submit(..)` go.
+pub fn search_input_with(
+    t: &Theme,
+    key: &str,
+    edit: &TextEdit,
+    placeholder: &str,
+    width: Option<f32>,
+    bind: impl FnOnce(El) -> El,
+) -> El {
     let focused = edit.focused;
     let mut b = css_border(row(), 1.0, if focused { t.c.focus_ring } else { t.c.input }, t.radius_lg())
         .key(format!("{key}-box"))
@@ -216,7 +229,7 @@ pub fn search_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, wi
                 inset: false,
             });
     }
-    b.child(ico(&i::SEARCH, 14.0, t.c.muted_foreground)).child(
+    b.child(ico(&i::SEARCH, 14.0, t.c.muted_foreground)).child(bind(
         rune::text_input(edit, font(14.0, 400.0))
             .key(key)
             .single_line()
@@ -226,7 +239,7 @@ pub fn search_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, wi
             .selection_color(t.c.selection)
             .grow(1.0)
             .min_w(0.0),
-    )
+    ))
 }
 
 /// `Field`: a label over a control, with a hint or an error under it.

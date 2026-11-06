@@ -95,8 +95,9 @@ pub fn cover_art(t: &Theme, images: &Images, url: Option<&str>, label: &str, w: 
         Cover::Ready(img) => base.child(el().w(w).h(h).pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
         Cover::Loading => base,
         Cover::Failed => {
-            // `font-size: clamp(16px, 32%, 40px)` of the box.
-            let fs = (w.min(h) * 0.32).clamp(16.0, 40.0);
+            // `font-size: clamp(16px, 32%, 40px)`: the percentage is of the
+            // inherited 14 px font size, so the clamp floor wins.
+            let fs = 16.0;
             let letter = label.trim().chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
             base.center().child(text(letter).font(font(fs, 500.0)).color(t.c.muted_foreground))
         }
@@ -162,6 +163,8 @@ pub struct Btn {
     pub leading: Option<&'static Icon>,
     pub leading_filled: bool,
     pub trailing: Option<&'static Icon>,
+    /// The icons' size: 14 px (`size-3.5`) unless set.
+    pub icon_size: f32,
 }
 
 impl Btn {
@@ -175,7 +178,13 @@ impl Btn {
             leading: None,
             leading_filled: false,
             trailing: None,
+            icon_size: 14.0,
         }
+    }
+    /// Icons at `size` px (`size-4` is 16).
+    pub fn icon_size(mut self, size: f32) -> Btn {
+        self.icon_size = size;
+        self
     }
     pub fn primary(mut self) -> Btn {
         self.variant = BtnVariant::Primary;
@@ -234,13 +243,13 @@ impl Btn {
             .role("button")
             .label(self.label.clone());
         if let Some(g) = self.leading {
-            b = b.child(ico(g, 14.0, ink));
+            b = b.child(ico(g, self.icon_size, ink));
         }
         if !self.label.is_empty() {
             b = b.child(text(self.label).font(font(fs, 500.0)).color(ink));
         }
         if let Some(g) = self.trailing {
-            b = b.child(ico(g, 14.0, ink));
+            b = b.child(ico(g, self.icon_size, ink));
         }
         if self.disabled {
             b.opacity(0.5).disabled(true).cursor(Cursor::NotAllowed)
