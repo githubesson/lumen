@@ -7,6 +7,7 @@
 mod api;
 mod app;
 mod config;
+mod core;
 mod desktop;
 mod format;
 mod images;
