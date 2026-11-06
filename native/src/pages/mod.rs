@@ -87,7 +87,8 @@ pub fn fallback(_app: &App, t: &Theme) -> El {
         .child(text("Loading...").font(font(12.0, 400.0)).color(t.c.muted_foreground))
 }
 
-/// Signed out: Login, Register, the startup connection screen, Welcome.
+/// Outside the shell: Welcome, the startup connection screen, Login,
+/// Register and the public share page.
 pub fn signed_out(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
-    auth::view(app, t, cx)
+    auth::signed_out(app, t, cx)
 }
