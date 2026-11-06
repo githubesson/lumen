@@ -34,14 +34,21 @@ pub fn scroll_area(t: &Theme, key: &str, content: El) -> El {
 /// content's right edge (plain `overflow: auto`, which on Windows also
 /// takes 10 px, but only while overflowing).
 pub fn scroll_area_with(t: &Theme, key: &str, content: El, stable_gutter: bool) -> El {
+    scroll_area_fit(t, key, content, stable_gutter, None)
+}
+
+/// [`scroll_area_with`] for an area whose height follows its content up to
+/// `max_h` (CSS `max-height` on an `overflow: auto` box in an auto-height
+/// column), instead of growing into a bounded parent.
+pub fn scroll_area_fit(t: &Theme, key: &str, content: El, stable_gutter: bool, max_h: Option<f32>) -> El {
     let live = thumb_live(key);
     let feed = live.clone();
-    let viewport = col()
-        .key(key)
-        .grow(1.0)
-        .min_h(0.0)
-        .min_w(0.0)
-        .h_full()
+    let viewport = col().key(key).min_h(0.0).min_w(0.0);
+    let viewport = match max_h {
+        Some(m) => viewport.grow(1.0).max_h(m),
+        None => viewport.grow(1.0).h_full(),
+    };
+    let viewport = viewport
         .scroll(rune::ScrollSpec { stick_bottom: false })
         .on_scroll_offset(move |at: ScrollPos| {
             let [_, vh] = at.viewport;
@@ -138,7 +145,9 @@ impl Dialog {
                     .child(close_btn),
             );
         }
-        panel = panel.child(col().grow(1.0).min_h(0.0).child(self.body));
+        // `grid-rows-[auto_1fr_auto]` in an auto-height panel: the body takes
+        // its content height and shrinks only to fit `max-height`.
+        panel = panel.child(col().w_full().shrink().min_h(0.0).child(self.body));
         if let Some(f) = self.footer {
             panel = panel.child(f);
         }

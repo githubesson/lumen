@@ -189,6 +189,19 @@ pub fn select_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> 
 /// `SearchInput`: the `.search` box with a magnifier and a text field.
 /// Escape clears it when `on_clear` is given.
 pub fn search_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, width: Option<f32>) -> El {
+    search_input_with(t, key, edit, placeholder, width, |f| f)
+}
+
+/// [`search_input`] with its text field passed through `field` first, to bind
+/// it (`.on_edit(|s: &mut App| &mut s.x)`) or add `.on_input_key(..)`.
+pub fn search_input_with(
+    t: &Theme,
+    key: &str,
+    edit: &TextEdit,
+    placeholder: &str,
+    width: Option<f32>,
+    field: impl FnOnce(El) -> El,
+) -> El {
     let focused = edit.focused;
     let mut b = css_border(row(), 1.0, if focused { t.c.focus_ring } else { t.c.input }, t.radius_lg())
         .key(format!("{key}-box"))
@@ -216,7 +229,7 @@ pub fn search_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, wi
                 inset: false,
             });
     }
-    b.child(ico(&i::SEARCH, 14.0, t.c.muted_foreground)).child(
+    b.child(ico(&i::SEARCH, 14.0, t.c.muted_foreground)).child(field(
         rune::text_input(edit, font(14.0, 400.0))
             .key(key)
             .single_line()
@@ -226,7 +239,7 @@ pub fn search_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, wi
             .selection_color(t.c.selection)
             .grow(1.0)
             .min_w(0.0),
-    )
+    ))
 }
 
 /// `Field`: a label over a control, with a hint or an error under it.
@@ -260,7 +273,10 @@ pub fn setting_row(
     error: Option<&str>,
     last: bool,
 ) -> El {
-    let mut texts = col().min_w(0.0).shrink().child(text(label).font(font(14.0, 400.0)).color(t.c.foreground));
+    // One line box as tall as CSS makes it (rune rounds text boxes up).
+    let label_style = font(14.0, 400.0);
+    let mut texts =
+        col().min_w(0.0).shrink().child(text(label).font(label_style).color(t.c.foreground).h(label_style.line_height));
     if let Some(d) = description {
         texts = texts.child(text(d).font(with_lh(font(12.0, 400.0), 16.8)).color(t.c.muted_foreground).wrap_anywhere().mt(2.0));
     }
