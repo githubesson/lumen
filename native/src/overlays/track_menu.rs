@@ -931,11 +931,11 @@ fn press(e: El, item: Item, enabled: bool) -> El {
 /// lifted by the rounding (measured against the reference; 12 and 13 px
 /// lines land right as they are).
 fn exact_line(e: El, lh: f32) -> El {
-    el().h(lh).min_w(0.0).shrink().child(e)
+    crate::ui::exact_text(e, 12.0, lh)
 }
 
 fn exact_line14(e: El, lh: f32) -> El {
-    exact_line(e.offset(0.0, -(lh.ceil() - lh)), lh)
+    crate::ui::exact_text(e, 14.0, lh)
 }
 
 /// `.ctx-heading`.

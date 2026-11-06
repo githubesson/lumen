@@ -15,7 +15,7 @@ use crate::app::App;
 use crate::theme::{Theme, color_mix};
 use crate::ui::kit::{error_banner, loading_state};
 use crate::ui::track_select::Source;
-use crate::ui::{Btn, exact, font, ico, icons as i, tnum, with_lh};
+use crate::ui::{Btn, exact, exact_text, font, ico, icons as i, tnum, with_lh};
 
 /// `Section`: the eyebrow (`sub`) over the 16 px title, an optional action
 /// at the right (a "view all" link), then the section's content.
@@ -135,8 +135,19 @@ pub fn meta_dot(t: &Theme) -> El {
 
 /// `PageHeader` with its right-aligned actions (`.page-header`); the plain
 /// title and count are `kit::page_header`.
+///
+/// The row aligns its items' baselines: the 24 px title's sits 25.9 px down
+/// its 34.8 px line, the count's 15.15 px down its 20.3, and a button's at
+/// its top (Chromium takes an inline-flex button's baseline from its
+/// leading icon), so the title and the actions share the row's top.
 pub fn page_header(t: &Theme, title: &str, count: Option<&str>, actions: Option<El>) -> El {
-    let mut h = row().w_full().gap(16.0).items_end().flex_wrap().child(crate::ui::kit::page_header(t, title, count));
+    let mut h = row().w_full().gap(16.0).items_start().flex_wrap();
+    // Both drawn a pixel higher than the line boxes put them: where
+    // Chromium's 24 px baseline lands (measured against the reference).
+    h = h.child(exact_text(text(title).font(with_lh(font(24.0, 600.0), 34.8).tracking(-0.6)).color(t.c.foreground), 24.0, 34.8).offset(0.0, -1.0));
+    if let Some(c) = count {
+        h = h.child(exact_text(text(c).font(tnum(font(14.0, 400.0))).color(t.c.muted_foreground), 14.0, 20.3).mt(25.9 - 15.15).offset(0.0, -1.0));
+    }
     h = h.child(el().grow(1.0));
     if let Some(a) = actions {
         h = h.child(a);
