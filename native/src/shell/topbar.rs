@@ -105,9 +105,11 @@ fn breadcrumbs(app: &App, t: &Theme) -> El {
 fn search(t: &Theme, window_w: f32) -> El {
     let w = 320.0f32.min(window_w * 0.4);
     let b = css_border(el(), 1.0, t.c.input, t.radius_lg());
+    // `flex: 0 1 auto; min-width: 0`: it gives up width before the bar
+    // overflows (a 900 px window with the sidebar).
     b.key("topbar-search")
         .w(w)
-        .min_w(0.0)
+        .shrink()
         .h(32.0)
         .pl(11.0)
         .pr(7.0)
