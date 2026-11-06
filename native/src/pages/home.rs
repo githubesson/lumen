@@ -179,6 +179,7 @@ pub fn enter(app: &mut App, loc: &Location) {
     home.settled.set(false);
     home.shown.replace(None);
     home.failure = None;
+    home.hero_starting = false;
     home.list_failed = false;
     if home.recent_limit == 0 {
         home.recent_limit = sources::RECENT_STEP;
@@ -595,7 +596,7 @@ fn empty(t: &Theme, m: &Model) -> El {
         .py(64.0)
         .gap(12.0)
         .items_center()
-        .child(text(message).font(font(14.0, 400.0)).color(t.c.muted_foreground))
+        .child(board::lh(text(message).font(font(14.0, 400.0)).color(t.c.muted_foreground), 20.3))
         .child(
             board::button16(t, Btn::new("board-empty-customize", "Customize Home"), &i::LAYOUT_DASHBOARD)
                 .on_press(|app: &mut App| app.navigate_replace(Location::parse("/?customize"))),
@@ -699,10 +700,13 @@ pub fn play_hero(app: &mut App, track: &TrackListItem) {
     app.net.run(
         move || requests::list_album_tracks(&client, &album.id),
         move |app, result| {
-            if app.pages.home.play_seq != seq || !app.location().is("/") {
+            if app.pages.home.play_seq != seq {
                 return;
             }
             app.pages.home.hero_starting = false;
+            if !app.location().is("/") {
+                return;
+            }
             let queue = result.map(|l| playable_tracks(&l)).unwrap_or_default();
             match queue.iter().find(|t| t.id == track.id).or(queue.first()).cloned() {
                 Some(start) => play_from(app, &start, &queue),
@@ -724,6 +728,16 @@ pub mod scenes {
         {"id":"resume","kind":"resume","w":4,"h":1},
         {"id":"playlists","kind":"playlists","w":2,"h":1,"hidden":true},
         {"id":"artists","kind":"artists","w":6,"h":1}]}"#;
+
+    /// Every panel hidden: the way back to customizing.
+    pub const HIDDEN: &str = r#"{"panels":[
+        {"id":"resume","kind":"resume","w":4,"h":1,"hidden":true},
+        {"id":"repeat","kind":"repeat","w":2,"h":2,"hidden":true},
+        {"id":"recent","kind":"recent","w":2,"h":1,"hidden":true},
+        {"id":"favorites","kind":"favorites","w":2,"h":1,"hidden":true},
+        {"id":"albums","kind":"albums","w":4,"h":1,"hidden":true},
+        {"id":"playlists","kind":"playlists","w":2,"h":1,"hidden":true},
+        {"id":"artists","kind":"artists","w":6,"h":1,"hidden":true}]}"#;
 
     /// Every kind of panel, in sizes the default board doesn't use (the UI
     /// lint's board).

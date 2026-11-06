@@ -520,10 +520,11 @@ pub fn button16(t: &Theme, b: Btn, glyph: &'static rune::Icon) -> El {
             (t.c.destructive_soft, ink, Color::TRANSPARENT, hover_overlay(t.c.destructive_soft, hot))
         }
     };
+    // The 1 px border takes layout space in CSS; Rune's doesn't.
     let r = row()
         .key(b.key)
         .h(h)
-        .px(10.0)
+        .px(11.0)
         .gap(gap)
         .items_center()
         .justify_center()

@@ -90,6 +90,17 @@ const CUSTOM_BOARD = {
   ],
 };
 
+/** Every panel hidden. */
+const HIDDEN_BOARD = {
+  panels: ["resume", "repeat", "recent", "favorites", "albums", "playlists", "artists"].map((id) => ({
+    id,
+    kind: id,
+    w: id === "resume" || id === "albums" ? 4 : id === "artists" ? 6 : 2,
+    h: id === "repeat" ? 2 : 1,
+    hidden: true,
+  })),
+};
+
 const boardReady = (p: Page) => ready(p, p.locator(".board"));
 /** Clicks without moving the mouse, so no hover is left behind. */
 const press = (p: Page, name: string | RegExp) => p.getByRole("button", { name }).first().dispatchEvent("click");
@@ -101,6 +112,7 @@ const SCENES: Scene[] = [
   { name: "home-customize", path: "/?customize", wait: boardReady },
   { name: "home-swapped", path: "/", homeBoard: SWAPPED_BOARD, wait: boardReady },
   { name: "home-custom", path: "/", homeBoard: CUSTOM_BOARD, size: { width: 1280, height: 1400 }, wait: boardReady },
+  { name: "home-empty", path: "/", homeBoard: HIDDEN_BOARD, wait: (p) => ready(p, p.locator(".board-empty")) },
   { name: "home-custom-customize", path: "/?customize", homeBoard: CUSTOM_BOARD, wait: boardReady },
   {
     name: "home-add",

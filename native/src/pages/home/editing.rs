@@ -199,19 +199,21 @@ pub fn slot(
     let id = panel.id.clone();
     let dragging = e.dragging.as_deref() == Some(&id);
     let lit = e.moving.as_deref() == Some(&id) || e.target.as_deref() == Some(&id);
-    s = s.child(body.inert());
+    // The tile frosts the panel under it (`backdrop-filter: blur(10px)`).
+    // Rune frosts only a few backdrops a frame, so the panel itself is
+    // drawn blurred, inside its slot's corners.
+    let r = t.radius_xl();
+    s = s.child(el().size(w, h).clip_rounded(r).child(body.inert().blur(10.0)));
     if dragging {
         s = s.opacity(0.4);
     }
     // The tile: frosted over the panel, with its label card in the middle.
-    let r = t.radius_xl();
     let mut tile = el()
         .key(format!("slot-{id}-editor"))
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
         .center()
         .padding(16.0)
         .radius(r)
-        .backdrop_blur(10.0)
         .fill(t.c.card.alpha(if lit { 0.86 } else { 0.72 }))
         .role("group")
         .label(label_of(app, panel))
@@ -474,6 +476,11 @@ pub fn bar(app: &App, t: &Theme, m: &Model, width: f32) -> El {
         .sticky_top(0.0)
         .role("region")
         .label("Customize Home");
+    // Stuck at the top, it passes over the board (`z-index: 3`); not over a
+    // dialog or a listbox, which raising would also pass over.
+    if e.dialog.is_none() && app.select.is_none() {
+        b = b.raise();
+    }
     for items in lines {
         // The text takes what the line's other groups leave.
         let others: f32 = items
@@ -519,7 +526,7 @@ fn chip(t: &Theme, key: &str, label: &str) -> El {
     crate::ui::css_border(row(), 1.0, t.c.input, t.radius_md().min(12.0))
         .key(key.to_string())
         .h(28.0)
-        .px(10.0)
+        .px(11.0)
         .gap(4.0)
         .min_w(0.0)
         .shrink()

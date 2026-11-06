@@ -308,6 +308,7 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
     ("home-customize", |a| scene(a, "/?customize")),
     ("home-swapped", |a| home_scene(a, crate::pages::home::scenes::SWAPPED, "/")),
     ("home-custom", |a| home_scene(a, crate::pages::home::scenes::CUSTOM, "/")),
+    ("home-empty", |a| home_scene(a, crate::pages::home::scenes::HIDDEN, "/")),
     ("home-custom-customize", |a| home_scene(a, crate::pages::home::scenes::CUSTOM, "/?customize")),
     ("home-add", |a| {
         home_scene(a, crate::pages::home::scenes::CUSTOM, "/?customize");
