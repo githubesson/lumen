@@ -82,13 +82,6 @@ fn dismiss(app: &mut App) {
     }
 }
 
-/// `libraryChanged.emit()`: views listing the library reload.
-fn library_changed(app: &mut App) {
-    // TODO(pages-merge): the pages' library-changed hook (and onSaved, which
-    // swaps the edited album into the page showing it).
-    let loc = app.location().clone();
-    crate::pages::enter(app, &loc);
-}
 
 /// Binds a field to its `TextEdit` in the app state.
 pub type Bind = fn(&mut App) -> &mut TextEdit;

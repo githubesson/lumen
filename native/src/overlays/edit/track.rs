@@ -133,7 +133,7 @@ fn save(app: &mut App) {
             }
             match result {
                 Ok(_) => {
-                    super::library_changed(app);
+                    crate::pages::library_changed(app);
                     super::close(app);
                 }
                 Err(e) => s.error = Some(crate::overlays::error_message(&e, "Save failed.")),

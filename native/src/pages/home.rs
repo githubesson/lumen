@@ -163,6 +163,15 @@ pub fn replay_error(period: Period) -> String {
 
 /// Runs on each navigation to the page: a new visit revalidates its lists
 /// (`?customize` coming and going doesn't).
+/// `libraryChanged`: on Home, its library lists read again.
+pub fn library_changed(app: &mut App) {
+    if app.location().is("/") {
+        sources::load_recent(app);
+        sources::load_tracks(app);
+        sources::load_favorites(app);
+    }
+}
+
 pub fn enter(app: &mut App, loc: &Location) {
     let _ = loc;
     if app.me().is_none() {

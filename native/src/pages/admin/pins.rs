@@ -305,6 +305,7 @@ fn scan(app: &mut App, kind: PinKind, p: &Pin) {
                     }
                     reload(app, kind, |_| {});
                     load_downloads(app, kind, id, false);
+                    crate::pages::library_changed(app);
                 },
             );
         }

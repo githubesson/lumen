@@ -134,13 +134,13 @@ fn set_visibility(app: &mut App, value: &str) {
 fn visibility_select(app: &App, t: &Theme, value: Visibility) -> El {
     const KEY: &str = "playlist-visibility";
     let open = app.select.as_ref().is_some_and(|s| s.key == KEY);
-    let spec = OpenSelect {
-        key: KEY.into(),
-        options: vec![SelectOption::new("private", "Private"), SelectOption::new("collaborative", "Collaborative")],
-        value: if value == Visibility::Collaborative { "collaborative" } else { "private" }.into(),
-        variant: SelectVariant::Minimal,
-        on_change: set_visibility,
-    };
+    let spec = OpenSelect::new(
+        KEY,
+        vec![SelectOption::new("private", "Private"), SelectOption::new("collaborative", "Collaborative")],
+        if value == Visibility::Collaborative { "collaborative" } else { "private" },
+        SelectVariant::Minimal,
+        set_visibility,
+    );
     let label = if value == Visibility::Collaborative { "Collaborative" } else { "Private" };
     row()
         .key(KEY)

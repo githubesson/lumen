@@ -193,7 +193,7 @@ fn relinked(app: &mut App, updated: TrackDetail) {
     s.picked = None;
     s.relinks += 1;
     s.track = Some(updated);
-    super::library_changed(app);
+    crate::pages::library_changed(app);
 }
 
 fn unlink(app: &mut App, id: String) {

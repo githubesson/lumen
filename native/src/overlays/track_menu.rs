@@ -653,7 +653,6 @@ fn album_href(t: &TrackListItem, d: Option<&api::TrackDetail>) -> Option<String>
 fn confirm_delete(app: &mut App, t: &TrackListItem, global: bool) {
     use crate::overlays::confirm::{self, Art, ConfirmSpec};
     let id = t.id.clone();
-    let path = if global { format!("/api/admin/tracks/{}", api::seg(&id)) } else { format!("/api/tracks/{}", api::seg(&id)) };
     let (title, message, label, busy) = if global {
         ("Remove for everyone?", "This permanently deletes the file from the server, so it leaves every library.", "Remove", "Removing…")
     } else {
@@ -668,11 +667,10 @@ fn confirm_delete(app: &mut App, t: &TrackListItem, global: bool) {
         .icon(&i::TRASH_2)
         .busy_label(busy)
         .error_fallback("Delete failed.");
-    confirm::ask_action(app, spec, move |client: &Client| client.delete_void(&path), |app: &mut App| {
-        // The library changed: reload what's on screen.
-        let loc = app.location().clone();
-        crate::pages::enter(app, &loc);
-    });
+    let action = move |client: &Client| {
+        if global { api::admin::delete_global_track(client, &id) } else { api::library::delete_track(client, &id) }
+    };
+    confirm::ask_action(app, spec, action, crate::pages::library_changed);
 }
 
 /// The menu, at the pointer.

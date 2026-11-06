@@ -127,12 +127,6 @@ fn escape(app: &mut App) {
     }
 }
 
-/// `libraryChanged.emit()` after a link or unlink.
-fn library_changed(app: &mut App) {
-    // TODO(pages-merge): the pages' library-changed hook.
-    let loc = app.location().clone();
-    crate::pages::enter(app, &loc);
-}
 
 /// The left third: artwork and the lines a player shows.
 fn summary(app: &App, t: &Theme, track: Option<&TrackDetail>, w: f32) -> El {

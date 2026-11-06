@@ -219,7 +219,7 @@ pub fn select(
 ) -> El {
     let open = app.select.as_ref().is_some_and(|s| s.key == key);
     let label = options.iter().find(|o| o.value == value).map(|o| o.label.clone()).unwrap_or_else(|| "Select…".into());
-    let spec = OpenSelect { key: key.to_string(), options, value: value.to_string(), variant: SelectVariant::Minimal, on_change };
+    let spec = OpenSelect::new(key, options, value, SelectVariant::Minimal, on_change);
     let b = row()
         .key(key)
         .h(28.0)

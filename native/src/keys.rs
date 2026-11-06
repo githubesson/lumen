@@ -2,6 +2,7 @@
 //!
 //! - Ctrl+K toggles the command palette, even from a field or over
 //!   Settings (it hands over); Ctrl+B collapses the sidebar (`Shell.tsx`).
+//! - Ctrl+F focuses an album, artist or playlist page's search.
 //! - The player's keys (`context/Player.tsx`): Space play/pause, ←/→ seek
 //!   5 s, ↑/↓ volume ±5%, N next, P previous, M mute, S shuffle, R repeat.
 //!
@@ -28,6 +29,10 @@ pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     if crate::overlays::track_menu::on_key(app, ev, tx) {
         return true;
     }
+    // An open Select's listbox takes the arrows, Return and Escape.
+    if crate::ui::forms::on_key(app, ev) {
+        return true;
+    }
     crate::ui::tooltip::on_key(app, ev);
     if crate::ui::track_select::on_key(app, ev, tx) {
         return true;
@@ -47,6 +52,11 @@ pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         return false;
     }
     if crate::pages::home::on_key(app, ev, tx) {
+        return true;
+    }
+    // Ctrl+F on an album, artist or playlist page focuses its search, also
+    // when nothing inside the page has focus (`useDetailTrackSearch`).
+    if crate::pages::library::on_key(app, ev) || crate::pages::playlists::on_key(app, ev, tx) {
         return true;
     }
     // sidebar:toggle is `ctrl+b` on every platform.

@@ -143,7 +143,7 @@ const SELECT_ARROW: rune::Icon = rune::Icon {
 fn native_select(app: &App, t: &Theme, key: &str, value: CollaboratorRole, width: Option<f32>, target: Option<String>, on_change: fn(&mut App, &str)) -> El {
     let open = app.select.as_ref().is_some_and(|s| s.key == key);
     let label = if value == CollaboratorRole::Editor { "Editor" } else { "Viewer" };
-    let spec = OpenSelect { key: key.to_string(), options: role_options(), value: value.as_str().to_string(), variant: SelectVariant::Outlined, on_change };
+    let spec = OpenSelect::new(key, role_options(), value.as_str(), SelectVariant::Outlined, on_change);
     let b = css_border(row(), 1.0, if open { t.c.focus_ring } else { t.c.input }, t.radius_lg())
         .key(key)
         .h(32.0)

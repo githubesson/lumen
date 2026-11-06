@@ -301,8 +301,8 @@ fn poll(app: &mut App) {
     }
 }
 
-/// `libraryChanged`: an upload or scan landed, so the open list reads its
-/// rows again. TODO(api-merge): call from wherever library events arrive.
+/// `libraryChanged` (see `pages::library_changed`): the open list, or the
+/// album or artist page, reads its rows again.
 pub fn library_changed(app: &mut App) {
     if app.location().is("/library") {
         let loc = app.location().clone();
@@ -563,12 +563,12 @@ pub mod scenes {
 
     pub fn sort_open(app: &mut App) {
         let value = app.pages.library.sort.param().to_string();
-        app.select = Some(crate::ui::forms::OpenSelect {
-            key: "lib-sort".into(),
-            options: toolbar::sort_options(),
+        app.select = Some(crate::ui::forms::OpenSelect::new(
+            "lib-sort",
+            toolbar::sort_options(),
             value,
-            variant: crate::ui::forms::SelectVariant::Toolbar,
-            on_change: |app, v| set_sort(app, Sort::parse(v)),
-        });
+            crate::ui::forms::SelectVariant::Toolbar,
+            |app, v| set_sort(app, Sort::parse(v)),
+        ));
     }
 }

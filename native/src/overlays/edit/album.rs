@@ -82,7 +82,7 @@ fn save(app: &mut App) {
             }
             match result {
                 Ok(_) => {
-                    super::library_changed(app);
+                    crate::pages::library_changed(app);
                     super::close(app);
                 }
                 Err(e) => s.error = Some(crate::overlays::error_message(&e, "Save failed.")),
@@ -102,7 +102,7 @@ fn cover_done(app: &mut App, nonce: u64, result: Result<Album, crate::api::ApiEr
         Ok(a) => {
             s.has_cover = a.has_cover;
             s.cover_nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_millis() as u64);
-            super::library_changed(app);
+            crate::pages::library_changed(app);
         }
         Err(e) => app.overlays.edit.error = Some(crate::overlays::error_message(&e, fallback)),
     }

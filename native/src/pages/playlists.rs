@@ -107,6 +107,14 @@ pub fn sync(app: &mut App) -> bool {
     detail::sync(app)
 }
 
+/// `libraryChanged`: an open playlist reads its rows again (an edited
+/// track's title, a removed one).
+pub fn library_changed(app: &mut App) {
+    if detail::detail(app).is_some() && app.location().segment(0) == Some("playlists") {
+        detail::load(app, None);
+    }
+}
+
 /// The page's own shortcuts (`useKey("mod+f")` on a playlist).
 pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     detail::on_key(app, ev, tx)

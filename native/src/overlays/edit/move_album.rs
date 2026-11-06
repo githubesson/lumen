@@ -74,7 +74,7 @@ fn move_to(app: &mut App, album: Album) {
             match result {
                 Ok(_) => {
                     s.moving_id = None;
-                    super::library_changed(app);
+                    crate::pages::library_changed(app);
                     super::close(app);
                 }
                 Err(e) => {

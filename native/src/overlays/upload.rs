@@ -235,7 +235,7 @@ fn send_batch(app: &mut App, batches: Vec<Vec<PathBuf>>, n: usize, mut uploaded:
         s.results = Some(uploaded);
         s.busy = false;
         if added {
-            library_changed(app);
+            crate::pages::library_changed(app);
         }
         return;
     }
@@ -274,7 +274,7 @@ fn send_batch(app: &mut App, batches: Vec<Vec<PathBuf>>, n: usize, mut uploaded:
                     }
                     s.busy = false;
                     if uploaded.iter().any(|r| r.inserted) {
-                        library_changed(app);
+                        crate::pages::library_changed(app);
                     }
                 }
             }
@@ -282,13 +282,6 @@ fn send_batch(app: &mut App, batches: Vec<Vec<PathBuf>>, n: usize, mut uploaded:
     );
 }
 
-/// `libraryChanged.emit()`: views that list the library reload.
-fn library_changed(app: &mut App) {
-    // TODO(pages-merge): the pages' library-changed hook; until then the
-    // current page reloads.
-    let loc = app.location().clone();
-    crate::pages::enter(app, &loc);
-}
 
 /// `RadioCardOption`.
 fn radio_card(t: &Theme, key: &str, label: &str, description: &str, checked: bool, pick: Scope) -> El {
