@@ -231,11 +231,25 @@ pub fn search_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, wi
 
 /// `Field`: a label over a control, with a hint or an error under it.
 pub fn field(t: &Theme, label: &str, control: El, hint: Option<&str>, error: Option<&str>) -> El {
+    field_in(t, label, control, hint, error, None)
+}
+
+/// [`field`] `width` wide, its hint or error boxed as CSS boxes it (whole
+/// 17.4 px lines, where rune rounds each text box up).
+pub fn field_in(t: &Theme, label: &str, control: El, hint: Option<&str>, error: Option<&str>, width: Option<f32>) -> El {
+    let note = |s: &str, color: Color| {
+        let style = font(12.0, 400.0);
+        let e = text(s).font(style).color(color).wrap();
+        match width {
+            Some(w) => e.h(crate::ui::css_text_h(s, style, Some(w))),
+            None => e,
+        }
+    };
     let mut c = col().gap(6.0).child(text(label).font(with_lh(font(14.0, 500.0), 14.0)).color(t.c.foreground)).child(control);
     if let Some(e) = error {
-        c = c.child(text(e).font(font(12.0, 400.0)).color(t.c.destructive).wrap().role("alert"));
+        c = c.child(note(e, t.c.destructive).role("alert"));
     } else if let Some(h) = hint {
-        c = c.child(text(h).font(font(12.0, 400.0)).color(t.c.muted_foreground).wrap());
+        c = c.child(note(h, t.c.muted_foreground));
     }
     c
 }
@@ -260,9 +274,34 @@ pub fn setting_row(
     error: Option<&str>,
     last: bool,
 ) -> El {
-    let mut texts = col().min_w(0.0).shrink().child(text(label).font(font(14.0, 400.0)).color(t.c.foreground));
+    setting_row_in(t, label, description, control, below, error, last, None)
+}
+
+/// [`setting_row`] whose texts are `text_width` wide, boxed as CSS boxes
+/// them (whole lines, where rune rounds each text box up).
+#[allow(clippy::too_many_arguments)]
+pub fn setting_row_in(
+    t: &Theme,
+    label: &str,
+    description: Option<&str>,
+    control: Option<El>,
+    below: Option<El>,
+    error: Option<&str>,
+    last: bool,
+    text_width: Option<f32>,
+) -> El {
+    let mut title = text(label).font(font(14.0, 400.0)).color(t.c.foreground);
+    if let Some(w) = text_width {
+        title = title.wrap().h(crate::ui::css_text_h(label, font(14.0, 400.0), Some(w)));
+    }
+    let mut texts = col().min_w(0.0).shrink().child(title);
     if let Some(d) = description {
-        texts = texts.child(text(d).font(with_lh(font(12.0, 400.0), 16.8)).color(t.c.muted_foreground).wrap_anywhere().mt(2.0));
+        let style = with_lh(font(12.0, 400.0), 16.8);
+        let mut e = text(d).font(style).color(t.c.muted_foreground).wrap_anywhere().mt(2.0);
+        if let Some(w) = text_width {
+            e = e.h(crate::ui::css_text_h(d, style, Some(w)));
+        }
+        texts = texts.child(e);
     }
     let mut main = row().min_h(28.0).gap(16.0).items_center().justify_between().child(texts);
     if let Some(c) = control {

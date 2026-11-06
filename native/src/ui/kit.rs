@@ -357,13 +357,25 @@ pub fn loading_state(t: &Theme, label: &str) -> El {
 
 /// `ErrorBanner`.
 pub fn error_banner(t: &Theme, message: &str) -> El {
+    error_banner_in(t, message, None)
+}
+
+/// [`error_banner`] `width` wide, its text boxed as CSS boxes it (whole
+/// 20.3 px lines, where rune rounds the box up).
+pub fn error_banner_in(t: &Theme, message: &str, width: Option<f32>) -> El {
+    let style = font(14.0, 400.0);
+    let mut msg = text(message).font(style).color(t.c.destructive).wrap();
+    if let Some(w) = width {
+        msg = msg.h(crate::ui::css_text_h(message, style, Some(w - 26.0)));
+    }
     crate::ui::css_border(el(), 1.0, t.c.destructive_border, t.radius_lg())
         .w_full()
         .px(13.0)
         .py(9.0)
         .radius(t.radius_lg())
         .fill(t.c.destructive_soft)
-        .child(text(message).font(font(14.0, 400.0)).color(t.c.destructive).wrap())
+        .role("alert")
+        .child(msg)
 }
 
 /// `PageHeader`: the 24 px title with an optional muted count after it,

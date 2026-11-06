@@ -45,6 +45,20 @@ pub fn ico(i: &'static Icon, size: f32, color: Color) -> El {
     icon(i, size).color(color)
 }
 
+/// The height CSS gives `s` set in `style` and wrapped at `max_width`: whole
+/// lines of `line-height`, fractions kept. Rune rounds each text box up to
+/// whole pixels (a 20.3 px line takes 21), which moves everything under it;
+/// pin a text's box with `.h(css_text_h(..))` where that matters.
+pub fn css_text_h(s: &str, style: TextStyle, max_width: Option<f32>) -> f32 {
+    let (_, h) = rune::text::measure(s, &[], style, max_width);
+    let lh = style.line_height;
+    if lh <= 1.0 {
+        return h;
+    }
+    // `h` is ceil(lines × lh), so with lh > 1 the floor gives the lines back.
+    (h / lh + 1e-3).floor().max(1.0) * lh
+}
+
 /// `TextStyle` with an explicit line height in px.
 pub fn with_lh(style: TextStyle, lh: f32) -> TextStyle {
     TextStyle { line_height: lh, ..style }

@@ -14,6 +14,22 @@ pub const BRAND_WAVE: Icon = Icon {
     body: r#"<path d="M1.23 16.81L4.67 16.81C4.98 16.81 5.28 16.62 5.36 16.29L5.7 14.77L7.35 22.43C7.5 23.13 8.65 23.13 8.76 22.41L10.19 13.02L11.86 27.51C11.97 28.38 13.21 28.37 13.28 27.51L14.82 10.23L16.36 27.5C16.43 28.38 17.68 28.38 17.78 27.5L19.46 13.02L20.89 22.43C20.99 23.14 22.14 23.14 22.29 22.43L23.92 14.87L24.29 16.29C24.39 16.67 24.66 16.81 24.98 16.81L28.3 16.81C28.77 16.81 29.14 16.45 29.14 15.99C29.14 15.54 28.77 15.16 28.3 15.16L25.49 15.16L24.55 11.53C24.34 10.74 23.32 10.74 23.15 11.53L21.71 18.37L20.05 7.58C19.93 6.72 18.74 6.75 18.64 7.59L17.16 20.4L15.54 2.12C15.46 1.24 14.18 1.24 14.1 2.12L12.48 20.4L11.01 7.59C10.9 6.72 9.72 6.72 9.59 7.58L7.94 18.37L6.5 11.53C6.33 10.8 5.29 10.8 5.09 11.53L4.15 15.16L1.23 15.16C0.75 15.16 0.39 15.54 0.39 15.99C0.39 16.45 0.75 16.81 1.23 16.81Z" fill="currentColor"/>"#,
 };
 
+/// The tile's `linear-gradient(180deg, top 0%, purple 70%)`. With a
+/// `display-p3` stop CSS interpolates in OKLab, not sRGB; rune blends stops
+/// in sRGB, so the OKLab ramp goes in as short steps.
+fn brand_stops(top: Color, purple: Color) -> Vec<(f32, Color)> {
+    // Rune keeps 8 stops: seven along the ramp, then the purple to the bottom.
+    let n = 6;
+    let mut stops: Vec<(f32, Color)> = (0..=n)
+        .map(|k| {
+            let p = k as f32 / n as f32;
+            (0.7 * p, crate::theme::color_mix(purple, p, top))
+        })
+        .collect();
+    stops.push((1.0, purple));
+    stops
+}
+
 /// `.brand-mark`: the app icon tile, `size` px square.
 pub fn brand_mark(t: &Theme, size: f32) -> El {
     let top = if t.dark() { rune::color::hex("#161616").unwrap() } else { Color::WHITE };
@@ -30,7 +46,7 @@ pub fn brand_mark(t: &Theme, size: f32) -> El {
     el()
         .size(size, size)
         .radius(t.radius_lg())
-        .linear_gradient(std::f32::consts::PI, vec![(0.0, top), (0.7, purple), (1.0, purple)])
+        .linear_gradient(std::f32::consts::PI, brand_stops(top, purple))
         .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: ring, inset: true })
         .box_shadow(Shadow { x: 0.0, y: 1.0, blur: 0.0, spread: 0.0, color: sheen, inset: true })
         .center()
@@ -161,6 +177,8 @@ pub struct Btn {
     pub disabled: bool,
     pub leading: Option<&'static Icon>,
     pub leading_filled: bool,
+    /// The leading icon's size: 14 (`size-3.5`) unless set.
+    pub leading_size: f32,
     pub trailing: Option<&'static Icon>,
 }
 
@@ -174,6 +192,7 @@ impl Btn {
             disabled: false,
             leading: None,
             leading_filled: false,
+            leading_size: 14.0,
             trailing: None,
         }
     }
@@ -202,6 +221,12 @@ impl Btn {
         self.leading = Some(glyph);
         self
     }
+    /// A leading icon at another size (`size-4` = 16).
+    pub fn icon_sized(mut self, glyph: &'static Icon, size: f32) -> Btn {
+        self.leading = Some(glyph);
+        self.leading_size = size;
+        self
+    }
     pub fn trailing(mut self, glyph: &'static Icon) -> Btn {
         self.trailing = Some(glyph);
         self
@@ -224,20 +249,29 @@ impl Btn {
         let mut b = rune::row()
             .key(self.key)
             .h(h)
-            .px(10.0)
+            // `padding: 0 10px` inside the 1 px border, which `.border` draws
+            // without taking room.
+            .px(11.0)
             .gap(gap)
             .items_center()
             .justify_center()
             .radius(radius)
             .fill(fill)
-            .border(1.0, border)
             .role("button")
             .label(self.label.clone());
+        // `.btn` clips its fill to the padding box under the 1 px border;
+        // the variants' `background` shorthand resets that, so their fill
+        // covers the (transparent) border.
+        if self.variant == BtnVariant::Secondary {
+            b = b.border(1.0, border);
+        }
         if let Some(g) = self.leading {
-            b = b.child(ico(g, 14.0, ink));
+            b = b.child(ico(g, self.leading_size, ink));
         }
         if !self.label.is_empty() {
-            b = b.child(text(self.label).font(font(fs, 500.0)).color(ink));
+            // One line box as tall as CSS makes it (rune rounds text boxes up).
+            let style = font(fs, 500.0);
+            b = b.child(text(self.label).font(style).color(ink).h(style.line_height));
         }
         if let Some(g) = self.trailing {
             b = b.child(ico(g, 14.0, ink));
@@ -250,9 +284,15 @@ impl Btn {
     }
 }
 
-/// `.input`: a 32 px outlined single-line field. Bind it with
-/// `.on_edit(|s| &mut s.field)`; `placeholder` shows while it's empty.
+/// `.input`: a 32 px outlined single-line field; `placeholder` shows while
+/// it's empty. Unbound: use [`input_with`] to bind it.
 pub fn input(t: &Theme, key: &str, edit: &rune::TextEdit, placeholder: &str) -> El {
+    input_with(t, key, edit, placeholder, |f| f)
+}
+
+/// [`input`] with its text field passed through `field_fn` first, to bind it
+/// (`.on_edit(|s: &mut App| &mut s.x)`) or add `.secure()`, `.on_submit(..)`.
+pub fn input_with(t: &Theme, key: &str, edit: &rune::TextEdit, placeholder: &str, field_fn: impl FnOnce(El) -> El) -> El {
     let focused = edit.focused;
     let mut field = el().key(format!("{key}-box")).h(32.0).w_full().radius(t.radius_lg()).fill(t.c.input_bg).items_center();
     field = crate::ui::css_border(field, 1.0, if focused { t.c.focus_ring } else { t.c.input }, t.radius_lg());
@@ -268,14 +308,15 @@ pub fn input(t: &Theme, key: &str, edit: &rune::TextEdit, placeholder: &str) -> 
                 inset: false,
             });
     }
-    field.child(
+    field.child(field_fn(
         rune::text_input(edit, font(14.0, 400.0))
             .key(key)
             .single_line()
             .placeholder(placeholder, t.c.muted_foreground)
             .color(t.c.foreground)
+            .caret(t.c.foreground, t.c.selection)
             .selection_color(t.c.selection)
             .grow(1.0)
             .px(11.0),
-    )
+    ))
 }
