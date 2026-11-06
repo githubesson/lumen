@@ -60,6 +60,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Vec<El> {
         track_menu::view(app, t, cx),
         confirm::view(app, t, cx),
         crate::pages::playlists::overlay(app, t, cx),
+        crate::pages::home::layer(app, t, cx),
         crate::ui::forms::select_layer(app, t, cx),
         crate::ui::tooltip::view(app, t, cx),
     ]

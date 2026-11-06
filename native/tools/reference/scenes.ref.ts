@@ -75,6 +75,8 @@ type Scene = {
   /** Leave the pointer where `act` put it (hover states). */
   keepPointer?: boolean;
   bridge?: Bridge;
+  /** `tweaks.homeBoard` to seed before sign-in (Home's saved arrangement). */
+  homeBoard?: unknown;
 };
 
 /** The desktop config the desktop-settings lint run serves. */
@@ -133,8 +135,94 @@ const rows = (p: Page) => ready(p, p.locator(".view:has(.playlist-toolbar) tbody
 /** Picks a tab without moving the mouse (no hover left behind). */
 const tab = (p: Page, name: string | RegExp) => p.getByRole("tab", { name }).first().dispatchEvent("click");
 
+/** Home with its default panels swapped about and one hidden: still the default layout. */
+const SWAPPED_BOARD = {
+  panels: [
+    { id: "albums", kind: "albums", w: 4, h: 1 },
+    { id: "repeat", kind: "repeat", w: 2, h: 2 },
+    { id: "favorites", kind: "favorites", w: 2, h: 1 },
+    { id: "recent", kind: "recent", w: 2, h: 1 },
+    { id: "resume", kind: "resume", w: 4, h: 1 },
+    { id: "playlists", kind: "playlists", w: 2, h: 1, hidden: true },
+    { id: "artists", kind: "artists", w: 6, h: 1 },
+  ],
+};
+
+/** Every kind of panel, in sizes the default board doesn't use (the UI lint's board). */
+const CUSTOM_BOARD = {
+  panels: [
+    { id: "resume", kind: "resume", w: 4, h: 1 },
+    { id: "stats", kind: "stats", w: 2, h: 1, period: "this-year" },
+    { id: "repeat", kind: "repeat", w: 2, h: 2, title: "Heavy rotation" },
+    { id: "activity", kind: "activity", w: 4, h: 1, period: "this-year" },
+    { id: "genres", kind: "genres", w: 3, h: 1, period: "this-year" },
+    { id: "added", kind: "added", w: 3, h: 1 },
+    { id: "top-albums", kind: "top-albums", w: 6, h: 1, period: "all" },
+    { id: "playlist", kind: "playlist", w: 3, h: 1, playlist: "pl-night-drives" },
+    { id: "recent", kind: "recent", w: 3, h: 1 },
+    { id: "artists", kind: "artists", w: 4, h: 1, period: "this-month" },
+    { id: "repeat-2", kind: "repeat", w: 2, h: 1, period: "all" },
+    { id: "favorites", kind: "favorites", w: 2, h: 1, hidden: true },
+    { id: "albums", kind: "albums", w: 6, h: 1 },
+    { id: "playlists", kind: "playlists", w: 6, h: 1, hidden: true },
+    { id: "artists-2", kind: "artists", w: 2, h: 1, period: "all", hidden: true, title: "Everyone I kept coming back to all year long" },
+  ],
+};
+
+/** Every panel hidden. */
+const HIDDEN_BOARD = {
+  panels: ["resume", "repeat", "recent", "favorites", "albums", "playlists", "artists"].map((id) => ({
+    id,
+    kind: id,
+    w: id === "resume" || id === "albums" ? 4 : id === "artists" ? 6 : 2,
+    h: id === "repeat" ? 2 : 1,
+    hidden: true,
+  })),
+};
+
+const boardReady = (p: Page) => ready(p, p.locator(".board"));
+/** Clicks without moving the mouse, so no hover is left behind. */
+const press = (p: Page, name: string | RegExp) => p.getByRole("button", { name }).first().dispatchEvent("click");
+
 const SCENES: Scene[] = [
   { name: "home", path: "/", wait: (p) => ready(p, p.locator(".board, .home")) },
+  { name: "home-medium", path: "/", size: { width: 900, height: 700 }, wait: boardReady },
+  { name: "home-narrow", path: "/", size: { width: 700, height: 600 }, wait: boardReady },
+  { name: "home-customize", path: "/?customize", wait: boardReady },
+  { name: "home-swapped", path: "/", homeBoard: SWAPPED_BOARD, wait: boardReady },
+  { name: "home-custom", path: "/", homeBoard: CUSTOM_BOARD, size: { width: 1280, height: 1400 }, wait: boardReady },
+  { name: "home-empty", path: "/", homeBoard: HIDDEN_BOARD, wait: (p) => ready(p, p.locator(".board-empty")) },
+  { name: "home-custom-customize", path: "/?customize", homeBoard: CUSTOM_BOARD, wait: boardReady },
+  {
+    name: "home-add",
+    path: "/?customize",
+    homeBoard: CUSTOM_BOARD,
+    wait: boardReady,
+    act: async (p) => {
+      await press(p, "Add panel");
+      await ready(p, p.getByRole("dialog", { name: "Add a panel" }));
+    },
+  },
+  {
+    name: "home-settings",
+    path: "/?customize",
+    homeBoard: CUSTOM_BOARD,
+    wait: boardReady,
+    act: async (p) => {
+      await press(p, /^Edit\s*Heavy rotation \(Last 30 days\)$/);
+      await ready(p, p.getByRole("dialog", { name: "Edit Heavy rotation (Last 30 days)" }));
+    },
+  },
+  {
+    name: "home-reset",
+    path: "/?customize",
+    homeBoard: CUSTOM_BOARD,
+    wait: boardReady,
+    act: async (p) => {
+      await press(p, "Reset");
+      await ready(p, p.getByRole("dialog", { name: "Reset Home?" }));
+    },
+  },
   { name: "library", path: "/library", wait: (p) => ready(p, p.locator("tbody tr")) },
   { name: "albums", path: "/library?view=albums", wait: (p) => ready(p, p.locator(".card")) },
   { name: "artists", path: "/library?view=artists", wait: (p) => ready(p, p.locator(".card")) },
@@ -735,6 +823,14 @@ function adminScenes(): Scene[] {
 for (const scene of SCENES) {
   test(scene.name, async ({ page }, info) => {
     await stubElectron(page, { config: scene.config ?? scene.bridge?.config, update: scene.bridge?.update });
+    if (scene.homeBoard) {
+      // Saved tweaks skip the system's colour scheme, so they carry it.
+      await page.addInitScript((homeBoard) => {
+        const theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        const saved = JSON.parse(localStorage.getItem("lumen.tweaks") ?? "{}");
+        localStorage.setItem("lumen.tweaks", JSON.stringify({ theme, ...saved, homeBoard }));
+      }, scene.homeBoard);
+    }
     if (scene.size) await page.setViewportSize(scene.size);
     if (scene.signedOut || scene.bare) {
       if (scene.signedOut) await signedOut(page);

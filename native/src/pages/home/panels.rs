@@ -1,0 +1,643 @@
+//! `HomePanels.tsx`: Home's panels, one function per kind. Home loads what
+//! they list (one request per source, however many panels draw on it) and
+//! hands it over in a [`Ctx`]; each panel works out its natural height (its
+//! usual rows), and, given its slot, how many items the room holds.
+
+use std::collections::HashSet;
+use std::rc::Rc;
+
+use rune::{El, col, el, row, text};
+
+use crate::api::{Playlist, TrackListItem};
+use crate::app::App;
+use crate::theme::Theme;
+use crate::ui::{Btn, font, icons as i, line, tnum, with_lh};
+
+use super::adapters::{self, Action, Card};
+use super::albums::HomeAlbum;
+use super::arrangement::{HomePanel, panel_title};
+use super::board::{self, ArtistItem, Frame, TrackRow};
+use super::fill::{FillUsual, count_in, usual_height};
+use super::kinds::{DEFAULT_PERIOD, PanelKind, period_sub};
+use super::logic::{self, Period, album_href, display_text, locale_int, pluralize_locale};
+use super::{Res, State};
+
+/// How much each panel usually holds; more is behind its "view all".
+pub const ON_REPEAT_ROWS: usize = 8;
+pub const LIST_ROWS: usize = 5;
+pub const PLAYLIST_ROWS: usize = 4;
+pub const GENRE_ROWS: usize = 5;
+
+/// What the panels read (`PanelContext`).
+pub struct Ctx<'a> {
+    pub state: &'a State,
+    /// The user's playlists; None until loaded.
+    pub playlists: Option<&'a [Playlist]>,
+    pub settled: bool,
+    /// Panels that show their source's load state.
+    pub owners: HashSet<String>,
+    pub albums: Vec<HomeAlbum>,
+    /// Jump back in's track, or None while recently played loads.
+    pub hero: Option<TrackListItem>,
+    /// The window is 760 px or narrower (`responsive.css`).
+    pub narrow_window: bool,
+}
+
+impl Ctx<'_> {
+    /// Show placeholders: nothing to list yet, and no error to show instead.
+    pub fn pending(&self, count: usize, loading: bool, error: Option<&str>) -> bool {
+        count == 0 && error.is_none() && (!self.settled || loading)
+    }
+    pub fn owns(&self, id: &str) -> bool {
+        self.owners.contains(id)
+    }
+    fn failure(&self, panel: &HomePanel) -> Option<String> {
+        self.state.failure.as_ref().filter(|(id, _)| *id == panel.id).map(|(_, m)| m.clone())
+    }
+}
+
+/// A panel laid out: its natural height, and its view once given a height.
+pub struct Out {
+    pub natural: f32,
+    pub view: Option<El>,
+    /// How many items its room asks for, for a paged panel (`useWant`).
+    pub want: Option<usize>,
+}
+
+/// A fill area's grid (`useBoardFill`'s measure).
+struct Fill {
+    usual: FillUsual,
+    columns: usize,
+    row: f32,
+    gap: f32,
+    margins: f32,
+    /// Items it would list: the source's, or as many placeholders as asked.
+    available: usize,
+}
+
+impl Fill {
+    fn min(&self) -> f32 {
+        let usual = self.usual.of(self.columns);
+        usual_height(self.usual, self.columns, usual.min(self.available), self.row, self.gap, self.margins)
+    }
+    fn count(&self, room: f32) -> usize {
+        count_in(self.usual, room, self.columns, self.row, self.gap, self.margins, self.available)
+    }
+}
+
+/// The view for a panel `h` tall (or its natural height alone, without `h`).
+pub fn panel(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>) -> Out {
+    match p.kind {
+        PanelKind::Resume => super::hero::resume(app, t, ctx, p, w, h),
+        PanelKind::Repeat => repeat(app, t, ctx, p, w, h),
+        PanelKind::Artists => artists(app, t, ctx, p, w, h),
+        PanelKind::TopAlbums => top_albums(app, t, ctx, p, w, h),
+        PanelKind::Stats => stats(t, ctx, p, w, h),
+        PanelKind::Genres => genres(t, ctx, p, w, h),
+        PanelKind::Activity => activity(t, ctx, p, w, h),
+        PanelKind::Recent | PanelKind::Favorites | PanelKind::Added | PanelKind::Playlist => track_rows(app, t, ctx, p, w, h),
+        PanelKind::Albums => albums(app, t, ctx, p, w, h),
+        PanelKind::Playlists => playlists(app, t, ctx, p, w, h),
+    }
+}
+
+/// `replayLink`.
+pub fn replay_link(period: Option<Period>) -> String {
+    format!("/replay?period={}", period.unwrap_or(DEFAULT_PERIOD).key())
+}
+
+/// The panel's load state, for the panel that shows it: an error and Retry
+/// (while loading it's for screen readers only).
+fn status_of<T>(ctx: &Ctx, t: &Theme, p: &HomePanel, title: &str, source: &Res<T>, gated: bool, retry: Action, content: f32) -> (Option<El>, f32) {
+    if gated && !ctx.owns(&p.id) {
+        return (None, 0.0);
+    }
+    match (&source.error, source.loading) {
+        (Some(e), false) => (Some(board::status(t, &p.id, title, e, retry)), board::status_height(e, content)),
+        _ => (None, 0.0),
+    }
+}
+
+fn reload_replay(period: Option<Period>) -> Action {
+    Rc::new(move |app: &mut App| super::sources::load_replay(app, period.unwrap_or(DEFAULT_PERIOD)))
+}
+
+/// Builds the frame around a fill body, or reports its natural height.
+#[allow(clippy::too_many_arguments)]
+fn finish(t: &Theme, frame: Frame, w: f32, h: Option<f32>, fixed: f32, min: f32, body: impl FnOnce(f32) -> El, want: Option<usize>) -> Out {
+    let natural = fixed + min;
+    let view = h.map(|h| frame.build(t, w, h, body((h - fixed).max(min))));
+    Out { natural, view, want }
+}
+
+fn repeat(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>) -> Out {
+    let content = board::content_width(w);
+    let source = ctx.state.replay_of(p.period);
+    let replay = source.data.as_ref();
+    let top: &[super::requests::ReplayTrack] = replay.map(|r| r.top_tracks.as_slice()).unwrap_or(&[]);
+    let empty = replay.is_some_and(|r| r.summary.total_plays == 0);
+    let title = panel_title(p, None);
+    let fill = Fill { usual: FillUsual::Count(ON_REPEAT_ROWS), columns: board::list_columns(content), row: board::ROW_H, gap: 0.0, margins: 0.0, available: top.len() };
+    let (status, status_h) = status_of(ctx, t, p, &title, source, true, reload_replay(p.period), content);
+    // `loading` needs the count, which needs the room; the footer shows
+    // whenever there's a list or placeholders, so it's there either way
+    // unless the period has nothing (then the panel is off the board).
+    let pending_any = ctx.pending(if empty { 0 } else { top.len().min(ON_REPEAT_ROWS) }, source.loading, source.error.as_deref());
+    let has_footer = !top.is_empty() || pending_any;
+    let placeholders = Fill { available: if pending_any { usize::MAX } else { fill.available }, ..fill };
+    let fixed = board::frame_height(&title, content) + status_h + if has_footer { board::FOOTER_H } else { 0.0 };
+    let min = placeholders.min();
+    let natural = fixed + min;
+    let Some(h) = h else { return Out { natural, view: None, want: None } };
+    let count = placeholders.count(h - fixed);
+    let on_repeat: Vec<TrackListItem> = top.iter().take(count).map(|r| r.track.clone()).collect();
+    let loading = ctx.pending(if empty { 0 } else { on_repeat.len() }, source.loading, source.error.as_deref());
+    let plays = logic::plays_by_id(top);
+    let mut frame = Frame::new(format!("panel-{}", p.id), period_sub(p.period), title, replay_link(p.period));
+    frame.status = status;
+    if !on_repeat.is_empty() || loading {
+        let n = on_repeat.len();
+        let label = if n > 0 { format!("Play all {n}") } else { "Play all".to_string() };
+        let queue = on_repeat.clone();
+        frame.footer = Some(
+            board::button16(t, Btn::new(format!("{}-playall", p.id), label).disabled(n == 0), &i::PLAY_FILLED).on_press(
+                move |app: &mut App| {
+                    super::play_list(app, &queue, None);
+                },
+            ),
+        );
+    }
+    let body = if loading {
+        board::board_list(&format!("{}-list", p.id), board::row_placeholders(t, &p.id, count, true, false), content)
+    } else {
+        let queue = Rc::new(logic::playable_tracks(&on_repeat));
+        let rows = on_repeat
+            .iter()
+            .enumerate()
+            .map(|(n, track)| {
+                let q = queue.clone();
+                let tr = track.clone();
+                board::track_row(app, t, format!("{}-row-{n}", p.id), track, TrackRow {
+                    ranked: true,
+                    rank: n + 1,
+                    bare: false,
+                    current: false,
+                    meta: locale_int(plays.get(&track.id).copied().unwrap_or(0)),
+                    on_play: Rc::new(move |app: &mut App| super::play_from(app, &tr, &q)),
+                    queue: Rc::new(on_repeat.clone()),
+                })
+            })
+            .collect();
+        board::board_list(&format!("{}-list", p.id), rows, content)
+    };
+    Out { natural, view: Some(frame.build(t, w, h, col().w_full().child(body))), want: None }
+}
+
+fn artists(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>) -> Out {
+    let content = board::content_width(w);
+    let source = ctx.state.replay_of(p.period);
+    let replay = source.data.as_ref();
+    let empty = replay.is_some_and(|r| r.summary.total_plays == 0);
+    let list: &[super::requests::ReplayArtist] = replay.map(|r| r.top_artists.as_slice()).unwrap_or(&[]);
+    let top_tracks: &[super::requests::ReplayTrack] = replay.map(|r| r.top_tracks.as_slice()).unwrap_or(&[]);
+    let title = panel_title(p, None);
+    let columns = board::artist_columns(content);
+    let pending = ctx.pending(if empty { 0 } else { list.len() }, source.loading, source.error.as_deref());
+    let fill = Fill {
+        usual: FillUsual::ARow,
+        columns,
+        row: board::ARTIST_H,
+        gap: 4.0,
+        margins: -4.0,
+        available: if pending { usize::MAX } else if empty { 0 } else { list.len() },
+    };
+    let alert = ctx.failure(p);
+    let (status, status_h) = status_of(ctx, t, p, &title, source, true, reload_replay(p.period), content);
+    let fixed = board::frame_height(&title, content) + status_h + alert.as_deref().map_or(0.0, |a| board::alert_height(a, content));
+    let mut frame = Frame::new(format!("panel-{}", p.id), period_sub(p.period), title, replay_link(p.period));
+    frame.status = status;
+    frame.alert = alert;
+    let id = p.id.clone();
+    let tile_w = board::tile_width(content, columns);
+    finish(t, frame, w, h, fixed, fill.min(), |room| {
+        let count = fill.count(room);
+        let tiles = if pending {
+            board::artist_placeholders(t, &format!("{id}-ph"), count, tile_w)
+        } else {
+            let shown = if empty { &[][..] } else { &list[..count.min(list.len())] };
+            shown
+                .iter()
+                .map(|artist| {
+                    let own: Vec<TrackListItem> =
+                        logic::tracks_by_artist(artist, top_tracks).into_iter().map(|r| r.track.clone()).collect();
+                    let action = logic::top_artist_action(artist, &own);
+                    let (panel, name, tracks) = (id.clone(), artist.name.clone(), own.clone());
+                    ArtistItem {
+                        id: artist.id.clone(),
+                        name: artist.name.clone(),
+                        detail: pluralize_locale(artist.plays, "play"),
+                        image: logic::artist_image_url(&own, 128),
+                        action,
+                        on_play: Rc::new(move |app: &mut App| {
+                            let tracks = tracks.clone();
+                            super::play_fetched(app, &panel, &name, move |_| Ok(tracks))
+                        }),
+                    }
+                })
+                .map(|a| {
+                    let key = format!("{id}-artist-{}", a.id);
+                    board::artist_tile(app, t, key, a, tile_w)
+                })
+                .collect()
+        };
+        board::tile_grid(&format!("{id}-artists"), tiles, content, columns)
+    }, None)
+}
+
+fn covers_fill(t: &Theme, content: f32, available: usize) -> (Fill, f32) {
+    let columns = board::cover_columns(content);
+    let tile = board::tile_width(content, columns);
+    (Fill { usual: FillUsual::ARow, columns, row: adapters::card_height(t, tile), gap: 4.0, margins: -4.0, available }, tile)
+}
+
+fn top_albums(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>) -> Out {
+    let content = board::content_width(w);
+    let source = ctx.state.replay_of(p.period);
+    let albums: &[super::requests::ReplayAlbum] =
+        source.data.as_ref().filter(|r| r.summary.total_plays > 0).map(|r| r.top_albums.as_slice()).unwrap_or(&[]);
+    let title = panel_title(p, None);
+    let pending = ctx.pending(albums.len(), source.loading, source.error.as_deref());
+    let (fill, tile) = covers_fill(t, content, if pending { usize::MAX } else { albums.len() });
+    let alert = ctx.failure(p);
+    let (status, status_h) = status_of(ctx, t, p, &title, source, true, reload_replay(p.period), content);
+    let fixed = board::frame_height(&title, content) + status_h + alert.as_deref().map_or(0.0, |a| board::alert_height(a, content));
+    let mut frame = Frame::new(format!("panel-{}", p.id), period_sub(p.period), title, replay_link(p.period));
+    frame.status = status;
+    frame.alert = alert;
+    let id = p.id.clone();
+    finish(t, frame, w, h, fixed, fill.min(), |room| {
+        let count = fill.count(room);
+        let mut tiles = if pending { adapters::media_card_placeholders(t, &format!("{id}-ph"), count, tile) } else { Vec::new() };
+        for (n, album) in albums.iter().take(count).enumerate() {
+            let target = logic::replay_album_target(album);
+            let on_play: Option<(String, Action)> = (!target.tidal).then(|| {
+                let (panel, name, album_id) = (id.clone(), album.title.clone(), target.id.clone());
+                let play: Action = Rc::new(move |app: &mut App| {
+                    let album_id = album_id.clone();
+                    super::play_fetched(app, &panel, &name, move |c| super::requests::list_album_tracks(c, &album_id))
+                });
+                (format!("Play {}", album.title), play)
+            });
+            tiles.push(adapters::media_card(app, t, Card {
+                key: format!("{id}-album-{}", album.id),
+                to: album_href(&target),
+                cover: Some(crate::api::media::album_cover_path(&album.id, Some(384), None)),
+                title: display_text(Some(&album.title), ""),
+                subtitle: logic::replay_album_subtitle(album),
+                rank: Some(n + 1),
+                on_play,
+            }, tile));
+        }
+        board::tile_grid(&format!("{id}-covers"), tiles, content, fill.columns)
+    }, None)
+}
+
+/// `.board-stats`' rows: four figures in two columns, or one row of four
+/// once the panel is 600 px wide.
+fn stats_height(content: f32) -> f32 {
+    let rows = if content >= 600.0 { 1.0 } else { 2.0 };
+    8.0 + rows * 54.2 + (rows - 1.0) * 12.0
+}
+
+fn stats(t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>) -> Out {
+    let content = board::content_width(w);
+    let source = ctx.state.replay_of(p.period);
+    let summary = source.data.as_ref().map(|r| &r.summary);
+    let title = panel_title(p, None);
+    let loading = ctx.pending(summary.map_or(0, |s| s.total_plays as usize), source.loading, source.error.as_deref());
+    let (status, status_h) = status_of(ctx, t, p, &title, source, true, reload_replay(p.period), content);
+    let headline = summary.and_then(|s| s.headline_artist.as_ref());
+    let shows = summary.is_some_and(|s| s.total_plays > 0);
+    let body_h = if loading {
+        stats_height(content)
+    } else if shows {
+        stats_height(content) + if headline.is_some() { 12.0 + 18.85 } else { 0.0 }
+    } else {
+        0.0
+    };
+    let fixed = board::frame_height(&title, content) + status_h;
+    let mut frame = Frame::new(format!("panel-{}", p.id), period_sub(p.period), title, replay_link(p.period));
+    frame.status = status;
+    let natural = fixed + body_h;
+    let Some(h) = h else { return Out { natural, view: None, want: None } };
+    let figures: Vec<(&str, String)> = match summary {
+        Some(s) if !loading => vec![
+            ("Plays", locale_int(s.total_plays)),
+            ("Listening time", logic::format_listening_time(s.total_ms)),
+            ("Tracks", locale_int(s.unique_tracks)),
+            ("Artists", locale_int(s.unique_artists)),
+        ],
+        _ => ["Plays", "Listening time", "Tracks", "Artists"].into_iter().map(|l| (l, String::new())).collect(),
+    };
+    let columns = if content >= 600.0 { 4 } else { 2 };
+    let cell_w = (content - 16.0 * (columns as f32 - 1.0)) / columns as f32;
+    let mut body = col().w_full();
+    if loading || shows {
+        let mut grid = col().w_full().mt(8.0).gap(12.0).a11y_hidden();
+        for chunk in figures.chunks(columns) {
+            let mut r = row().w_full().gap(16.0);
+            for (label, value) in chunk {
+                let dd = if loading { stat_skeleton(t) } else { line(value.clone(), board::stat_value_style(), t.c.card_foreground) };
+                r = r.child(
+                    col().w(cell_w).min_w(0.0).gap(2.0)
+                        .child(board::lh(text(*label).font(font(12.0, 400.0)).color(t.c.muted_foreground), 17.4))
+                        .child(board::lh(dd, 34.8)),
+                );
+            }
+            grid = grid.child(r);
+        }
+        body = body.child(grid);
+        if !loading && let Some(a) = headline {
+            body = body.child(board::lh(
+                row().w_full().min_w(0.0)
+                    .child(text("Most played: ").font(font(13.0, 400.0)).color(t.c.muted_foreground))
+                    .child(line(display_text(Some(&a.name), ""), font(13.0, 500.0), t.c.foreground)),
+                18.85,
+            ).mt(12.0));
+        }
+    }
+    Out { natural, view: Some(frame.build(t, w, h, body)), want: None }
+}
+
+/// A figure still loading: a 4ch skeleton bar on the 24 px line.
+fn stat_skeleton(t: &Theme) -> El {
+    let fs = 24.0;
+    let lh = 34.8;
+    let bar_h = fs * 0.75;
+    let mid = board::baseline(fs, lh) - fs * 0.53 / 2.0;
+    // `4ch`: four zero advances of the tabular 24 px figures.
+    let ch = rune::text::advance("0", tnum(with_lh(font(fs, 600.0), lh)));
+    el().w_full().h(lh).child(el().absolute(0.0, mid - bar_h / 2.0).w(4.0 * ch).h(bar_h).radius(t.radius_sm()).fill(t.c.muted))
+}
+
+fn genres(t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>) -> Out {
+    let content = board::content_width(w);
+    let source = ctx.state.replay_of(p.period);
+    let shares = source.data.as_ref().filter(|r| r.summary.total_plays > 0).map(|r| logic::genre_shares(&r.top_genres)).unwrap_or_default();
+    let title = panel_title(p, None);
+    let pending = ctx.pending(shares.len(), source.loading, source.error.as_deref());
+    let columns = if content >= 600.0 { 2 } else { 1 };
+    let fill = Fill {
+        usual: FillUsual::Count(GENRE_ROWS),
+        columns,
+        row: if pending { 30.0 } else { 30.3 },
+        gap: 12.0,
+        margins: 8.0,
+        available: if pending { usize::MAX } else { shares.len() },
+    };
+    let (status, status_h) = status_of(ctx, t, p, &title, source, true, reload_replay(p.period), content);
+    let fixed = board::frame_height(&title, content) + status_h;
+    let mut frame = Frame::new(format!("panel-{}", p.id), period_sub(p.period), title, replay_link(p.period));
+    frame.status = status;
+    finish(t, frame, w, h, fixed, fill.min(), |room| {
+        let count = fill.count(room);
+        let cell_w = (content - 24.0 * (columns as f32 - 1.0)) / columns as f32;
+        let items: Vec<El> = if pending {
+            (0..count).map(|_| el().w(cell_w).h(30.0).child(board::skeleton_line(t, 14.0, 20.3, 0.6))).collect()
+        } else {
+            shares
+                .iter()
+                .take(count)
+                .map(|(g, share)| {
+                    col().w(cell_w).gap(4.0)
+                        .child(board::lh(
+                            row().w_full().h(20.3).gap(12.0).items_center()
+                                .child(line(display_text(Some(&g.genre), ""), font(14.0, 400.0), t.c.card_foreground).grow(1.0))
+                                .child(text(format!("{share:.0}%")).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground)),
+                            20.3,
+                        ))
+                        .child(
+                            el().w_full().h(6.0).radius(999.0).fill(t.c.muted).clip_rounded(999.0)
+                                .child(el().w(cell_w * (*share as f32 / 100.0)).h(6.0).radius(999.0).fill(t.c.primary)),
+                        )
+                })
+                .collect()
+        };
+        let mut list = col().w_full().mt(8.0).gap(12.0);
+        let mut it = items.into_iter().peekable();
+        while it.peek().is_some() {
+            let mut r = row().w_full().gap(24.0).items_start();
+            for _ in 0..columns {
+                if let Some(item) = it.next() {
+                    r = r.child(item);
+                }
+            }
+            list = list.child(r);
+        }
+        list
+    }, None)
+}
+
+fn activity(t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>) -> Out {
+    let content = board::content_width(w);
+    let source = ctx.state.replay_of(p.period);
+    let replay = source.data.as_ref();
+    let title = panel_title(p, None);
+    let loading = ctx.pending(replay.map_or(0, |r| r.summary.total_plays as usize), source.loading, source.error.as_deref());
+    let (status, status_h) = status_of(ctx, t, p, &title, source, true, reload_replay(p.period), content);
+    let fixed = board::frame_height(&title, content) + status_h;
+    let mut frame = Frame::new(format!("panel-{}", p.id), period_sub(p.period), title, replay_link(p.period));
+    frame.status = status;
+    let id = p.id.clone();
+    finish(t, frame, w, h, fixed, 8.0 + 148.0, |room| {
+        let chart_h = room - 8.0;
+        let mut area = col().w_full().mt(8.0).h(chart_h);
+        if !loading && let Some(r) = replay.filter(|r| r.summary.total_plays > 0) {
+            // As Replay charts it: by day for a month, by month for longer.
+            let range = logic::period_range(p.period.unwrap_or(DEFAULT_PERIOD));
+            let (bucket, buckets) = match logic::replay_calendar(r, &range, logic::Utc::now().ms) {
+                Some(cal) => logic::activity_series(&cal, range.bucket.unwrap_or(super::requests::ReplayBucket::Month)),
+                None => (r.bucket, r.activity.clone()),
+            };
+            area = area.child(adapters::activity_chart(t, &format!("{id}-chart"), &buckets, bucket, chart_h));
+        }
+        area
+    }, None)
+}
+
+/// A panel of track rows, each playing the list from there
+/// (`TrackRowsPanel`: Recently played, Your favorites, Recently added, a
+/// playlist's tracks).
+fn track_rows(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>) -> Out {
+    let content = board::content_width(w);
+    let st = ctx.state;
+    let gone = Res::gone();
+    let (sub, to, source, paged): (&str, String, &Res<Vec<TrackListItem>>, bool) = match p.kind {
+        PanelKind::Recent => ("Picked up where you left off", "/recent".into(), &st.recent, true),
+        PanelKind::Favorites => ("Hearts", "/favorites".into(), &st.favorites, false),
+        PanelKind::Added => ("New in your library", "/library".into(), &st.tracks, true),
+        _ => (
+            "Playlist",
+            format!("/playlists/{}", urlencoding::encode(p.playlist.as_deref().unwrap_or(""))),
+            st.playlist_of(p.playlist.as_deref(), ctx.playlists).unwrap_or(&gone),
+            false,
+        ),
+    };
+    let tracks: &[TrackListItem] = source.data.as_deref().unwrap_or(&[]);
+    let title = panel_title(p, ctx.playlists);
+    let placeholders = ctx.pending(tracks.len(), source.loading, source.error.as_deref());
+    let fill = Fill {
+        usual: FillUsual::Count(LIST_ROWS),
+        columns: board::list_columns(content),
+        row: board::ROW_H,
+        gap: 0.0,
+        margins: 0.0,
+        available: if placeholders { usize::MAX } else { tracks.len() },
+    };
+    let retry: Action = match p.kind {
+        PanelKind::Recent => Rc::new(|app: &mut App| super::sources::load_recent(app)),
+        PanelKind::Favorites => Rc::new(|app: &mut App| super::sources::load_favorites(app)),
+        PanelKind::Added => Rc::new(|app: &mut App| super::sources::load_tracks(app)),
+        _ => {
+            let id = p.playlist.clone().unwrap_or_default();
+            Rc::new(move |app: &mut App| super::sources::load_playlist(app, &id))
+        }
+    };
+    let (status, status_h) = status_of(ctx, t, p, &title, source, true, retry, content);
+    let has_footer = p.kind == PanelKind::Playlist && !tracks.is_empty();
+    let fixed = board::frame_height(&title, content) + status_h + if has_footer { board::FOOTER_H } else { 0.0 };
+    let mut frame = Frame::new(format!("panel-{}", p.id), sub, title, to);
+    frame.status = status;
+    if has_footer {
+        let all = tracks.to_vec();
+        frame.footer = Some(
+            board::button16(t, Btn::new(format!("{}-playall", p.id), format!("Play all {}", tracks.len())), &i::PLAY_FILLED)
+                .on_press(move |app: &mut App| {
+                    super::play_list(app, &all, None);
+                }),
+        );
+    }
+    let natural = fixed + fill.min();
+    let want = |count: usize| paged.then_some(count);
+    let Some(h) = h else {
+        return Out { natural, view: None, want: want(fill.count(fill.min())) };
+    };
+    let count = fill.count((h - fixed).max(fill.min()));
+    let body = if placeholders {
+        board::row_placeholders(t, &p.id, count, false, false)
+    } else {
+        let queue = Rc::new(logic::playable_tracks(tracks));
+        let menu_queue = Rc::new(tracks.to_vec());
+        tracks
+            .iter()
+            .take(count)
+            .enumerate()
+            .map(|(n, track)| {
+                let (q, tr) = (queue.clone(), track.clone());
+                board::track_row(app, t, format!("{}-row-{n}", p.id), track, TrackRow {
+                    ranked: false,
+                    rank: n + 1,
+                    bare: false,
+                    current: false,
+                    meta: crate::format::fmt_duration_ms(track.duration_ms),
+                    on_play: Rc::new(move |app: &mut App| super::play_from(app, &tr, &q)),
+                    queue: menu_queue.clone(),
+                })
+            })
+            .collect()
+    };
+    let view = frame.build(t, w, h, col().w_full().child(board::board_list(&format!("{}-list", p.id), body, content)));
+    Out { natural, view: Some(view), want: want(count) }
+}
+
+fn albums(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>) -> Out {
+    let content = board::content_width(w);
+    let source = &ctx.state.tracks;
+    let list = &ctx.albums;
+    let title = panel_title(p, None);
+    let pending = ctx.pending(list.len(), source.loading, source.error.as_deref());
+    let (fill, tile) = covers_fill(t, content, if pending { usize::MAX } else { list.len() });
+    let alert = ctx.failure(p);
+    let (status, status_h) =
+        status_of(ctx, t, p, &title, source, true, Rc::new(|app: &mut App| super::sources::load_tracks(app)), content);
+    let fixed = board::frame_height(&title, content) + status_h + alert.as_deref().map_or(0.0, |a| board::alert_height(a, content));
+    let mut frame = Frame::new(format!("panel-{}", p.id), "Your library", title, "/library?view=albums");
+    frame.status = status;
+    frame.alert = alert;
+    let natural = fixed + fill.min();
+    let Some(h) = h else { return Out { natural, view: None, want: Some(fill.count(fill.min())) } };
+    let count = fill.count((h - fixed).max(fill.min()));
+    let id = p.id.clone();
+    let mut tiles = if pending { adapters::media_card_placeholders(t, &format!("{id}-ph"), count, tile) } else { Vec::new() };
+    for a in list.iter().take(count) {
+        let (panel, name, album_id) = (id.clone(), a.title.clone(), a.id.clone());
+        let play: Action = Rc::new(move |app: &mut App| {
+            let album_id = album_id.clone();
+            super::play_fetched(app, &panel, &name, move |c| super::requests::list_album_tracks(c, &album_id))
+        });
+        tiles.push(adapters::media_card(app, t, Card {
+            key: format!("{id}-album-{}", a.id),
+            to: format!("/library?view=albums&album={}&by={}", urlencoding::encode(&a.id), urlencoding::encode(&a.artist)),
+            cover: Some(crate::api::media::album_cover_path(&a.id, Some(384), None)),
+            title: display_text(Some(&a.title), ""),
+            subtitle: display_text(Some(&a.artist), ""),
+            rank: None,
+            on_play: Some((format!("Play {}", a.title), play)),
+        }, tile));
+    }
+    let body = board::tile_grid(&format!("{id}-covers"), tiles, content, fill.columns);
+    Out { natural, view: Some(frame.build(t, w, h, col().w_full().child(body))), want: Some(count) }
+}
+
+fn playlists(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>) -> Out {
+    let content = board::content_width(w);
+    let list: &[Playlist] = ctx.playlists.unwrap_or(&[]);
+    let st = ctx.state;
+    let title = panel_title(p, None);
+    let pending = ctx.pending(list.len(), st.playlists_loading, st.playlists_error.as_deref());
+    let fill = Fill {
+        usual: FillUsual::Count(PLAYLIST_ROWS),
+        columns: board::list_columns(content),
+        row: board::ROW_H,
+        gap: 0.0,
+        margins: 0.0,
+        available: if pending { usize::MAX } else { list.len() },
+    };
+    let alert = ctx.failure(p);
+    let (status, status_h) = match (&st.playlists_error, st.playlists_loading) {
+        (Some(e), false) => (
+            Some(board::status(t, &p.id, &title, e, Rc::new(|app: &mut App| super::sources::load_playlists(app)))),
+            board::status_height(e, content),
+        ),
+        _ => (None, 0.0),
+    };
+    let fixed = board::frame_height(&title, content) + status_h + alert.as_deref().map_or(0.0, |a| board::alert_height(a, content));
+    let mut frame = Frame::new(format!("panel-{}", p.id), "Curated", title, "/playlists");
+    frame.status = status;
+    frame.alert = alert;
+    let id = p.id.clone();
+    finish(t, frame, w, h, fixed, fill.min(), |room| {
+        let count = fill.count(room);
+        let rows = if pending {
+            board::row_placeholders(t, &id, count, false, false)
+        } else {
+            list.iter()
+                .take(count)
+                .map(|pl| {
+                    let (panel, name, pid) = (id.clone(), pl.name.clone(), pl.id.clone());
+                    let play: Action = Rc::new(move |app: &mut App| {
+                        let pid = pid.clone();
+                        super::play_fetched(app, &panel, &name, move |c| super::requests::list_playlist_tracks(c, &pid))
+                    });
+                    board::playlist_row(app, t, format!("{id}-pl-{}", pl.id), pl, play)
+                })
+                .collect()
+        };
+        col().w_full().child(board::board_list(&format!("{id}-list"), rows, content))
+    }, None)
+}
+
+/// `pluralize` re-exported for the hero.
+pub fn tracks_label(n: u32) -> String {
+    logic::pluralize(n as u64, "track")
+}
