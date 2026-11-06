@@ -173,6 +173,28 @@ impl MediaCard {
     }
 }
 
+/// A [`MediaCard`]'s height at `width` (`.card`: its padding, the square
+/// cover, the gap and the title and subtitle lines).
+pub fn media_card_height(t: &Theme, width: f32) -> f32 {
+    let (pad, gap, title_fs) = card_metrics(t);
+    width + gap + title_fs * 1.45 + 17.4 - 2.0 * pad + 2.0 * pad
+}
+
+/// `.replay-rank`: a play-count rank over a card's cover corner
+/// ([`MediaCard::rank_badge`]).
+pub fn replay_rank(t: &Theme, rank: usize) -> El {
+    row()
+        .absolute(6.0, 6.0)
+        .min_w(20.0)
+        .h(20.0)
+        .px(6.0)
+        .items_center()
+        .justify_center()
+        .radius(999.0)
+        .fill(t.c.background)
+        .child(text(rank.to_string()).font(crate::ui::tnum(font(12.0, 500.0))).color(t.c.foreground))
+}
+
 /// `MediaCardPlaceholders`: stand-ins for a loading row of cards, the same
 /// box as a real one.
 pub fn media_card_placeholders(t: &Theme, key: &str, count: usize) -> Vec<El> {
@@ -237,12 +259,8 @@ pub fn playlist_card(app: &App, t: &Theme, p: &Playlist) -> El {
         .on_press(move |app: &mut App| app.navigate_to(&href))
 }
 
-/// `TopArtistAction`: what a top artist's tile does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TopArtistAction {
-    Open,
-    Play,
-}
+/// What a top artist's tile does (`topArtistAction`).
+pub use crate::core::replay::figures::TopArtistAction;
 
 /// `artistHref`: a library artist's page.
 pub fn artist_href(id: &str) -> String {

@@ -13,7 +13,8 @@ use crate::app::App;
 use crate::theme::Theme;
 use crate::ui::{Btn, font, icons as i, line, tnum, with_lh};
 
-use super::adapters::{self, Action, Card};
+use crate::ui::cards::{Action, MediaCard, media_card_height, media_card_placeholders, replay_rank};
+use crate::ui::chart::{Bar, Bucket, activity_chart_sized};
 use super::albums::HomeAlbum;
 use super::arrangement::{HomePanel, panel_title};
 use super::board::{self, ArtistItem, Frame, TrackRow};
@@ -21,6 +22,35 @@ use super::fill::{FillUsual, count_in, usual_height};
 use super::kinds::{DEFAULT_PERIOD, PanelKind, period_sub};
 use super::logic::{self, Period, album_href, display_text, locale_int, pluralize_locale};
 use super::{Res, State};
+
+/// A `MediaCard` as a board tile uses it.
+struct Card {
+    key: String,
+    to: String,
+    cover: Option<String>,
+    title: String,
+    subtitle: String,
+    /// Replay's rank over the cover's corner (`.replay-rank`).
+    rank: Option<usize>,
+    on_play: Option<(String, Action)>,
+}
+
+/// The shared `MediaCard`, `width` wide (a tile of the board's grid).
+fn media_card(app: &App, t: &Theme, c: Card, width: f32) -> El {
+    let mut card = MediaCard::new(c.key, c.title).to(c.to).cover(c.cover).subtitle(c.subtitle);
+    if let Some(n) = c.rank {
+        card = card.rank_badge(replay_rank(t, n));
+    }
+    if let Some((label, play)) = c.on_play {
+        card = card.on_play(label, move |app: &mut App| play(app));
+    }
+    el().w(width).child(card.build(app, t))
+}
+
+/// `MediaCardPlaceholders`, each `width` wide.
+fn placeholders(t: &Theme, key: &str, count: usize, width: f32) -> Vec<El> {
+    media_card_placeholders(t, key, count).into_iter().map(|c| el().w(width).child(c)).collect()
+}
 
 /// How much each panel usually holds; more is behind its "view all".
 pub const ON_REPEAT_ROWS: usize = 8;
@@ -160,7 +190,7 @@ fn repeat(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>
         let label = if n > 0 { format!("Play all {n}") } else { "Play all".to_string() };
         let queue = on_repeat.clone();
         frame.footer = Some(
-            board::button16(t, Btn::new(format!("{}-playall", p.id), label).disabled(n == 0), &i::PLAY_FILLED).on_press(
+            Btn::new(format!("{}-playall", p.id), label).disabled(n == 0).icon(&i::PLAY_FILLED).icon_size(16.0).build(t).on_press(
                 move |app: &mut App| {
                     super::play_list(app, &queue, None);
                 },
@@ -257,7 +287,7 @@ fn artists(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32
 fn covers_fill(t: &Theme, content: f32, available: usize) -> (Fill, f32) {
     let columns = board::cover_columns(content);
     let tile = board::tile_width(content, columns);
-    (Fill { usual: FillUsual::ARow, columns, row: adapters::card_height(t, tile), gap: 4.0, margins: -4.0, available }, tile)
+    (Fill { usual: FillUsual::ARow, columns, row: media_card_height(t, tile), gap: 4.0, margins: -4.0, available }, tile)
 }
 
 fn top_albums(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>) -> Out {
@@ -277,7 +307,7 @@ fn top_albums(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<
     let id = p.id.clone();
     finish(t, frame, w, h, fixed, fill.min(), |room| {
         let count = fill.count(room);
-        let mut tiles = if pending { adapters::media_card_placeholders(t, &format!("{id}-ph"), count, tile) } else { Vec::new() };
+        let mut tiles = if pending { placeholders(t, &format!("{id}-ph"), count, tile) } else { Vec::new() };
         for (n, album) in albums.iter().take(count).enumerate() {
             let target = logic::replay_album_target(album);
             let on_play: Option<(String, Action)> = (!target.tidal).then(|| {
@@ -288,7 +318,7 @@ fn top_albums(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<
                 });
                 (format!("Play {}", album.title), play)
             });
-            tiles.push(adapters::media_card(app, t, Card {
+            tiles.push(media_card(app, t, Card {
                 key: format!("{id}-album-{}", album.id),
                 to: album_href(&target),
                 cover: Some(crate::api::media::album_cover_path(&album.id, Some(384), None)),
@@ -459,7 +489,13 @@ fn activity(t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>) -> Out 
                 Some(cal) => logic::activity_series(&cal, range.bucket.unwrap_or(super::requests::ReplayBucket::Month)),
                 None => (r.bucket, r.activity.clone()),
             };
-            area = area.child(adapters::activity_chart(t, &format!("{id}-chart"), &buckets, bucket, chart_h));
+            let bars: Vec<Bar> = buckets.iter().map(|b| Bar { start: b.bucket_start.clone(), plays: b.plays }).collect();
+            let bucket = match bucket {
+                super::requests::ReplayBucket::Day => Bucket::Day,
+                super::requests::ReplayBucket::Week => Bucket::Week,
+                super::requests::ReplayBucket::Month => Bucket::Month,
+            };
+            area = area.child(activity_chart_sized(t, &format!("{id}-chart"), &bars, bucket, chart_h));
         }
         area
     }, None)
@@ -511,7 +547,7 @@ fn track_rows(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<
     if has_footer {
         let all = tracks.to_vec();
         frame.footer = Some(
-            board::button16(t, Btn::new(format!("{}-playall", p.id), format!("Play all {}", tracks.len())), &i::PLAY_FILLED)
+            Btn::new(format!("{}-playall", p.id), format!("Play all {}", tracks.len())).icon(&i::PLAY_FILLED).icon_size(16.0).build(t)
                 .on_press(move |app: &mut App| {
                     super::play_list(app, &all, None);
                 }),
@@ -568,14 +604,14 @@ fn albums(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>
     let Some(h) = h else { return Out { natural, view: None, want: Some(fill.count(fill.min())) } };
     let count = fill.count((h - fixed).max(fill.min()));
     let id = p.id.clone();
-    let mut tiles = if pending { adapters::media_card_placeholders(t, &format!("{id}-ph"), count, tile) } else { Vec::new() };
+    let mut tiles = if pending { placeholders(t, &format!("{id}-ph"), count, tile) } else { Vec::new() };
     for a in list.iter().take(count) {
         let (panel, name, album_id) = (id.clone(), a.title.clone(), a.id.clone());
         let play: Action = Rc::new(move |app: &mut App| {
             let album_id = album_id.clone();
             super::play_fetched(app, &panel, &name, move |c| super::requests::list_album_tracks(c, &album_id))
         });
-        tiles.push(adapters::media_card(app, t, Card {
+        tiles.push(media_card(app, t, Card {
             key: format!("{id}-album-{}", a.id),
             to: format!("/library?view=albums&album={}&by={}", urlencoding::encode(&a.id), urlencoding::encode(&a.artist)),
             cover: Some(crate::api::media::album_cover_path(&a.id, Some(384), None)),

@@ -134,7 +134,7 @@ pub fn view(app: &App, t: &Theme, window: [f32; 2]) -> Option<El> {
     );
     let mut go = Btn::new("playlist-confirm-go", spec.confirm_label.clone()).danger();
     if let Some(g) = spec.confirm_icon {
-        go = go.icon_sized(g, 16.0);
+        go = go.icon(g).icon_size(16.0);
     }
     let cancel = Btn::new("playlist-confirm-cancel", "Cancel").build(t).on_press(|a: &mut App| settle(a, false));
     let footer = crate::ui::css_border(row(), 0.0, Color::TRANSPARENT, 0.0)

@@ -53,7 +53,7 @@ pub fn playlist_card(app: &App, t: &Theme, p: &Playlist, width: f32) -> El {
 /// on).
 // TODO(components-merge): the shared PlayListButton (startListPlayback).
 pub fn play_list_button(t: &Theme, key: &str, tracks: Vec<TrackListItem>, disabled: bool, label: &str) -> El {
-    let b = Btn::new(key, label).primary().icon_sized(&i::PLAY_FILLED, 16.0).disabled(disabled).build(t);
+    let b = Btn::new(key, label).primary().icon(&i::PLAY_FILLED).icon_size(16.0).disabled(disabled).build(t);
     if disabled {
         return b;
     }

@@ -309,7 +309,7 @@ fn server_step(t: &Theme, s: &State, change: bool) -> El {
     } else {
         Btn::new("welcome-back", "Back")
             .ghost()
-            .icon_sized(&i::ARROW_LEFT, 16.0)
+            .icon(&i::ARROW_LEFT).icon_size(16.0)
             .disabled(busy)
             .build(t)
             .on_press(back)
@@ -437,7 +437,7 @@ fn prefs_step(t: &Theme, s: &State) -> El {
     step.child(actions(vec![
         Btn::new("welcome-back", "Back")
             .ghost()
-            .icon_sized(&i::ARROW_LEFT, 16.0)
+            .icon(&i::ARROW_LEFT).icon_size(16.0)
             .disabled(busy)
             .build(t)
             .on_press(back),

@@ -486,18 +486,11 @@ fn shared(app: &App, t: &Theme, s: &State, share: &PublicTrackShare) -> El {
     }
     let open = Btn::new("share-open", "Open Lumen")
         .primary()
-        .icon_sized(&i::EXTERNAL_LINK, 16.0)
+        .icon(&i::EXTERNAL_LINK).icon_size(16.0)
         .build(t)
         .on_press_tx(open_lumen);
     let copy_btn = Btn::new("share-copy", if s.copied { "Copied" } else { "Copy link" })
-        .icon_sized(
-            if s.copied {
-                &i::CHECK
-            } else {
-                &i::CLIPBOARD_COPY
-            },
-            16.0,
-        )
+        .icon(if s.copied { &i::CHECK } else { &i::CLIPBOARD_COPY }).icon_size(16.0)
         .build(t)
         .on_press_tx(copy);
     let download = s.link.is_some().then(|| {
@@ -509,7 +502,7 @@ fn shared(app: &App, t: &Theme, s: &State, share: &PublicTrackShare) -> El {
             })
             .rotate_motion(crate::ui::motion::ease_out(150.0));
         Btn::new("share-download", "")
-            .icon_sized(&i::DOWNLOAD, 16.0)
+            .icon(&i::DOWNLOAD).icon_size(16.0)
             .build(t)
             .gap(4.0)
             .h_full()
@@ -648,7 +641,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     } else if let Some(e) = &s.error {
         let open = Btn::new("share-open", "Open Lumen")
             .primary()
-            .icon_sized(&i::EXTERNAL_LINK, 16.0)
+            .icon(&i::EXTERNAL_LINK).icon_size(16.0)
             .build(t)
             .on_press(|a: &mut App| a.navigate_to("/"));
         shell = shell.child(card(

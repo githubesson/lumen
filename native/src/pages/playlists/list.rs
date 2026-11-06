@@ -56,7 +56,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let count = rows.map_or("—".to_string(), |r| pluralize(r.len(), "list"));
     let new = Btn::new("playlists-new", "New playlist")
         .primary()
-        .icon_sized(&i::PLUS, 16.0)
+        .icon(&i::PLUS).icon_size(16.0)
         .build(t)
         .role("link")
         .on_press(|app: &mut App| app.navigate_to("/playlists/new"));

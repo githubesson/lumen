@@ -11,6 +11,7 @@ use rune::{El, TextStyle, col, el, row, text};
 
 use crate::api::TrackListItem;
 use crate::app::App;
+use crate::ui::tooltip::TipExt;
 use crate::theme::Theme;
 use crate::ui::{Btn, cover_art, font, icons as i, line, with_lh};
 
@@ -217,8 +218,8 @@ pub fn resume(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<
             title: None,
             meta: vec!["Loading your music…".into()],
             actions: vec![
-                board::button16(t, Btn::new(format!("{key}-play"), "Play").primary().disabled(true), &i::PLAY_FILLED),
-                board::button16(t, Btn::new(format!("{key}-open"), "Open album").disabled(true), &i::DISC_3),
+                Btn::new(format!("{key}-play"), "Play").primary().disabled(true).icon(&i::PLAY_FILLED).icon_size(16.0).build(t),
+                Btn::new(format!("{key}-open"), "Open album").disabled(true).icon(&i::DISC_3).icon_size(16.0).build(t),
             ],
             status_meta: true,
             note: None,
@@ -248,7 +249,7 @@ pub fn resume(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<
             title: Some("Your library is quiet".into()),
             meta: vec!["Nothing ingested yet".into()],
             actions: vec![
-                board::button16(t, Btn::new(format!("{key}-explore"), "Explore").primary(), &i::SPARKLES)
+                Btn::new(format!("{key}-explore"), "Explore").primary().icon(&i::SPARKLES).icon_size(16.0).build(t)
                     .role("link")
                     .on_press(|app: &mut App| app.navigate_to("/library")),
             ],
@@ -286,12 +287,12 @@ fn hero_album(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, track: &TrackListI
     }
     let mut actions = vec![{
         let tr = track.clone();
-        board::button16(t, Btn::new(format!("{key}-play"), "Play").primary().disabled(st.hero_starting), &i::PLAY_FILLED)
+        Btn::new(format!("{key}-play"), "Play").primary().disabled(st.hero_starting).icon(&i::PLAY_FILLED).icon_size(16.0).build(t)
             .on_press(move |app: &mut App| super::play_hero(app, &tr))
     }];
     if let Some(href) = target.as_ref().map(album_href) {
         actions.push(
-            board::button16(t, Btn::new(format!("{key}-open"), "Open album"), &i::DISC_3)
+            Btn::new(format!("{key}-open"), "Open album").icon(&i::DISC_3).icon_size(16.0).build(t)
                 .role("link")
                 .on_press(move |app: &mut App| app.navigate_to(&href)),
         );
@@ -362,7 +363,7 @@ fn hero_tracks(
             let id = album_id.to_string();
             c = c.child(
                 row().w_full().gap(8.0).pt(8.0).items_center().role("status")
-                    .child(line(e.clone(), font(14.0, 400.0), t.c.muted_foreground).help(e).shrink())
+                    .child(line(e.clone(), font(14.0, 400.0), t.c.muted_foreground).shrink().tip(&format!("{key}-tracks-error"), &e))
                     .child(
                         Btn::new(format!("{key}-tracks-retry"), "Retry")
                             .small()

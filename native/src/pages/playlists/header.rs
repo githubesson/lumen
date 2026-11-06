@@ -156,7 +156,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, h: Props) -> El {
         "Play all",
     ));
     if h.perms.can_edit_tracks {
-        let add = Btn::new("playlist-add-tracks", "Add tracks").icon_sized(&i::PLUS, 16.0).disabled(h.tracks.is_none()).build(t);
+        let add = Btn::new("playlist-add-tracks", "Add tracks").icon(&i::PLUS).icon_size(16.0).disabled(h.tracks.is_none()).build(t);
         actions = actions.child(if h.tracks.is_none() { add } else { add.on_press(super::add_tracks::open) });
     }
     let header = adapters::list_page_header(

@@ -11,7 +11,8 @@ use crate::app::App;
 use crate::theme::{Density, Theme};
 use crate::ui::{Btn, cover_art, font, ico, icons as i, line, tnum, with_lh};
 
-use super::adapters::{self, Action};
+use crate::ui::cards::{Action, top_artist_glyph, top_artist_press};
+use crate::ui::tooltip::TipExt;
 use super::logic::{TopArtistAction, display_text, playlist_subtitle, track_cover_url};
 
 /// Row art is 40-48px; the server's next size up covers a 2x screen.
@@ -298,10 +299,11 @@ pub fn track_row(app: &App, t: &Theme, key: String, track: &TrackListItem, o: Tr
     let queue = o.queue.clone();
     let menu_track = track.clone();
     r = r.on_secondary_press(move |app: &mut App, at, _| {
-        adapters::open_track_menu(app, menu_track.clone(), [at.x, at.y], (*queue).clone())
+        let ctx = crate::overlays::track_menu::MenuContext::bind(&menu_track, (*queue).clone());
+        crate::overlays::track_menu::open(app, menu_track.clone(), [at.x, at.y], ctx)
     });
     if unavailable {
-        return r.opacity(0.45).help("No longer on TIDAL").label(track.title.clone());
+        return r.opacity(0.45).label(track.title.clone()).tip(&key, "No longer on TIDAL");
     }
     let play = o.on_play;
     r.hover(t.c.accent)
@@ -441,7 +443,7 @@ pub fn tile_width(content: f32, columns: usize) -> f32 {
 /// they have none.
 pub fn artist_tile(app: &App, t: &Theme, key: String, a: ArtistItem, width: f32) -> El {
     let mut avatar = el().size(48.0, 48.0).child(cover_art(t, &app.images, a.image.as_deref(), &a.name, 48.0, 48.0, 999.0));
-    if let Some(glyph) = adapters::top_artist_glyph(t, a.action, 28.0, 14.0) {
+    if let Some(glyph) = top_artist_glyph(t, a.action, 28.0, 14.0) {
         avatar = avatar.child(glyph.absolute(10.0, 10.0));
     }
     let name = line(display_text(Some(&a.name), ""), font(title_size(t), 500.0), t.c.foreground);
@@ -457,7 +459,7 @@ pub fn artist_tile(app: &App, t: &Theme, key: String, a: ArtistItem, width: f32)
     if a.action.is_some() {
         tile = tile.hover(t.c.accent).hover_motion(crate::ui::motion::ease(100.0), crate::ui::motion::ease(100.0)).focusable(true);
     }
-    adapters::top_artist_press(tile, a.action, &a.id, &a.name, a.on_play)
+    top_artist_press(tile, a.action, &a.id, &a.name, a.on_play)
 }
 
 /// `BoardRowPlaceholders`: the same 52 px rows, so the panel keeps its height
@@ -502,42 +504,4 @@ pub fn artist_placeholders(t: &Theme, key: &str, count: usize, width: f32) -> Ve
 /// A line of text with the `.board-stat dd` style (24 px semibold, tabular).
 pub fn stat_value_style() -> TextStyle {
     tnum(with_lh(font(24.0, 600.0), 34.8))
-}
-
-/// `<Button leadingIcon={<Icon className="size-4" />}>`: [`Btn`] with a
-/// 16 px leading icon (the shared one draws `size-3.5`).
-/// TODO(merge): the shared `Btn` with its icon-size option.
-pub fn button16(t: &Theme, b: Btn, glyph: &'static rune::Icon) -> El {
-    use crate::ui::{BtnVariant, hover_overlay};
-    let (h, fs, gap, radius) = if b.small { (28.0, 13.0, 4.0, t.radius_md().min(12.0)) } else { (32.0, 14.0, 6.0, t.radius_lg()) };
-    let (fill, ink, border, hover) = match b.variant {
-        BtnVariant::Primary => (t.c.primary, t.c.primary_foreground, Color::TRANSPARENT, t.c.background.alpha(0.2)),
-        BtnVariant::Secondary => (t.c.input_bg, t.c.foreground, t.c.input, hover_overlay(t.c.input_bg, t.c.input_bg_hover)),
-        BtnVariant::Ghost => (Color::TRANSPARENT, t.c.foreground, Color::TRANSPARENT, t.c.ghost_hover),
-        BtnVariant::Danger => {
-            let ink = if t.dark() { t.c.destructive } else { crate::theme::color_mix(t.c.destructive, 0.8, Color::BLACK) };
-            let hot = crate::theme::color_mix(t.c.destructive, 0.2, Color::TRANSPARENT);
-            (t.c.destructive_soft, ink, Color::TRANSPARENT, hover_overlay(t.c.destructive_soft, hot))
-        }
-    };
-    // The 1 px border takes layout space in CSS; Rune's doesn't.
-    let r = row()
-        .key(b.key)
-        .h(h)
-        .px(11.0)
-        .gap(gap)
-        .items_center()
-        .justify_center()
-        .radius(radius)
-        .fill(fill)
-        .border(1.0, border)
-        .role("button")
-        .label(b.label.clone())
-        .child(ico(glyph, 16.0, ink))
-        .child(text(b.label).font(font(fs, 500.0)).color(ink));
-    if b.disabled {
-        r.opacity(0.5).disabled(true).cursor(Cursor::NotAllowed)
-    } else {
-        r.hover(hover).press_scale(0.97).cursor(Cursor::Pointer).focusable(true)
-    }
 }

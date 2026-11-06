@@ -11,9 +11,7 @@
 //! - [`editing`], [`dialogs`]: customize mode and its dialogs.
 //! - [`sources`], [`requests`], [`logic`]: what Home loads, and the core
 //!   helpers it uses (until the API port merges).
-//! - [`adapters`]: stand-ins for the shared components.
 
-pub mod adapters;
 pub mod albums;
 pub mod arrangement;
 pub mod board;
@@ -598,7 +596,7 @@ fn empty(t: &Theme, m: &Model) -> El {
         .items_center()
         .child(board::lh(text(message).font(font(14.0, 400.0)).color(t.c.muted_foreground), 20.3))
         .child(
-            board::button16(t, Btn::new("board-empty-customize", "Customize Home"), &i::LAYOUT_DASHBOARD)
+            Btn::new("board-empty-customize", "Customize Home").icon(&i::LAYOUT_DASHBOARD).icon_size(16.0).build(t)
                 .on_press(|app: &mut App| app.navigate_replace(Location::parse("/?customize"))),
         )
 }

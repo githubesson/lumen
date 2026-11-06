@@ -7,6 +7,7 @@
 use rune::{Color, Cursor, El, Key, KeyEvent, Phase, Tx, col, el, row, text};
 
 use crate::app::App;
+use crate::ui::tooltip::TipExt;
 use crate::route::Location;
 use crate::theme::Theme;
 use crate::ui::{Btn, font, ico, icons as i, line, with_lh};
@@ -539,7 +540,7 @@ fn chip(t: &Theme, key: &str, label: &str) -> El {
         .focusable(true)
         .role("button")
         .label(format!("Show {label}"))
-        .help(label.to_string())
         .child(ico(&i::EYE, 14.0, ink))
         .child(line(label.to_string(), with_lh(font(13.0, 500.0), 18.85), ink))
+        .tip(key, label)
 }

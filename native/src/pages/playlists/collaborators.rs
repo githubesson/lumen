@@ -201,7 +201,7 @@ pub fn view(app: &App, t: &Theme, d: &Detail, perms: &Permissions) -> El {
             f.label("Invite by username").on_edit(|a: &mut App| &mut a.pages.playlists.fields.invite).on_submit(|a: &mut App, _| invite(a))
         });
         let can_send = !s.busy && !app.pages.playlists.fields.invite.text.trim().is_empty();
-        let send = Btn::new("playlist-invite-send", "Invite").primary().icon_sized(&i::USER_PLUS, 16.0).disabled(!can_send).build(t);
+        let send = Btn::new("playlist-invite-send", "Invite").primary().icon(&i::USER_PLUS).icon_size(16.0).disabled(!can_send).build(t);
         let form = row()
             .w_full()
             .padding(16.0)

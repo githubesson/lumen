@@ -353,19 +353,11 @@ pub fn tracks_by_artist<'a>(artist: &ReplayArtist, tracks: &'a [ReplayTrack]) ->
         .collect()
 }
 
-/// `TopArtistAction`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TopArtistAction {
-    Open,
-    Play,
-}
+pub use crate::core::replay::figures::TopArtistAction;
 
 /// `topArtistAction`.
 pub fn top_artist_action(artist: &ReplayArtist, tracks: &[TrackListItem]) -> Option<TopArtistAction> {
-    if artist.has_page == Some(true) {
-        return Some(TopArtistAction::Open);
-    }
-    (!playable_tracks(tracks).is_empty()).then_some(TopArtistAction::Play)
+    crate::core::replay::figures::top_artist_action(artist.has_page, tracks)
 }
 
 /// `genreShares`: each genre with its share of the listed genres' plays.
