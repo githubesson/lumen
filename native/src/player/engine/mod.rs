@@ -400,8 +400,11 @@ impl AudioAdapter for EngineAdapter {
         let duration = active.state.duration();
         let seconds = if duration > 0.0 { seconds.clamp(0.0, duration) } else { seconds.max(0.0) };
         active.state.set_position(seconds);
-        let _ = active.ctl.send(DecoderCmd::Seek { seconds, epoch: self.seek_epoch });
-        self.send(MixerCmd::Seeking { id: active.state.id, epoch: self.seek_epoch });
+        // The mixer hears of the seek before the decoder can answer it, or
+        // it would drop the answer as stale.
+        let (id, epoch, ctl) = (active.state.id, self.seek_epoch, active.ctl.clone());
+        self.send(MixerCmd::Seeking { id, epoch });
+        let _ = ctl.send(DecoderCmd::Seek { seconds, epoch });
     }
 
     fn set_volume(&mut self, volume: f64) {
@@ -470,6 +473,9 @@ impl AudioAdapter for EngineAdapter {
 
 /// The `seq` of a pause the system made (the output device went away).
 pub const SYSTEM_PAUSE: u64 = u64::MAX;
+
+#[cfg(test)]
+pub mod test_server;
 
 #[cfg(test)]
 #[path = "engine_tests.rs"]

@@ -179,10 +179,14 @@ impl Mixer {
                 if self.outgoing.is_some() && self.current.as_ref().is_some_and(|c| c.id() == id) {
                     self.finish_fade();
                 }
-                if let Some(voice) = self.voice_mut(id) {
+                if let Some(voice) = self.voice_mut(id)
+                    && epoch > voice.awaiting
+                {
                     voice.awaiting = epoch;
-                    voice.feed = None;
-                    voice.ended = false;
+                    if voice.feed.as_ref().is_some_and(|f| f.epoch < epoch) {
+                        voice.feed = None;
+                        voice.ended = false;
+                    }
                 }
             }
             MixerCmd::Play { seq } => {
@@ -442,6 +446,20 @@ mod tests {
         r.send(MixerCmd::Feed { id: 1, feed: fresh });
         assert_eq!(r.render(10), vec![0.9; 10]);
         assert_eq!(state.position(), 30.1);
+    }
+
+    #[test]
+    fn a_seeks_answer_that_beats_its_notice_is_kept() {
+        let mut r = rig();
+        let (a, fa) = voice(1, 0.5, 100, false);
+        r.send(MixerCmd::SetCurrent(Some(a)));
+        r.send(MixerCmd::Feed { id: 1, feed: fa });
+        r.send(MixerCmd::Play { seq: 1 });
+        let (_, mut answer) = voice(9, 0.9, 50, false);
+        answer.epoch = 1;
+        r.send(MixerCmd::Feed { id: 1, feed: answer });
+        r.send(MixerCmd::Seeking { id: 1, epoch: 1 });
+        assert_eq!(r.render(10), vec![0.9; 10]);
     }
 
     #[test]
