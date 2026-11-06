@@ -409,6 +409,28 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
         crate::pages::admin::scenes::ready(a);
         crate::pages::admin::scenes::revoke_invite(a);
     }),
+    ("admin", |a| scene(a, "/admin")),
+    ("library-grid", |a| {
+        scene(a, "/library");
+        crate::pages::library::scenes::grid(a);
+    }),
+    ("library-select", |a| {
+        scene(a, "/library");
+        crate::pages::library::scenes::select(a);
+    }),
+    ("library-sort", |a| {
+        scene(a, "/library");
+        crate::pages::library::scenes::sort_open(a);
+    }),
+    ("library-search", |a| scene(a, "/library?q=harbour")),
+    ("library-album", |a| scene(a, "/library?album=al-weather")),
+    ("library-album-medium", |a| scene(a, "/library?album=al-lanterns")),
+    ("library-artist", |a| scene(a, "/library?artist=ar-velvet")),
+    ("library-tidal-album", |a| scene(a, "/library?tidalAlbum=381245566&tidalArtist=4419021")),
+    ("library-tidal-saved", |a| scene(a, "/library?tidalAlbum=310077120")),
+    ("library-tidal-artist", |a| scene(a, "/library?tidalArtist=4419021&artistName=Marisol%20Vey")),
+    ("library-album-missing", |a| scene(a, "/library?album=missing")),
+    ("library-tidal-missing", |a| scene(a, "/library?tidalAlbum=404404")),
     ("drawer", |a| {
         scene(a, "/library");
         a.ui.mobile_nav_open = true;

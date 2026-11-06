@@ -165,11 +165,11 @@ fn listbox_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> {
         .max_h(240.0)
         .role("listbox")
         .focus_group();
-    list = match open.variant {
-        SelectVariant::Outlined | SelectVariant::Native => list.w(trigger_w),
-        SelectVariant::Minimal => list.min_w(160.0),
-        SelectVariant::Toolbar => list.min_w(176.0),
-    };
+    // The other variants' `min-w-40` / `min-w-44` lose to `.menu`'s 220 px:
+    // Tailwind's utilities sit in a cascade layer and menu.css doesn't.
+    if matches!(open.variant, SelectVariant::Outlined | SelectVariant::Native) {
+        list = list.w(trigger_w);
+    }
     let mut items = col();
     for (n, o) in open.options.iter().enumerate() {
         let selected = o.value == open.value;
@@ -248,10 +248,19 @@ pub fn search_input_bound(
 /// `SearchInput`: the `.search` box with a magnifier and a text field.
 /// Escape clears it when `on_clear` is given.
 pub fn search_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, width: Option<f32>) -> El {
-    search_input_with(t, key, edit, placeholder, width, |input| input)
+    search_input_with(t, key, edit, placeholder, width, |field| field)
 }
 
-fn search_input_with(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, width: Option<f32>, wire: impl FnOnce(El) -> El) -> El {
+/// [`search_input`] with `bind` applied to the inner text field, where its
+/// `.on_edit(..)`, `.on_input_key(..)` and `.on_submit(..)` go.
+pub fn search_input_with(
+    t: &Theme,
+    key: &str,
+    edit: &TextEdit,
+    placeholder: &str,
+    width: Option<f32>,
+    bind: impl FnOnce(El) -> El,
+) -> El {
     let focused = edit.focused;
     let mut b = css_border(row(), 1.0, if focused { t.c.focus_ring } else { t.c.input }, t.radius_lg())
         .key(format!("{key}-box"))
@@ -279,7 +288,7 @@ fn search_input_with(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, w
                 inset: false,
             });
     }
-    b.child(ico(&i::SEARCH, 14.0, t.c.muted_foreground)).child(wire(
+    b.child(ico(&i::SEARCH, 14.0, t.c.muted_foreground)).child(bind(
         rune::text_input(edit, font(14.0, 400.0))
             .key(key)
             .single_line()

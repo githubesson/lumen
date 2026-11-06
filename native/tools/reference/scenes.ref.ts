@@ -200,6 +200,63 @@ const SCENES: Scene[] = [
   { name: "login", signedOut: true, path: "/login", wait: (p) => ready(p, p.locator("form")) },
   { name: "library-medium", path: "/library", size: { width: 900, height: 700 }, wait: (p) => ready(p, p.locator("tbody tr")) },
   { name: "library-narrow", path: "/library", size: { width: 700, height: 600 }, wait: (p) => ready(p, p.locator("tbody tr")) },
+  // The Library page's tabs, toolbar states and drill-down pages.
+  {
+    name: "library-grid",
+    path: "/library",
+    wait: (p) => ready(p, p.locator("tbody tr")),
+    act: async (p) => {
+      await p.getByRole("tab", { name: "Grid" }).click();
+      await ready(p, p.locator(".card"));
+    },
+  },
+  {
+    name: "library-select",
+    path: "/library",
+    wait: (p) => ready(p, p.locator("tbody tr")),
+    act: async (p) => {
+      await p.locator(".toolbar-group").getByRole("button", { name: "Select", exact: true }).click();
+    },
+  },
+  {
+    name: "library-sort",
+    path: "/library",
+    wait: (p) => ready(p, p.locator("tbody tr")),
+    act: async (p) => {
+      await p.getByRole("combobox", { name: "Sort" }).click();
+      await p.getByRole("listbox").waitFor();
+    },
+  },
+  { name: "library-search", path: "/library?q=harbour", wait: (p) => ready(p, p.locator("tbody tr")) },
+  { name: "library-album", path: "/library?album=al-weather", wait: (p) => ready(p, p.locator("tbody tr")) },
+  {
+    name: "library-album-medium",
+    path: "/library?album=al-lanterns",
+    size: { width: 900, height: 700 },
+    wait: (p) => ready(p, p.locator("tbody tr")),
+  },
+  { name: "library-artist", path: "/library?artist=ar-velvet", wait: (p) => ready(p, p.locator("tbody tr")) },
+  {
+    name: "library-tidal-album",
+    path: "/library?tidalAlbum=381245566&tidalArtist=4419021",
+    wait: (p) => ready(p, p.locator("tbody tr")),
+  },
+  { name: "library-tidal-saved", path: "/library?tidalAlbum=310077120", wait: (p) => ready(p, p.locator("tbody tr")) },
+  {
+    name: "library-tidal-artist",
+    path: "/library?tidalArtist=4419021&artistName=Marisol%20Vey",
+    wait: (p) => ready(p, p.locator(".card")),
+  },
+  {
+    name: "library-album-missing",
+    path: "/library?album=missing",
+    wait: (p) => ready(p, p.getByText("Album not found.")),
+  },
+  {
+    name: "library-tidal-missing",
+    path: "/library?tidalAlbum=404404",
+    wait: (p) => ready(p, p.getByText("TIDAL album unavailable.")),
+  },
   {
     name: "drawer-narrow",
     path: "/library",

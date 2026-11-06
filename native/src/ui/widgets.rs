@@ -111,8 +111,9 @@ pub fn cover_art(t: &Theme, images: &Images, url: Option<&str>, label: &str, w: 
         Cover::Ready(img) => base.child(el().w(w).h(h).pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
         Cover::Loading => base,
         Cover::Failed => {
-            // `font-size: clamp(16px, 32%, 40px)` of the box.
-            let fs = (w.min(h) * 0.32).clamp(16.0, 40.0);
+            // `font-size: clamp(16px, 32%, 40px)`: the percentage is of the
+            // inherited 14 px font size, so the clamp floor wins.
+            let fs = 16.0;
             let letter = label.trim().chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
             base.center().child(text(letter).font(font(fs, 500.0)).color(t.c.muted_foreground))
         }
