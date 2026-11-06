@@ -152,13 +152,30 @@ impl App {
         }
     }
 
+    /// `usePlaylists().reload()`: only the newest read commits, and none that
+    /// an `update` overtook (`useApiResource`).
     pub fn load_playlists(&mut self) {
         let Some(client) = self.client.clone() else { return };
+        let list = &mut self.pages.playlists.list;
+        list.seq += 1;
+        list.error = None;
+        let (seq, updates) = (list.seq, list.updates);
+        if self.me().is_some_and(|me| me.must_reset_password) {
+            self.playlists = Some(Vec::new());
+            return;
+        }
         self.net.run(
             move || client.get::<Option<Vec<Playlist>>>("/api/playlists"),
-            |app, result| {
-                if let Ok(list) = result {
-                    app.playlists = Some(list.unwrap_or_default());
+            move |app, result| {
+                let list = &mut app.pages.playlists.list;
+                if list.seq != seq || list.updates != updates {
+                    return;
+                }
+                match result {
+                    Ok(rows) => app.playlists = Some(rows.unwrap_or_default()),
+                    Err(e) => {
+                        list.error = Some(crate::pages::playlists::error_message(&e, "Could not load playlists."))
+                    }
                 }
             },
         );
@@ -339,6 +356,35 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
     ("favorites", |a| scene(a, "/favorites")),
     ("recent", |a| scene(a, "/recent")),
     ("playlists", |a| scene(a, "/playlists")),
+    ("playlist-owned", |a| scene(a, "/playlists/pl-night-drives")),
+    ("playlist-collab", |a| scene(a, "/playlists/pl-sunday-coffee")),
+    ("playlist-shared", |a| scene(a, "/playlists/pl-road-trip")),
+    ("playlist-collaborators", |a| {
+        scene(a, "/playlists/pl-sunday-coffee");
+        crate::pages::playlists::scene(a, "collaborators");
+    }),
+    ("playlist-shared-collaborators", |a| {
+        scene(a, "/playlists/pl-road-trip");
+        crate::pages::playlists::scene(a, "collaborators");
+    }),
+    ("playlist-settings", |a| {
+        scene(a, "/playlists/pl-sunday-coffee");
+        crate::pages::playlists::scene(a, "settings");
+    }),
+    ("playlist-shared-settings", |a| {
+        scene(a, "/playlists/pl-road-trip");
+        crate::pages::playlists::scene(a, "settings");
+    }),
+    ("playlist-add", |a| {
+        scene(a, "/playlists/pl-night-drives");
+        crate::pages::playlists::scene(a, "add");
+    }),
+    ("playlist-drag", |a| {
+        scene(a, "/playlists/pl-night-drives");
+        crate::pages::playlists::scene(a, "drag");
+    }),
+    ("playlist-new", |a| scene(a, "/playlists/new")),
+    ("invites", |a| scene(a, "/invites")),
     ("replay", |a| scene(a, "/replay")),
     ("admin", |a| {
         scene(a, "/admin");

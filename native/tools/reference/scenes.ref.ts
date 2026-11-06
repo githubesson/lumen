@@ -128,6 +128,10 @@ async function openSettings(page: Page, section?: string) {
 
 const MENU_TRACK = "The Lighthouse Keeper's Daughter Never Learned to Swim";
 const LINKED_TRACK = "Everything You Left in the Glovebox";
+/** The playlist page's own track rows (not the library's, still up as it opens). */
+const rows = (p: Page) => ready(p, p.locator(".view:has(.playlist-toolbar) tbody tr"));
+/** Picks a tab without moving the mouse (no hover left behind). */
+const tab = (p: Page, name: string | RegExp) => p.getByRole("tab", { name }).first().dispatchEvent("click");
 
 const SCENES: Scene[] = [
   { name: "home", path: "/", wait: (p) => ready(p, p.locator(".board, .home")) },
@@ -197,6 +201,74 @@ const SCENES: Scene[] = [
     },
     keepPointer: true,
   },
+  // Playlists: one owned private, one owned collaborative, one shared with
+  // the user as an editor (fixtures.ts), each on its tabs.
+  { name: "playlist-owned", path: "/playlists/pl-night-drives", wait: rows },
+  { name: "playlist-collab", path: "/playlists/pl-sunday-coffee", wait: rows },
+  { name: "playlist-shared", path: "/playlists/pl-road-trip", wait: rows },
+  {
+    name: "playlist-collaborators",
+    path: "/playlists/pl-sunday-coffee",
+    wait: rows,
+    act: async (p) => {
+      await tab(p, /^Collaborators/);
+      await ready(p, p.getByText("theo", { exact: true }));
+    },
+  },
+  {
+    name: "playlist-shared-collaborators",
+    path: "/playlists/pl-road-trip",
+    wait: rows,
+    act: async (p) => {
+      await tab(p, /^Collaborators/);
+      await ready(p, p.getByText("priya", { exact: true }));
+    },
+  },
+  {
+    name: "playlist-settings",
+    path: "/playlists/pl-sunday-coffee",
+    wait: rows,
+    act: async (p) => {
+      await tab(p, "Settings");
+      await ready(p, p.getByRole("textbox", { name: "Name" }));
+    },
+  },
+  {
+    name: "playlist-shared-settings",
+    path: "/playlists/pl-road-trip",
+    wait: rows,
+    act: async (p) => {
+      await tab(p, "Settings");
+      await ready(p, p.getByText("Save TIDAL tracks to the library"));
+    },
+  },
+  {
+    name: "playlist-add",
+    path: "/playlists/pl-night-drives",
+    wait: rows,
+    act: async (p) => {
+      await p.getByRole("button", { name: "Add tracks" }).dispatchEvent("click");
+      await ready(p, p.locator("[role=dialog] li"));
+      // The search field is focused when the dialog opens; drop the caret
+      // and focus ring so both apps show the field at rest.
+      await p.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    },
+  },
+  {
+    // A row picked up and held over the gap above the fifth row.
+    name: "playlist-drag",
+    path: "/playlists/pl-night-drives",
+    wait: rows,
+    act: async (p) => {
+      const all = p.locator(".view:has(.playlist-toolbar) tbody tr");
+      const data = await p.evaluateHandle(() => new DataTransfer());
+      await all.nth(1).dispatchEvent("dragstart", { dataTransfer: data });
+      const box = (await all.nth(4).boundingBox())!;
+      await all.nth(4).dispatchEvent("dragover", { dataTransfer: data, clientX: box.x + 40, clientY: box.y + 4 });
+    },
+  },
+  { name: "playlist-new", path: "/playlists/new", wait: (p) => ready(p, p.getByRole("heading", { name: "New playlist" })) },
+  { name: "invites", path: "/invites", wait: (p) => ready(p, p.getByText("Wedding Reception", { exact: false })) },
   { name: "login", signedOut: true, path: "/login", wait: (p) => ready(p, p.locator("form")) },
   { name: "library-medium", path: "/library", size: { width: 900, height: 700 }, wait: (p) => ready(p, p.locator("tbody tr")) },
   { name: "library-narrow", path: "/library", size: { width: 700, height: 600 }, wait: (p) => ready(p, p.locator("tbody tr")) },

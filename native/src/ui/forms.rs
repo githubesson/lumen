@@ -362,10 +362,13 @@ pub fn setting_row_in(
     last: bool,
     text_width: Option<f32>,
 ) -> El {
-    let mut title = text(label).font(font(14.0, 400.0)).color(t.c.foreground);
-    if let Some(w) = text_width {
-        title = title.wrap().h(crate::ui::css_text_h(label, font(14.0, 400.0), Some(w)));
-    }
+    // One line box as tall as CSS makes it (rune rounds text boxes up).
+    let label_style = font(14.0, 400.0);
+    let mut title = text(label).font(label_style).color(t.c.foreground);
+    title = match text_width {
+        Some(w) => title.wrap().h(crate::ui::css_text_h(label, label_style, Some(w))),
+        None => title.h(label_style.line_height),
+    };
     let mut texts = col().min_w(0.0).shrink().child(title);
     if let Some(d) = description {
         let style = with_lh(font(12.0, 400.0), 16.8);
