@@ -241,9 +241,15 @@ impl Btn {
             .justify_center()
             .radius(radius)
             .fill(fill)
-            .border(1.0, border)
             .role("button")
             .label(self.label.clone());
+        // Only the outlined button clips its fill to the padding box; the
+        // others set `background`, which resets `background-clip`, so their
+        // fill covers the transparent border (rune's `.border` would cut a
+        // ring out of it).
+        if self.variant == BtnVariant::Secondary {
+            b = b.border(1.0, border);
+        }
         if let Some(g) = self.leading {
             b = b.child(ico(g, self.leading_size, ink));
         }

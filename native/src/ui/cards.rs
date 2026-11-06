@@ -179,10 +179,8 @@ pub fn media_card_placeholders(t: &Theme, key: &str, count: usize) -> Vec<El> {
     let (pad, gap, title_fs) = card_metrics(t);
     (0..count)
         .map(|n| {
-            // `.skeleton-text`: a 0.75em bar centred on the line.
-            let bar = |fs: f32, frac: f32| {
-                el().w_full().h(fs * 1.45).items_center().child(el().w_frac(frac).h(fs * 0.75).radius(t.radius_sm()).fill(t.c.muted))
-            };
+            // `.skeleton-text`: a 0.75 em bar at `vertical-align: middle`.
+            let bar = |fs: f32, frac: f32| crate::ui::skeleton_line(t, fs, fs * 1.45, frac);
             col()
                 .key(format!("{key}-{n}"))
                 .w_full()
