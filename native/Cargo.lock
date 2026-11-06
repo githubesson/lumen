@@ -1572,6 +1572,7 @@ name = "lumen-desktop"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "fastrand",
  "rune",
  "rune-motion",
  "serde",

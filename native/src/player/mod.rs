@@ -2,6 +2,11 @@
 //! repeat, volume and position, driving an audio engine. This module holds
 //! the state the views read; `engine` plays it.
 
+pub mod adapter;
+pub mod core;
+pub mod error;
+pub mod local;
+
 use rune::Tx;
 
 use crate::api::TrackListItem;
