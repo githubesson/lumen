@@ -21,12 +21,26 @@ pub fn validate_registration_input(username_input: &str, password: &str) -> Regi
     }
 }
 
+impl RegistrationValidation {
+    /// The first problem, as the form shows it.
+    pub fn error(&self) -> Option<&'static str> {
+        self.username_error.or(self.password_error)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PasswordChangeValidation {
     pub current_error: Option<&'static str>,
     pub password_error: Option<&'static str>,
     pub confirm_error: Option<&'static str>,
     pub valid: bool,
+}
+
+impl PasswordChangeValidation {
+    /// The first problem, as the form shows it.
+    pub fn error(&self) -> Option<&'static str> {
+        self.current_error.or(self.password_error).or(self.confirm_error)
+    }
 }
 
 /// A new password follows the registration rule; the current one is only

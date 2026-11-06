@@ -36,7 +36,7 @@ fn submit(app: &mut App) {
         return;
     }
     let v =
-        super::validation::validate_password_change(&s.current.text, &s.next.text, &s.confirm.text);
+        crate::core::auth::validation::validate_password_change(&s.current.text, &s.next.text, &s.confirm.text);
     if let Some(e) = v.error() {
         s.error = Some(e.to_string());
         return;

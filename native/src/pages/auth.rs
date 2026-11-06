@@ -11,7 +11,6 @@ pub mod scenes;
 pub mod server;
 pub mod session;
 pub mod startup;
-pub mod validation;
 pub mod welcome;
 
 use rune::{Cx, El, Tx, el};

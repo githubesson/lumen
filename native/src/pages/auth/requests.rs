@@ -3,21 +3,14 @@
 //! `resetPassword`, `logout`, `getPublicTrackShare`), and the messages
 //! `core/src/auth/errors.ts` turns their failures into.
 //!
-//! TODO(api-merge): thin calls on [`Client`] until `crate::api::auth` lands;
-//! switch the call sites over and delete this module then.
+//! The session calls are `crate::api::auth`'s plus the auth generation's
+//! advance a sign-in makes; the messages are `crate::core::auth::errors`'.
 
 use serde::Deserialize;
 
 use crate::api::{ApiError, ApiResult, Client, Me, query, seg};
 
-/// `InviteCheck`: the public invite lookup's answer.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
-pub struct InviteCheck {
-    pub valid: bool,
-    /// `user` or `admin`, as the server spells it.
-    #[serde(default)]
-    pub target_role: Option<String>,
-}
+pub use crate::api::auth::InviteCheck;
 
 /// `PublicTrackShare`: what a signed share link shows.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -136,7 +129,7 @@ pub fn register(client: &Client, token: &str, username: &str, password: &str) ->
 }
 
 pub fn check_invite(client: &Client, token: &str) -> ApiResult<InviteCheck> {
-    client.get(&format!("/api/auth/invite?token={}", seg(token)))
+    crate::api::auth::check_invite(client, token)
 }
 
 pub fn reset_password(
@@ -177,75 +170,13 @@ pub fn preview_video_url(client: &Client, share: &TrackShareRef) -> String {
     ))
 }
 
-/// A request that never got an HTTP response: the network failed or the
-/// deadline passed (anything that isn't an `ApiError` in the web client).
-fn unanswered(e: &ApiError) -> bool {
-    e.status == 0
-}
+pub use crate::core::auth::errors::{
+    invite_check_error_message, login_error_message, password_change_error_message, registration_error_message,
+};
 
-const UNREACHABLE: &str = "Couldn't reach the server. Check your connection and try again.";
-
-/// `loginErrorMessage`.
-pub fn login_error_message(e: &ApiError) -> String {
-    if unanswered(e) {
-        return UNREACHABLE.into();
-    }
-    match e.status {
-        401 => "Invalid username or password.",
-        // The server only says so after a correct password.
-        403 => "This account has been disabled.",
-        429 => "Too many sign-in attempts. Try again later.",
-        _ => "Sign in failed. Please try again.",
-    }
-    .into()
-}
-
-/// `registrationErrorMessage`.
-pub fn registration_error_message(e: &ApiError) -> String {
-    if unanswered(e) {
-        return "Couldn't create your account. Check your connection and try again.".into();
-    }
-    match e.status {
-        409 => "That username is already taken.".into(),
-        429 => "Too many registration attempts. Try again later.".into(),
-        // "invalid invite" or "invite is no longer usable", both 400s.
-        _ if e.message.contains("invite") => {
-            "This invite is no longer usable. Ask an admin for a new one.".into()
-        }
-        _ if !e.message.is_empty() => e.message.clone(),
-        s => format!("Registration failed ({s})."),
-    }
-}
-
-/// `inviteCheckErrorMessage`: the check answers `valid: false` for a dead
-/// invite, so a failure says nothing about the invite itself.
-pub fn invite_check_error_message(e: &ApiError) -> String {
-    if e.status == 429 {
-        "Too many invite checks. Wait a minute and try again."
-    } else if unanswered(e) {
-        "Couldn't verify this invite. Check your connection and try again."
-    } else {
-        "Couldn't verify this invite. Try again."
-    }
-    .into()
-}
-
-/// `passwordChangeErrorMessage`.
-pub fn password_change_error_message(e: &ApiError) -> String {
-    if unanswered(e) {
-        return UNREACHABLE.into();
-    }
-    match e.status {
-        401 => "Your current password is incorrect.".into(),
-        429 => "Too many attempts. Try again later.".into(),
-        _ if !e.message.is_empty() => e.message.clone(),
-        _ => "Couldn't change your password.".into(),
-    }
-}
-
-/// `errorMessage(err, fallback)`: the server's message, else `fallback`.
+/// `errorMessage(err, fallback)`.
 pub fn error_message(e: &ApiError, fallback: &str) -> String {
-    if !unanswered(e) && !e.message.is_empty() {
+    if e.status != 0 && !e.message.is_empty() {
         e.message.clone()
     } else {
         fallback.to_string()
@@ -272,7 +203,7 @@ mod tests {
         );
         assert_eq!(
             login_error_message(&err(0, "Couldn't reach the server.")),
-            UNREACHABLE
+            "Couldn't reach the server. Check your connection and try again."
         );
         assert_eq!(
             login_error_message(&err(500, "boom")),
