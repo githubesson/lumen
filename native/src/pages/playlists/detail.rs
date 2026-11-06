@@ -134,6 +134,14 @@ pub(super) fn current(app: &mut App, mount: u64) -> Option<&mut Detail> {
     app.pages.playlists.detail.as_mut().filter(|d| d.mount == mount)
 }
 
+/// Whether the visit `mount` is still on screen: the state outlives the
+/// page, so leaving it (the web's unmount) is the route moving on.
+pub(super) fn on_screen(app: &App, mount: u64) -> bool {
+    app.pages.playlists.detail.as_ref().is_some_and(|d| {
+        d.mount == mount && app.location().segment(0) == Some("playlists") && app.location().segment(1) == Some(d.id.as_str())
+    })
+}
+
 /// The sidebar's row for the open playlist.
 pub fn listed<'a>(app: &'a App, d: &Detail) -> Option<&'a Playlist> {
     if d.gone {
@@ -354,6 +362,9 @@ pub(super) fn arm_poll(app: &mut App) {
 fn refresh(app: &mut App, mount: u64, token: u64) {
     let busy = pending(app, mount) > 0;
     let Some(client) = app.client.clone() else { return };
+    if !on_screen(app, mount) {
+        return;
+    }
     let Some(d) = current(app, mount) else { return };
     if d.poll != token {
         return;

@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use rune::{Cursor, Cx, El, Phase, Tx, col, el, row, text};
 
-use crate::api::{Playlist, PlaylistTrackEntry, TrackListItem, Visibility, media};
+use crate::api::{Playlist, PlaylistTrackEntry, Visibility, media};
 use crate::app::App;
 use crate::format::{display_text, fmt_duration_ms};
 use crate::theme::Theme;
@@ -190,7 +190,6 @@ struct RowCtx<'a> {
     reorderable: bool,
     drag: Option<DragState>,
     fav: bool,
-    queue: &'a [TrackListItem],
 }
 
 /// Which edge of row `index` the drop line draws on, if any
@@ -294,7 +293,6 @@ fn track_row(app: &App, t: &Theme, e: &PlaylistTrackEntry, r: RowCtx) -> El {
     let (index, count, selecting, reorderable) = (r.index, r.count, r.selecting, r.reorderable);
     let title_x = (c.select + c.idx + c.art, c.select + c.idx + c.art + c.title);
     let menu_track = e.as_track();
-    let queue = r.queue.to_vec();
     let dbl_id = id.clone();
     tr.role("row")
         .on_drag(move |app: &mut App, g: &mut rune::Drag, tx: &mut Tx| {
@@ -305,7 +303,10 @@ fn track_row(app: &App, t: &Theme, e: &PlaylistTrackEntry, r: RowCtx) -> El {
                 play(app, &dbl_id);
             }
         })
-        .on_secondary_press(move |app: &mut App, at, _tx| adapters::open_track_menu(app, menu_track.clone(), queue.clone(), [at.x, at.y]))
+        .on_secondary_press(move |app: &mut App, at, _tx| {
+            let queue = detail::detail(app).map(|d| d.queue()).unwrap_or_default();
+            adapters::open_track_menu(app, menu_track.clone(), queue, [at.x, at.y]);
+        })
 }
 
 struct Gesture<'a> {
@@ -399,7 +400,6 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, d: &Detail, p: &Playlist, pe
         p.visibility == Visibility::Collaborative || rows.iter().any(|t| t.added_by_id.as_deref().is_some_and(|by| by != p.owner_id));
     let reorderable = perms.can_edit_tracks && d.sort == SortKey::Custom && q.is_empty() && !s.selecting;
     let current = app.player.current().map(|t| t.id.clone());
-    let queue = d.queue();
     let b = bar(app, d);
     let mut body = col().key("playlist-tbody").w_full();
     for (index, &i) in shown.iter().enumerate() {
@@ -422,7 +422,6 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, d: &Detail, p: &Playlist, pe
                 reorderable,
                 drag: s.drag,
                 fav: app.pages.favorites_has(&e.track_id),
-                queue: &queue,
             },
         ));
     }
@@ -432,10 +431,19 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, d: &Detail, p: &Playlist, pe
     }
     // With one row there's no toolbar host, so the bar sits above the table.
     if rows.len() <= 1 {
+        let status = if b.selecting {
+            format!("{} selected", b.selected)
+        } else {
+            format!("{} track{}", rows.len(), if rows.len() == 1 { "" } else { "s" })
+        };
         panel = panel.child(
-            row().w_full().min_h(38.0).pb(8.0).gap(8.0).items_center()
-                .child(text(if b.selecting { format!("{} selected", b.selected) } else { format!("{} track{}", rows.len(), if rows.len() == 1 { "" } else { "s" }) })
-                    .font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground).grow(1.0))
+            row()
+                .w_full()
+                .min_h(38.0)
+                .pb(8.0)
+                .gap(8.0)
+                .items_center()
+                .child(text(status).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground).grow(1.0))
                 .child(selection_host(app, t, d)),
         );
     }

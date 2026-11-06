@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use crate::api::{ApiResult, Client, PlaylistTrackEntry};
 use crate::app::App;
 
-use super::detail::{Download, arm_poll, cover_for, current, detail, detail_mut, invalidate_loads, load, write_cache};
+use super::detail::{Download, arm_poll, cover_for, current, detail, detail_mut, invalidate_loads, load, on_screen, write_cache};
 use super::logic::{self, error_message};
 use super::{requests, update_playlists};
 
@@ -112,7 +112,7 @@ fn finish(app: &mut App, mount: u64, id: String, next: Vec<PlaylistTrackEntry>) 
     }
     let failure = c.error.take();
     let edit_gen = c.seq;
-    if current(app, mount).is_none() {
+    if !on_screen(app, mount) {
         // Left the page: its cache holds the optimistic rows. After a
         // failure, drop it so a revisit doesn't paint an edit that failed.
         if failure.is_some() {
