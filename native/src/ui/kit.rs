@@ -12,6 +12,7 @@ use rune::{Color, Cursor, El, Icon, Live, ScrollPos, Shadow, Side, col, el, row,
 use crate::app::App;
 use crate::theme::{Theme, color_mix};
 use crate::ui::{BtnState, font, ico, iconbtn, icons as i, line, motion, with_lh};
+use crate::ui::tooltip::TipExt;
 
 thread_local! {
     static THUMBS: RefCell<HashMap<String, Live<[f32; 4]>>> = RefCell::new(HashMap::new());
@@ -125,7 +126,7 @@ impl Dialog {
         if let Some(title) = self.title {
             let close_btn = iconbtn(t, &format!("{}-close", self.key), &i::X, 14.0, BtnState::default())
                 .label("Close")
-                .help("Close")
+                .tip(&format!("{}-close", self.key), "Close")
                 .on_press(close);
             panel = panel.child(
                 crate::ui::css_border_bottom(row(), 1.0, t.c.border)

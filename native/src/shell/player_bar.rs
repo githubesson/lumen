@@ -9,6 +9,7 @@ use crate::format::fmt_duration_sec;
 use crate::player::Repeat;
 use crate::theme::Theme;
 use crate::ui::{self, css_border, font, ico, icons as i, line, tnum};
+use crate::ui::tooltip::TipExt;
 
 /// `.t-btn`: a 28 px muted icon button.
 pub fn t_btn(t: &Theme, key: &str, glyph: &'static Icon, active: bool, disabled: bool) -> El {
@@ -59,11 +60,11 @@ fn now_playing(app: &App, t: &Theme) -> El {
     let letter = track.map(|tr| tr.album_title.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| tr.title.clone())).unwrap_or_else(|| "·".into());
     let art = ui::cover_art(t, &app.images, cover.as_deref().filter(|_| track.is_some()), &letter, 48.0, 48.0, t.radius_md());
     let mut lines = col().grow(1.0).min_w(0.0).h(48.0).gap(2.0).justify_center()
-        .child(line(title.clone(), font(14.0, 500.0), t.c.foreground).help(title));
+        .child(line(title.clone(), font(14.0, 500.0), t.c.foreground).tip_truncated("np-title", &title, font(14.0, 500.0)));
     if let Some(err) = &p.error {
         lines = lines.child(line(err.summary.clone(), font(12.0, 400.0), t.c.destructive));
     } else {
-        lines = lines.child(line(artist.clone(), font(12.0, 400.0), t.c.muted_foreground).help(artist));
+        lines = lines.child(line(artist.clone(), font(12.0, 400.0), t.c.muted_foreground).tip_truncated("np-artist", &artist, font(12.0, 400.0)));
     }
     row().key("np").gap(12.0).items_center().min_w(0.0).child(art).child(lines)
 }
@@ -153,12 +154,12 @@ fn utility(app: &App, t: &Theme) -> El {
         .child(
             t_btn(t, "lyrics", &i::MIC_VOCAL, app.ui.lyrics_open, !has)
                 .label("Toggle lyrics panel")
-                .help("Lyrics")
+                .tip("lyrics", "Lyrics")
                 .on_press(|app: &mut App| app.ui.lyrics_open = !app.ui.lyrics_open),
         )
         .child(t_btn(t, "queue", &i::LIST_MUSIC, false, false).label("Queue"))
         .child(volume)
-        .child(t_btn(t, "mini-player", &i::MINIMIZE_2, false, false).label("Mini player").help("Mini player"))
+        .child(t_btn(t, "mini-player", &i::MINIMIZE_2, false, false).label("Mini player").tip("mini-player", "Mini player"))
 }
 
 pub fn view(app: &App, t: &Theme) -> El {

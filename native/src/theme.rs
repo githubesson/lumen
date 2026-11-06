@@ -328,8 +328,10 @@ mod tests {
     use super::*;
 
     fn srgb(c: Color) -> [u8; 4] {
-        let e = |v: f32| (rune::srgb_encode(v) * 255.0).round() as u8;
-        [e(c.r), e(c.g), e(c.b), (c.a * 255.0).round() as u8]
+        // `Color::hex` gives the sRGB-encoded `#rrggbb`.
+        let h = c.hex();
+        let e = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).unwrap();
+        [e(1), e(3), e(5), (c.a * 255.0).round() as u8]
     }
 
     #[test]

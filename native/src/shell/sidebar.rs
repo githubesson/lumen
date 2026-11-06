@@ -7,6 +7,7 @@ use crate::app::App;
 use crate::route::Location;
 use crate::theme::{Layout, Theme, color_mix};
 use crate::ui::{self, BtnState, brand_mark, font, ico, icons as i, iconbtn, line, with_lh};
+use crate::ui::tooltip::{Side, TipExt};
 
 /// Which Browse entry a /library URL belongs to (`libraryViewOf`).
 fn library_view_of(loc: &Location) -> &'static str {
@@ -72,7 +73,7 @@ fn nav_item(t: &Theme, key: &str, glyph: &'static Icon, label: &str, active: boo
         item = item.fill(t.c.sidebar_accent);
     }
     if compact(t) {
-        item = item.justify_center().help(label);
+        item = item.justify_center().tip_side(key, label, Side::Right);
         if let Some(n) = badge {
             item = item.child(nav_badge(t, n, true));
         }
@@ -181,7 +182,7 @@ fn playlists(app: &App, t: &Theme) -> El {
         .role("link")
         .cursor(Cursor::Pointer)
         .hover(t.c.ghost_hover)
-        .help("New playlist")
+        .tip("new-playlist", "New playlist")
         .on_press(|app: &mut App| app.navigate_to("/playlists/new"))
         .child(ico(&i::PLUS, 12.0, t.c.foreground));
     let mut list = col().key("sidebar-playlists").px(8.0).pb(12.0);
@@ -223,7 +224,7 @@ fn playlists(app: &App, t: &Theme) -> El {
                 r = r.fill(t.c.sidebar_accent);
             }
             if compact(t) {
-                r = r.justify_center().help(p.name.clone());
+                r = r.justify_center().tip_side(&format!("sidebar-playlist-{}", p.id), &p.name, Side::Right);
             } else {
                 r = r.px(8.0).gap(8.0).child(
                     line(p.name.clone(), font(14.0, if active { 500.0 } else { 400.0 }), t.c.sidebar_foreground).grow(1.0),
@@ -255,12 +256,12 @@ fn footer(app: &App, t: &Theme) -> El {
 
     let admin_btn = admin.then(|| {
         iconbtn(t, "footer-admin", &i::SETTINGS, 16.0, BtnState { active: app.location().starts_with("/admin"), disabled: false })
-            .help("Admin")
+            .tip("footer-admin", "Admin")
             .label("Admin")
             .on_press(|app: &mut App| app.navigate_to("/admin"))
     });
     let sign_out = iconbtn(t, "footer-sign-out", &i::LOG_OUT, 16.0, BtnState::default())
-        .help("Sign out")
+        .tip("footer-sign-out", "Sign out")
         .label("Sign out")
         .on_press(|app: &mut App| app.sign_out());
 

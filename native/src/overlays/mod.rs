@@ -39,6 +39,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Vec<El> {
         palette::view(app, t, cx),
         track_menu::view(app, t, cx),
         confirm::view(app, t, cx),
+        crate::ui::tooltip::view(app, t, cx),
     ]
     .into_iter()
     .flatten()

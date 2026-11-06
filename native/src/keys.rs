@@ -5,7 +5,13 @@ use rune::{Key, KeyEvent, Tx};
 use crate::app::App;
 
 pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
-    let _ = tx;
+    if crate::overlays::track_menu::on_key(app, ev, tx) {
+        return true;
+    }
+    crate::ui::tooltip::on_key(app, ev);
+    if crate::ui::track_select::on_key(app, ev, tx) {
+        return true;
+    }
     if ev.is_command('k') {
         app.ui.settings_open = false;
         app.ui.palette_open = !app.ui.palette_open;

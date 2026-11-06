@@ -7,6 +7,7 @@ use crate::app::App;
 use crate::route::Location;
 use crate::theme::{Layout, Theme};
 use crate::ui::{self, BtnState, css_border, font, ico, icons as i, iconbtn, kbd};
+use crate::ui::tooltip::TipExt;
 
 struct Crumb {
     label: String,
@@ -150,19 +151,19 @@ pub fn window_controls(t: &Theme) -> El {
         .child(
             button("window-minimize", &i::MINUS, 16.0, false)
                 .label("Minimize")
-                .help("Minimize")
+                .tip("window-minimize", "Minimize")
                 .on_press_tx(|_: &mut App, tx| tx.minimize()),
         )
         .child(
             button("window-maximize", &i::COPY, 14.0, false)
                 .label("Maximize")
-                .help("Maximize")
+                .tip("window-maximize", "Maximize")
                 .on_press_tx(|_: &mut App, tx| crate::desktop::window::toggle_maximize(tx)),
         )
         .child(
             button("window-close", &i::X, 16.0, true)
                 .label("Close")
-                .help("Close")
+                .tip("window-close", "Close")
                 .on_press_tx(|_: &mut App, tx| tx.close_window()),
         )
 }
@@ -184,7 +185,7 @@ pub fn view(app: &App, t: &Theme, window_w: f32) -> El {
         .child(
             iconbtn(t, "sidebar-toggle", if compact { &i::PANEL_LEFT_OPEN } else { &i::PANEL_LEFT_CLOSE }, 16.0, BtnState::default())
                 .label(if compact { "Expand sidebar" } else { "Collapse sidebar" })
-                .help(if compact { "Expand sidebar" } else { "Collapse sidebar" })
+                .tip("sidebar-toggle", if compact { "Expand sidebar" } else { "Collapse sidebar" })
                 .on_press(|app: &mut App| app.toggle_sidebar()),
         )
         .child(breadcrumbs(app, t))
@@ -194,7 +195,7 @@ pub fn view(app: &App, t: &Theme, window_w: f32) -> El {
         bar = bar.child(
             iconbtn(t, "customize-home", &i::LAYOUT_DASHBOARD, 16.0, BtnState { active: customizing, disabled: false })
                 .label("Customize Home")
-                .help(if customizing { "Done customizing" } else { "Customize Home" })
+                .tip("customize-home", if customizing { "Done customizing" } else { "Customize Home" })
                 .on_press(move |app: &mut App| {
                     let to = if customizing { "/" } else { "/?customize" };
                     app.navigate_replace(Location::parse(to));
@@ -204,25 +205,25 @@ pub fn view(app: &App, t: &Theme, window_w: f32) -> El {
     bar.child(
         iconbtn(t, "toggle-lyrics", &i::MIC_VOCAL, 16.0, BtnState { active: app.ui.lyrics_open, disabled: false })
             .label("Toggle lyrics panel")
-            .help("Lyrics")
+            .tip("toggle-lyrics", "Lyrics")
             .on_press(|app: &mut App| app.ui.lyrics_open = !app.ui.lyrics_open),
     )
     .child(
         iconbtn(t, "add-music", &i::UPLOAD, 16.0, BtnState::default())
             .label("Add music")
-            .help("Add music")
+            .tip("add-music", "Add music")
             .on_press(|app: &mut App| app.ui.upload_open = true),
     )
     .child(
         iconbtn(t, "toggle-theme", if dark { &i::SUN } else { &i::MOON }, 16.0, BtnState::default())
             .label("Toggle theme")
-            .help(if dark { "Switch to light mode" } else { "Switch to dark mode" })
+            .tip("toggle-theme", if dark { "Switch to light mode" } else { "Switch to dark mode" })
             .on_press(|app: &mut App| app.toggle_theme()),
     )
     .child(
         iconbtn(t, "open-settings", &i::SLIDERS_HORIZONTAL, 16.0, BtnState { active: app.ui.settings_open, disabled: false })
             .label("Settings")
-            .help("Settings")
+            .tip("open-settings", "Settings")
             .on_press(|app: &mut App| app.ui.settings_open = !app.ui.settings_open),
     )
     .child(window_controls(t))

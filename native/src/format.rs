@@ -30,6 +30,11 @@ pub fn fmt_total_ms(total_ms: u64) -> String {
     format!("{h} hr {m} min")
 }
 
+/// `pluralize(n, singular)`: "1 track", "8 tracks".
+pub fn pluralize(n: usize, singular: &str) -> String {
+    if n == 1 { format!("1 {singular}") } else { format!("{n} {singular}s") }
+}
+
 /// `displayText`: trimmed text, or the fallback when there's none.
 pub fn display_text(s: Option<&str>, fallback: &str) -> String {
     match s.map(str::trim).filter(|s| !s.is_empty()) {
