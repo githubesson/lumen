@@ -87,6 +87,12 @@ pub fn utc_parts(ms: i64) -> Parts {
     }
 }
 
+/// `new Date(year, month0, day, hour)`: a local wall-clock time.
+pub fn local_ms(year: i64, month0: i64, day: i64, hour: i64) -> i64 {
+    let wall = utc(year, month0, day) + hour * 3_600_000;
+    wall - local_offset_ms(wall - local_offset_ms(wall))
+}
+
 /// The local fields of `ms` (`getFullYear` …).
 pub fn local_parts(ms: i64) -> Parts {
     utc_parts(ms + local_offset_ms(ms))
@@ -119,8 +125,16 @@ pub fn parse(s: &str) -> Option<i64> {
         let part = s.get(from..from + len)?;
         part.bytes().all(|c| c.is_ascii_digit()).then(|| part.parse().ok())?
     };
-    let year = num(0, 4)?;
-    let (mut month, mut day, mut at) = (1, 1, 4);
+    // An expanded year (`+010000`, `-000001`), as `toISOString` writes
+    // years outside 0–9999.
+    let (year, mut at) = match b.first() {
+        Some(sign @ (b'+' | b'-')) => {
+            let y = num(1, 6)?;
+            (if *sign == b'-' { -y } else { y }, 7)
+        }
+        _ => (num(0, 4)?, 4),
+    };
+    let (mut month, mut day) = (1, 1);
     if b.get(at) == Some(&b'-') {
         month = num(at + 1, 2)?;
         at += 3;
@@ -320,6 +334,8 @@ mod tests {
         assert_eq!(parse("1969-12-31T23:59:59.999Z"), Some(-1));
         assert_eq!(to_iso(-1), "1969-12-31T23:59:59.999Z");
         assert_eq!(utc_parts(0).weekday, 4);
+        let far = parse("+010000-01-01T00:00:00.000Z").unwrap();
+        assert_eq!((utc_parts(far).year, to_iso(far).as_str()), (10000, "+010000-01-01T00:00:00.000Z"));
         for bad in ["", "soon", "2026-13-01", "2026-02-30", "2026-01-01T25:00Z", "2026-01-01Tx"] {
             assert_eq!(parse(bad), None, "{bad}");
         }
