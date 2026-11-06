@@ -1,0 +1,5 @@
+[toolchain]
+# Rune pins this toolchain; keep them in step when bumping the rune rev.
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+targets = ["x86_64-pc-windows-gnu"]

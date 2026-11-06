@@ -135,7 +135,7 @@ function paged<T>(items: T[], url: URL): Reply {
 const notFound: Reply = { status: 404, text: "not found" };
 const noContent: Reply = { status: 204 };
 
-function apiRoutes(signedIn: boolean): [string, RegExp, Handler][] {
+export function apiRoutes(signedIn: boolean): [string, RegExp, Handler][] {
   const id = "([^/]+)";
   const track = (raw: string) => data.tracks.find((t) => t.id === decodeURIComponent(raw));
   const playlist = (raw: string): Playlist | undefined => data.playlists.find((p) => p.id === raw);

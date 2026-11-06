@@ -1,0 +1,36 @@
+[package]
+name = "lumen-desktop"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Lumen's desktop client, drawn with Rune"
+publish = false
+
+[[bin]]
+name = "lumen"
+path = "src/main.rs"
+
+[dependencies]
+# Rune is pre-release: pin a rev of `dev` (never rewritten).
+rune = { git = "https://github.com/anomalyco/rune", rev = "4ca683561a100e16b1ce32f3576f4ade61bd2924", features = ["native-file-dialog"] }
+rune-motion = { git = "https://github.com/anomalyco/rune", rev = "4ca683561a100e16b1ce32f3576f4ade61bd2924" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3", default-features = false, features = ["rustls", "json", "cookies", "gzip"] }
+dirs = "6"
+urlencoding = "2"
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 2
+
+[profile.release]
+codegen-units = 16
+incremental = true
+
+[profile.dist]
+inherits = "release"
+codegen-units = 1
+lto = "thin"
+strip = true
+incremental = false

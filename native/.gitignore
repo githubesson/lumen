@@ -1,0 +1,5 @@
+/target
+/out
+/tools/reference/node_modules
+/tools/reference/test-results
+/tools/node_modules
