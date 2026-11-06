@@ -55,6 +55,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Vec<El> {
         edit::view(app, t, cx),
         share::view(app, t, cx),
         track_info::view(app, t, cx),
+        track_info::picker_view(app, t, cx),
         palette::view(app, t, cx),
         track_menu::view(app, t, cx),
         confirm::view(app, t, cx),

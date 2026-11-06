@@ -128,6 +128,34 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
         crate::overlays::share::open(a, MENU_TRACK);
         a.settle_sync();
     }),
+    ("track-info", |a| {
+        library(a);
+        crate::overlays::track_info::open(a, MENU_TRACK);
+        a.settle_sync();
+    }),
+    ("track-info-linked", |a| {
+        library(a);
+        crate::overlays::track_info::open(a, LINKED_TRACK);
+        a.settle_sync();
+    }),
+    ("edit-track", |a| {
+        library(a);
+        crate::overlays::edit::open_track(a, MENU_TRACK);
+        a.settle_sync();
+    }),
+    ("move-album", |a| {
+        library(a);
+        let Some(t) = track(a, MENU_TRACK) else { return };
+        crate::overlays::edit::open_move_to_album(a, &t);
+        a.settle_sync();
+    }),
+    ("edit-album", |a| {
+        scene(a, "/library?album=al-weather");
+        let Some(client) = a.client.clone() else { return };
+        let Ok(album) = client.get::<crate::api::Album>("/api/albums/al-weather") else { return };
+        crate::overlays::edit::open_album(a, &album);
+        a.settle_sync();
+    }),
 ];
 
 /// A library row by id, as the track list shows it.

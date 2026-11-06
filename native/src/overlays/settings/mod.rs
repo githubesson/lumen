@@ -12,7 +12,7 @@ use rune::{Color, Cursor, Cx, El, Icon, Shadow, TextEdit, col, el, row, text};
 
 use crate::app::App;
 use crate::theme::Theme;
-use crate::ui::forms::{OpenSelect, SelectOption, SelectVariant, search_input};
+use crate::ui::forms::{OpenSelect, SelectOption, SelectVariant, search_input_bound};
 use crate::ui::kit::scroll_area_with;
 use crate::ui::{BtnState, css_border, font, ico, iconbtn, icons as i, line, motion, with_lh};
 
@@ -263,7 +263,7 @@ fn nav(app: &App, t: &Theme, list: &[(SectionId, &'static str, &'static Icon)], 
         .help("Close settings")
         .on_press(close);
     let search = el().grow(1.0).min_w(0.0).child(
-        search_input(t, "settings-search", &s.query, "Search settings", None).on_edit(|app: &mut App| &mut app.overlays.settings.query),
+        search_input_bound(t, "settings-search", &s.query, "Search settings", None, |app: &mut App| &mut app.overlays.settings.query, None),
     );
     let mut items = col().gap(2.0).w_full();
     for (id, title, icon) in list {
