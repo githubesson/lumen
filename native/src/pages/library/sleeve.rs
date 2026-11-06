@@ -15,7 +15,7 @@ use crate::ui::forms::search_input_with;
 use crate::ui::kit::eyebrow;
 use crate::ui::{self, Btn, BtnState, font, icons as i, iconbtn, tnum, with_lh};
 
-use super::adapters::{self, Host};
+use crate::ui::track_select::{self, BarPlace};
 use super::{exact, line_count};
 use super::logic::{self, AlbumCredit, AlbumFact, FactKey};
 
@@ -302,7 +302,9 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, mut s: Sleeve) -> El {
     let search = &app.pages.library.detail.search;
     let search_w = if phone { None } else { Some(280.0f32.min(if stacked { content_w } else { content_w - 280.0 - 49.0 })) };
     let field = search_input_with(t, "sleeve-search", search, "Search this album", search_w, |f| {
-        f.on_edit(|app: &mut App| &mut app.pages.library.detail.search).on_input_key(clear_on_escape)
+        f.on_edit(|app: &mut App| &mut app.pages.library.detail.search)
+            .on_input_change(|app: &mut App, _| super::refilter(app))
+            .on_input_key(clear_on_escape)
     });
     let mut tools = row().w_full().gap(8.0).items_center().flex_wrap().child(if phone { field.grow(1.0).min_w(200.0) } else { field });
     if !search.text.trim().is_empty() {
@@ -311,10 +313,13 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, mut s: Sleeve) -> El {
         );
     }
     tools = tools.child(el().grow(1.0));
-    let (controls, _) = adapters::selection_controls(app, t, Host::AlbumTools, s.album.is_some());
-    for c in controls {
-        tools = tools.child(c);
-    }
+    // `album-track-selection`: the list's selection controls, portaled here.
+    let list_key = super::album::TRACKS_LIST;
+    tools = tools.child(if s.album.is_some() {
+        track_select::selection_bar(app, t, list_key, super::detail_rows, BarPlace::Attached)
+    } else {
+        track_select::selection_bar_placeholder(t, list_key, BarPlace::Attached)
+    });
     let mut list = col().key("sleeve-list").gap(8.0).min_w(0.0).child(tools);
     for c in std::mem::take(&mut s.list) {
         list = list.child(c);
@@ -351,6 +356,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, mut s: Sleeve) -> El {
 pub fn clear_on_escape(app: &mut App, ev: &rune::KeyEvent, tx: &mut rune::Tx) -> bool {
     if matches!(ev.key, rune::Key::Escape) {
         app.pages.library.detail.search.replace_text("");
+        super::refilter(app);
         tx.blur();
         return true;
     }

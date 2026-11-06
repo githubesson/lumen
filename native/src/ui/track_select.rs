@@ -265,11 +265,13 @@ pub fn checkbox(t: &Theme, key: &str, checked: bool, indeterminate: bool, label:
     b
 }
 
-/// How [`selection_bar`] sits: above the table, or inside a page's
-/// `.toolbar-group` (`track-selectbar-attached`).
+/// How [`selection_bar`] sits: above the table, portaled into a page's host
+/// (`track-selectbar-attached`, e.g. the album sleeve's tool row), or into a
+/// `.toolbar-group` (Library's toolbar).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BarPlace {
     Inline,
+    Attached,
     Group,
 }
 
@@ -295,15 +297,20 @@ pub fn selection_bar(app: &App, t: &Theme, key: &str, source: Source, place: Bar
     let mut bar = row().key(format!("{key}-selectbar")).items_center();
     bar = match place {
         BarPlace::Inline => bar.w_full().min_h(38.0).gap(8.0).pb(8.0),
+        BarPlace::Attached => bar.min_h(30.0).gap(6.0),
         BarPlace::Group => bar.min_h(26.0).gap(2.0),
     };
 
-    // `.track-selectbar-status`: hidden in the group until selecting.
-    if !group || s.mode {
+    // `.track-selectbar-status`: hidden in a host until selecting.
+    if place == BarPlace::Inline || s.mode {
         let style = if group { font(14.0, 500.0) } else { tnum(font(12.0, 400.0)) };
         let ink = if group { t.c.foreground } else { t.c.muted_foreground };
         let mut status = row().key(format!("{key}-selectstatus")).gap(10.0).items_center().min_w(0.0);
-        status = if group { status.px(6.0) } else { status.grow(1.0) };
+        status = match place {
+            BarPlace::Inline => status.grow(1.0),
+            BarPlace::Attached => status.max_w(220.0).clip_rounded(0.0),
+            BarPlace::Group => status.px(6.0),
+        };
         status = status.child(text(status_text).font(style).color(ink));
         if let Some(n) = &s.notice {
             status = status.child(line(n.clone(), tnum(font(12.0, 400.0)), t.c.muted_foreground));
@@ -348,9 +355,15 @@ pub fn selection_bar(app: &App, t: &Theme, key: &str, source: Source, place: Bar
     bar
 }
 
-/// `TrackSelectionToolbarPlaceholder`: a disabled Select while the list loads.
-pub fn selection_bar_placeholder(t: &Theme, key: &str) -> El {
-    row().key(format!("{key}-selectbar")).min_h(26.0).items_center().child(bar_btn(t, &format!("{key}-select"), "Select", Some(&i::CHECK), true, true))
+/// `TrackSelectionToolbarPlaceholder`: a disabled Select in the host while
+/// the list loads.
+pub fn selection_bar_placeholder(t: &Theme, key: &str, place: BarPlace) -> El {
+    let group = place == BarPlace::Group;
+    row()
+        .key(format!("{key}-selectbar"))
+        .min_h(if group { 26.0 } else { 30.0 })
+        .items_center()
+        .child(bar_btn(t, &format!("{key}-select"), "Select", Some(&i::CHECK), true, group))
 }
 
 /// `.track-selectbar .btn` (30 px) or, in a toolbar group, its 26 px

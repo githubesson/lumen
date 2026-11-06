@@ -77,7 +77,7 @@ pub fn card(app: &App, t: &Theme, c: Card, width: f32, play: Option<El>) -> El {
     }
     let mut texts = col().w_full().min_w(0.0).child(title).child(sub);
     if let Some(b) = c.badge {
-        texts = texts.child(row().mt(6.0).child(super::adapters::badge(t, b)));
+        texts = texts.child(row().mt(6.0).child(crate::ui::track_row::badge(t, b)));
     }
     col()
         .key(c.key)
@@ -225,6 +225,7 @@ pub fn track_card(app: &App, t: &Theme, key: &str, tr: &TrackListItem, queue: &[
     .focusable(false)
     .role("group")
     .on_secondary_press(move |app: &mut App, at: rune::PointerPress, _tx: &mut rune::Tx| {
-        super::adapters::open_track_menu(app, &menu_track, &menu_queue, [at.x, at.y])
+        let ctx = crate::overlays::track_menu::MenuContext::bind(&menu_track, menu_queue.clone());
+        crate::overlays::track_menu::open(app, menu_track.clone(), [at.x, at.y], ctx)
     })
 }

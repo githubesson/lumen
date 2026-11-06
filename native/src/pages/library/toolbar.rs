@@ -12,7 +12,9 @@ use crate::ui::forms::{SelectOption, SelectVariant, search_input_with, select};
 use crate::ui::kit::{segmented, toolbar_group, toolbar_sep};
 use crate::ui::{font, ico, icons as i};
 
-use super::adapters::{self, Host};
+use crate::ui::track_select::{self, BarPlace};
+
+use super::browse::{TRACKS_LIST, tracks_source};
 use super::requests::{SEARCH_DEBOUNCE_MS, SEARCH_TYPE_OPTIONS, SearchType};
 use super::{Display, Sort, View};
 
@@ -77,11 +79,16 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, view: View, query: &str, sea
         let mut parts: Vec<El> = Vec::new();
         let mut selecting = false;
         if list {
+            // `TrackSelectionToolbar` portaled into the group, or its
+            // disabled placeholder while the list loads.
             let ready = s.tracks.items.as_ref().is_some_and(|i| !i.is_empty());
-            let (controls, on) = adapters::selection_controls(app, t, Host::LibraryToolbar, ready);
-            selecting = on;
-            parts.extend(controls);
-            if !on {
+            selecting = ready && app.widgets.lists.is_selecting(TRACKS_LIST);
+            parts.push(if ready {
+                track_select::selection_bar(app, t, TRACKS_LIST, tracks_source, BarPlace::Group)
+            } else {
+                track_select::selection_bar_placeholder(t, TRACKS_LIST, BarPlace::Group)
+            });
+            if !selecting {
                 parts.push(toolbar_sep(t));
             }
         }

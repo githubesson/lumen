@@ -12,7 +12,8 @@ use crate::theme::Theme;
 use crate::ui::kit::{empty_state, error_banner, loading_state};
 use crate::ui::{Btn, font};
 
-use super::adapters::{self, TableOptions};
+use crate::ui::track_list::TrackList;
+
 use super::browse::refreshable;
 use super::cards;
 use super::logic::merge_search_warnings;
@@ -34,6 +35,15 @@ fn on_page(app: &mut App, page: &PageResult<SearchItem>, reset: bool) {
     let key = s.search.key.clone();
     let previous = if reset || s.search_warnings.0 != key { Vec::new() } else { std::mem::take(&mut s.search_warnings.1) };
     s.search_warnings = (key, merge_search_warnings(&previous, &page.warnings));
+    s.search_tracks = s.search.items.iter().flatten().filter_map(|i| if let SearchItem::Track(t) = i { Some(t.clone()) } else { None }).collect();
+}
+
+/// The track list's key.
+pub const TRACKS_LIST: &str = "search-tracks";
+
+/// The results' songs (the list's rows and its queue).
+fn tracks_source(app: &App) -> &[TrackListItem] {
+    &app.pages.library.search_tracks
 }
 
 /// Start the search for `q` (kept up while the next query loads).
@@ -55,7 +65,9 @@ fn heading(t: &Theme, s: &str) -> El {
     text(s.to_string()).font(font(14.0, 400.0)).color(t.c.foreground)
 }
 
-pub fn view(app: &App, t: &Theme, query: &str, ty: SearchType, width: f32) -> El {
+/// The results under the browse page's `head`: the whole page, whose songs
+/// are a virtualised track list when there are any.
+pub fn view(app: &App, t: &Theme, head: El, query: &str, ty: SearchType, width: f32) -> El {
     let s = &app.pages.library;
     let p = &s.search;
     let key = search_key(query, ty);
@@ -79,8 +91,7 @@ pub fn view(app: &App, t: &Theme, query: &str, ty: SearchType, width: f32) -> El
     } else if items.is_empty() && p.error.is_none() && warning.is_none() {
         v = v.child(empty_state(t, None, "No matching results.", Some("Try another search or type."), None));
     }
-    let tracks: Vec<TrackListItem> =
-        items.iter().filter_map(|i| if let SearchItem::Track(t) = i { Some(t.clone()) } else { None }).collect();
+    let has_tracks = items.iter().any(|i| matches!(i, SearchItem::Track(_)));
     let artist_cards: Vec<Box<dyn FnOnce(f32) -> El + '_>> = items
         .iter()
         .enumerate()
@@ -108,12 +119,18 @@ pub fn view(app: &App, t: &Theme, query: &str, ty: SearchType, width: f32) -> El
     if !album_cards.is_empty() {
         v = v.child(col().w_full().label("Albums").child(heading(t, "Albums")).child(cards::grid(t, "search-albums", width, album_cards)));
     }
-    if !tracks.is_empty() {
-        let table = adapters::track_table(app, t, "search-table", &tracks, &tracks, &TableOptions { width, ..TableOptions::default() }, None);
-        v = v.child(col().w_full().label("Songs").child(heading(t, "Songs")).child(table));
+    let stale = p.stale() && !searching;
+    if has_tracks {
+        // `<section aria-label="Songs">`: its heading ends the list's head.
+        v = v.child(crate::ui::exact(heading(t, "Songs"), 20.3).label("Songs"));
+        let mut tail = col().key("lib-search-tail").w_full();
+        for e in paging::sentinel(t, "lib-search", p, slot) {
+            tail = tail.child(e);
+        }
+        return TrackList::new(TRACKS_LIST, tracks_source).stale(stale).head_gap(0.0).page(app, t, head.child(v), Some(tail));
     }
     for e in paging::sentinel(t, "lib-search", p, slot) {
         v = v.child(e);
     }
-    v
+    super::browse::padded(t, head.child(v))
 }

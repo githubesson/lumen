@@ -13,7 +13,7 @@ use crate::ui::forms::{SelectOption, SelectVariant, select};
 use crate::ui::kit::{empty_state, error_banner};
 use crate::ui::{Btn, BtnState, font, ico, icons as i, iconbtn};
 
-use super::adapters::{self, Host, TableOptions};
+use crate::ui::track_list::TrackList;
 use super::logic::{self, AlbumDownloadState, ArtistRelease, CreditFields, EntityTarget};
 use super::requests::{self, error_message};
 use super::sleeve::{self, Sleeve, SleeveAlbum};
@@ -37,6 +37,7 @@ pub fn enter_library(app: &mut App, id: &str) {
             s.detail.album = Some(a);
             s.detail.tracks = Some(t);
         }
+        super::refilter(app);
     }
     load_library(app, false);
 }
@@ -61,6 +62,7 @@ fn load_library(app: &mut App, quiet: bool) {
                     s.detail.album = Some(album);
                     s.detail.tracks = Some(tracks);
                     s.detail.error = None;
+                    super::refilter(app);
                     if queued > 0 {
                         arm_refresh(app);
                     }
@@ -81,6 +83,7 @@ pub fn enter_tidal(app: &mut App, id: &str, artist: Option<&str>) {
     if super::mount(app, format!("tidal-album:{id}"), id) {
         let s = &mut app.pages.library;
         s.detail.tidal_album = s.cache.tidal_albums.get(id).cloned();
+        super::refilter(app);
     }
     load_tidal(app, false);
     let artist = artist.map(str::to_string).or_else(|| app.pages.library.detail.tidal_album.as_ref().and_then(|a| a.artist_id.clone()));
@@ -110,6 +113,7 @@ fn load_tidal(app: &mut App, quiet: bool) {
                     if quiet {
                         s.detail.error = None;
                     }
+                    super::refilter(app);
                     if queued > 0 {
                         arm_refresh(app);
                     }
@@ -124,8 +128,9 @@ fn load_tidal(app: &mut App, quiet: bool) {
                     if e.status == 404 {
                         s.cache.tidal_albums.remove(&s.detail.id);
                         s.detail.tidal_album = None;
+                        super::refilter(app);
                     }
-                    s.detail.error = Some(error_message(&e, "Failed to load TIDAL album."));
+                    app.pages.library.detail.error = Some(error_message(&e, "Failed to load TIDAL album."));
                 }
             }
         },
@@ -186,38 +191,23 @@ fn refresh(app: &mut App) {
 
 // ---------------------------------------------------------------- views
 
-/// The search's matches (`useDetailTrackSearch`).
-pub fn filtered<'a>(app: &App, tracks: &'a [TrackListItem]) -> (Vec<TrackListItem>, Option<String>) {
-    let q = app.pages.library.detail.search.text.clone();
-    let needle = q.trim().to_lowercase();
-    if needle.is_empty() {
-        return (tracks.to_vec(), None);
-    }
-    (tracks.iter().filter(|t| logic::track_search_key(t).contains(&needle)).cloned().collect(), Some(q))
-}
+/// The album's track list's key (its selection).
+pub const TRACKS_LIST: &str = "album-tracks";
 
 /// `AlbumTrackList`: no row covers or albums, and rows crediting only the
-/// album's artists leave their artist line out.
-fn album_tracks(
-    app: &App,
-    t: &Theme,
-    cx: &mut Cx<App>,
-    rows: &[TrackListItem],
-    queue: &[TrackListItem],
-    credits: Vec<String>,
-    query: Option<&str>,
-) -> El {
-    let opts = TableOptions {
-        show_cover: false,
-        show_album: false,
-        omit_artists: credits,
-        host: Some(Host::AlbumTools),
-        min_width: 0.0,
-        width: sleeve::list_width(t, cx),
-        ..TableOptions::default()
-    };
-    let empty = query.map(|q| empty_state(t, None, "No matches.", Some(&format!("Nothing in this album matches \"{q}\".")), None));
-    adapters::track_table(app, t, "album-table", rows, queue, &opts, empty)
+/// album's artists leave their artist line out. The rows are the search's
+/// matches; a row plays the whole album.
+fn album_tracks(app: &App, t: &Theme, credits: Vec<String>) -> El {
+    let mut list = TrackList::new(TRACKS_LIST, super::detail_rows)
+        .queue(super::detail_tracks)
+        .no_cover()
+        .no_album()
+        .omit_artists(credits)
+        .bar_elsewhere();
+    if let Some(q) = super::detail_query(app) {
+        list = list.empty(empty_state(t, None, "No matches.", Some(&format!("Nothing in this album matches \"{q}\".")), None));
+    }
+    list.build(app, t)
 }
 
 /// A failed first load: the error, in the view. The Library crumb is the way back.
@@ -254,7 +244,7 @@ pub fn view_library(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let admin = is_admin(app);
     let on_edit: Option<fn(&mut App)> = admin.then_some(|app: &mut App| {
         if let Some(a) = app.pages.library.detail.album.clone() {
-            adapters::edit_album(app, &a);
+            crate::overlays::edit::open_album(app, &a);
         }
     });
     let (Some(album), Some(tracks)) = (&d.album, &d.tracks) else {
@@ -272,13 +262,12 @@ pub fn view_library(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     });
     let nonce = (d.cover_nonce > 0).then(|| d.cover_nonce.to_string());
     let cover = crate::api::media::album_art(&album.id, Some(album.has_cover), None, None, None, nonce.as_deref());
-    let (rows, query) = filtered(app, tracks);
     let mut list = Vec::new();
     if let Some(e) = d.error.as_ref().or(d.action_error.as_ref()) {
         list.push(error_banner(t, e));
     }
     let names: Vec<String> = credits.iter().map(|c| c.name.clone()).collect();
-    list.push(album_tracks(app, t, cx, &rows, tracks, names, query.as_deref()));
+    list.push(album_tracks(app, t, names));
     let actions = match album.tidal_album_id.as_deref().filter(|s| !s.is_empty()) {
         Some(tidal) if admin => download_control(app, t, tidal, tracks, album.queued_count.unwrap_or(0)),
         _ => Vec::new(),
@@ -304,7 +293,7 @@ pub fn view_library(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
             loading_facts: LOADING_FACTS,
             details_link: None,
             on_edit,
-            matches: (rows.len(), tracks.len()),
+            matches: (d.rows.len(), tracks.len()),
             list,
         },
     )
@@ -386,13 +375,12 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, id: &str, artist_param
         ..Default::default()
     });
     let cover = crate::api::media::album_art(&album.id, None, album.cover_url.as_deref(), Some(crate::api::TrackSource::Tidal), None, None);
-    let (rows, query) = filtered(app, tracks);
     let mut list = Vec::new();
     if let Some(e) = d.error.as_ref().or(d.action_error.as_ref()) {
         list.push(error_banner(t, e));
     }
     let names: Vec<String> = credits.iter().map(|c| c.name.clone()).collect();
-    list.push(album_tracks(app, t, cx, &rows, tracks, names, query.as_deref()));
+    list.push(album_tracks(app, t, names));
     sleeve::view(
         app,
         t,
@@ -414,7 +402,7 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, id: &str, artist_param
             loading_facts: TIDAL_LOADING_FACTS,
             details_link,
             on_edit: None,
-            matches: (rows.len(), tracks.len()),
+            matches: (d.rows.len(), tracks.len()),
             list,
         },
     )

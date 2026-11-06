@@ -269,6 +269,9 @@ pub struct RowSpec<'a> {
     pub cover: bool,
     pub album: bool,
     pub source_badge: bool,
+    /// In a `.table-headless`: rounded rows over transparent borders, and
+    /// 40 px covers in a 56 px column.
+    pub headless: bool,
     pub artist: bool,
     pub extra: Option<&'a crate::ui::track_list::Extra>,
 }
@@ -302,7 +305,7 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
         r = r.checked(selected);
     }
     r = if selected { r.fill(t.c.muted).hover_group() } else { r.hover(t.c.ghost_hover) };
-    r = css_border_bottom(r, 1.0, t.c.border);
+    r = if spec.headless { r.radius(t.radius_lg()) } else { css_border_bottom(r, 1.0, t.c.border) };
 
     // `.col-select`: collapsed to nothing until selection mode opens it.
     let check = {
@@ -347,14 +350,15 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
     // `.col-art`.
     if spec.cover {
         let url = cover_url(tr, 64);
+        let (col_w, art) = if spec.headless { (56.0, 40.0) } else { (44.0, 32.0) };
         r = r.child(
-            row().w(44.0).h_full().pl(8.0).items_center().child(crate::ui::cover_art(
+            row().w(col_w).h_full().pl(8.0).items_center().child(crate::ui::cover_art(
                 t,
                 &app.images,
                 Some(&url),
                 &art_label(tr),
-                32.0,
-                32.0,
+                art,
+                art,
                 t.radius_md(),
             )),
         );

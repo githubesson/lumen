@@ -53,6 +53,14 @@ pub struct MenuContext {
     pub selection: Option<MenuSelection>,
 }
 
+impl MenuContext {
+    /// `bind(track, { queue })`: Play from `queue`, Song info, and Share
+    /// when the track can be shared (the hook's default wiring).
+    pub fn bind(track: &TrackListItem, queue: Vec<TrackListItem>) -> MenuContext {
+        MenuContext { queue, info: true, share: crate::ui::track_row::can_share(track), ..MenuContext::default() }
+    }
+}
+
 /// One open menu.
 pub struct Menu {
     track: TrackListItem,

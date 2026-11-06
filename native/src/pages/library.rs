@@ -11,10 +11,8 @@
 //! - [`sleeve`] + [`album`]: `AlbumSleeve`, `LibraryDetail`, the version
 //!   picker and `AlbumDownloadControl`
 //! - [`artist`]: `ArtistDetail`
-//! - [`adapters`]: stand-ins for the shared `TrackList`, `Section`, …
 //! - [`logic`] + [`requests`]: core helpers and API calls, until the merge
 
-pub mod adapters;
 pub mod album;
 pub mod artist;
 pub mod browse;
@@ -142,6 +140,9 @@ pub struct Detail {
     pub album: Option<Album>,
     pub artist: Option<Artist>,
     pub tracks: Option<Vec<TrackListItem>>,
+    /// The page's tracks matching its search (`useDetailTrackSearch`), the
+    /// rows its track list shows: kept by [`refilter`].
+    pub rows: Vec<TrackListItem>,
     pub tidal_album: Option<TidalAlbum>,
     pub tidal_artist: Option<TidalArtist>,
     pub not_found: bool,
@@ -183,6 +184,8 @@ pub struct State {
     pub albums: Paged<Album>,
     pub artists: Paged<Artist>,
     pub search: Paged<SearchItem>,
+    /// The search results' songs, the rows of their track list.
+    pub search_tracks: Vec<TrackListItem>,
     /// The search the warnings came from (`type\0query`), and them.
     pub search_warnings: (String, Vec<String>),
     /// The search box's draft (`LibrarySearchInput`).
@@ -190,8 +193,6 @@ pub struct State {
     pub query_gen: u64,
     /// The URL's query the draft last took.
     pub query_value: String,
-    /// TODO(components-merge): the shared track list keeps its own selection mode.
-    pub selecting: Option<adapters::Host>,
     pub detail: Detail,
     pub cache: Caches,
 }
@@ -205,11 +206,11 @@ impl Default for State {
             albums: Paged::new(60),
             artists: Paged::new(60),
             search: Paged::new(25),
+            search_tracks: Vec::new(),
             search_warnings: Default::default(),
             query_edit: TextEdit::new(""),
             query_gen: 0,
             query_value: String::new(),
-            selecting: None,
             detail: Detail::default(),
             cache: Caches::default(),
         }
@@ -430,7 +431,8 @@ pub fn set_sort(app: &mut App, sort: Sort) {
 
 pub fn set_display(app: &mut App, d: Display) {
     app.pages.library.display = d;
-    app.pages.library.selecting = None;
+    // The table unmounts, and its selection with it.
+    crate::ui::track_select::clear(app, browse::TRACKS_LIST);
 }
 
 /// `openAlbum`: one album param at a time. A TIDAL album keeps the TIDAL
@@ -479,6 +481,42 @@ pub fn artist_link(app: &mut App, artist_id: &str) {
     app.navigate(next);
 }
 
+/// The open album's or artist's tracks (a TIDAL album's from its payload).
+pub fn detail_tracks(app: &App) -> &[TrackListItem] {
+    let d = &app.pages.library.detail;
+    match (&d.tracks, &d.tidal_album, &d.tidal_artist) {
+        (Some(t), _, _) => t,
+        (None, Some(a), _) => a.tracks(),
+        (None, None, Some(a)) => a.tracks(),
+        _ => &[],
+    }
+}
+
+/// The rows the page's search leaves ([`Detail::rows`]).
+pub fn detail_rows(app: &App) -> &[TrackListItem] {
+    &app.pages.library.detail.rows
+}
+
+/// The page's search query, if it has one.
+pub fn detail_query(app: &App) -> Option<String> {
+    let q = &app.pages.library.detail.search.text;
+    (!q.trim().is_empty()).then(|| q.clone())
+}
+
+/// Recompute [`Detail::rows`]: after the tracks load and on each edit of the search.
+pub fn refilter(app: &mut App) {
+    let needle = app.pages.library.detail.search.text.trim().to_lowercase();
+    let rows: Vec<TrackListItem> = detail_tracks(app)
+        .iter()
+        .filter(|t| needle.is_empty() || logic::track_search_key(t).contains(&needle))
+        .cloned()
+        .collect();
+    app.pages.library.detail.rows = rows;
+}
+
+/// The drill-down pages' track lists (their selections reset with the page).
+pub const DETAIL_LISTS: [&str; 3] = [album::TRACKS_LIST, artist::TRACKS_LIST, artist::POPULAR_LIST];
+
 /// Mount a drill-down page: a new key resets its state, a revisit of the
 /// same one keeps it (and reloads behind it).
 fn mount(app: &mut App, key: String, id: &str) -> bool {
@@ -489,7 +527,10 @@ fn mount(app: &mut App, key: String, id: &str) -> bool {
     let refresh_gen = d.refresh_gen + 1;
     let seq = d.seq + 1;
     *d = Detail { key, id: id.to_string(), refresh_gen, seq, ..Detail::default() };
-    app.pages.library.selecting = None;
+    // A new page is a new table: nothing selected.
+    for list in DETAIL_LISTS {
+        crate::ui::track_select::clear(app, list);
+    }
     true
 }
 
@@ -504,7 +545,7 @@ pub mod scenes {
     }
 
     pub fn select(app: &mut App) {
-        app.pages.library.selecting = Some(adapters::Host::LibraryToolbar);
+        crate::ui::track_select::toggle_mode(app, browse::TRACKS_LIST);
     }
 
     pub fn sort_open(app: &mut App) {

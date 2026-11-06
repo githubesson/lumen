@@ -20,16 +20,54 @@ use crate::ui::{Btn, exact, exact_text, font, ico, icons as i, tnum, with_lh};
 /// `Section`: the eyebrow (`sub`) over the 16 px title, an optional action
 /// at the right (a "view all" link), then the section's content.
 pub fn section(t: &Theme, key: &str, sub: Option<&str>, title: &str, action: Option<El>, body: El) -> El {
-    let mut head_text = col();
-    if let Some(s) = sub {
-        head_text = head_text.child(text(s).font(font(12.0, 400.0)).color(t.c.muted_foreground));
+    section_with(t, key, sub, title, action, body, SectionLook::default())
+}
+
+/// How a [`section_with`]'s head looks: `home.css`'s `.section-head` and
+/// `.section-title`, or a page's override of them.
+#[derive(Clone, Copy, Debug)]
+pub struct SectionLook {
+    /// `.section-title`'s type.
+    pub title: rune::TextStyle,
+    /// `.section-head`'s `margin-bottom`.
+    pub gap: f32,
+    /// `align-items: center` (else `baseline`, the title's last line on the action's).
+    pub center: bool,
+}
+
+impl Default for SectionLook {
+    fn default() -> Self {
+        SectionLook { title: font(16.0, 600.0).tracking(-0.16), gap: 12.0, center: false }
     }
-    head_text = head_text.child(text(title).font(font(16.0, 600.0).tracking(-0.16)).color(t.c.foreground));
-    let mut head = row().w_full().gap(16.0).mb(12.0).items_end().justify_between().child(head_text);
+}
+
+impl SectionLook {
+    /// `artist.css`'s `.artist-section`: an 18 px title, centred, 10 px above the content.
+    pub fn artist() -> Self {
+        SectionLook { title: font(18.0, 600.0).tracking(-0.27), gap: 10.0, center: true }
+    }
+}
+
+/// [`section`] with its head styled by `look`.
+pub fn section_with(t: &Theme, key: &str, sub: Option<&str>, title: &str, action: Option<El>, body: El, look: SectionLook) -> El {
+    col().key(key).w_full().child(section_head(t, sub, title, action, look).mb(look.gap)).child(body)
+}
+
+/// `.section-head` alone (without its `margin-bottom`), for a section whose
+/// content is a virtualised [`TrackList::page`](crate::ui::track_list::TrackList::page).
+pub fn section_head(t: &Theme, sub: Option<&str>, title: &str, action: Option<El>, look: SectionLook) -> El {
+    let mut head_text = col().min_w(0.0);
+    if let Some(s) = sub {
+        head_text = head_text.child(exact(text(s).font(font(12.0, 400.0)).color(t.c.muted_foreground), 17.4));
+    }
+    let lh = look.title.line_height;
+    head_text = head_text.child(exact(text(title).font(look.title).color(t.c.foreground), lh));
+    let mut head = row().w_full().gap(16.0).justify_between().child(head_text);
+    head = if look.center { head.items_center() } else { head.items_end() };
     if let Some(a) = action {
         head = head.child(a);
     }
-    col().key(key).w_full().child(head).child(body)
+    head
 }
 
 /// `.section-link`: a muted 14 px link that lights up on hover.
@@ -166,9 +204,10 @@ pub fn list_meta_text(loaded: Option<u64>, total: Option<u64>, unit: &str) -> St
     }
 }
 
-/// `ListMeta`: the mono count under a library toolbar.
+/// `ListMeta`: the mono count under a library toolbar, 14 px below it (its
+/// 17.4 px line box held, so what follows sits where the browser puts it).
 pub fn list_meta(t: &Theme, loaded: Option<u64>, total: Option<u64>, unit: &str) -> El {
-    text(list_meta_text(loaded, total, unit)).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground).mt(14.0)
+    exact(text(list_meta_text(loaded, total, unit)).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground), 17.4).mt(14.0)
 }
 
 /// `toLocaleString()` in en-US: thousands grouped with commas.
