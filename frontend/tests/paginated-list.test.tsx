@@ -44,3 +44,59 @@ it("prefetches within the scroll container and retains loaded pages on backgroun
   expect(fetcher.mock.calls.map(([request]) => [request.offset, request.limit])).toEqual([[0, 2], [2, 2], [0, 4]]);
   scroll.remove();
 });
+
+it("stops when an offset page is empty even if its total is stale", async () => {
+  let observe!: IntersectionObserverCallback;
+  vi.stubGlobal("IntersectionObserver", class {
+    constructor(callback: IntersectionObserverCallback) { observe = callback; }
+    observe() {}
+    disconnect() {}
+  });
+  const sentinel = document.createElement("div");
+  document.body.append(sentinel);
+  const fetcher = vi.fn(async ({ offset }: { offset: number; limit: number }) =>
+    offset === 0
+      ? { items: [{ id: "0" }, { id: "1" }], total: 100 }
+      : { items: [], total: 100 },
+  );
+  const { result } = renderHook(() => {
+    const list = usePaginatedList(fetcher, "", { pageSize: 2 });
+    useLayoutEffect(() => { list.sentinelRef.current = sentinel; }, [list.sentinelRef]);
+    return list;
+  });
+  await act(async () => {});
+  await act(async () => { observe([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver); });
+  expect(result.current.hasMore).toBe(false);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  sentinel.remove();
+});
+
+it("does not re-page while the sentinel stays visible after appending a page", async () => {
+  let observe!: IntersectionObserverCallback;
+  vi.stubGlobal("IntersectionObserver", class {
+    constructor(callback: IntersectionObserverCallback) { observe = callback; }
+    observe() {}
+    disconnect() {}
+  });
+  const sentinel = document.createElement("div");
+  document.body.append(sentinel);
+  const all = Array.from({ length: 8 }, (_, id) => ({ id: String(id) }));
+  const fetcher = vi.fn(async ({ offset, limit }: { offset: number; limit: number }) => ({
+    items: all.slice(offset, offset + limit), total: all.length,
+  }));
+  const { result } = renderHook(() => {
+    const list = usePaginatedList(fetcher, "", { pageSize: 2 });
+    useLayoutEffect(() => { list.sentinelRef.current = sentinel; }, [list.sentinelRef]);
+    return list;
+  });
+  await act(async () => {});
+  await act(async () => { observe([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver); });
+  expect(result.current.items).toHaveLength(4);
+  await act(async () => { observe([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver); });
+  expect(result.current.items).toHaveLength(4);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  await act(async () => { observe([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver); });
+  await act(async () => { observe([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver); });
+  expect(result.current.items).toHaveLength(6);
+  sentinel.remove();
+});

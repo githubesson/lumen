@@ -84,7 +84,7 @@ pub fn playing_bars(t: &Theme) -> El {
     // `barDance`: scaleY .3 → .9 → .3 over 1 s, ease-in-out each half; each
     // bar starts .2 s after the one before. A bar slides inside a clip, its
     // hidden part standing for the scale. The slide is a live offset that
-    // [`poll_bars`] steps at 30 fps: a Rune loop would redraw the whole
+    // [`poll_bars`] steps at 20 fps: a Rune loop would redraw the whole
     // window at the display's refresh rate for as long as music plays.
     BARS_SHOWN.with(|b| b.set(true));
     let mut bars = row().size(14.0, 14.0).gap(2.0).items_end().label("now playing");
@@ -116,7 +116,7 @@ pub fn begin_bars() {
     BARS_SHOWN.with(|b| b.set(false));
 }
 
-/// Step the playing bars (30 fps) while some show and music plays.
+/// Step the playing bars (20 fps) while some show and music plays.
 pub fn poll_bars(app: &App, clock: f64, tx: &mut rune::Tx) {
     if !BARS_SHOWN.with(|b| b.get()) || !app.player.playing {
         return;
@@ -128,7 +128,9 @@ pub fn poll_bars(app: &App, clock: f64, tx: &mut rune::Tx) {
         let scale = 0.3 + 0.6 * ease.eval(half);
         bar_live(n).set([0.0, 14.0 * (1.0 - scale)]);
     }
-    tx.wake_after(std::time::Duration::from_millis(33));
+    // The bars are only 14 px tall, so 20 fps is visually smooth while
+    // avoiding a 30/60 fps full-window composite on every playback tick.
+    tx.wake_after(std::time::Duration::from_millis(50));
 }
 
 /// `TrackIndexCell`'s `.play-cell`: the zero-padded number (or the bars

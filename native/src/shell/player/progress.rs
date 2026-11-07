@@ -21,7 +21,7 @@ use crate::ui::{font, tnum};
 /// The clock's glide between its 0.25 s steps, in seconds.
 const GLIDE: f64 = 0.25;
 /// How far the bar moves between two redraws of a glide, in px.
-const GLIDE_STEP_PX: f32 = 0.25;
+const GLIDE_STEP_PX: f32 = 0.5;
 
 /// A linear glide of the shown value from one published step to the next.
 #[derive(Clone, Copy, Debug)]
@@ -129,7 +129,11 @@ impl Progress {
         let speed = (g.to - g.from).abs() * self.size[0] / GLIDE as f32;
         let wait = if speed > 0.0 { (GLIDE_STEP_PX / speed) as f64 } else { GLIDE };
         let left = (1.0 - t as f64) * GLIDE;
-        tx.wake_after(Duration::from_secs_f64(wait.clamp(1.0 / 120.0, left.max(1.0 / 120.0))));
+        // A 60 Hz cap is enough for a 250 ms seek glide. During normal
+        // playback the larger pixel step reduces the cadence to only a few
+        // updates per second on long tracks, avoiding needless full-window
+        // composites while preserving a smooth seek.
+        tx.wake_after(Duration::from_secs_f64(wait.clamp(1.0 / 60.0, left.max(1.0 / 60.0))));
     }
 }
 

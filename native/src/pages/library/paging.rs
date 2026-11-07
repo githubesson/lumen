@@ -134,7 +134,11 @@ fn run<T: Clone + Send + 'static>(app: &mut App, slot: Slot<T>, offset: usize, r
                     let loaded = offset + page.items.len();
                     let more = match &page.next_offsets {
                         Some(o) => !o.is_empty(),
-                        None => (loaded as u64) < page.total,
+                        // An empty offset page cannot make progress. Treat it
+                        // as exhausted even if a stale total claims rows are
+                        // still available, otherwise a visible sentinel will
+                        // request the same empty page forever.
+                        None => !page.items.is_empty() && (loaded as u64) < page.total,
                     };
                     p.has_more = more;
                     p.total = if page.next_offsets.is_some() && more { None } else { Some(page.total) };
@@ -150,14 +154,8 @@ fn run<T: Clone + Send + 'static>(app: &mut App, slot: Slot<T>, offset: usize, r
                         p.loaded_at = Some(std::time::Instant::now());
                     }
                     let on_page = p.on_page;
-                    let near = p.near_end;
                     if let Some(f) = on_page {
                         f(app, &page, reset);
-                    }
-                    // The sentinel only reports changes: a page too short to
-                    // push it out of reach asks for the next one itself.
-                    if near && more {
-                        load_more(app, slot);
                     }
                 }
                 Err(e) => {

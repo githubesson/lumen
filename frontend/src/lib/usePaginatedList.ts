@@ -79,11 +79,17 @@ export function usePaginatedList<T>(
   const fetcherRef = useRef(fetcher);
   const requestKeyRef = useRef(requestKey);
   const pageCacheKeyRef = useRef(pageCacheKey);
+  // IntersectionObserver can report the same visible sentinel again after a
+  // reset. A reset starts a new pagination sequence, so its first visible
+  // callback must be allowed through.
+  const sentinelVisibleRef = useRef(false);
   // For the failure path, which runs after the render that last set items.
   const itemsRef = useRef(items);
+  const hasMoreRef = useRef(hasMore);
   useEffect(() => {
     itemsRef.current = items;
-  }, [items]);
+    hasMoreRef.current = hasMore;
+  }, [items, hasMore]);
   const [loadedKey, setLoadedKey] = useState<string | null>(() =>
     readCache(pageCacheKey) === undefined ? null : requestKey,
   );
@@ -103,6 +109,7 @@ export function usePaginatedList<T>(
       if (reset) {
         tokenRef.current += 1;
         activeRequestRef.current?.abort();
+        sentinelVisibleRef.current = false;
         setLoadingMore(false);
         if (!preserve) setHasMore(false);
         if (!preserve) nextOffsets.current = undefined;
@@ -144,7 +151,13 @@ export function usePaginatedList<T>(
         }
         if (controller.signal.aborted || token !== tokenRef.current) return;
         nextOffsets.current = page.nextOffsets;
-        const more = nextPageParam(page, offset + collected.length) !== undefined;
+        const more =
+          // An empty offset page cannot advance the list. Some backends can
+          // return a stale total during a concurrent library update; keeping
+          // `hasMore` true there makes the visible sentinel fetch that same
+          // empty page forever.
+          (page.nextOffsets !== undefined || page.items.length > 0) &&
+          nextPageParam(page, offset + collected.length) !== undefined;
         setHasMore(more);
         const nextTotal = page.nextOffsets !== undefined && more ? null : page.total;
         setTotal(nextTotal);
@@ -233,16 +246,25 @@ export function usePaginatedList<T>(
     const root = findScrollParent(el);
     const obs = new IntersectionObserver(
       (entries) => {
-        if (!entries.some((e) => e.isIntersecting)) return;
-        if (loadingRef.current) return;
-        if (items === null || !hasMore) return;
-        void loadPage(items.length, false);
+        const visible = entries.some((e) => e.isIntersecting);
+        if (!visible) {
+          sentinelVisibleRef.current = false;
+          return;
+        }
+        const currentItems = itemsRef.current;
+        if (currentItems === null || !hasMoreRef.current) {
+          sentinelVisibleRef.current = false;
+          return;
+        }
+        if (sentinelVisibleRef.current || loadingRef.current) return;
+        sentinelVisibleRef.current = true;
+        void loadPage(currentItems.length, false);
       },
       { rootMargin, root },
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [loadPage, items, hasMore, rootMargin]);
+  }, [loadPage, rootMargin, hasMore]);
 
   const stale = items !== null && loadedKey !== requestKey;
   return { items, total, hasMore, loadingMore, error, stale, sentinelRef, reload: () => loadPage(0, true, true, true) };
