@@ -3,13 +3,10 @@
 //! player's poll. The view only runs again for a real change (a track,
 //! play/pause, a label growing a digit, a drag).
 //!
-//! The web moves the clock in 0.25 s steps and glides the fill over each
-//! step (`transition: clip-path 250ms linear`). Here the poll runs the same
-//! linear glide, but only as often as the bar visibly moves: a four-minute
-//! track creeps a fraction of a pixel per step, so the window redraws a few
-//! times a step instead of at the display's rate for as long as music plays.
-
-use std::time::Duration;
+//! The player samples the clock in 0.25 s steps. Rune's live bindings repaint
+//! the full window when they change, so the native bar publishes at the
+//! visible one-second clock cadence and snaps immediately for seeks, track
+//! changes, and play/pause.
 
 use rune::{El, Live, LiveText, Tx, el, text};
 
@@ -17,19 +14,6 @@ use crate::app::App;
 use crate::format::fmt_duration_sec;
 use crate::theme::Theme;
 use crate::ui::{font, tnum};
-
-/// The clock's glide between its 0.25 s steps, in seconds.
-const GLIDE: f64 = 0.25;
-/// How far the bar moves between two redraws of a glide, in px.
-const GLIDE_STEP_PX: f32 = 0.5;
-
-/// A linear glide of the shown value from one published step to the next.
-#[derive(Clone, Copy, Debug)]
-struct Glide {
-    from: f32,
-    to: f32,
-    start: f64,
-}
 
 /// The live values the seek bar and its times are bound to.
 #[derive(Clone)]
@@ -45,9 +29,15 @@ pub struct Progress {
     pub remaining: LiveText,
     /// The seek bar's laid-out size.
     size: [f32; 2],
-    /// The value the fill shows now, and the glide it is on.
+    /// The value the fill shows now.
     shown: f32,
-    glide: Option<Glide>,
+    /// The last clock state sent to the live bar. Playback is sampled at the
+    /// player cadence, but the window only needs a new composite once a whole
+    /// displayed second has passed (or a real state/seek change occurred).
+    last_track: Option<String>,
+    last_position: Option<f64>,
+    last_duration: Option<f64>,
+    last_playing: Option<bool>,
 }
 
 impl Default for Progress {
@@ -60,7 +50,10 @@ impl Default for Progress {
             remaining: LiveText::new("0:00"),
             size: [0.0; 2],
             shown: 0.0,
-            glide: None,
+            last_track: None,
+            last_position: None,
+            last_duration: None,
+            last_playing: None,
         }
     }
 }
@@ -107,45 +100,36 @@ impl Progress {
     /// Land the fill and thumb at `v` at once (a release after a drag, a
     /// resize).
     pub fn snap(&mut self, v: f32) {
-        self.glide = None;
         self.show(v);
-    }
-
-    /// Glide toward `v`, as of `now`; asks for the next redraw while the
-    /// glide runs.
-    fn glide_to(&mut self, v: f32, now: f64, tx: &mut Tx) {
-        if self.glide.map_or(self.shown, |g| g.to) != v {
-            self.glide = Some(Glide { from: self.shown, to: v, start: now });
-        }
-        let Some(g) = self.glide else { return };
-        let t = ((now - g.start) / GLIDE).clamp(0.0, 1.0) as f32;
-        self.show(g.from + (g.to - g.from) * t);
-        if t >= 1.0 {
-            self.glide = None;
-            return;
-        }
-        // Redraw when the fill has moved another `GLIDE_STEP_PX`: rarely for
-        // a long track's creep, at the display's rate for a seek's jump.
-        let speed = (g.to - g.from).abs() * self.size[0] / GLIDE as f32;
-        let wait = if speed > 0.0 { (GLIDE_STEP_PX / speed) as f64 } else { GLIDE };
-        let left = (1.0 - t as f64) * GLIDE;
-        // A 60 Hz cap is enough for a 250 ms seek glide. During normal
-        // playback the larger pixel step reduces the cadence to only a few
-        // updates per second on long tracks, avoiding needless full-window
-        // composites while preserving a smooth seek.
-        tx.wake_after(Duration::from_secs_f64(wait.clamp(1.0 / 60.0, left.max(1.0 / 60.0))));
     }
 }
 
 /// Every frame, after the player's poll: publish the clock. True when the
 /// view has to run again: a label changed its length (its box is sized from
 /// the text the view last saw).
-pub fn publish(app: &mut App, now: f64, tx: &mut Tx) -> bool {
+pub fn publish(app: &mut App, _now: f64, _tx: &mut Tx) -> bool {
     let (position, duration, v) = clock(app);
-    if app.ui.seek_drag.as_ref().is_none_or(|(k, _)| k != "seek") {
-        app.ui.player.progress.glide_to(v, now, tx);
+    let p = &mut app.ui.player.progress;
+    let track = app.player.current().map(|t| t.id.clone());
+    let state_changed = p.last_track != track
+        || p.last_duration != app.player.duration
+        || p.last_playing != Some(app.player.playing);
+    let position_changed = p.last_position.is_none_or(|last| {
+        !app.player.playing || position.floor() != last.floor() || (position - last).abs() >= 0.75
+    });
+    let clock_changed = state_changed || position_changed;
+    if clock_changed && app.ui.seek_drag.as_ref().is_none_or(|(k, _)| k != "seek") {
+        // Rune's live bindings composite the full window on every change. A
+        // direct snap at the visible clock cadence keeps the bar accurate
+        // while avoiding a second animation loop between player ticks.
+        p.snap(v);
     }
-    let p = &app.ui.player.progress;
+    if clock_changed {
+        p.last_track = track;
+        p.last_position = Some(position);
+        p.last_duration = app.player.duration;
+        p.last_playing = Some(app.player.playing);
+    }
     let mut relayout = false;
     for (live, s) in [&p.elapsed, &p.total, &p.remaining].into_iter().zip(labels(position, duration)) {
         if live.get().chars().count() != s.chars().count() {

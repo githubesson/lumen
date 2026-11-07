@@ -7,7 +7,7 @@
 
 
 use rune::{Color, Cursor, El, el, row, text};
-use rune_motion::{Beat, Easing, Sequence};
+use rune_motion::{Beat, Sequence};
 
 use crate::api::{TrackListItem, media};
 use crate::app::App;
@@ -79,60 +79,18 @@ pub fn art_label(t: &TrackListItem) -> String {
     t.album_title.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| t.title.clone())
 }
 
-/// `PlayingBars`: three 2 px bars dancing on a 14 px square.
+/// `PlayingBars`: three 2 px bars on a 14 px square.
 pub fn playing_bars(t: &Theme) -> El {
-    // `barDance`: scaleY .3 → .9 → .3 over 1 s, ease-in-out each half; each
-    // bar starts .2 s after the one before. A bar slides inside a clip, its
-    // hidden part standing for the scale. The slide is a live offset that
-    // [`poll_bars`] steps at 20 fps: a Rune loop would redraw the whole
-    // window at the display's refresh rate for as long as music plays.
-    BARS_SHOWN.with(|b| b.set(true));
     let mut bars = row().size(14.0, 14.0).gap(2.0).items_end().label("now playing");
-    for (n, rest) in [0.4f32, 0.8, 0.6].into_iter().enumerate() {
-        let live = bar_live(n);
-        // The static staggered glyph (reduced motion, paused) until poll moves it.
-        if live.get() == [0.0, 0.0] {
-            live.set([0.0, 14.0 * (1.0 - rest)]);
-        }
-        let bar = el().w(2.0).h(14.0).radius(1.0).fill(t.c.foreground).live_offset(&live);
+    for rest in [0.4f32, 0.8, 0.6] {
+        // Keep the staggered silhouette without subscribing the whole window
+        // to a 20 fps live animation. A playing indicator is still visible,
+        // but it no longer forces a full-surface composite while music plays.
+        let bar = el().w(2.0).h(14.0).radius(1.0).fill(t.c.foreground).offset(0.0, 14.0 * (1.0 - rest));
         bars = bars.child(el().w(2.0).h(14.0).clip_rounded(0.0).child(bar));
     }
     bars
 }
-
-thread_local! {
-    /// Whether the last view built any playing bars.
-    static BARS_SHOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static BAR_LIVES: [rune::Live<[f32; 2]>; 3] =
-        [rune::Live::new([0.0, 0.0]), rune::Live::new([0.0, 0.0]), rune::Live::new([0.0, 0.0])];
-}
-
-fn bar_live(n: usize) -> rune::Live<[f32; 2]> {
-    BAR_LIVES.with(|l| l[n].clone())
-}
-
-/// Start of a view run: bars count as shown only if this run builds some.
-pub fn begin_bars() {
-    BARS_SHOWN.with(|b| b.set(false));
-}
-
-/// Step the playing bars (20 fps) while some show and music plays.
-pub fn poll_bars(app: &App, clock: f64, tx: &mut rune::Tx) {
-    if !BARS_SHOWN.with(|b| b.get()) || !app.player.playing {
-        return;
-    }
-    let ease = Easing::cubic(0.42, 0.0, 0.58, 1.0);
-    for n in 0..3 {
-        let phase = (clock - n as f64 * 0.2).rem_euclid(1.0) as f32;
-        let half = if phase < 0.5 { phase * 2.0 } else { 2.0 - phase * 2.0 };
-        let scale = 0.3 + 0.6 * ease.eval(half);
-        bar_live(n).set([0.0, 14.0 * (1.0 - scale)]);
-    }
-    // The bars are only 14 px tall, so 20 fps is visually smooth while
-    // avoiding a 30/60 fps full-window composite on every playback tick.
-    tx.wake_after(std::time::Duration::from_millis(50));
-}
-
 /// `TrackIndexCell`'s `.play-cell`: the zero-padded number (or the bars
 /// while the row's track plays), and with `play` the hover play button over
 /// it.

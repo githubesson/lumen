@@ -33,7 +33,6 @@ use rune::{Color, El, Family, Icon, TextStyle, icon, text};
 /// Runs before each frame for the shared components: tooltips waiting out
 /// their delay and counters rolling.
 pub fn poll(app: &mut crate::app::App, clock: f64, tx: &mut rune::Tx) -> bool {
-    track_row::poll_bars(app, clock, tx);
     let a = tooltip::poll(app, clock);
     let b = blocks::poll_numbers(app, clock, tx);
     a || b

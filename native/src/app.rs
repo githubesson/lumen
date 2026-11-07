@@ -335,7 +335,6 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
     app.system_dark.set(cx.system_dark());
     app.images.set_scale(cx.env().scale);
     app.widgets.lists.begin_frame();
-    crate::ui::track_row::begin_bars();
     let t = app.theme();
     // `App.tsx`'s gating: the shell only for a signed-in route.
     let in_shell = crate::pages::auth::gate(app) == crate::pages::auth::Gate::Shell;
