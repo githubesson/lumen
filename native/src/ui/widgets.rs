@@ -106,9 +106,10 @@ pub fn cover_art(t: &Theme, images: &Images, url: Option<&str>, label: &str, w: 
     // The image rounds its own corners: no clipping layer per cover.
     let base = el().size(w, h).radius(radius).fill(t.c.muted);
     let state = match url {
-        Some(u) => images.get_sized(u, w, h),
+        Some(u) => images.get_sized_lazy(u, w, h),
         None => Cover::Failed,
     };
+    let base = load_when_shown(base, &state, url, w, h);
     match state {
         Cover::Ready(img) => base.child(el().w(w).h(h).radius(radius).pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
         Cover::Loading => base,
@@ -134,7 +135,9 @@ pub fn cover_art_letter_size(
     letter: f32,
 ) -> El {
     let base = el().size(size, size).radius(radius).fill(t.c.muted);
-    match url.map(|u| images.get_sized(u, size, size)).unwrap_or(Cover::Failed) {
+    let state = url.map(|u| images.get_sized_lazy(u, size, size)).unwrap_or(Cover::Failed);
+    let base = load_when_shown(base, &state, url, size, size);
+    match state {
         Cover::Ready(img) => base.child(el().w(size).h(size).radius(radius).pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
         Cover::Loading => base,
         Cover::Failed => {
@@ -142,6 +145,20 @@ pub fn cover_art_letter_size(
             base.center().child(text(ch).font(font(letter, 500.0)).color(t.c.muted_foreground))
         }
     }
+}
+
+/// `<img loading="lazy">`: a cover still loading fetches next while its box
+/// shows on screen, and waits behind those that show once it leaves. A view
+/// builds every card of a grid, so without it the covers far below would
+/// load with (or before) the ones in view.
+pub fn load_when_shown(base: El, state: &Cover, url: Option<&str>, w: f32, h: f32) -> El {
+    let (Cover::Loading, Some(url)) = (state, url) else { return base };
+    let url = url.to_string();
+    base.on_visible(move |app: &mut crate::app::App, shown: bool, tx: &mut rune::Tx| {
+        if shown { app.images.want_sized(&url, w, h) } else { app.images.unwant_sized(&url, w, h) }
+        // Only the fetch order changed; the cover shows when it arrives.
+        tx.live_only();
+    })
 }
 
 /// The overlay `.hover(..)` must draw over `base` so the element shows

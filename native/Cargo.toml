@@ -93,3 +93,9 @@ codegen-units = 1
 lto = "thin"
 strip = true
 incremental = false
+
+# Rune comes from `vendor/rune`: upstream at the rev above plus our patches
+# (`vendor/README.md`). Its sibling crates (`rune-motion`, …) still come from git
+# at the same rev, so ours and vendored Rune's unify.
+[patch."https://github.com/anomalyco/rune"]
+rune = { path = "vendor/rune" }

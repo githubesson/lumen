@@ -2,9 +2,11 @@
 //! `TracksView` (table or `TracksGrid`), or `GridView` of album or artist
 //! cards; a search shows `SearchResults` instead.
 
+use std::borrow::Cow;
+use std::rc::Rc;
 use std::sync::Arc;
 
-use rune::{Cx, El, col};
+use rune::{Cx, El, GrowthSpec, col, el, row};
 
 use crate::api::{self, Album, Artist, PageParams, TrackListItem};
 use crate::api::search::SearchType;
@@ -85,38 +87,38 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, view: View, query: &str, sea
     if searching {
         return super::search::view(app, t, head, query, search_type, width);
     }
+    // The grids as the content's virtual rows: only the cards near the
+    // viewport are built, however many pages have loaded.
+    let grid_w = grid_width(t, cx);
     match view {
-        View::Tracks => tracks_view(app, t, head, width),
-        View::Albums => {
+        View::Tracks => tracks_view(app, t, head, grid_w),
+        View::Albums if has_items(&app.pages.library.albums) => {
             let p = &app.pages.library.albums;
-            padded(t, head.children(grid_view(t, p, "album", "No albums found.", albums_slot, width, |w| {
-                let cards: Vec<Box<dyn FnOnce(f32) -> El + '_>> = p
-                    .items
-                    .iter()
-                    .flatten()
-                    .enumerate()
-                    .map(|(n, a)| -> Box<dyn FnOnce(f32) -> El + '_> {
-                        Box::new(move |cw| cards::library_album_card(app, t, &format!("album-card-{n}"), a, cw))
-                    })
-                    .collect();
-                cards::grid(t, "lib-grid", w, cards)
-            })))
+            grid_page(app, t, "lib-albums", head, grid_meta(t, p, "album"), grid_w, Grid {
+                items: |app| app.pages.library.albums.items.as_ref().map_or(0, Vec::len),
+                card: |app, t, n, w| {
+                    let a = &app.pages.library.albums.items.as_ref().unwrap()[n];
+                    cards::library_album_card(app, t, &format!("album-card-{n}"), a, w)
+                },
+                tail: |app, t| paging::sentinel(t, "lib-cards", &app.pages.library.albums, albums_slot),
+                stale: |_| false,
+            })
         }
-        View::Artists => {
+        View::Artists if has_items(&app.pages.library.artists) => {
             let p = &app.pages.library.artists;
-            padded(t, head.children(grid_view(t, p, "artist", "No artists found.", artists_slot, width, |w| {
-                let cards: Vec<Box<dyn FnOnce(f32) -> El + '_>> = p
-                    .items
-                    .iter()
-                    .flatten()
-                    .enumerate()
-                    .map(|(n, a)| -> Box<dyn FnOnce(f32) -> El + '_> {
-                        Box::new(move |cw| cards::artist_card(app, t, &format!("artist-card-{n}"), a, None, None, cw))
-                    })
-                    .collect();
-                cards::grid(t, "lib-grid", w, cards)
-            })))
+            grid_page(app, t, "lib-artists", head, grid_meta(t, p, "artist"), grid_w, Grid {
+                items: |app| app.pages.library.artists.items.as_ref().map_or(0, Vec::len),
+                card: |app, t, n, w| {
+                    let a = &app.pages.library.artists.items.as_ref().unwrap()[n];
+                    cards::artist_card(app, t, &format!("artist-card-{n}"), a, None, None, w)
+                },
+                tail: |app, t| paging::sentinel(t, "lib-cards", &app.pages.library.artists, artists_slot),
+                stale: |_| false,
+            })
         }
+        // Loading, empty or failed: no cards to build.
+        View::Albums => padded(t, head.children(grid_view(t, &app.pages.library.albums, "album", "No albums found.", albums_slot))),
+        View::Artists => padded(t, head.children(grid_view(t, &app.pages.library.artists, "artist", "No artists found.", artists_slot))),
     }
 }
 
@@ -132,7 +134,7 @@ pub fn refreshable(key: &str, stale: bool) -> El {
 
 /// `TracksView`: the count and any error under the toolbar, then the table
 /// (the page's virtual rows) or the grid of track cards.
-fn tracks_view(app: &App, t: &Theme, mut head: El, width: f32) -> El {
+fn tracks_view(app: &App, t: &Theme, mut head: El, grid_w: f32) -> El {
     let s = &app.pages.library;
     let p = &s.tracks;
     head = head.child(list_meta(t, p.len().map(|n| n as u64), p.total, "track"));
@@ -152,24 +154,24 @@ fn tracks_view(app: &App, t: &Theme, mut head: El, width: f32) -> El {
             let tail = sentinel(col().key("lib-tracks-tail").w_full());
             TrackList::new(TRACKS_LIST, tracks_source).bar_elsewhere().stale(p.stale()).view_gap(14.0).page(app, t, head, Some(tail))
         }
+        Some(items) if !items.is_empty() => grid_page(app, t, "lib-tracks", head, Vec::new(), grid_w, Grid {
+            items: |app| tracks_source(app).len(),
+            card: |app, t, n, w| {
+                let items = tracks_source(app);
+                cards::track_card(app, t, &format!("track-card-{n}"), &items[n], tracks_source, w)
+            },
+            tail: |app, t| paging::sentinel(t, "lib-tracks", &app.pages.library.tracks, tracks_slot),
+            stale: |app| app.pages.library.tracks.stale(),
+        }),
         _ => {
             let mut body = refreshable("lib-tracks", p.stale()).mt(14.0);
             match &p.items {
                 None => body = body.child(loading_state(t, "Loading library…")),
-                Some(items) if items.is_empty() => {
+                // The cards are `grid_page`'s.
+                Some(_) => {
                     if p.error.is_none() {
                         body = body.child(toolbar::empty_library(t));
                     }
-                }
-                Some(items) => {
-                    let cards: Vec<Box<dyn FnOnce(f32) -> El + '_>> = items
-                        .iter()
-                        .enumerate()
-                        .map(|(n, tr)| -> Box<dyn FnOnce(f32) -> El + '_> {
-                            Box::new(move |cw| cards::track_card(app, t, &format!("track-card-{n}"), tr, items, cw))
-                        })
-                        .collect();
-                    body = body.child(cards::grid(t, "lib-grid", width, cards));
                 }
             }
             padded(t, head.child(sentinel(body)))
@@ -177,29 +179,113 @@ fn tracks_view(app: &App, t: &Theme, mut head: El, width: f32) -> El {
     }
 }
 
-/// `GridView`: the count, an error, then the cards (or loading / empty).
-fn grid_view<'a, T: Clone + Send + 'static>(
-    t: &Theme,
-    p: &'a Paged<T>,
-    unit: &str,
-    empty_label: &str,
-    slot: paging::Slot<T>,
-    width: f32,
-    cards: impl FnOnce(f32) -> El + 'a,
-) -> Vec<El> {
+fn has_items<T>(p: &Paged<T>) -> bool {
+    p.items.as_ref().is_some_and(|i| !i.is_empty())
+}
+
+/// What a virtual grid page shows: how many cards, one card (the `n`th, at
+/// a column width), what follows the cards, and whether it shows a previous
+/// query's rows (dimmed, as `.refreshable`).
+struct Grid {
+    items: fn(&App) -> usize,
+    card: fn(&App, &Theme, usize, f32) -> El,
+    tail: fn(&App, &Theme) -> Vec<El>,
+    stale: fn(&App) -> bool,
+}
+
+/// The grid's width: the page's, inside `.view`'s padding. The page is the
+/// scroller's child, so it's there whichever rows are built.
+fn grid_width(t: &Theme, cx: &mut Cx<App>) -> f32 {
+    ["lib-albums-page", "lib-artists-page", "lib-tracks-grid-page"]
+        .iter()
+        .find_map(|k| cx.layout_size(k))
+        .map(|s| s[0] - 2.0 * t.pad())
+        .or_else(|| cx.layout_size("lib-head").map(|s| s[0]))
+        .unwrap_or_else(|| content_width(t, cx, "lib-view"))
+}
+
+/// The count and any error under the toolbar, as `GridView` puts them.
+fn grid_meta<T>(t: &Theme, p: &Paged<T>, unit: &str) -> Vec<El> {
     let mut out = vec![list_meta(t, p.len().map(|n| n as u64), p.total, unit)];
     if let Some(e) = &p.error {
         out.push(error_banner(t, e));
     }
+    out
+}
+
+/// `GridView` with cards (`TracksGrid` too) as the content scroller's
+/// virtual rows: the head (padded like `.view`, with `meta` under it), one
+/// row per line of cards 14 px under it and a gap apart (`.grid-cards`),
+/// then `tail` (the paging sentinel) and the bottom padding. Laid out as
+/// `padded(head + grid)` is, but only the lines near the viewport are built,
+/// so a library of thousands of albums keeps a screenful of cards.
+fn grid_page(app: &App, t: &Theme, key: &'static str, head: El, meta: Vec<El>, width: f32, grid: Grid) -> El {
+    let pad = t.pad();
+    let count = (grid.items)(app);
+    let (cols, card_w) = cards::grid_columns(t, width);
+    let lines = count.div_ceil(cols);
+    let gap = t.gap();
+    let line_h = crate::ui::cards::media_card_height(t, card_w) + gap;
+    let head = Rc::new(head.children(meta));
+    let stale = (grid.stale)(app);
+    let page_key = if key == "lib-tracks" { "lib-tracks-grid-page".to_string() } else { format!("{key}-page") };
+    col()
+        .key(page_key)
+        .w_full()
+        .growth(GrowthSpec { edge: rune::edge::NO_MASK, ..GrowthSpec::default() })
+        .virtual_rows(
+            lines + 2,
+            line_h,
+            move |_: &App, i| -> Cow<'_, str> {
+                if i == 0 {
+                    Cow::Borrowed("page-head")
+                } else if i <= lines {
+                    Cow::Owned(format!("cards-{i}"))
+                } else {
+                    Cow::Borrowed("page-tail")
+                }
+            },
+            move |app: &App, i| {
+                let t = app.theme();
+                let pad = t.pad();
+                if i == 0 {
+                    return el().w_full().px(pad).pt(pad).child((*head).clone());
+                }
+                let dim = |e: El| refreshable(&format!("{key}-dim-{i}"), (grid.stale)(app)).child(e);
+                if i <= lines {
+                    let count = (grid.items)(app);
+                    let first = (i - 1) * cols;
+                    let mut line = row().gap(t.gap()).items_start();
+                    for n in first..(first + cols).min(count) {
+                        line = line.child((grid.card)(app, &t, n, card_w));
+                    }
+                    // `.grid-cards` sits 14 px under the count; its lines a gap apart.
+                    let line = el().w_full().px(pad).child(dim(line.w_full()));
+                    let line = if i == 1 { line.pt(14.0) } else { line };
+                    return if i < lines { line.pb(t.gap()) } else { line };
+                }
+                let mut end = col().w_full().px(pad).pb(pad);
+                for e in (grid.tail)(app, &t) {
+                    end = end.child(e);
+                }
+                end
+            },
+        )
+        .virtual_rows_version((count, cols, card_w.to_bits(), pad.to_bits(), stale))
+}
+
+/// `GridView` without cards: the count, an error, then loading or empty.
+/// With cards it's [`grid_page`].
+fn grid_view<T: Clone + Send + 'static>(t: &Theme, p: &Paged<T>, unit: &str, empty_label: &str, slot: paging::Slot<T>) -> Vec<El> {
+    let mut out = grid_meta(t, p, unit);
     let mut body = col().key("lib-cards").w_full().mt(14.0);
     match &p.items {
         None => body = body.child(loading_state(t, "Loading library…")),
-        Some(items) if items.is_empty() => {
+        Some(_) => {
             if p.error.is_none() {
                 body = body.child(empty_state(t, None, empty_label, None, None));
             }
         }
-        Some(_) => body = body.child(cards(width)),
     }
     for e in paging::sentinel(t, "lib-cards", p, slot) {
         body = body.child(e);

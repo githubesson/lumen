@@ -315,6 +315,8 @@ fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
         // Loaded data shows at once, as the web app renders it.
         tx.instant();
     }
+    // A cover arrived: the view swaps its placeholder for it.
+    changed |= app.images.take_arrived();
     changed |= crate::player::poll(app, tx);
     changed |= crate::ui::poll(app, clock, tx);
     changed |= crate::pages::playlists::sync(app);

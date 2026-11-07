@@ -185,10 +185,11 @@ pub fn release_card(app: &App, t: &Theme, key: &str, r: &ArtistRelease, width: f
 
 /// A `TracksGrid` card: the track's cover with a play button that shows on
 /// hover, its title and artist, and a TIDAL badge.
-pub fn track_card(app: &App, t: &Theme, key: &str, tr: &TrackListItem, queue: &[TrackListItem], width: f32) -> El {
+/// `queue` is read when the card is pressed: a card holding its own copy of
+/// the list made a grid of n tracks keep n² of them.
+pub fn track_card(app: &App, t: &Theme, key: &str, tr: &TrackListItem, queue: crate::ui::track_select::Source, width: f32) -> El {
     let cover = Some(media::track_cover(&tr.id, tr.album_id.as_deref(), tr.cover_url.as_deref(), Some(384)));
     let id = tr.id.clone();
-    let q = queue.to_vec();
     let play = el()
         .key(format!("{key}-play"))
         .size(32.0, 32.0)
@@ -203,10 +204,14 @@ pub fn track_card(app: &App, t: &Theme, key: &str, tr: &TrackListItem, queue: &[
         .group_opacity(0.0, 1.0)
         .press_scale(0.95)
         .child(ico(&i::PLAY_FILLED, 16.0, t.c.primary_foreground))
-        .on_press(move |app: &mut App| { if let Some(tr) = q.iter().find(|t| t.id == id).cloned() { crate::ui::track_row::play_from(app, &tr, &q) } });
+        .on_press(move |app: &mut App| {
+            let q = queue(app).to_vec();
+            if let Some(tr) = q.iter().find(|t| t.id == id).cloned() {
+                crate::ui::track_row::play_from(app, &tr, &q)
+            }
+        });
     let letter = tr.album_title.as_deref().filter(|s| !s.is_empty()).unwrap_or(&tr.title);
     let menu_track = tr.clone();
-    let menu_queue = queue.to_vec();
     card(
         app,
         t,
@@ -225,7 +230,7 @@ pub fn track_card(app: &App, t: &Theme, key: &str, tr: &TrackListItem, queue: &[
     .focusable(false)
     .role("group")
     .on_secondary_press(move |app: &mut App, at: rune::PointerPress, _tx: &mut rune::Tx| {
-        let ctx = crate::overlays::track_menu::MenuContext::bind(&menu_track, menu_queue.clone());
+        let ctx = crate::overlays::track_menu::MenuContext::bind(&menu_track, queue(app).to_vec());
         crate::overlays::track_menu::open(app, menu_track.clone(), [at.x, at.y], ctx)
     })
 }

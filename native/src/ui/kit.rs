@@ -78,12 +78,30 @@ pub fn scroll_area_with(t: &Theme, key: &str, content: El, stable_gutter: bool) 
 /// `max_h` (CSS `max-height` on an `overflow: auto` box in an auto-height
 /// column), instead of growing into a bounded parent.
 pub fn scroll_area_fit(t: &Theme, key: &str, content: El, stable_gutter: bool, max_h: Option<f32>) -> El {
+    scroll_area_impl(t, key, content, stable_gutter, max_h, None)
+}
+
+/// [`scroll_area`] whose viewport also clips to its own rounded `corners`
+/// (top left, top right, bottom right, bottom left): the padding-box radius
+/// CSS clips an `overflow: hidden` box's content to inside its border, for a
+/// viewport that sits in a rounded panel's corner. Without it the content
+/// takes the panel's own clip, whose arc cuts the viewport's corner, and
+/// Rune draws the whole page through an offscreen layer every frame.
+pub fn scroll_area_clipped(t: &Theme, key: &str, content: El, corners: [f32; 4]) -> El {
+    scroll_area_impl(t, key, content, true, None, Some(corners))
+}
+
+fn scroll_area_impl(t: &Theme, key: &str, content: El, stable_gutter: bool, max_h: Option<f32>, corners: Option<[f32; 4]>) -> El {
     let live = thumb_live(key);
     let feed = live.clone();
     let viewport = col().key(key).min_h(0.0).min_w(0.0);
     let viewport = match max_h {
         Some(m) => viewport.grow(1.0).max_h(m),
         None => viewport.grow(1.0).h_full(),
+    };
+    let viewport = match corners {
+        Some(c) => viewport.clip_corners(c),
+        None => viewport,
     };
     let pos_key = key.to_string();
     let viewport = viewport

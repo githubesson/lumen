@@ -23,7 +23,9 @@ pub fn square_art(t: &Theme, images: &Images, url: Option<&str>, label: &str, ra
     // Cards run up to about 240 px wide (grid columns, shelves); smaller ones
     // draw from the image's mips. The image rounds its own corners.
     let base = el().w_full().aspect_ratio(1.0).radius(radius).fill(t.c.muted);
-    match url.map(|u| images.get_sized(u, 240.0, 240.0)).unwrap_or(Cover::Failed) {
+    let state = url.map(|u| images.get_sized_lazy(u, 240.0, 240.0)).unwrap_or(Cover::Failed);
+    let base = crate::ui::widgets::load_when_shown(base, &state, url, 240.0, 240.0);
+    match state {
         Cover::Ready(img) => base.child(el().w_full().h_full().radius(radius).pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
         Cover::Loading => base,
         Cover::Failed => {

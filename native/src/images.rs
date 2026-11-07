@@ -27,7 +27,7 @@ use crate::net::LateWaker;
 #[derive(Clone)]
 enum Slot {
     Loading,
-    Ready(Image),
+    Ready(Picture),
     Failed,
 }
 
@@ -35,15 +35,34 @@ enum Slot {
 pub enum Cover {
     /// Fetching or decoding: the muted surface.
     Loading,
-    Ready(Image),
+    Ready(Picture),
     /// No image: the placeholder with the entity's initial.
     Failed,
 }
 
-/// Decoded covers kept in memory, in bytes of pixels.
-const DECODED_BUDGET: usize = 64 << 20;
-/// Encoded cover bytes kept in memory (to resize again for another size).
-const ENCODED_BUDGET: usize = 32 << 20;
+/// A decoded cover, ready to draw.
+#[derive(Clone)]
+pub struct Picture(rune::Pixels);
+
+impl Picture {
+    pub fn pixels(&self) -> &rune::Pixels {
+        &self.0
+    }
+
+    /// Its size in pixels.
+    pub fn size(&self) -> Option<[u32; 2]> {
+        let (w, h) = self.0.size();
+        (w > 0 && h > 0).then_some([w, h])
+    }
+}
+
+/// Decoded covers kept in memory, in bytes of pixels: some ten screens of a
+/// card grid. Past it a cover decodes again from the bytes, in memory or on
+/// disk, in a few milliseconds on a worker.
+const DECODED_BUDGET: usize = 32 << 20;
+/// Encoded cover bytes kept in memory (to resize again for another size);
+/// the disk cache keeps them all for their `max-age` anyway.
+const ENCODED_BUDGET: usize = 8 << 20;
 /// The disk cache's size; the oldest files go past it.
 const DISK_BUDGET: u64 = 256 << 20;
 /// Without a size, covers decode at most this many pixels a side.
@@ -102,10 +121,14 @@ impl<V: Clone> Lru<V> {
     }
 }
 
-/// Workers that take the newest job first: after a fast scroll the covers
-/// on screen were asked for last, so they load before the rows scrolled
-/// past. Past `MAX_QUEUED` the oldest waiting jobs are dropped and their
-/// slots forgotten, so a row that shows again asks again.
+/// Workers that take the job at the back first. An urgent request goes to
+/// the back: after a fast scroll the covers on screen were asked for last,
+/// so they load before the rows scrolled past. A lazy one (`loading="lazy"`
+/// in the web app: a cover built off screen, as a grid builds every card)
+/// waits at the front, in the order asked, until it comes on screen
+/// ([`Images::want_sized`] moves it to the back). Past `MAX_QUEUED` the job
+/// at the front is dropped and its slot forgotten, so a cover that shows
+/// again asks again.
 struct Stack<J: Task = Job> {
     jobs: Mutex<VecDeque<J>>,
     ready: Condvar,
@@ -116,15 +139,19 @@ struct Stack<J: Task = Job> {
 
 /// Cover jobs waiting at most (a few screens of rows).
 const MAX_QUEUED: usize = 192;
-/// Cover workers: fetches mostly wait on the network, as Chromium's six
-/// connections a host do.
-const WORKERS: usize = 6;
+/// Cover workers: fetches mostly wait on the network (and the server on
+/// TIDAL's CDN for a cover it hasn't cached), so more run than Chromium's
+/// six HTTP/1.1 connections a host; over HTTP/2 it asks for every cover in
+/// view at once.
+const WORKERS: usize = 8;
 
 /// A job on the [`Stack`].
 trait Task: Send + 'static {
     fn run(self);
     /// Dropped unrun, past `MAX_QUEUED`.
     fn dropped(self);
+    /// What it fetches, to find it again in the queue.
+    fn key(&self) -> &str;
 }
 
 impl<J: Task> Stack<J> {
@@ -157,17 +184,28 @@ impl<J: Task> Stack<J> {
         }
     }
 
+    /// Moves the waiting job for `key` to the back (next to run, `urgent`) or
+    /// the front. False when none waits (running, done or dropped).
+    fn reorder(&self, key: &str, urgent: bool) -> bool {
+        let mut jobs = self.jobs.lock().unwrap();
+        let Some(at) = jobs.iter().position(|j| j.key() == key) else { return false };
+        let job = jobs.remove(at).unwrap();
+        if urgent { jobs.push_back(job) } else { jobs.push_front(job) }
+        true
+    }
+
     fn close(&self) {
         self.closed.store(true, Ordering::Release);
         self.jobs.lock().unwrap().clear();
         self.ready.notify_all();
     }
 
-    fn push(self: &Arc<Stack<J>>, job: J) {
+    /// Queues `job`: at the back when `urgent`, else at the front.
+    fn push(self: &Arc<Stack<J>>, job: J, urgent: bool) {
         self.started.call_once(|| self.start());
         let dropped = {
             let mut jobs = self.jobs.lock().unwrap();
-            jobs.push_back(job);
+            if urgent { jobs.push_back(job) } else { jobs.push_front(job) }
             if jobs.len() > MAX_QUEUED { jobs.pop_front() } else { None }
         };
         self.ready.notify_one();
@@ -180,6 +218,8 @@ impl<J: Task> Stack<J> {
 struct Shared {
     decoded: Mutex<Lru<Slot>>,
     encoded: Mutex<Lru<Arc<[u8]>>>,
+    /// A cover finished since the app last looked ([`Images::take_arrived`]).
+    arrived: AtomicBool,
 }
 
 pub struct Images {
@@ -203,7 +243,11 @@ impl Images {
         }
         Images {
             cache: Arc::new(ImageCache::new(waker.as_waker())),
-            shared: Arc::new(Shared { decoded: Mutex::new(Lru::new(DECODED_BUDGET)), encoded: Mutex::new(Lru::new(ENCODED_BUDGET)) }),
+            shared: Arc::new(Shared {
+                decoded: Mutex::new(Lru::new(DECODED_BUDGET)),
+                encoded: Mutex::new(Lru::new(ENCODED_BUDGET)),
+                arrived: AtomicBool::new(false),
+            }),
             jobs: Stack::new(),
             client: Arc::default(),
             waker,
@@ -212,6 +256,15 @@ impl Images {
             disk,
         }
     }
+
+    /// Whether a cover finished (loaded or failed) since the last call: the
+    /// view runs again to show it. The waker only runs `poll`, which commits
+    /// nothing unless something says it changed, so a cover that arrived with
+    /// nothing else going on stayed on its placeholder.
+    pub fn take_arrived(&self) -> bool {
+        self.shared.arrived.swap(false, Ordering::AcqRel)
+    }
+
 
     /// The server covers are fetched from (its session included).
     pub fn set_client(&self, client: Option<Client>) {
@@ -238,28 +291,57 @@ impl Images {
 
     /// The cover at `url` at its natural size (at most 512 px a side).
     pub fn get(&self, url: &str) -> Cover {
-        self.request(url, None)
+        self.request(url, None, true)
     }
 
     /// The cover at `url` drawn `w`×`h` points: decoded at those device
     /// pixels, cropped to fill them as `object-fit: cover` does.
     pub fn get_sized(&self, url: &str, w: f32, h: f32) -> Cover {
-        let s = self.scale();
-        let (wp, hp) = ((w * s).round().max(1.0) as u32, (h * s).round().max(1.0) as u32);
-        self.request(url, Some((wp, hp, w.max(h))))
+        self.request(url, Some(self.sized(w, h)), true)
     }
 
-    fn request(&self, url: &str, size: Option<(u32, u32, f32)>) -> Cover {
-        let key = match size {
+    /// [`Images::get_sized`] for a cover that may be off screen: its fetch
+    /// waits behind every cover on screen until [`Images::want_sized`] says
+    /// it shows (`CoverArt`'s `loading="lazy"`).
+    pub fn get_sized_lazy(&self, url: &str, w: f32, h: f32) -> Cover {
+        self.request(url, Some(self.sized(w, h)), false)
+    }
+
+    /// The cover came on screen: fetch it next (asking again if it was dropped).
+    pub fn want_sized(&self, url: &str, w: f32, h: f32) {
+        let size = self.sized(w, h);
+        let key = Self::key(url, Some(size));
+        let waiting = matches!(self.shared.decoded.lock().unwrap().get(&key), Some(Slot::Loading));
+        if waiting {
+            self.jobs.reorder(&key, true);
+        } else {
+            self.request(url, Some(size), true);
+        }
+    }
+
+    /// The cover left the screen before it loaded: covers that show go first.
+    pub fn unwant_sized(&self, url: &str, w: f32, h: f32) {
+        self.jobs.reorder(&Self::key(url, Some(self.sized(w, h))), false);
+    }
+
+    fn sized(&self, w: f32, h: f32) -> (u32, u32, f32) {
+        let s = self.scale();
+        ((w * s).round().max(1.0) as u32, (h * s).round().max(1.0) as u32, w.max(h))
+    }
+
+    fn key(url: &str, size: Option<(u32, u32, f32)>) -> String {
+        match size {
             Some((w, h, _)) => format!("{w}x{h}@{url}"),
             None => url.to_string(),
-        };
+        }
+    }
+
+    fn request(&self, url: &str, size: Option<(u32, u32, f32)>, urgent: bool) -> Cover {
+        let key = Self::key(url, size);
         if let Some(slot) = self.shared.decoded.lock().unwrap().get(&key) {
             return match slot {
                 Slot::Loading => Cover::Loading,
-                Slot::Ready(img) if img.error().is_some() => Cover::Failed,
-                Slot::Ready(img) if img.is_ready() => Cover::Ready(img),
-                Slot::Ready(_) => Cover::Loading,
+                Slot::Ready(picture) => Cover::Ready(picture),
                 Slot::Failed => Cover::Failed,
             };
         }
@@ -278,9 +360,9 @@ impl Images {
         };
         if self.sync.load(Ordering::Relaxed) {
             job.run();
-            return self.request(url, size);
+            return self.request(url, size, urgent);
         }
-        self.jobs.push(job);
+        self.jobs.push(job, urgent);
         Cover::Loading
     }
 }
@@ -308,6 +390,10 @@ impl Task for Job {
         Job::run(self);
     }
 
+    fn key(&self) -> &str {
+        &self.key
+    }
+
     /// The slot is forgotten, so the row asks again if it shows again.
     fn dropped(self) {
         let mut decoded = self.shared.decoded.lock().unwrap();
@@ -319,15 +405,12 @@ impl Task for Job {
 
 impl Job {
     fn run(self) {
-        let slot = match self.encoded() {
+        let (slot, bytes) = match self.encoded() {
             Some(bytes) => self.decode(&bytes),
             None => (Slot::Failed, 64),
         };
-        let (slot, bytes) = match slot {
-            (Slot::Ready(img), b) if img.wait().is_err() => (Slot::Failed, b),
-            other => other,
-        };
         self.shared.decoded.lock().unwrap().put(self.key.clone(), slot, bytes);
+        self.shared.arrived.store(true, Ordering::Release);
         self.waker.wake();
     }
 
@@ -366,11 +449,12 @@ impl Job {
         if svg {
             let pt = self.size.map_or(UNSIZED_MAX as f32 / self.scale, |(_, _, pt)| pt);
             let px = (pt * self.scale) as usize;
-            return (Slot::Ready(self.cache.svg(bytes.to_vec(), pt, self.scale)), px * px * 4);
+            // Rune rasterizes it, with mips: a third more than its pixels.
+            return (Self::ready(self.cache.svg(bytes.to_vec(), pt, self.scale)), px * px * 16 / 3);
         }
         let Ok(img) = image::load_from_memory(bytes) else {
             // A format the decoder here lacks: hand it to Rune's.
-            return (Slot::Ready(self.cache.load(bytes.to_vec())), 256 * 256 * 4);
+            return (Self::ready(self.cache.load(bytes.to_vec())), 256 * 256 * 16 / 3);
         };
         let rgba = img.to_rgba8();
         let (iw, ih) = rgba.dimensions();
@@ -383,8 +467,22 @@ impl Job {
             }
             None => (rgba, iw, ih),
         };
+        // Decoded at the device pixels it's drawn at, so it draws 1:1 and
+        // needs no mips: the pixels as they are (`Pixels::set`), one buffer.
+        // `ImageCache::rgba` premultiplied a copy and built a mip chain, a
+        // third again as much, for every cover held.
         let n = (w * h * 4) as usize;
-        (Slot::Ready(self.cache.rgba(w, h, out.into_raw())), n)
+        let pixels = rune::Pixels::new();
+        pixels.set(w, h, out.into_raw());
+        (Slot::Ready(Picture(pixels)), n)
+    }
+
+    /// An `ImageCache` image once its worker has it: its pixels keep it alive.
+    fn ready(image: Image) -> Slot {
+        match image.wait() {
+            Ok(_) => Slot::Ready(Picture(image.pixels().clone())),
+            Err(_) => Slot::Failed,
+        }
     }
 }
 
@@ -512,6 +610,9 @@ mod tests {
         fn dropped(self) {
             self.1.lock().unwrap().push((self.0, false));
         }
+        fn key(&self) -> &str {
+            ["a", "b", "c", "d"].get(self.0 as usize).copied().unwrap_or("")
+        }
     }
 
     #[test]
@@ -521,7 +622,7 @@ mod tests {
         // Held so nothing starts: the queue fills as a fast scroll would fill it.
         stack.started.call_once(|| {});
         for n in 0..MAX_QUEUED as u32 + 3 {
-            stack.push(Probe(n, log.clone()));
+            stack.push(Probe(n, log.clone()), true);
         }
         assert_eq!(*log.lock().unwrap(), vec![(0, false), (1, false), (2, false)]);
         log.lock().unwrap().clear();
@@ -535,6 +636,25 @@ mod tests {
         let ran: Vec<u32> = log.lock().unwrap().iter().map(|&(n, _)| n).collect();
         assert_eq!(ran.first(), Some(&(MAX_QUEUED as u32 + 2)));
         assert!(ran.windows(2).all(|w| w[0] > w[1]));
+    }
+
+    #[test]
+    fn lazy_jobs_wait_in_order_until_they_show() {
+        let stack: Arc<Stack<Probe>> = Stack::new();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        stack.started.call_once(|| {});
+        // A grid asks for four covers top to bottom; the third comes on screen.
+        for n in 0..4 {
+            stack.push(Probe(n, log.clone()), false);
+        }
+        assert!(stack.reorder("c", true));
+        assert!(!stack.reorder("x", true));
+        let order: Vec<u32> = stack.jobs.lock().unwrap().iter().rev().map(|p| p.0).collect();
+        assert_eq!(order, vec![2, 0, 1, 3]);
+        // It scrolls away again before it loads.
+        assert!(stack.reorder("c", false));
+        let order: Vec<u32> = stack.jobs.lock().unwrap().iter().rev().map(|p| p.0).collect();
+        assert_eq!(order, vec![0, 1, 3, 2]);
     }
 
     #[test]

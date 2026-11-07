@@ -60,7 +60,13 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
         .fill(t.c.background)
         .clip_rounded(t.radius_xl())
         .child(topbar::view(app, t, window_w, bp))
-        .child(crate::ui::kit::scroll_area(t, "content", crate::pages::view(app, t, cx)).grow(1.0));
+        // `.main`'s `overflow: hidden` clips at its padding box: the content's
+        // bottom-left corner takes the radius inside the 1 px border (the
+        // gutter holds the bottom-right one).
+        .child(
+            crate::ui::kit::scroll_area_clipped(t, "content", crate::pages::view(app, t, cx), [0.0, 0.0, 0.0, (t.radius_xl() - 1.0).max(0.0)])
+                .grow(1.0),
+        );
     let gap = if narrow { 4.0 } else { 8.0 };
     let mut grid = row().grow(1.0).min_h(0.0);
     if !narrow {

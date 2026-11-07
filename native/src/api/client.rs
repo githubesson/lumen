@@ -212,6 +212,12 @@ impl Client {
     pub fn new(base: &str, jar_path: Option<PathBuf>) -> Client {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            // ureq keeps 3 idle connections a host by default: with the
+            // cover workers and API requests running at once, the rest
+            // closed after each request and the next paid a new TCP and TLS
+            // handshake. Keep one for each.
+            .max_idle_connections(32)
+            .max_idle_connections_per_host(16)
             .user_agent(concat!("Lumen-Desktop/", env!("CARGO_PKG_VERSION")))
             .build()
             .into();
